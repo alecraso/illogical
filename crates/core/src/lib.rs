@@ -15,7 +15,7 @@ pub type NodeId = u32;
 pub type ClientId = u64;
 
 pub use layout::{Layout, Rect, SplitRect};
-pub use mux::{Effect, Error, Intent, Mux, Session, Tab};
+pub use mux::{Effect, Error, Intent, Mux, OptionMap, OptionScope, Options, Session, Tab};
 pub use tree::{Child, Dir, Edge, Node};
 
 #[cfg(test)]

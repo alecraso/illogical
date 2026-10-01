@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M7 (files and navigation) works, on top of M4c (sandboxes, resident daemons, dial-out, synced history)
+## Status: M7 (files and navigation) and M5 (tmux -CC) work, on top of M4c (sandboxes, resident daemons, dial-out, synced history)
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -251,6 +251,11 @@ the daemon stopping, crashing, or the machine rebooting:
     names ("drifting cedar", unique per daemon). Ids don't change, rename
     is still a double-click, and older sessions keep their names.
 
+- **iTerm2 as a client** (M5). `illogical tmux -CC` speaks tmux's control
+  mode, so iTerm2 (and Ghostty's and WezTerm's tmux support) shows
+  illogical's sessions, tabs and splits as native windows, tabs and splits,
+  live alongside the browser; see *Use it*.
+
 ### The CLI
 
 ```
@@ -308,6 +313,7 @@ illogical fs watch ~/src                      # changes, as NDJSON (also stat, r
 illogical run --cwd ~/src                     # a shell in a directory, in a new tab
 illogical run --split %4 --join --cwd ~/app   # beside %4, where it runs (its VM tab's machine)
 illogical cd %4 ~/src                         # typed into %4's shell, only if it's at its prompt
+illogical tmux -CC attach [-t SESSION]        # be tmux for iTerm2 (see *Use it*)
 ```
 
 `--json` prints the API's JSON. `send` then `wait` only sees what happened
@@ -416,6 +422,78 @@ the token, not an identity. Its page and CLI reach the sandbox at
 `/h/sbx/…`, and a share link to one of its panes would be on the
 sandbox's own daemon, so the menu doesn't offer one there.
 
+**iTerm2, as a tmux client** (M5). iTerm2's tmux integration works with
+illogical in place of tmux: sessions are sessions, tabs are native windows,
+splits are native splits, and the same layout stays live in the browser.
+From iTerm2 on the Mac:
+
+```
+ssh -t geek '~/.local/bin/illogical tmux -CC attach'          # the first session
+ssh -t geek '~/.local/bin/illogical tmux -CC attach -t work'
+ssh -t geek '~/.local/bin/illogical tmux -CC new -s ipad'
+```
+
+iTerm2 sees the control-mode greeting and takes over the window. `-t` is a
+session name or `$N`; plain `illogical tmux -CC` is `attach`. To detach,
+use iTerm2's *Shell › tmux › Detach* (or press Esc in the gateway
+window). Add `--host NAME` before `tmux` to reach another daemon. Anything
+that runs `tmux -CC` by name can run illogical instead: the CLI behaves as
+`illogical tmux` when it is called `tmux`, so put a link where only that
+command looks (`mkdir -p ~/.local/share/illogical/tmux && ln -s
+~/.local/bin/illogical ~/.local/share/illogical/tmux/tmux`, then `ssh -t geek
+'PATH=~/.local/share/illogical/tmux:$PATH tmux -CC attach'`), not on your
+`PATH`, where it would hide the real tmux.
+
+What to expect:
+- It reports tmux 3.5a. Typing, splits (*Shell › Split*), divider drags,
+  window resizes, new tabs and closing panes all change the daemon's
+  layout, which the browser shows at once, and the other way round.
+- The window's size follows whoever claimed it last: iTerm2 claims it when
+  it resizes a window or you type in it, the browser when you click or
+  type there. The other side draws the tab at that size.
+- iTerm2 keeps its tab grouping and its attach guard in the session's
+  options; they're saved with the layout, so they survive a reattach and a
+  reboot.
+- Agent and browser blocks show as read-only panes with their text and a
+  note to open them in the web app.
+- If iTerm2 falls behind a fast pane it shows "paused"; unpausing
+  re-captures the pane and carries on.
+
+**Testing it from the Mac** (nothing here has seen a real iTerm2 yet):
+
+1. On geek, install the build (`just install`) and check `illogical ls`
+   works. Open <https://geek.tailb2e8f2.ts.net> in a browser beside iTerm2.
+2. In iTerm2: `ssh -t geek '~/.local/bin/illogical tmux -CC attach'`. A new
+   iTerm2 window opens with a tab per illogical tab (the gateway window
+   says "tmux mode"). The tab's shell prompt is there, with its history.
+3. Type `ls` and Enter in it: the output appears in iTerm2 and in the
+   browser's same pane.
+4. *Shell › Split Vertically*, then *Split Horizontally*: three native
+   splits; the browser shows the same three panes within a second.
+5. Drag an iTerm2 divider: the browser's divider moves to match. Drag one
+   in the browser: iTerm2's moves. Resize the iTerm2 window: the panes
+   reflow and the browser letterboxes the tab at iTerm2's size; click in
+   the browser's pane and type, and the browser takes the size back.
+6. ⌘T for a new tab: a new tab appears in the browser too. Close it in
+   iTerm2 (⌘W, *Kill*): it goes from the browser. Close a split with
+   `exit`: its pane goes from both.
+7. Run `vim` (or `htop`) in a pane, type a little, and leave it running.
+8. Detach (*Shell › tmux › Detach*). The iTerm2 windows close; vim keeps
+   running in the browser.
+9. Reattach with the same `ssh` command: the tabs and splits come back as
+   they were, with vim on screen; quit it with `:q` and the shell prompt is
+   on the line after the `vim` command.
+10. In the browser, split a pane and open a new tab: iTerm2 shows both.
+
+Watch for: an alert from iTerm2 about an unexpected reply (it disconnects
+on any error it doesn't expect; note the command it names), panes that
+stay blank after attach, output in the wrong pane, a window that keeps
+resizing itself when both iTerm2 and the browser are open, and garbled
+screens after a reattach. To record the conversation, start it with
+`ILLOGICAL_TMUX_LOG`: `ssh -t geek 'ILLOGICAL_TMUX_LOG=/tmp/cc.log
+~/.local/bin/illogical tmux -CC attach'` writes every line both ways (`>`
+from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
+
 Development: `just dev` runs a separate daemon on 7682 (state in
 `~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
 alone. `just check` is what CI runs; `just e2e` drives the system Chrome
@@ -454,7 +532,12 @@ against the running one.
   history sync (`sync.rs`, sealed by `seal.rs`). M7: files on a host
   (`fs.rs`), names (`illogical_core::names`).
 - `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
-  another daemon with `--host` (`hosts.rs`).
+  another daemon with `--host` (`hosts.rs`). `tmux/` is the tmux
+  control-mode front end (M5): the command parser and `-F` format expander,
+  layout strings derived from the daemon's ratios (spike S11's converter),
+  and a mirror terminal per pane so captures line up with the output
+  stream. `crates/daemon/tests/tmux.rs` replays iTerm2's command sequence
+  and compares every reply with what tmux 3.6 answered (S11's transcript).
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
   and phone).

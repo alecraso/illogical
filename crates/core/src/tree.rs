@@ -168,6 +168,22 @@ impl Node {
         }
     }
 
+    /// The fewest cells the tree fits in: one per pane, plus the one-cell
+    /// dividers between neighbours. A tab is never smaller (as in tmux).
+    pub fn min_size(&self) -> (u16, u16) {
+        match self {
+            Node::Pane { .. } => (1, 1),
+            Node::Split { dir, children, .. } => {
+                let mins = children.iter().map(|c| c.node.min_size());
+                let gaps = children.len().saturating_sub(1) as u16;
+                match dir {
+                    Dir::Row => mins.fold((gaps, 1), |(c, r), (mc, mr)| (c.saturating_add(mc), r.max(mr))),
+                    Dir::Column => mins.fold((1, gaps), |(c, r), (mc, mr)| (c.max(mc), r.saturating_add(mr))),
+                }
+            }
+        }
+    }
+
     pub fn has_split(&self, split: NodeId) -> bool {
         match self {
             Node::Pane { .. } => false,

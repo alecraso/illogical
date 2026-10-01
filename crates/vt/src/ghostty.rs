@@ -321,14 +321,16 @@ impl VtEngine for GhosttyEngine {
     fn snapshot(&mut self) -> Vec<u8> {
         let mut out = Vec::new();
         if self.term.active_screen().ok() == Some(Screen::Alternate) {
+            // Where leaving the alternate screen puts the cursor back: the
+            // cursor 1049h below saves.
+            let saved = self.alt_saved_cursor();
             // Mode 47 switches screens without clearing or saving the cursor.
             self.term.vt_write(b"\x1b[?47l");
             out.extend(self.format(Format::Vt, false, false));
             self.pad_rows(&mut out);
-            // No CUP: 47 carries the alt cursor across, and the cursor that
-            // 1049l restores is not exposed. The line after the primary
-            // content is where the shell was when the app started, which is
-            // what that saved cursor normally is.
+            if let Some((x, y)) = saved {
+                out.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
+            }
             self.term.vt_write(b"\x1b[?47h");
             // Entering through 47 set its flag; the app entered through 1049.
             let _ = self.term.set_mode(Mode::new(47, ModeKind::Dec), false);
@@ -378,6 +380,9 @@ impl VtEngine for GhosttyEngine {
         self.term.pwd().unwrap_or("").to_owned()
     }
 }
+
+mod inspect;
+pub use inspect::{CaptureOpts, Line};
 
 #[cfg(test)]
 mod tests;
