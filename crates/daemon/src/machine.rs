@@ -36,6 +36,10 @@ use crate::pane::Spawn;
 /// daemon restart or upgrade.
 const DETACHED_FOR: &str = "12h";
 
+/// Tries, half a second apart, before giving up on a wispd that isn't
+/// answering (it may still be starting, at boot).
+const WISP_PATIENCE: u32 = 120;
+
 /// A wispd, by its API URL and bearer token.
 pub struct Wisp {
     base: Url,
@@ -286,10 +290,19 @@ async fn drive(
 ) {
     let (mut session, mut received) = match begin {
         Begin::New { spawn, image } => {
-            // New, or lost in a reboot of its host: (re)create it.
-            let made = match wisp.exists(&sprite).await {
-                Ok(true) => Ok(()),
-                _ => wisp.create(&sprite, image.as_deref()).await,
+            // New, or lost in a reboot of its host: (re)create it. At boot
+            // wispd may not be answering yet; wait for it.
+            let mut tries = 0;
+            let made = loop {
+                match wisp.exists(&sprite).await {
+                    Ok(true) => break Ok(()),
+                    Ok(false) => break wisp.create(&sprite, image.as_deref()).await,
+                    Err(e) if tries >= WISP_PATIENCE => break Err(e),
+                    Err(_) => {
+                        tries += 1;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                }
             };
             if let Err(e) = made {
                 warn!(sprite, error = %e, "can't create machine");
@@ -331,7 +344,7 @@ async fn drive(
                         sink(ExecEvent::Lost { machine_gone: false });
                         return;
                     }
-                    _ if failures >= 30 => {
+                    _ if failures >= WISP_PATIENCE => {
                         sink(ExecEvent::Lost { machine_gone: false });
                         return;
                     }
