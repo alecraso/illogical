@@ -45,8 +45,10 @@ pub struct App {
     pub mux: MuxHandle,
     pub push: Option<crate::push::Push>,
     pub hosts: Arc<Hosts>,
+    /// The static binaries a daemon made resident in a sandbox runs.
+    pub binaries: Option<crate::resident::Binaries>,
     /// Dial-out hosts connected to us (M4c).
-    pub tunnels: Arc<crate::dial::Tunnels>,
+    pub dial_outs: Arc<crate::dial::DialOuts>,
     /// Read-only share links.
     pub shares: Arc<crate::share::Shares>,
     /// History other hosts synced to us.
@@ -55,6 +57,7 @@ pub struct App {
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         access: Access,
         identify: Identify,
@@ -63,6 +66,7 @@ impl App {
         hosts: Arc<Hosts>,
         shares: Arc<crate::share::Shares>,
         synced: Arc<crate::sync::Synced>,
+        binaries: Option<crate::resident::Binaries>,
     ) -> Arc<Self> {
         Arc::new(Self {
             access,
@@ -70,9 +74,10 @@ impl App {
             mux,
             push,
             hosts,
-            tunnels: Default::default(),
+            dial_outs: Default::default(),
             shares,
             synced,
+            binaries,
             next_client: AtomicU64::new(1),
         })
     }
@@ -84,9 +89,14 @@ fn own_routes() -> Router<Arc<App>> {
 }
 
 /// Plus what makes it a home daemon: hosts dialing in and pushing history,
-/// and the way through to dial-out hosts.
+/// the way through to dial-out hosts (`/h/NAME`), its provider's sandboxes,
+/// and the provider tunnel to resident daemons in them (`/tunnel/NAME`).
 fn api_routes() -> Router<Arc<App>> {
-    own_routes().merge(crate::dial::routes()).merge(crate::sync::routes())
+    own_routes()
+        .merge(crate::dial::routes())
+        .merge(crate::sync::routes())
+        .merge(crate::resident::routes())
+        .merge(crate::provider_tunnel::routes())
 }
 
 /// Over TCP (loopback, behind `tailscale serve`, or a tailnet address):

@@ -78,9 +78,14 @@ enum Command {
         /// The VM's image (with --vm or --vm-tab).
         #[arg(long)]
         image: Option<String>,
+        /// On a sandbox that exists (`illogical sandboxes`), over a plain
+        /// exec with no daemon there: disposable, and the sandbox stays
+        /// when the pane closes. Without a command: a shell.
+        #[arg(long, conflicts_with_all = ["vm", "vm_tab", "image"])]
+        sandbox: Option<String>,
         /// One argument is a shell command line (`'make && ./app'`);
         /// several are a program and its arguments, quoted as given.
-        #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab"])]
+        #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab", "sandbox"])]
         command: Vec<String>,
     },
     /// Machines that panes run on (VM panes).
@@ -329,6 +334,12 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<hosts::HostsCmd>,
     },
+    /// The sandbox provider's sandboxes (this daemon's): open a shell on
+    /// one (`run --sandbox`), or make a daemon resident there.
+    Sandboxes {
+        #[command(subcommand)]
+        cmd: Option<hosts::SandboxesCmd>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -528,6 +539,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             }
         }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
+        Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
         Command::Install { .. } => unreachable!("handled before connecting"),
         Command::Ls => {
             let v = request(&sock, "GET", "/api/panes", None)?.json()?;
@@ -670,13 +682,13 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 println!("m{:<4} {owner:<5} {state:<9} {sprite:<34} {provider} ({image})", m["id"]);
             }
         }
-        Command::Run { session, split, cwd, policy: pol, wait, vm, vm_tab, image, command } => {
+        Command::Run { session, split, cwd, policy: pol, wait, vm, vm_tab, image, sandbox, command } => {
             if image.is_some() && !vm && !vm_tab {
                 anyhow::bail!("--image is for --vm or --vm-tab");
             }
             // A VM (or another daemon's host) has none of this host's
             // directories.
-            let cwd = if vm || vm_tab || REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
+            let cwd = if vm || vm_tab || sandbox.is_some() || REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
                 cwd
             } else {
                 cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))
@@ -686,6 +698,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 "vm": vm,
                 "vm_tab": vm_tab,
                 "image": image,
+                "sandbox": sandbox,
                 "session": session,
                 "split": split.map(|p| p.0),
                 "cwd": cwd,

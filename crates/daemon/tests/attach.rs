@@ -46,23 +46,40 @@ fn temp_state() -> PathBuf {
     dir
 }
 
-#[expect(clippy::zombie_processes, reason = "Daemon's Drop kills and waits")]
+/// Start a daemon on a free port. Tests run in parallel, so another test's
+/// daemon can take the port between our picking it and binding it: then a
+/// TCP connect succeeds (to theirs) while ours fails to bind and exits. So
+/// it's up when its own Unix socket (made after it binds) answers; if it
+/// exited instead, try another port.
 async fn start_in(state: &Path) -> Daemon {
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
-        .arg("--state-dir")
-        .arg(state)
-        .env("PS1", "$ ")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    for _ in 0..100 {
-        if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
-            return Daemon { child, port };
+    for _ in 0..5 {
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
+            .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+            .arg("--state-dir")
+            .arg(state)
+            .env("PS1", "$ ")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let sock = || match std::fs::read_to_string(state.join("sock.path")) {
+            Ok(p) => PathBuf::from(p.trim()),
+            Err(_) => state.join("sock"),
+        };
+        for _ in 0..100 {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if std::os::unix::net::UnixStream::connect(sock()).is_ok()
+                && TcpStream::connect(("127.0.0.1", port)).await.is_ok()
+            {
+                return Daemon { child, port };
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = child.kill();
+        let _ = child.wait();
     }
     panic!("daemon did not start");
 }
@@ -584,6 +601,30 @@ async fn a_restored_pane_drops_the_dead_programs_input_modes() {
     for m in ["\x1b[?1000h", "\x1b[?1006h", "\x1b[?1004h", "\x1b[?1h"] {
         assert!(!snap.contains(m), "mode {m:?} survived the restore");
     }
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[tokio::test]
+async fn the_restore_marker_goes_below_what_a_program_drew_in_place() {
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    attach_pane(&mut ws, 1).await;
+    // Like Claude Code's TUI: draws on the main screen, then leaves the
+    // cursor above the bottom of what it drew.
+    type_in(&mut ws, 1, r"clear; printf '\e[6;1Hdrawn-%s\e[7;1Hlast-%s\e[2;1H' below row; sleep 300").await;
+    read_pane_until(&mut ws, 1, "last-row").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(ws);
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    let snap = attach_pane(&mut ws, 1).await;
+    let (drawn, last, marker) = (snap.find("drawn-below"), snap.find("last-row"), snap.find("restored"));
+    assert!(drawn.is_some() && last.is_some(), "what it drew is still there: {snap:?}");
+    assert!(marker > last, "the marker is below it: {snap:?}");
     d.stop(nix::sys::signal::Signal::SIGTERM);
     let _ = std::fs::remove_dir_all(state);
 }

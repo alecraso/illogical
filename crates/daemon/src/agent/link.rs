@@ -28,14 +28,15 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use futures_util::{SinkExt, StreamExt};
 use illogical_proto::PaneId;
 use nix::sys::socket::{MsgFlags, recv};
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
 
-use crate::{machine::Wisp, pane::Launcher};
+use crate::{
+    pane::Launcher,
+    provider::{PipeBegin, PipeEvent, Provider},
+};
 
 /// What comes from the agent server.
 #[derive(Debug)]
@@ -352,7 +353,7 @@ pub enum VmBegin {
 /// Start (or reattach to) an agent server in a VM.
 pub fn spawn_vm(
     rt: &tokio::runtime::Handle,
-    wisp: Arc<Wisp>,
+    provider: Arc<dyn Provider>,
     sprite: String,
     dir: PathBuf,
     begin: VmBegin,
@@ -360,7 +361,7 @@ pub fn spawn_vm(
 ) -> Link {
     let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (stop_tx, stop_rx) = mpsc::unbounded_channel::<()>();
-    rt.spawn(drive_vm(wisp, sprite, dir, begin, rx, stop_rx, sink));
+    rt.spawn(drive_vm(provider, sprite, dir, begin, rx, stop_rx, sink));
     Link {
         tx,
         stop: Box::new(move || {
@@ -370,7 +371,7 @@ pub fn spawn_vm(
 }
 
 async fn drive_vm(
-    wisp: Arc<Wisp>,
+    provider: Arc<dyn Provider>,
     sprite: String,
     dir: PathBuf,
     begin: VmBegin,
@@ -381,7 +382,7 @@ async fn drive_vm(
     let closed = |why: String| sink(FromAgent::Closed(why));
     let (mut rec, mut fresh) = match begin {
         VmBegin::New { npm, cwd, argv, secret_env } => {
-            if let Err(e) = wisp.ensure(&sprite, None).await {
+            if let Err(e) = crate::provider::ensure(&*provider, &sprite, None).await {
                 closed(format!("couldn't start its machine: {e}"));
                 return;
             }
@@ -396,19 +397,15 @@ async fn drive_vm(
     let mut err = OpenOptions::new().create(true).append(true).mode(0o600).open(dir.join("agent.err")).ok();
     let mut failures = 0u32;
     loop {
-        let req = match &rec {
-            Ok(r) => wisp.pipe_attach(&sprite, &r.session, r.received),
-            Err(cmd) => wisp.pipe_exec(&sprite, cmd),
+        let begin = match &rec {
+            Ok(r) => PipeBegin::Resume { session: r.session.clone(), received: r.received },
+            Err(cmd) => PipeBegin::New { argv: cmd.clone() },
         };
-        let ws = match req {
-            Ok(req) => tokio_tungstenite::connect_async(req).await,
-            Err(e) => return closed(format!("bad exec request: {e}")),
-        };
-        let mut ws = match ws {
-            Ok((ws, _)) => ws,
+        let mut pipe = match provider.pipe(&sprite, begin).await {
+            Ok(p) => p,
             Err(e) => {
                 failures += 1;
-                match wisp.exists(&sprite).await {
+                match crate::provider::exists(&*provider, &sprite).await {
                     Ok(false) => return closed("its machine is gone".into()),
                     _ if failures > 5 => return closed(format!("can't reach its machine: {e}")),
                     _ => {}
@@ -424,30 +421,17 @@ async fn drive_vm(
         let mut ended: Option<String> = None;
         loop {
             tokio::select! {
-                m = ws.next() => match m {
-                    Some(Ok(Message::Binary(b))) if !b.is_empty() => {
-                        let data = &b[1..];
-                        match b[0] {
-                            1 => {
-                                received += data.len() as u64;
-                                partial.extend_from_slice(data);
-                                if let Some(last) = partial.iter().rposition(|c| *c == b'\n') {
-                                    for line in partial[..last].split(|c| *c == b'\n') {
-                                        if !line.iter().all(u8::is_ascii_whitespace) {
-                                            sink(FromAgent::Line(line.to_vec()));
-                                        }
-                                    }
-                                    partial.drain(..=last);
+                ev = pipe.events.recv() => match ev {
+                    Some(PipeEvent::Stdout(data)) => {
+                        received += data.len() as u64;
+                        partial.extend_from_slice(&data);
+                        if let Some(last) = partial.iter().rposition(|c| *c == b'\n') {
+                            for line in partial[..last].split(|c| *c == b'\n') {
+                                if !line.iter().all(u8::is_ascii_whitespace) {
+                                    sink(FromAgent::Line(line.to_vec()));
                                 }
                             }
-                            2 => {
-                                received += data.len() as u64;
-                                if let Some(f) = err.as_mut() {
-                                    let _ = f.write_all(data);
-                                }
-                            }
-                            3 => ended = Some(format!("exited with code {}", data.first().copied().unwrap_or(0))),
-                            _ => {}
+                            partial.drain(..=last);
                         }
                         // Only whole lines count as handled.
                         if partial.is_empty()
@@ -457,54 +441,53 @@ async fn drive_vm(
                             r.write(&dir);
                         }
                     }
-                    Some(Ok(Message::Text(t))) => {
-                        let v: serde_json::Value = serde_json::from_str(&t).unwrap_or_default();
-                        match v["type"].as_str() {
-                            Some("session_info") if rec.is_err() => {
-                                let session = v["session_id"].as_str().map(str::to_owned)
-                                    .unwrap_or_else(|| v["session_id"].to_string());
-                                let r = ExecRecord { session, received };
-                                r.write(&dir);
-                                rec = Ok(r);
-                                // Credentials and settings, then a blank line.
-                                if let Some(env) = fresh.take() {
-                                    let mut pre = vec![0u8];
-                                    for (k, v) in env {
-                                        pre.extend_from_slice(format!("{k}={v}\n").as_bytes());
-                                    }
-                                    pre.push(b'\n');
-                                    let _ = ws.send(Message::Binary(pre.into())).await;
-                                }
-                            }
-                            Some("exit") => {
-                                ended = Some(format!("exited with code {}", v["exit_code"].as_i64().unwrap_or(-1)));
-                            }
-                            _ => {}
+                    Some(PipeEvent::Stderr(data)) => {
+                        received += data.len() as u64;
+                        if let Some(f) = err.as_mut() {
+                            let _ = f.write_all(&data);
+                        }
+                        if partial.is_empty()
+                            && let Ok(r) = rec.as_mut()
+                        {
+                            r.received = received;
+                            r.write(&dir);
                         }
                     }
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(_)) => {}
+                    Some(PipeEvent::Exited(code)) => {
+                        ended = Some(format!("exited with code {}", code.unwrap_or(-1)));
+                    }
+                    Some(PipeEvent::Session(session)) if rec.is_err() => {
+                        let r = ExecRecord { session, received };
+                        r.write(&dir);
+                        rec = Ok(r);
+                        // Credentials and settings, then a blank line.
+                        if let Some(env) = fresh.take() {
+                            let mut pre = Vec::new();
+                            for (k, v) in env {
+                                pre.extend_from_slice(format!("{k}={v}\n").as_bytes());
+                            }
+                            pre.push(b'\n');
+                            let _ = pipe.stdin.send(pre);
+                        }
+                    }
+                    Some(PipeEvent::Session(_)) => {}
+                    None => break,
                 },
                 line = rx.recv() => match line {
                     Some(line) => {
-                        let mut f = Vec::with_capacity(line.len() + 1);
-                        f.push(0u8);
-                        f.extend_from_slice(&line);
-                        let _ = ws.send(Message::Binary(f.into())).await;
+                        let _ = pipe.stdin.send(line);
                     }
                     None => {
                         // The block let go (daemon shutting down): detach,
                         // leaving the agent running for the next daemon.
-                        let _ = ws.close(None).await;
                         return;
                     }
                 },
                 _ = stop.recv() => {
                     if let Ok(r) = &rec {
-                        let _ = wisp.kill(&sprite, &r.session, "TERM").await;
+                        let _ = provider.kill(&sprite, &r.session, "TERM").await;
                     }
                     ExecRecord::clear(&dir);
-                    let _ = ws.close(None).await;
                     return;
                 }
             }
@@ -513,7 +496,7 @@ async fn drive_vm(
             ExecRecord::clear(&dir);
             return closed(why);
         }
-        match (&rec, wisp.exists(&sprite).await) {
+        match (&rec, crate::provider::exists(&*provider, &sprite).await) {
             (_, Ok(false)) => return closed("its machine is gone".into()),
             (Err(_), _) => return closed("the agent server didn't start".into()),
             _ => {

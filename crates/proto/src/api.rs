@@ -120,6 +120,11 @@ pub struct RunRequest {
     /// The machine's image (the provider's default if none).
     #[serde(default)]
     pub image: Option<String>,
+    /// On a sandbox that already exists (the provider's name for it), over
+    /// a plain exec with no daemon there ("open shell", M4b). The sandbox
+    /// isn't ours: closing the pane leaves it be.
+    #[serde(default)]
+    pub sandbox: Option<String>,
     /// Session name or id; created if no session has that name. Default: the
     /// session of `from_pane`, else the first.
     #[serde(default)]

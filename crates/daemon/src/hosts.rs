@@ -3,15 +3,27 @@
 //! host directly, so terminal bytes never pass through here.
 //!
 //! A host gets on the list by being added (`illogical hosts add`, by the
-//! owner) or by joining with a one-time invite token (a sandbox installing
-//! itself, which has no user identity to be checked). The home daemon
-//! checks on each host every minute and records when it last answered.
+//! owner), by joining with a one-time invite token (a sandbox installing
+//! itself, which has no user identity to be checked), or by being made
+//! resident in a provider's sandbox (M4b, `resident.rs`). The home daemon
+//! checks on each host every minute and records when it last answered; a
+//! provider host's sandbox is asked about through its provider instead,
+//! which doesn't wake it.
 //!
-//! Hosts without tailnet identity (M4c: a sandbox that can only dial out)
-//! get a per-host token instead: minted here (`illogical hosts token NAME`,
-//! or by joining as `dial_out`), kept only as a hash in `host-tokens.json`,
-//! good for that one host until revoked or replaced. It lets the host dial
-//! in (`dial.rs`) and push its history (`sync.rs`), and nothing else.
+//! Hosts without tailnet identity carry tokens, one kind per direction:
+//!
+//! - **Host tokens** (`ilh_…`, M4c), the host → us: minted here
+//!   (`illogical hosts token NAME`, or by joining as `dial_out`), kept only
+//!   as a hash in `host-tokens.json`. They let that one host dial in
+//!   (`dial.rs`) and push its history (`sync.rs`), and
+//!   nothing else.
+//! - **Provider tunnel tokens** (`ilp_…`, M4b), us → the host: minted when
+//!   a daemon is made resident in a sandbox, kept here in
+//!   `provider-tokens.json` (we present them; the host keeps the hash), and
+//!   sent by the provider tunnel (`provider_tunnel.rs`) to reach it.
+//!
+//! Neither is ever in the list clients get. `hosts revoke` and `hosts rm`
+//! drop whatever a host has of both.
 
 use std::{
     path::PathBuf,
@@ -26,12 +38,15 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
-use illogical_proto::hosts::{AddHost, Host, HostInfo, HostList, HostToken, Invite, JoinRequest, Joined, Transport};
+use illogical_proto::hosts::{
+    AddHost, Host, HostInfo, HostList, HostToken, Invite, JoinRequest, Joined, ProviderRef, Transport,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::{
+    provider::Provider,
     server::App,
     store::{now_ms, write_atomic},
 };
@@ -44,9 +59,12 @@ pub struct Hosts {
     name: String,
     path: PathBuf,
     invites_path: PathBuf,
+    provider_tokens_path: PathBuf,
     tokens_path: PathBuf,
     inner: Mutex<Saved>,
     http: reqwest::Client,
+    /// Where provider hosts' sandboxes are asked about.
+    provider: Option<Arc<dyn Provider>>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -55,6 +73,9 @@ struct Saved {
     /// Outstanding invites: SHA-256 of the token, and when it expires.
     #[serde(skip)]
     invites: Vec<(String, u64)>,
+    /// Provider hosts' tunnel tokens, by host name.
+    #[serde(skip)]
+    provider_tokens: std::collections::BTreeMap<String, String>,
     #[serde(skip)]
     tokens: Vec<SavedToken>,
 }
@@ -78,9 +99,10 @@ struct SavedInvites {
 }
 
 impl Hosts {
-    pub fn open(state_dir: &std::path::Path, name: String) -> Arc<Self> {
+    pub fn open(state_dir: &std::path::Path, name: String, provider: Option<Arc<dyn Provider>>) -> Arc<Self> {
         let path = state_dir.join("hosts.json");
         let invites_path = state_dir.join("invites.json");
+        let provider_tokens_path = state_dir.join("provider-tokens.json");
         let tokens_path = state_dir.join("host-tokens.json");
         let mut saved: Saved =
             std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
@@ -89,6 +111,8 @@ impl Hosts {
             .and_then(|b| serde_json::from_slice::<SavedInvites>(&b).ok())
             .map(|s| s.invites)
             .unwrap_or_default();
+        saved.provider_tokens =
+            std::fs::read(&provider_tokens_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         saved.tokens = std::fs::read(&tokens_path)
             .ok()
             .and_then(|b| serde_json::from_slice::<SavedTokens>(&b).ok())
@@ -98,7 +122,16 @@ impl Hosts {
             .timeout(Duration::from_secs(5))
             .build()
             .expect("an HTTP client with default settings");
-        Arc::new(Self { name, path, invites_path, tokens_path, inner: Mutex::new(saved), http })
+        Arc::new(Self {
+            name,
+            path,
+            invites_path,
+            provider_tokens_path,
+            tokens_path,
+            inner: Mutex::new(saved),
+            http,
+            provider,
+        })
     }
 
     pub fn name(&self) -> &str {
@@ -112,15 +145,42 @@ impl Hosts {
     /// Add a host, or replace the one with the same name (keeping when it
     /// was first added and last seen, if its URLs are the same).
     pub fn add(&self, req: AddHost) -> Result<Host, String> {
-        let req = validate(req, &self.name)?;
+        if req.transport == Transport::Provider {
+            return Err("a provider host is added by making a daemon resident in its sandbox".into());
+        }
+        self.insert(validate(req, &self.name)?, None)
+    }
+
+    /// Add (or replace) a host whose daemon lives in a provider's sandbox,
+    /// reached through our tunnel with `token`.
+    pub fn add_provider(&self, name: String, at: ProviderRef, token: String) -> Result<Host, String> {
+        let req = validate(AddHost { name, urls: vec![], transport: Transport::Provider }, &self.name)?;
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.provider_tokens.insert(req.name.clone(), token);
+            self.save_provider_tokens(&inner);
+        }
+        self.insert(req, Some(at))
+    }
+
+    /// A provider host: where it is, and the token its daemon wants.
+    pub fn provider_tunnel(&self, name: &str) -> Option<(ProviderRef, String)> {
+        let inner = self.inner.lock().unwrap();
+        let at = inner.hosts.iter().find(|h| h.name == name)?.provider.clone()?;
+        Some((at, inner.provider_tokens.get(name)?.clone()))
+    }
+
+    fn insert(&self, req: AddHost, provider: Option<ProviderRef>) -> Result<Host, String> {
         let mut inner = self.inner.lock().unwrap();
         let old = inner.hosts.iter().position(|h| h.name == req.name).map(|i| inner.hosts.remove(i));
         let host = Host {
             added_ms: old.as_ref().map_or_else(now_ms, |o| o.added_ms),
-            last_seen_ms: old.filter(|o| o.urls == req.urls).and_then(|o| o.last_seen_ms),
+            last_seen_ms: old.as_ref().filter(|o| o.urls == req.urls).and_then(|o| o.last_seen_ms),
+            status: old.as_ref().filter(|o| o.provider == provider).and_then(|o| o.status.clone()),
             name: req.name,
             urls: req.urls,
             transport: req.transport,
+            provider,
         };
         inner.hosts.push(host.clone());
         inner.hosts.sort_by(|a, b| a.name.cmp(&b.name));
@@ -129,8 +189,8 @@ impl Hosts {
         Ok(host)
     }
 
-    /// Remove a host, and revoke its token: a removed host can't dial back
-    /// in.
+    /// Remove a host, and revoke its tokens: a removed host can't dial back
+    /// in, nor be reached through a provider tunnel.
     pub fn remove(&self, name: &str) -> bool {
         let mut inner = self.inner.lock().unwrap();
         let before = inner.hosts.len();
@@ -138,6 +198,9 @@ impl Hosts {
         let gone = inner.hosts.len() != before;
         if gone {
             self.save(&inner);
+            if inner.provider_tokens.remove(name).is_some() {
+                self.save_provider_tokens(&inner);
+            }
             info!(name, "host removed");
         }
         let had_token = inner.tokens.iter().any(|t| t.name == name);
@@ -164,7 +227,9 @@ impl Hosts {
         Ok(HostToken { name: name.to_owned(), token })
     }
 
-    /// Revoke `name`'s token; whether it had one.
+    /// Revoke `name`'s tokens: its host token, and the provider tunnel
+    /// token we reach it with (a provider host stays listed, unreachable
+    /// until it's made resident again). Whether it had either.
     pub fn revoke_token(&self, name: &str) -> bool {
         let mut inner = self.inner.lock().unwrap();
         let before = inner.tokens.len();
@@ -174,7 +239,12 @@ impl Hosts {
             self.save_tokens(&inner);
             info!(name, "host token revoked");
         }
-        had
+        let had_tunnel = inner.provider_tokens.remove(name).is_some();
+        if had_tunnel {
+            self.save_provider_tokens(&inner);
+            info!(name, "provider tunnel token revoked");
+        }
+        had || had_tunnel
     }
 
     /// The host a token belongs to, if it is current.
@@ -230,6 +300,13 @@ impl Hosts {
         }
     }
 
+    fn save_provider_tokens(&self, inner: &Saved) {
+        let bytes = serde_json::to_vec(&inner.provider_tokens).expect("serialize");
+        if let Err(e) = write_atomic(&self.provider_tokens_path, &bytes) {
+            warn!(error = %e, "can't save provider tunnel tokens");
+        }
+    }
+
     fn save_tokens(&self, inner: &Saved) {
         let bytes = serde_json::to_vec_pretty(&SavedTokens { tokens: inner.tokens.clone() }).expect("serialize");
         if let Err(e) = write_atomic(&self.tokens_path, &bytes) {
@@ -244,8 +321,11 @@ impl Hosts {
         }
     }
 
-    /// Ask every host who it is; note the ones that answer.
+    /// Ask every host who it is; note the ones that answer. A provider
+    /// host's sandbox is asked about through its provider instead, which
+    /// doesn't wake it (connecting would, and keep it awake).
     pub async fn probe(&self) {
+        self.ask_providers().await;
         // Dial-out hosts have no URL: their connection says they're there
         // (`dial.rs` marks them seen).
         let targets: Vec<(String, Vec<String>)> = self
@@ -254,9 +334,40 @@ impl Hosts {
             .unwrap()
             .hosts
             .iter()
-            .filter(|h| h.transport != Transport::DialOut)
+            // Provider hosts are asked about through their provider.
+            .filter(|h| h.transport == Transport::Tailnet)
             .map(|h| (h.name.clone(), h.urls.clone()))
             .collect();
+        self.probe_urls(targets).await;
+    }
+
+    /// What provider hosts' sandboxes are doing, from their provider.
+    pub async fn ask_providers(&self) {
+        let sandboxes: Vec<(String, ProviderRef)> = self
+            .inner
+            .lock()
+            .unwrap()
+            .hosts
+            .iter()
+            .filter_map(|h| Some((h.name.clone(), h.provider.clone()?)))
+            .collect();
+        for (name, at) in sandboxes {
+            let status = match &self.provider {
+                Some(p) if p.name() == at.provider => match p.status(&at.sandbox).await {
+                    Ok(Some(s)) => s.status,
+                    Ok(None) => "gone".into(),
+                    Err(e) => {
+                        info!(host = name, error = %e, "can't ask the provider about a host");
+                        continue;
+                    }
+                },
+                _ => "unknown".into(),
+            };
+            self.note_status(&name, &status);
+        }
+    }
+
+    async fn probe_urls(&self, targets: Vec<(String, Vec<String>)>) {
         for (name, urls) in targets {
             let mut seen = false;
             for url in &urls {
@@ -274,6 +385,20 @@ impl Hosts {
                 }
             }
         }
+    }
+
+    /// What the provider says of a provider host's sandbox (and, if it's
+    /// running, that it was seen).
+    pub fn note_status(&self, name: &str, status: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(h) = inner.hosts.iter_mut().find(|h| h.name == name) else { return };
+        let seen = (status == "running").then(now_ms);
+        if h.status.as_deref() == Some(status) && seen.is_none() {
+            return;
+        }
+        h.status = Some(status.to_owned());
+        h.last_seen_ms = seen.or(h.last_seen_ms);
+        self.save(&inner);
     }
 
     pub fn spawn_probe(self: &Arc<Self>) {
@@ -309,6 +434,8 @@ fn validate(mut req: AddHost, this: &str) -> Result<AddHost, String> {
         Transport::Tailnet if req.urls.is_empty() => return Err("a host needs at least one URL".into()),
         // Reached through the home daemon, never at a URL of its own.
         Transport::DialOut if !req.urls.is_empty() => return Err("a dial-out host has no URLs".into()),
+        // Reached through the home daemon's provider tunnel; URLs are
+        // optional (tailnet ones to upgrade to).
         _ => {}
     }
     for url in &mut req.urls {
@@ -367,6 +494,9 @@ async fn host(State(app): AppState) -> Json<HostInfo> {
 }
 
 async fn list(State(app): AppState) -> Json<HostList> {
+    // Sandboxes' states are cheap to ask for (and asking doesn't wake
+    // them), so the list a client gets is current.
+    let _ = tokio::time::timeout(Duration::from_secs(3), app.hosts.ask_providers()).await;
     Json(app.hosts.list())
 }
 
@@ -383,7 +513,7 @@ async fn add(State(app): AppState, Json(req): Json<AddHost>) -> Response {
 
 async fn remove(State(app): AppState, Path(name): Path<String>) -> Response {
     // Its tunnel goes with it.
-    app.tunnels.drop_host(&name);
+    app.dial_outs.drop_host(&name);
     if app.hosts.remove(&name) {
         Json(serde_json::json!({})).into_response()
     } else {
@@ -405,7 +535,7 @@ async fn mint_token(State(app): AppState, Path(name): Path<String>) -> Response 
     match app.hosts.mint_token(&name) {
         // A new token replaces the old one: so does the connection.
         Ok(t) => {
-            app.tunnels.drop_host(&name);
+            app.dial_outs.drop_host(&name);
             Json(t).into_response()
         }
         Err(e) => error(StatusCode::BAD_REQUEST, e),
@@ -414,7 +544,7 @@ async fn mint_token(State(app): AppState, Path(name): Path<String>) -> Response 
 
 async fn revoke_token(State(app): AppState, Path(name): Path<String>) -> Response {
     let had = app.hosts.revoke_token(&name);
-    let connected = app.tunnels.drop_host(&name);
+    let connected = app.dial_outs.drop_host(&name);
     if had || connected {
         Json(serde_json::json!({})).into_response()
     } else {
@@ -456,7 +586,7 @@ mod tests {
     #[test]
     fn add_replace_remove_and_persist() {
         let d = dir();
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         h.add(req("box", "https://box.example.ts.net/")).unwrap();
         h.add(req("alpha", "http://127.0.0.1:7691")).unwrap();
         let l = h.list();
@@ -468,7 +598,7 @@ mod tests {
         assert!(h.remove("alpha"));
         assert!(!h.remove("alpha"));
         drop(h);
-        let again = Hosts::open(&d, "geek".into());
+        let again = Hosts::open(&d, "geek".into(), None);
         assert_eq!(again.list().hosts.len(), 1);
         assert_eq!(again.list().hosts[0].urls, ["https://box2.example.ts.net"]);
         std::fs::remove_dir_all(d).unwrap();
@@ -477,7 +607,7 @@ mod tests {
     #[test]
     fn bad_hosts_are_refused() {
         let d = dir();
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         assert!(h.add(req("geek", "https://x.example")).is_err(), "our own name");
         assert!(h.add(req("", "https://x.example")).is_err());
         assert!(h.add(req("a b", "https://x.example")).is_err());
@@ -497,14 +627,14 @@ mod tests {
     #[test]
     fn invites_are_single_use_and_survive_a_restart() {
         let d = dir();
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         let inv = h.invite(60);
         assert!(inv.token.starts_with("ilj_"));
         let join =
             |h: &Hosts, token: &str| h.join(JoinRequest { token: token.into(), host: req("box", "https://b.x") });
         assert!(join(&h, "ilj_wrong").is_err());
         drop(h);
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         assert_eq!(join(&h, &inv.token).unwrap().1, None, "no token for a tailnet host");
         assert!(join(&h, &inv.token).is_err(), "spent");
         let expired = h.invite(0);
@@ -518,7 +648,7 @@ mod tests {
     #[test]
     fn host_tokens_are_hashed_scoped_revocable_and_replaced() {
         let d = dir();
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         let t = h.mint_token("sbx").unwrap();
         assert!(t.token.starts_with("ilh_"));
         let entry = h.list().hosts.into_iter().find(|x| x.name == "sbx").unwrap();
@@ -529,7 +659,7 @@ mod tests {
         assert_eq!(h.host_for_token(&other.token).as_deref(), Some("other"), "each token names one host");
         // Survives a restart; only the hash is on disk.
         drop(h);
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         assert_eq!(h.host_for_token(&t.token).as_deref(), Some("sbx"));
         let saved = std::fs::read_to_string(d.join("host-tokens.json")).unwrap();
         assert!(!saved.contains(&t.token) && saved.contains(&digest(&t.token)));
@@ -550,6 +680,32 @@ mod tests {
         let req = AddHost { name: "joiner".into(), urls: vec![], transport: Transport::DialOut };
         let (_, token) = h.join(JoinRequest { token: inv.token, host: req }).unwrap();
         assert_eq!(h.host_for_token(&token.unwrap()).as_deref(), Some("joiner"));
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn revoking_or_removing_a_provider_host_drops_both_kinds_of_token() {
+        let d = dir();
+        let h = Hosts::open(&d, "geek".into(), None);
+        let at = ProviderRef { provider: "wisp".into(), sandbox: "s1".into(), port: 7681 };
+        let host = h.add_provider("res".into(), at.clone(), "ilp_x".into()).unwrap();
+        assert_eq!(host.transport, Transport::Provider);
+        assert!(h.add(AddHost { name: "y".into(), urls: vec![], transport: Transport::Provider }).is_err());
+        let ilh = h.mint_token("res").unwrap().token;
+        assert_eq!(h.provider_tunnel("res").unwrap().1, "ilp_x");
+        // Neither token is in what clients get.
+        let listed = serde_json::to_string(&h.list()).unwrap();
+        assert!(!listed.contains("ilp_x") && !listed.contains(&ilh));
+        assert!(h.revoke_token("res"));
+        assert!(h.provider_tunnel("res").is_none() && h.host_for_token(&ilh).is_none());
+        assert_eq!(h.list().hosts.len(), 1, "revoking keeps the host");
+        h.add_provider("res".into(), at, "ilp_y".into()).unwrap();
+        drop(h);
+        let h = Hosts::open(&d, "geek".into(), None);
+        assert_eq!(h.provider_tunnel("res").unwrap().1, "ilp_y", "kept across a restart");
+        assert!(h.remove("res"));
+        assert!(h.provider_tunnel("res").is_none());
+        assert!(!std::fs::read_to_string(d.join("provider-tokens.json")).unwrap().contains("ilp_y"));
         std::fs::remove_dir_all(d).unwrap();
     }
 }

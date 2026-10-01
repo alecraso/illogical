@@ -374,10 +374,11 @@ async fn share_machine(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json
 
 async fn guest_process(app: &App, pane: PaneId, machine: &illogical_proto::Machine) -> Res<Json<Process>> {
     let unavailable = |why: String| ApiError(StatusCode::SERVICE_UNAVAILABLE, why);
-    let wisp = app.mux.wisp.clone().ok_or_else(|| unavailable("VM panes aren't set up".into()))?;
+    let provider = app.mux.provider.clone().ok_or_else(|| unavailable("VM panes aren't set up".into()))?;
     let tag = crate::mux::exec_tag(&app.mux.daemon_id, pane);
     let argv = ["bash", "-c", GUEST_PROCESS, "illogical-process", &tag];
-    let (out, code) = wisp.run(&machine.sprite, &argv).await.map_err(|e| unavailable(format!("unavailable: {e}")))?;
+    let (out, code) =
+        provider.run(&machine.sprite, &argv).await.map_err(|e| unavailable(format!("unavailable: {e}")))?;
     let text = String::from_utf8_lossy(&out);
     let lines: Vec<&str> = text.lines().collect();
     if code != Some(0) || lines.len() < 6 {

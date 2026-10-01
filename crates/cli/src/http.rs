@@ -1,6 +1,8 @@
 //! Just enough HTTP/1.1: one request per connection, with fixed-length or
 //! chunked (streamed) responses. Over the daemon's Unix socket by default,
-//! or to another daemon's URL (`--host`), with TLS for `https://`.
+//! or to another daemon's URL (`--host`), with TLS for `https://`, or to a
+//! host reached through the local daemon (on its socket, under `/h/<host>`
+//! for a dial-out host, `/tunnel/<host>` for a provider host).
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -22,8 +24,9 @@ pub enum Target {
     Socket(PathBuf),
     /// Another daemon, over HTTP(S).
     Url(Url),
-    /// A dial-out host, through the local daemon (its home daemon): the
-    /// local socket, with every path under this prefix (`/h/NAME`).
+    /// A host reached through the local daemon (its home daemon): the local
+    /// socket, with every path under this prefix: `/h/NAME` for a dial-out
+    /// host, `/tunnel/NAME` for a provider host (M4b).
     Via(PathBuf, String),
 }
 

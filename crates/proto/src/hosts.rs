@@ -16,6 +16,21 @@ pub enum Transport {
     /// `<home>/h/<name>/ws` and `<home>/h/<name>/api/...`. It has no URLs of
     /// its own.
     DialOut,
+    /// Through the home daemon's tunnel (`/tunnel/<name>/…`), which reaches
+    /// the host's port through its sandbox provider (M4b): for a resident
+    /// daemon in a sandbox that sleeps. Its URLs, if any, are tailnet ones
+    /// to upgrade to once it's awake.
+    Provider,
+}
+
+/// Where a resident daemon lives: a sandbox, and its daemon's port there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRef {
+    /// Which provider: `wisp`, `sprites`.
+    pub provider: String,
+    /// The provider's name for the sandbox.
+    pub sandbox: String,
+    pub port: u16,
 }
 
 /// Another daemon, in the home daemon's list.
@@ -27,11 +42,20 @@ pub struct Host {
     pub urls: Vec<String>,
     #[serde(default)]
     pub transport: Transport,
+    /// For [`Transport::Provider`]: where it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderRef>,
     #[serde(default)]
     pub added_ms: u64,
-    /// When the home daemon last reached it.
+    /// When the home daemon last reached it (for a provider host: last
+    /// saw its sandbox running).
     #[serde(default)]
     pub last_seen_ms: Option<u64>,
+    /// A provider host's sandbox state as its provider last said
+    /// (`running`, `warm`, `cold`, `gone`): asked of the provider, never
+    /// by connecting, so asking doesn't wake it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// `GET /api/hosts`.
@@ -92,4 +116,44 @@ pub struct Joined {
 pub struct HostToken {
     pub name: String,
     pub token: String,
+}
+
+/// A sandbox provider's capabilities, as far as a client cares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    pub name: String,
+    /// Output a detached shell keeps for reattaching, in bytes: a shell
+    /// opened without a daemon has no more history than this while
+    /// nothing follows it.
+    pub exec_replay: u64,
+    /// Whether a daemon can be made resident there (files and services).
+    pub resident: bool,
+}
+
+/// `GET /api/sandboxes`: the provider's sandboxes, on the home daemon.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxList {
+    pub provider: ProviderInfo,
+    pub sandboxes: Vec<SandboxInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxInfo {
+    pub name: String,
+    pub status: String,
+    /// The host in the list whose daemon lives there, if one does.
+    #[serde(default)]
+    pub host: Option<String>,
+}
+
+/// `POST /api/sandboxes/{name}/promote`: copy the static daemon in and keep
+/// it running there as a provider service, then add it to the host list.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromoteRequest {
+    /// Its name in the host list [default: the sandbox's].
+    #[serde(default)]
+    pub host: Option<String>,
+    /// The daemon's port inside the sandbox [default: 7681].
+    #[serde(default)]
+    pub port: Option<u16>,
 }

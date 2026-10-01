@@ -4,7 +4,7 @@
 //! F`) keeps one WebSocket open to the home daemon's `/api/dial`, with its
 //! per-host token, and redials with backoff whenever it drops. It serves the
 //! same WebSocket protocol and HTTP API it serves on its own port, over
-//! streams the home daemon opens in that socket (`tunnel.rs`). It works
+//! streams the home daemon opens in that socket (`dialout_mux.rs`). It works
 //! standalone all along: the tunnel is just one more way in.
 //!
 //! **The home daemon** treats it as one more host (`transport: dial_out`)
@@ -46,7 +46,7 @@ use tokio::{
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 use tracing::{info, warn};
 
-use crate::{server::App, tunnel::Mux};
+use crate::{dialout_mux::Mux, server::App};
 
 /// How often each end pings, and how long silence lasts before the tunnel
 /// is given up as dead.
@@ -62,7 +62,7 @@ pub const DIAL_PATH: &str = "/api/dial";
 
 /// The dial-out hosts connected now.
 #[derive(Default)]
-pub struct Tunnels {
+pub struct DialOuts {
     live: Mutex<HashMap<String, Live>>,
     next: std::sync::atomic::AtomicU64,
 }
@@ -73,7 +73,7 @@ struct Live {
     stop: Arc<Notify>,
 }
 
-impl Tunnels {
+impl DialOuts {
     /// A host connected; an older connection of the same host is dropped.
     fn insert(&self, name: &str, mux: Mux, stop: Arc<Notify>) -> u64 {
         let generation = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -138,7 +138,7 @@ async fn dial(State(app): State<Arc<App>>, headers: HeaderMap, upgrade: WebSocke
 async fn home_end(app: Arc<App>, name: String, socket: WebSocket) {
     let (mux, mut out) = Mux::new(None);
     let stop = Arc::new(Notify::new());
-    let generation = app.tunnels.insert(&name, mux.clone(), stop.clone());
+    let generation = app.dial_outs.insert(&name, mux.clone(), stop.clone());
     app.hosts.seen(&name);
     info!(host = name, "dial-out host connected");
     let (mut tx, mut rx) = socket.split();
@@ -173,7 +173,7 @@ async fn home_end(app: Arc<App>, name: String, socket: WebSocket) {
         }
     }
     mux.close();
-    app.tunnels.remove(&name, generation);
+    app.dial_outs.remove(&name, generation);
     info!(host = name, "dial-out host disconnected");
 }
 
@@ -199,7 +199,7 @@ const DROP_REQUEST: [&str; 7] = [
 
 /// One request to a dial-out host, over a stream of its own.
 async fn forward(app: Arc<App>, name: String, path: String, mut req: Request) -> Response {
-    let Some(mux) = app.tunnels.get(&name) else {
+    let Some(mux) = app.dial_outs.get(&name) else {
         return refuse(StatusCode::BAD_GATEWAY, &format!("{name} is not connected"));
     };
     let upgrade = req.headers().get(header::UPGRADE).is_some();
@@ -244,7 +244,7 @@ async fn forward(app: Arc<App>, name: String, path: String, mut req: Request) ->
 }
 
 /// A host's answer, made safe to serve on our origin.
-fn defang(h: &mut HeaderMap) {
+pub(crate) fn defang(h: &mut HeaderMap) {
     h.remove(header::SET_COOKIE);
     let cors: Vec<_> = h.keys().filter(|k| k.as_str().starts_with("access-control-")).cloned().collect();
     for k in cors {
