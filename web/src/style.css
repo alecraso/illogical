@@ -839,3 +839,344 @@ button {
   text-decoration: none;
   font-weight: 600;
 }
+
+/* ---- agent blocks (M6b) */
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  font-size: 13px;
+}
+
+.agent-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.agent-bar button {
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--raised);
+}
+
+.agent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.agent-spacer {
+  flex: 1;
+}
+
+.agent-cost {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-status {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--raised);
+  color: var(--dim);
+}
+
+.agent-status.working,
+.agent-status.starting,
+.agent-status.remote {
+  color: #f9e2af;
+}
+
+.agent-status.exited {
+  color: var(--danger);
+}
+
+.agent-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-user {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 7px 11px;
+  border-radius: 12px 12px 2px 12px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--raised));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-msg {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.agent-thought {
+  color: var(--dim);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
+.agent-thought summary {
+  cursor: pointer;
+  font-style: normal;
+  font-size: 11px;
+}
+
+.agent-note,
+.agent-working {
+  color: var(--dim);
+  font-size: 12px;
+  text-align: center;
+}
+
+.agent-working {
+  text-align: left;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.agent-tool {
+  flex-shrink: 0;
+  border: 1px solid var(--divider);
+  border-left: 3px solid var(--dim);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.agent-tool.completed {
+  border-left-color: #a6e3a1;
+}
+
+.agent-tool.failed {
+  border-left-color: var(--danger);
+}
+
+.agent-tool.in_progress,
+.agent-tool.pending {
+  border-left-color: #f9e2af;
+}
+
+.agent-tool-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.agent-tool-icon {
+  color: var(--dim);
+  font-family: ui-monospace, monospace;
+}
+
+.agent-tool-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.agent-tool-status {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.agent-tool-status.failed {
+  color: var(--danger);
+}
+
+.agent-tool-cmd,
+.agent-tool-text,
+.agent-tool-locs {
+  margin: 0;
+  padding: 4px 8px 6px;
+  font: 12px ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dim);
+}
+
+.agent-tool-text {
+  max-height: 240px;
+  overflow: auto;
+  color: var(--fg);
+  background: var(--letterbox);
+}
+
+.agent-output {
+  padding: 4px 6px;
+  background: #11111b;
+  overflow-x: auto;
+}
+
+.agent-perm {
+  margin: 0 8px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.agent-perm-q {
+  font-weight: 600;
+}
+
+.agent-perm-cmd {
+  margin: 6px 0 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--letterbox);
+  font: 12px ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-perm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Big enough to hit with a thumb. */
+.agent-perm-buttons button {
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--raised);
+  font-weight: 600;
+}
+
+.agent-perm-buttons button.primary {
+  background: var(--accent);
+  color: var(--letterbox);
+}
+
+.agent-perm-buttons button.danger {
+  color: var(--danger);
+}
+
+.agent-perm-buttons button.link {
+  min-height: 0;
+  padding: 4px;
+  background: none;
+  color: var(--dim);
+  font-weight: normal;
+  font-size: 12px;
+}
+
+.agent-error {
+  margin: 0 8px 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #f38ba822;
+  color: var(--danger);
+}
+
+.agent-composer {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--divider);
+  background: var(--surface);
+}
+
+.agent-composer textarea {
+  flex: 1;
+  min-height: 36px;
+  max-height: 40vh;
+  resize: vertical;
+  padding: 8px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--letterbox);
+  border: 1px solid var(--raised-hover);
+  border-radius: 8px;
+  outline: none;
+  field-sizing: content;
+}
+
+.agent-composer textarea:focus {
+  border-color: var(--accent);
+}
+
+.agent-composer button {
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--raised);
+  font-weight: 600;
+}
+
+.agent-composer button.primary {
+  background: var(--accent);
+  color: var(--letterbox);
+}
+
+.agent-composer button:disabled {
+  opacity: 0.5;
+}
+
+.agent-composer button.danger {
+  color: var(--danger);
+}
+
+.agent-empty {
+  margin: auto;
+  color: var(--dim);
+}
+
+.agent-dialog {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-dialog h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.agent-dialog select,
+.agent-dialog textarea {
+  font: 13px ui-monospace, monospace;
+  padding: 8px;
+  color: var(--fg);
+  background: var(--letterbox);
+  border: 1px solid var(--raised-hover);
+  border-radius: 6px;
+}
+
+.agent-dialog label.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: normal;
+}
+
+.agent-dialog .hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 12px;
+}

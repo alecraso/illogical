@@ -458,7 +458,68 @@ fn tail_closed(app: &App, id: PaneId, q: &TailQuery) -> Res<Response> {
     Ok(if q.text == Some(1) { strip(&bytes).into_bytes() } else { bytes }.into_response())
 }
 
+/// A block that isn't a terminal: its text, then (following) what it adds.
+/// Text that changes in place (a tool call finishing) is printed again from
+/// the first line that changed.
+fn tail_block(app: Arc<App>, id: PaneId, b: Arc<dyn crate::block::Block>, follow: bool) -> Response {
+    let first = b.text();
+    if !follow {
+        return first.into_response();
+    }
+    drop(b);
+    let live = stream::unfold((app, first.clone()), move |(app, mut seen)| async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let b = app.mux.api(|r| Api::Block(id, r)).await.flatten()?;
+            let now = b.text();
+            if now == seen {
+                continue;
+            }
+            // From the start of the first line that differs.
+            let same = seen.bytes().zip(now.bytes()).take_while(|(a, b)| a == b).count();
+            let from = now[..same].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let out = now[from..].to_owned();
+            seen = now;
+            return Some((Ok::<_, Infallible>(Bytes::from(out)), (app, seen)));
+        }
+    });
+    Body::from_stream(stream::once(async move { Ok::<_, Infallible>(Bytes::from(first)) }).chain(live)).into_response()
+}
+
+/// `until=idle` (whatever it's doing, it's not working any more) or
+/// `until=needs-input`, for any block. An agent's own state says this as
+/// soon as a call returns; others go by the daemon's attention.
+async fn wait_attention(app: &App, id: PaneId, needs_input: bool) -> Res<WaitResult> {
+    use illogical_proto::Attention;
+    loop {
+        let state = app
+            .mux
+            .api(|r| Api::Block(id, r))
+            .await
+            .flatten()
+            .and_then(|b| serde_json::from_value::<Attention>(b.state()["attention"].clone()).ok());
+        let state = match state {
+            Some(a) => a,
+            None => {
+                let summaries = app.mux.api(Api::Panes).await.unwrap_or_default();
+                match summaries.into_iter().find(|p| p.info.id == id) {
+                    Some(p) => p.info.attention,
+                    None => return Err(ApiError(StatusCode::GONE, format!("%{id} closed"))),
+                }
+            }
+        };
+        let done = if needs_input { state == Attention::NeedsInput } else { state != Attention::Working };
+        if done {
+            return Ok(WaitResult::Attention { state });
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 async fn tail(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<TailQuery>) -> Res<Response> {
+    if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+        return Ok(tail_block(app.clone(), id, b, q.follow == Some(1)));
+    }
     let p = match pane(&app, id).await {
         Ok(p) => p,
         // Closed: what it left behind.
@@ -513,8 +574,15 @@ struct WaitQuery {
 }
 
 async fn wait(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<WaitQuery>) -> Res<Json<WaitResult>> {
-    let p = pane(&app, id).await?;
     let limit = q.timeout.map(Duration::from_secs_f64).unwrap_or(Duration::from_secs(365 * 24 * 3600));
+    if q.until == "idle" || q.until == "needs-input" {
+        let result = tokio::time::timeout(limit, wait_attention(&app, id, q.until == "needs-input")).await;
+        return Ok(Json(match result {
+            Ok(r) => r?,
+            Err(_) => WaitResult::Timeout,
+        }));
+    }
+    let p = pane(&app, id).await?;
     let result = tokio::time::timeout(limit, wait_for(&app, id, p, &q)).await;
     Ok(Json(match result {
         Ok(r) => r?,
@@ -583,7 +651,7 @@ async fn wait_for(app: &App, id: PaneId, p: PaneHandle, q: &WaitQuery) -> Res<Wa
                 seen.push_str(&strip(&data));
             }
         }
-        u => Err(bad(format!("until {u}: command-end, exit or match"))),
+        u => Err(bad(format!("until {u}: command-end, exit, match, idle or needs-input"))),
     }
 }
 
@@ -731,6 +799,6 @@ async fn push_subscribe(State(app): AppState, Json(sub): Json<Subscription>) -> 
 
 async fn push_test(State(app): AppState) -> Res<Json<serde_json::Value>> {
     let push = app.push.as_ref().ok_or(ApiError(StatusCode::NOT_FOUND, "push is off".into()))?;
-    push.send(0, "illogical", "Notifications work.");
+    push.send(0, "illogical", "Notifications work.", None);
     Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
 }

@@ -18,8 +18,8 @@
 //! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |
 //! | GET | `/api/panes/N/capture` | `format=text\|ansi\|html`, `scope=screen\|scrollback\|last-command` | text |
 //! | GET | `/api/panes/N/process` | | `Process` |
-//! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `follow=1`, `text=1` | bytes (streamed with follow) |
-//! | GET | `/api/panes/N/wait` | `until=command-end\|exit\|match`, `re=`, `timeout=` secs | `WaitResult` |
+//! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `follow=1`, `text=1` | bytes (streamed with follow); other blocks: their text |
+//! | GET | `/api/panes/N/wait` | `until=command-end\|exit\|match\|idle\|needs-input`, `re=`, `timeout=` secs | `WaitResult` |
 //! | GET | `/api/panes/N/export.cast` | | asciicast v3 |
 //! | GET | `/api/events` | `pane=`, `type=a,b`, `follow=1` | NDJSON `Event`s |
 //! | GET | `/api/history` | `pane=`, `failed=1`, `since=` secs, `cwd=`, `match=` | `[HistoryEntry]` |
@@ -57,6 +57,12 @@ pub struct OpenRequest {
     pub split: Option<PaneId>,
     #[serde(default)]
     pub from_pane: Option<PaneId>,
+    /// Run it on a new throwaway machine of its own.
+    #[serde(default)]
+    pub vm: bool,
+    /// The new machine's image.
+    #[serde(default)]
+    pub image: Option<String>,
     /// Run it on this machine [default: the tab's, when splitting in a VM
     /// tab; else this host].
     #[serde(default)]
@@ -172,9 +178,23 @@ pub struct Process {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum WaitResult {
-    CommandEnd { text: Option<String>, exit: Option<i32>, start: u64, end: Option<u64> },
-    Exit { code: Option<i32> },
-    Match { text: String, offset: u64 },
+    CommandEnd {
+        text: Option<String>,
+        exit: Option<i32>,
+        start: u64,
+        end: Option<u64>,
+    },
+    Exit {
+        code: Option<i32>,
+    },
+    Match {
+        text: String,
+        offset: u64,
+    },
+    /// `until=idle` (no longer working) or `until=needs-input`: where it got.
+    Attention {
+        state: Attention,
+    },
     Timeout,
 }
 
