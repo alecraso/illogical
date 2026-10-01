@@ -3,7 +3,8 @@ import { defineConfig } from "@playwright/test";
 // By default runs against a throwaway debug daemon on 7683 (which serves
 // web/dist from disk), driving the system Chrome. Set E2E_BASE_URL to test a
 // daemon that is already running, e.g. through `tailscale serve`.
-const port = 7683;
+// E2E_PORT runs it elsewhere (beside another worktree's run, say).
+const port = Number(process.env.E2E_PORT) || 7683;
 const external = process.env.E2E_BASE_URL || undefined;
 // E2E_DAEMON_LOG=/path/to/file keeps the test daemon's debug log.
 const log = process.env.E2E_DAEMON_LOG ? ` >>${process.env.E2E_DAEMON_LOG} 2>&1` : "";

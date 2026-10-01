@@ -1,7 +1,8 @@
 // illogical service worker: shows push notifications (a pane needs you)
 // and opens that pane when one is tapped. An agent block's permission
-// request comes with Approve and Deny actions, answered from here without
-// opening the app. It also keeps the last copy of the page itself, used
+// request comes with Approve and Deny actions, and an agent's question with
+// one or two answers comes with them as actions (M6c), answered from here
+// without opening the app. It also keeps the last copy of the page itself, used
 // only when the daemon that serves it doesn't answer: the page can then
 // still reach the other hosts on its saved list (M4a). Nothing else is
 // cached.
@@ -43,31 +44,36 @@ self.addEventListener("push", (event) => {
     if (event.data) msg.body = event.data.text();
   }
   const approve = msg.approve && typeof msg.approve.id === "string" ? msg.approve : null;
+  const ask = msg.ask && typeof msg.ask.id === "string" && Array.isArray(msg.ask.options) ? msg.ask : null;
+  const actions = approve
+    ? [
+        { action: "approve", title: "Approve" },
+        { action: "deny", title: "Deny" },
+      ]
+    : ask
+      ? ask.options.slice(0, 2).map((o, i) => ({ action: `answer-${i}`, title: o }))
+      : [];
   event.waitUntil(
     self.registration.showNotification(msg.title || "illogical", {
       body: msg.body || "",
       tag: msg.tag || "illogical",
       renotify: true,
       icon: "/icon.svg",
-      requireInteraction: !!approve,
-      actions: approve
-        ? [
-            { action: "approve", title: "Approve" },
-            { action: "deny", title: "Deny" },
-          ]
-        : [],
-      data: { pane: msg.pane, approve },
+      requireInteraction: !!(approve || ask),
+      actions,
+      data: { pane: msg.pane, approve, ask },
     }),
   );
 });
 
-/** Answer an agent's permission request; true if the daemon took it. */
-async function answer(pane, method, id) {
+/** Answer an agent's permission request or question; true if the daemon
+ * took it. */
+async function answer(pane, method, args) {
   try {
     const res = await fetch(`/api/blocks/${pane}/call/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify(args),
     });
     return res.ok;
   } catch {
@@ -82,10 +88,27 @@ self.addEventListener("notificationclick", (event) => {
   if ((event.action === "approve" || event.action === "deny") && pane && data.approve) {
     event.waitUntil(
       (async () => {
-        if (!(await answer(pane, event.action, data.approve.id))) {
+        if (!(await answer(pane, event.action, { id: data.approve.id }))) {
           // Already answered, or the daemon is unreachable: show the block.
           await self.registration.showNotification("Couldn't answer that", {
             body: data.approve.title || "",
+            tag: `pane-${pane}`,
+            data: { pane },
+          });
+        }
+      })(),
+    );
+    return;
+  }
+  const picked = /^answer-(\d)$/.exec(event.action || "");
+  if (picked && pane && data.ask) {
+    const choice = data.ask.options[Number(picked[1])];
+    event.waitUntil(
+      (async () => {
+        const args = { id: data.ask.id, content: { [data.ask.field]: choice } };
+        if (!(await answer(pane, "answer", args))) {
+          await self.registration.showNotification("Couldn't answer that", {
+            body: choice,
             tag: `pane-${pane}`,
             data: { pane },
           });
