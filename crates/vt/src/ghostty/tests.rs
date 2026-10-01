@@ -265,3 +265,86 @@ fn does_not_promise_what_xterm_js_cannot_draw() {
     assert!(!reply.contains('u'), "no kitty keyboard reply: {reply:?}");
     assert!(reply.contains("\x1b[?62;"), "DA1 still answered: {reply:?}");
 }
+
+/// Checkpoints (GHOSTSNP + zstd) restore everything the snapshot does, with
+/// no fix-ups, including the primary screen under a full-screen app.
+fn checkpoint_round_trip(name: &str) {
+    let mut a = load(name);
+    let ckpt = a.checkpoint();
+    let mut b = GhosttyEngine::from_checkpoint(&ckpt).expect("checkpoint decodes");
+    assert_same(&a, &b, &format!("{name} checkpoint"));
+    if a.terminal().active_screen().unwrap() == Screen::Alternate {
+        a.feed(b"\x1b[?1049l");
+        b.feed(b"\x1b[?1049l");
+        assert_same(
+            &a,
+            &b,
+            &format!("{name} checkpoint after leaving the alt screen"),
+        );
+    }
+}
+
+#[test]
+fn checkpoints_round_trip_every_fixture() {
+    for name in [
+        "seq",
+        "modes",
+        "nvim",
+        "nvim_resize",
+        "less",
+        "top",
+        "resize",
+    ] {
+        checkpoint_round_trip(name);
+    }
+}
+
+#[test]
+fn checkpoint_mid_escape_sequence_resumes() {
+    let mut a = GhosttyEngine::new(80, 24);
+    a.feed(b"hello \x1b[1;3");
+    let mut b = GhosttyEngine::from_checkpoint(&a.checkpoint()).unwrap();
+    a.feed(b"1mred\x1b[0m world");
+    b.feed(b"1mred\x1b[0m world");
+    assert_same(&a, &b, "split CSI");
+}
+
+#[test]
+fn restored_engine_still_answers_queries() {
+    let a = load("modes");
+    let mut b = GhosttyEngine::from_checkpoint(&a.checkpoint()).unwrap();
+    b.feed(b"\x1b[c\x1b[?69$p");
+    let reply = String::from_utf8(b.take_replies()).unwrap();
+    assert!(
+        reply.contains("\x1b[?62;") && reply.contains("\x1b[?69;0$y"),
+        "{reply:?}"
+    );
+}
+
+#[test]
+fn bad_checkpoints_are_rejected() {
+    use crate::CheckpointError;
+    let good = load("modes").checkpoint();
+    assert_eq!(
+        GhosttyEngine::from_checkpoint(b"nope").err(),
+        Some(CheckpointError::NotACheckpoint)
+    );
+    let mut other = good.clone();
+    let tag_at = other.iter().position(|b| *b == b'@').unwrap();
+    other[tag_at + 1] = b'X';
+    assert!(matches!(
+        GhosttyEngine::from_checkpoint(&other),
+        Err(CheckpointError::OtherEngine(_))
+    ));
+    let mut corrupt = good.clone();
+    let n = corrupt.len();
+    corrupt[n - 10] ^= 0xff;
+    assert_eq!(
+        GhosttyEngine::from_checkpoint(&corrupt).err(),
+        Some(CheckpointError::Corrupt)
+    );
+    assert_eq!(
+        GhosttyEngine::from_checkpoint(&good[..good.len() / 2]).err(),
+        Some(CheckpointError::Corrupt)
+    );
+}

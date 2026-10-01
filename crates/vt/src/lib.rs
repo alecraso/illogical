@@ -10,7 +10,7 @@ mod compat;
 mod ghostty;
 
 pub use compat::Capabilities;
-pub use ghostty::GhosttyEngine;
+pub use ghostty::{CheckpointError, GhosttyEngine, engine_tag};
 
 pub trait VtEngine {
     /// Process PTY output.
@@ -29,5 +29,7 @@ pub trait VtEngine {
     /// primary screen is active.
     fn plain_text(&self) -> String;
     fn title(&self) -> String;
+    /// Whether a full-screen program's alternate screen is showing.
+    fn alt_screen(&self) -> bool;
     fn pwd(&self) -> String;
 }

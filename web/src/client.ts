@@ -13,6 +13,7 @@ import {
   type ClientMsg,
   type Intent,
   type PaneId,
+  type PaneOp,
   type ServerMsg,
   type SessionId,
   type State,
@@ -87,7 +88,15 @@ export class Client {
   }
 
   cwd(pane: PaneId): string | null {
-    return this.state?.panes.find((p) => p.id === pane)?.cwd ?? null;
+    return this.info(pane)?.cwd ?? null;
+  }
+
+  info(pane: PaneId) {
+    return this.state?.panes.find((p) => p.id === pane);
+  }
+
+  paneOp(pane: PaneId, op: PaneOp) {
+    this.send({ type: "pane", pane, op });
   }
 
   // ---- changing local selection

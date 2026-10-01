@@ -3,7 +3,10 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 
-export type MenuItem = { label: string; run: () => void; danger?: boolean; disabled?: boolean } | "separator";
+export type MenuItem =
+  | { label: string; run: () => void; danger?: boolean; disabled?: boolean; checked?: boolean }
+  | { header: string }
+  | "separator";
 
 interface OpenMenu {
   x: number;
@@ -77,10 +80,15 @@ export function MenuLayer() {
       {current.items.map((item, i) =>
         item === "separator" ? (
           <div key={i} class="menu-sep" />
+        ) : "header" in item ? (
+          <div key={i} class="menu-header">
+            {item.header}
+          </div>
         ) : (
           <button
             key={i}
-            role="menuitem"
+            role={item.checked === undefined ? "menuitem" : "menuitemradio"}
+            aria-checked={item.checked}
             class={item.danger ? "menu-item danger" : "menu-item"}
             disabled={item.disabled}
             onClick={() => {
@@ -88,10 +96,89 @@ export function MenuLayer() {
               item.run();
             }}
           >
+            {item.checked !== undefined && <span class="menu-check">{item.checked ? "●" : ""}</span>}
             {item.label}
           </button>
         ),
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- prompt
+
+interface OpenPrompt {
+  title: string;
+  value: string;
+  placeholder?: string;
+  done: (value: string | null) => void;
+}
+
+let prompt: OpenPrompt | null = null;
+const promptListeners = new Set<() => void>();
+
+/** Ask for one line of text (no browser dialogs: they block everything). */
+export function askText(title: string, value: string, placeholder?: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    prompt = { title, value, placeholder, done: resolve };
+    promptListeners.forEach((fn) => fn());
+  });
+}
+
+export function PromptLayer() {
+  const [, setTick] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const fn = () => setTick((t) => t + 1);
+    promptListeners.add(fn);
+    return () => {
+      promptListeners.delete(fn);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, [prompt]);
+  if (!prompt) return null;
+  const p = prompt;
+  const finish = (v: string | null) => {
+    prompt = null;
+    promptListeners.forEach((fn) => fn());
+    p.done(v);
+  };
+  return (
+    <div
+      class="prompt-backdrop"
+      role="dialog"
+      aria-label={p.title}
+      onPointerDown={(e) => e.target === e.currentTarget && finish(null)}
+    >
+      <form
+        class="prompt"
+        aria-label={p.title}
+        onSubmit={(e) => {
+          e.preventDefault();
+          finish(input.current?.value ?? "");
+        }}
+      >
+        <label>
+          {p.title}
+          <input
+            ref={input}
+            value={p.value}
+            placeholder={p.placeholder}
+            onKeyDown={(e) => e.key === "Escape" && finish(null)}
+          />
+        </label>
+        <div class="prompt-buttons">
+          <button type="button" onClick={() => finish(null)}>
+            Cancel
+          </button>
+          <button type="submit" class="primary">
+            OK
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

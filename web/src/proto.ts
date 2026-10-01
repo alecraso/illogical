@@ -50,11 +50,24 @@ export interface TabView {
   layout: Layout;
 }
 
+export type Policy =
+  | { kind: "none" }
+  | { kind: "shell" }
+  | { kind: "rerun"; confirm: boolean }
+  | { kind: "hook"; command: string };
+
 export interface PaneInfo {
   id: PaneId;
   epoch: number;
   cwd: string | null;
+  /** The foreground command, when it isn't the shell. */
+  command: string | null;
+  /** False while a restored pane waits for Enter. */
+  running: boolean;
+  policy: Policy;
 }
+
+export type PaneOp = { op: "set_policy"; policy: Policy } | { op: "purge" };
 
 export interface State {
   rev: number;
@@ -82,7 +95,8 @@ export type ClientMsg =
   | { type: "attach"; panes: { pane: PaneId; offset: number | null }[] }
   | { type: "detach"; panes: PaneId[] }
   | { type: "view"; tab: TabId; cols: number; rows: number; zoom: PaneId | null; claim: boolean }
-  | { type: "intent"; id: number | null; intent: Intent };
+  | { type: "intent"; id: number | null; intent: Intent }
+  | { type: "pane"; pane: PaneId; op: PaneOp };
 
 export type ServerMsg =
   | { type: "hello"; version: string; client: ClientId; state: State }

@@ -381,6 +381,22 @@ button {
   color: var(--danger);
 }
 
+.menu-header {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.menu-check {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--accent);
+  font-size: 9px;
+  vertical-align: 1px;
+}
+
 .menu-sep {
   height: 1px;
   margin: 4px 6px;
@@ -520,4 +536,71 @@ button {
 .key.on {
   background: var(--accent);
   color: var(--letterbox);
+}
+
+/* ---- restored panes waiting to start */
+
+.start-pane {
+  position: absolute;
+  z-index: 5;
+  right: 12px;
+  bottom: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--letterbox);
+  font-weight: 600;
+  box-shadow: 0 4px 16px #0008;
+}
+
+/* ---- one-line prompt */
+
+.prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: start center;
+  padding-top: 15vh;
+  background: #0006;
+}
+
+.prompt {
+  width: min(440px, calc(100vw - 32px));
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: 0 12px 40px #000a;
+}
+
+.prompt label {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.prompt input {
+  font: 13px ui-monospace, monospace;
+  padding: 8px;
+  color: var(--fg);
+  background: var(--letterbox);
+  border: 1px solid var(--raised-hover);
+  border-radius: 6px;
+  outline: none;
+}
+
+.prompt input:focus {
+  border-color: var(--accent);
+}
+
+.prompt-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.prompt-buttons button {
+  padding: 6px 14px;
+  border-radius: 6px;
 }

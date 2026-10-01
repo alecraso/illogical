@@ -6,7 +6,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-libghostty-vt = "0.2.2"
+libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs.git", rev = "8953a74" }
+zstd = "0.14.0"
 
 [lints]
 workspace = true

@@ -6,39 +6,59 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M1 (multiplexer) works
+## Status: M2 (durability) works
 
-Sessions, tabs and splits of shells owned by `illogicald`, driven by the
-mouse: right-click a pane to split, move or close it; drag the grip in a
-pane's corner onto another pane's edge to move it; drag dividers to resize;
-drag tabs to reorder them or onto a pane's edge to dock them; double-click a
-tab to rename it, middle-click to close it. Every window shows the same
-layout live, and closing or losing a window loses nothing. On a phone you see
-one pane at a time, switch from a sheet, and get a key bar with Esc, Tab,
-sticky Ctrl/Alt and arrows.
+Everything from M1 (sessions, tabs and splits held by the daemon, driven by
+the mouse, the same live on every window and a phone), and now it survives
+the daemon stopping, crashing, or the machine rebooting:
 
-The layout lives on the daemon and is computed in character cells (like
-tmux), so every window draws exactly the panes' real terminal sizes. Each tab
-takes the size of the window that last opened, focused or typed in it;
-other windows show it scaled to fit. Not yet: anything surviving a daemon
-restart or reboot (M2), or the CLI (M3).
+- Every pane's output goes to an append-only log as it happens, and its
+  terminal is checkpointed (Ghostty's snapshot format, zstd) after 5s idle
+  or every 2 MB. The layout is saved on every change.
+- On start, each pane is rebuilt from its checkpoint plus the log after it,
+  marked `── restored <time> ──`, and then does what its restart policy says
+  (right-click a pane → *After a restart*): start a shell in its last
+  directory (default), re-run its last command (asking first, or not), run a
+  command you choose (e.g. `claude --continue`), or wait for Enter.
+- A shell killed by a signal (OOM, `kill -9`) leaves its pane and scrollback
+  in place and offers a new shell. Only an ordinary `exit` closes a pane.
+- *Forget history* deletes a pane's saved output and clears its screen.
+  History is kept to 256 MB per pane, in `~/.local/state/illogical`, which
+  is private to you (0700/0600).
+
+Not yet: panes surviving a daemon *restart* without losing their processes
+(M2b; today a restart is a restore), the CLI (M3).
 
 ## Use it
 
 ```
-just bootstrap      # Zig 0.15.2 via mise, web dependencies
-just run            # release build, daemon on 127.0.0.1:7681
+just bootstrap      # Zig 0.16 via mise, web dependencies
+just install        # release build, installed as a systemd user service
 ```
+
+`illogicald install` copies the binary to `~/.local/bin`, writes
+`~/.config/systemd/user/illogicald.service` and enables it; with lingering on
+(`loginctl enable-linger $USER`) it starts at boot. Logs:
+`journalctl --user -u illogicald`.
 
 Open <http://127.0.0.1:7681>, or <https://geek.tailb2e8f2.ts.net> from
 anywhere on the tailnet (`tailscale serve --bg --https=443
 http://127.0.0.1:7681` is already configured on geek). The daemon accepts
 tailnet requests from the login that owns the node; `--owner` overrides.
 
-Development: `just dev` runs a separate daemon on 7682 plus Vite on 5173, so
-the real daemon and its shell are left alone. `just check` is what CI runs;
-`just e2e` drives the system Chrome against a throwaway daemon, or
-`just e2e https://geek.tailb2e8f2.ts.net` against the running one.
+**Pane environment.** At boot the daemon starts before you log in, so its own
+environment has no `WAYLAND_DISPLAY`, `DISPLAY` or desktop `SSH_AUTH_SOCK`.
+Each new pane takes the systemd user manager's environment as it is at that
+moment, which your desktop session fills in at login. For variables every
+pane should have from boot (`PATH` additions, `EDITOR`), put `KEY=value`
+lines in `~/.config/environment.d/50-illogical.conf`. Panes run `$SHELL -l`,
+so your profile runs too.
+
+Development: `just dev` runs a separate daemon on 7682 (state in
+`~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
+alone. `just check` is what CI runs; `just e2e` drives the system Chrome
+against throwaway daemons, or `just e2e https://geek.tailb2e8f2.ts.net`
+against the running one.
 
 ## Layout
 
@@ -46,18 +66,20 @@ the real daemon and its shell are left alone. `just check` is what CI runs;
   them, and the cell layout. Pure state, property-tested.
 - `crates/proto`: wire protocol (JSON control messages + binary frames with a
   per-pane stream offset). Mirrored by hand in `web/src/proto.ts`.
-- `crates/vt`: server-side terminal state on libghostty-vt. Snapshots that
-  reproduce the screen (spike S1's fix-ups), answers to terminal queries
-  limited to what xterm.js can draw, recorded fixtures.
+- `crates/vt`: server-side terminal state on libghostty-vt (libghostty-rs
+  `master`, Zig 0.16). VT snapshots for xterm.js (spike S1's fix-ups),
+  checkpoints for disk (GHOSTSNP + zstd, spike S5), answers to terminal
+  queries limited to what xterm.js can draw, recorded fixtures.
 - `crates/daemon`: `illogicald`. A multiplexer task owning the layout, a PTY
-  + VT thread per pane, axum WebSocket server, embedded web client,
-  Host/Origin/tailnet-identity checks.
+  + VT thread per pane with its log and checkpoints (`store.rs`), restore
+  and restart policies, axum WebSocket server, embedded web client,
+  Host/Origin/tailnet-identity checks, `install`.
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0 and M1 taught us
+## Things M0–M2 taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -89,3 +111,16 @@ the real daemon and its shell are left alone. `just check` is what CI runs;
 - **Subscribe, then catch up.** A store subscription made in an effect misses
   anything that happens before the first paint; the daemon's hello sometimes
   won that race and left a window blank.
+- **Upstream fixes move bugs.** The newer libghostty formatter fixed the
+  cursor S1 had to re-place, but now writes tab stops before the content and
+  leaves the cursor on the last stop, so the first line wrapped. The fixture
+  tests caught it on the upgrade; the block is moved to the end.
+- **Leaving the alternate screen restores the cursor** even when nothing is
+  on it, so the restore marker only sends `?1049l` if a full-screen program
+  was showing; otherwise it overwrote the last lines of scrollback.
+- **A reboot kills shells and the daemon together.** `KillMode=mixed` stops
+  the daemon first (it saves, then exits) and kills the shells after; and a
+  shell killed by a signal never closes its pane, so even a race can't lose
+  one.
+- **"Re-run" reads /proc**, so `bash -c 'a; b'` that exec'd into `b` re-runs
+  `b`. The typed command line needs shell integration (M3).

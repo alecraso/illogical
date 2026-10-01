@@ -43,11 +43,15 @@ check: test
 run *args: build
     ./target/release/illogicald {{args}}
 
+# Install as a systemd user service (starts at boot with lingering).
+install: build
+    ./target/release/illogicald install
+
 # Dev loop: separate daemon on 7682 + Vite on 5173; leaves the real one alone.
 dev:
     {{cargo}} build -p illogicald
     trap 'kill 0' EXIT; \
-      ./target/debug/illogicald --listen 127.0.0.1:7682 --allow-origin http://localhost:5173 & \
+      ./target/debug/illogicald --listen 127.0.0.1:7682 --allow-origin http://localhost:5173 --state-dir ~/.local/state/illogical-dev & \
       (cd web && pnpm run dev)
 
 # Re-record snapshot fixtures (crates/vt/fixtures).

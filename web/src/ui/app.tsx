@@ -1,11 +1,11 @@
 import { Fragment } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
-import type { Edge, Intent, PaneId, Rect, SplitRect, TabId, TabView } from "../proto";
+import type { Edge, Intent, PaneId, Policy, Rect, SplitRect, TabId, TabView } from "../proto";
 import type { Cell } from "./cells";
 import { drag, startDrag, type Dragged, type Target } from "./drag";
 import { useSubscribe, usePhone } from "./hooks";
-import { closeMenu, MenuLayer, openMenu, type MenuItem } from "./menu";
+import { askText, closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./menu";
 import { KeyBar, PhoneHeader } from "./phone";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
@@ -56,6 +56,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       </main>
       {phone && state && state.sessions.length > 0 && <KeyBar client={client} />}
       <MenuLayer />
+      <PromptLayer />
       <DragGhost />
       <StatusPill client={client} />
     </div>
@@ -385,10 +386,17 @@ function PaneSlot({
       },
       { label: "Copy working directory", disabled: !cwd, run: () => cwd && void navigator.clipboard?.writeText(cwd) },
       "separator",
+      ...restartItems(client, id),
+      "separator",
+      {
+        label: "Forget history",
+        run: () => client.paneOp(id, { op: "purge" }),
+      },
       { label: "Close pane", danger: true, run: () => client.intent({ op: "close_pane", pane: id }) },
     ]);
   };
 
+  const waiting = client.info(id)?.running === false;
   return (
     <div
       ref={ref}
@@ -398,6 +406,15 @@ function PaneSlot({
       onPointerDownCapture={() => client.setActive(id)}
       onContextMenu={menu}
     >
+      {waiting && (
+        <button
+          class="start-pane"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => client.input(id, new TextEncoder().encode("\r"))}
+        >
+          {client.info(id)?.policy.kind === "rerun" ? "Re-run" : "Start shell"}
+        </button>
+      )}
       {!phone && (
         <div
           class="grip"
@@ -414,6 +431,38 @@ function PaneSlot({
       )}
     </div>
   );
+}
+
+/** What the pane does when the daemon starts again, e.g. after a reboot. */
+function restartItems(client: Client, id: PaneId): MenuItem[] {
+  const info = client.info(id);
+  const p = info?.policy ?? { kind: "shell" };
+  const cmd = info?.command;
+  const set = (policy: Policy) => client.paneOp(id, { op: "set_policy", policy });
+  const short = (s: string) => (s.length > 32 ? `${s.slice(0, 31)}…` : s);
+  return [
+    { header: "After a restart" },
+    { label: "Start a shell here", checked: p.kind === "shell", run: () => set({ kind: "shell" }) },
+    {
+      label: cmd ? `Re-run ${short(cmd)}, asking first` : "Re-run the command, asking first",
+      checked: p.kind === "rerun" && p.confirm,
+      run: () => set({ kind: "rerun", confirm: true }),
+    },
+    {
+      label: cmd ? `Re-run ${short(cmd)}` : "Re-run the command",
+      checked: p.kind === "rerun" && !p.confirm,
+      run: () => set({ kind: "rerun", confirm: false }),
+    },
+    {
+      label: p.kind === "hook" ? `Run ${short(p.command)}` : "Run a command…",
+      checked: p.kind === "hook",
+      run: async () => {
+        const command = await askText("Run when restored", p.kind === "hook" ? p.command : "", "claude --continue");
+        if (command?.trim()) set({ kind: "hook", command: command.trim() });
+      },
+    },
+    { label: "Nothing (wait for Enter)", checked: p.kind === "none", run: () => set({ kind: "none" }) },
+  ];
 }
 
 function Divider({

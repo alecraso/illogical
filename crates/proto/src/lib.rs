@@ -38,6 +38,35 @@ pub enum ClientMsg {
     /// Change sessions, tabs or splits. Errors come back as
     /// [`ServerMsg::Error`] with the same id.
     Intent { id: Option<u64>, intent: Intent },
+    /// Something about one pane rather than the layout.
+    Pane { pane: PaneId, op: PaneOp },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum PaneOp {
+    /// What happens to the pane when the daemon starts again (after a
+    /// reboot).
+    SetPolicy { policy: Policy },
+    /// Delete the pane's saved history and clear its scrollback.
+    Purge,
+}
+
+/// What a pane does when the daemon restores it. Its scrollback always comes
+/// back; this decides what runs in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Policy {
+    /// Nothing; press Enter for a shell.
+    None,
+    /// A login shell in the pane's last working directory.
+    #[default]
+    Shell,
+    /// The command that was in the foreground, in its directory. With
+    /// `confirm`, the pane asks first (press Enter).
+    Rerun { confirm: bool },
+    /// A fixed command, such as `claude --continue`.
+    Hook { command: String },
 }
 
 /// Control messages from the server.
@@ -101,6 +130,12 @@ pub struct PaneInfo {
     pub epoch: u64,
     /// The pane process's working directory, when known.
     pub cwd: Option<String>,
+    /// The foreground command, when it isn't the shell itself.
+    pub command: Option<String>,
+    /// Whether a process is running (false while a restored pane waits for
+    /// Enter).
+    pub running: bool,
+    pub policy: Policy,
 }
 
 /// Binary frame kinds.

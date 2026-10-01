@@ -2,7 +2,9 @@
 
 use std::{
     net::TcpListener,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
 
@@ -28,8 +30,24 @@ impl Drop for Daemon {
     }
 }
 
-#[expect(clippy::zombie_processes, reason = "Daemon's Drop kills and waits")]
 async fn start() -> Daemon {
+    start_in(&temp_state()).await
+}
+
+/// A fresh state directory, so tests never touch the real one.
+fn temp_state() -> PathBuf {
+    static N: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "illogical-test-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+#[expect(clippy::zombie_processes, reason = "Daemon's Drop kills and waits")]
+async fn start_in(state: &Path) -> Daemon {
     let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -41,7 +59,10 @@ async fn start() -> Daemon {
             &format!("127.0.0.1:{port}"),
             "--shell",
             "bash --norc --noprofile",
+            "--no-manager-env",
         ])
+        .arg("--state-dir")
+        .arg(state)
         .env("PS1", "$ ")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -476,4 +497,298 @@ async fn bad_intents_report_errors_and_others_see_changes() {
     .await;
     let state = next_state(&mut b).await;
     assert_eq!(state.sessions[0].tabs.len(), 2);
+}
+
+// ---------------------------------------------------------------- M2: restore
+
+impl Daemon {
+    /// Stop the daemon with a signal and wait for it to exit.
+    fn stop(&mut self, signal: nix::sys::signal::Signal) {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(self.child.id() as i32), signal).unwrap();
+        let _ = self.child.wait();
+    }
+}
+
+use illogical_proto::{PaneOp, Policy};
+
+async fn attach_pane(ws: &mut Ws, pane: u32) -> String {
+    send(
+        ws,
+        ClientMsg::Attach {
+            panes: vec![AttachPane { pane, offset: None }],
+        },
+    )
+    .await;
+    until(ws, |m| match m {
+        In::Frame(f) if f.kind == FrameKind::Snapshot && f.pane == pane => {
+            Some(String::from_utf8_lossy(&f.data).into_owned())
+        }
+        _ => None,
+    })
+    .await
+}
+
+/// Output from one pane until `needle` appears.
+async fn read_pane_until(ws: &mut Ws, pane: u32, needle: &str) -> String {
+    let mut seen = String::new();
+    until(ws, |m| {
+        if let In::Frame(f) = m
+            && f.pane == pane
+            && f.kind == FrameKind::Output
+        {
+            seen.push_str(&String::from_utf8_lossy(&f.data));
+        }
+        seen.contains(needle).then(|| seen.clone())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    let (mut ws, s) = connect_state(&d).await;
+    let tab = s.tabs[0].id;
+    send(
+        &mut ws,
+        ClientMsg::Intent {
+            id: None,
+            intent: Intent::Split {
+                pane: 1,
+                edge: Edge::Right,
+            },
+        },
+    )
+    .await;
+    send(
+        &mut ws,
+        ClientMsg::Intent {
+            id: None,
+            intent: Intent::RenameTab {
+                tab,
+                name: Some("kept".into()),
+            },
+        },
+    )
+    .await;
+    attach_pane(&mut ws, 1).await;
+    type_in(&mut ws, 1, "cd /tmp && echo marker-$((6*7))").await;
+    read_pane_until(&mut ws, 1, "marker-42").await;
+    attach_pane(&mut ws, 2).await;
+    let policy = Policy::Rerun { confirm: true };
+    send(
+        &mut ws,
+        ClientMsg::Pane {
+            pane: 2,
+            op: PaneOp::SetPolicy {
+                policy: policy.clone(),
+            },
+        },
+    )
+    .await;
+    // The trailing `true` stops bash from exec'ing into `sleep`, which would
+    // leave only "sleep 300" to see (the M2 command capture reads /proc).
+    type_in(
+        &mut ws,
+        2,
+        "bash -c 'echo rerun-ok-$((1+1)); sleep 300; true'",
+    )
+    .await;
+    read_pane_until(&mut ws, 2, "rerun-ok-2").await;
+    drop(ws);
+
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let mut d = start_in(&state).await;
+    let (mut ws, s) = connect_state(&d).await;
+    assert_eq!(s.tabs.len(), 1);
+    assert_eq!(s.tabs[0].name.as_deref(), Some("kept"));
+    assert_eq!(s.tabs[0].layout.panes.len(), 2);
+    let p2 = s.panes.iter().find(|p| p.id == 2).unwrap();
+    assert_eq!(p2.policy, policy);
+    assert!(!p2.running, "a confirm-first rerun waits");
+    assert!(
+        p2.command.as_deref().unwrap_or("").contains("sleep 300"),
+        "{:?}",
+        p2.command
+    );
+
+    // Scrollback is back, marked, and the shell starts where it was.
+    let snap = attach_pane(&mut ws, 1).await;
+    assert!(snap.contains("marker-42"), "scrollback restored");
+    assert!(snap.contains("restored"), "restore marker");
+    type_in(&mut ws, 1, "echo cwd=$(pwd)").await;
+    read_pane_until(&mut ws, 1, "cwd=/tmp").await;
+
+    // The rerun pane shows what it would run; Enter runs it.
+    let snap = attach_pane(&mut ws, 2).await;
+    assert!(snap.contains("press Enter to re-run"), "banner: {snap}");
+    type_in(&mut ws, 2, "").await;
+    read_pane_until(&mut ws, 2, "rerun-ok-2").await;
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[tokio::test]
+async fn a_crash_loses_nothing_that_was_printed() {
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    attach_pane(&mut ws, 1).await;
+    type_in(&mut ws, 1, "echo crash-$((5+5))").await;
+    read_pane_until(&mut ws, 1, "crash-10").await;
+    // Long enough for the first layout save, not for a checkpoint: the log
+    // alone carries the output.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    d.stop(nix::sys::signal::Signal::SIGKILL);
+
+    let mut d = start_in(&state).await;
+    let (mut ws, s) = connect_state(&d).await;
+    assert_eq!(s.panes.iter().map(|p| p.id).collect::<Vec<_>>(), vec![1]);
+    assert!(attach_pane(&mut ws, 1).await.contains("crash-10"));
+    d.stop(nix::sys::signal::Signal::SIGKILL);
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[tokio::test]
+async fn idle_panes_are_checkpointed() {
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    attach_pane(&mut ws, 1).await;
+    type_in(&mut ws, 1, "echo idle-$((2+2))").await;
+    read_pane_until(&mut ws, 1, "idle-4").await;
+    let ckpt = state.join("panes/1/checkpoint");
+    for _ in 0..80 {
+        if ckpt.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(ckpt.exists(), "checkpoint after ~5s idle");
+    let mode =
+        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&ckpt).unwrap().permissions());
+    assert_eq!(mode & 0o777, 0o600);
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[tokio::test]
+async fn a_killed_shell_keeps_its_pane_and_offers_a_new_one() {
+    let d = start().await;
+    let (mut ws, _) = connect_state(&d).await;
+    attach_pane(&mut ws, 1).await;
+    type_in(&mut ws, 1, "echo pid=$((0+$$))x").await;
+    // The echoed command line also says "pid="; wait for digits.
+    let mut seen = String::new();
+    let pid: i32 = until(&mut ws, |m| {
+        if let In::Frame(f) = m {
+            seen.push_str(&String::from_utf8_lossy(&f.data));
+        }
+        seen.match_indices("pid=").find_map(|(i, _)| {
+            let digits: String = seen[i + 4..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            (!digits.is_empty() && seen[i + 4 + digits.len()..].starts_with('x'))
+                .then(|| digits.parse().unwrap())
+        })
+    })
+    .await;
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .unwrap();
+    read_pane_until(&mut ws, 1, "press Enter for a shell").await;
+    let state = next_state(&mut ws).await;
+    assert_eq!(state.panes.len(), 1, "the pane stays");
+    assert!(!state.panes[0].running);
+    type_in(&mut ws, 1, "").await;
+    type_in(&mut ws, 1, "echo again-$((3+3))").await;
+    read_pane_until(&mut ws, 1, "again-6").await;
+}
+
+#[tokio::test]
+async fn policy_none_waits_purge_forgets_and_closing_deletes_history() {
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    attach_pane(&mut ws, 1).await;
+    type_in(&mut ws, 1, "echo secret-$((9*9))").await;
+    read_pane_until(&mut ws, 1, "secret-81").await;
+    send(
+        &mut ws,
+        ClientMsg::Pane {
+            pane: 1,
+            op: PaneOp::Purge,
+        },
+    )
+    .await;
+    send(
+        &mut ws,
+        ClientMsg::Pane {
+            pane: 1,
+            op: PaneOp::SetPolicy {
+                policy: Policy::None,
+            },
+        },
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let logs: Vec<u8> = std::fs::read_dir(state.join("panes/1"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("seg-"))
+        .flat_map(|e| std::fs::read(e.path()).unwrap())
+        .collect();
+    assert!(
+        !String::from_utf8_lossy(&logs).contains("secret-81"),
+        "purged from disk"
+    );
+    drop(ws);
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+
+    let mut d = start_in(&state).await;
+    let (mut ws, s) = connect_state(&d).await;
+    assert!(!s.panes[0].running, "policy none: nothing runs");
+    let snap = attach_pane(&mut ws, 1).await;
+    assert!(!snap.contains("secret-81"), "purged from scrollback");
+    assert!(snap.contains("press Enter for a shell"));
+    type_in(&mut ws, 1, "").await;
+    type_in(&mut ws, 1, "echo fresh-$((1+1))").await;
+    read_pane_until(&mut ws, 1, "fresh-2").await;
+
+    send(
+        &mut ws,
+        ClientMsg::Intent {
+            id: None,
+            intent: Intent::Split {
+                pane: 1,
+                edge: Edge::Right,
+            },
+        },
+    )
+    .await;
+    next_state(&mut ws).await;
+    assert!(state.join("panes/2").exists());
+    send(
+        &mut ws,
+        ClientMsg::Intent {
+            id: None,
+            intent: Intent::ClosePane { pane: 2 },
+        },
+    )
+    .await;
+    for _ in 0..50 {
+        if !state.join("panes/2").exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        !state.join("panes/2").exists(),
+        "a closed pane's history is deleted"
+    );
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let _ = std::fs::remove_dir_all(state);
 }

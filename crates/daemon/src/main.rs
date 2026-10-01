@@ -1,13 +1,16 @@
 //! illogicald: owns the terminals; clients attach over WebSocket.
 
 mod access;
+mod install;
 mod mux;
 mod pane;
 mod server;
+mod store;
+mod sys;
 
 use std::{net::SocketAddr, path::PathBuf};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -16,6 +19,29 @@ use tracing::info;
     about = "illogical daemon: owns terminals that clients attach to"
 )]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[command(flatten)]
+    run: RunArgs,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Install as a systemd user service that starts at boot: copies this
+    /// binary to ~/.local/bin, writes the unit, enables and (re)starts it.
+    Install {
+        /// Write and enable the unit without starting it now.
+        #[arg(long)]
+        no_start: bool,
+        /// Arguments for the daemon in the unit, after `--`.
+        #[arg(last = true)]
+        daemon_args: Vec<String>,
+    },
+}
+
+#[derive(clap::Args, Debug)]
+struct RunArgs {
     /// Address to listen on. Keep it loopback; `tailscale serve` exposes it.
     #[arg(long, default_value = "127.0.0.1:7681", env = "ILLOGICAL_LISTEN")]
     listen: SocketAddr,
@@ -36,6 +62,21 @@ struct Args {
     /// Command line for panes, split on whitespace [default: $SHELL -l].
     #[arg(long)]
     shell: Option<String>,
+
+    /// Where layout, scrollback and checkpoints live [default:
+    /// $XDG_STATE_HOME/illogical, else ~/.local/state/illogical].
+    #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+    state_dir: Option<PathBuf>,
+
+    /// Don't merge the systemd user manager's environment into new panes.
+    #[arg(long)]
+    no_manager_env: bool,
+}
+
+fn home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| "/".into())
 }
 
 #[tokio::main]
@@ -47,7 +88,16 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let args = Args::parse();
+    match args.command {
+        Some(Command::Install {
+            no_start,
+            daemon_args,
+        }) => install::install(!no_start, &daemon_args),
+        None => run(args.run).await,
+    }
+}
 
+async fn run(args: RunArgs) -> anyhow::Result<()> {
     let mut public_hosts = args.public_hosts.clone();
     let mut owner = args.owner.clone();
     if let Some(t) = access::tailnet() {
@@ -68,42 +118,57 @@ async fn main() -> anyhow::Result<()> {
         owner,
     );
 
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| "/".into());
-    let spawn = match &args.shell {
+    let (shell, shell_args) = match &args.shell {
         Some(cmd) => {
             let mut words = cmd.split_whitespace().map(String::from);
             let program = words
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("--shell is empty"))?;
-            pane::Spawn {
-                program,
-                args: words.collect(),
-                cwd: home,
-            }
+            (program, words.collect())
         }
-        None => pane::Spawn {
-            program: std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()),
-            args: vec!["-l".into()],
-            cwd: home,
-        },
+        None => (
+            std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()),
+            vec!["-l".into()],
+        ),
     };
-    let app = server::App::new(access, mux::start(spawn));
+    let state_dir = args.state_dir.unwrap_or_else(|| {
+        std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".local/state"))
+            .join("illogical")
+    });
+    let store = store::StateDir::open(state_dir.clone())?;
+    info!(state = %state_dir.display(), "state directory");
+    let config = mux::Config {
+        shell,
+        shell_args,
+        home: home(),
+        manager_env: !args.no_manager_env,
+    };
+    let mux = mux::start(config, store);
+
+    let app = server::App::new(access, mux.clone());
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
-    axum::serve(listener, server::router(app))
-        .with_graceful_shutdown(shutdown())
-        .await?;
+    sys::notify("READY=1");
+    tokio::select! {
+        r = axum::serve(listener, server::router(app)) => r?,
+        _ = signalled() => {
+            sys::notify("STOPPING=1");
+            info!("shutting down: saving every pane");
+            mux.shutdown().await;
+        }
+    }
+    // Returning drops open connections; panes' shells are hung up as their
+    // terminals close, after everything is saved.
     Ok(())
 }
 
-async fn shutdown() {
+async fn signalled() {
     let mut term =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = term.recv() => {}
     }
-    info!("shutting down");
 }

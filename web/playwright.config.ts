@@ -19,7 +19,7 @@ export default defineConfig({
   webServer: external
     ? undefined
     : {
-        command: `RUST_LOG=illogicald=debug ../target/debug/illogicald --listen 127.0.0.1:${port} --shell "bash --norc --noprofile"`,
+        command: `RUST_LOG=illogicald=debug ../target/debug/illogicald --listen 127.0.0.1:${port} --shell "bash --norc --noprofile" --no-manager-env --state-dir "$(mktemp -d)"`,
         url: `http://127.0.0.1:${port}/`,
         reuseExistingServer: false,
         stdout: "ignore",

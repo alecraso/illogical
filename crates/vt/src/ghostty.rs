@@ -15,10 +15,11 @@
 use std::{cell::RefCell, rc::Rc};
 
 use libghostty_vt::{
-    RenderState, Terminal, TerminalOptions,
+    RenderState, Terminal,
     fmt::{Format, Formatter, FormatterOptions},
     render::CursorVisualStyle,
     screen::{CellContentTag, Screen},
+    snapshot::Decoder,
     style::{RgbColor, StyleColor},
     terminal::{
         ConformanceLevel, DeviceAttributeFeature, DeviceAttributes, DeviceType, Mode, ModeKind,
@@ -29,8 +30,41 @@ use libghostty_vt::{
 
 use crate::{Capabilities, VtEngine};
 
-/// libghostty's scrollback limit behaves as a byte budget, not a line count.
+/// Scrollback kept per pane, as a byte budget.
 const SCROLLBACK_BYTES: usize = 64 * 1024 * 1024;
+/// Largest unfinished escape sequence a checkpoint can carry.
+const CONTINUATION_BYTES: usize = 1024 * 1024;
+
+const CHECKPOINT_MAGIC: &[u8] = b"ILLOGICAL-CKPT1\n";
+
+/// Which engine wrote a checkpoint. GHOSTSNP has changed incompatibly
+/// without bumping its version, so a checkpoint is only trusted by the
+/// exact libghostty it came from.
+pub fn engine_tag() -> String {
+    format!(
+        "libghostty-rs@8953a74 ghostty@{}",
+        libghostty_vt::build_info::version_string().unwrap_or("unknown")
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointError {
+    NotACheckpoint,
+    OtherEngine(String),
+    Corrupt,
+}
+
+impl std::fmt::Display for CheckpointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotACheckpoint => f.write_str("not a checkpoint"),
+            Self::OtherEngine(tag) => write!(f, "written by another engine ({tag})"),
+            Self::Corrupt => f.write_str("corrupt checkpoint"),
+        }
+    }
+}
+
+impl std::error::Error for CheckpointError {}
 
 /// Modes [`modes`] carries across. 47/1047/1049 are excluded: the snapshot
 /// switches screens itself.
@@ -73,12 +107,61 @@ impl GhosttyEngine {
     }
 
     pub fn with_capabilities(cols: u16, rows: u16, caps: Capabilities) -> Self {
-        let mut term = Terminal::new(TerminalOptions {
-            cols,
-            rows,
-            max_scrollback: SCROLLBACK_BYTES,
-        })
-        .expect("libghostty terminal");
+        let term = Terminal::new(cols, rows).expect("libghostty terminal");
+        Self::configure(term, caps)
+    }
+
+    /// Rebuild an engine from [`GhosttyEngine::checkpoint`] bytes. Fails if
+    /// they are corrupt or were written by a different libghostty (the
+    /// format has changed without a version bump; spike S5).
+    pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, CheckpointError> {
+        let body = bytes
+            .strip_prefix(CHECKPOINT_MAGIC)
+            .ok_or(CheckpointError::NotACheckpoint)?;
+        let (tag, body) = body.split_at(
+            body.iter()
+                .position(|b| *b == b'\n')
+                .ok_or(CheckpointError::NotACheckpoint)?
+                + 1,
+        );
+        if tag != format!("{}\n", engine_tag()).as_bytes() {
+            return Err(CheckpointError::OtherEngine(
+                String::from_utf8_lossy(&tag[..tag.len() - 1]).into_owned(),
+            ));
+        }
+        let snap = zstd::decode_all(body).map_err(|_| CheckpointError::Corrupt)?;
+        let decoder = Decoder::new_buf(&snap).map_err(|_| CheckpointError::Corrupt)?;
+        let term: Terminal<'static, 'static> =
+            decoder.decode().map_err(|_| CheckpointError::Corrupt)?;
+        Ok(Self::configure(term, Capabilities::XTERM_JS))
+    }
+
+    /// Everything about the terminal in Ghostty's own snapshot format,
+    /// zstd-compressed, behind a header naming the engine that wrote it.
+    /// For checkpoints on disk, not for clients (xterm.js needs
+    /// [`VtEngine::snapshot`]).
+    pub fn checkpoint(&self) -> Vec<u8> {
+        let snap = self
+            .term
+            .encode_snapshot_alloc(None)
+            .ok()
+            .flatten()
+            .map(|b| b.to_vec())
+            .unwrap_or_default();
+        let mut out = Vec::with_capacity(snap.len() / 20 + 64);
+        out.extend_from_slice(CHECKPOINT_MAGIC);
+        out.extend_from_slice(engine_tag().as_bytes());
+        out.push(b'\n');
+        out.extend(zstd::encode_all(&snap[..], 3).expect("zstd to memory"));
+        out
+    }
+
+    fn configure(mut term: Terminal<'static, 'static>, caps: Capabilities) -> Self {
+        term.set_scrollback_max_bytes(Some(SCROLLBACK_BYTES))
+            .expect("scrollback limit");
+        // Lets a checkpoint be taken in the middle of an escape sequence.
+        term.set_continuation_max_bytes(CONTINUATION_BYTES)
+            .expect("continuation tracking");
         let replies = Rc::new(RefCell::new(Vec::new()));
         let sink = replies.clone();
         term.on_pty_write(move |_, data| sink.borrow_mut().extend_from_slice(data))
@@ -130,7 +213,12 @@ impl GhosttyEngine {
                 .with_charsets(true);
         }
         let mut f = Formatter::new(&self.term, o).expect("formatter");
-        f.format_alloc(None).expect("format").to_vec()
+        let out = f.format_alloc(None).expect("format").to_vec();
+        if extras {
+            move_tabstops_to_end(out)
+        } else {
+            out
+        }
     }
 
     /// Non-default modes as CSI h/l.
@@ -248,6 +336,35 @@ impl GhosttyEngine {
     }
 }
 
+/// The formatter writes tab stops (`CSI 3 g`, then `CSI n G` + `ESC H` per
+/// stop) before the screen content and leaves the cursor on the last stop,
+/// so the content starts mid-line and wraps. Move that block to the end;
+/// the trailer positions the cursor afterwards.
+fn move_tabstops_to_end(out: Vec<u8>) -> Vec<u8> {
+    let Some(start) = out.windows(4).position(|w| w == b"\x1b[3g") else {
+        return out;
+    };
+    let mut end = start + 4;
+    loop {
+        let rest = &out[end..];
+        let Some(digits) = rest
+            .strip_prefix(b"\x1b[")
+            .map(|r| r.iter().take_while(|c| c.is_ascii_digit()).count())
+        else {
+            break;
+        };
+        if digits == 0 || !rest[2 + digits..].starts_with(b"G\x1bH") {
+            break;
+        }
+        end += 2 + digits + 3;
+    }
+    let mut moved = Vec::with_capacity(out.len());
+    moved.extend_from_slice(&out[..start]);
+    moved.extend_from_slice(&out[end..]);
+    moved.extend_from_slice(&out[start..end]);
+    moved
+}
+
 fn sgr_rgb(c: RgbColor) -> String {
     format!("48;2;{};{};{}", c.r, c.g, c.b)
 }
@@ -305,6 +422,10 @@ impl VtEngine for GhosttyEngine {
 
     fn plain_text(&self) -> String {
         String::from_utf8_lossy(&self.format(Format::Plain, false, false)).into_owned()
+    }
+
+    fn alt_screen(&self) -> bool {
+        self.term.active_screen().ok() == Some(Screen::Alternate)
     }
 
     fn title(&self) -> String {
