@@ -168,3 +168,21 @@ fn config_keeps_rules_but_not_the_first_prompt() {
         json!({ "agent": "claude", "cwd": "/src", "model": "haiku", "allow": [{ "tool": "Bash", "title": "make" }] })
     );
 }
+
+#[test]
+fn a_real_node_from_mise_not_its_shims() {
+    let root = std::env::temp_dir().join(format!("ilg-node-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for v in ["20.1.0", "22.9.1", "22.23.3", "24.21.0"] {
+        let bin = root.join(v).join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("node"), "").unwrap();
+    }
+    // Aliases mise keeps beside the versions are ignored.
+    std::fs::create_dir_all(root.join("lts/bin")).unwrap();
+    assert_eq!(super::mise_node(&root), Some(root.join("22.23.3/bin")));
+    std::fs::remove_dir_all(root.join("22.9.1")).unwrap();
+    std::fs::remove_dir_all(root.join("22.23.3")).unwrap();
+    assert_eq!(super::mise_node(&root), Some(root.join("24.21.0/bin")));
+    std::fs::remove_dir_all(&root).unwrap();
+}

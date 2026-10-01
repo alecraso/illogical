@@ -217,6 +217,11 @@ fn run_local(id: PaneId, dir: PathBuf, in_w: OwnedFd, out: OwnedFd, pid: u32, fd
             std::thread::sleep(Duration::from_millis(20));
         };
         let what = match ended {
+            // Why, as it said on its way out.
+            Some(crate::shim::Ended::Code(c)) if c != 0 => match last_words(&reader_dir) {
+                Some(w) => format!("exited with code {c}: {w}"),
+                None => format!("exited with code {c}"),
+            },
             Some(crate::shim::Ended::Code(c)) => format!("exited with code {c}"),
             Some(crate::shim::Ended::Signal(s)) => format!("killed by signal {s}"),
             None => why,
@@ -517,4 +522,17 @@ async fn drive_vm(
             }
         }
     }
+}
+
+/// The last thing an agent server wrote to stderr (`agent.err`), for the
+/// note when it exits with an error.
+fn last_words(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("agent.err")).ok()?;
+    let tail = &text[text.len().saturating_sub(4096)..];
+    let line = tail.lines().map(str::trim).filter(|l| !l.is_empty()).find(|l| {
+        let l = l.to_ascii_lowercase();
+        l.contains("error") || l.contains("not found") || l.contains("cannot")
+    });
+    let line = line.or_else(|| tail.lines().map(str::trim).rfind(|l| !l.is_empty()))?;
+    Some(line.chars().take(240).collect())
 }
