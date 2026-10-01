@@ -647,7 +647,8 @@ instead.
 - **M4c, dial-out and history.** The dial-out transport, read-only share
   tokens, and an optional log-segment sync to the home daemon, so history
   outlives a deleted sandbox.
-  - **Decide first:** whether to encrypt logs at rest. Synced sandbox logs are
+  - **Decided 2026-10-01: encrypt synced segments at rest, with a key held
+    by the home daemon.** The question was whether to encrypt logs at rest. Synced sandbox logs are
     where an agent's secrets end up. The likely answer is to encrypt synced
     segments with a key held by the home daemon, and later fetch that key with
     the secrets-manager identity under Risks.
@@ -732,8 +733,9 @@ to it, on the desktop and the phone.
       rather than through `tailscale serve`;
     - it identifies the caller by asking tailscaled who is connecting
       (`WhoIs`), the same path M4 uses for direct connections.
+  - **Domain (decided 2026-10-01):** `illogical.widgets.wtf` (geek already
+    has ACME and a Cloudflare token for `widgets.wtf`).
   - **To check before building it:**
-    - which domain to use;
     - that the DNS record resolves only to the tailnet IP;
     - which port the listener uses (443 on the tailnet IP is serve's);
     - that the certificate renews.
@@ -908,6 +910,11 @@ permissions.
     `CLAUDE_CODE_EXECUTABLE` points at yours;
   - Claude's own transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) is the
     source of truth for anything said while the daemon was down.
+- **Credentials in VMs (decided 2026-10-01):** an Anthropic API key from a
+  file only the user controls (`~/.config/illogical/anthropic-key`), passed
+  as `ANTHROPIC_API_KEY` into the agent server's environment in the VM, and
+  never written to the VM's disk or logged. Local agents use the user's own
+  Claude Code login.
 - **CLI:**
   - `illogical agent [--acp <cmd> | --fountain <agent>] [--host m|--vm]
     [--cwd d] "prompt"` prints the block id;
