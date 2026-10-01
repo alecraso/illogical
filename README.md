@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M4c (sandboxes, resident daemons, dial-out, synced history) works
+## Status: M7 (files and navigation) works, on top of M4c (sandboxes, resident daemons, dial-out, synced history)
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -222,6 +222,35 @@ the daemon stopping, crashing, or the machine rebooting:
     through `/tunnel/NAME`, and the answers are defanged: they're served on
     the home daemon's origin and the sandbox runs untrusted code.
 
+- **Files and navigation** (M7). *Go to directory…* (a pane's menu; *In a
+  directory…* on the `+` button's right-click; *Go to directory* in the
+  phone's sheet, where it's a full-screen sheet; Ctrl+Shift+G) browses
+  directories on the host the pane runs on: this daemon's, another host's
+  (it answers for itself), or its VM's (through the provider). It starts
+  where the pane is (OSC 7), lists directories used lately there first,
+  and filters fuzzily as you type (`/…` or `~…` goes to a path; Backspace
+  goes up). Then *New pane here* (on the same host: a VM tab's machine, a
+  sandbox's shell), *New tab here* (not for a VM's own directories: they
+  exist only in its tab), or *cd there*, which types `cd` into the shell
+  only while it waits at its prompt (shell integration says so) and says
+  why not otherwise.
+  - The `fs` methods behind it (`/api/fs/list|stat|read|watch|recent`,
+    `illogical fs`) are read-only and part of the owner's API: share-link
+    viewers and host tokens never reach them. On a daemon's host they read
+    as the daemon's user, so the OS's permissions are the limit, and they
+    also refuse `/proc`, `/sys`, `/dev`, the daemon's state directory and
+    the secrets it knows of (the wisp token, agent credentials); paths are
+    resolved first and an opened file is checked again through
+    `/proc/self/fd`, so no symlink (or one swapped in mid-open) gets
+    around that. On a machine the provider's agent reads as the sandbox's
+    root, in the user's own sandbox; the same places are refused by path,
+    and a read through any symlink is refused. A listing holds at most
+    5000 entries and a read at most 1 MiB (read in ranges); `watch`
+    polls (1s here, 3s on a machine) until you hang up.
+  - New sessions, and the machines of VM tabs and VM panes, get generated
+    names ("drifting cedar", unique per daemon). Ids don't change, rename
+    is still a double-click, and older sessions keep their names.
+
 ### The CLI
 
 ```
@@ -273,6 +302,12 @@ illogical sandboxes                           # the provider's sandboxes and the
 illogical run --sandbox s1                    # a disposable shell on one, nothing installed there
 illogical sandboxes promote s1 --as s1        # a resident daemon there, a host reached through the tunnel
 illogical --host s1 ls                        # through the tunnel (wakes it)
+illogical fs ls -l ~/src                      # files on this host (read-only)
+illogical fs cat %4:~/app/log.txt             # on the host %4 runs on (its VM); mN:PATH for machine N
+illogical fs watch ~/src                      # changes, as NDJSON (also stat, recent)
+illogical run --cwd ~/src                     # a shell in a directory, in a new tab
+illogical run --split %4 --join --cwd ~/app   # beside %4, where it runs (its VM tab's machine)
+illogical cd %4 ~/src                         # typed into %4's shell, only if it's at its prompt
 ```
 
 `--json` prints the API's JSON. `send` then `wait` only sees what happened
@@ -416,7 +451,8 @@ against the running one.
   API and WhoIs (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install
   --tailnet` and the `sandbox` supervisor). M4c: the dial-out transport
   (`dial.rs`, over `dialout_mux.rs`'s streams), share links (`share.rs`), and
-  history sync (`sync.rs`, sealed by `seal.rs`).
+  history sync (`sync.rs`, sealed by `seal.rs`). M7: files on a host
+  (`fs.rs`), names (`illogical_core::names`).
 - `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
   another daemon with `--host` (`hosts.rs`).
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
