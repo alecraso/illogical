@@ -728,10 +728,9 @@ impl Front {
         let s = self.session;
         let tabs = self.session_tabs(s);
         let current = self.current_tab(s);
+        // The current window, mended if it went away.
         if let Some(cur) = current {
-            if self.active_tab.get(&s) != Some(&cur) {
-                self.active_tab.insert(s, cur);
-            }
+            self.active_tab.insert(s, cur);
         }
         if current != self.told.active
             && let Some(cur) = current

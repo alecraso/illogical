@@ -1498,7 +1498,7 @@ impl Daemon {
         panes.extend(self.blocks.iter().map(|(id, b)| self.block_info(*id, b)));
         panes.sort_by_key(|p| p.id);
         let machines = self.machines.values().cloned().collect();
-        let options = self.mux.options.clone();
+        let options = Box::new(self.mux.options.clone());
         State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes, machines, options }
     }
 }

@@ -206,7 +206,7 @@ pub struct State {
     pub machines: Vec<Machine>,
     /// Clients' named options (tmux `@` options), per scope.
     #[serde(default)]
-    pub options: Options,
+    pub options: Box<Options>,
 }
 
 pub type MachineId = u32;
@@ -478,7 +478,14 @@ mod tests {
         let mut options = Options::default();
         options.sessions.insert(1, [("@a".to_owned(), "b".to_owned())].into());
         options.panes.insert(7, [("@uservars".to_owned(), "x".to_owned())].into());
-        let state = State { rev: 1, sessions: vec![], tabs: vec![], panes: vec![], machines: vec![], options };
+        let state = State {
+            rev: 1,
+            sessions: vec![],
+            tabs: vec![],
+            panes: vec![],
+            machines: vec![],
+            options: Box::new(options),
+        };
         let msg = ServerMsg::State { state };
         let back: ServerMsg = serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
         assert_eq!(back, msg);
