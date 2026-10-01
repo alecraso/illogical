@@ -6,6 +6,7 @@ import { useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
 import { useSubscribe } from "./hooks";
 import { AttentionBadge } from "./attention";
+import { HostCrumb, HostSection } from "./hosts";
 import { openPort } from "../blocks";
 import { startAgent } from "./agent-dialog";
 
@@ -19,7 +20,8 @@ export function PhoneHeader({ client }: { client: Client }) {
     <>
       <header class="bar phone-bar">
         <button class="sheet-button" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {client.state?.panes.some((p) => p.attention === "needs_input") ? <span class="att needs_input">●</span> : "☰"} <span class="crumb">{session?.name}</span> ›{" "}
+          {client.state?.panes.some((p) => p.attention === "needs_input") ? <span class="att needs_input">●</span> : "☰"} <HostCrumb />
+          <span class="crumb">{session?.name}</span> ›{" "}
           {tab && client.tabMachine(tab.id) && <span class="host-tag">VM</span>}
           <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
         </button>
@@ -45,6 +47,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
   return (
     <div class="sheet-backdrop" onClick={close}>
       <nav class="sheet" onClick={(e) => e.stopPropagation()}>
+        <HostSection close={close} />
         {wanting.length > 0 && (
           <section class="needs-you">
             <h2>Needs you</h2>

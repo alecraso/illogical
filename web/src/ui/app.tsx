@@ -9,6 +9,7 @@ import { askText, closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } f
 import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
+import { HostButton, HostPicker } from "./hosts";
 import { openPort } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 
@@ -48,7 +49,9 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
         <TopBar client={client} renaming={renaming} setRenaming={setRenaming} />
       ))}
       <main class="main">
-        {!state ? null : state.sessions.length === 0 ? (
+        {!state ? (
+          <HostPicker />
+        ) : state.sessions.length === 0 ? (
           <div class="empty">
             <p>No sessions.</p>
             <button class="primary" onClick={() => client.intent({ op: "new_session", name: null, from_pane: null })}>
@@ -107,6 +110,7 @@ function TopBar({
 
   return (
     <header class="bar">
+      <HostButton />
       {renaming?.kind === "session" && renaming.id === session.id ? (
         <RenameInput
           value={session.name}

@@ -6,6 +6,7 @@ mod api;
 mod block;
 mod browser;
 mod history;
+mod hosts;
 mod install;
 mod keys;
 mod machine;
@@ -14,12 +15,14 @@ mod osc;
 mod pane;
 mod ports;
 mod push;
+mod sandbox;
 mod server;
 mod shellint;
 mod shim;
 mod sites;
 mod store;
 mod sys;
+mod tailscale;
 mod tls;
 
 use std::{net::SocketAddr, path::PathBuf};
@@ -41,14 +44,44 @@ struct Args {
 enum Command {
     /// Install as a systemd user service that starts at boot: copies this
     /// binary to ~/.local/bin, writes the unit, enables and (re)starts it.
+    /// With --tailnet (sandboxes, no systemd): joins the tailnet with a
+    /// userspace tailscaled and runs the daemon there, both kept running by
+    /// `illogicald sandbox`.
     Install {
         /// Write and enable the unit without starting it now.
         #[arg(long)]
         no_start: bool,
+        /// A Tailscale auth key (ephemeral, tagged), as `file:PATH`, `-` for
+        /// stdin, or the key itself (kept off command lines it starts).
+        #[arg(long, value_name = "AUTHKEY")]
+        tailnet: Option<String>,
+        /// The home daemon's URL: its page may use this daemon.
+        #[arg(long, requires = "tailnet")]
+        home: Option<String>,
+        /// An invite from the home daemon (`illogical hosts invite`), or
+        /// `file:PATH`: adds this daemon to its host list.
+        #[arg(long, requires = "home")]
+        join: Option<String>,
+        /// The tailnet login allowed in [default: the home daemon's owner,
+        /// learned when joining].
+        #[arg(long, requires = "tailnet")]
+        owner: Option<String>,
+        /// This machine's tailnet name (and host name in lists).
+        #[arg(long, requires = "tailnet")]
+        hostname: Option<String>,
+        /// The daemon's port on loopback.
+        #[arg(long, default_value_t = 7681, requires = "tailnet")]
+        port: u16,
+        /// Don't put it behind `tailscale serve` (plain http only).
+        #[arg(long, requires = "tailnet")]
+        no_serve: bool,
         /// Arguments for the daemon in the unit, after `--`.
         #[arg(last = true)]
         daemon_args: Vec<String>,
     },
+    /// Keep tailscaled and the daemon running, as `install --tailnet` set
+    /// them up (for machines without systemd); stops on SIGTERM.
+    Sandbox,
 }
 
 #[derive(clap::Args, Debug)]
@@ -66,9 +99,21 @@ struct RunArgs {
     #[arg(long = "public-host")]
     public_hosts: Vec<String>,
 
-    /// Extra WebSocket origins to accept, e.g. the Vite dev server.
+    /// Extra origins whose pages may use this daemon (WebSocket and API),
+    /// exactly as the browser sends them: the Vite dev server, or the home
+    /// daemon whose host list this daemon is on (`https://geek.….ts.net`).
     #[arg(long = "allow-origin")]
     allow_origins: Vec<String>,
+
+    /// This daemon's name in host lists [default: its tailnet name, else
+    /// the hostname].
+    #[arg(long, env = "ILLOGICAL_NAME")]
+    name: Option<String>,
+
+    /// tailscaled's socket, for its name and for asking who is connecting
+    /// [default: tailscaled's usual one, if present].
+    #[arg(long, env = "ILLOGICAL_TAILSCALE_SOCKET")]
+    tailscale_socket: Option<PathBuf>,
 
     /// Command line for panes, split on whitespace [default: $SHELL -l].
     #[arg(long)]
@@ -272,7 +317,21 @@ fn main() -> anyhow::Result<()> {
         .init();
     let args = Args::parse();
     match args.command {
-        Some(Command::Install { no_start, daemon_args }) => install::install(!no_start, &daemon_args),
+        Some(Command::Install {
+            tailnet: Some(authkey),
+            home,
+            join,
+            owner,
+            hostname,
+            port,
+            no_serve,
+            daemon_args,
+            ..
+        }) => {
+            sandbox::install(sandbox::TailnetOpts { authkey, hostname, home, join, owner, port, no_serve, daemon_args })
+        }
+        Some(Command::Install { no_start, daemon_args, .. }) => install::install(!no_start, &daemon_args),
+        Some(Command::Sandbox) => sandbox::supervise(),
         None => {
             // Pane terminals kept for us across a restart; taken before any
             // threads start.
@@ -285,14 +344,44 @@ fn main() -> anyhow::Result<()> {
 async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd::OwnedFd>) -> anyhow::Result<()> {
     let mut public_hosts = args.public_hosts.clone();
     let mut owner = args.owner.clone();
-    if let Some(t) = access::tailnet() {
-        info!(host = %t.host, "accepting tailnet host");
-        public_hosts.push(t.host);
-        owner = owner.or(t.login);
+    let local_api = tailscale::LocalApi::find(args.tailscale_socket.as_deref());
+    let status = match &local_api {
+        Some(api) => api
+            .settled_status(std::time::Duration::from_secs(30))
+            .await
+            .map_err(|e| info!(error = %e, "no tailnet"))
+            .ok(),
+        None => None,
+    };
+    if let Some(t) = &status {
+        info!(host = %t.host, userspace = t.userspace, "accepting tailnet host");
+        public_hosts.push(t.host.clone());
+        owner = owner.or(t.login.clone());
     }
     info!(owner = owner.as_deref().unwrap_or("<none: tailnet requests refused>"), "tailnet owner");
     let owner_login = owner.clone();
-    let access = access::Access::new(args.listen.port(), &public_hosts, &args.allow_origins, owner.clone());
+    // Reachable without serve, on our own port: when not bound to loopback
+    // (at the listen address, or bound to every address, at this node's
+    // tailnet ones), or when tailscaled's netstack forwards the port to us.
+    let userspace = status.as_ref().is_some_and(|t| t.userspace);
+    let everywhere = args.listen.ip().is_unspecified();
+    let mut direct: Vec<String> = access::direct_address(args.listen).into_iter().collect();
+    if everywhere || userspace {
+        direct.extend(status.iter().flat_map(|t| &t.ips).map(|ip| access::host_name(*ip)));
+    }
+    if !direct.is_empty() || everywhere || userspace {
+        direct.extend(public_hosts.iter().cloned());
+    }
+    let access = access::Access::new(args.listen.port(), &public_hosts, &direct, &args.allow_origins, owner.clone());
+    let identify = tailscale::Identify::new(local_api, userspace);
+    let name = args.name.clone().unwrap_or_else(|| {
+        status
+            .as_ref()
+            .and_then(|t| t.host.split('.').next().map(str::to_owned))
+            .or_else(|| nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok()))
+            .unwrap_or_else(|| "illogical".into())
+    });
+    info!(name, "this host");
 
     let (shell, shell_args) = match &args.shell {
         Some(cmd) => {
@@ -365,7 +454,9 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     };
     let mux = mux::start(config, store, kept, push.clone());
 
-    let app = server::App::new(access, mux.clone(), push);
+    let hosts = hosts::Hosts::open(&state_dir, name);
+    hosts.spawn_probe();
+    let app = server::App::new(access, identify, mux.clone(), push, hosts);
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
     // The CLI's socket: replace a stale one from a previous run.
@@ -375,7 +466,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
     sys::notify("READY=1");
     tokio::select! {
-        r = axum::serve(listener, server::router(app)) => r?,
+        r = axum::serve(listener, server::router(app).into_make_service_with_connect_info::<SocketAddr>()) => r?,
         _ = signalled() => {
             sys::notify("STOPPING=1");
             info!("shutting down: saving every pane");

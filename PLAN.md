@@ -627,7 +627,7 @@ instead.
 
 **Milestones:**
 
-- **M4a, federation + tailnet.**
+- **M4a, federation + tailnet.** (Done 2026-10-01; see README.)
   - The host list on the home daemon, shown in the client and cached there.
   - Per-host attach.
   - The CLI takes a `--host` flag.

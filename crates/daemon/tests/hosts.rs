@@ -1,0 +1,243 @@
+//! M4a end to end: a home daemon's host list, the CLI's `--host`, and a
+//! second daemon accepting the home daemon's page (its exact origin) and
+//! nobody else's. Both daemons are real binaries on loopback; tailscaled is
+//! kept out of it (`--tailscale-socket` points nowhere), and a fake tailnet
+//! name stands in for serve.
+
+use std::{
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
+    path::{Path, PathBuf},
+    process::{Child, Command, Output, Stdio},
+    sync::atomic::{AtomicU32, Ordering},
+    time::{Duration, Instant},
+};
+
+use serde_json::{Value, json};
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
+
+const PUBLIC: &str = "box.example.ts.net";
+const OWNER: &str = "me@example.com";
+
+struct Daemon {
+    child: Child,
+    port: u16,
+    state: PathBuf,
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.state);
+    }
+}
+
+fn start(name: &str, extra: &[&str]) -> Daemon {
+    static N: AtomicU32 = AtomicU32::new(0);
+    let state =
+        std::env::temp_dir().join(format!("ilg-hosts-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+    let _ = std::fs::remove_dir_all(&state);
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
+        .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+        .args(["--name", name, "--tailscale-socket", "/nonexistent/tailscaled.sock"])
+        .args(["--public-host", PUBLIC, "--owner", OWNER])
+        .args(extra)
+        .arg("--state-dir")
+        .arg(&state)
+        .env("PS1", "$ ")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let d = Daemon { child, port, state };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while std::os::unix::net::UnixStream::connect(d.sock()).is_err() || TcpStream::connect(("127.0.0.1", port)).is_err()
+    {
+        assert!(Instant::now() < deadline, "daemon did not start");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    d
+}
+
+impl Daemon {
+    fn sock(&self) -> PathBuf {
+        match std::fs::read_to_string(self.state.join("sock.path")) {
+            Ok(p) => PathBuf::from(p.trim()),
+            Err(_) => self.state.join("sock"),
+        }
+    }
+
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// One HTTP request over TCP with these headers; status, headers, body.
+    fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> (u16, String, String) {
+        let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
+        let body = body.map(|b| b.to_string()).unwrap_or_default();
+        let mut req = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\nContent-Length: {}\r\n", body.len());
+        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+            req.push_str(&format!("Host: 127.0.0.1:{}\r\n", self.port));
+        }
+        for (k, v) in headers {
+            req.push_str(&format!("{k}: {v}\r\n"));
+        }
+        if !body.is_empty() {
+            req.push_str("Content-Type: application/json\r\n");
+        }
+        req.push_str("\r\n");
+        req.push_str(&body);
+        s.write_all(req.as_bytes()).unwrap();
+        let mut res = String::new();
+        s.read_to_string(&mut res).unwrap();
+        let (head, body) = res.split_once("\r\n\r\n").unwrap_or((&res, ""));
+        let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+        (status, head.to_ascii_lowercase(), body.to_owned())
+    }
+}
+
+/// The CLI, built next to the daemon (cargo builds only this package's
+/// binaries for its tests).
+fn cli_bin() -> PathBuf {
+    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    assert!(status.success(), "building the CLI");
+    bin
+}
+
+fn cli(home: &Daemon, args: &[&str]) -> Output {
+    Command::new(cli_bin()).arg("--socket").arg(home.sock()).args(args).env_remove("ILLOGICAL_PANE").output().unwrap()
+}
+
+fn stdout(o: &Output) -> String {
+    assert!(o.status.success(), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !f() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn the_home_list_and_host_flag_reach_another_daemon() {
+    let home = start("home", &[]);
+    let other = start("other", &["--allow-origin", &home.url()]);
+
+    // Add it; the home daemon checks on it straight away.
+    stdout(&cli(&home, &["hosts", "add", "other", &other.url()]));
+    let list: Value = serde_json::from_str(&stdout(&cli(&home, &["--json", "hosts"]))).unwrap();
+    assert_eq!(list["this"], "home");
+    assert_eq!(list["hosts"][0]["name"], "other");
+    assert_eq!(list["hosts"][0]["urls"][0], other.url());
+    wait_for("the home daemon to see it", || {
+        let v: Value = serde_json::from_str(&stdout(&cli(&home, &["--json", "hosts"]))).unwrap();
+        v["hosts"][0]["last_seen_ms"].is_u64()
+    });
+
+    // `--host NAME` runs there, not here.
+    let run = cli(&home, &["--host", "other", "run", "--wait", "--", "echo on-the-other; exit 4"]);
+    assert_eq!(run.status.code(), Some(4), "{}", String::from_utf8_lossy(&run.stderr));
+    let pane = String::from_utf8_lossy(&run.stdout).trim().trim_start_matches('%').to_owned();
+    let tail = stdout(&cli(&home, &["--host", "other", "tail", &format!("%{pane}"), "--text"]));
+    assert!(tail.contains("on-the-other"), "{tail}");
+    let here: Value = serde_json::from_str(&stdout(&cli(&home, &["--json", "ls"]))).unwrap();
+    assert_eq!(here.as_array().unwrap().len(), 1, "nothing new on the home daemon");
+    // A URL works without the list; the home daemon's own name is the socket.
+    let there: Value = serde_json::from_str(&stdout(&cli(&home, &["--host", &other.url(), "--json", "ls"]))).unwrap();
+    assert_eq!(there.as_array().unwrap().len(), 2);
+    let me: Value = serde_json::from_str(&stdout(&cli(&home, &["--host", "home", "--json", "ls"]))).unwrap();
+    assert_eq!(me.as_array().unwrap().len(), 1);
+    // Unknown names fail clearly.
+    let o = cli(&home, &["--host", "nope", "ls"]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("no host nope"));
+
+    stdout(&cli(&home, &["hosts", "rm", "other"]));
+    let list: Value = serde_json::from_str(&stdout(&cli(&home, &["--json", "hosts"]))).unwrap();
+    assert_eq!(list["hosts"], json!([]));
+}
+
+#[tokio::test]
+async fn another_daemon_accepts_the_home_page_and_nobody_else() {
+    let home = start("home", &[]);
+    let other = start("other", &["--allow-origin", &home.url()]);
+    let ws = |origin: &str| {
+        let mut req = format!("ws://127.0.0.1:{}/ws", other.port).into_client_request().unwrap();
+        req.headers_mut().insert("origin", origin.parse().unwrap());
+        connect_async(req)
+    };
+    assert!(ws(&home.url()).await.is_ok(), "the home daemon's page may connect");
+    for bad in ["http://127.0.0.1:1", "https://evil.example", &home.url().replace("http:", "https:"), "null"] {
+        assert!(ws(bad).await.is_err(), "{bad} must be refused");
+    }
+    // The home daemon itself doesn't accept the other's page.
+    let mut req = format!("ws://127.0.0.1:{}/ws", home.port).into_client_request().unwrap();
+    req.headers_mut().insert("origin", other.url().parse().unwrap());
+    assert!(connect_async(req).await.is_err());
+
+    let (other, home_url) = (std::sync::Arc::new(other), home.url());
+    let o = other.clone();
+    tokio::task::spawn_blocking(move || {
+        // CORS: the API answers the home page, exactly, and no one else.
+        let pre = [("origin", home_url.as_str()), ("access-control-request-method", "POST")];
+        let (status, head, _) = o.http("OPTIONS", "/api/run", &pre, None);
+        assert_eq!(status, 204, "{head}");
+        assert!(head.contains(&format!("access-control-allow-origin: {home_url}")), "{head}");
+        let (status, head, _) = o.http("GET", "/api/panes", &[("origin", &home_url)], None);
+        assert_eq!(status, 200);
+        assert!(head.contains(&format!("access-control-allow-origin: {home_url}")), "{head}");
+
+        let evil = [("origin", "https://evil.example"), ("access-control-request-method", "POST")];
+        let (_, head, _) = o.http("OPTIONS", "/api/run", &evil, None);
+        assert!(!head.contains("access-control-allow-origin"), "{head}");
+        let (status, head, _) = o.http("POST", "/api/run", &[("origin", "https://evil.example")], Some(json!({})));
+        assert_eq!(status, 403, "{head}");
+        assert!(!head.contains("access-control-allow-origin"), "{head}");
+    })
+    .await
+    .unwrap();
+}
+
+#[test]
+fn tailnet_requests_need_the_owner_except_to_join_with_an_invite() {
+    let home = start("home", &[]);
+    let login = ("tailscale-user-login", OWNER);
+    let host = ("host", PUBLIC);
+    // Through serve with the owner's login: fine. Without a login (a tagged
+    // node, or Funnel): refused. Someone else: refused.
+    assert_eq!(home.http("GET", "/api/hosts", &[host, login], None).0, 200);
+    assert_eq!(home.http("GET", "/api/hosts", &[host], None).0, 403);
+    assert_eq!(home.http("GET", "/api/hosts", &[host, ("tailscale-user-login", "friend@example.com")], None).0, 403);
+    assert_eq!(home.http("POST", "/api/hosts/invite", &[host], None).0, 403, "only the owner mints invites");
+    // A foreign Host is refused before anything else, join included.
+    assert_eq!(home.http("POST", "/api/hosts/join", &[("host", "evil.example")], Some(json!({}))).0, 421);
+
+    // A sandbox (no identity) joins with an invite, once.
+    let (status, _, body) = home.http("POST", "/api/hosts/invite", &[host, login], None);
+    assert_eq!(status, 200);
+    let token = serde_json::from_str::<Value>(&body).unwrap()["token"].as_str().unwrap().to_owned();
+    let join = |token: &str| {
+        let body = json!({"token": token, "host": {"name": "sbx", "urls": ["https://sbx.example.ts.net"]}});
+        home.http("POST", "/api/hosts/join", &[host], Some(body))
+    };
+    assert_eq!(join("ilj_not-a-token").0, 403);
+    let (status, _, body) = join(&token);
+    assert_eq!(status, 200, "{body}");
+    // The sandbox learns whom to let in: the home daemon's owner.
+    let joined: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(joined["owner"], OWNER);
+    assert_eq!(joined["host"]["name"], "sbx");
+    assert_eq!(join(&token).0, 403, "an invite is spent");
+    let (_, _, list) = home.http("GET", "/api/hosts", &[host, login], None);
+    let list: Value = serde_json::from_str(&list).unwrap();
+    assert_eq!(list["hosts"][0]["name"], "sbx");
+    // Joining doesn't open anything else up.
+    assert_eq!(home.http("GET", "/api/hosts/join", &[host], None).0, 403);
+    assert_eq!(home.http("POST", "/api/run", &[host], Some(json!({}))).0, 403);
+}
