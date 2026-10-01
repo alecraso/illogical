@@ -186,3 +186,24 @@ fn a_real_node_from_mise_not_its_shims() {
     assert_eq!(super::mise_node(&root), Some(root.join("24.21.0/bin")));
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_prompt_queued_while_the_agent_is_down_survives_a_restart() {
+    let mut inner = Inner::new(Config::default(), None);
+    for l in [
+        frame("note", json!({ "e": "exit", "why": "exited with code 1" })),
+        frame("note", json!({ "e": "queue", "text": "whats this project?", "front": false })),
+    ] {
+        inner.rebuild_line(&l);
+    }
+    assert_eq!(inner.queue, ["whats this project?"]);
+    // Sending it takes it off, here as when it's rebuilt.
+    inner.rebuild_line(&frame(
+        "out",
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "session/prompt", "params": { "sessionId": "s1", "prompt": [{ "type": "text", "text": "whats this project?" }] } }),
+    ));
+    assert!(inner.queue.is_empty());
+    inner.rebuild_line(&frame("note", json!({ "e": "queue", "text": "later", "front": false })));
+    inner.rebuild_line(&frame("note", json!({ "e": "queue_clear" })));
+    assert!(inner.queue.is_empty(), "cancel drops what's queued");
+}

@@ -303,6 +303,13 @@ impl Inner {
         self.on_note(&e, now_ms());
     }
 
+    /// Queue a prompt for the agent. It's in the log, so a prompt queued
+    /// while the agent is down survives a daemon restart; sending it takes
+    /// it off (see `session/prompt` in `on_out`).
+    fn enqueue(&mut self, text: &str, front: bool) {
+        self.note(json!({ "e": "queue", "text": text, "front": front }));
+    }
+
     /// Send a frame: log it, account for it, then write it.
     fn out(&mut self, frame: Value) {
         self.write_log("out", &frame);
@@ -330,6 +337,14 @@ impl Inner {
 
     fn on_note(&mut self, e: &Value, at: u64) {
         match e["e"].as_str().unwrap_or("") {
+            "queue" => {
+                let text = e["text"].as_str().unwrap_or_default().to_owned();
+                match e["front"].as_bool() {
+                    Some(true) => self.queue.push_front(text),
+                    _ => self.queue.push_back(text),
+                }
+            }
+            "queue_clear" => self.queue.clear(),
             "spawn" => {
                 // A new server: nothing outstanding carries over.
                 if self.prompt_id.is_some() || !self.pending.is_empty() {
@@ -427,6 +442,9 @@ impl Inner {
                             .filter_map(|c| c["text"].as_str())
                             .collect::<Vec<_>>()
                             .join("\n");
+                        if self.queue.front() == Some(&text) {
+                            self.queue.pop_front();
+                        }
                         self.t.user(&text, at);
                         self.prompt_id = Some(id);
                         self.status = Status::Working;
@@ -747,7 +765,7 @@ impl Agent {
     fn begin(&self) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(p) = inner.cfg.prompt.take() {
-            inner.queue.push_back(p);
+            inner.enqueue(&p, false);
         }
         if self.ctx.restoring {
             // Still running from before the restart: carry on with it.
@@ -1011,7 +1029,7 @@ async fn run(
                             if retries > MAX_RETRIES {
                                 g.note(json!({ "e": "error", "message": "The agent kept asking to retry; send it again later" }));
                             } else {
-                                g.queue.push_front(text.clone());
+                                g.enqueue(text, true);
                                 retry_at = Some(tokio::time::Instant::now() + RETRY_AFTER);
                             }
                             continue;
@@ -1190,7 +1208,7 @@ fn send_next(ctx: &BlockCtx, g: &mut Inner) {
     if g.status != Status::Ready || g.prompt_id.is_some() || g.cfg.session_id.is_none() {
         return;
     }
-    let Some(text) = g.queue.pop_front() else { return };
+    let Some(text) = g.queue.front().cloned() else { return };
     let session = g.session();
     let mut params = json!({ "sessionId": session, "prompt": [{ "type": "text", "text": text }] });
     if g.cfg.def.agent == Kind::Fountain {
@@ -1272,7 +1290,7 @@ impl Agent {
 
     fn cancel(&self) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
-        g.queue.clear();
+        g.note(json!({ "e": "queue_clear" }));
         let open: Vec<Value> = g.pending.iter().map(|p| p.rpc.clone()).collect();
         if g.prompt_id.is_none() && open.is_empty() {
             drop(g);
@@ -1293,7 +1311,7 @@ impl Agent {
     fn send(&self, args: &Value) -> Result<Value, String> {
         let text = args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or("send needs {\"text\": …}")?;
         let mut g = self.inner.lock().unwrap();
-        g.queue.push_back(text.to_owned());
+        g.enqueue(text, false);
         g.error = None;
         match g.status {
             Status::Exited | Status::Stopped => self.spawn(&mut g),
