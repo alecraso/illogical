@@ -29,6 +29,14 @@ pub enum HostsCmd {
         #[arg(long, default_value = "1h")]
         ttl: String,
     },
+    /// Mint a per-host token for a host without tailnet identity: one that
+    /// dials out (`illogicald --peer wss://this-daemon --token FILE`) or
+    /// pushes its history (`--sync`). Adds it as a dial-out host if it isn't
+    /// listed; replaces any token it had. Printed once; only its hash is
+    /// kept.
+    Token { name: String },
+    /// Revoke a host's token, and drop its dial-out connection.
+    Revoke { name: String },
 }
 
 /// Where commands go: the local socket, or the daemon `--host` names.
@@ -50,6 +58,10 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
         .flatten()
         .find(|h| h["name"].as_str() == Some(host))
         .with_context(|| format!("no host {host} (see `illogical hosts`)"))?;
+    // A host that dials out is reached through the home daemon.
+    if entry["transport"].as_str() == Some("dial_out") {
+        return Ok(Target::Via(socket_of(&local), format!("/h/{}", crate::http::enc(host))));
+    }
     let urls: Vec<&str> = entry["urls"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     // The first URL that answers.
     let mut last = None;
@@ -63,6 +75,13 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
     match last {
         Some(e) => Err(e.context(format!("can't reach {host}"))),
         None => bail!("host {host} has no URL"),
+    }
+}
+
+fn socket_of(t: &Target) -> PathBuf {
+    match t {
+        Target::Socket(p) | Target::Via(p, _) => p.clone(),
+        Target::Url(_) => unreachable!("the local daemon is a socket"),
     }
 }
 
@@ -89,8 +108,11 @@ pub fn run(
             if !json_out {
                 println!("{:<20} {:<44} (this daemon)", v["this"].as_str().unwrap_or("?"), "");
                 for h in v["hosts"].as_array().into_iter().flatten() {
-                    let urls: Vec<&str> =
+                    let mut urls: Vec<&str> =
                         h["urls"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    if h["transport"].as_str() == Some("dial_out") {
+                        urls.push("(dials out, reached through here)");
+                    }
                     let seen =
                         h["last_seen_ms"].as_u64().map(|t| format!("seen {}", ago(t))).unwrap_or("never seen".into());
                     println!("{:<20} {:<44} {seen}", h["name"].as_str().unwrap_or("?"), urls.join(" "));
@@ -113,6 +135,18 @@ pub fn run(
                 return Ok(());
             }
             v
+        }
+        Some(HostsCmd::Token { name }) => {
+            let path = format!("/api/hosts/{}/token", crate::http::enc(&name));
+            let v = request(target, "POST", &path, None)?.json()?;
+            if !json_out {
+                println!("{}", v["token"].as_str().unwrap_or_default());
+                return Ok(());
+            }
+            v
+        }
+        Some(HostsCmd::Revoke { name }) => {
+            request(target, "DELETE", &format!("/api/hosts/{}/token", crate::http::enc(&name)), None)?.json()?
         }
     };
     if json_out {

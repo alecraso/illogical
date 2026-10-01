@@ -435,6 +435,9 @@ struct TailQuery {
     /// Strip escape sequences.
     #[serde(default)]
     text: Option<u8>,
+    /// A pane of another host, from its synced history.
+    #[serde(default)]
+    host: Option<String>,
 }
 
 /// A closed pane's output, from its retired log: no following, and offsets
@@ -517,6 +520,9 @@ async fn wait_attention(app: &App, id: PaneId, needs_input: bool) -> Res<WaitRes
 }
 
 async fn tail(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<TailQuery>) -> Res<Response> {
+    if let Some(host) = q.host.clone() {
+        return tail_synced(&app, id, host, &q).await;
+    }
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
         return Ok(tail_block(app.clone(), id, b, q.follow == Some(1)));
     }
@@ -750,6 +756,9 @@ struct HistoryQuery {
     matching: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
+    /// Another host's synced history (`*`: every host's).
+    #[serde(default)]
+    host: Option<String>,
 }
 
 async fn history_(State(app): AppState, Query(q): Query<HistoryQuery>) -> Res<Response> {
@@ -763,7 +772,13 @@ async fn history_(State(app): AppState, Query(q): Query<HistoryQuery>) -> Res<Re
     };
     let store = app.mux.store.clone();
     let limit = q.limit.unwrap_or(100);
-    let list = tokio::task::spawn_blocking(move || history::history(&store, &filter, limit)).await.unwrap_or_default();
+    let synced = app.synced.clone();
+    let list = tokio::task::spawn_blocking(move || match &q.host {
+        Some(host) => synced.history(host, &filter, limit),
+        None => history::history(&store, &filter, limit),
+    })
+    .await
+    .unwrap_or_default();
     Ok(Json(list).into_response())
 }
 
@@ -774,6 +789,9 @@ struct SearchQuery {
     since: Option<u64>,
     #[serde(default)]
     limit: Option<usize>,
+    /// Another host's synced history (`*`: every host's).
+    #[serde(default)]
+    host: Option<String>,
 }
 
 async fn search(State(app): AppState, Query(q): Query<SearchQuery>) -> Res<Response> {
@@ -781,9 +799,32 @@ async fn search(State(app): AppState, Query(q): Query<SearchQuery>) -> Res<Respo
     let since = q.since.map(|s| now_ms().saturating_sub(s * 1000));
     let store = app.mux.store.clone();
     let limit = q.limit.unwrap_or(100);
-    let hits =
-        tokio::task::spawn_blocking(move || history::search(&store, &re, since, limit)).await.unwrap_or_default();
+    let synced = app.synced.clone();
+    let hits = tokio::task::spawn_blocking(move || match &q.host {
+        Some(host) => synced.search(host, &re, since, limit),
+        None => history::search(&store, &re, since, limit),
+    })
+    .await
+    .unwrap_or_default();
     Ok(Json(hits).into_response())
+}
+
+/// A pane synced from another host: its output from an offset (default the
+/// last 64 KB), no following.
+async fn tail_synced(app: &App, id: PaneId, host: String, q: &TailQuery) -> Res<Response> {
+    let synced = app.synced.clone();
+    let from = match q.from.as_deref() {
+        None => None,
+        Some(n) => Some(n.parse::<u64>().map_err(|_| bad("a synced pane's from takes an offset"))?),
+    };
+    let read = tokio::task::spawn_blocking(move || {
+        let from = from.unwrap_or_else(|| synced.pane(&host, id).log_end.saturating_sub(64 * 1024));
+        synced.read_from(&host, id, from)
+    })
+    .await
+    .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let (_, bytes) = read.map_err(|e| ApiError(StatusCode::NOT_FOUND, e.to_string()))?;
+    Ok(if q.text == Some(1) { strip(&bytes).into_bytes() } else { bytes }.into_response())
 }
 
 async fn push_key(State(app): AppState) -> Res<Json<HashMap<&'static str, String>>> {

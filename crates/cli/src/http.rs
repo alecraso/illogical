@@ -22,6 +22,9 @@ pub enum Target {
     Socket(PathBuf),
     /// Another daemon, over HTTP(S).
     Url(Url),
+    /// A dial-out host, through the local daemon (its home daemon): the
+    /// local socket, with every path under this prefix (`/h/NAME`).
+    Via(PathBuf, String),
 }
 
 /// `http(s)://host[:port]`, taken apart.
@@ -71,21 +74,29 @@ impl Target {
     /// The Host header, and the WebSocket URL's authority.
     pub fn authority(&self) -> &str {
         match self {
-            Target::Socket(_) => "localhost",
+            Target::Socket(_) | Target::Via(..) => "localhost",
             Target::Url(u) => &u.authority,
+        }
+    }
+
+    /// What every request path is put under.
+    pub fn prefix(&self) -> &str {
+        match self {
+            Target::Via(_, p) => p,
+            _ => "",
         }
     }
 
     pub fn ws_url(&self) -> String {
         match self {
             Target::Url(u) if u.tls => format!("wss://{}/ws", u.authority),
-            _ => format!("ws://{}/ws", self.authority()),
+            _ => format!("ws://{}{}/ws", self.authority(), self.prefix()),
         }
     }
 
     pub fn connect(&self) -> anyhow::Result<Box<dyn Stream>> {
         match self {
-            Target::Socket(path) => Ok(Box::new(
+            Target::Socket(path) | Target::Via(path, _) => Ok(Box::new(
                 UnixStream::connect(path)
                     .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
             )),
@@ -178,7 +189,8 @@ pub fn request(
     let body = body.map(|b| b.to_string()).unwrap_or_default();
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {}{path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        target.prefix(),
         target.authority(),
         body.len()
     )?;

@@ -5,6 +5,7 @@ mod agent;
 mod api;
 mod block;
 mod browser;
+mod dial;
 mod history;
 mod hosts;
 mod install;
@@ -16,14 +17,18 @@ mod pane;
 mod ports;
 mod push;
 mod sandbox;
+mod seal;
 mod server;
+mod share;
 mod shellint;
 mod shim;
 mod sites;
 mod store;
+mod sync;
 mod sys;
 mod tailscale;
 mod tls;
+mod tunnel;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -151,6 +156,45 @@ struct RunArgs {
 
     #[command(flatten)]
     blocks: BlockArgs,
+
+    #[command(flatten)]
+    reach: ReachArgs,
+}
+
+/// M4c: reaching a home daemon from a host that can only dial out, and
+/// keeping history there.
+#[derive(clap::Args, Debug)]
+struct ReachArgs {
+    /// Dial out to this home daemon (`wss://geek.….ts.net`) and serve this
+    /// daemon through it, for when nothing can connect in. Redials with
+    /// backoff; this daemon works on its own meanwhile.
+    #[arg(long, env = "ILLOGICAL_PEER", requires = "token")]
+    peer: Option<String>,
+    /// The per-host token for --peer (and --sync), in a file. Mint one on
+    /// the home daemon with `illogical hosts token NAME`.
+    #[arg(long, env = "ILLOGICAL_TOKEN_FILE", value_name = "FILE")]
+    token: Option<PathBuf>,
+    /// An invite (`illogical hosts invite`) to trade for a token when the
+    /// --token file doesn't exist yet; the token is saved there.
+    #[arg(long, requires = "peer")]
+    join: Option<String>,
+    /// Push closed panes' history to the home daemon, which keeps it
+    /// encrypted after this host is gone.
+    #[arg(long, requires = "token")]
+    sync: bool,
+    /// Push open panes' history too, as it grows.
+    #[arg(long, requires = "sync")]
+    sync_live: bool,
+    /// Where to push [default: the --peer's https:// origin].
+    #[arg(long, requires = "sync")]
+    sync_to: Option<String>,
+    /// Seconds between pushes.
+    #[arg(long, default_value_t = 30, requires = "sync")]
+    sync_every: u64,
+    /// Home daemon: the key ring synced history is sealed with [default:
+    /// <state>/synced/key, made on first use, 0600].
+    #[arg(long, env = "ILLOGICAL_SYNC_KEY_FILE")]
+    sync_key_file: Option<PathBuf>,
 }
 
 /// Browser blocks on ports: each is served on its own origin by a listener
@@ -254,6 +298,44 @@ fn start_sites(
         };
         info!(%addr, "serving block sites");
         sites::serve(sites, listener, tls).await;
+    });
+    Ok(())
+}
+
+/// Dial out to the home daemon and push history there, if asked to.
+fn start_reach(r: &ReachArgs, app: &std::sync::Arc<server::App>, name: String) -> anyhow::Result<()> {
+    if let (Some(peer), Some(token_file)) = (&r.peer, &r.token) {
+        dial::dial_url(peer)?;
+        let opts = dial::PeerOpts { url: peer.clone(), token_file: token_file.clone(), join: r.join.clone(), name };
+        let (accept, streams) = tokio::sync::mpsc::unbounded_channel();
+        info!(peer, "dialing out to the home daemon");
+        tokio::spawn(axum::serve(dial::Streams(streams), server::tunnel_router(app.clone())).into_future());
+        tokio::spawn(dial::keep_dialing(opts, accept));
+    }
+    if r.sync {
+        let origin = match (&r.sync_to, &r.peer) {
+            (Some(to), _) => to.trim_end_matches('/').to_owned(),
+            (None, Some(peer)) => dial::home_origin(peer)?,
+            (None, None) => anyhow::bail!("--sync needs --peer or --sync-to"),
+        };
+        let opts = sync::PushOpts {
+            origin,
+            token_file: r.token.clone().expect("clap requires --token"),
+            live: r.sync_live,
+            every: std::time::Duration::from_secs(r.sync_every.max(1)),
+        };
+        info!(to = opts.origin, live = opts.live, "syncing history to the home daemon");
+        tokio::spawn(sync::keep_pushing(opts, app.mux.store.clone()));
+    }
+    // Synced history expires a day at a time.
+    let synced = app.synced.clone();
+    tokio::spawn(async move {
+        let mut day = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+        day.tick().await;
+        loop {
+            day.tick().await;
+            synced.prune(sync::RETAIN_MS);
+        }
     });
     Ok(())
 }
@@ -454,9 +536,13 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     };
     let mux = mux::start(config, store, kept, push.clone());
 
-    let hosts = hosts::Hosts::open(&state_dir, name);
+    let hosts = hosts::Hosts::open(&state_dir, name.clone());
     hosts.spawn_probe();
-    let app = server::App::new(access, identify, mux.clone(), push, hosts);
+    let shares = share::Shares::open(&state_dir);
+    let synced = sync::Synced::new(&state_dir, args.reach.sync_key_file.clone());
+    synced.prune(sync::RETAIN_MS);
+    let app = server::App::new(access, identify, mux.clone(), push, hosts, shares, synced);
+    start_reach(&args.reach, &app, name)?;
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
     // The CLI's socket: replace a stale one from a previous run.

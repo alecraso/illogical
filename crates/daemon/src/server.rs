@@ -45,6 +45,12 @@ pub struct App {
     pub mux: MuxHandle,
     pub push: Option<crate::push::Push>,
     pub hosts: Arc<Hosts>,
+    /// Dial-out hosts connected to us (M4c).
+    pub tunnels: Arc<crate::dial::Tunnels>,
+    /// Read-only share links.
+    pub shares: Arc<crate::share::Shares>,
+    /// History other hosts synced to us.
+    pub synced: Arc<crate::sync::Synced>,
     next_client: AtomicU64,
 }
 
@@ -55,13 +61,32 @@ impl App {
         mux: MuxHandle,
         push: Option<crate::push::Push>,
         hosts: Arc<Hosts>,
+        shares: Arc<crate::share::Shares>,
+        synced: Arc<crate::sync::Synced>,
     ) -> Arc<Self> {
-        Arc::new(Self { access, identify, mux, push, hosts, next_client: AtomicU64::new(1) })
+        Arc::new(Self {
+            access,
+            identify,
+            mux,
+            push,
+            hosts,
+            tunnels: Default::default(),
+            shares,
+            synced,
+            next_client: AtomicU64::new(1),
+        })
     }
 }
 
+/// What a daemon serves to its owner: its own API.
+fn own_routes() -> Router<Arc<App>> {
+    crate::api::routes().merge(crate::hosts::routes()).merge(crate::share::api_routes())
+}
+
+/// Plus what makes it a home daemon: hosts dialing in and pushing history,
+/// and the way through to dial-out hosts.
 fn api_routes() -> Router<Arc<App>> {
-    crate::api::routes().merge(crate::hosts::routes())
+    own_routes().merge(crate::dial::routes()).merge(crate::sync::routes())
 }
 
 /// Over TCP (loopback, behind `tailscale serve`, or a tailnet address):
@@ -72,6 +97,7 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws))
         .merge(api_routes().layer(middleware::from_fn_with_state(app.clone(), api_origin)))
+        .merge(crate::share::viewer_routes())
         .fallback(asset)
         .layer(middleware::from_fn_with_state(app.clone(), cors))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
@@ -82,6 +108,18 @@ pub fn router(app: Arc<App>) -> Router {
 /// the user's private state directory, so reaching it is the check.
 pub fn local_router(app: Arc<App>) -> Router {
     Router::new().route("/ws", get(local_ws)).merge(api_routes()).with_state(app)
+}
+
+/// Over the tunnel to the home daemon (a dial-out host): the home daemon
+/// checked who is asking. Our own WebSocket and API only: nothing that
+/// would make this host a way to anywhere else (no `/h/`, no dialing in).
+pub fn tunnel_router(app: Arc<App>) -> Router {
+    Router::new().route("/ws", get(local_ws)).merge(own_routes()).with_state(app)
+}
+
+/// An embedded web client file.
+pub fn asset_file(path: &str) -> Option<Vec<u8>> {
+    Assets::get(path).map(|f| f.data.into_owned())
 }
 
 /// Cross-site requests can't read our answers, but a POST still lands: so a
@@ -132,13 +170,11 @@ async fn guard(
     next: Next,
 ) -> Response {
     let peer = app.identify.peer(addr).await;
-    // Joining the host list needs an invite, not an identity: it's how a
-    // tagged sandbox node adds itself. The Host check still applies.
-    let joining = req.method() == axum::http::Method::POST && req.uri().path() == crate::hosts::JOIN_PATH;
-    let checked = app
-        .access
-        .check_host(req.headers())
-        .and_then(|()| if joining { Ok(()) } else { app.access.check_identity(req.headers(), &peer) });
+    let checked = app.access.check_host(req.headers()).and_then(|()| match class(&req) {
+        Class::Owner => app.access.check_identity(req.headers(), &peer),
+        Class::Viewer => app.access.check_viewer(req.headers(), &peer),
+        Class::Token => Ok(()),
+    });
     let mut res = match checked {
         Ok(()) => next.run(req).await,
         Err((status, why)) => {
@@ -148,10 +184,51 @@ async fn guard(
     };
     // serve authenticates by source, so any page the owner visits could frame
     // the logged-in app (clickjacking). Nothing frames us legitimately.
+    // (A stricter policy already set, on a dial-out host's answer, stays.)
     let h = res.headers_mut();
-    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("frame-ancestors 'none'"));
+    h.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static("frame-ancestors 'none'"));
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     res
+}
+
+/// Whose request this can be.
+enum Class {
+    /// The owner's, like everything by default.
+    Owner,
+    /// A share link's viewer: the viewer page, its socket and static files.
+    Viewer,
+    /// A host's, without a user identity: the token it carries (an invite,
+    /// or its per-host token) is the credential, checked by the handler.
+    /// Joining is how a tagged sandbox node adds itself; dialing in and
+    /// pushing history are how a dial-out host reaches us.
+    Token,
+}
+
+/// Exactly `/share/<token>`, `/share/<token>/ws`, `/assets/<file>` or the
+/// icon: nothing with dots that a router or proxy might resolve elsewhere.
+fn viewer_path(path: &str) -> bool {
+    let plain = |s: &str| !s.is_empty() && !s.starts_with('.') && !s.contains('%');
+    match path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice() {
+        ["share", token] | ["share", token, "ws"] => plain(token),
+        ["assets", file] => plain(file),
+        ["icon.svg"] => true,
+        _ => false,
+    }
+}
+
+fn class(req: &Request) -> Class {
+    use axum::http::Method;
+    let (m, path) = (req.method(), req.uri().path());
+    if (m == Method::POST && path == crate::hosts::JOIN_PATH)
+        || (m == Method::GET && path == crate::dial::DIAL_PATH)
+        || path.starts_with(crate::sync::PUSH_PREFIX)
+    {
+        Class::Token
+    } else if m == Method::GET && viewer_path(path) {
+        Class::Viewer
+    } else {
+        Class::Owner
+    }
 }
 
 async fn asset(uri: Uri) -> Response {

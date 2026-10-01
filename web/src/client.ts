@@ -44,7 +44,8 @@ export interface Modifiers {
 export class Client {
   /** The daemon's origin (`https://box.….ts.net`), or "" for the one this
    * page came from. Another daemon must list this page's origin as
-   * allowed (`--allow-origin`). */
+   * allowed (`--allow-origin`). A path (`/h/box`) is a dial-out host,
+   * reached through this page's own daemon. */
   constructor(readonly base = "") {}
 
   state: State | null = null;
@@ -160,6 +161,29 @@ export class Client {
     }
   }
 
+  /** A read-only link to a terminal pane (M4c), good for `ttlSecs`; copied
+   * to the clipboard when the browser lets us. */
+  async share(pane: PaneId, ttlSecs = 3600): Promise<string | null> {
+    try {
+      const res = await fetch(this.base + "/api/shares", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pane, ttl_secs: ttlSecs }),
+      });
+      const body = (await res.json().catch(() => null)) as { url?: string; path?: string; error?: string } | null;
+      if (!res.ok || !body) {
+        this.toast(body?.error ?? `couldn't share it (${res.status})`);
+        return null;
+      }
+      const url = body.url ?? new URL(body.path ?? "", location.href).href;
+      await navigator.clipboard?.writeText(url).catch(() => {});
+      return url;
+    } catch {
+      this.toast("couldn't share it");
+      return null;
+    }
+  }
+
   /**
    * A shell on a new throwaway VM: a tab in `session` whose panes share it
    * (`tab`), a pane-owned one in a tab of its own, or a split of `split`.
@@ -233,9 +257,8 @@ export class Client {
 
   connect() {
     if (this.closed) return;
-    const url = this.base
-      ? `${this.base.replace(/^http/, "ws")}/ws`
-      : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+    const here = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+    const url = /^https?:/.test(this.base) ? `${this.base.replace(/^http/, "ws")}/ws` : `${here}${this.base}/ws`;
     const sock = new WebSocket(url);
     sock.binaryType = "arraybuffer";
     this.ws = sock;

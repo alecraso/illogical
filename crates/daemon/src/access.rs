@@ -53,6 +53,8 @@ pub struct Access {
     /// Exact `scheme://host[:port]` values accepted as WebSocket origins.
     origins: HashSet<String>,
     owner: Option<String>,
+    /// This daemon's page, for share links.
+    page: String,
 }
 
 impl Access {
@@ -77,8 +79,41 @@ impl Access {
             .chain(public.iter().map(|h| format!("https://{h}")))
             .chain(extra_origins.iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()))
             .collect();
+        let page = match public.first() {
+            Some(name) => format!("https://{name}"),
+            None => format!("http://127.0.0.1:{port}"),
+        };
         let hosts = loopback.into_iter().chain(public.iter().cloned()).chain(direct).collect();
-        Self { hosts, public: public.into_iter().collect(), origins, owner }
+        Self { hosts, public: public.into_iter().collect(), origins, owner, page }
+    }
+
+    /// Where this daemon's page is, for links to it: its tailnet name, else
+    /// loopback.
+    pub fn page_origin(&self) -> &str {
+        &self.page
+    }
+
+    /// Who may open a read-only share link (the link itself is the
+    /// credential): any tailnet user, not only the owner, or this machine.
+    /// Never a tagged node (sandboxes run untrusted agents), Funnel, or
+    /// anyone off the tailnet. The Host check applies as usual.
+    pub fn check_viewer(&self, headers: &HeaderMap, peer: &Peer) -> Result<(), Refusal> {
+        match peer {
+            Peer::Tailnet { login: Some(_) } => Ok(()),
+            Peer::Tailnet { login: None } => {
+                Err((StatusCode::FORBIDDEN, "tagged tailnet nodes can't open share links".into()))
+            }
+            Peer::Other => Err((StatusCode::FORBIDDEN, "share links are for the tailnet only".into())),
+            Peer::Local => match header_str(headers, "tailscale-user-login") {
+                // Through serve, from a tailnet user.
+                Some(_) => Ok(()),
+                None if self.public.contains(&host(headers)) => Err((
+                    StatusCode::FORBIDDEN,
+                    "tailnet request without a user identity (a tagged node, or Funnel)".into(),
+                )),
+                None => Ok(()),
+            },
+        }
     }
 
     /// The app's own origins (the pages allowed to frame a block).
@@ -286,6 +321,27 @@ mod tests {
         assert_eq!(direct_address("100.1.2.3:7681".parse().unwrap()).as_deref(), Some("100.1.2.3"));
         assert_eq!(direct_address("127.0.0.1:7681".parse().unwrap()), None);
         assert_eq!(direct_address("0.0.0.0:7681".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn share_viewers_are_tailnet_users_or_local() {
+        let a = access();
+        let public = headers(&[("host", "geek.example.ts.net")]);
+        let friend = headers(&[("host", "geek.example.ts.net"), ("tailscale-user-login", "friend@x.com")]);
+        // A tailnet user who isn't the owner: may view, may not use the app.
+        assert!(a.check_viewer(&friend, &Peer::Local).is_ok());
+        assert!(a.check_identity(&friend, &Peer::Local).is_err());
+        let direct = Peer::Tailnet { login: Some("friend@x.com".into()) };
+        assert!(a.check_viewer(&public, &direct).is_ok());
+        // Tagged nodes, Funnel and the internet: never.
+        assert!(a.check_viewer(&public, &Peer::Local).is_err(), "serve without a user");
+        assert!(a.check_viewer(&public, &Peer::Tailnet { login: None }).is_err());
+        assert!(a.check_viewer(&public, &Peer::Other).is_err());
+        assert!(a.check_viewer(&friend, &Peer::Other).is_err(), "a forged header changes nothing");
+        // This machine.
+        assert!(a.check_viewer(&headers(&[("host", "127.0.0.1:7681")]), &Peer::Local).is_ok());
+        assert_eq!(a.page_origin(), "https://geek.example.ts.net");
+        assert_eq!(Access::new(7681, &[], &[], &[], None).page_origin(), "http://127.0.0.1:7681");
     }
 
     #[test]

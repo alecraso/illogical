@@ -8,7 +8,9 @@
 export interface Host {
   name: string;
   urls: string[];
-  transport: "tailnet";
+  /** `dial_out` (M4c): the host dials the home daemon and is reached
+   * through it, at `/h/<name>/…` on this page's own origin. */
+  transport: "tailnet" | "dial_out";
   added_ms: number;
   last_seen_ms: number | null;
 }
@@ -77,7 +79,9 @@ export class HostDirectory {
   /** What the client prefixes its URLs with: "" for this page's daemon. */
   base(name: string | null = this.shown): string {
     if (name === null || name === this.home) return "";
-    return this.find(name)?.urls[0] ?? "";
+    const h = this.find(name);
+    if (h?.transport === "dial_out") return `/h/${encodeURIComponent(h.name)}`;
+    return h?.urls[0] ?? "";
   }
 
   /** The shown host's name ("" until the home daemon's is known). */
