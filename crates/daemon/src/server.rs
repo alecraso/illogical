@@ -45,6 +45,8 @@ pub struct App {
     pub mux: MuxHandle,
     pub push: Option<crate::push::Push>,
     pub hosts: Arc<Hosts>,
+    /// The static binaries a daemon made resident in a sandbox runs.
+    pub binaries: Option<crate::resident::Binaries>,
     next_client: AtomicU64,
 }
 
@@ -55,13 +57,14 @@ impl App {
         mux: MuxHandle,
         push: Option<crate::push::Push>,
         hosts: Arc<Hosts>,
+        binaries: Option<crate::resident::Binaries>,
     ) -> Arc<Self> {
-        Arc::new(Self { access, identify, mux, push, hosts, next_client: AtomicU64::new(1) })
+        Arc::new(Self { access, identify, mux, push, hosts, binaries, next_client: AtomicU64::new(1) })
     }
 }
 
 fn api_routes() -> Router<Arc<App>> {
-    crate::api::routes().merge(crate::hosts::routes())
+    crate::api::routes().merge(crate::hosts::routes()).merge(crate::resident::routes()).merge(crate::tunnel::routes())
 }
 
 /// Over TCP (loopback, behind `tailscale serve`, or a tailnet address):

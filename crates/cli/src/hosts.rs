@@ -1,7 +1,13 @@
 //! `--host` and `illogical hosts`: other daemons, from the home daemon's
 //! list. A name is looked up in that list (over the local socket); a URL is
 //! used as it is. Either way the commands then talk to that daemon
-//! directly, over HTTP(S), where its usual access checks apply.
+//! directly, over HTTP(S), where its usual access checks apply. A resident
+//! daemon in a sandbox (a provider host) is reached through the home
+//! daemon's provider tunnel instead, which also wakes it.
+//!
+//! `illogical sandboxes`: the home daemon's provider's sandboxes, a shell
+//! on one with no daemon there (`run --sandbox`), and making a daemon
+//! resident in one.
 
 use std::path::PathBuf;
 
@@ -31,9 +37,77 @@ pub enum HostsCmd {
     },
 }
 
+#[derive(Subcommand)]
+pub enum SandboxesCmd {
+    /// Copy the static daemon into a sandbox and keep it running there as
+    /// a provider service; it joins the host list, reached through this
+    /// daemon's tunnel (`--host NAME`).
+    Promote {
+        sandbox: String,
+        /// Its name in the host list [default: the sandbox's].
+        #[arg(long = "as")]
+        host: Option<String>,
+        /// Its port inside the sandbox [default: 7681].
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Stop a sandbox's resident daemon and take it off the host list.
+    Demote { sandbox: String },
+}
+
+pub fn sandboxes(target: &Target, cmd: Option<SandboxesCmd>, json_out: bool) -> anyhow::Result<()> {
+    let v = match cmd {
+        None => {
+            let v = request(target, "GET", "/api/sandboxes", None)?.json()?;
+            if !json_out {
+                let p = &v["provider"];
+                let replay = p["exec_replay"].as_u64().unwrap_or(0);
+                println!(
+                    "{}: a shell with no daemon (`run --sandbox NAME`) keeps {} KB while detached",
+                    p["name"].as_str().unwrap_or("?"),
+                    replay / 1024
+                );
+                for s in v["sandboxes"].as_array().into_iter().flatten() {
+                    let host = s["host"].as_str().map(|h| format!("resident: --host {h}")).unwrap_or_default();
+                    println!(
+                        "{:<34} {:<8} {host}",
+                        s["name"].as_str().unwrap_or("?"),
+                        s["status"].as_str().unwrap_or("?")
+                    );
+                }
+                return Ok(());
+            }
+            v
+        }
+        Some(SandboxesCmd::Promote { sandbox, host, port }) => {
+            let body = json!({"host": host, "port": port});
+            let v = request(
+                target,
+                "POST",
+                &format!("/api/sandboxes/{}/promote", crate::http::enc(&sandbox)),
+                Some(&body),
+            )?
+            .json()?;
+            if !json_out {
+                println!("{} is resident in {sandbox}: `illogical --host {0} …`", v["name"].as_str().unwrap_or("?"));
+                return Ok(());
+            }
+            v
+        }
+        Some(SandboxesCmd::Demote { sandbox }) => {
+            request(target, "DELETE", &format!("/api/sandboxes/{}/resident", crate::http::enc(&sandbox)), None)?
+                .json()?
+        }
+    };
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    }
+    Ok(())
+}
+
 /// Where commands go: the local socket, or the daemon `--host` names.
 pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
-    let local = Target::Socket(socket);
+    let local = Target::Socket(socket.clone());
     let Some(host) = host else { return Ok(local) };
     if host.contains("://") {
         return Ok(Target::Url(Url::parse(host)?));
@@ -50,6 +124,10 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
         .flatten()
         .find(|h| h["name"].as_str() == Some(host))
         .with_context(|| format!("no host {host} (see `illogical hosts`)"))?;
+    if entry["transport"] == "provider" {
+        // Through the home daemon's tunnel (it wakes the sandbox).
+        return Ok(Target::Tunnel { socket, host: host.to_owned() });
+    }
     let urls: Vec<&str> = entry["urls"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     // The first URL that answers.
     let mut last = None;
@@ -93,7 +171,20 @@ pub fn run(
                         h["urls"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                     let seen =
                         h["last_seen_ms"].as_u64().map(|t| format!("seen {}", ago(t))).unwrap_or("never seen".into());
-                    println!("{:<20} {:<44} {seen}", h["name"].as_str().unwrap_or("?"), urls.join(" "));
+                    let place = match h["provider"].as_object() {
+                        Some(p) => format!(
+                            "{} {} (tunnel){}",
+                            p["provider"].as_str().unwrap_or("?"),
+                            p["sandbox"].as_str().unwrap_or("?"),
+                            if urls.is_empty() { String::new() } else { format!(" {}", urls.join(" ")) }
+                        ),
+                        None => urls.join(" "),
+                    };
+                    let seen = match h["status"].as_str() {
+                        Some(st) => format!("{st}, {seen}"),
+                        None => seen,
+                    };
+                    println!("{:<20} {place:<44} {seen}", h["name"].as_str().unwrap_or("?"));
                 }
                 return Ok(());
             }

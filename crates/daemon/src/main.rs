@@ -16,6 +16,7 @@ mod pane;
 mod ports;
 mod provider;
 mod push;
+mod resident;
 mod sandbox;
 mod server;
 mod shellint;
@@ -25,6 +26,7 @@ mod store;
 mod sys;
 mod tailscale;
 mod tls;
+mod tunnel;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -140,6 +142,17 @@ struct RunArgs {
     /// `$XDG_DATA_HOME/wisp/token`.
     #[arg(long, env = "ILLOGICAL_WISP_TOKEN_FILE")]
     wisp_token_file: Option<PathBuf>,
+    /// Where the static binaries (`just static`) to copy into a sandbox
+    /// are, when making a daemon resident there [default:
+    /// $XDG_DATA_HOME/illogical/static].
+    #[arg(long, env = "ILLOGICAL_STATIC_DIR")]
+    static_dir: Option<PathBuf>,
+    /// A resident daemon in a sandbox (set when it's made resident): the
+    /// SHA-256 of the token the home daemon's tunnel presents. Connections
+    /// from this machine (the provider's proxy arrives on loopback) need
+    /// it; the Unix socket doesn't.
+    #[arg(long, value_name = "HEX")]
+    tunnel_token_sha256: Option<String>,
     /// An Anthropic API key for Claude Code agents in VMs, passed to them as
     /// ANTHROPIC_API_KEY [default: ~/.config/illogical/anthropic-key].
     #[arg(long, env = "ILLOGICAL_ANTHROPIC_KEY_FILE")]
@@ -373,7 +386,12 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     if !direct.is_empty() || everywhere || userspace {
         direct.extend(public_hosts.iter().cloned());
     }
-    let access = access::Access::new(args.listen.port(), &public_hosts, &direct, &args.allow_origins, owner.clone());
+    let mut access =
+        access::Access::new(args.listen.port(), &public_hosts, &direct, &args.allow_origins, owner.clone());
+    if let Some(digest) = &args.tunnel_token_sha256 {
+        access = access.require_tunnel_token(digest)?;
+        info!("resident: loopback connections need the home daemon's tunnel token");
+    }
     let identify = tailscale::Identify::new(local_api, userspace);
     let name = args.name.clone().unwrap_or_else(|| {
         status
@@ -457,9 +475,16 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     };
     let mux = mux::start(config, store, kept, push.clone());
 
-    let hosts = hosts::Hosts::open(&state_dir, name);
+    let hosts = hosts::Hosts::open(&state_dir, name, provider);
     hosts.spawn_probe();
-    let app = server::App::new(access, identify, mux.clone(), push, hosts);
+    let static_dir = args.static_dir.clone().unwrap_or_else(|| {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".local/share"))
+            .join("illogical/static")
+    });
+    let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
+    let app = server::App::new(access, identify, mux.clone(), push, hosts, binaries);
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
     // The CLI's socket: replace a stale one from a previous run.

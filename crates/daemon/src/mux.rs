@@ -825,7 +825,11 @@ impl Daemon {
             .unwrap_or_else(|| self.config.home.clone());
         let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();
-        let host = if req.vm || req.vm_tab { Some(self.new_machine(req.image.clone())?) } else { None };
+        let host = match &req.sandbox {
+            Some(sandbox) => Some(self.borrow_machine(sandbox)?),
+            None if req.vm || req.vm_tab => Some(self.new_machine(req.image.clone())?),
+            None => None,
+        };
         self.next_spawn = req.command.as_ref().map(|command| {
             let spawn = match host {
                 // Not this host's directory: the guest's, if one was asked for.

@@ -26,10 +26,18 @@
 //!   with no user (a tagged node, or Funnel), so it is refused too. Local
 //!   processes could forge the header, but they could equally use the Unix
 //!   socket; its job is keeping other tailnet users and nodes out.
+//! - **A resident daemon in a sandbox** (M4b) is reached through its
+//!   provider's proxy, which arrives on loopback like a local process.
+//!   There, everything not identified by tailscaled must carry the token
+//!   the home daemon minted for this host (`Authorization: Bearer …`): the
+//!   home daemon checked the owner on its side, and the token says so. Only
+//!   its SHA-256 is kept here, so a process in the sandbox reading our
+//!   arguments or files learns nothing it can use.
 
 use std::{collections::HashSet, net::SocketAddr};
 
 use axum::http::{HeaderMap, StatusCode, header};
+use sha2::{Digest, Sha256};
 
 /// Who is on the other end of a TCP connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +61,8 @@ pub struct Access {
     /// Exact `scheme://host[:port]` values accepted as WebSocket origins.
     origins: HashSet<String>,
     owner: Option<String>,
+    /// SHA-256 of the tunnel token, when loopback connections need it.
+    tunnel: Option<[u8; 32]>,
 }
 
 impl Access {
@@ -78,7 +88,23 @@ impl Access {
             .chain(extra_origins.iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()))
             .collect();
         let hosts = loopback.into_iter().chain(public.iter().cloned()).chain(direct).collect();
-        Self { hosts, public: public.into_iter().collect(), origins, owner }
+        Self { hosts, public: public.into_iter().collect(), origins, owner, tunnel: None }
+    }
+
+    /// From now on, connections from this machine need the token whose
+    /// SHA-256 this is (hex): a resident daemon reached through its
+    /// provider's tunnel.
+    pub fn require_tunnel_token(mut self, sha256_hex: &str) -> anyhow::Result<Self> {
+        let hex = sha256_hex.trim();
+        if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            anyhow::bail!("a tunnel token's SHA-256 is 64 hex digits");
+        }
+        let mut d = [0u8; 32];
+        for (i, b) in d.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)?;
+        }
+        self.tunnel = Some(d);
+        Ok(self)
     }
 
     /// The app's own origins (the pages allowed to frame a block).
@@ -111,6 +137,7 @@ impl Access {
                 Err((StatusCode::FORBIDDEN, "tagged tailnet nodes have no user identity".into()))
             }
             Peer::Other => Err((StatusCode::FORBIDDEN, "not from this machine or the tailnet".into())),
+            Peer::Local if self.tunnel.is_some() => self.check_tunnel_token(headers),
             Peer::Local => match header_str(headers, "tailscale-user-login") {
                 Some(login) => self.must_be_owner(login),
                 None if self.public.contains(&host(headers)) => {
@@ -118,6 +145,20 @@ impl Access {
                 }
                 None => Ok(()),
             },
+        }
+    }
+
+    fn check_tunnel_token(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+        let given = header_str(headers, header::AUTHORIZATION.as_str()).and_then(|v| v.strip_prefix("Bearer "));
+        let (Some(want), Some(given)) = (&self.tunnel, given) else {
+            return Err((StatusCode::UNAUTHORIZED, "this daemon is reached through its home daemon's tunnel".into()));
+        };
+        let got: [u8; 32] = Sha256::digest(given.trim().as_bytes()).into();
+        // Constant time: no early exit on the first differing byte.
+        if got.iter().zip(want).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0 {
+            Ok(())
+        } else {
+            Err((StatusCode::UNAUTHORIZED, "wrong tunnel token".into()))
         }
     }
 
@@ -286,6 +327,24 @@ mod tests {
         assert_eq!(direct_address("100.1.2.3:7681".parse().unwrap()).as_deref(), Some("100.1.2.3"));
         assert_eq!(direct_address("127.0.0.1:7681".parse().unwrap()), None);
         assert_eq!(direct_address("0.0.0.0:7681".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn tunnelled_connections_need_the_token() {
+        let token = "ilt_secret";
+        let digest: String = Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        let a = Access::new(7681, &[], &[], &[], None).require_tunnel_token(&digest).unwrap();
+        let local = [("host", "127.0.0.1:7681")];
+        assert_eq!(check(&a, &local).unwrap_err().0, StatusCode::UNAUTHORIZED, "no token");
+        let bearer = format!("Bearer {token}");
+        assert!(check(&a, &[local[0], ("authorization", &bearer)]).is_ok());
+        assert!(check(&a, &[local[0], ("authorization", "Bearer ilt_wrong")]).is_err());
+        assert!(check(&a, &[local[0], ("authorization", token)]).is_err(), "not a bearer");
+        // A forged serve header is no substitute.
+        assert!(check(&a, &[local[0], ("tailscale-user-login", "me@x.com")]).is_err());
+        // The Host check still applies.
+        assert!(check(&a, &[("host", "evil.com"), ("authorization", &bearer)]).is_err());
+        assert!(Access::new(7681, &[], &[], &[], None).require_tunnel_token("abc").is_err());
     }
 
     #[test]

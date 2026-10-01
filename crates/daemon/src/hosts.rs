@@ -3,9 +3,16 @@
 //! host directly, so terminal bytes never pass through here.
 //!
 //! A host gets on the list by being added (`illogical hosts add`, by the
-//! owner) or by joining with a one-time invite token (a sandbox installing
-//! itself, which has no user identity to be checked). The home daemon
-//! checks on each host every minute and records when it last answered.
+//! owner), by joining with a one-time invite token (a sandbox installing
+//! itself, which has no user identity to be checked), or by being made
+//! resident in a provider's sandbox (M4b, `resident.rs`). The home daemon
+//! checks on each host every minute and records when it last answered; a
+//! provider host's sandbox is asked about through its provider instead,
+//! which doesn't wake it.
+//!
+//! A provider host is reached through the home daemon's tunnel
+//! (`tunnel.rs`), which presents a token the home daemon minted for that
+//! host. The tokens live in `tunnels.json` (never in the list clients get).
 
 use std::{
     path::PathBuf,
@@ -20,12 +27,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
-use illogical_proto::hosts::{AddHost, Host, HostInfo, HostList, Invite, JoinRequest, Joined};
+use illogical_proto::hosts::{AddHost, Host, HostInfo, HostList, Invite, JoinRequest, Joined, ProviderRef, Transport};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::{
+    provider::Provider,
     server::App,
     store::{now_ms, write_atomic},
 };
@@ -38,8 +46,11 @@ pub struct Hosts {
     name: String,
     path: PathBuf,
     invites_path: PathBuf,
+    tunnels_path: PathBuf,
     inner: Mutex<Saved>,
     http: reqwest::Client,
+    /// Where provider hosts' sandboxes are asked about.
+    provider: Option<Arc<dyn Provider>>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -48,6 +59,9 @@ struct Saved {
     /// Outstanding invites: SHA-256 of the token, and when it expires.
     #[serde(skip)]
     invites: Vec<(String, u64)>,
+    /// Provider hosts' tunnel tokens, by host name.
+    #[serde(skip)]
+    tunnels: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -56,9 +70,10 @@ struct SavedInvites {
 }
 
 impl Hosts {
-    pub fn open(state_dir: &std::path::Path, name: String) -> Arc<Self> {
+    pub fn open(state_dir: &std::path::Path, name: String, provider: Option<Arc<dyn Provider>>) -> Arc<Self> {
         let path = state_dir.join("hosts.json");
         let invites_path = state_dir.join("invites.json");
+        let tunnels_path = state_dir.join("tunnels.json");
         let mut saved: Saved =
             std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         saved.invites = std::fs::read(&invites_path)
@@ -66,11 +81,13 @@ impl Hosts {
             .and_then(|b| serde_json::from_slice::<SavedInvites>(&b).ok())
             .map(|s| s.invites)
             .unwrap_or_default();
+        saved.tunnels =
+            std::fs::read(&tunnels_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
             .expect("an HTTP client with default settings");
-        Arc::new(Self { name, path, invites_path, inner: Mutex::new(saved), http })
+        Arc::new(Self { name, path, invites_path, tunnels_path, inner: Mutex::new(saved), http, provider })
     }
 
     pub fn name(&self) -> &str {
@@ -84,15 +101,42 @@ impl Hosts {
     /// Add a host, or replace the one with the same name (keeping when it
     /// was first added and last seen, if its URLs are the same).
     pub fn add(&self, req: AddHost) -> Result<Host, String> {
-        let req = validate(req, &self.name)?;
+        if req.transport == Transport::Provider {
+            return Err("a provider host is added by making a daemon resident in its sandbox".into());
+        }
+        self.insert(validate(req, &self.name)?, None)
+    }
+
+    /// Add (or replace) a host whose daemon lives in a provider's sandbox,
+    /// reached through our tunnel with `token`.
+    pub fn add_provider(&self, name: String, at: ProviderRef, token: String) -> Result<Host, String> {
+        let req = validate(AddHost { name, urls: vec![], transport: Transport::Provider }, &self.name)?;
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.tunnels.insert(req.name.clone(), token);
+            self.save_tunnels(&inner);
+        }
+        self.insert(req, Some(at))
+    }
+
+    /// A provider host: where it is, and the token its daemon wants.
+    pub fn tunnel(&self, name: &str) -> Option<(ProviderRef, String)> {
+        let inner = self.inner.lock().unwrap();
+        let at = inner.hosts.iter().find(|h| h.name == name)?.provider.clone()?;
+        Some((at, inner.tunnels.get(name)?.clone()))
+    }
+
+    fn insert(&self, req: AddHost, provider: Option<ProviderRef>) -> Result<Host, String> {
         let mut inner = self.inner.lock().unwrap();
         let old = inner.hosts.iter().position(|h| h.name == req.name).map(|i| inner.hosts.remove(i));
         let host = Host {
             added_ms: old.as_ref().map_or_else(now_ms, |o| o.added_ms),
-            last_seen_ms: old.filter(|o| o.urls == req.urls).and_then(|o| o.last_seen_ms),
+            last_seen_ms: old.as_ref().filter(|o| o.urls == req.urls).and_then(|o| o.last_seen_ms),
+            status: old.as_ref().filter(|o| o.provider == provider).and_then(|o| o.status.clone()),
             name: req.name,
             urls: req.urls,
             transport: req.transport,
+            provider,
         };
         inner.hosts.push(host.clone());
         inner.hosts.sort_by(|a, b| a.name.cmp(&b.name));
@@ -108,6 +152,9 @@ impl Hosts {
         let gone = inner.hosts.len() != before;
         if gone {
             self.save(&inner);
+            if inner.tunnels.remove(name).is_some() {
+                self.save_tunnels(&inner);
+            }
             info!(name, "host removed");
         }
         gone
@@ -149,6 +196,13 @@ impl Hosts {
         }
     }
 
+    fn save_tunnels(&self, inner: &Saved) {
+        let bytes = serde_json::to_vec(&inner.tunnels).expect("serialize");
+        if let Err(e) = write_atomic(&self.tunnels_path, &bytes) {
+            warn!(error = %e, "can't save tunnel tokens");
+        }
+    }
+
     fn save_invites(&self, inner: &Saved) {
         let bytes = serde_json::to_vec(&SavedInvites { invites: inner.invites.clone() }).expect("serialize");
         if let Err(e) = write_atomic(&self.invites_path, &bytes) {
@@ -156,10 +210,41 @@ impl Hosts {
         }
     }
 
-    /// Ask every host who it is; note the ones that answer.
+    /// Ask every host who it is; note the ones that answer. A provider
+    /// host's sandbox is asked about through its provider instead, which
+    /// doesn't wake it (connecting would, and keep it awake).
     pub async fn probe(&self) {
-        let targets: Vec<(String, Vec<String>)> =
-            self.inner.lock().unwrap().hosts.iter().map(|h| (h.name.clone(), h.urls.clone())).collect();
+        let sandboxes: Vec<(String, ProviderRef)> = self
+            .inner
+            .lock()
+            .unwrap()
+            .hosts
+            .iter()
+            .filter_map(|h| Some((h.name.clone(), h.provider.clone()?)))
+            .collect();
+        for (name, at) in sandboxes {
+            let status = match &self.provider {
+                Some(p) if p.name() == at.provider => match p.status(&at.sandbox).await {
+                    Ok(Some(s)) => s.status,
+                    Ok(None) => "gone".into(),
+                    Err(e) => {
+                        info!(host = name, error = %e, "can't ask the provider about a host");
+                        continue;
+                    }
+                },
+                _ => "unknown".into(),
+            };
+            self.note_status(&name, &status);
+        }
+        let targets: Vec<(String, Vec<String>)> = self
+            .inner
+            .lock()
+            .unwrap()
+            .hosts
+            .iter()
+            .filter(|h| h.provider.is_none())
+            .map(|h| (h.name.clone(), h.urls.clone()))
+            .collect();
         for (name, urls) in targets {
             let mut seen = false;
             for url in &urls {
@@ -177,6 +262,20 @@ impl Hosts {
                 }
             }
         }
+    }
+
+    /// What the provider says of a provider host's sandbox (and, if it's
+    /// running, that it was seen).
+    pub fn note_status(&self, name: &str, status: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(h) = inner.hosts.iter_mut().find(|h| h.name == name) else { return };
+        let seen = (status == "running").then(now_ms);
+        if h.status.as_deref() == Some(status) && seen.is_none() {
+            return;
+        }
+        h.status = Some(status.to_owned());
+        h.last_seen_ms = seen.or(h.last_seen_ms);
+        self.save(&inner);
     }
 
     pub fn spawn_probe(self: &Arc<Self>) {
@@ -203,7 +302,7 @@ fn validate(mut req: AddHost, this: &str) -> Result<AddHost, String> {
         return Err(format!("{name} is this daemon's own name"));
     }
     req.name = name.to_owned();
-    if req.urls.is_empty() {
+    if req.urls.is_empty() && req.transport != Transport::Provider {
         return Err("a host needs at least one URL".into());
     }
     for url in &mut req.urls {
@@ -301,8 +400,6 @@ async fn join(State(app): AppState, Json(req): Json<JoinRequest>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use illogical_proto::hosts::Transport;
-
     use super::*;
 
     fn dir() -> PathBuf {
@@ -321,7 +418,7 @@ mod tests {
     #[test]
     fn add_replace_remove_and_persist() {
         let d = dir();
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         h.add(req("box", "https://box.example.ts.net/")).unwrap();
         h.add(req("alpha", "http://127.0.0.1:7691")).unwrap();
         let l = h.list();
@@ -333,7 +430,7 @@ mod tests {
         assert!(h.remove("alpha"));
         assert!(!h.remove("alpha"));
         drop(h);
-        let again = Hosts::open(&d, "geek".into());
+        let again = Hosts::open(&d, "geek".into(), None);
         assert_eq!(again.list().hosts.len(), 1);
         assert_eq!(again.list().hosts[0].urls, ["https://box2.example.ts.net"]);
         std::fs::remove_dir_all(d).unwrap();
@@ -342,7 +439,7 @@ mod tests {
     #[test]
     fn bad_hosts_are_refused() {
         let d = dir();
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         assert!(h.add(req("geek", "https://x.example")).is_err(), "our own name");
         assert!(h.add(req("", "https://x.example")).is_err());
         assert!(h.add(req("a b", "https://x.example")).is_err());
@@ -358,14 +455,14 @@ mod tests {
     #[test]
     fn invites_are_single_use_and_survive_a_restart() {
         let d = dir();
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         let inv = h.invite(60);
         assert!(inv.token.starts_with("ilj_"));
         let join =
             |h: &Hosts, token: &str| h.join(JoinRequest { token: token.into(), host: req("box", "https://b.x") });
         assert!(join(&h, "ilj_wrong").is_err());
         drop(h);
-        let h = Hosts::open(&d, "geek".into());
+        let h = Hosts::open(&d, "geek".into(), None);
         assert!(join(&h, &inv.token).is_ok());
         assert!(join(&h, &inv.token).is_err(), "spent");
         let expired = h.invite(0);
