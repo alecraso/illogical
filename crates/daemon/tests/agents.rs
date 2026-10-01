@@ -10,11 +10,7 @@
 
 mod agentd;
 
-use std::{
-    io::{BufRead, BufReader, Read, Write},
-    net::TcpListener,
-    time::Duration,
-};
+use std::time::Duration;
 
 use agentd::*;
 use serde_json::{Value, json};
@@ -234,69 +230,10 @@ fn a_restart_mid_turn_keeps_the_agent_and_its_pending_approval() {
 /// works.
 #[test]
 fn a_permission_request_is_pushed_with_its_approval() {
-    use aes_gcm::{Aes128Gcm, KeyInit, aead::Aead};
-    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
-    use hkdf::Hkdf;
-    use p256::{PublicKey, SecretKey};
-    use sha2::Sha256;
-
     let d = Daemon::child();
-    let service = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://127.0.0.1:{}/push/abc", service.local_addr().unwrap().port());
-    let ua = SecretKey::from_slice(&[7u8; 32]).unwrap();
-    let ua_public = ua.public_key().to_sec1_bytes().to_vec();
-    let auth = [9u8; 16];
-    d.post(
-        "/api/push/subscribe",
-        json!({"endpoint": endpoint, "keys": {"p256dh": B64.encode(&ua_public), "auth": B64.encode(auth)}}),
-    );
+    let phone = Phone::subscribe(&d);
     let id = d.open("run git push");
-
-    // Pushes come for each attention change nobody is looking at; find the
-    // one that asks.
-    let msg = loop {
-        let (mut conn, _) = service.accept().unwrap();
-        conn.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
-        let mut r = BufReader::new(conn.try_clone().unwrap());
-        let mut len = 0;
-        loop {
-            let mut line = String::new();
-            r.read_line(&mut line).unwrap();
-            if line.trim().is_empty() {
-                break;
-            }
-            if let Some((k, v)) = line.split_once(':')
-                && k.eq_ignore_ascii_case("content-length")
-            {
-                len = v.trim().parse().unwrap();
-            }
-        }
-        let mut body = vec![0; len];
-        r.read_exact(&mut body).unwrap();
-        write!(conn, "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n").unwrap();
-        let (salt, rest) = body.split_at(16);
-        let idlen = rest[4] as usize;
-        let (as_public, sealed) = rest[5..].split_at(idlen);
-        let shared = p256::ecdh::diffie_hellman(
-            ua.to_nonzero_scalar(),
-            PublicKey::from_sec1_bytes(as_public).unwrap().as_affine(),
-        );
-        let mut info = b"WebPush: info\0".to_vec();
-        info.extend_from_slice(&ua_public);
-        info.extend_from_slice(as_public);
-        let mut ikm = [0u8; 32];
-        Hkdf::<Sha256>::new(Some(&auth), shared.raw_secret_bytes().as_ref()).expand(&info, &mut ikm).unwrap();
-        let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
-        let (mut cek, mut nonce) = ([0u8; 16], [0u8; 12]);
-        prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).unwrap();
-        prk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
-        let mut plain = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(&nonce.into(), sealed).unwrap();
-        plain.pop();
-        let msg: Value = serde_json::from_slice(&plain).unwrap();
-        if msg["title"] == "Needs you" {
-            break msg;
-        }
-    };
+    let msg = phone.needs_you();
     assert_eq!(msg["pane"], id);
     assert_eq!(msg["body"], "wants to run git push");
     assert_eq!(msg["approve"]["title"], "git push");

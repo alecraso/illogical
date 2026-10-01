@@ -16,6 +16,7 @@ use illogical_proto::{
     Attention, BlockType, ClientId, ClientMsg, CommandInfo, Event, EventKind, Machine, MachineId, MachineState, Owner,
     PaneId, PaneInfo, PaneOp, Policy, ServerMsg, State, TabId, TabView,
     api::{OpenRequest, PaneSummary, RunRequest},
+    ask::Ask,
 };
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
@@ -87,6 +88,36 @@ pub enum Api {
     ShareMachine(PaneId, oneshot::Sender<Result<(), String>>),
     /// Delete and recreate a machine; its panes restart by policy.
     ResetMachine(MachineId, oneshot::Sender<Result<(), String>>),
+    /// A question asked in a terminal (`illogical ask`, from Claude Code's
+    /// hook): shown beside it until answered. The reply carries a token
+    /// (for withdrawing exactly this one) and where the answer will come.
+    Ask(PaneId, Ask, oneshot::Sender<Result<(u64, oneshot::Receiver<AskReply>), String>>),
+    /// A client answered a terminal's question (`id`: which; `None`: the
+    /// one open). Replies with the question, or why not.
+    AskReply(PaneId, Option<String>, AskReply, oneshot::Sender<Result<Ask, String>>),
+    /// The asker gave up (Claude Code interrupted it): close the card.
+    /// With a token, only if it's still that registration's.
+    AskWithdraw(PaneId, Option<String>, Option<u64>),
+}
+
+/// What a terminal's question got.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AskReply {
+    /// The card's fields (as AskUserQuestion's form names them).
+    Answer(serde_json::Value),
+    /// Skipped.
+    Decline,
+    /// "Answer in terminal": let the program show its own picker.
+    Terminal,
+    /// It went away (its pane closed, or a newer one replaced it).
+    Withdrawn,
+}
+
+/// A question open in a terminal.
+struct TermAsk {
+    ask: Ask,
+    token: u64,
+    reply: oneshot::Sender<AskReply>,
 }
 
 #[derive(Clone)]
@@ -306,6 +337,9 @@ struct Daemon {
     push: Option<Push>,
     /// Non-terminal blocks (terminals are in `panes`).
     blocks: HashMap<PaneId, Arc<dyn Block>>,
+    /// Questions open in terminals, one per pane (M6c).
+    asks: HashMap<PaneId, TermAsk>,
+    next_ask: u64,
     /// The next block an intent spawns is this type, with this config,
     /// instead of a terminal.
     next_block: Option<(BlockType, serde_json::Value)>,
@@ -347,6 +381,8 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         events: events.clone(),
         push,
         blocks: HashMap::new(),
+        asks: HashMap::new(),
+        next_ask: 1,
         next_block: None,
         last_block_error: None,
         next_spawn: None,
@@ -617,7 +653,10 @@ impl Daemon {
                 Attention::NeedsInput => "Needs you",
                 _ => "Done",
             };
-            let extra = self.blocks.get(&pane).and_then(|b| b.push_extra());
+            let extra = self.blocks.get(&pane).and_then(|b| b.push_extra()).or_else(|| {
+                let choice = self.asks.get(&pane)?.ask.push_choice()?;
+                Some(serde_json::json!({ "ask": choice }))
+            });
             push.send(pane, title, why, extra);
         }
         self.broadcast();
@@ -792,6 +831,11 @@ impl Daemon {
     fn input(&mut self, pane: PaneId, data: Vec<u8>) {
         let Some(p) = self.panes.get(&pane) else { return };
         p.input(data);
+        // A question open beside it still wants an answer (typing in Claude
+        // Code's prompt box doesn't answer it).
+        if self.asks.contains_key(&pane) {
+            return;
+        }
         if matches!(self.attention.get(&pane), Some(Attention::NeedsInput | Attention::Done)) {
             let next = if p.status().current.is_some() { Attention::Working } else { Attention::Idle };
             self.set_attention(pane, next, "input");
@@ -839,6 +883,77 @@ impl Daemon {
             Api::Run(req, reply) => {
                 let _ = reply.send(self.run_command(req));
             }
+            Api::Ask(pane, ask, reply) => {
+                let _ = reply.send(self.ask(pane, ask));
+            }
+            Api::AskReply(pane, id, answer, reply) => {
+                let _ = reply.send(self.ask_reply(pane, id, answer));
+            }
+            Api::AskWithdraw(pane, id, token) => {
+                let open = self.asks.get(&pane).is_some_and(|a| {
+                    id.as_ref().is_none_or(|id| *id == a.ask.id) && token.is_none_or(|t| t == a.token)
+                });
+                if open && let Some(a) = self.asks.remove(&pane) {
+                    info!(pane, id = a.ask.id, "question withdrawn");
+                    let _ = a.reply.send(AskReply::Withdrawn);
+                    self.after_ask(pane);
+                }
+            }
+        }
+    }
+
+    /// Show a terminal's question on every client, and ask for you.
+    fn ask(&mut self, pane: PaneId, ask: Ask) -> Result<(u64, oneshot::Receiver<AskReply>), String> {
+        if !self.panes.contains_key(&pane) {
+            return Err(format!("no terminal %{pane}"));
+        }
+        let (tx, rx) = oneshot::channel();
+        let token = self.next_ask;
+        self.next_ask += 1;
+        let why = ask.headline();
+        info!(pane, id = ask.id, "question asked");
+        // The same question again (its asker reconnected) or a newer one:
+        // either way the older registration is over.
+        if let Some(old) = self.asks.insert(pane, TermAsk { ask, token, reply: tx }) {
+            let _ = old.reply.send(AskReply::Withdrawn);
+        }
+        if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
+            // Already asking for you (Claude Code's own hook, say): this is
+            // what it wants, and the card changed.
+            self.broadcast();
+        } else {
+            self.set_attention(pane, Attention::NeedsInput, &why);
+        }
+        Ok((token, rx))
+    }
+
+    fn ask_reply(&mut self, pane: PaneId, id: Option<String>, answer: AskReply) -> Result<Ask, String> {
+        let a = self
+            .asks
+            .get(&pane)
+            .filter(|a| id.as_ref().is_none_or(|id| *id == a.ask.id))
+            .ok_or_else(|| format!("no open question in %{pane} (it was answered, or withdrawn)"))?;
+        let ask = a.ask.clone();
+        let a = self.asks.remove(&pane).expect("just found");
+        info!(pane, id = ask.id, ?answer, "question answered");
+        let terminal = answer == AskReply::Terminal;
+        let _ = a.reply.send(answer);
+        if terminal {
+            // It asks again in the terminal: still wants you.
+            self.broadcast();
+        } else {
+            self.after_ask(pane);
+        }
+        Ok(ask)
+    }
+
+    /// A terminal's question went: back to work, and its card off every
+    /// client.
+    fn after_ask(&mut self, pane: PaneId) {
+        if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
+            self.set_attention(pane, Attention::Working, "answered");
+        } else {
+            self.broadcast();
         }
     }
 
@@ -1384,6 +1499,9 @@ impl Daemon {
                     self.sizes.remove(&pane);
                     self.meta.remove(&pane);
                     self.attention.remove(&pane);
+                    if let Some(a) = self.asks.remove(&pane) {
+                        let _ = a.reply.send(AskReply::Withdrawn);
+                    }
                     self.emit(Some(pane), EventKind::Closed);
                 }
             }
@@ -1504,6 +1622,7 @@ impl Daemon {
             integration: meta.integration.unwrap_or(true),
             kind: BlockType::Terminal,
             host: meta.host,
+            ask: self.asks.get(&p.id).map(|a| a.ask.clone()),
         }
     }
 
@@ -1523,6 +1642,7 @@ impl Daemon {
             integration: false,
             kind: b.kind(),
             host: meta.host,
+            ask: None,
         }
     }
 

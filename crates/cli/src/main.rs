@@ -3,6 +3,7 @@
 //! URL, with `--host`); `--json` prints the API's answers as they are, for
 //! programs.
 
+mod ask;
 mod attach;
 mod fs;
 mod hosts;
@@ -282,6 +283,11 @@ enum Command {
         #[arg(required = true)]
         panes: Vec<Pane>,
     },
+    /// Claude Code's PreToolUse hook on AskUserQuestion: show its questions
+    /// as a card beside this pane (every client, with a push), wait, and
+    /// print the answer for Claude Code. Outside an illogical pane, or
+    /// "Answer in terminal": no output, so Claude Code shows its picker.
+    Ask,
     /// Tell illogical whether this pane needs you (for agent hooks).
     Attention {
         /// needs-input, done, working or idle.
@@ -508,6 +514,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         let daemon = if beside.exists() { beside } else { PathBuf::from("illogicald") };
         let err = std::process::Command::new(&daemon).arg("install").args(args).exec();
         bail!("running {}: {err}", daemon.display());
+    }
+    if let Command::Ask = cli.cmd {
+        // A hook: the local daemon only, and never an error.
+        return Ok(ask::run(http::Target::Socket(socket(&cli))));
     }
     let reads_history = matches!(cli.cmd, Command::History { .. } | Command::Search { .. } | Command::Tail { .. });
     let (sock, gone) = match hosts::target(socket(&cli), cli.host.as_deref()) {
@@ -846,7 +856,12 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 }
                 Some("exit") => v["code"].as_i64().unwrap_or(0) as i32,
                 Some("attention") => {
-                    if !json_out {
+                    if json_out {
+                    } else if v["ask"].is_object() {
+                        // What it asks, for a script (or another agent) to
+                        // answer with `call %N answer`.
+                        print_json(&v["ask"]);
+                    } else {
                         println!("{}", v["state"].as_str().unwrap_or("").replace('_', "-"));
                     }
                     0
@@ -931,6 +946,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 request(&sock, "POST", &format!("/api/panes/{}/close", p.0), None)?.json()?;
             }
         }
+        Command::Ask => unreachable!("handled first"),
         Command::Attention { state, pane } => {
             let state = state.replace('-', "_");
             // Hooks (Claude Code's, say) run this in every terminal; outside an

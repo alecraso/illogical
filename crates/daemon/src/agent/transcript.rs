@@ -13,6 +13,8 @@ pub const OUTPUT_IN_STATE: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// Tool calls are most of a transcript anyway; boxing them buys nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Entry {
     /// What you sent.
     User {
@@ -42,6 +44,9 @@ pub enum Entry {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Tool {
     pub id: String,
+    /// The agent's name for the tool (`AskUserQuestion`), when it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub title: String,
     /// ACP's kind: execute, edit, read, fetch, think, …
     pub kind: String,
@@ -58,6 +63,9 @@ pub struct Tool {
     pub text: String,
     /// Paths it touches (on the agent's machine, or in its sandbox).
     pub locations: Vec<String>,
+    /// AskUserQuestion's questions (its `rawInput.questions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub questions: Option<Value>,
     pub started_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ended_ms: Option<u64>,
@@ -68,9 +76,21 @@ impl Tool {
         self.status == "completed" || self.status == "failed"
     }
 
-    /// What history calls it: the command, else its title.
+    /// What history calls it: the command, else its title (a question
+    /// tool: its first question).
     pub fn label(&self) -> String {
+        if let Some(q) = self.first_question() {
+            return format!("asked: {q}");
+        }
         self.command.clone().unwrap_or_else(|| self.title.clone())
+    }
+
+    pub fn is_question(&self) -> bool {
+        self.name.as_deref() == Some(illogical_proto::ask::ASK_USER_QUESTION)
+    }
+
+    fn first_question(&self) -> Option<&str> {
+        self.questions.as_ref()?.get(0)?["question"].as_str()
     }
 }
 
@@ -247,6 +267,21 @@ impl Transcript {
                     {
                         out.push_str(&format!("\n    $ {c}\n"));
                     }
+                    for q in t.questions.as_ref().and_then(Value::as_array).into_iter().flatten() {
+                        let options: Vec<&str> =
+                            q["options"].as_array().into_iter().flatten().filter_map(|o| o["label"].as_str()).collect();
+                        let header = q["header"].as_str().filter(|h| !h.is_empty()).map(|h| format!("{h}: "));
+                        let many = if q["multiSelect"].as_bool() == Some(true) { ", any of" } else { "" };
+                        out.push_str(&format!(
+                            "\n- {}{} ({}{many})",
+                            header.unwrap_or_default(),
+                            q["question"].as_str().unwrap_or(""),
+                            options.join(" / ")
+                        ));
+                    }
+                    if t.questions.is_some() {
+                        out.push('\n');
+                    }
                     let body =
                         if t.output.is_empty() { t.text.clone() } else { crate::osc::strip(t.output.as_bytes()) };
                     if body.contains("```") {
@@ -293,6 +328,9 @@ impl Transcript {
 }
 
 fn tool_kind(t: &Tool) -> &str {
+    if t.is_question() {
+        return "Asked";
+    }
     match t.kind.as_str() {
         "execute" => "Ran",
         "edit" => "Edited",
@@ -317,6 +355,12 @@ fn merge_tool(t: &mut Tool, u: &Value) {
     }
     if let Some(s) = u["kind"].as_str() {
         t.kind = s.to_owned();
+    }
+    if let Some(s) = u["name"].as_str().or(u["_meta"]["claudeCode"]["toolName"].as_str()) {
+        t.name = Some(s.to_owned());
+    }
+    if let Some(q) = u["rawInput"]["questions"].as_array().filter(|q| !q.is_empty()) {
+        t.questions = Some(Value::Array(q.clone()));
     }
     if let Some(s) = u["status"].as_str() {
         t.status = s.to_owned();

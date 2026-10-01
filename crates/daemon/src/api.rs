@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 use crate::{
     history::{self, Filter},
     keys,
-    mux::{Api, Cmd},
+    mux::{Api, AskReply, Cmd, MuxHandle},
     osc::strip,
     pane::{CaptureFormat, CaptureScope, PaneHandle, Subscriber, ToClient},
     push::Subscription,
@@ -50,6 +50,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/keys", post(keys_))
         .route("/api/panes/{id}/mouse", post(mouse))
         .route("/api/panes/{id}/attention", post(attention))
+        .route("/api/panes/{id}/ask", post(ask))
+        .route("/api/panes/{id}/ask/withdraw", post(ask_withdraw))
         .route("/api/panes/{id}/close", post(close))
         .route("/api/panes/{id}/capture", get(capture))
         .route("/api/panes/{id}/process", get(process))
@@ -204,6 +206,120 @@ async fn attention(
     }
 }
 
+#[derive(Deserialize)]
+struct AskRequest {
+    /// AskUserQuestion's `questions`, as the hook got them.
+    questions: serde_json::Value,
+    /// The tool use's id, so asking again (after a daemon restart) is the
+    /// same question.
+    #[serde(default)]
+    id: Option<String>,
+}
+
+/// Withdraws a terminal's question if whoever asked it goes away first.
+struct AskGuard {
+    mux: MuxHandle,
+    pane: PaneId,
+    token: u64,
+    armed: bool,
+}
+
+impl Drop for AskGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.mux.send(Cmd::Api(Api::AskWithdraw(self.pane, None, Some(self.token))));
+        }
+    }
+}
+
+/// `illogical ask`: show AskUserQuestion's questions beside a terminal and
+/// wait for the answer. Answers `{action: accept, content, output}` (the
+/// hook's output for Claude Code), `{action: decline, output}`,
+/// `{action: terminal}` (answer in the terminal) or `{action: withdrawn}`.
+async fn ask(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    Json(req): Json<AskRequest>,
+) -> Res<Json<serde_json::Value>> {
+    use illogical_proto::ask::{self, Ask, AskKind};
+    let questions = req.questions.as_array().filter(|q| !q.is_empty()).ok_or_else(|| bad("no questions"))?;
+    let message = match questions.as_slice() {
+        [q] => q["question"].as_str().unwrap_or_default().to_owned(),
+        _ => "Please answer the following questions.".to_owned(),
+    };
+    let a = Ask {
+        id: req.id.clone().unwrap_or_else(|| format!("q{}", now_ms())),
+        kind: AskKind::Questions,
+        message,
+        questions: Some(req.questions.clone()),
+        schema: None,
+        url: None,
+        accepted: false,
+        tool_call_id: req.id,
+        source: "hook".into(),
+        at_ms: now_ms(),
+    };
+    let (token, rx) = match app.mux.api(|r| Api::Ask(id, a, r)).await {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Err(ApiError(StatusCode::NOT_FOUND, e)),
+        None => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    };
+    let mut guard = AskGuard { mux: app.mux.clone(), pane: id, token, armed: true };
+    let reply = rx.await;
+    guard.armed = false;
+    Ok(Json(match reply {
+        Ok(AskReply::Answer(content)) => {
+            let output = ask::hook_output(&req.questions, &content);
+            serde_json::json!({ "action": "accept", "content": content, "output": output })
+        }
+        Ok(AskReply::Decline) => serde_json::json!({ "action": "decline", "output": ask::hook_declined() }),
+        Ok(AskReply::Terminal) => serde_json::json!({ "action": "terminal" }),
+        Ok(AskReply::Withdrawn) => serde_json::json!({ "action": "withdrawn" }),
+        // The daemon is going away; the asker asks the next one.
+        Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }))
+}
+
+#[derive(Deserialize)]
+struct WithdrawRequest {
+    #[serde(default)]
+    id: Option<String>,
+}
+
+async fn ask_withdraw(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    Json(req): Json<WithdrawRequest>,
+) -> Res<Json<serde_json::Value>> {
+    app.mux.send(Cmd::Api(Api::AskWithdraw(id, req.id, None)));
+    Ok(Json(serde_json::json!({})))
+}
+
+/// A terminal's question answered by `call %N answer|decline|terminal`.
+async fn answer_terminal(app: &App, id: PaneId, method: &str, args: serde_json::Value) -> Res<Json<serde_json::Value>> {
+    let ask_id = args["id"].as_str().map(str::to_owned);
+    let reply = match method {
+        "answer" => {
+            let content = match args.get("content") {
+                Some(c) if c.is_object() => c.clone(),
+                _ => {
+                    let mut c = args.as_object().cloned().unwrap_or_default();
+                    c.remove("id");
+                    serde_json::Value::Object(c)
+                }
+            };
+            AskReply::Answer(content)
+        }
+        "decline" => AskReply::Decline,
+        _ => AskReply::Terminal,
+    };
+    match app.mux.api(|r| Api::AskReply(id, ask_id, reply, r)).await {
+        Some(Ok(a)) => Ok(Json(serde_json::json!({ "answered": a.id }))),
+        Some(Err(e)) => Err(bad(e)),
+        None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }
+}
+
 async fn close(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
     match app.mux.api(|r| Api::Close(id, r)).await {
         Some(true) => Ok(Json(serde_json::json!({}))),
@@ -327,6 +443,7 @@ async fn call(
                 .unwrap_or_default();
             Ok(Json(serde_json::json!({ "text": text })))
         }
+        "answer" | "decline" | "terminal" => answer_terminal(&app, id, &method, args).await,
         m => Err(bad(crate::block::no_method(illogical_proto::BlockType::Terminal, m))),
     }
 }
@@ -495,26 +612,34 @@ fn tail_block(app: Arc<App>, id: PaneId, b: Arc<dyn crate::block::Block>, follow
 /// soon as a call returns; others go by the daemon's attention.
 async fn wait_attention(app: &App, id: PaneId, needs_input: bool) -> Res<WaitResult> {
     use illogical_proto::Attention;
+    use illogical_proto::ask::Ask;
     loop {
-        let state = app
-            .mux
-            .api(|r| Api::Block(id, r))
-            .await
-            .flatten()
-            .and_then(|b| serde_json::from_value::<Attention>(b.state()["attention"].clone()).ok());
-        let state = match state {
-            Some(a) => a,
+        let block = app.mux.api(|r| Api::Block(id, r)).await.flatten().map(|b| b.state());
+        let found = block.and_then(|s| {
+            let a = serde_json::from_value::<Attention>(s["attention"].clone()).ok()?;
+            // The question it waits on: the first one not already opened.
+            let ask = s["asks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|a| a["accepted"] != true)
+                .and_then(|a| serde_json::from_value::<Ask>(a.clone()).ok());
+            Some((a, ask))
+        });
+        let (state, ask) = match found {
+            Some(f) => f,
             None => {
                 let summaries = app.mux.api(Api::Panes).await.unwrap_or_default();
                 match summaries.into_iter().find(|p| p.info.id == id) {
-                    Some(p) => p.info.attention,
+                    Some(p) => (p.info.attention, p.info.ask),
                     None => return Err(ApiError(StatusCode::GONE, format!("%{id} closed"))),
                 }
             }
         };
         let done = if needs_input { state == Attention::NeedsInput } else { state != Attention::Working };
         if done {
-            return Ok(WaitResult::Attention { state });
+            let ask = ask.filter(|_| state == Attention::NeedsInput);
+            return Ok(WaitResult::Attention { state, ask });
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
