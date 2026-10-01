@@ -880,6 +880,8 @@ button {
   padding: 6px 14px;
   border-radius: 8px;
   background: var(--raised);
+}
+
 /* ---- agent blocks (M6b) */
 
 .agent {
