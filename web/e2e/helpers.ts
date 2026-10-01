@@ -1,11 +1,13 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { Client } from "../src/client";
+import type { HostDirectory } from "../src/hosts";
 import type { PaneId, TabView } from "../src/proto";
 
 declare global {
   interface Window {
     __illogical: {
       client: Client;
+      hosts: HostDirectory;
       text(pane: PaneId): string;
       screen(pane: PaneId): string;
       size(pane: PaneId): [number, number] | null;

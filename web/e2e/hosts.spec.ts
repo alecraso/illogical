@@ -134,7 +134,9 @@ test.describe("phone", () => {
 
   test("hosts are listed in the sheet and switch from there", async ({ page }) => {
     await page.goto("/");
+    await expect.poll(() => connected(page)).toBe(true);
     await page.evaluate(() => window.__illogical.hosts.select("home"));
+    await expect.poll(() => base(page)).toBe("");
     await expect.poll(() => connected(page)).toBe(true);
     await page.locator(".sheet-button").click();
     await expect(page.locator(".sheet-host")).toHaveCount(2);
@@ -161,7 +163,7 @@ test("with the home daemon down, the saved list still reaches the other host", a
 
   await page.reload();
   // The list is the saved one; home is unreachable, so it offers the others.
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.stale)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__illogical?.hosts.stale)).toBe(true);
   await page.locator('.host-picker button[data-host="other"]').click();
   await expect.poll(() => base(page)).toBe(otherUrl);
   await expect.poll(() => connected(page)).toBe(true);

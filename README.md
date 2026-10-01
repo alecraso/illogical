@@ -82,6 +82,18 @@ the daemon stopping, crashing, or the machine rebooting:
   a card with "open in new tab". Block directories are `blocks/<id>/` in
   the state directory (`panes/` before; it's moved, and left as a link).
 
+- **Other hosts** (M4a). Every daemon is a peer; the one the page comes
+  from (geek's, the "home daemon") keeps a list of the others and checks on
+  each every minute. The page shows a host switcher (desktop: the bar's
+  left end; phone: the sheet), and each host has its own sessions and tabs.
+  Switching connects straight to that daemon; nothing is relayed, and the
+  host you left gets no connection (so a sandbox can sleep). The list is
+  remembered in the browser, and the page itself by its service worker, so
+  the other hosts stay reachable while the home daemon is down.
+  `illogical --host NAME …` runs any command on another host. A sandbox
+  (a sprite, a container: no systemd needed) gets a static daemon on the
+  tailnet with one command and adds itself to the list; see *Use it*.
+
 ### The CLI
 
 ```
@@ -109,6 +121,10 @@ illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
+illogical hosts                               # the home daemon's other hosts, last seen
+illogical hosts add box https://box.tailb2e8f2.ts.net
+illogical hosts invite                        # a one-time token a sandbox joins with
+illogical --host box run --wait -- make       # any command, on another host
 ```
 
 `--json` prints the API's JSON. `send` then `wait` only sees what happened
@@ -155,6 +171,29 @@ pane should have from boot (`PATH` additions, `EDITOR`), put `KEY=value`
 lines in `~/.config/environment.d/50-illogical.conf`. Panes run `$SHELL -l`,
 so your profile runs too.
 
+**A sandbox on the tailnet** (M4a). `just static` builds static x86_64 musl
+binaries in `target/x86_64-unknown-linux-musl/release/`. Copy
+`illogicald` and `illogical` into the sandbox, then:
+
+```
+illogical hosts invite                                  # on geek: prints a token
+illogical install --tailnet file:KEYFILE \
+  --home https://geek.tailb2e8f2.ts.net --join TOKEN    # in the sandbox
+```
+
+The key is an ephemeral, `tag:sandbox` Tailscale auth key, in a file (or
+`-` for stdin; it is never put on a command line). This downloads
+tailscaled if it isn't there, runs it in userspace mode with its own state
+in `~/.local/state/illogical-sandbox`, joins, puts the daemon behind
+`tailscale serve`, and adds it to geek's list (learning whom to let in;
+`--owner` otherwise). `illogicald sandbox` keeps tailscaled and the daemon
+running and restarts them; install starts it detached. After a reboot, run
+`illogicald sandbox &` again. Without `--join` it prints the `illogical
+hosts add` line to run on geek. Another daemon accepts the home page only
+by exact origin: `--allow-origin https://geek.tailb2e8f2.ts.net` (install
+sets it from `--home`). Sprites pause when idle and tailnet traffic doesn't
+wake them, so wake one through the provider first (M4b does that).
+
 Development: `just dev` runs a separate daemon on 7682 (state in
 `~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
 alone. `just check` is what CI runs; `just e2e` drives the system Chrome
@@ -178,14 +217,18 @@ against the running one.
   integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
   search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
   (`machine.rs`: the Sprites API and exec TTY sessions), the WebSocket
-  server, embedded web client, access checks, `install`.
-- `crates/cli`: `illogical`, over the daemon's Unix socket.
+  server, embedded web client, access checks, `install`. Federation: the
+  host list and invites (`hosts.rs`), tailscaled's local API and WhoIs
+  (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install --tailnet` and
+  the `sandbox` supervisor).
+- `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
+  another daemon with `--host` (`hosts.rs`).
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M3c taught us
+## Things M0–M4a taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -258,3 +301,25 @@ against the running one.
 - **A tab's title follows its active pane,** so grabbing a pane to drag it
   can resize its tab under the pointer. The tests aim after the pane is
   active, and anything that measures the tab bar mid-drag should too.
+- **In userspace mode, the tailnet arrives on loopback.** tailscaled's
+  netstack forwards a tailnet connection to the daemon's port as one from
+  127.0.0.1, with any Host header the sender likes, so "loopback means
+  local" would let in anyone the ACL lets reach the sandbox. The daemon asks
+  tailscaled's WhoIs about every peer there (it knows forwarded
+  connections); a second daemon in a sprite with another owner refused geek
+  even with a forged loopback Host and serve header.
+- **serve sends no identity for tagged nodes** (or Funnel). A request for
+  the tailnet name without `Tailscale-User-Login` used to pass as local;
+  with sandboxes on the tailnet that would have handed geek's terminals to
+  any tagged node the ACL let through. It is refused now, except joining
+  the host list with an invite.
+- **Zig as a musl C compiler:** cc-rs passes a Rust-style `--target=` that
+  Zig rejects, and Zig turns on UBSan for unoptimized C (aws-lc's
+  jitterentropy), whose runtime nothing links. `scripts/zig-cc-musl` drops
+  the one and turns off the other.
+- **Children inherit a blocked signal mask.** The sandbox supervisor
+  blocks SIGTERM to wait for it, and std's `Command` passed that on: the
+  daemon never heard SIGTERM and was killed instead of saving its panes.
+- **A restarted tailscaled says `Starting` for a moment.** A daemon that
+  asked then got no tailnet name (and refused its own URL), and an install
+  that asked then logged in again. Both wait for it to settle now.
