@@ -14,7 +14,12 @@
 //! port" half of M4b's `Provider`; [`Target`] is what a provider will hand
 //! back.
 
-use std::{io, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -77,10 +82,11 @@ impl Target {
     async fn dial_now(&self) -> io::Result<Conn> {
         match self {
             Self::Local(port) => {
-                // Each of localhost's addresses in turn, as the Sprites
-                // proxy does: dev servers often listen on only one of
-                // 127.0.0.1 and ::1.
-                let s = tokio::net::TcpStream::connect(("localhost", *port)).await?;
+                // Both loopback addresses in turn: a dev server listening
+                // on "localhost" may be on either one only.
+                let both =
+                    [SocketAddr::from((Ipv4Addr::LOCALHOST, *port)), SocketAddr::from((Ipv6Addr::LOCALHOST, *port))];
+                let s = tokio::net::TcpStream::connect(&both[..]).await?;
                 s.set_nodelay(true)?;
                 Ok(Box::new(s))
             }
