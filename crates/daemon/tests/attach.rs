@@ -468,7 +468,7 @@ async fn idle_panes_are_checkpointed() {
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "echo idle-$((2+2))").await;
     read_pane_until(&mut ws, 1, "idle-4").await;
-    let ckpt = state.join("panes/1/checkpoint");
+    let ckpt = state.join("blocks/1/checkpoint");
     for _ in 0..80 {
         if ckpt.exists() {
             break;
@@ -520,7 +520,7 @@ async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
     send(&mut ws, ClientMsg::Pane { pane: 1, op: PaneOp::Purge }).await;
     send(&mut ws, ClientMsg::Pane { pane: 1, op: PaneOp::SetPolicy { policy: Policy::None } }).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let logs: Vec<u8> = std::fs::read_dir(state.join("panes/1"))
+    let logs: Vec<u8> = std::fs::read_dir(state.join("blocks/1"))
         .unwrap()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("seg-"))
@@ -543,15 +543,15 @@ async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right, local: false } })
         .await;
     until(&mut ws, |m| matches!(m, In::Msg(ServerMsg::State { state }) if state.panes.len() == 2).then_some(())).await;
-    assert!(state.join("panes/2").exists());
+    assert!(state.join("blocks/2").exists());
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::ClosePane { pane: 2 } }).await;
     for _ in 0..50 {
-        if !state.join("panes/2").exists() {
+        if !state.join("blocks/2").exists() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(!state.join("panes/2").exists(), "a closed pane leaves the live panes");
+    assert!(!state.join("blocks/2").exists(), "a closed pane leaves the live panes");
     let retired = std::fs::read_dir(state.join("closed"))
         .unwrap()
         .flatten()

@@ -251,6 +251,8 @@ fn events_stream_and_attention() {
     // Typing in the pane answers it.
     d.send(1, "true");
     d.wait_for(|| d.pane(1)["attention"] != "needs_input");
+    // (After `true` has finished, or its end would reset what follows.)
+    d.wait_for(|| d.pane(1)["last"]["text"] == "true");
 
     // An agent hook sets it directly.
     d.post("/api/panes/1/attention", json!({"state": "done"}));

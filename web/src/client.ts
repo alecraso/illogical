@@ -21,12 +21,19 @@ import {
   type TabView,
 } from "./proto";
 import { TerminalView } from "./terminal-view";
+import { makeBlockView, type BlockView } from "./blocks";
 
 export interface PaneEntry {
   view: TerminalView;
   epoch: number;
   offset: number | null;
   title: string;
+}
+
+/** A block that isn't a terminal: its type's view and latest state. */
+export interface BlockEntry {
+  view: BlockView;
+  state: unknown;
 }
 
 export interface Modifiers {
@@ -42,7 +49,10 @@ export class Client {
   session: SessionId | null = null;
   tab: TabId | null = null;
   readonly activePane = new Map<TabId, PaneId>();
+  /** Terminals, by pane id. */
   readonly panes = new Map<PaneId, PaneEntry>();
+  /** Every other block type, in the same id space. */
+  readonly blocks = new Map<PaneId, BlockEntry>();
   /** Sticky modifiers from the phone key bar, applied to the next key. */
   modifiers: Modifiers = { ctrl: false, alt: false };
   private focused: PaneId | null | undefined = undefined;
@@ -67,6 +77,7 @@ export class Client {
   /** When this client last asked for a change; panes that appear soon
    * after are the ones it created, and become active. */
   private lastIntentAt = 0;
+  private pendingBlocks = new Map<PaneId, unknown>();
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -96,6 +107,16 @@ export class Client {
     const t = this.tabView(tab);
     const a = this.activePane.get(tab);
     return t && a !== undefined && paneIds(t).includes(a) ? a : t ? paneIds(t)[0] : undefined;
+  }
+
+  /** The element a block of any type is drawn in, and how to show it. */
+  viewOf(id: PaneId): { host: HTMLElement; setVisible(v: boolean): void; focus(): void } | undefined {
+    return this.panes.get(id)?.view ?? this.blocks.get(id)?.view;
+  }
+
+  /** What a block calls itself: a terminal's title, or its view's. */
+  title(id: PaneId): string {
+    return this.panes.get(id)?.title || this.blocks.get(id)?.view.title() || "";
   }
 
   cwd(pane: PaneId): string | null {
@@ -295,6 +316,18 @@ export class Client {
       case "error":
         this.showError(msg.message);
         break;
+      case "block": {
+        const b = this.blocks.get(msg.block);
+        if (b) {
+          b.state = msg.state;
+          b.view.update(msg.state);
+          this.emit();
+        } else {
+          // Its state can arrive before the layout that has it.
+          this.pendingBlocks.set(msg.block, msg.state);
+        }
+        break;
+      }
     }
   }
 
@@ -311,7 +344,24 @@ export class Client {
         this.panes.delete(id);
       }
     }
+    for (const [id, entry] of this.blocks) {
+      if (!live.has(id)) {
+        entry.view.dispose();
+        this.blocks.delete(id);
+      }
+    }
     for (const info of state.panes) {
+      if (info.type !== "terminal") {
+        if (!this.blocks.has(info.id)) {
+          const view = makeBlockView(info.type, this, info.id);
+          const pending = this.pendingBlocks.get(info.id);
+          this.pendingBlocks.delete(info.id);
+          if (pending !== undefined) view.update(pending);
+          this.blocks.set(info.id, { view, state: pending ?? null });
+          if (!reconnect) created.push(info.id);
+        }
+        continue;
+      }
       let entry = this.panes.get(info.id);
       if (entry && entry.epoch !== info.epoch) {
         // A different stream (daemon restarted): our offset means nothing.
@@ -408,7 +458,7 @@ export function tabLabel(client: Client, tab: TabView): string {
   if (tab.name) return tab.name;
   const pane = client.active(tab.id);
   if (pane === undefined) return `@${tab.id}`;
-  const title = client.panes.get(pane)?.title;
+  const title = client.title(pane);
   if (title) return title;
   const cwd = client.cwd(pane);
   return cwd ? cwd.split("/").filter(Boolean).pop() ?? "/" : `@${tab.id}`;

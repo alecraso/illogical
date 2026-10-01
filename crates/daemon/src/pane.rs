@@ -93,6 +93,10 @@ pub enum What {
     Signal(Signal),
     /// Output started flowing (true) or has been quiet for a while (false).
     Busy(bool),
+    /// A non-terminal block's state changed.
+    BlockChanged,
+    /// A block asks for attention (or lets go of it), and why.
+    Attention(illogical_proto::Attention, String),
 }
 
 pub type NoticeSink = mpsc::UnboundedSender<Notice>;

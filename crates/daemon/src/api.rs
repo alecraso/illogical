@@ -56,6 +56,9 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/tail", get(tail))
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
+        .route("/api/blocks", post(open_block))
+        .route("/api/blocks/{id}", get(describe))
+        .route("/api/blocks/{id}/call/{method}", post(call))
         .route("/api/machines", get(machines))
         .route("/api/machines/{id}/reset", post(reset_machine))
         .route("/api/panes/{id}/share-machine", post(share_machine))
@@ -217,6 +220,10 @@ struct CaptureQuery {
 }
 
 async fn capture(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<CaptureQuery>) -> Res<Response> {
+    // Any block has a text rendering; terminals have more.
+    if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+        return Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], b.text()).into_response());
+    }
     let p = pane(&app, id).await?;
     let format = match q.format.as_deref().unwrap_or("text") {
         "text" => CaptureFormat::Text,
@@ -237,6 +244,91 @@ async fn capture(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<C
         .ok_or_else(|| ApiError(StatusCode::GATEWAY_TIMEOUT, "the pane didn't answer".into()))?;
     let ctype = if format == CaptureFormat::Html { "text/html; charset=utf-8" } else { "text/plain; charset=utf-8" };
     Ok(([(header::CONTENT_TYPE, ctype)], text).into_response())
+}
+
+async fn open_block(
+    State(app): AppState,
+    Json(req): Json<illogical_proto::api::OpenRequest>,
+) -> Res<Json<serde_json::Value>> {
+    match app.mux.api(|r| Api::Open(req, r)).await {
+        Some(Ok(block)) => Ok(Json(serde_json::json!({ "block": block }))),
+        Some(Err(e)) => Err(bad(e)),
+        None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }
+}
+
+/// `describe %N`: where a block is and what it's doing, for any type.
+async fn describe(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+    let info = app
+        .mux
+        .api(Api::Panes)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|p| p.info.id == id)
+        .ok_or(ApiError(StatusCode::NOT_FOUND, format!("no block %{id}")))?;
+    let state = match app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+        Some(b) => b.state(),
+        None => {
+            let st = pane(&app, id).await?.status();
+            serde_json::json!({
+                "cwd": st.cwd,
+                "busy": st.busy,
+                "end": st.end,
+                "exited": st.exited,
+                "current": st.current,
+                "last": st.last,
+            })
+        }
+    };
+    Ok(Json(serde_json::json!({ "info": info, "state": state })))
+}
+
+/// `call %N METHOD [json]`: a block's own methods. Terminals answer `send`,
+/// `keys` and `capture` the same way as their own routes.
+async fn call(
+    State(app): AppState,
+    Path((id, method)): Path<(PaneId, String)>,
+    body: axum::body::Bytes,
+) -> Res<Json<serde_json::Value>> {
+    let args: serde_json::Value = if body.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_slice(&body).map_err(|e| bad(e.to_string()))?
+    };
+    if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+        return b.call(&method, args).await.map(Json).map_err(bad);
+    }
+    let p = pane(&app, id).await?;
+    match method.as_str() {
+        "send" => {
+            let req: SendRequest = serde_json::from_value(args).map_err(|e| bad(e.to_string()))?;
+            p.mark_input();
+            let mut data = req.text.into_bytes();
+            if req.enter {
+                data.push(b'\r');
+            }
+            app.mux.send(Cmd::Input { pane: id, data });
+            Ok(Json(serde_json::json!({})))
+        }
+        "keys" => {
+            let req: KeysRequest = serde_json::from_value(args).map_err(|e| bad(e.to_string()))?;
+            let modes = p.status().modes;
+            let data: Vec<u8> = req.keys.iter().flat_map(|k| keys::key(k, modes)).collect();
+            p.mark_input();
+            app.mux.send(Cmd::Input { pane: id, data });
+            Ok(Json(serde_json::json!({})))
+        }
+        "capture" => {
+            let text = tokio::task::spawn_blocking(move || p.capture(CaptureFormat::Text, CaptureScope::Screen))
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            Ok(Json(serde_json::json!({ "text": text })))
+        }
+        m => Err(bad(crate::block::no_method(illogical_proto::BlockType::Terminal, m))),
+    }
 }
 
 async fn machines(State(app): AppState) -> Res<Json<Vec<illogical_proto::Machine>>> {

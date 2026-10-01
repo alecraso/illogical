@@ -10,6 +10,9 @@
 //! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
 //! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
+//! | POST | `/api/blocks` | `OpenRequest` | `{"block": N}` |
+//! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |
+//! | POST | `/api/blocks/N/call/METHOD` | JSON args | the method's answer |
 //! | GET | `/api/machines` | | `[Machine]` |
 //! | POST | `/api/machines/N/reset` | | `{}`: delete and recreate it; its panes restart by policy |
 //! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |
@@ -36,6 +39,24 @@ pub struct PaneSummary {
     pub tab_name: Option<String>,
     #[serde(flatten)]
     pub info: PaneInfo,
+}
+
+/// `POST /api/blocks`: open a block of any type.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OpenRequest {
+    #[serde(rename = "type")]
+    pub kind: crate::BlockType,
+    /// What the type needs to make it (a URL, an agent command).
+    #[serde(default)]
+    pub config: serde_json::Value,
+    /// Session name or id, as for `run`.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// Split this block instead of opening a tab.
+    #[serde(default)]
+    pub split: Option<PaneId>,
+    #[serde(default)]
+    pub from_pane: Option<PaneId>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -311,7 +311,7 @@ export function TabArea({ client, tab, cell, phone }: { client: Client; tab: Tab
   // Keyboard focus follows the active pane (not on phones: that would pop
   // up the keyboard on every switch).
   useEffect(() => {
-    if (!phone && active !== null) client.panes.get(active)?.view.focus();
+    if (!phone && active !== null) client.viewOf(active)?.focus();
   }, [client, tab.id, active, phone]);
   // ...and comes back to it after menus and buttons, unless something else
   // (a rename box) is using the keyboard.
@@ -319,7 +319,7 @@ export function TabArea({ client, tab, cell, phone }: { client: Client; tab: Tab
   useEffect(() => {
     const el = document.activeElement;
     const idle = !el || el === document.body || el.closest(".menu, .bar button, .tab");
-    if (!phone && active !== null && idle) client.panes.get(active)?.view.focus();
+    if (!phone && active !== null && idle) client.viewOf(active)?.focus();
   }, [client, rev, active, phone]);
 
   const gridW = tab.cols * cell.width;
@@ -381,22 +381,25 @@ function PaneSlot({
   phone: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // A terminal's entry (for terminal-only features), and the view of any
+  // block type.
   const entry = client.panes.get(id);
+  const view = client.viewOf(id);
 
-  // Move the pane's terminal in, rather than creating one: moving a pane
-  // around the layout never restarts or redraws its terminal from scratch.
+  // Move the block's view in, rather than creating one: moving a block
+  // around the layout never restarts or redraws it from scratch.
   useLayoutEffect(() => {
     const slot = ref.current;
-    if (!entry || !slot) return;
-    slot.appendChild(entry.view.host);
-    entry.view.setVisible(true);
+    if (!view || !slot) return;
+    slot.appendChild(view.host);
+    view.setVisible(true);
     return () => {
-      if (entry.view.host.parentElement === slot) {
-        parking.appendChild(entry.view.host);
-        entry.view.setVisible(false);
+      if (view.host.parentElement === slot) {
+        parking.appendChild(view.host);
+        view.setVisible(false);
       }
     };
-  }, [entry]);
+  }, [view]);
 
   const info = client.info(id);
 
@@ -432,6 +435,13 @@ function PaneSlot({
       { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
       ...(tabMachine ? [{ label: "Split (local)", run: () => client.intent({ op: "split", pane: id, edge: "right", local: true }) } as MenuItem] : []),
       { label: "New VM pane on the right", run: () => void client.newVm({ split: id }) },
+      {
+        label: "Open a web page…",
+        run: async () => {
+          const url = await askText("Open a web page", "", "https://… or example.com");
+          if (url) void client.api("/api/blocks", { type: "browser", config: { url }, split: id }, "couldn't open that page");
+        },
+      },
       ...(own && !tabMachine
         ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
         : []),
@@ -490,7 +500,7 @@ function PaneSlot({
           title="Drag to move this pane"
           onPointerDown={(e) => {
             e.stopPropagation();
-            startDrag(e, { kind: "pane", pane: id }, client.panes.get(id)?.title || `pane %${id}`, {
+            startDrag(e, { kind: "pane", pane: id }, client.title(id) || `pane %${id}`, {
               onDrop: (what, target) => drop(client, what, target),
             });
           }}

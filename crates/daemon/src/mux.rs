@@ -15,7 +15,7 @@ use illogical_core::{Effect, Intent, Mux};
 use illogical_proto::{
     Attention, BlockType, ClientId, ClientMsg, CommandInfo, Event, EventKind, Machine, MachineId, MachineState, Owner,
     PaneId, PaneInfo, PaneOp, Policy, ServerMsg, State, TabId, TabView,
-    api::{PaneSummary, RunRequest},
+    api::{OpenRequest, PaneSummary, RunRequest},
 };
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
@@ -24,6 +24,7 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
+    block::{Block, BlockCtx},
     machine::Wisp,
     osc::Signal,
     pane::{
@@ -75,6 +76,10 @@ pub enum Api {
     Pane(PaneId, oneshot::Sender<Option<PaneHandle>>),
     Attention(PaneId, Attention, oneshot::Sender<bool>),
     Close(PaneId, oneshot::Sender<bool>),
+    /// Open a block of any type.
+    Open(OpenRequest, oneshot::Sender<Result<PaneId, String>>),
+    /// A non-terminal block, to describe or call.
+    Block(PaneId, oneshot::Sender<Option<Arc<dyn Block>>>),
     Machines(oneshot::Sender<Vec<Machine>>),
     /// The machine a pane runs on.
     MachineOf(PaneId, oneshot::Sender<Option<Machine>>),
@@ -275,6 +280,13 @@ struct Daemon {
     notices: NoticeSink,
     events: broadcast::Sender<Event>,
     push: Option<Push>,
+    /// Non-terminal blocks (terminals are in `panes`).
+    blocks: HashMap<PaneId, Arc<dyn Block>>,
+    /// The next block an intent spawns is this type, with this config,
+    /// instead of a terminal.
+    next_block: Option<(BlockType, serde_json::Value)>,
+    /// Why the last block failed to start, for `open_block` to report.
+    last_block_error: Option<String>,
     /// The next pane an intent spawns runs this instead of a shell.
     next_spawn: Option<(Spawn, Option<String>)>,
     /// ...and runs it on this machine.
@@ -308,6 +320,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         notices,
         events: events.clone(),
         push,
+        blocks: HashMap::new(),
+        next_block: None,
+        last_block_error: None,
         next_spawn: None,
         next_host: None,
         next_owner_tab: false,
@@ -400,8 +415,23 @@ impl Daemon {
                 },
                 _ => self.config.restore(id, &meta),
             };
+            if meta.kind != BlockType::Terminal {
+                let config = meta.config.clone().unwrap_or_default();
+                match self.make_block(id, meta.kind, config, meta.host, true) {
+                    Ok(()) => {
+                        self.meta.insert(id, meta);
+                    }
+                    Err(e) => {
+                        warn!(block = id, error = %e, "can't restore block; dropping it");
+                        let _ = self.mux.apply(Intent::ClosePane { pane: id });
+                    }
+                }
+                continue;
+            }
             let integrate = meta.integration.unwrap_or(true);
-            match self.open_pane(id, cols, rows, true, start, cwd, integrate, false, meta.host) {
+            // Still running what `run` started: keep holding it.
+            let hold = meta.hold && matches!(start, Start::Adopt(_) | Start::Resume { .. });
+            match self.open_pane(id, cols, rows, true, start, cwd, integrate, hold, meta.host) {
                 Ok(()) => {
                     self.meta.insert(id, meta);
                 }
@@ -472,6 +502,27 @@ impl Daemon {
         Ok(())
     }
 
+    /// Make a non-terminal block for `id` and keep it.
+    fn make_block(
+        &mut self,
+        id: PaneId,
+        kind: BlockType,
+        config: serde_json::Value,
+        host: Option<MachineId>,
+        restoring: bool,
+    ) -> Result<(), String> {
+        let sprite = host.and_then(|m| self.machines.get(&m)).map(|m| m.sprite.clone());
+        let dir = self.store.pane_dir(id);
+        let ctx = BlockCtx::new(id, dir, self.notices.clone(), self.config.wisp.clone(), sprite, restoring);
+        let b = crate::block::create(kind, ctx, config)?;
+        self.blocks.insert(id, b);
+        Ok(())
+    }
+
+    fn block_msg(&self, id: PaneId) -> Option<ServerMsg> {
+        Some(ServerMsg::Block { block: id, state: self.blocks.get(&id)?.state() })
+    }
+
     async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Cmd>, mut notices: mpsc::UnboundedReceiver<Notice>) {
         let mut refresh = tokio::time::interval(REFRESH);
         loop {
@@ -505,7 +556,7 @@ impl Daemon {
 
     fn set_attention(&mut self, pane: PaneId, state: Attention, why: &str) {
         let old = self.attention.get(&pane).copied().unwrap_or_default();
-        if old == state || !self.panes.contains_key(&pane) {
+        if old == state || !(self.panes.contains_key(&pane) || self.blocks.contains_key(&pane)) {
             return;
         }
         info!(pane, ?state, why, "attention");
@@ -566,7 +617,21 @@ impl Daemon {
                     self.broadcast();
                 }
             }
+            What::BlockChanged => {
+                if let Some(msg) = self.block_msg(pane) {
+                    for sub in self.clients.values() {
+                        let _ = sub.ctrl.send(ToClient::Msg(msg.clone()));
+                    }
+                }
+                // Its config may have changed with it.
+                self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
+            }
+            What::Attention(state, why) => self.set_attention(pane, state, &why),
             What::Started => {
+                // What `run` started is gone; the new program isn't held.
+                if let Some(m) = self.meta.get_mut(&pane) {
+                    m.hold = false;
+                }
                 self.set_attention(pane, Attention::Idle, "started");
                 self.changed();
             }
@@ -649,6 +714,11 @@ impl Daemon {
                     state: self.state(),
                 };
                 let _ = sub.ctrl.send(ToClient::Msg(hello));
+                for id in self.blocks.keys() {
+                    if let Some(msg) = self.block_msg(*id) {
+                        let _ = sub.ctrl.send(ToClient::Msg(msg));
+                    }
+                }
                 self.clients.insert(sub.client, sub);
             }
             Cmd::Disconnect { client } => {
@@ -704,8 +774,14 @@ impl Daemon {
             Api::ResetMachine(id, reply) => {
                 let _ = reply.send(self.reset_machine(id));
             }
+            Api::Open(req, reply) => {
+                let _ = reply.send(self.open_block(req));
+            }
+            Api::Block(id, reply) => {
+                let _ = reply.send(self.blocks.get(&id).cloned());
+            }
             Api::Close(pane, reply) => {
-                let known = self.panes.contains_key(&pane);
+                let known = self.panes.contains_key(&pane) || self.blocks.contains_key(&pane);
                 if known {
                     let _ = self.intent(None, Intent::ClosePane { pane });
                 }
@@ -726,21 +802,7 @@ impl Daemon {
             .map(PathBuf::from)
             .or_else(|| from.and_then(|p| self.panes.get(&p)?.cwd()))
             .unwrap_or_else(|| self.config.home.clone());
-        let session = match &req.session {
-            Some(name) => match self.mux.sessions.iter().find(|s| s.name == *name || s.id.to_string() == *name) {
-                Some(s) => Some(s.id),
-                None => {
-                    // A new session starts with a shell; the command gets a
-                    // tab of its own next to it.
-                    self.intent(None, Intent::NewSession { name: Some(name.clone()), from_pane: None })?;
-                    self.mux.sessions.last().map(|s| s.id)
-                }
-            },
-            None => from
-                .and_then(|p| self.mux.tab_of(p).ok())
-                .and_then(|t| self.mux.session_of_tab(t).ok())
-                .or_else(|| self.mux.sessions.first().map(|s| s.id)),
-        };
+        let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();
         let host = if req.vm || req.vm_tab { Some(self.new_machine(req.image.clone())?) } else { None };
         self.next_spawn = req.command.as_ref().map(|command| {
@@ -773,6 +835,54 @@ impl Daemon {
             self.meta.entry(pane).or_default().policy = policy;
         }
         Ok(pane)
+    }
+
+    /// Which session a new tab goes in: one named (made if missing), else
+    /// `from`'s, else the first.
+    fn resolve_session(&mut self, name: Option<&str>, from: Option<PaneId>) -> Result<Option<u32>, String> {
+        Ok(match name {
+            Some(name) => match self.mux.sessions.iter().find(|s| s.name == name || s.id.to_string() == name) {
+                Some(s) => Some(s.id),
+                None => {
+                    // A new session starts with a shell; the block gets a
+                    // tab of its own next to it.
+                    self.intent(None, Intent::NewSession { name: Some(name.to_owned()), from_pane: None })?;
+                    self.mux.sessions.last().map(|s| s.id)
+                }
+            },
+            None => from
+                .and_then(|p| self.mux.tab_of(p).ok())
+                .and_then(|t| self.mux.session_of_tab(t).ok())
+                .or_else(|| self.mux.sessions.first().map(|s| s.id)),
+        })
+    }
+
+    /// `POST /api/blocks`: a new block of any type, in a tab of its own or
+    /// split beside another. In a VM tab it runs on the tab's machine.
+    fn open_block(&mut self, req: OpenRequest) -> Result<PaneId, String> {
+        if req.kind == BlockType::Terminal {
+            return Err("terminals are opened with run".into());
+        }
+        let from = req.from_pane.filter(|p| self.panes.contains_key(p) || self.blocks.contains_key(p));
+        let session = self.resolve_session(req.session.as_deref(), from)?;
+        let before: Vec<PaneId> = self.mux.panes();
+        self.next_block = Some((req.kind, req.config));
+        let intent = match (req.split, session) {
+            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: false },
+            (None, Some(session)) => Intent::NewTab { session, from_pane: from },
+            (None, None) => Intent::NewSession { name: None, from_pane: from },
+        };
+        let result = self.intent(None, intent);
+        let unused = self.next_block.take();
+        result?;
+        if let Some((kind, _)) = unused {
+            return Err(format!("no {kind:?} block was made").to_lowercase());
+        }
+        let id = self.mux.panes().into_iter().find(|p| !before.contains(p)).ok_or("no block was made")?;
+        if !self.blocks.contains_key(&id) {
+            return Err(self.last_block_error.take().unwrap_or_else(|| "the block couldn't start".into()));
+        }
+        Ok(id)
     }
 
     /// A new machine for the next pane; it's created when its first
@@ -1015,6 +1125,21 @@ impl Daemon {
                     let tab = self.mux.tab_of(pane).ok();
                     let made = self.next_host.take();
                     let host = made.or_else(|| tab.filter(|_| !local).and_then(|t| self.tab_machine(t)));
+                    if let Some((kind, config)) = self.next_block.take() {
+                        match self.make_block(pane, kind, config.clone(), host, false) {
+                            Ok(()) => {
+                                let meta = PaneMeta { host, kind, config: Some(config), ..Default::default() };
+                                self.meta.insert(pane, meta);
+                                self.emit(Some(pane), EventKind::Opened);
+                            }
+                            Err(e) => {
+                                warn!(block = pane, ?kind, error = %e, "could not start block");
+                                self.last_block_error = Some(e);
+                                let _ = self.mux.apply(Intent::ClosePane { pane });
+                            }
+                        }
+                        continue;
+                    }
                     let (start, hold, cwd) = match self.next_spawn.take() {
                         // A command from `run`: fill in the pane id it gets.
                         Some((mut spawn, Some(text))) => {
@@ -1042,7 +1167,7 @@ impl Daemon {
                     }
                     match self.open_pane(pane, cols, rows, false, start, cwd, integrate, hold, host) {
                         Ok(()) => {
-                            let meta = PaneMeta { integration: from_meta, host, ..Default::default() };
+                            let meta = PaneMeta { integration: from_meta, host, hold, ..Default::default() };
                             self.meta.insert(pane, meta);
                             self.emit(Some(pane), EventKind::Opened);
                         }
@@ -1058,6 +1183,13 @@ impl Daemon {
                 Effect::Kill { pane } => {
                     if let Some(p) = self.panes.remove(&pane) {
                         p.close();
+                    }
+                    if let Some(b) = self.blocks.remove(&pane) {
+                        b.close();
+                        // Its history is kept like a closed pane's.
+                        if let Ok(log) = PaneLog::open(self.store.pane_dir(pane)) {
+                            log.retire(pane);
+                        }
                     }
                     // A pane's own machine goes with it (a tab's, with the tab).
                     if let Some(m) = self.machine_of(pane).filter(|m| m.owner == Owner::Pane(pane)) {
@@ -1080,6 +1212,12 @@ impl Daemon {
     fn changed(&mut self) {
         for (pane, r) in self.mux.pane_rects() {
             let size = (r.cols, r.rows);
+            if self.sizes.get(&pane) != Some(&size)
+                && let Some(b) = self.blocks.get(&pane)
+            {
+                b.resize(r.cols, r.rows);
+                self.sizes.insert(pane, size);
+            }
             if self.sizes.get(&pane) != Some(&size)
                 && let Some(p) = self.panes.get(&pane)
             {
@@ -1127,6 +1265,11 @@ impl Daemon {
         // Whichever notices a new directory or command tells the clients.
         if self.refresh_meta() {
             self.broadcast();
+        }
+        for (id, b) in &self.blocks {
+            if let Some(m) = self.meta.get_mut(id) {
+                m.config = Some(b.config());
+            }
         }
         let panes: BTreeMap<PaneId, PaneMeta> = self.meta.iter().map(|(k, v)| (*k, v.clone())).collect();
         if self.last_saved.as_ref().is_some_and(|(m, p, ms)| *m == self.mux && *p == panes && *ms == self.machines) {
@@ -1178,19 +1321,46 @@ impl Daemon {
         }
     }
 
+    /// A non-terminal block's entry in the state.
+    fn block_info(&self, id: PaneId, b: &Arc<dyn Block>) -> PaneInfo {
+        let meta = self.meta.get(&id).cloned().unwrap_or_default();
+        PaneInfo {
+            id,
+            epoch: 0,
+            cwd: None,
+            command: None,
+            running: true,
+            policy: meta.policy,
+            current: None,
+            last: None,
+            attention: self.attention.get(&id).copied().unwrap_or_default(),
+            integration: false,
+            kind: b.kind(),
+            host: meta.host,
+        }
+    }
+
+    fn info_of_any(&self, id: PaneId) -> Option<PaneInfo> {
+        match (self.panes.get(&id), self.blocks.get(&id)) {
+            (Some(h), _) => Some(self.pane_info(h)),
+            (_, Some(b)) => Some(self.block_info(id, b)),
+            _ => None,
+        }
+    }
+
     fn summaries(&self) -> Vec<PaneSummary> {
         let mut out = Vec::new();
         for s in &self.mux.sessions {
             for tab in &s.tabs {
                 let Ok(t) = self.mux.tab(*tab) else { continue };
                 for pane in t.root.panes() {
-                    let Some(h) = self.panes.get(&pane) else { continue };
+                    let Some(info) = self.info_of_any(pane) else { continue };
                     out.push(PaneSummary {
                         session: s.id,
                         session_name: s.name.clone(),
                         tab: t.id,
                         tab_name: t.name.clone(),
-                        info: self.pane_info(h),
+                        info,
                     });
                 }
             }
@@ -1219,6 +1389,7 @@ impl Daemon {
             })
             .collect();
         let mut panes: Vec<PaneInfo> = self.panes.values().map(|p| self.pane_info(p)).collect();
+        panes.extend(self.blocks.iter().map(|(id, b)| self.block_info(*id, b)));
         panes.sort_by_key(|p| p.id);
         let machines = self.machines.values().cloned().collect();
         State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes, machines }

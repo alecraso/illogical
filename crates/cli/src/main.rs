@@ -79,6 +79,24 @@ enum Command {
     },
     /// Machines that panes run on (VM panes).
     Machines,
+    /// A block's type, place and state (any type).
+    Describe { block: Pane },
+    /// Call one of a block's methods, e.g. `call %4 navigate '{"url":"…"}'`.
+    Call {
+        block: Pane,
+        method: String,
+        /// Arguments as JSON.
+        args: Option<String>,
+    },
+    /// Open a web page in a browser block.
+    Open {
+        url: String,
+        /// Split this block instead of opening a tab.
+        #[arg(long)]
+        split: Option<Pane>,
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Type text into a pane (`-` reads stdin).
     Send {
         pane: Pane,
@@ -327,6 +345,32 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                     tab,
                     s("cwd")
                 );
+            }
+        }
+        Command::Describe { block } => {
+            print_json(&request(&sock, "GET", &format!("/api/blocks/{}", block.0), None)?.json()?);
+        }
+        Command::Call { block, method, args } => {
+            let args: Value = match args {
+                Some(a) => serde_json::from_str(&a).context("args must be JSON")?,
+                None => json!({}),
+            };
+            let path = format!("/api/blocks/{}/call/{}", block.0, enc(&method));
+            print_json(&request(&sock, "POST", &path, Some(&args))?.json()?);
+        }
+        Command::Open { url, split, session } => {
+            let body = json!({
+                "type": "browser",
+                "config": { "url": url },
+                "split": split.map(|p| p.0),
+                "session": session,
+                "from_pane": std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
+            });
+            let v = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("%{}", v["block"]);
             }
         }
         Command::Machines => {

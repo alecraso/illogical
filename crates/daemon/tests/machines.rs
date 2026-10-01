@@ -137,7 +137,7 @@ impl Daemon {
     }
 
     fn log(&self, pane: u64) -> String {
-        let dir = self.state.join("panes").join(pane.to_string());
+        let dir = self.state.join("blocks").join(pane.to_string());
         log_text(&dir)
     }
 }

@@ -43,7 +43,7 @@ Object.assign(window, {
   __illogical: {
     client,
     cell,
-    text: (pane: number) => client.panes.get(pane)?.view.text() ?? "",
+    text: (pane: number) => client.panes.get(pane)?.view.text() ?? client.blocks.get(pane)?.view.text() ?? "",
     screen: (pane: number) => client.panes.get(pane)?.view.screen() ?? "",
     size: (pane: number) => {
       const v = client.panes.get(pane)?.view;

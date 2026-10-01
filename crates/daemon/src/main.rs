@@ -2,6 +2,8 @@
 
 mod access;
 mod api;
+mod block;
+mod browser;
 mod history;
 mod install;
 mod keys;

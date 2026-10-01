@@ -87,7 +87,7 @@ export interface PaneInfo {
   host: MachineId | null;
 }
 
-export type BlockType = "terminal";
+export type BlockType = "terminal" | "browser" | "agent";
 export type MachineId = number;
 export type MachineState = "starting" | "running" | "gone";
 
@@ -143,7 +143,8 @@ export type ServerMsg =
   | { type: "state"; state: State }
   | { type: "size"; pane: PaneId; cols: number; rows: number }
   | { type: "resync"; pane: PaneId }
-  | { type: "error"; id: number | null; message: string };
+  | { type: "error"; id: number | null; message: string }
+  | { type: "block"; block: PaneId; state: unknown };
 
 export const enum FrameKind {
   Output = 1,

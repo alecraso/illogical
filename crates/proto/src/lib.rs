@@ -168,6 +168,9 @@ pub enum ServerMsg {
     Resync { pane: PaneId },
     /// An intent failed.
     Error { id: Option<u64>, message: String },
+    /// A non-terminal block's state, whole: on connecting, and whenever it
+    /// changes. Its type's renderer draws it.
+    Block { block: PaneId, state: serde_json::Value },
 }
 
 /// Everything a client needs to draw: sessions in order, each tab's tree
@@ -247,13 +250,17 @@ pub enum MachineState {
     Gone,
 }
 
-/// What a block is. Only terminals exist so far; where one runs is its
-/// `host`, not its type.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What a block is; where one runs is its `host`, not its type. All types
+/// share one id space (`%N`) and one place in the layout tree.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockType {
     #[default]
     Terminal,
+    /// A web page: a dev server on a machine, or another site (M6a).
+    Browser,
+    /// An agent run driven over ACP (M6b).
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

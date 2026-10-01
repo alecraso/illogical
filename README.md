@@ -75,6 +75,13 @@ the daemon stopping, crashing, or the machine rebooting:
   base image is plain Ubuntu 24.04: install what you need, e.g. Claude Code
   with `curl -fsSL https://claude.ai/install.sh | bash`.
 
+- **Blocks** (M6, in progress). A pane is one kind of block; every kind
+  shares the layout, ids, attention, `describe` and `call`. The first other
+  kind is a browser block for ordinary pages: *Open a web page…* in the pane
+  menu, or `illogical open example.com`. Sites that refuse to be framed get
+  a card with "open in new tab". Block directories are `blocks/<id>/` in
+  the state directory (`panes/` before; it's moved, and left as a link).
+
 ### The CLI
 
 ```
@@ -96,6 +103,9 @@ illogical export %3 -o session.cast           # asciinema play session.cast
 illogical run --vm -- 'git clone … && make'   # on a throwaway VM (no command: a shell)
 illogical run --vm-tab                        # a tab whose panes share a new VM
 illogical machines                            # VMs, their owner (@tab or %pane) and state
+illogical open example.com                    # a browser block (--split %3 beside a pane)
+illogical describe %4                         # any block: type, place, state
+illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane

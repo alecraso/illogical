@@ -49,7 +49,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             {wanting.map((p) => (
               <button key={p.id} class="sheet-item" onClick={act(() => client.setActive(p.id))}>
                 <AttentionBadge state={p.attention} />{" "}
-                {client.panes.get(p.id)?.title || p.current?.text || p.last?.text || p.cwd || `pane %${p.id}`}
+                {client.title(p.id) || p.current?.text || p.last?.text || p.cwd || `pane %${p.id}`}
               </button>
             ))}
           </section>
@@ -76,7 +76,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
                       >
                         {/* Shells often title every pane alike; the number tells them apart. */}
                         <span class="pane-number">{i + 1}</span>
-                        {client.panes.get(p)?.title || client.cwd(p) || `pane %${p}`}
+                        {client.title(p) || client.cwd(p) || `pane %${p}`}
                       </button>
                     ))}
                 </div>

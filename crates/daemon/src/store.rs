@@ -5,7 +5,7 @@
 //! $XDG_STATE_HOME/illogical/          0700
 //!   layout.json                       sessions, tabs, splits, pane details,
 //!                                     machines
-//!   panes/<id>/
+//!   blocks/<id>/                      every block type (terminals: below)
 //!     seg-<offset>.log                raw output; the name is the stream
 //!                                     offset of its first byte
 //!     index                           "<offset> resize <cols> <rows>",
@@ -31,7 +31,7 @@ use std::{
 };
 
 use illogical_core::Mux;
-use illogical_proto::{Machine, MachineId, PaneId, Policy};
+use illogical_proto::{BlockType, Machine, MachineId, PaneId, Policy};
 use serde::{Deserialize, Serialize};
 
 pub const LAYOUT_VERSION: u32 = 1;
@@ -64,6 +64,20 @@ pub struct PaneMeta {
     /// The machine it runs on; `None` is this host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<MachineId>,
+    /// What the block is (a terminal unless it says otherwise).
+    #[serde(default, rename = "type", skip_serializing_if = "is_terminal")]
+    pub kind: BlockType,
+    /// Keep the pane when its program ends (`illogical run`), across
+    /// restarts too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hold: bool,
+    /// A non-terminal block's config: what makes it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+}
+
+fn is_terminal(k: &BlockType) -> bool {
+    *k == BlockType::Terminal
 }
 
 #[derive(Debug, Clone)]
@@ -104,7 +118,15 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 impl StateDir {
     pub fn open(root: PathBuf) -> io::Result<Self> {
         private_dir(&root)?;
-        private_dir(&root.join("panes"))?;
+        // Blocks of every type live in `blocks/` (`panes/` before M6).
+        // Programs that outlived the old daemon still write their exit
+        // records under `panes/`, so it stays as a link.
+        let old = root.join("panes");
+        if old.is_dir() && !old.is_symlink() && !root.join("blocks").exists() {
+            fs::rename(&old, root.join("blocks"))?;
+            std::os::unix::fs::symlink("blocks", &old)?;
+        }
+        private_dir(&root.join("blocks"))?;
         Ok(Self { root })
     }
 
@@ -113,7 +135,7 @@ impl StateDir {
     }
 
     pub fn pane_dir(&self, pane: PaneId) -> PathBuf {
-        self.root.join("panes").join(pane.to_string())
+        self.root.join("blocks").join(pane.to_string())
     }
 
     pub fn load_layout(&self) -> io::Result<Option<Saved>> {
@@ -136,7 +158,7 @@ impl StateDir {
     /// Pane directories with no pane in the layout (closed while the daemon
     /// was down, or left by a crash) are retired like closed panes.
     pub fn remove_strays(&self, keep: &[PaneId]) {
-        let Ok(entries) = fs::read_dir(self.root.join("panes")) else {
+        let Ok(entries) = fs::read_dir(self.root.join("blocks")) else {
             return;
         };
         for e in entries.flatten() {
@@ -162,7 +184,7 @@ impl StateDir {
     /// Every pane directory with history: open panes, then closed ones.
     pub fn pane_dirs(&self) -> Vec<(PaneId, bool, PathBuf)> {
         let mut out = Vec::new();
-        for (sub, open) in [("panes", true), ("closed", false)] {
+        for (sub, open) in [("blocks", true), ("closed", false)] {
             let Ok(entries) = fs::read_dir(self.root.join(sub)) else { continue };
             for e in entries.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
