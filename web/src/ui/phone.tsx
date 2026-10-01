@@ -1,0 +1,138 @@
+// Phone layout: one pane at a time, full screen. A sheet lists sessions,
+// tabs and panes to switch between, and a key bar supplies the keys a phone
+// keyboard lacks.
+
+import { useState } from "preact/hooks";
+import { paneIds, tabLabel, type Client } from "../client";
+import { useSubscribe } from "./hooks";
+
+export function PhoneHeader({ client }: { client: Client }) {
+  const [open, setOpen] = useState(false);
+  const tab = client.tabView();
+  const session = client.state?.sessions.find((s) => s.id === client.session);
+  const panes = tab ? paneIds(tab) : [];
+  const active = client.active();
+  return (
+    <>
+      <header class="bar phone-bar">
+        <button class="sheet-button" aria-expanded={open} onClick={() => setOpen(!open)}>
+          ☰ <span class="crumb">{session?.name}</span> › <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
+        </button>
+        {panes.length > 1 && (
+          <span class="pane-count">
+            {panes.indexOf(active ?? -1) + 1}/{panes.length}
+          </span>
+        )}
+      </header>
+      {open && <Sheet client={client} close={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function Sheet({ client, close }: { client: Client; close: () => void }) {
+  const state = client.state!;
+  const active = client.active();
+  const act = (fn: () => void) => () => {
+    fn();
+    close();
+  };
+  return (
+    <div class="sheet-backdrop" onClick={close}>
+      <nav class="sheet" onClick={(e) => e.stopPropagation()}>
+        {state.sessions.map((s) => (
+          <section key={s.id}>
+            <h2>{s.name}</h2>
+            {s.tabs.map((tid) => {
+              const t = client.tabView(tid);
+              if (!t) return null;
+              const panes = paneIds(t);
+              return (
+                <div key={tid} class="sheet-tab">
+                  <button class={tid === client.tab ? "sheet-item current" : "sheet-item"} onClick={act(() => client.selectTab(tid))}>
+                    {tabLabel(client, t)}
+                  </button>
+                  {panes.length > 1 &&
+                    panes.map((p, i) => (
+                      <button
+                        key={p}
+                        class={p === active ? "sheet-item sheet-pane current" : "sheet-item sheet-pane"}
+                        onClick={act(() => client.setActive(p))}
+                      >
+                        {/* Shells often title every pane alike; the number tells them apart. */}
+                        <span class="pane-number">{i + 1}</span>
+                        {client.panes.get(p)?.title || client.cwd(p) || `pane %${p}`}
+                      </button>
+                    ))}
+                </div>
+              );
+            })}
+          </section>
+        ))}
+        <div class="sheet-actions">
+          <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
+            New tab
+          </button>
+          {active !== undefined && (
+            <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right" }))}>Split pane</button>
+          )}
+          <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
+          {active !== undefined && (
+            <button class="danger" onClick={act(() => client.intent({ op: "close_pane", pane: active }))}>
+              Close pane
+            </button>
+          )}
+        </div>
+      </nav>
+    </div>
+  );
+}
+
+const KEYS: { label: string; bytes?: string; app?: string; mod?: "ctrl" | "alt" }[] = [
+  { label: "Esc", bytes: "\x1b" },
+  { label: "Tab", bytes: "\t" },
+  { label: "Ctrl", mod: "ctrl" },
+  { label: "Alt", mod: "alt" },
+  { label: "←", bytes: "\x1b[D", app: "\x1bOD" },
+  { label: "↑", bytes: "\x1b[A", app: "\x1bOA" },
+  { label: "↓", bytes: "\x1b[B", app: "\x1bOB" },
+  { label: "→", bytes: "\x1b[C", app: "\x1bOC" },
+  { label: "|", bytes: "|" },
+  { label: "~", bytes: "~" },
+  { label: "/", bytes: "/" },
+  { label: "-", bytes: "-" },
+];
+
+export function KeyBar({ client }: { client: Client }) {
+  useSubscribe((fn) => client.subscribe(fn));
+  const enc = new TextEncoder();
+  return (
+    <div class="keybar" role="toolbar" aria-label="Extra keys">
+      {KEYS.map((k) => {
+        const on = k.mod ? client.modifiers[k.mod] : false;
+        return (
+          <button
+            key={k.label}
+            class={on ? "key on" : "key"}
+            aria-pressed={k.mod ? on : undefined}
+            // Keep focus (and the on-screen keyboard) on the terminal.
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const pane = client.active();
+              if (pane === undefined) return;
+              if (k.mod) {
+                client.modifiers = { ...client.modifiers, [k.mod]: !client.modifiers[k.mod] };
+                client.emit();
+                return;
+              }
+              const view = client.panes.get(pane)?.view;
+              const seq = view?.appCursor && k.app ? k.app : k.bytes!;
+              client.input(pane, enc.encode(seq));
+            }}
+          >
+            {k.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}

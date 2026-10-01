@@ -1,6 +1,7 @@
 //! illogicald: owns the terminals; clients attach over WebSocket.
 
 mod access;
+mod mux;
 mod pane;
 mod server;
 
@@ -35,12 +36,6 @@ struct Args {
     /// Command line for panes, split on whitespace [default: $SHELL -l].
     #[arg(long)]
     shell: Option<String>,
-
-    /// Initial pane size until a client sends its own.
-    #[arg(long, default_value_t = 80)]
-    cols: u16,
-    #[arg(long, default_value_t = 24)]
-    rows: u16,
 }
 
 #[tokio::main]
@@ -94,9 +89,7 @@ async fn main() -> anyhow::Result<()> {
             cwd: home,
         },
     };
-    let panes = vec![pane::spawn_pane(1, spawn, args.cols, args.rows)?];
-
-    let app = server::App::new(access, panes);
+    let app = server::App::new(access, mux::start(spawn));
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
     axum::serve(listener, server::router(app))

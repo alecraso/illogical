@@ -10,6 +10,7 @@ anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["ws"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
 crossbeam-channel = "0.5.17"
+illogical-core = { version = "0.1.0", path = "../core" }
 illogical-proto = { version = "0.1.0", path = "../proto" }
 illogical-vt = { version = "0.1.0", path = "../vt" }
 nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll"] }

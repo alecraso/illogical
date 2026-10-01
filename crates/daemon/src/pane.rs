@@ -14,14 +14,18 @@ use std::{
         fd::{AsRawFd, OwnedFd},
         unix::process::{CommandExt, ExitStatusExt},
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use illogical_proto::{ClientId, Frame, FrameKind, PaneId, PaneInfo, ServerMsg};
+use illogical_proto::{ClientId, Frame, FrameKind, PaneId, ServerMsg};
 use illogical_vt::{GhosttyEngine, VtEngine};
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
@@ -36,18 +40,19 @@ use tracing::{debug, info, warn};
 const RING_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REPLAY_BYTES: u64 = 1024 * 1024;
 /// Frames queued per client before it counts as too slow and is resynced.
-pub const CLIENT_QUEUE: usize = 512;
+pub const CLIENT_QUEUE: usize = 1024;
 
-/// What a client connection receives from a pane.
+/// What a client connection receives.
 #[derive(Debug)]
 pub enum ToClient {
     Frame(Vec<u8>),
     Msg(ServerMsg),
 }
 
-/// A client's subscription. Everything the client must apply in order
-/// (sizes, snapshots, output) goes through the bounded `data` queue; `ctrl`
-/// is unbounded and only carries the resync notice for a full `data` queue.
+/// A client's subscription. Everything the client must apply in order with
+/// a pane's output (sizes, snapshots, output) goes through the bounded
+/// `data` queue; `ctrl` is unbounded and carries layout state and the
+/// resync notice for a full `data` queue.
 #[derive(Clone)]
 pub struct Subscriber {
     pub client: ClientId,
@@ -55,10 +60,12 @@ pub struct Subscriber {
     pub ctrl: mpsc::UnboundedSender<ToClient>,
 }
 
+/// Told to the multiplexer when a pane's process ends.
+pub type ExitSink = mpsc::UnboundedSender<(PaneId, Option<i32>)>;
+
 enum Cmd {
     Output(Vec<u8>),
     Exited {
-        pid: u32,
         code: Option<i32>,
     },
     Attach {
@@ -69,16 +76,18 @@ enum Cmd {
         client: ClientId,
     },
     Resize {
-        client: ClientId,
         cols: u16,
         rows: u16,
     },
     Input(Vec<u8>),
+    Close,
 }
 
 #[derive(Clone)]
 pub struct PaneHandle {
-    pub info: PaneInfo,
+    pub id: PaneId,
+    pub epoch: u64,
+    pid: Arc<AtomicU32>,
     tx: Sender<Cmd>,
 }
 
@@ -89,11 +98,22 @@ impl PaneHandle {
     pub fn detach(&self, client: ClientId) {
         let _ = self.tx.send(Cmd::Detach { client });
     }
-    pub fn resize(&self, client: ClientId, cols: u16, rows: u16) {
-        let _ = self.tx.send(Cmd::Resize { client, cols, rows });
+    pub fn resize(&self, cols: u16, rows: u16) {
+        let _ = self.tx.send(Cmd::Resize { cols, rows });
     }
     pub fn input(&self, data: Vec<u8>) {
         let _ = self.tx.send(Cmd::Input(data));
+    }
+    /// Hang up the process; the pane's thread ends when it exits.
+    pub fn close(&self) {
+        let _ = self.tx.send(Cmd::Close);
+    }
+    /// The process's working directory, from /proc.
+    pub fn cwd(&self) -> Option<PathBuf> {
+        match self.pid.load(Ordering::Relaxed) {
+            0 => None,
+            pid => std::fs::read_link(format!("/proc/{pid}/cwd")).ok(),
+        }
     }
 }
 
@@ -106,7 +126,7 @@ pub struct Spawn {
 
 /// A running process on its own PTY.
 struct Process {
-    child_pid: u32,
+    pid: u32,
     master: File,
     writer: Sender<Vec<u8>>,
 }
@@ -131,9 +151,14 @@ impl Process {
         fcntl(&pty.master, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
         let stdio = |fd: &OwnedFd| fd.try_clone().map(Stdio::from);
 
+        let cwd = if spawn.cwd.is_dir() {
+            spawn.cwd.as_path()
+        } else {
+            Path::new("/")
+        };
         let mut cmd = Command::new(&spawn.program);
         cmd.args(&spawn.args)
-            .current_dir(&spawn.cwd)
+            .current_dir(cwd)
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
             .env("ILLOGICAL_PANE", pane.to_string())
@@ -151,8 +176,8 @@ impl Process {
         }
         let child: Child = cmd.spawn()?;
         drop(pty.slave);
-        let child_pid = child.id();
-        info!(pane, pid = child_pid, program = %spawn.program, "started process");
+        let pid = child.id();
+        info!(pane, pid, program = %spawn.program, cwd = %cwd.display(), "started process");
 
         let master = File::from(pty.master);
         let mut reader = master.try_clone()?;
@@ -194,14 +219,11 @@ impl Process {
                     .wait()
                     .ok()
                     .and_then(|s| s.code().or(s.signal().map(|sig| 128 + sig)));
-                let _ = events.send(Cmd::Exited {
-                    pid: child_pid,
-                    code,
-                });
+                let _ = events.send(Cmd::Exited { code });
             })?;
 
         Ok(Self {
-            child_pid,
+            pid,
             master,
             writer,
         })
@@ -219,6 +241,18 @@ impl Process {
         if rc < 0 {
             warn!(error = %std::io::Error::last_os_error(), "TIOCSWINSZ failed");
         }
+    }
+
+    /// Hang up the process group (the shell is a session leader), and kill
+    /// it if it is still around a few seconds later.
+    fn hang_up(&self) {
+        let pgid = self.pid as libc::pid_t;
+        // SAFETY: plain signal sends.
+        unsafe { libc::killpg(pgid, libc::SIGHUP) };
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(3));
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        });
     }
 }
 
@@ -255,50 +289,48 @@ impl Ring {
 
 struct State {
     id: PaneId,
-    spawn: Spawn,
     engine: GhosttyEngine,
-    process: Option<Process>,
+    process: Process,
     ring: Ring,
     subs: HashMap<ClientId, Subscriber>,
-    size_owner: Option<ClientId>,
-    events: Sender<Cmd>,
+    closing: bool,
+    on_exit: ExitSink,
 }
 
-pub fn spawn_pane(id: PaneId, spawn: Spawn, cols: u16, rows: u16) -> std::io::Result<PaneHandle> {
+pub fn spawn_pane(
+    id: PaneId,
+    spawn: &Spawn,
+    cols: u16,
+    rows: u16,
+    on_exit: ExitSink,
+) -> std::io::Result<PaneHandle> {
     let (tx, rx) = unbounded();
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    let process = Process::start(&spawn, cols, rows, id, tx.clone())?;
-    let events = tx.clone();
+    let process = Process::start(spawn, cols, rows, id, tx.clone())?;
+    let pid = Arc::new(AtomicU32::new(process.pid));
+    let pid_out = pid.clone();
     thread::Builder::new()
         .name(format!("pane{id}-vt"))
         .spawn(move || {
             let state = State {
                 id,
-                spawn,
                 engine: GhosttyEngine::new(cols, rows),
-                process: Some(process),
+                process,
                 ring: Ring {
                     buf: VecDeque::new(),
                     start: 0,
                 },
                 subs: HashMap::new(),
-                size_owner: None,
-                events,
+                closing: false,
+                on_exit,
             };
             run(state, rx);
+            pid_out.store(0, Ordering::Relaxed);
         })?;
-    Ok(PaneHandle {
-        info: PaneInfo {
-            id,
-            epoch,
-            cols,
-            rows,
-        },
-        tx,
-    })
+    Ok(PaneHandle { id, epoch, pid, tx })
 }
 
 fn run(mut st: State, rx: Receiver<Cmd>) {
@@ -306,16 +338,25 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
         match cmd {
             Cmd::Output(data) => st.output(&data),
             Cmd::Input(data) => {
-                if let Some(p) = &st.process {
-                    let _ = p.writer.send(data);
-                }
+                let _ = st.process.writer.send(data);
             }
             Cmd::Attach { sub, offset } => st.attach(sub, offset),
             Cmd::Detach { client } => {
                 st.subs.remove(&client);
             }
-            Cmd::Resize { client, cols, rows } => st.resize(client, cols, rows),
-            Cmd::Exited { pid, code } => st.exited(pid, code),
+            Cmd::Resize { cols, rows } => st.resize(cols, rows),
+            Cmd::Close => {
+                st.closing = true;
+                st.subs.clear();
+                st.process.hang_up();
+            }
+            Cmd::Exited { code } => {
+                info!(pane = st.id, pid = st.process.pid, ?code, "process exited");
+                if !st.closing {
+                    let _ = st.on_exit.send((st.id, code));
+                }
+                return;
+            }
         }
     }
 }
@@ -325,10 +366,8 @@ impl State {
         let offset = self.ring.end();
         self.engine.feed(data);
         let replies = self.engine.take_replies();
-        if !replies.is_empty()
-            && let Some(p) = &self.process
-        {
-            let _ = p.writer.send(replies);
+        if !replies.is_empty() {
+            let _ = self.process.writer.send(replies);
         }
         self.ring.push(data);
         let frame = Frame {
@@ -360,6 +399,9 @@ impl State {
     }
 
     fn attach(&mut self, sub: Subscriber, offset: Option<u64>) {
+        if self.closing {
+            return;
+        }
         let end = self.ring.end();
         let (cols, rows) = self.engine.size();
         let replay = offset
@@ -386,7 +428,6 @@ impl State {
             pane: self.id,
             cols,
             rows,
-            owner: self.size_owner,
         };
         let queued = sub.data.try_send(ToClient::Msg(size)).is_ok()
             && frame.is_none_or(|f| sub.data.try_send(ToClient::Frame(f.encode())).is_ok());
@@ -399,55 +440,20 @@ impl State {
         self.subs.insert(sub.client, sub);
     }
 
-    fn resize(&mut self, client: ClientId, cols: u16, rows: u16) {
-        if cols == 0 || rows == 0 {
+    fn resize(&mut self, cols: u16, rows: u16) {
+        if cols == 0 || rows == 0 || self.engine.size() == (cols, rows) {
             return;
         }
-        if self.engine.size() != (cols, rows) {
-            self.engine.resize(cols, rows);
-            if let Some(p) = &self.process {
-                p.resize(cols, rows);
-            }
-        }
-        self.size_owner = Some(client);
+        self.engine.resize(cols, rows);
+        self.process.resize(cols, rows);
         let id = self.id;
         self.broadcast(|| {
             ToClient::Msg(ServerMsg::Size {
                 pane: id,
                 cols,
                 rows,
-                owner: Some(client),
             })
         });
-    }
-
-    fn exited(&mut self, pid: u32, code: Option<i32>) {
-        if self.process.as_ref().map(|p| p.child_pid) != Some(pid) {
-            return;
-        }
-        info!(pane = self.id, pid, ?code, "process exited; restarting");
-        self.process = None;
-        let id = self.id;
-        self.broadcast(|| ToClient::Msg(ServerMsg::Exit { pane: id, code }));
-        let note = format!(
-            "\r\n\x1b[0m\x1b[2m[process exited{}; starting a new one]\x1b[0m\r\n",
-            code.map(|c| format!(" with code {c}")).unwrap_or_default()
-        );
-        self.output(note.as_bytes());
-        let (cols, rows) = self.engine.size();
-        match Process::start(&self.spawn, cols, rows, self.id, self.events.clone()) {
-            Ok(p) => self.process = Some(p),
-            Err(e) => {
-                warn!(pane = self.id, error = %e, "restart failed");
-                self.output(
-                    format!(
-                        "\x1b[31m[could not start {}: {e}]\x1b[0m\r\n",
-                        self.spawn.program
-                    )
-                    .as_bytes(),
-                );
-            }
-        }
     }
 }
 

@@ -9,44 +9,79 @@
 
 use serde::{Deserialize, Serialize};
 
-pub type PaneId = u32;
-pub type ClientId = u64;
+pub use illogical_core::{
+    ClientId, Dir, Edge, Intent, Layout, Node, NodeId, PaneId, Rect, Session, SessionId, SplitRect,
+    TabId,
+};
 
 /// Control messages from a client.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
     /// Start (or resume) receiving panes. The server replays from each
     /// pane's offset when it still has the bytes, otherwise it sends a
     /// snapshot.
     Attach { panes: Vec<AttachPane> },
-    /// The client's size for a pane. The latest client to send one owns the
-    /// pane's size; everyone else renders at that size.
-    Resize { pane: PaneId, cols: u16, rows: u16 },
+    /// Stop receiving panes.
+    Detach { panes: Vec<PaneId> },
+    /// The client is showing `tab` in a `cols`x`rows` cell area, optionally
+    /// with one pane zoomed to fill it. With `claim` (the client was opened,
+    /// focused or typed in), that becomes the tab's size; otherwise it only
+    /// does if the client already owns the tab's size or nobody does.
+    View {
+        tab: TabId,
+        cols: u16,
+        rows: u16,
+        zoom: Option<PaneId>,
+        claim: bool,
+    },
+    /// Change sessions, tabs or splits. Errors come back as
+    /// [`ServerMsg::Error`] with the same id.
+    Intent { id: Option<u64>, intent: Intent },
 }
 
 /// Control messages from the server.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
     /// First message on every connection.
     Hello {
         version: String,
         client: ClientId,
-        panes: Vec<PaneInfo>,
+        state: State,
     },
-    /// A pane's size changed; `owner` is the client whose size it is.
-    Size {
-        pane: PaneId,
-        cols: u16,
-        rows: u16,
-        owner: Option<ClientId>,
-    },
-    /// The client fell too far behind and was unsubscribed; attach again to
-    /// get a fresh snapshot.
+    /// The whole layout, after every change.
+    State { state: State },
+    /// A pane's size changed. Sent in order with its output, so the client
+    /// resizes before drawing what follows.
+    Size { pane: PaneId, cols: u16, rows: u16 },
+    /// The client fell too far behind and was unsubscribed from this pane;
+    /// attach again to get a fresh snapshot.
     Resync { pane: PaneId },
-    /// The pane's process exited.
-    Exit { pane: PaneId, code: Option<i32> },
+    /// An intent failed.
+    Error { id: Option<u64>, message: String },
+}
+
+/// Everything a client needs to draw: sessions in order, each tab's tree
+/// and the cell rectangles the server computed for it, and pane details.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct State {
+    pub rev: u64,
+    pub sessions: Vec<Session>,
+    pub tabs: Vec<TabView>,
+    pub panes: Vec<PaneInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TabView {
+    pub id: TabId,
+    pub name: Option<String>,
+    pub root: Node,
+    pub cols: u16,
+    pub rows: u16,
+    pub owner: Option<ClientId>,
+    pub zoom: Option<PaneId>,
+    pub layout: Layout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,10 +97,10 @@ pub struct PaneInfo {
     pub id: PaneId,
     /// Identifies this pane's output stream. Offsets are only meaningful
     /// within one epoch; a client holding an offset from another epoch (an
-    /// earlier daemon, a recreated pane) must attach with `None`.
+    /// earlier daemon) must attach with `None`.
     pub epoch: u64,
-    pub cols: u16,
-    pub rows: u16,
+    /// The pane process's working directory, when known.
+    pub cwd: Option<String>,
 }
 
 /// Binary frame kinds.
@@ -184,5 +219,19 @@ mod tests {
         assert_eq!(m, ClientMsg::Attach { panes });
         let s = serde_json::to_string(&ServerMsg::Resync { pane: 3 }).unwrap();
         assert_eq!(s, r#"{"type":"resync","pane":3}"#);
+        let m: ClientMsg = serde_json::from_str(
+            r#"{"type":"intent","id":4,"intent":{"op":"split","pane":1,"edge":"bottom"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            m,
+            ClientMsg::Intent {
+                id: Some(4),
+                intent: Intent::Split {
+                    pane: 1,
+                    edge: Edge::Bottom
+                }
+            }
+        );
     }
 }

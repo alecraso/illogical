@@ -17,14 +17,15 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use illogical_proto::{ClientId, ClientMsg, Frame, FrameKind, ServerMsg};
+use illogical_proto::{ClientId, ClientMsg, Frame, FrameKind};
 use rust_embed::Embed;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::{
     access::Access,
-    pane::{CLIENT_QUEUE, PaneHandle, Subscriber, ToClient},
+    mux::{Cmd, MuxHandle},
+    pane::{CLIENT_QUEUE, Subscriber, ToClient},
 };
 
 #[derive(Embed)]
@@ -34,15 +35,15 @@ struct Assets;
 
 pub struct App {
     pub access: Access,
-    pub panes: Vec<PaneHandle>,
+    pub mux: MuxHandle,
     next_client: AtomicU64,
 }
 
 impl App {
-    pub fn new(access: Access, panes: Vec<PaneHandle>) -> Arc<Self> {
+    pub fn new(access: Access, mux: MuxHandle) -> Arc<Self> {
         Arc::new(Self {
             access,
-            panes,
+            mux,
             next_client: AtomicU64::new(1),
         })
     }
@@ -109,26 +110,19 @@ async fn connection(app: Arc<App>, mut socket: WebSocket) {
     info!(client, "client connected");
     let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
-    let sub = Subscriber {
-        client,
-        data: data_tx,
-        ctrl: ctrl_tx,
-    };
-
-    let hello = ServerMsg::Hello {
-        version: env!("CARGO_PKG_VERSION").into(),
-        client,
-        panes: app.panes.iter().map(|p| p.info.clone()).collect(),
-    };
-    if send(&mut socket, ToClient::Msg(hello)).await.is_err() {
-        return;
-    }
+    app.mux.send(Cmd::Connect {
+        sub: Subscriber {
+            client,
+            data: data_tx,
+            ctrl: ctrl_tx,
+        },
+    });
 
     loop {
         tokio::select! {
             incoming = socket.recv() => match incoming {
                 Some(Ok(msg)) => {
-                    if let Err(e) = handle(&app, &sub, msg) {
+                    if let Err(e) = handle(&app, client, msg) {
                         debug!(client, error = %e, "bad client message");
                     }
                 }
@@ -142,37 +136,23 @@ async fn connection(app: Arc<App>, mut socket: WebSocket) {
             Some(out) = data_rx.recv() => if send(&mut socket, out).await.is_err() { break },
         }
     }
-    for pane in &app.panes {
-        pane.detach(client);
-    }
+    app.mux.send(Cmd::Disconnect { client });
     info!(client, "client disconnected");
 }
 
-fn pane(app: &App, id: u32) -> anyhow::Result<&PaneHandle> {
-    app.panes
-        .iter()
-        .find(|p| p.info.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no pane {id}"))
-}
-
-fn handle(app: &App, sub: &Subscriber, msg: Message) -> anyhow::Result<()> {
+fn handle(app: &App, client: ClientId, msg: Message) -> anyhow::Result<()> {
     match msg {
-        Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text)? {
-            ClientMsg::Attach { panes } => {
-                for a in panes {
-                    pane(app, a.pane)?.attach(sub.clone(), a.offset);
-                }
-            }
-            ClientMsg::Resize {
-                pane: id,
-                cols,
-                rows,
-            } => pane(app, id)?.resize(sub.client, cols, rows),
-        },
+        Message::Text(text) => {
+            let msg = serde_json::from_str::<ClientMsg>(&text)?;
+            app.mux.send(Cmd::Msg { client, msg });
+        }
         Message::Binary(bytes) => {
             let frame = Frame::decode(&bytes)?;
             match frame.kind {
-                FrameKind::Input => pane(app, frame.pane)?.input(frame.data),
+                FrameKind::Input => app.mux.send(Cmd::Input {
+                    pane: frame.pane,
+                    data: frame.data,
+                }),
                 k => anyhow::bail!("unexpected frame kind {k:?} from client"),
             }
         }

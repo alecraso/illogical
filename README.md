@@ -6,12 +6,22 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M0 (the loop) works
+## Status: M1 (multiplexer) works
 
-One shell pane, owned by `illogicald`. Close the browser tab (or lose the
-connection) and reopen it from any machine or phone on the tailnet: the
-screen comes back exactly, including full-screen programs like nvim, and
-nothing printed in between is lost.
+Sessions, tabs and splits of shells owned by `illogicald`, driven by the
+mouse: right-click a pane to split, move or close it; drag the grip in a
+pane's corner onto another pane's edge to move it; drag dividers to resize;
+drag tabs to reorder them or onto a pane's edge to dock them; double-click a
+tab to rename it, middle-click to close it. Every window shows the same
+layout live, and closing or losing a window loses nothing. On a phone you see
+one pane at a time, switch from a sheet, and get a key bar with Esc, Tab,
+sticky Ctrl/Alt and arrows.
+
+The layout lives on the daemon and is computed in character cells (like
+tmux), so every window draws exactly the panes' real terminal sizes. Each tab
+takes the size of the window that last opened, focused or typed in it;
+other windows show it scaled to fit. Not yet: anything surviving a daemon
+restart or reboot (M2), or the CLI (M3).
 
 ## Use it
 
@@ -32,17 +42,22 @@ the real daemon and its shell are left alone. `just check` is what CI runs;
 
 ## Layout
 
+- `crates/core`: sessions, tabs and split trees, the intents that change
+  them, and the cell layout. Pure state, property-tested.
 - `crates/proto`: wire protocol (JSON control messages + binary frames with a
   per-pane stream offset). Mirrored by hand in `web/src/proto.ts`.
 - `crates/vt`: server-side terminal state on libghostty-vt. Snapshots that
   reproduce the screen (spike S1's fix-ups), answers to terminal queries
   limited to what xterm.js can draw, recorded fixtures.
-- `crates/daemon`: `illogicald`. PTY + VT thread per pane, axum WebSocket
-  server, embedded web client, Host/Origin/tailnet-identity checks.
-- `web`: TypeScript client on xterm.js 6, plus Playwright tests.
+- `crates/daemon`: `illogicald`. A multiplexer task owning the layout, a PTY
+  + VT thread per pane, axum WebSocket server, embedded web client,
+  Host/Origin/tailnet-identity checks.
+- `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
+  are moved between slots rather than recreated, Playwright tests (desktop
+  and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0 taught us
+## Things M0 and M1 taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -58,5 +73,19 @@ the real daemon and its shell are left alone. `just check` is what CI runs;
 - **Size travels in order with output.** A client must resize before drawing
   a snapshot, so size changes share the bounded output queue. Only the
   "you fell behind, resync" notice uses a separate channel.
-- **Sizing:** the last client to connect, focus or type owns the pane size;
-  others draw at that size, scaled down to fit if needed.
+- **Cells, not pixels.** The plan said react-mosaic; it lays panes out in
+  its own pixels, which drift from the PTY sizes. The daemon computes cell
+  rectangles instead (and M5's tmux layout strings come for free), and the
+  client draws them.
+- **Size is per tab.** With splits, one window's size decides every pane in a
+  tab; per-pane ownership would mix a phone's and a desktop's sizes in one
+  tab. A phone claims its tab with one pane zoomed; the others keep their
+  sizes until a desktop takes the tab back.
+- **WebGL drew nothing in phone emulation** (fractional pixel ratio), so
+  touch devices use xterm's DOM renderer; desktops use WebGL for visible panes
+  only and release contexts for hidden ones (Chrome allows ~16).
+- **Preact 11 no longer appends `px`** to numeric styles. Zeros still worked,
+  so the bug looked like a layout one.
+- **Subscribe, then catch up.** A store subscription made in an effect misses
+  anything that happens before the first paint; the daemon's hello sometimes
+  won that race and left a window blank.

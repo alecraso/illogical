@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures_util::{SinkExt, StreamExt};
-use illogical_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg};
+use illogical_proto::{AttachPane, ClientMsg, Edge, Frame, FrameKind, Intent, ServerMsg, State};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
@@ -78,14 +78,44 @@ async fn recv(ws: &mut Ws) -> In {
 }
 
 async fn connect(d: &Daemon) -> (Ws, u64) {
+    let (ws, state) = connect_state(d).await;
+    (ws, state.panes[0].epoch)
+}
+
+async fn connect_state(d: &Daemon) -> (Ws, State) {
     let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port))
         .await
         .unwrap();
-    let In::Msg(ServerMsg::Hello { panes, .. }) = recv(&mut ws).await else {
+    let In::Msg(ServerMsg::Hello { state, .. }) = recv(&mut ws).await else {
         panic!("expected hello")
     };
-    assert_eq!(panes.len(), 1);
-    (ws, panes[0].epoch)
+    assert!(!state.panes.is_empty(), "the daemon starts with a session");
+    (ws, state)
+}
+
+async fn send(ws: &mut Ws, msg: ClientMsg) {
+    ws.send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .await
+        .unwrap();
+}
+
+/// Skip messages until the next layout state.
+async fn next_state(ws: &mut Ws) -> State {
+    loop {
+        if let In::Msg(ServerMsg::State { state }) = recv(ws).await {
+            return state;
+        }
+    }
+}
+
+/// Skip everything until a message matches.
+async fn until<T>(ws: &mut Ws, mut f: impl FnMut(&In) -> Option<T>) -> T {
+    loop {
+        let m = recv(ws).await;
+        if let Some(t) = f(&m) {
+            return t;
+        }
+    }
 }
 
 async fn attach(ws: &mut Ws, offset: Option<u64>) {
@@ -98,9 +128,13 @@ async fn attach(ws: &mut Ws, offset: Option<u64>) {
 }
 
 async fn type_line(ws: &mut Ws, line: &str) {
+    type_in(ws, 1, line).await;
+}
+
+async fn type_in(ws: &mut Ws, pane: u32, line: &str) {
     let f = Frame {
         kind: FrameKind::Input,
-        pane: 1,
+        pane,
         offset: 0,
         data: format!("{line}\r").into_bytes(),
     };
@@ -283,4 +317,163 @@ async fn slow_client_is_resynced() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn split_spawns_a_pane_and_exit_closes_it() {
+    let d = start().await;
+    let (mut ws, _) = connect_state(&d).await;
+    send(
+        &mut ws,
+        ClientMsg::Intent {
+            id: Some(1),
+            intent: Intent::Split {
+                pane: 1,
+                edge: Edge::Right,
+            },
+        },
+    )
+    .await;
+    let state = next_state(&mut ws).await;
+    let ids: Vec<u32> = state.panes.iter().map(|p| p.id).collect();
+    assert_eq!(ids, vec![1, 2]);
+    let tab = &state.tabs[0];
+    assert_eq!(tab.layout.panes.len(), 2);
+    assert_eq!(
+        (tab.layout.panes[0].1.cols, tab.layout.panes[1].1.cols),
+        (40, 39)
+    );
+
+    // The new pane runs a shell of its own.
+    send(
+        &mut ws,
+        ClientMsg::Attach {
+            panes: vec![AttachPane {
+                pane: 2,
+                offset: None,
+            }],
+        },
+    )
+    .await;
+    type_in(&mut ws, 2, "echo in-pane-$((1+1)); exit").await;
+    let state = until(&mut ws, |m| match m {
+        In::Msg(ServerMsg::State { state }) if state.panes.len() == 1 => Some(state.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(state.panes[0].id, 1);
+    assert_eq!(
+        state.tabs[0].layout.panes.len(),
+        1,
+        "exiting closed the split"
+    );
+}
+
+#[tokio::test]
+async fn the_tab_takes_the_claiming_clients_size() {
+    let d = start().await;
+    let (mut a, state) = connect_state(&d).await;
+    let tab = state.tabs[0].id;
+    send(
+        &mut a,
+        ClientMsg::Attach {
+            panes: vec![AttachPane {
+                pane: 1,
+                offset: None,
+            }],
+        },
+    )
+    .await;
+    send(
+        &mut a,
+        ClientMsg::View {
+            tab,
+            cols: 101,
+            rows: 30,
+            zoom: None,
+            claim: true,
+        },
+    )
+    .await;
+    until(&mut a, |m| {
+        matches!(
+            m,
+            In::Msg(ServerMsg::Size {
+                pane: 1,
+                cols: 101,
+                rows: 30
+            })
+        )
+        .then_some(())
+    })
+    .await;
+    type_line(&mut a, "stty size").await;
+    read_until(&mut a, None, "30 101").await;
+
+    // Another client's unclaimed view doesn't take over; a claimed one does.
+    let (mut b, _) = connect_state(&d).await;
+    send(
+        &mut b,
+        ClientMsg::View {
+            tab,
+            cols: 60,
+            rows: 20,
+            zoom: None,
+            claim: false,
+        },
+    )
+    .await;
+    send(
+        &mut b,
+        ClientMsg::View {
+            tab,
+            cols: 61,
+            rows: 20,
+            zoom: None,
+            claim: true,
+        },
+    )
+    .await;
+    let state = next_state(&mut a).await;
+    assert_eq!(
+        (state.tabs[0].cols, state.tabs[0].rows),
+        (61, 20),
+        "B's claim, not its plain view"
+    );
+    assert_ne!(state.tabs[0].owner, None);
+}
+
+#[tokio::test]
+async fn bad_intents_report_errors_and_others_see_changes() {
+    let d = start().await;
+    let (mut a, _) = connect_state(&d).await;
+    let (mut b, _) = connect_state(&d).await;
+    send(
+        &mut a,
+        ClientMsg::Intent {
+            id: Some(9),
+            intent: Intent::ClosePane { pane: 999 },
+        },
+    )
+    .await;
+    let err = until(&mut a, |m| match m {
+        In::Msg(ServerMsg::Error { id, message }) => Some((*id, message.clone())),
+        _ => None,
+    })
+    .await;
+    assert_eq!(err, (Some(9), "no pane %999".to_string()));
+
+    send(
+        &mut a,
+        ClientMsg::Intent {
+            id: None,
+            intent: Intent::NewTab {
+                session: 1,
+                from_pane: Some(1),
+            },
+        },
+    )
+    .await;
+    let state = next_state(&mut b).await;
+    assert_eq!(state.sessions[0].tabs.len(), 2);
 }
