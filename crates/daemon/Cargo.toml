@@ -17,7 +17,7 @@ hkdf = "0.13.0"
 illogical-core = { version = "0.1.0", path = "../core" }
 illogical-proto = { version = "0.1.0", path = "../proto" }
 illogical-vt = { version = "0.1.0", path = "../vt" }
-nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll", "socket", "uio"] }
+nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll", "socket", "uio", "hostname"] }
 p256 = { version = "0.14.0", features = ["ecdh", "ecdsa"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "json"] }

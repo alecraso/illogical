@@ -1,15 +1,18 @@
 //! HTTP: the embedded web client, and the WebSocket protocol at `/ws`.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use axum::{
     Router,
     body::Body,
     extract::{
-        Request, State,
+        ConnectInfo, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
@@ -24,8 +27,10 @@ use tracing::{debug, info, warn};
 
 use crate::{
     access::Access,
+    hosts::Hosts,
     mux::{Cmd, MuxHandle},
     pane::{CLIENT_QUEUE, Subscriber, ToClient},
+    tailscale::Identify,
 };
 
 #[derive(Embed)]
@@ -35,24 +40,40 @@ struct Assets;
 
 pub struct App {
     pub access: Access,
+    /// Who is on the other end of a TCP connection (tailscaled's WhoIs).
+    pub identify: Identify,
     pub mux: MuxHandle,
     pub push: Option<crate::push::Push>,
+    pub hosts: Arc<Hosts>,
     next_client: AtomicU64,
 }
 
 impl App {
-    pub fn new(access: Access, mux: MuxHandle, push: Option<crate::push::Push>) -> Arc<Self> {
-        Arc::new(Self { access, mux, push, next_client: AtomicU64::new(1) })
+    pub fn new(
+        access: Access,
+        identify: Identify,
+        mux: MuxHandle,
+        push: Option<crate::push::Push>,
+        hosts: Arc<Hosts>,
+    ) -> Arc<Self> {
+        Arc::new(Self { access, identify, mux, push, hosts, next_client: AtomicU64::new(1) })
     }
 }
 
-/// Over TCP (loopback, behind `tailscale serve`): every request passes the
-/// access checks, and API calls from a browser must come from our own pages.
+fn api_routes() -> Router<Arc<App>> {
+    crate::api::routes().merge(crate::hosts::routes())
+}
+
+/// Over TCP (loopback, behind `tailscale serve`, or a tailnet address):
+/// every request passes the access checks, and API calls from a browser
+/// must come from one of our origins. Serve it with
+/// `into_make_service_with_connect_info::<SocketAddr>()`.
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws))
-        .merge(crate::api::routes().layer(middleware::from_fn_with_state(app.clone(), api_origin)))
+        .merge(api_routes().layer(middleware::from_fn_with_state(app.clone(), api_origin)))
         .fallback(asset)
+        .layer(middleware::from_fn_with_state(app.clone(), cors))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
         .with_state(app)
 }
@@ -60,7 +81,7 @@ pub fn router(app: Arc<App>) -> Router {
 /// Over the Unix socket (the CLI, programs in panes): the socket lives in
 /// the user's private state directory, so reaching it is the check.
 pub fn local_router(app: Arc<App>) -> Router {
-    Router::new().route("/ws", get(local_ws)).merge(crate::api::routes()).with_state(app)
+    Router::new().route("/ws", get(local_ws)).merge(api_routes()).with_state(app)
 }
 
 /// Cross-site requests can't read our answers, but a POST still lands: so a
@@ -76,11 +97,52 @@ async fn api_origin(State(app): State<Arc<App>>, req: Request, next: Next) -> Re
     }
 }
 
-async fn guard(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
-    let mut res = match app.access.check(req.headers()) {
+/// The home daemon's page talks to other daemons' APIs (another origin):
+/// browsers allow that only if we say so, and we say so only to origins the
+/// access checks accept, exactly. Nothing needs cookies (identity is the
+/// tailnet's), so credentials stay off.
+async fn cors(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|o| o.to_str().ok())
+        .filter(|o| app.access.origin_allowed(o))
+        .map(str::to_owned);
+    let Some(origin) = origin else { return next.run(req).await };
+    let preflight = req.method() == axum::http::Method::OPTIONS
+        && req.headers().contains_key(header::ACCESS_CONTROL_REQUEST_METHOD);
+    let mut res = if preflight { StatusCode::NO_CONTENT.into_response() } else { next.run(req).await };
+    let h = res.headers_mut();
+    if let Ok(v) = HeaderValue::from_str(&origin) {
+        h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
+    }
+    h.append(header::VARY, HeaderValue::from_static("origin"));
+    if preflight {
+        h.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, DELETE"));
+        h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("content-type"));
+        h.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("600"));
+    }
+    res
+}
+
+async fn guard(
+    State(app): State<Arc<App>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let peer = app.identify.peer(addr).await;
+    // Joining the host list needs an invite, not an identity: it's how a
+    // tagged sandbox node adds itself. The Host check still applies.
+    let joining = req.method() == axum::http::Method::POST && req.uri().path() == crate::hosts::JOIN_PATH;
+    let checked = app
+        .access
+        .check_host(req.headers())
+        .and_then(|()| if joining { Ok(()) } else { app.access.check_identity(req.headers(), &peer) });
+    let mut res = match checked {
         Ok(()) => next.run(req).await,
         Err((status, why)) => {
-            warn!(%why, uri = %req.uri(), "rejected request");
+            warn!(%why, ?peer, %addr, uri = %req.uri(), "rejected request");
             (status, why).into_response()
         }
     };

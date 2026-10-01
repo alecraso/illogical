@@ -1,8 +1,10 @@
 //! `illogical`: drive illogicald from a shell or a script. Every command
-//! talks to the daemon's HTTP API over its Unix socket; `--json` prints the
-//! API's answers as they are, for programs.
+//! talks to the daemon's HTTP API over its Unix socket (or another daemon's
+//! URL, with `--host`); `--json` prints the API's answers as they are, for
+//! programs.
 
 mod attach;
+mod hosts;
 mod http;
 
 use std::{
@@ -22,6 +24,10 @@ struct Cli {
     /// $XDG_STATE_HOME/illogical/sock].
     #[arg(long, global = true, env = "ILLOGICAL_SOCK")]
     socket: Option<PathBuf>,
+    /// Talk to another daemon: a name from the local daemon's host list
+    /// (`illogical hosts`), or a URL.
+    #[arg(long, global = true)]
+    host: Option<String>,
     /// Print the API's JSON instead of a summary.
     #[arg(long, global = true)]
     json: bool,
@@ -231,6 +237,23 @@ enum Command {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
+    /// Other daemons to switch to (this daemon's host list).
+    Hosts {
+        #[command(subcommand)]
+        cmd: Option<hosts::HostsCmd>,
+    },
+}
+
+/// Talking to another daemon (`--host`): this shell's pane and directory
+/// mean nothing there.
+static REMOTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The pane we're running in, if it is on the daemon we're talking to.
+fn env_pane() -> Option<u32> {
+    if REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse().ok())
 }
 
 fn socket(cli: &Cli) -> PathBuf {
@@ -251,10 +274,7 @@ fn socket(cli: &Cli) -> PathBuf {
 fn here(p: Option<Pane>) -> anyhow::Result<u32> {
     match p {
         Some(Pane(n)) => Ok(n),
-        None => std::env::var("ILLOGICAL_PANE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .context("which pane? (give %N, or run this inside an illogical pane)"),
+        None => env_pane().context("which pane? (give %N, or run this inside an illogical pane)"),
     }
 }
 
@@ -312,9 +332,11 @@ fn main() {
 }
 
 fn real_main(cli: Cli) -> anyhow::Result<i32> {
-    let sock = socket(&cli);
+    let sock = hosts::target(socket(&cli), cli.host.as_deref())?;
+    REMOTE.store(matches!(sock, http::Target::Url(_)), std::sync::atomic::Ordering::Relaxed);
     let json_out = cli.json;
     match cli.cmd {
+        Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Ls => {
             let v = request(&sock, "GET", "/api/panes", None)?.json()?;
             if json_out {
@@ -364,7 +386,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 "config": { "url": url },
                 "split": split.map(|p| p.0),
                 "session": session,
-                "from_pane": std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
+                "from_pane": env_pane(),
             });
             let v = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?;
             if json_out {
@@ -395,8 +417,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             if image.is_some() && !vm && !vm_tab {
                 anyhow::bail!("--image is for --vm or --vm-tab");
             }
-            // A VM has none of this host's directories.
-            let cwd = if vm || vm_tab {
+            // A VM (or another daemon's host) has none of this host's
+            // directories.
+            let cwd = if vm || vm_tab || REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
                 cwd
             } else {
                 cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))
@@ -410,7 +433,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 "split": split.map(|p| p.0),
                 "cwd": cwd,
                 "policy": pol.as_deref().map(policy).transpose()?,
-                "from_pane": std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
+                "from_pane": env_pane(),
             });
             let v = request(&sock, "POST", "/api/run", Some(&body))?.json()?;
             let pane = v["pane"].as_u64().context("no pane in the answer")?;

@@ -14,6 +14,7 @@ pub use illogical_core::{
 };
 
 pub mod api;
+pub mod hosts;
 
 /// Control messages from a client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

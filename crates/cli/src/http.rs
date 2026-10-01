@@ -1,32 +1,188 @@
-//! Just enough HTTP/1.1 over the daemon's Unix socket: one request per
-//! connection, with fixed-length or chunked (streamed) responses.
+//! Just enough HTTP/1.1: one request per connection, with fixed-length or
+//! chunked (streamed) responses. Over the daemon's Unix socket by default,
+//! or to another daemon's URL (`--host`), with TLS for `https://`.
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    os::unix::net::UnixStream,
-    path::Path,
+    net::TcpStream,
+    os::{
+        fd::{AsFd, BorrowedFd},
+        unix::net::UnixStream,
+    },
+    path::PathBuf,
+    sync::Arc,
 };
 
 use anyhow::{Context, bail};
 
+/// A daemon to talk to.
+#[derive(Debug, Clone)]
+pub enum Target {
+    /// The local daemon's socket.
+    Socket(PathBuf),
+    /// Another daemon, over HTTP(S).
+    Url(Url),
+}
+
+/// `http(s)://host[:port]`, taken apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Url {
+    pub tls: bool,
+    /// Without brackets, for connecting and for TLS.
+    pub host: String,
+    pub port: u16,
+    /// As written (`host[:port]`), for the Host header.
+    pub authority: String,
+}
+
+impl Url {
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        let (tls, rest) = if let Some(r) = s.strip_prefix("https://") {
+            (true, r)
+        } else if let Some(r) = s.strip_prefix("http://") {
+            (false, r)
+        } else {
+            bail!("not an http(s) URL: {s}");
+        };
+        let authority = rest.split('/').next().unwrap_or_default().to_ascii_lowercase();
+        let (host, port) = match authority.strip_prefix('[') {
+            Some(v6) => {
+                let (h, after) = v6.split_once(']').context("bad IPv6 address")?;
+                (h.to_owned(), after.strip_prefix(':'))
+            }
+            None => match authority.rsplit_once(':') {
+                Some((h, p)) => (h.to_owned(), Some(p)),
+                None => (authority.clone(), None),
+            },
+        };
+        let port = match port {
+            Some(p) => p.parse().with_context(|| format!("bad port in {s}"))?,
+            None if tls => 443,
+            None => 80,
+        };
+        if host.is_empty() {
+            bail!("no host in {s}");
+        }
+        Ok(Self { tls, host, port, authority })
+    }
+}
+
+impl Target {
+    /// The Host header, and the WebSocket URL's authority.
+    pub fn authority(&self) -> &str {
+        match self {
+            Target::Socket(_) => "localhost",
+            Target::Url(u) => &u.authority,
+        }
+    }
+
+    pub fn ws_url(&self) -> String {
+        match self {
+            Target::Url(u) if u.tls => format!("wss://{}/ws", u.authority),
+            _ => format!("ws://{}/ws", self.authority()),
+        }
+    }
+
+    pub fn connect(&self) -> anyhow::Result<Box<dyn Stream>> {
+        match self {
+            Target::Socket(path) => Ok(Box::new(
+                UnixStream::connect(path)
+                    .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
+            )),
+            Target::Url(u) => {
+                let tcp = TcpStream::connect((u.host.as_str(), u.port))
+                    .with_context(|| format!("can't reach {}:{}", u.host, u.port))?;
+                tcp.set_nodelay(true)?;
+                if !u.tls {
+                    return Ok(Box::new(tcp));
+                }
+                let name = rustls::pki_types::ServerName::try_from(u.host.clone())?;
+                let conn = rustls::ClientConnection::new(tls_config()?, name)?;
+                Ok(Box::new(Tls(rustls::StreamOwned::new(conn, tcp))))
+            }
+        }
+    }
+}
+
+fn tls_config() -> anyhow::Result<Arc<rustls::ClientConfig>> {
+    use rustls_platform_verifier::ConfigVerifierExt;
+    Ok(Arc::new(rustls::ClientConfig::with_platform_verifier()?))
+}
+
+/// A connection to a daemon, whatever it runs over.
+pub trait Stream: Read + Write + Send {
+    fn fd(&self) -> BorrowedFd<'_>;
+    fn set_nonblocking(&self, on: bool) -> std::io::Result<()>;
+}
+
+impl Stream for UnixStream {
+    fn fd(&self) -> BorrowedFd<'_> {
+        self.as_fd()
+    }
+    fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
+        UnixStream::set_nonblocking(self, on)
+    }
+}
+
+impl Stream for TcpStream {
+    fn fd(&self) -> BorrowedFd<'_> {
+        self.as_fd()
+    }
+    fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
+        TcpStream::set_nonblocking(self, on)
+    }
+}
+
+struct Tls(rustls::StreamOwned<rustls::ClientConnection, TcpStream>);
+
+impl Read for Tls {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for Tls {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Stream for Tls {
+    fn fd(&self) -> BorrowedFd<'_> {
+        self.0.sock.as_fd()
+    }
+    fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
+        self.0.sock.set_nonblocking(on)
+    }
+}
+
 pub struct Response {
     pub status: u16,
-    reader: BufReader<UnixStream>,
+    reader: BufReader<Box<dyn Stream>>,
     chunked: bool,
     length: Option<usize>,
     chunk_left: usize,
     done: bool,
 }
 
-pub fn request(socket: &Path, method: &str, path: &str, body: Option<&serde_json::Value>) -> anyhow::Result<Response> {
-    let mut stream = UnixStream::connect(socket)
-        .with_context(|| format!("can't reach illogicald at {} (is it running?)", socket.display()))?;
+pub fn request(
+    target: &Target,
+    method: &str,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> anyhow::Result<Response> {
+    let mut stream = target.connect()?;
     let body = body.map(|b| b.to_string()).unwrap_or_default();
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        target.authority(),
         body.len()
     )?;
+    stream.flush()?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
@@ -132,4 +288,28 @@ pub fn enc(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Url;
+
+    #[test]
+    fn urls() {
+        let u = Url::parse("https://box.example.ts.net").unwrap();
+        assert_eq!(
+            (u.tls, u.host.as_str(), u.port, u.authority.as_str()),
+            (true, "box.example.ts.net", 443, "box.example.ts.net")
+        );
+        let u = Url::parse("http://127.0.0.1:7691/").unwrap();
+        assert_eq!(
+            (u.tls, u.host.as_str(), u.port, u.authority.as_str()),
+            (false, "127.0.0.1", 7691, "127.0.0.1:7691")
+        );
+        let u = Url::parse("http://[::1]:7681").unwrap();
+        assert_eq!((u.host.as_str(), u.port, u.authority.as_str()), ("::1", 7681, "[::1]:7681"));
+        assert!(Url::parse("ftp://x").is_err());
+        assert!(Url::parse("box").is_err());
+        assert!(Url::parse("http://x:notaport").is_err());
+    }
 }

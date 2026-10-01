@@ -4,8 +4,7 @@
 
 use std::{
     io::{ErrorKind, Read, Write},
-    os::{fd::AsFd, unix::net::UnixStream},
-    path::Path,
+    os::fd::AsFd,
 };
 
 use anyhow::Context;
@@ -16,6 +15,8 @@ use nix::{
     sys::termios::{self, SetArg},
 };
 use tungstenite::{Message, WebSocket};
+
+use crate::http::{Stream, Target};
 
 const DETACH: u8 = 0x1d; // Ctrl-]
 
@@ -29,15 +30,17 @@ fn term_size() -> (u16, u16) {
     }
 }
 
-fn send(ws: &mut WebSocket<UnixStream>, msg: &ClientMsg) -> anyhow::Result<()> {
+fn send(ws: &mut WebSocket<Box<dyn Stream>>, msg: &ClientMsg) -> anyhow::Result<()> {
     ws.send(Message::Text(serde_json::to_string(msg)?.into()))?;
     Ok(())
 }
 
-pub fn run(socket: &Path, pane: u32) -> anyhow::Result<i32> {
-    let stream =
-        UnixStream::connect(socket).with_context(|| format!("can't reach illogicald at {}", socket.display()))?;
-    let (mut ws, _) = tungstenite::client("ws://localhost/ws", stream).context("websocket handshake")?;
+pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
+    let stream = target.connect()?;
+    let (mut ws, _) = tungstenite::client(target.ws_url(), stream).map_err(|e| match e {
+        tungstenite::HandshakeError::Failure(e) => anyhow::Error::from(e).context("websocket handshake"),
+        tungstenite::HandshakeError::Interrupted(_) => anyhow::anyhow!("websocket handshake interrupted"),
+    })?;
 
     // Hello: find the pane's tab.
     let tab = loop {
@@ -88,7 +91,7 @@ pub fn run(socket: &Path, pane: u32) -> anyhow::Result<i32> {
     loop {
         let (sock_ready, stdin_ready) = {
             let mut fds =
-                [PollFd::new(ws.get_ref().as_fd(), PollFlags::POLLIN), PollFd::new(stdin.as_fd(), PollFlags::POLLIN)];
+                [PollFd::new(ws.get_ref().fd(), PollFlags::POLLIN), PollFd::new(stdin.as_fd(), PollFlags::POLLIN)];
             poll(&mut fds, PollTimeout::from(200u16))?;
             let r = |i: usize| fds[i].revents().is_some_and(|e| !e.is_empty());
             (r(0), r(1))

@@ -24,6 +24,16 @@
 //! | GET | `/api/events` | `pane=`, `type=a,b`, `follow=1` | NDJSON `Event`s |
 //! | GET | `/api/history` | `pane=`, `failed=1`, `since=` secs, `cwd=`, `match=` | `[HistoryEntry]` |
 //! | GET | `/api/search` | `re=`, `since=` secs | `[SearchHit]` |
+//! | GET | `/api/host` | | `HostInfo`: this daemon's name and version |
+//! | GET | `/api/hosts` | | `HostList`: the daemons a client can switch between |
+//! | POST | `/api/hosts` | `AddHost` | `Host` (replaces one with the same name) |
+//! | DELETE | `/api/hosts/NAME` | | `{}` |
+//! | POST | `/api/hosts/invite` | | `Invite`: a one-time token for `join` |
+//! | POST | `/api/hosts/join` | `JoinRequest` | `Host`; the token is the credential |
+//!
+//! `join` is how a sandbox adds itself to the home daemon's list. Sandboxes
+//! are tagged tailnet nodes with no user identity, so the access checks
+//! refuse them everything else.
 //!
 //! Errors are `{"error": "..."}` with a 4xx/5xx status.
 

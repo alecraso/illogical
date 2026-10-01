@@ -5,6 +5,7 @@ mod api;
 mod block;
 mod browser;
 mod history;
+mod hosts;
 mod install;
 mod keys;
 mod machine;
@@ -17,6 +18,7 @@ mod shellint;
 mod shim;
 mod store;
 mod sys;
+mod tailscale;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -62,9 +64,21 @@ struct RunArgs {
     #[arg(long = "public-host")]
     public_hosts: Vec<String>,
 
-    /// Extra WebSocket origins to accept, e.g. the Vite dev server.
+    /// Extra origins whose pages may use this daemon (WebSocket and API),
+    /// exactly as the browser sends them: the Vite dev server, or the home
+    /// daemon whose host list this daemon is on (`https://geek.….ts.net`).
     #[arg(long = "allow-origin")]
     allow_origins: Vec<String>,
+
+    /// This daemon's name in host lists [default: its tailnet name, else
+    /// the hostname].
+    #[arg(long, env = "ILLOGICAL_NAME")]
+    name: Option<String>,
+
+    /// tailscaled's socket, for its name and for asking who is connecting
+    /// [default: tailscaled's usual one, if present].
+    #[arg(long, env = "ILLOGICAL_TAILSCALE_SOCKET")]
+    tailscale_socket: Option<PathBuf>,
 
     /// Command line for panes, split on whitespace [default: $SHELL -l].
     #[arg(long)]
@@ -164,14 +178,34 @@ fn main() -> anyhow::Result<()> {
 async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd::OwnedFd>) -> anyhow::Result<()> {
     let mut public_hosts = args.public_hosts.clone();
     let mut owner = args.owner.clone();
-    if let Some(t) = access::tailnet() {
-        info!(host = %t.host, "accepting tailnet host");
-        public_hosts.push(t.host);
-        owner = owner.or(t.login);
+    let local_api = tailscale::LocalApi::find(args.tailscale_socket.as_deref());
+    let status = match &local_api {
+        Some(api) => api.status().await.map_err(|e| info!(error = %e, "no tailnet")).ok(),
+        None => None,
+    };
+    if let Some(t) = &status {
+        info!(host = %t.host, userspace = t.userspace, "accepting tailnet host");
+        public_hosts.push(t.host.clone());
+        owner = owner.or(t.login.clone());
     }
     info!(owner = owner.as_deref().unwrap_or("<none: tailnet requests refused>"), "tailnet owner");
     let owner_login = owner.clone();
-    let access = access::Access::new(args.listen.port(), &public_hosts, &args.allow_origins, owner);
+    // Reachable without serve unless bound to loopback: at the listen
+    // address, or (bound to every address) at this node's tailnet ones.
+    let mut direct: Vec<String> = access::direct_address(args.listen).into_iter().collect();
+    if args.listen.ip().is_unspecified() {
+        direct.extend(status.iter().flat_map(|t| &t.ips).map(|ip| access::host_name(*ip)));
+    }
+    let access = access::Access::new(args.listen.port(), &public_hosts, &direct, &args.allow_origins, owner);
+    let identify = tailscale::Identify::new(local_api, status.as_ref().is_some_and(|t| t.userspace));
+    let name = args.name.clone().unwrap_or_else(|| {
+        status
+            .as_ref()
+            .and_then(|t| t.host.split('.').next().map(str::to_owned))
+            .or_else(|| nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok()))
+            .unwrap_or_else(|| "illogical".into())
+    });
+    info!(name, "this host");
 
     let (shell, shell_args) = match &args.shell {
         Some(cmd) => {
@@ -233,7 +267,9 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     };
     let mux = mux::start(config, store, kept, push.clone());
 
-    let app = server::App::new(access, mux.clone(), push);
+    let hosts = hosts::Hosts::open(&state_dir, name);
+    hosts.spawn_probe();
+    let app = server::App::new(access, identify, mux.clone(), push, hosts);
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
     // The CLI's socket: replace a stale one from a previous run.
@@ -243,7 +279,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
     sys::notify("READY=1");
     tokio::select! {
-        r = axum::serve(listener, server::router(app)) => r?,
+        r = axum::serve(listener, server::router(app).into_make_service_with_connect_info::<SocketAddr>()) => r?,
         _ = signalled() => {
             sys::notify("STOPPING=1");
             info!("shutting down: saving every pane");
