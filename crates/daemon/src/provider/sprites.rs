@@ -73,7 +73,14 @@ pub struct Sprites {
 struct SpriteList {
     #[serde(default)]
     sprites: Vec<SpriteEntry>,
+    #[serde(default)]
+    has_more: bool,
+    #[serde(default)]
+    next_continuation_token: Option<String>,
 }
+
+/// Pages of a sprite list we follow at most (50 sprites each).
+const MAX_PAGES: usize = 40;
 
 #[derive(Deserialize)]
 struct SpriteEntry {
@@ -402,18 +409,33 @@ impl Provider for Sprites {
 
     fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, anyhow::Result<Vec<Sandbox>>> {
         async move {
-            let mut u = self.url("");
-            if !prefix.is_empty() {
-                u.query_pairs_mut().append_pair("prefix", prefix);
+            let mut all = Vec::new();
+            let mut after: Option<String> = None;
+            for _ in 0..MAX_PAGES {
+                let mut u = self.url("");
+                {
+                    let mut q = u.query_pairs_mut();
+                    if !prefix.is_empty() {
+                        q.append_pair("prefix", prefix);
+                    }
+                    if let Some(a) = &after {
+                        q.append_pair("continuation_token", a);
+                    }
+                }
+                let r = self.http.get(u).bearer_auth(&self.token).send().await?.error_for_status()?;
+                let page: SpriteList = r.json().await?;
+                all.extend(
+                    page.sprites
+                        .into_iter()
+                        .filter(|s| s.name.starts_with(prefix))
+                        .map(|s| Sandbox { name: s.name, status: s.status }),
+                );
+                match page.next_continuation_token {
+                    Some(next) if page.has_more => after = Some(next),
+                    _ => break,
+                }
             }
-            let r = self.http.get(u).bearer_auth(&self.token).send().await?.error_for_status()?;
-            let list: SpriteList = r.json().await?;
-            Ok(list
-                .sprites
-                .into_iter()
-                .filter(|s| s.name.starts_with(prefix))
-                .map(|s| Sandbox { name: s.name, status: s.status })
-                .collect())
+            Ok(all)
         }
         .boxed()
     }

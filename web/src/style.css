@@ -1222,3 +1222,73 @@ button {
   color: var(--dim);
   font-size: 12px;
 }
+
+/* ---- sandboxes (M4b) */
+
+.sandboxes {
+  display: grid;
+  gap: 10px;
+  max-height: 75vh;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+}
+
+.sandboxes h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.sandboxes .hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.sandboxes .error {
+  margin: 0;
+  color: var(--danger);
+}
+
+.sandbox-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.sandbox-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--raised-hover);
+}
+
+.sandbox-name {
+  font: 13px ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sandbox-status {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.sandbox-status.running {
+  color: #a6e3a1;
+}
+
+.sandbox-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.host-badge.borrowed {
+  color: #fab387;
+  border-color: #fab38766;
+  background: #fab38722;
+}

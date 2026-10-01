@@ -214,6 +214,21 @@ impl Hosts {
     /// host's sandbox is asked about through its provider instead, which
     /// doesn't wake it (connecting would, and keep it awake).
     pub async fn probe(&self) {
+        self.ask_providers().await;
+        let targets: Vec<(String, Vec<String>)> = self
+            .inner
+            .lock()
+            .unwrap()
+            .hosts
+            .iter()
+            .filter(|h| h.provider.is_none())
+            .map(|h| (h.name.clone(), h.urls.clone()))
+            .collect();
+        self.probe_urls(targets).await;
+    }
+
+    /// What provider hosts' sandboxes are doing, from their provider.
+    pub async fn ask_providers(&self) {
         let sandboxes: Vec<(String, ProviderRef)> = self
             .inner
             .lock()
@@ -236,15 +251,9 @@ impl Hosts {
             };
             self.note_status(&name, &status);
         }
-        let targets: Vec<(String, Vec<String>)> = self
-            .inner
-            .lock()
-            .unwrap()
-            .hosts
-            .iter()
-            .filter(|h| h.provider.is_none())
-            .map(|h| (h.name.clone(), h.urls.clone()))
-            .collect();
+    }
+
+    async fn probe_urls(&self, targets: Vec<(String, Vec<String>)>) {
         for (name, urls) in targets {
             let mut seen = false;
             for url in &urls {
@@ -352,6 +361,9 @@ async fn host(State(app): AppState) -> Json<HostInfo> {
 }
 
 async fn list(State(app): AppState) -> Json<HostList> {
+    // Sandboxes' states are cheap to ask for (and asking doesn't wake
+    // them), so the list a client gets is current.
+    let _ = tokio::time::timeout(Duration::from_secs(3), app.hosts.ask_providers()).await;
     Json(app.hosts.list())
 }
 

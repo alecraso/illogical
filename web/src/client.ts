@@ -232,7 +232,7 @@ export class Client {
   // ---- talking to the daemon
 
   connect() {
-    if (this.closed) return;
+    if (this.closed || this.asleep) return;
     const url = this.base
       ? `${this.base.replace(/^http/, "ws")}/ws`
       : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
@@ -271,9 +271,23 @@ export class Client {
   }
 
   private closed = false;
+  private asleep = false;
+
+  /** Let go of the connection while nobody is looking (a sandbox host:
+   * an open connection keeps it awake); `wake` reconnects. */
+  sleep() {
+    if (this.closed || !this.ws) return;
+    this.asleep = true;
+    const sock = this.ws;
+    this.ws = undefined;
+    this.connected = false;
+    sock.close();
+    this.emit();
+  }
 
   /** Reconnect now if the socket is down (a phone coming back). */
   wake() {
+    this.asleep = false;
     if (!this.ws && !this.closed) {
       this.retry = 0;
       this.connect();

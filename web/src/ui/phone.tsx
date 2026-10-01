@@ -9,6 +9,7 @@ import { AttentionBadge } from "./attention";
 import { HostCrumb, HostSection } from "./hosts";
 import { openPort } from "../blocks";
 import { startAgent } from "./agent-dialog";
+import { openSandboxes } from "./sandboxes";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -108,6 +109,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             </button>
           )}
           <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
+          <button onClick={act(() => openSandboxes())}>Sandboxes</button>
           {active !== undefined && (
             <button class="danger" onClick={act(() => client.intent({ op: "close_pane", pane: active }))}>
               Close pane

@@ -4,13 +4,29 @@
 // directly; the home daemon never relays. The last list (and which host was
 // shown) is kept in localStorage, so known hosts stay reachable while the
 // home daemon is down.
+//
+// A resident daemon in a sandbox (M4b, a "provider" host) is reached
+// through the home daemon's tunnel (`/tunnel/<name>`), which wakes it. If
+// it also has a tailnet URL, that's tried once it's awake, and used when it
+// answers within about 5s (S4: wake through the provider first, because
+// tailnet packets don't wake a sleeping sandbox).
+
+export interface ProviderRef {
+  provider: string;
+  sandbox: string;
+  port: number;
+}
 
 export interface Host {
   name: string;
   urls: string[];
-  transport: "tailnet";
+  transport: "tailnet" | "provider";
+  provider?: ProviderRef;
   added_ms: number;
   last_seen_ms: number | null;
+  /** A provider host's sandbox state, from the provider (never by
+   * connecting): running, warm, cold, gone. */
+  status?: string;
 }
 
 export interface HostList {
@@ -45,10 +61,13 @@ export class HostDirectory {
   stale = true;
   /** The host shown; `null` is the home daemon (this page's own). */
   shown: string | null = load<string>(SHOWN_KEY);
+  /** Provider hosts whose tailnet URL answered: used instead of the tunnel. */
+  private upgraded = new Set<string>();
   private listeners = new Set<() => void>();
 
   constructor() {
     if (this.shown !== null && !this.find(this.shown)) this.shown = null;
+    if (this.shown !== null) void this.upgrade(this.shown);
   }
 
   subscribe(fn: () => void): () => void {
@@ -77,7 +96,37 @@ export class HostDirectory {
   /** What the client prefixes its URLs with: "" for this page's daemon. */
   base(name: string | null = this.shown): string {
     if (name === null || name === this.home) return "";
-    return this.find(name)?.urls[0] ?? "";
+    const h = this.find(name);
+    if (h?.transport === "provider" && !this.upgraded.has(name)) {
+      return `${location.origin}/tunnel/${encodeURIComponent(name)}`;
+    }
+    return h?.urls[0] ?? "";
+  }
+
+  /** Whether the shown host lives in a sandbox that sleeps. */
+  get sleeps(): boolean {
+    return this.shown !== null && this.find(this.shown)?.transport === "provider";
+  }
+
+  /** A provider host with a tailnet URL: once the tunnel has woken it,
+   * switch to the tailnet if it answers within about 5s. */
+  private async upgrade(name: string) {
+    const url = this.find(name)?.transport === "provider" ? this.find(name)?.urls[0] : undefined;
+    if (!url || this.upgraded.has(name)) return;
+    const until = Date.now() + 5000;
+    while (Date.now() < until && this.shown === name) {
+      try {
+        const res = await fetch(`${url}/api/host`, { signal: AbortSignal.timeout(1500) });
+        if (res.ok) {
+          this.upgraded.add(name);
+          this.emit();
+          return;
+        }
+      } catch {
+        // not up yet
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
 
   /** The shown host's name ("" until the home daemon's is known). */
@@ -91,6 +140,7 @@ export class HostDirectory {
     this.shown = shown;
     save(SHOWN_KEY, shown);
     this.emit();
+    if (shown !== null) void this.upgrade(shown);
   }
 
   /** Fetch the list from the home daemon; on failure keep the cached one. */

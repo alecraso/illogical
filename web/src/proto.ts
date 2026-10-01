@@ -99,6 +99,9 @@ export interface Machine {
   image: string | null;
   owner: { pane: PaneId } | { tab: TabId };
   state: MachineState;
+  /** Someone else's sandbox, borrowed for a shell with no daemon there
+   * (M4b): disposable, and left alone when the pane closes. */
+  borrowed?: boolean;
 }
 
 export type PaneOp =

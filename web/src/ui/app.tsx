@@ -10,6 +10,8 @@ import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
+import { directory } from "../hosts";
+import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { openPort } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 
@@ -20,6 +22,9 @@ document.body.appendChild(parking);
 
 type Renaming = { kind: "tab" | "session"; id: number } | null;
 
+/** How long a hidden page keeps its connection to a sandbox host. */
+const HIDDEN_GRACE_MS = 10_000;
+
 export function App({ client, cell }: { client: Client; cell: Cell }) {
   useSubscribe((fn) => client.subscribe(fn));
   const phone = usePhone();
@@ -27,10 +32,18 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
 
   useEffect(() => {
     const focus = () => client.tab !== null && client.claim(client.tab);
-    const visible = () => document.visibilityState === "visible" && client.wake();
+    // A sandbox host sleeps when nothing holds it awake, and an open
+    // connection does: let go of it while the page is hidden.
+    let hidden: number | undefined;
+    const visible = () => {
+      clearTimeout(hidden);
+      if (document.visibilityState === "visible") client.wake();
+      else if (directory.sleeps) hidden = window.setTimeout(() => client.sleep(), HIDDEN_GRACE_MS);
+    };
     window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", visible);
     return () => {
+      clearTimeout(hidden);
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visible);
     };
@@ -66,6 +79,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <MenuLayer />
       <PromptLayer />
       <AgentDialogLayer />
+      <SandboxesLayer />
       <DragGhost />
       <StatusPill client={client} />
     </div>
@@ -99,6 +113,7 @@ function TopBar({
       "separator",
       { label: "New session", run: () => client.intent({ op: "new_session", name: null, from_pane: client.active() ?? null }) },
       { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
+      { label: "Sandboxes…", run: () => openSandboxes() },
       { label: "Rename session", run: () => setRenaming({ kind: "session", id: session.id }) },
       "separator",
       ...notificationItems(client),
@@ -539,6 +554,16 @@ function HostBadge({ client, id }: { client: Client; id: PaneId }) {
   }
   if (!m || m.id === tabMachine?.id) return null;
   const state = m.state === "running" ? "" : ` · ${m.state === "gone" ? "gone" : "starting"}`;
+  if (m.borrowed) {
+    return (
+      <div
+        class={`host-badge borrowed ${m.state}`}
+        title={`A shell on ${m.sprite} (${m.provider}) with no daemon there: disposable. Its output is kept here while it's attached; the sandbox stays when this pane closes. Make it resident (Sandboxes…) for history that survives.`}
+      >
+        {m.sprite} · shell{state}
+      </div>
+    );
+  }
   return (
     <div class={`host-badge ${m.state}`} title={`${m.sprite} (${m.provider}${m.image ? `, ${m.image}` : ""}); deleted when this pane closes`}>
       VM{state}
