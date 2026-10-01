@@ -225,6 +225,19 @@ export class Client {
     );
   }
 
+  /** POST to the API and show what it makes (a pane from `/api/run`);
+   * the error if it failed, for whoever asked to show it. */
+  async make(path: string, body: unknown): Promise<string | null> {
+    this.lastIntentAt = Date.now();
+    try {
+      const res = await fetch(this.base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (res.ok) return null;
+      return ((await res.json().catch(() => null))?.error as string) ?? `that didn't work (${res.status})`;
+    } catch {
+      return "can't reach the daemon";
+    }
+  }
+
   paneOp(pane: PaneId, op: PaneOp) {
     this.send({ type: "pane", pane, op });
   }

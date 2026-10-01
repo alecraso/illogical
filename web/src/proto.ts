@@ -96,6 +96,9 @@ export interface Machine {
   id: MachineId;
   provider: string;
   sprite: string;
+  /** What to call it ("drifting cedar"): ours have one, a borrowed
+   * sandbox goes by its sprite's name. */
+  name?: string | null;
   image: string | null;
   owner: { pane: PaneId } | { tab: TabId };
   state: MachineState;
