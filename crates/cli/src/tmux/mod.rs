@@ -162,8 +162,28 @@ fn next(f: &mut Front) -> u64 {
     f.cmd_no
 }
 
+/// `ILLOGICAL_TMUX_LOG=FILE`: every line both ways (`>` from the client,
+/// `<` to it), to see what a client really sends.
+struct Log(Option<std::fs::File>);
+
+impl Log {
+    fn open() -> Self {
+        let path = std::env::var_os("ILLOGICAL_TMUX_LOG");
+        Self(path.and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()))
+    }
+
+    fn lines(&mut self, dir: char, data: &[u8]) {
+        let Some(file) = &mut self.0 else { return };
+        let text = String::from_utf8_lossy(data).replace('\x1b', "\\033");
+        for line in text.split('\n').filter(|l| !l.is_empty()) {
+            let _ = writeln!(file, "{dir} {line}");
+        }
+    }
+}
+
 /// Commands from stdin, notifications from the daemon, until detach.
 fn serve(f: &mut Front) -> anyhow::Result<i32> {
+    let mut log = Log::open();
     let mut stdout = std::io::stdout();
     let stdin = std::io::stdin();
     let mut pending: Vec<u8> = Vec::new();
@@ -178,18 +198,19 @@ fn serve(f: &mut Front) -> anyhow::Result<i32> {
             let line = if reason.is_empty() { "%exit\n".to_owned() } else { format!("%exit {reason}\n") };
             f.out.extend_from_slice(line.as_bytes());
             if !f.flags.wait_exit {
-                return finish(f, &mut stdout);
+                return finish(f, &mut stdout, &mut log);
             }
             leaving = Some(Instant::now() + Duration::from_secs(5));
         }
         if !f.out.is_empty() {
+            log.lines('<', &f.out);
             if stdout.write_all(&f.out).and_then(|()| stdout.flush()).is_err() {
                 return Ok(0);
             }
             f.out.clear();
         }
         if leaving.is_some_and(|t| Instant::now() > t) {
-            return finish(f, &mut stdout);
+            return finish(f, &mut stdout, &mut log);
         }
         f.conn.flush()?;
         let input = {
@@ -222,10 +243,11 @@ fn serve(f: &mut Front) -> anyhow::Result<i32> {
                 after_cr = b == b'\r';
                 if b == b'\r' || b == b'\n' {
                     let line = std::mem::take(&mut pending);
+                    log.lines('>', if line.is_empty() { b"(empty line)" } else { &line });
                     if line.is_empty() {
                         // An empty line detaches, or answers our `%exit`.
                         if leaving.is_some() {
-                            return finish(f, &mut stdout);
+                            return finish(f, &mut stdout, &mut log);
                         }
                         f.exit.get_or_insert_with(String::new);
                         break;
@@ -243,10 +265,11 @@ fn serve(f: &mut Front) -> anyhow::Result<i32> {
 }
 
 /// The end of control mode: the DCS closes with ST.
-fn finish(f: &mut Front, stdout: &mut std::io::Stdout) -> anyhow::Result<i32> {
+fn finish(f: &mut Front, stdout: &mut std::io::Stdout, log: &mut Log) -> anyhow::Result<i32> {
     if f.dcs {
         f.out.extend_from_slice(b"\x1b\\");
     }
+    log.lines('<', &f.out);
     let _ = stdout.write_all(&f.out);
     let _ = stdout.flush();
     Ok(0)

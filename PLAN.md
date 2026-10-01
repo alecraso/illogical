@@ -1000,6 +1000,14 @@ illogicald and show its tabs and splits as native windows. It is independent
 of M4 and M6. The protocol was shaped for this from the start (the M5 rule
 under Protocol).
 
+- **Done 2026-10-01** (spike S11 first), except the check on a real iTerm2:
+  `illogical tmux -CC` in `crates/cli/src/tmux/`; the daemon changes S11
+  asked for (a minimum tab size, the option store, vt accessors, `cwd` on
+  split and new tab; plus Ping/Pong). `crates/daemon/tests/tmux.rs` replays
+  iTerm2's sequence and matches tmux 3.6's replies, and covers WezTerm's and
+  Ghostty's sequences, formats against real tmux, `%pause` and blocks;
+  `web/e2e/tmux.spec.ts` edits one layout from both sides. The manual iTerm2
+  script is in README (*Use it*).
 - **First:**
   - capture iTerm2's attach sequence through a logging proxy against real
     tmux;
