@@ -2,9 +2,9 @@
 
 Written 2026-10-01 from [BRIEF.md](BRIEF.md) and [docs/research.md](docs/research.md).
 Scope: v1 is M0 to M2 (with M2b) plus enough of M3 to `run`/`tail`/`wait`.
-Beyond v1, M3b (ephemeral machines) and M4 (reach) are planned with their
-shape decisions made, and M5 is kept cheap. Decisions made after the first
-draft are dated inline.
+Beyond v1, M3b and M3c (throwaway machines per pane and per tab), M4 (reach)
+and M6 (non-terminal blocks) are planned with their shape decisions made, and
+M5 is kept cheap. Decisions made after the first draft are dated inline.
 
 ## Decisions on the brief's open questions
 
@@ -281,7 +281,7 @@ Each milestone ends with a demo against the acceptance list.
     only if that is slow.
 - **HTTP API:** the same requests over the WS/HTTP API for remote agents.
 
-### M3b: ephemeral machines (a fresh VM owned by a pane or tab)
+### M3b: ephemeral machines (a fresh VM owned by a pane)
 
 "New VM pane" creates a throwaway wisp sprite (a Firecracker microVM on geek)
 and opens a login shell in it. The sprite is deleted when the pane closes.
@@ -301,11 +301,8 @@ and `tail`. So the VM is modelled as *placement*, not as a kind of pane:
   `Machine { id, provider, image, cpus, mem, owner: NodeId, sprite }`.
   - Any block under its owner node can run on it, and no block outside can.
   - When the owner node closes, the machine is deleted.
-- **M3b ships pane-owned machines only.** A tab-owned machine ("this tab is a
-  throwaway box", where splits inherit the host) is the cheap follow-up the
-  model is shaped for: a shell and `claude` side by side on one machine. Later
-  that tab could add a browser block on the VM's dev port (through the Sprites
-  proxy, which S4 showed working) or an agent block. Both are out of scope here.
+- **M3b ships pane-owned machines only.** Tab-owned machines ("this tab is a
+  throwaway box", where splits inherit the host) are M3c, below.
 
 **Build on the Sprites API, not Firecracker directly.**
 
@@ -394,7 +391,7 @@ and `tail`. So the VM is modelled as *placement*, not as a kind of pane:
 - **`rerun` during normal running.**
   - On a pane-owned machine, `rerun` gets a fresh VM, because the old one
     went away with the pane.
-  - Once tab ownership exists, `rerun` reuses the tab's machine.
+  - On a tab-owned machine (M3c), `rerun` reuses the tab's machine.
 - **Block methods on VM panes.**
   - `process` runs `ps` inside the guest over a second exec. If that fails it
     returns `unavailable`.
@@ -432,6 +429,89 @@ and `tail`. So the VM is modelled as *placement*, not as a kind of pane:
 - from the phone, open a VM pane, run `claude` in it, and close it;
 - the sprite is gone from wisp's list;
 - `illogical tail %N` still prints its whole session.
+
+### M3c: tab-owned machines (a throwaway box per tab)
+
+A **VM tab** owns one wisp sprite that all its panes share. You open it, split
+it, run a shell in one pane and `claude` in another, all on the same files,
+and closing the tab deletes the machine. M3b gave one pane a machine. M3c
+makes the tab the unit, which is what working in a sandbox actually looks
+like. M6 depends on it, because a browser block has to sit on the same machine
+as the dev server it shows, and an agent block beside the terminals it works
+with.
+
+**It's mostly a change of owner.** M3b's model already has every block carry a
+`host` and every `Machine` an `owner: NodeId`, with the rule "blocks under the
+owner may run on it, and closing the owner deletes it". M3c lets the owner be
+a tab. The M3b spike showed what this needs from wisp: two execs on one sprite
+are independent (their own PTY, size and session), share the filesystem and
+processes, and detach and reattach separately.
+
+**Decisions (2026-10-01):**
+
+- **Splits default to the tab's machine, and local panes are allowed.**
+  - Splitting a pane in a VM tab starts the new pane on the tab's machine.
+  - The split menu also offers "Split (local)" for a shell on geek beside the
+    sandbox.
+  - Local panes in a VM tab carry a `local` badge, so it's always clear which
+    side of the line a shell is on.
+- **A pane on the tab's machine can't be dragged out of the tab.**
+  - The drop is refused, with a short "runs on this tab's machine" message, so
+    nothing dies by accident.
+  - Local panes in a VM tab move freely.
+  - Moving the *whole tab* (to another session or position) is fine. The
+    machine goes with it, because the tab owns it.
+- **A pane's machine can be promoted to the tab: "Share machine with tab".**
+  - The right-click action moves ownership from the pane to its tab. The VM
+    keeps running, and new splits join it.
+  - It's only offered when the tab has no machine yet.
+  - The reverse ("give the machine back to one pane") isn't offered.
+
+**Lifecycle, compared with pane-owned:**
+
+| | Pane-owned (M3b) | Tab-owned (M3c) |
+|---|---|---|
+| VMs | one per pane | one per tab |
+| Split a pane | the new pane is local | the new pane joins the tab's VM (or "Split (local)") |
+| A shell exits | the pane follows its policy; closing it deletes the VM | the pane follows its policy; the VM stays until the tab closes |
+| `rerun` | gets a fresh VM | reuses the tab's VM |
+| After geek reboots | each pane gets a fresh VM | the tab gets **one** fresh VM, then every pane follows its restart policy on it |
+| Closing | closing the pane deletes the VM | closing the tab deletes the VM, after its panes' scrollback is flushed |
+
+- **Creating:** "New VM tab" (in the `+` menu and the tab bar's right-click),
+  and `illogical run --vm-tab [--image] -- cmd`. Create returns in about 14ms;
+  the first exec boots the VM in about a third of a second (M3b spike).
+- **The last pane on the machine closes but the tab stays open** (it still
+  holds local panes): the machine stays, and the tab shows "machine idle" with
+  a "New pane on machine" action. Closing the tab deletes it.
+- **Persistence:** unchanged from M3b. The machine lives in `layout.json` with
+  its owner, and each pane keeps its exec id and replay byte count in its
+  `meta.json`.
+- **Crash sweep:** unchanged. Sprites are named per machine, not per pane.
+
+**Cost:** every attached exec keeps the sprite awake (M3b spike), so a VM tab
+never pauses while any of its panes is open. That's fine on geek. Pausing
+idle, unwatched VM tabs waits for the same replay fix as M3b's.
+
+**UI:**
+
+- The tab itself carries the machine badge (name, state). Pane badges show only
+  where they differ (`local`).
+- The tab's right-click menu has "Machine": status, "New pane on machine",
+  "Reset machine" (delete and recreate; panes restart per policy on the new
+  one, with a `── machine reset ──` rule), and "Close tab and machine".
+- `illogical machines` shows each machine's owner as `@tab` or `%pane`.
+
+**Done when:**
+
+- from the phone, open a VM tab, split it, and run `claude` in one pane and a
+  shell in the other, both seeing the same files;
+- add a "Split (local)" pane and see it run on geek;
+- a drag of a VM pane out of the tab is refused, while the local one moves;
+- promote a VM pane's machine to its tab, and a new split joins it;
+- reboot geek, and the tab comes back with one fresh VM and every pane
+  restored per policy;
+- close the tab, and the sprite is gone from wisp's list.
 
 ### M4: reach (a shell on any machine or sandbox)
 
@@ -616,7 +696,7 @@ A block that shows a web page, mainly a dev server inside a machine: run
 `npm run dev` in a terminal block, then open a browser block on port 5173 next
 to it, on the desktop and the phone.
 
-- **Prerequisite: tab-owned machines** (the M3b follow-up). The terminal block
+- **Prerequisite: tab-owned machines** (M3c). The terminal block
   and the browser block in a tab have to share one VM.
 - **Config:** `{ host, port, path }` for machine ports, or `{ url }` for other
   pages.
