@@ -241,6 +241,21 @@ async fn rejects_foreign_host_and_origin() {
 }
 
 #[tokio::test]
+async fn pages_refuse_to_be_framed() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let d = start().await;
+    let mut s = TcpStream::connect(("127.0.0.1", d.port)).await.unwrap();
+    let req = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", d.port);
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut res = Vec::new();
+    timeout(Duration::from_secs(5), s.read_to_end(&mut res)).await.unwrap().unwrap();
+    let head = String::from_utf8_lossy(&res).to_ascii_lowercase();
+    let head = head.split("\r\n\r\n").next().unwrap();
+    assert!(head.contains("content-security-policy: frame-ancestors 'none'"), "{head}");
+    assert!(head.contains("x-frame-options: deny"), "{head}");
+}
+
+#[tokio::test]
 async fn slow_client_is_resynced() {
     let d = start().await;
     let (mut ws, _) = connect(&d).await;

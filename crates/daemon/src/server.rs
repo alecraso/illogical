@@ -12,7 +12,7 @@ use axum::{
         Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, StatusCode, Uri, header},
+    http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -54,13 +54,19 @@ pub fn router(app: Arc<App>) -> Router {
 }
 
 async fn guard(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
-    match app.access.check(req.headers()) {
+    let mut res = match app.access.check(req.headers()) {
         Ok(()) => next.run(req).await,
         Err((status, why)) => {
             warn!(%why, uri = %req.uri(), "rejected request");
             (status, why).into_response()
         }
-    }
+    };
+    // serve authenticates by source, so any page the owner visits could frame
+    // the logged-in app (clickjacking). Nothing frames us legitimately.
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("frame-ancestors 'none'"));
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    res
 }
 
 async fn asset(uri: Uri) -> Response {

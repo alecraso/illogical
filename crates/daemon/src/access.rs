@@ -7,9 +7,11 @@
 //! - **Host** must be a loopback name or the tailnet name. This stops DNS
 //!   rebinding: a web page that rebinds its own name to 127.0.0.1 still sends
 //!   its own name as Host.
-//! - **Origin**, when a browser sends one, must be one of those hosts too.
-//!   This stops any other page in a local browser from opening a WebSocket to
-//!   127.0.0.1 (cross-site WebSocket hijacking).
+//! - **Origin**, when a browser sends one, must be exactly the page's own
+//!   origin: `http://` for loopback, `https://` for the tailnet name (serve
+//!   terminates TLS). This stops any other page in a local browser from
+//!   opening a WebSocket to 127.0.0.1 (cross-site WebSocket hijacking), and
+//!   the scheme matters: an `http://` page on the tailnet name is not ours.
 //! - **Tailscale-User-Login**, when present, must be the owner. It is absent
 //!   for local requests, and any local process could forge it anyway, so its
 //!   job is keeping other tailnet users (shared nodes) out.
@@ -21,16 +23,22 @@ use axum::http::{HeaderMap, StatusCode, header};
 #[derive(Debug, Clone)]
 pub struct Access {
     hosts: HashSet<String>,
+    /// Exact `scheme://host[:port]` values accepted as WebSocket origins.
     origins: HashSet<String>,
     owner: Option<String>,
 }
 
 impl Access {
     pub fn new(port: u16, public_hosts: &[String], extra_origins: &[String], owner: Option<String>) -> Self {
-        let mut hosts: HashSet<String> =
-            ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
-        hosts.extend(public_hosts.iter().map(|h| h.to_ascii_lowercase()));
-        let origins = extra_origins.iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()).collect();
+        let loopback: Vec<String> = ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
+        let public: Vec<String> = public_hosts.iter().map(|h| h.to_ascii_lowercase()).collect();
+        let origins = loopback
+            .iter()
+            .map(|h| format!("http://{h}"))
+            .chain(public.iter().map(|h| format!("https://{h}")))
+            .chain(extra_origins.iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()))
+            .collect();
+        let hosts = loopback.into_iter().chain(public).collect();
         Self { hosts, origins, owner }
     }
 
@@ -64,8 +72,7 @@ impl Access {
             return Ok(());
         };
         let origin = origin.trim_end_matches('/').to_ascii_lowercase();
-        let host = origin.split_once("://").map(|(_, h)| h).unwrap_or_default();
-        if self.hosts.contains(host) || self.origins.contains(&origin) {
+        if self.origins.contains(&origin) {
             Ok(())
         } else {
             Err((StatusCode::FORBIDDEN, format!("origin {origin} not allowed")))
@@ -143,5 +150,17 @@ mod tests {
         assert!(a.check_origin(&headers(&[("origin", "http://localhost:5173")])).is_ok());
         assert!(a.check_origin(&headers(&[("origin", "https://evil.com")])).is_err());
         assert!(a.check_origin(&headers(&[("origin", "null")])).is_err());
+    }
+
+    #[test]
+    fn websocket_origin_scheme_and_port_must_match() {
+        let a = access();
+        // serve terminates TLS, so the tailnet page is only ever https.
+        assert!(a.check_origin(&headers(&[("origin", "http://geek.example.ts.net")])).is_err());
+        // Loopback is plain http.
+        assert!(a.check_origin(&headers(&[("origin", "https://127.0.0.1:7681")])).is_err());
+        // Another port on the same name is another origin (e.g. a proxied dev server).
+        assert!(a.check_origin(&headers(&[("origin", "https://geek.example.ts.net:10000")])).is_err());
+        assert!(a.check_origin(&headers(&[("origin", "https://localhost:5173")])).is_err());
     }
 }
