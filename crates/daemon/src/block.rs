@@ -16,15 +16,20 @@
 //!
 //! All blocks share one id space (`%N`) and one place in the layout tree.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    os::fd::OwnedFd,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use futures_util::future::BoxFuture;
-use illogical_proto::{Attention, BlockType, PaneId};
+use illogical_proto::{Attention, BlockType, PaneId, Policy};
 use serde_json::Value;
 
 use crate::{
     machine::Wisp,
-    pane::{Notice, NoticeSink, What},
+    pane::{Launcher, Notice, NoticeSink, What},
     store::PaneLog,
 };
 
@@ -43,11 +48,41 @@ pub trait Block: Send + Sync {
     fn resize(&self, _cols: u16, _rows: u16) {}
     /// It's closing: stop whatever it runs. Its directory is retired after.
     fn close(&self);
+    /// Extra fields for a push notification about it (an agent's pending
+    /// approval, so the notification can approve it).
+    fn push_extra(&self) -> Option<Value> {
+        None
+    }
+}
+
+/// Files that hold credentials an agent in a VM needs. They're read when
+/// the agent starts and passed to it in its environment only: never saved,
+/// logged, or put on the VM's disk.
+#[derive(Clone, Debug, Default)]
+pub struct Secrets {
+    /// An Anthropic API key (`ANTHROPIC_API_KEY`).
+    pub anthropic_key: PathBuf,
+    /// A Claude Code token from `claude setup-token`
+    /// (`CLAUDE_CODE_OAUTH_TOKEN`), used if there's no API key.
+    pub claude_token: PathBuf,
+}
+
+/// What the daemon gives every block it makes, besides its id and place.
+#[derive(Clone)]
+pub struct BlockEnv {
+    pub notices: NoticeSink,
+    pub wisp: Option<Arc<Wisp>>,
+    /// How processes are started on this host (shim, scope, FD store).
+    pub launch: Launcher,
+    /// The environment they get (as a pane's shell would).
+    pub env: Vec<(String, String)>,
+    pub home: PathBuf,
+    pub secrets: Secrets,
 }
 
 /// What a block gets from the daemon.
 #[derive(Clone)]
-#[allow(dead_code)] // `wisp`, `sprite` and `restoring` are for machine-backed types
+#[allow(dead_code)] // not every type uses every field
 pub struct BlockCtx {
     pub id: PaneId,
     /// Its own directory, for its log and anything else it keeps.
@@ -59,18 +94,42 @@ pub struct BlockCtx {
     pub sprite: Option<String>,
     /// Whether it's being brought back after a restart.
     pub restoring: bool,
+    /// What it does when brought back after a restart.
+    pub policy: Policy,
+    pub launch: Launcher,
+    pub env: Vec<(String, String)>,
+    pub home: PathBuf,
+    /// Descriptors systemd kept for it across a restart, by name; take what
+    /// you use.
+    pub kept: Arc<Mutex<HashMap<String, OwnedFd>>>,
+    pub secrets: Secrets,
 }
 
 impl BlockCtx {
     pub fn new(
         id: PaneId,
         dir: PathBuf,
-        notices: NoticeSink,
-        wisp: Option<Arc<Wisp>>,
+        base: BlockEnv,
         sprite: Option<String>,
         restoring: bool,
+        policy: Policy,
+        kept: HashMap<String, OwnedFd>,
     ) -> Self {
-        Self { id, dir, notices, rt: tokio::runtime::Handle::current(), wisp, sprite, restoring }
+        Self {
+            id,
+            dir,
+            notices: base.notices,
+            rt: tokio::runtime::Handle::current(),
+            wisp: base.wisp,
+            sprite,
+            restoring,
+            policy,
+            launch: base.launch,
+            env: base.env,
+            home: base.home,
+            kept: Arc::new(Mutex::new(kept)),
+            secrets: base.secrets,
+        }
     }
 
     /// Its state changed: clients get the new one.
@@ -81,6 +140,16 @@ impl BlockCtx {
     /// Ask for (or let go of) the user's attention.
     pub fn attention(&self, state: Attention, why: impl Into<String>) {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Attention(state, why.into()) });
+    }
+
+    /// Something happened that the event stream should carry.
+    pub fn event(&self, kind: illogical_proto::EventKind) {
+        let _ = self.notices.send(Notice { pane: self.id, what: What::Event(kind) });
+    }
+
+    /// Its machine is up (true) or gone (false).
+    pub fn machine(&self, up: bool) {
+        let _ = self.notices.send(Notice { pane: self.id, what: What::Machine(up) });
     }
 
     /// The block's log: its own segment store.
@@ -94,7 +163,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
     match kind {
         BlockType::Terminal => Err("terminals aren't made here".into()),
         BlockType::Browser => crate::browser::Browser::create(ctx, config),
-        BlockType::Agent => Err("agent blocks aren't built yet".into()),
+        BlockType::Agent => crate::agent::Agent::create(ctx, config),
     }
 }
 

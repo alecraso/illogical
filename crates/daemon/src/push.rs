@@ -108,14 +108,20 @@ impl Push {
         self.subs.lock().unwrap().len()
     }
 
-    /// Notify every subscribed browser; in the background.
-    pub fn send(&self, pane: u32, title: &str, body: &str) {
+    /// Notify every subscribed browser; in the background. `extra` fields
+    /// go in the payload too (an agent's pending approval, which the
+    /// service worker turns into Approve and Deny actions).
+    pub fn send(&self, pane: u32, title: &str, body: &str, extra: Option<serde_json::Value>) {
         let subs = self.subs.lock().unwrap().clone();
         if subs.is_empty() {
             return;
         }
-        let payload = serde_json::json!({ "title": title, "body": body, "pane": pane, "tag": format!("pane-{pane}") })
-            .to_string();
+        let mut payload =
+            serde_json::json!({ "title": title, "body": body, "pane": pane, "tag": format!("pane-{pane}") });
+        if let Some(serde_json::Value::Object(extra)) = extra {
+            payload.as_object_mut().unwrap().extend(extra);
+        }
+        let payload = payload.to_string();
         let this = self.clone();
         tokio::spawn(async move {
             for sub in subs {

@@ -10,6 +10,8 @@ import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
+import { openPort } from "../blocks";
+import { AgentDialogLayer, startAgent } from "./agent-dialog";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -60,9 +62,10 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
           <TabArea client={client} tab={tab} cell={cell} phone={phone} />
         ) : null}
       </main>
-      {phone && state && state.sessions.length > 0 && <KeyBar client={client} />}
+      {phone && state && state.sessions.length > 0 && client.panes.has(client.active() ?? -1) && <KeyBar client={client} />}
       <MenuLayer />
       <PromptLayer />
+      <AgentDialogLayer />
       <DragGhost />
       <StatusPill client={client} />
     </div>
@@ -446,6 +449,9 @@ function PaneSlot({
           if (url) void client.api("/api/blocks", { type: "browser", config: { url }, split: id }, "couldn't open that page");
         },
       },
+      // A port where this pane runs: its machine, or this host.
+      { label: mine ? "Open a port on this machine…" : "Open a port…", run: () => void openPort(client, { split: id, host: mine?.id, local: !mine }) },
+      { label: "Start an agent…", run: () => startAgent(client, { split: id, from: id }) },
       ...(own && !tabMachine
         ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
         : []),
@@ -558,6 +564,11 @@ function machineItems(client: Client, tab: TabView): MenuItem[] {
       label: "New pane on machine",
       disabled: anchor === undefined,
       run: () => anchor !== undefined && client.intent({ op: "split", pane: anchor, edge: "right", local: false }),
+    },
+    {
+      label: "Open a port on machine…",
+      disabled: anchor === undefined,
+      run: () => anchor !== undefined && void openPort(client, { split: anchor, host: m.id }),
     },
     {
       label: "Reset machine",

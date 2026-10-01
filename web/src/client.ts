@@ -184,6 +184,23 @@ export class Client {
     );
   }
 
+  /** An agent block (M6b): beside `split`, or in a new tab of `session`. */
+  async newAgent(o: { config: Record<string, unknown>; vm: boolean; split?: PaneId; session?: number; from?: PaneId }) {
+    this.lastIntentAt = Date.now();
+    await this.api(
+      "/api/blocks",
+      {
+        type: "agent",
+        config: o.config,
+        vm: o.vm,
+        split: o.split ?? null,
+        from_pane: o.from ?? null,
+        session: o.from === undefined ? (o.session?.toString() ?? null) : null,
+      },
+      "couldn't start the agent",
+    );
+  }
+
   paneOp(pane: PaneId, op: PaneOp) {
     this.send({ type: "pane", pane, op });
   }

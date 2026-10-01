@@ -129,6 +129,16 @@ pub enum EventKind {
         machine: MachineId,
         state: MachineState,
     },
+    /// A browser block shows a new page.
+    Navigated {
+        url: String,
+        title: Option<String>,
+    },
+    /// A browser block's page couldn't be loaded (its server died, say).
+    LoadError {
+        url: String,
+        error: String,
+    },
     Opened,
     Closed,
     Layout {

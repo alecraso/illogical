@@ -138,6 +138,8 @@ pub struct Config {
     pub wisp: Option<Arc<Wisp>>,
     /// Names this daemon's sprites, so a crash sweep only touches ours.
     pub daemon_id: String,
+    /// Where agents in VMs get their credentials from.
+    pub secrets: crate::block::Secrets,
 }
 
 impl Config {
@@ -417,7 +419,11 @@ impl Daemon {
             };
             if meta.kind != BlockType::Terminal {
                 let config = meta.config.clone().unwrap_or_default();
-                match self.make_block(id, meta.kind, config, meta.host, true) {
+                // What systemd kept for it (an agent server's pipes).
+                let prefix = format!("agent-{id}-");
+                let names: Vec<String> = kept.keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
+                let mine = names.into_iter().filter_map(|k| kept.remove_entry(&k)).collect();
+                match self.make_block(id, meta.kind, config, meta.host, Some((meta.policy.clone(), mine))) {
                     Ok(()) => {
                         self.meta.insert(id, meta);
                     }
@@ -502,18 +508,29 @@ impl Daemon {
         Ok(())
     }
 
-    /// Make a non-terminal block for `id` and keep it.
+    /// Make a non-terminal block for `id` and keep it. `restoring`: its
+    /// restart policy, and what systemd kept for it.
     fn make_block(
         &mut self,
         id: PaneId,
         kind: BlockType,
         config: serde_json::Value,
         host: Option<MachineId>,
-        restoring: bool,
+        restoring: Option<(Policy, HashMap<String, OwnedFd>)>,
     ) -> Result<(), String> {
         let sprite = host.and_then(|m| self.machines.get(&m)).map(|m| m.sprite.clone());
         let dir = self.store.pane_dir(id);
-        let ctx = BlockCtx::new(id, dir, self.notices.clone(), self.config.wisp.clone(), sprite, restoring);
+        let base = crate::block::BlockEnv {
+            notices: self.notices.clone(),
+            wisp: self.config.wisp.clone(),
+            launch: self.config.launch.clone(),
+            env: self.config.env(id),
+            home: self.config.home.clone(),
+            secrets: self.config.secrets.clone(),
+        };
+        let is_restore = restoring.is_some();
+        let (policy, kept) = restoring.unwrap_or_default();
+        let ctx = BlockCtx::new(id, dir, base, sprite, is_restore, policy, kept);
         let b = crate::block::create(kind, ctx, config)?;
         self.blocks.insert(id, b);
         Ok(())
@@ -570,7 +587,8 @@ impl Daemon {
                 Attention::NeedsInput => "Needs you",
                 _ => "Done",
             };
-            push.send(pane, title, why);
+            let extra = self.blocks.get(&pane).and_then(|b| b.push_extra());
+            push.send(pane, title, why, extra);
         }
         self.broadcast();
     }
@@ -627,6 +645,7 @@ impl Daemon {
                 self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
             }
             What::Attention(state, why) => self.set_attention(pane, state, &why),
+            What::Event(kind) => self.emit(Some(pane), kind),
             What::Started => {
                 // What `run` started is gone; the new program isn't held.
                 if let Some(m) = self.meta.get_mut(&pane) {
@@ -758,7 +777,7 @@ impl Daemon {
                 let _ = reply.send(self.panes.get(&pane).cloned());
             }
             Api::Attention(pane, state, reply) => {
-                let known = self.panes.contains_key(&pane);
+                let known = self.panes.contains_key(&pane) || self.blocks.contains_key(&pane);
                 self.set_attention(pane, state, "set by the API");
                 let _ = reply.send(known);
             }
@@ -866,19 +885,43 @@ impl Daemon {
         let from = req.from_pane.filter(|p| self.panes.contains_key(p) || self.blocks.contains_key(p));
         let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();
+        self.last_block_error = None;
+        // On a new machine of its own, or one that exists (a tab's).
+        if let Some(m) = req.host
+            && !self.machines.contains_key(&m)
+        {
+            return Err(format!("no machine m{m}"));
+        }
+        self.next_host = match (req.vm, req.host) {
+            (true, _) => Some(self.new_machine(req.image.clone())?),
+            (false, host) => host,
+        };
+        let made = req.vm.then_some(self.next_host).flatten();
+        // Here if asked; an agent also runs here unless asked for a machine;
+        // a page in a VM tab is the tab's machine's.
+        let local = req.local || (req.kind == BlockType::Agent && self.next_host.is_none());
         self.next_block = Some((req.kind, req.config));
         let intent = match (req.split, session) {
-            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: false },
+            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local },
             (None, Some(session)) => Intent::NewTab { session, from_pane: from },
             (None, None) => Intent::NewSession { name: None, from_pane: from },
         };
         let result = self.intent(None, intent);
         let unused = self.next_block.take();
+        if self.next_host.take().is_some()
+            && let Some(m) = made
+        {
+            // Nothing took it.
+            self.machines.remove(&m);
+        }
         result?;
         if let Some((kind, _)) = unused {
             return Err(format!("no {kind:?} block was made").to_lowercase());
         }
-        let id = self.mux.panes().into_iter().find(|p| !before.contains(p)).ok_or("no block was made")?;
+        let made = self.mux.panes().into_iter().find(|p| !before.contains(p));
+        let Some(id) = made else {
+            return Err(self.last_block_error.take().unwrap_or_else(|| "no block was made".into()));
+        };
         if !self.blocks.contains_key(&id) {
             return Err(self.last_block_error.take().unwrap_or_else(|| "the block couldn't start".into()));
         }
@@ -1077,6 +1120,19 @@ impl Daemon {
                 }
             }
             ClientMsg::Pane { pane, op } => {
+                // Blocks of other types take what applies to them.
+                if self.blocks.contains_key(&pane) {
+                    match op {
+                        PaneOp::Attention { state } => self.set_attention(pane, state, "set by a client"),
+                        PaneOp::SetPolicy { policy } => {
+                            info!(pane, ?policy, "restart policy");
+                            self.meta.entry(pane).or_default().policy = policy;
+                        }
+                        _ => {}
+                    }
+                    self.changed();
+                    return;
+                }
                 let Some(handle) = self.panes.get(&pane) else {
                     let message = format!("no pane %{pane}");
                     let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id: None, message }));
@@ -1126,7 +1182,13 @@ impl Daemon {
                     let made = self.next_host.take();
                     let host = made.or_else(|| tab.filter(|_| !local).and_then(|t| self.tab_machine(t)));
                     if let Some((kind, config)) = self.next_block.take() {
-                        match self.make_block(pane, kind, config.clone(), host, false) {
+                        // A machine made for it is its own.
+                        if let Some(m) = made.and_then(|m| self.machines.get_mut(&m))
+                            && m.owner == Owner::Pane(0)
+                        {
+                            m.owner = Owner::Pane(pane);
+                        }
+                        match self.make_block(pane, kind, config.clone(), host, None) {
                             Ok(()) => {
                                 let meta = PaneMeta { host, kind, config: Some(config), ..Default::default() };
                                 self.meta.insert(pane, meta);
@@ -1135,6 +1197,11 @@ impl Daemon {
                             Err(e) => {
                                 warn!(block = pane, ?kind, error = %e, "could not start block");
                                 self.last_block_error = Some(e);
+                                if let Some(m) = made
+                                    && self.machines.get(&m).is_some_and(|x| x.owner == Owner::Pane(pane))
+                                {
+                                    self.machines.remove(&m);
+                                }
                                 let _ = self.mux.apply(Intent::ClosePane { pane });
                             }
                         }

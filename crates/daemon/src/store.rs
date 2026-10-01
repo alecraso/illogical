@@ -89,7 +89,7 @@ pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
-fn private_dir(path: &Path) -> io::Result<()> {
+pub fn private_dir(path: &Path) -> io::Result<()> {
     fs::DirBuilder::new().recursive(true).mode(0o700).create(path)
 }
 

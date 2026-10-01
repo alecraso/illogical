@@ -1,0 +1,727 @@
+//! Block sites: each browser block on a port gets an origin of its own,
+//! served by the daemon's block listener and proxied to that port.
+//!
+//! **Why an origin per block.** A dev server in a machine runs code an agent
+//! wrote. Served from the app's origin, any script in it could drive every
+//! terminal. Served from one shared origin, blocks could read each other.
+//! So block 42 is `b-42.<domain>`, at `/`, and dev servers need no base path.
+//!
+//! **Two schemes:**
+//!
+//! - **Tailnet** (`--block-domain`): `https://b-42.<domain>:<port>`. A
+//!   wildcard DNS record points `*.<domain>` at this host's tailnet address,
+//!   so only the tailnet reaches it; the daemon terminates TLS itself with a
+//!   wildcard certificate (`tls.rs`), and asks tailscaled who is connecting
+//!   (`tailscale whois`): only the owner gets through.
+//! - **Dev** (no domain): `http://b-42-<key>.localhost:<port>`, on loopback
+//!   only, for tests and local use. Browsers resolve `*.localhost` to
+//!   loopback themselves. There is no identity here, so the name carries a
+//!   random key, kept in the block's config: only the app (which learns it
+//!   over its own authenticated socket) and the CLI know the name.
+//!
+//! **The proxy speaks HTTP, not raw bytes,** so that dev servers work with
+//! no config and their own guards are replaced by ours:
+//!
+//! - it rewrites `Host` (and `Origin`, `Referer`) to `localhost:<port>`, so
+//!   Vite's host check and Next's dev-origin check pass;
+//! - which turns those guards off, so it enforces its own: a request whose
+//!   `Origin` is anything but the block's own origin is refused (exact match,
+//!   scheme and port included; `null` too), and so is any cross-site request
+//!   that isn't a page navigation (`Sec-Fetch-Site`/`Sec-Fetch-Mode`);
+//! - it strips `Tailscale-*`, `X-Forwarded-*` and `Forwarded`, so code in
+//!   the machine never learns who you are;
+//! - only the app may frame a block (`frame-ancestors`), and the dev
+//!   server's own `X-Frame-Options` is dropped;
+//! - it carries WebSocket upgrades, so hot reload works;
+//! - it never proxies to the daemon's own ports.
+//!
+//! The app's side of the rule is in `access.rs`: its WebSocket and API
+//! refuse every origin but the app's own, so a block's page can't reach them.
+
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    net::{IpAddr, SocketAddr},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+use http_body_util::{BodyExt, Full, Limited, combinators::BoxBody};
+use hyper::{
+    HeaderMap, Method, Request, Response, StatusCode,
+    body::{Bytes, Incoming},
+    client::conn::http1::SendRequest,
+    header::{self, HeaderName, HeaderValue},
+    service::service_fn,
+};
+use hyper_util::rt::TokioIo;
+use illogical_proto::PaneId;
+use tokio::net::TcpListener;
+use tracing::{debug, info, warn};
+
+use crate::ports::Target;
+
+type Body = BoxBody<Bytes, hyper::Error>;
+
+/// How long a `tailscale whois` answer is trusted.
+const WHOIS_FOR: Duration = Duration::from_secs(60);
+/// At most this much of a page is read for its title.
+const PROBE_LIMIT: usize = 512 * 1024;
+
+/// How block sites are named and reached.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Scheme {
+    /// `http://b-<id>-<key>.localhost:<port>`, loopback only.
+    Dev { port: u16 },
+    /// `https://b-<id>.<domain>[:<port>]`, the owner only (by WhoIs).
+    Tailnet { domain: String, port: u16 },
+}
+
+pub struct Settings {
+    pub scheme: Scheme,
+    /// The tailnet login allowed in (tailnet scheme).
+    pub owner: Option<String>,
+    /// The app's own origins: the only pages that may frame a block.
+    pub app_origins: Vec<String>,
+    /// This host's ports that are never proxied (the daemon's own).
+    pub reserved: Vec<u16>,
+}
+
+/// What the proxy tells a block about its site.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Report {
+    /// The frame navigated to this path (and query).
+    Navigated(String),
+    /// The port stopped answering.
+    Unreachable(String),
+    /// It answers again.
+    Reached,
+}
+
+/// One block's site.
+pub struct Site {
+    pub id: PaneId,
+    /// Its hostname, e.g. `b-42.illogical.example.com`.
+    pub host: String,
+    /// Its origin, e.g. `https://b-42.illogical.example.com:7443`.
+    pub origin: String,
+    target: Mutex<Option<Target>>,
+    down: AtomicBool,
+    report: Box<dyn Fn(Report) + Send + Sync>,
+}
+
+impl Site {
+    /// The page at `path` (starting with `/`), as the browser loads it.
+    pub fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.origin)
+    }
+
+    /// Point the site at a port.
+    pub fn set_target(&self, t: Target) {
+        *self.target.lock().unwrap() = Some(t);
+        self.down.store(false, Ordering::Relaxed);
+    }
+
+    pub fn target(&self) -> Option<Target> {
+        self.target.lock().unwrap().clone()
+    }
+
+    fn reached(&self, ok: Result<(), &str>) {
+        match ok {
+            Ok(()) if self.down.swap(false, Ordering::Relaxed) => (self.report)(Report::Reached),
+            Err(e) if !self.down.swap(true, Ordering::Relaxed) => (self.report)(Report::Unreachable(e.to_owned())),
+            _ => {}
+        }
+    }
+}
+
+pub struct Sites {
+    settings: Settings,
+    sites: Mutex<HashMap<PaneId, Arc<Site>>>,
+    whois: Mutex<HashMap<IpAddr, (Instant, Option<String>)>>,
+}
+
+static SITES: OnceLock<Arc<Sites>> = OnceLock::new();
+
+/// Block sites, if this daemon serves them (`--block-listen`).
+pub fn get() -> Option<Arc<Sites>> {
+    SITES.get().cloned()
+}
+
+/// Turn block sites on (once per process); `serve` then serves them.
+pub fn install(settings: Settings) -> Arc<Sites> {
+    SITES.get_or_init(|| Arc::new(Sites { settings, sites: Mutex::default(), whois: Mutex::default() })).clone()
+}
+
+impl Sites {
+    /// A site for block `id`. `key` is the block's own random key, part of
+    /// its name in the dev scheme.
+    pub fn open(&self, id: PaneId, key: &str, report: impl Fn(Report) + Send + Sync + 'static) -> Arc<Site> {
+        let (host, origin) = match &self.settings.scheme {
+            Scheme::Dev { port } => {
+                let host = format!("b-{id}-{key}.localhost");
+                let origin = format!("http://{host}:{port}");
+                (host, origin)
+            }
+            Scheme::Tailnet { domain, port } => {
+                let host = format!("b-{id}.{domain}");
+                let origin = if *port == 443 { format!("https://{host}") } else { format!("https://{host}:{port}") };
+                (host, origin)
+            }
+        };
+        let site = Arc::new(Site {
+            id,
+            host,
+            origin,
+            target: Mutex::new(None),
+            down: AtomicBool::new(false),
+            report: Box::new(report),
+        });
+        self.sites.lock().unwrap().insert(id, site.clone());
+        site
+    }
+
+    pub fn close(&self, id: PaneId) {
+        self.sites.lock().unwrap().remove(&id);
+    }
+
+    /// Whether a port of this host may be proxied.
+    pub fn allowed(&self, t: &Target) -> Result<(), String> {
+        match t {
+            Target::Local(p) if self.settings.reserved.contains(p) => {
+                Err(format!("port {p} is illogical's own; it can't be shown in a block"))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The site a `Host` header names, if it's one of ours.
+    fn site_for(&self, host: &str) -> Option<Arc<Site>> {
+        let host = host.to_ascii_lowercase();
+        let (name, port) = match host.rsplit_once(':') {
+            Some((n, p)) => (n, p.parse::<u16>().ok()?),
+            None => (host.as_str(), 443),
+        };
+        let (suffix, want_port) = match &self.settings.scheme {
+            Scheme::Dev { port } => (".localhost".to_owned(), *port),
+            Scheme::Tailnet { domain, port } => (format!(".{domain}"), *port),
+        };
+        if port != want_port {
+            return None;
+        }
+        let label = name.strip_suffix(&suffix)?;
+        let id: PaneId = label.strip_prefix("b-")?.split('-').next()?.parse().ok()?;
+        let site = self.sites.lock().unwrap().get(&id).cloned()?;
+        // The whole name, key and all, must match.
+        same(site.host.as_bytes(), name.as_bytes()).then_some(site)
+    }
+
+    /// Who may come in on this connection.
+    async fn admit(&self, peer: SocketAddr) -> Result<(), String> {
+        match &self.settings.scheme {
+            Scheme::Dev { .. } if peer.ip().is_loopback() => Ok(()),
+            Scheme::Dev { .. } => Err(format!("{} is not this host", peer.ip())),
+            Scheme::Tailnet { .. } => {
+                let login = self.whois(peer.ip()).await;
+                match (&self.settings.owner, login) {
+                    (Some(owner), Some(login)) if owner.eq_ignore_ascii_case(&login) => Ok(()),
+                    (_, Some(login)) => Err(format!("{login} is not the owner")),
+                    (_, None) => Err(format!("{} is not a person on this tailnet", peer.ip())),
+                }
+            }
+        }
+    }
+
+    async fn whois(&self, ip: IpAddr) -> Option<String> {
+        if let Some((at, login)) = self.whois.lock().unwrap().get(&ip)
+            && at.elapsed() < WHOIS_FOR
+        {
+            return login.clone();
+        }
+        let login = whois(ip).await;
+        self.whois.lock().unwrap().insert(ip, (Instant::now(), login.clone()));
+        login
+    }
+}
+
+/// Compares secrets without stopping at the first difference.
+fn same(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// The login of the person whose device has `ip`, by asking tailscaled.
+/// Tagged devices (servers) aren't people, so they get `None`.
+async fn whois(ip: IpAddr) -> Option<String> {
+    let out = tokio::process::Command::new("tailscale").args(["whois", "--json", &ip.to_string()]).output().await;
+    let out = out.ok().filter(|o| o.status.success())?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    if v["Node"]["Tags"].as_array().is_some_and(|t| !t.is_empty()) {
+        return None;
+    }
+    v["UserProfile"]["LoginName"].as_str().map(str::to_owned)
+}
+
+/// Serve block sites on `listener`: over TLS with `tls` (tailnet scheme),
+/// else plain HTTP.
+pub async fn serve(sites: Arc<Sites>, listener: TcpListener, tls: Option<Arc<tokio_rustls::rustls::ServerConfig>>) {
+    let acceptor = tls.map(tokio_rustls::TlsAcceptor::from);
+    loop {
+        let (tcp, peer) = match listener.accept().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(error = %e, "block listener");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        let (sites, acceptor) = (sites.clone(), acceptor.clone());
+        tokio::spawn(async move {
+            let _ = tcp.set_nodelay(true);
+            let admitted = sites.admit(peer).await;
+            if let Err(why) = &admitted {
+                info!(%peer, why, "refusing block site connection");
+            }
+            let conn = Arc::new(Upstream::default());
+            let svc = service_fn(move |req| {
+                let (sites, admitted, conn) = (sites.clone(), admitted.clone(), conn.clone());
+                async move { Ok::<_, Infallible>(handle(&sites, admitted, &conn, req).await) }
+            });
+            let http = hyper::server::conn::http1::Builder::new();
+            let served = match acceptor {
+                Some(a) => match a.accept(tcp).await {
+                    Ok(tls) => http.serve_connection(TokioIo::new(tls), svc).with_upgrades().await,
+                    Err(e) => {
+                        debug!(%peer, error = %e, "TLS handshake");
+                        return;
+                    }
+                },
+                None => http.serve_connection(TokioIo::new(tcp), svc).with_upgrades().await,
+            };
+            if let Err(e) = served {
+                debug!(%peer, error = %e, "block site connection");
+            }
+        });
+    }
+}
+
+/// The connection to the port that one browser connection's requests reuse
+/// (one Sprites proxy socket per browser connection, not per request).
+#[derive(Default)]
+struct Upstream(tokio::sync::Mutex<Option<(PaneId, Target, SendRequest<Body>)>>);
+
+/// Why a request didn't get an answer.
+enum Failed {
+    /// Couldn't reach the port.
+    Dial(std::io::Error),
+    /// Reached it, but the exchange broke.
+    Http(hyper::Error),
+}
+
+impl Upstream {
+    /// Send on the kept connection, or a new one. A kept connection the
+    /// port has meanwhile closed gets the request back unsent, and it goes
+    /// out once more on a new one.
+    async fn send(&self, site: &Site, target: &Target, req: Request<Body>) -> Result<Response<Incoming>, Failed> {
+        let mut slot = self.0.lock().await;
+        let kept = match slot.take() {
+            Some((id, t, mut s)) if id == site.id && t == *target => s.ready().await.is_ok().then_some(s),
+            _ => None,
+        };
+        let mut req = Some(req);
+        if let Some(mut s) = kept {
+            let sent = s.try_send_request(req.take().expect("request"));
+            *slot = Some((site.id, target.clone(), s));
+            drop(slot);
+            match sent.await {
+                Ok(r) => return Ok(r),
+                Err(mut e) => match e.take_message() {
+                    Some(unsent) => req = Some(unsent),
+                    None => return Err(Failed::Http(e.into_error())),
+                },
+            }
+            slot = self.0.lock().await;
+        }
+        let mut s = connect(target).await.map_err(Failed::Dial)?;
+        let sent = s.send_request(req.take().expect("request"));
+        *slot = Some((site.id, target.clone(), s));
+        drop(slot);
+        sent.await.map_err(Failed::Http)
+    }
+}
+
+async fn connect(target: &Target) -> std::io::Result<SendRequest<Body>> {
+    let io = target.dial().await?;
+    let (sender, conn) =
+        hyper::client::conn::http1::handshake(TokioIo::new(io)).await.map_err(std::io::Error::other)?;
+    tokio::spawn(async move {
+        let _ = conn.with_upgrades().await;
+    });
+    Ok(sender)
+}
+
+fn full(status: StatusCode, text: impl Into<String>) -> Response<Body> {
+    let mut r = Response::new(Full::new(Bytes::from(text.into())).map_err(|e| match e {}).boxed());
+    *r.status_mut() = status;
+    r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
+    r
+}
+
+/// Why a request is refused, if it is (the checks that don't depend on the
+/// port: who, which site, from where).
+fn check(
+    sites: &Sites,
+    admitted: Result<(), String>,
+    req: &Request<Incoming>,
+) -> Result<Arc<Site>, (StatusCode, String)> {
+    if let Err(why) = admitted {
+        return Err((StatusCode::FORBIDDEN, why));
+    }
+    let h = req.headers();
+    let host = text(h, header::HOST.as_str()).or_else(|| req.uri().authority().map(|a| a.as_str())).unwrap_or("");
+    let site = sites.site_for(host).ok_or((StatusCode::NOT_FOUND, "no such block".into()))?;
+    if let Some(origin) = text(h, header::ORIGIN.as_str())
+        && origin != site.origin
+    {
+        return Err((StatusCode::FORBIDDEN, format!("origin {origin} may not use this block")));
+    }
+    let fetch_site = text(h, "sec-fetch-site").unwrap_or("");
+    let navigating = text(h, "sec-fetch-mode") == Some("navigate");
+    if matches!(fetch_site, "cross-site" | "same-site") && !navigating {
+        return Err((StatusCode::FORBIDDEN, "other sites can't fetch from this block".into()));
+    }
+    Ok(site)
+}
+
+fn text<'h>(h: &'h HeaderMap, name: &str) -> Option<&'h str> {
+    h.get(name).and_then(|v| v.to_str().ok())
+}
+
+/// Hop-by-hop headers: for one connection, never forwarded.
+const HOP: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
+
+fn is_upgrade(h: &HeaderMap) -> bool {
+    text(h, header::CONNECTION.as_str()).is_some_and(|c| c.to_ascii_lowercase().contains("upgrade"))
+        && h.contains_key(header::UPGRADE)
+}
+
+/// The request as the port sees it: from `localhost:<port>`, with nothing
+/// that says who you are.
+fn rewrite_request(h: &mut HeaderMap, site: &Site, port: u16) {
+    let upgrade = is_upgrade(h);
+    let local = format!("localhost:{port}");
+    let local_origin = format!("http://{local}");
+    for name in HOP {
+        if !(upgrade && (*name == "connection" || *name == "upgrade")) {
+            h.remove(*name);
+        }
+    }
+    let identity: Vec<HeaderName> = h
+        .keys()
+        .filter(|k| {
+            let k = k.as_str();
+            k.starts_with("tailscale-") || k.starts_with("x-forwarded-") || k == "forwarded" || k == "x-real-ip"
+        })
+        .cloned()
+        .collect();
+    for k in identity {
+        h.remove(k);
+    }
+    if upgrade {
+        h.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
+    }
+    h.insert(header::HOST, HeaderValue::from_str(&local).expect("host"));
+    // `check` let through only our own origin.
+    if h.contains_key(header::ORIGIN) {
+        h.insert(header::ORIGIN, HeaderValue::from_str(&local_origin).expect("origin"));
+    }
+    if let Some(r) = text(h, header::REFERER.as_str()).and_then(|r| r.strip_prefix(&site.origin))
+        && let Ok(v) = HeaderValue::from_str(&format!("{local_origin}{r}"))
+    {
+        h.insert(header::REFERER, v);
+    }
+}
+
+/// The answer as the browser sees it: from the block's origin, framed only
+/// by the app.
+fn rewrite_response(h: &mut HeaderMap, site: &Site, port: u16, frame_ancestors: &HeaderValue, upgraded: bool) {
+    for name in HOP {
+        if !(upgraded && (*name == "connection" || *name == "upgrade")) {
+            h.remove(*name);
+        }
+    }
+    if let Some(loc) = text(h, header::LOCATION.as_str()) {
+        let local = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
+        if let Some(rest) = local.iter().find_map(|l| loc.strip_prefix(l.as_str()))
+            && let Ok(v) = HeaderValue::from_str(&format!("{}{rest}", site.origin))
+        {
+            h.insert(header::LOCATION, v);
+        }
+    }
+    h.remove(header::X_FRAME_OPTIONS);
+    // A second policy: browsers enforce both, so the server's own stays.
+    h.append(header::CONTENT_SECURITY_POLICY, frame_ancestors.clone());
+}
+
+async fn handle(
+    sites: &Sites,
+    admitted: Result<(), String>,
+    up: &Upstream,
+    mut req: Request<Incoming>,
+) -> Response<Body> {
+    let site = match check(sites, admitted, &req) {
+        Ok(s) => s,
+        Err((status, why)) => return full(status, why),
+    };
+    let Some(target) = site.target() else {
+        return full(StatusCode::SERVICE_UNAVAILABLE, "this block isn't showing a port");
+    };
+    if let Err(why) = sites.allowed(&target) {
+        return full(StatusCode::FORBIDDEN, why);
+    }
+    let port = target.port();
+    let h = req.headers();
+    if req.method() == Method::GET
+        && text(h, "sec-fetch-mode") == Some("navigate")
+        && text(h, "sec-fetch-dest") == Some("iframe")
+    {
+        let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/").to_owned();
+        (site.report)(Report::Navigated(path));
+    }
+    let upgrade = is_upgrade(req.headers());
+    let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut req));
+    let (mut parts, body) = req.into_parts();
+    rewrite_request(&mut parts.headers, &site, port);
+    // Origin-form only: the port's server sees a request to itself.
+    parts.uri = parts.uri.path_and_query().map(|p| p.as_str()).unwrap_or("/").parse().unwrap_or_default();
+    let out = Request::from_parts(parts, body.boxed());
+    // An upgraded connection is used up, so it gets one of its own.
+    let sent = if upgrade {
+        match connect(&target).await {
+            Ok(mut s) => s.send_request(out).await.map_err(Failed::Http),
+            Err(e) => Err(Failed::Dial(e)),
+        }
+    } else {
+        up.send(&site, &target, out).await
+    };
+    let mut res = match sent {
+        Ok(r) => {
+            site.reached(Ok(()));
+            r
+        }
+        Err(Failed::Dial(e)) => {
+            let why = format!("nothing is answering on port {port}: {e}");
+            site.reached(Err(&why));
+            return full(StatusCode::BAD_GATEWAY, why);
+        }
+        Err(Failed::Http(e)) => return full(StatusCode::BAD_GATEWAY, format!("port {port}: {e}")),
+    };
+    let upgraded = res.status() == StatusCode::SWITCHING_PROTOCOLS;
+    let ancestors = frame_ancestors(&sites.settings.app_origins);
+    rewrite_response(res.headers_mut(), &site, port, &ancestors, upgraded);
+    if upgraded && let Some(client) = client_upgrade {
+        let server = hyper::upgrade::on(&mut res);
+        tokio::spawn(async move {
+            let (Ok(client), Ok(server)) = tokio::join!(client, server) else { return };
+            let (mut a, mut b) = (TokioIo::new(client), TokioIo::new(server));
+            let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
+        });
+    }
+    res.map(|b| b.boxed())
+}
+
+fn frame_ancestors(app: &[String]) -> HeaderValue {
+    let list = if app.is_empty() { "'none'".to_owned() } else { app.join(" ") };
+    HeaderValue::from_str(&format!("frame-ancestors {list}"))
+        .unwrap_or(HeaderValue::from_static("frame-ancestors 'none'"))
+}
+
+/// `GET path` on a port, as the proxy would send it: (status, up to
+/// `PROBE_LIMIT` of the body). For a block's title and whether it answers.
+pub async fn probe(target: &Target, path: &str) -> Result<(u16, String), String> {
+    let mut sender =
+        connect(target).await.map_err(|e| format!("nothing is answering on port {}: {e}", target.port()))?;
+    let req = Request::get(path)
+        .header(header::HOST, format!("localhost:{}", target.port()))
+        .header(header::ACCEPT, "text/html,*/*")
+        .body(Full::new(Bytes::new()).map_err(|e| match e {}).boxed())
+        .map_err(|e| e.to_string())?;
+    let res = tokio::time::timeout(Duration::from_secs(15), sender.send_request(req))
+        .await
+        .map_err(|_| format!("port {} didn't answer in time", target.port()))?
+        .map_err(|e| format!("port {}: {e}", target.port()))?;
+    let status = res.status().as_u16();
+    let body = match tokio::time::timeout(Duration::from_secs(10), Limited::new(res.into_body(), PROBE_LIMIT).collect())
+        .await
+    {
+        Ok(Ok(b)) => String::from_utf8_lossy(&b.to_bytes()).into_owned(),
+        _ => String::new(),
+    };
+    Ok((status, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sites(scheme: Scheme) -> Sites {
+        Sites {
+            settings: Settings {
+                scheme,
+                owner: Some("me@x.com".into()),
+                app_origins: vec!["http://127.0.0.1:7681".into()],
+                reserved: vec![7681, 7690],
+            },
+            sites: Mutex::default(),
+            whois: Mutex::default(),
+        }
+    }
+
+    #[test]
+    fn dev_names_carry_the_key() {
+        let s = sites(Scheme::Dev { port: 7690 });
+        let site = s.open(42, "k3y", |_| {});
+        assert_eq!(site.origin, "http://b-42-k3y.localhost:7690");
+        assert_eq!(site.url("/a?b"), "http://b-42-k3y.localhost:7690/a?b");
+        assert!(s.site_for("b-42-k3y.localhost:7690").is_some());
+        assert!(s.site_for("B-42-K3Y.localhost:7690").is_some());
+        // Without the key, with a wrong one, another port, another block.
+        assert!(s.site_for("b-42.localhost:7690").is_none());
+        assert!(s.site_for("b-42-k3z.localhost:7690").is_none());
+        assert!(s.site_for("b-42-k3y.localhost:7691").is_none());
+        assert!(s.site_for("b-42-k3y.localhost").is_none());
+        assert!(s.site_for("b-43-k3y.localhost:7690").is_none());
+        assert!(s.site_for("127.0.0.1:7690").is_none());
+        s.close(42);
+        assert!(s.site_for("b-42-k3y.localhost:7690").is_none());
+    }
+
+    #[test]
+    fn tailnet_names() {
+        let s = sites(Scheme::Tailnet { domain: "illogical.example.com".into(), port: 7443 });
+        let site = s.open(7, "ignored", |_| {});
+        assert_eq!(site.origin, "https://b-7.illogical.example.com:7443");
+        assert!(s.site_for("b-7.illogical.example.com:7443").is_some());
+        assert!(s.site_for("b-7.illogical.example.com").is_none());
+        assert!(s.site_for("b-7.illogical.example.com.evil.com:7443").is_none());
+        assert!(s.site_for("b-7.evil.com:7443").is_none());
+        let s = sites(Scheme::Tailnet { domain: "illogical.example.com".into(), port: 443 });
+        let site = s.open(7, "", |_| {});
+        assert_eq!(site.origin, "https://b-7.illogical.example.com");
+        assert!(s.site_for("b-7.illogical.example.com").is_some());
+        assert!(s.site_for("b-7.illogical.example.com:443").is_some());
+    }
+
+    #[tokio::test]
+    async fn who_may_connect() {
+        let dev = sites(Scheme::Dev { port: 7690 });
+        assert!(dev.admit("127.0.0.1:5000".parse().unwrap()).await.is_ok());
+        assert!(dev.admit("[::1]:5000".parse().unwrap()).await.is_ok());
+        assert!(dev.admit("100.64.0.9:5000".parse().unwrap()).await.is_err());
+        let tailnet = sites(Scheme::Tailnet { domain: "d.example".into(), port: 7443 });
+        let ip: IpAddr = "100.64.0.9".parse().unwrap();
+        tailnet.whois.lock().unwrap().insert(ip, (Instant::now(), Some("ME@x.com".into())));
+        assert!(tailnet.admit(SocketAddr::new(ip, 1)).await.is_ok());
+        let friend: IpAddr = "100.64.0.10".parse().unwrap();
+        tailnet.whois.lock().unwrap().insert(friend, (Instant::now(), Some("friend@x.com".into())));
+        assert!(tailnet.admit(SocketAddr::new(friend, 1)).await.is_err());
+        let server: IpAddr = "100.64.0.11".parse().unwrap();
+        tailnet.whois.lock().unwrap().insert(server, (Instant::now(), None));
+        assert!(tailnet.admit(SocketAddr::new(server, 1)).await.is_err());
+    }
+
+    #[test]
+    fn own_ports_are_never_proxied() {
+        let s = sites(Scheme::Dev { port: 7690 });
+        assert!(s.allowed(&Target::Local(7681)).is_err());
+        assert!(s.allowed(&Target::Local(7690)).is_err());
+        assert!(s.allowed(&Target::Local(5173)).is_ok());
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(HeaderName::from_bytes(k.as_bytes()).unwrap(), v.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn requests_lose_identity_and_look_local() {
+        let s = sites(Scheme::Tailnet { domain: "d.example".into(), port: 7443 });
+        let site = s.open(3, "", |_| {});
+        let mut h = headers(&[
+            ("host", "b-3.d.example:7443"),
+            ("origin", "https://b-3.d.example:7443"),
+            ("referer", "https://b-3.d.example:7443/page?x=1"),
+            ("tailscale-user-login", "me@x.com"),
+            ("tailscale-user-name", "Me"),
+            ("x-forwarded-for", "100.64.0.9"),
+            ("forwarded", "for=100.64.0.9"),
+            ("connection", "keep-alive"),
+            ("keep-alive", "timeout=5"),
+            ("cookie", "a=b"),
+        ]);
+        rewrite_request(&mut h, &site, 5173);
+        assert_eq!(h["host"], "localhost:5173");
+        assert_eq!(h["origin"], "http://localhost:5173");
+        assert_eq!(h["referer"], "http://localhost:5173/page?x=1");
+        assert_eq!(h["cookie"], "a=b");
+        for gone in
+            ["tailscale-user-login", "tailscale-user-name", "x-forwarded-for", "forwarded", "connection", "keep-alive"]
+        {
+            assert!(!h.contains_key(gone), "{gone} was forwarded");
+        }
+        // WebSocket upgrades keep what makes them upgrades.
+        let mut h = headers(&[("connection", "keep-alive, Upgrade"), ("upgrade", "websocket"), ("host", "x")]);
+        rewrite_request(&mut h, &site, 5173);
+        assert_eq!(h["connection"], "upgrade");
+        assert_eq!(h["upgrade"], "websocket");
+    }
+
+    #[test]
+    fn answers_are_framed_only_by_the_app() {
+        let s = sites(Scheme::Dev { port: 7690 });
+        let site = s.open(3, "k", |_| {});
+        let fa = frame_ancestors(&["http://127.0.0.1:7681".into(), "https://geek.example.ts.net".into()]);
+        let mut h = headers(&[
+            ("x-frame-options", "DENY"),
+            ("location", "http://localhost:5173/next"),
+            ("content-security-policy", "default-src 'self'"),
+        ]);
+        rewrite_response(&mut h, &site, 5173, &fa, false);
+        assert!(!h.contains_key("x-frame-options"));
+        assert_eq!(h["location"], "http://b-3-k.localhost:7690/next");
+        let csp: Vec<_> = h.get_all("content-security-policy").iter().map(|v| v.to_str().unwrap()).collect();
+        assert_eq!(csp, ["default-src 'self'", "frame-ancestors http://127.0.0.1:7681 https://geek.example.ts.net"]);
+        let mut h = headers(&[("location", "https://elsewhere.example/")]);
+        rewrite_response(&mut h, &site, 5173, &fa, false);
+        assert_eq!(h["location"], "https://elsewhere.example/");
+    }
+
+    #[test]
+    fn reports_only_changes() {
+        let got = Arc::new(Mutex::new(vec![]));
+        let s = sites(Scheme::Dev { port: 7690 });
+        let g = got.clone();
+        let site = s.open(1, "k", move |r| g.lock().unwrap().push(r));
+        site.reached(Ok(()));
+        site.reached(Err("down"));
+        site.reached(Err("still down"));
+        site.reached(Ok(()));
+        site.reached(Ok(()));
+        assert_eq!(*got.lock().unwrap(), [Report::Unreachable("down".into()), Report::Reached]);
+    }
+}

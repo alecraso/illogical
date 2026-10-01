@@ -1,25 +1,66 @@
-// Browser blocks (M6a): a web page in a frame, or, for sites that refuse to
-// be framed, a card that opens them in a new tab.
+// Browser blocks (M6a): a port on a machine (a dev server, on the block's
+// own origin), or a web page in a frame; for sites that refuse to be framed,
+// a card that opens them in a new tab.
 
 import { render } from "preact";
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
+import { askText } from "../ui/menu";
 import { registerBlock, type BlockView } from "./view";
 
 export interface BrowserState {
+  /** Where the page is now. */
   url: string;
+  /** What the frame was last told to load. */
+  src: string;
   title: string | null;
   framable: boolean | null;
   error: string | null;
   loading: boolean;
   reloads: number;
   back: string[];
+  /** For a port: which, its path, and the machine (null: the daemon's host). */
+  port: number | null;
+  path: string | null;
+  machine: string | null;
+}
+
+/** `:5173/path` for a port, else the URL. */
+function shown(s: BrowserState) {
+  return s.port !== null ? `:${s.port}${s.path ?? "/"}` : s.url;
+}
+
+/**
+ * Ask for a port and open it beside `split`: on machine `host`, or (`local`)
+ * on the daemon's host even in a VM tab.
+ */
+export async function openPort(client: Client, where: { split?: PaneId; host?: number; local?: boolean }) {
+  const v = await askText("Open a port", "", "5173, or 5173/path");
+  const m = v?.trim().match(/^:?(\d{1,5})(\/.*)?$/);
+  if (!v) return;
+  if (!m) {
+    client.toast(`not a port: ${v}`);
+    return;
+  }
+  void client.api(
+    "/api/blocks",
+    {
+      type: "browser",
+      config: { port: Number(m[1]), path: m[2] ?? "/" },
+      split: where.split ?? null,
+      host: where.host ?? null,
+      local: !!where.local,
+    },
+    "couldn't open that port",
+  );
 }
 
 function BrowserBlock({ client, id, s }: { client: Client; id: PaneId; s: BrowserState | null }) {
   if (!s) return <div class="browser-card">…</div>;
   const call = (method: string, args: unknown = {}) => void client.api(`/api/blocks/${id}/call/${method}`, args);
-  const host = (() => {
+  const port = s.port !== null;
+  const where = (() => {
+    if (port) return `:${s.port}`;
     try {
       return new URL(s.url).host;
     } catch {
@@ -35,6 +76,11 @@ function BrowserBlock({ client, id, s }: { client: Client; id: PaneId; s: Browse
         <button title="Reload" onClick={() => call("reload")}>
           ↻
         </button>
+        {port && s.machine && (
+          <span class="host-tag" title={`port ${s.port} on ${s.machine}`}>
+            VM
+          </span>
+        )}
         <form
           class="browser-url"
           onSubmit={(e) => {
@@ -43,7 +89,7 @@ function BrowserBlock({ client, id, s }: { client: Client; id: PaneId; s: Browse
             call("navigate", { url: v });
           }}
         >
-          <input name="url" value={s.url} spellcheck={false} autocomplete="off" />
+          <input name="url" value={shown(s)} spellcheck={false} autocomplete="off" />
         </form>
         <a class="browser-open" href={s.url} target="_blank" rel="noopener noreferrer" title="Open in a new tab">
           ↗
@@ -51,27 +97,29 @@ function BrowserBlock({ client, id, s }: { client: Client; id: PaneId; s: Browse
       </div>
       {s.error ? (
         <div class="browser-card error">
-          <p>Couldn't load {host}</p>
+          <p>{port ? `Nothing is answering on ${where}` : `Couldn't load ${where}`}</p>
           <p class="dim">{s.error}</p>
+          {port && <p class="dim">It shows again when the server is back.</p>}
           <button onClick={() => call("reload")}>Try again</button>
         </div>
       ) : s.framable === false ? (
         <div class="browser-card">
-          <p>{s.title ?? host} doesn't allow being shown inside another page.</p>
+          <p>{s.title ?? where} doesn't allow being shown inside another page.</p>
           <a class="button" href={s.url} target="_blank" rel="noopener noreferrer">
             Open in new tab
           </a>
         </div>
       ) : s.framable === null ? (
-        <div class="browser-card dim">Loading {host}…</div>
+        <div class="browser-card dim">Loading {where}…</div>
       ) : (
-        // A page from elsewhere: its own origin, never the app's.
+        // Its own origin, never the app's: a port on its block's own name,
+        // or the site's. `allow-same-origin` means that origin.
         <iframe
-          key={`${s.url}#${s.reloads}`}
+          key={`${s.src}#${s.reloads}`}
           class="browser-frame"
-          src={s.url}
+          src={s.src}
           title={s.title ?? s.url}
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+          sandbox={port ? "allow-scripts allow-forms allow-same-origin" : "allow-scripts allow-forms allow-same-origin allow-popups"}
           referrerpolicy="no-referrer"
         />
       )}
@@ -92,8 +140,8 @@ registerBlock("browser", (client, id): BlockView => {
       state = s as BrowserState;
       draw();
     },
-    title: () => state?.title ?? state?.url ?? "browser",
-    text: () => (state ? `${state.title ?? ""}\n${state.url}`.trim() : ""),
+    title: () => state?.title ?? (state ? shown(state) : "browser"),
+    text: () => (state ? `${state.title ?? ""}\n${shown(state)}`.trim() : ""),
     focus: () => host.querySelector<HTMLElement>("iframe, input")?.focus(),
     dispose: () => {
       render(null, host);

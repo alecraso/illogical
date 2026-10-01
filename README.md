@@ -82,6 +82,63 @@ the daemon stopping, crashing, or the machine rebooting:
   a card with "open in new tab". Block directories are `blocks/<id>/` in
   the state directory (`panes/` before; it's moved, and left as a link).
 
+- **Browser blocks on ports** (M6a). Run `npm run dev` in a VM tab, then
+  *Open a port on this machine…* (pane menu), *Open a port on machine…*
+  (tab menu), *Open port* (phone sheet) or `illogical open --split right
+  :5173` puts the app beside it, hot reload and all. A block opened from a
+  pane shows that pane's machine's port (or this host's). Each block is
+  served on an origin of its own, `https://b-<id>.illogical.widgets.wtf:7443`
+  on geek, by the daemon, which proxies it to the port (through the Sprites
+  proxy for a VM). The dev server needs no config: the proxy rewrites
+  `Host` and `Origin` to `localhost:<port>`, and since that switches off the
+  server's own guards, the proxy enforces its own: only you (asked of
+  tailscaled), only the block's own origin, nothing cross-site but page
+  loads, framed only by the app. It strips `Tailscale-*` headers, so agent
+  code never learns who you are, and a script in the page can't reach
+  illogical: the app refuses every origin but its own. The block follows
+  the frame's navigations; when the server dies it asks for you and shows
+  the page again when the server is back. Events: `navigated`,
+  `load_error`.
+- **Agent blocks** (M6b). An agent run as UI instead of a TUI: messages,
+  thoughts, tool-call cards with each command's output in a read-only
+  terminal, permission requests as Approve / Always / Deny cards (big
+  enough for a thumb, and actions on the push notification), a composer,
+  Stop, and cost per turn. The block is an
+  [ACP](https://agentclientprotocol.com) client, so one block type drives
+  Claude Code (`claude-agent-acp`), Codex (`codex-acp`), a Fountain agent
+  (`fountain acp`, in Fountain's sandbox) or any ACP agent server. Start
+  one from *Start an agent…* in the pane menu, *New agent* in the phone's
+  sheet, or `illogical agent`.
+  - *Always* is remembered by the block (in its config) and answered by
+    it; it never picks the agent's own "always", which would write
+    `.claude/settings.local.json` into your repo. Claude Code runs with no
+    settings sources, so your own hooks don't fire inside it.
+  - The block's log is the JSON-RPC stream; `capture` is the transcript as
+    Markdown, `history` lists the agent's commands and turns, `search`
+    covers what agents said and ran.
+  - A local agent server runs in its own scope with its pipes in systemd's
+    FD store, so restarting the daemon mid-turn (even with an approval
+    open) doesn't touch it. After a reboot the session reopens with
+    `session/resume` (or `session/load`), unless the policy is `none` or
+    `rerun-ask` (then *Resume*). A Fountain turn that ran on while nothing
+    followed it shows "running on Fountain" and appears when it ends.
+  - The adapters, pinned, go in `~/.local/share/illogical/agents/`:
+    `npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.81.2`
+    and `npm install --omit=optional --prefix ~/.local/share/illogical/agents/codex @agentclientprotocol/codex-acp@2.1.0`
+    (Codex uses `~/.local/bin/codex`). They need Node on PATH (mise's
+    shims are added if present).
+  - **In a VM** (`--vm`, or the dialog's checkbox) the agent server runs
+    over a non-TTY exec on the block's own machine; its first start
+    installs Node and the adapter there (about 15s). Claude Code there
+    needs credentials: a token from `claude setup-token` in
+    `~/.config/illogical/claude-oauth-token` (given to it as
+    `CLAUDE_CODE_OAUTH_TOKEN`), or an API key in
+    `~/.config/illogical/anthropic-key` (`ANTHROPIC_API_KEY`, used first);
+    `--claude-token-file` and `--anthropic-key-file` move them. They reach
+    the agent on its stdin, into its environment only: never the VM's
+    disk, a URL, an argv, the log or the layout. A VM agent survives a
+    daemon restart (its exec session lives on wisp).
+
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (geek's, the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's
@@ -116,8 +173,17 @@ illogical run --vm -- 'git clone … && make'   # on a throwaway VM (no command:
 illogical run --vm-tab                        # a tab whose panes share a new VM
 illogical machines                            # VMs, their owner (@tab or %pane) and state
 illogical open example.com                    # a browser block (--split %3 beside a pane)
+illogical open --split right :5173/about      # a port, beside this pane, on its VM tab's machine
+illogical open --host m2 :3000                # a port on machine m2 (--host local: this host)
 illogical describe %4                         # any block: type, place, state
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
+illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
+                                              #   --acp CMD, --vm, --model haiku, --cwd d, --wait)
+illogical wait %5 --needs-input               # it asks to run something…
+illogical call %5 approve                     # …or '{"option":"always"}'; deny '{"reason":"…"}'; cancel
+illogical call %5 send '{"text":"and then?"}' # the next message (queued while it works)
+illogical wait %5 --idle                      # the turn ended: prints idle, done or needs-input
+illogical tail %5 -f                          # any block's text as it grows
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
@@ -162,6 +228,30 @@ Open <http://127.0.0.1:7681>, or <https://geek.tailb2e8f2.ts.net> from
 anywhere on the tailnet (`tailscale serve --bg --https=443
 http://127.0.0.1:7681` is already configured on geek). The daemon accepts
 tailnet requests from the login that owns the node; `--owner` overrides.
+
+**Browser blocks on ports** need a listener for block sites; without one
+they're off. On geek:
+
+```
+illogicald install -- --block-listen 100.71.195.119:7443 \
+  --block-domain illogical.widgets.wtf \
+  --block-acme-cloudflare-token-file ~/.local/share/wisp/cloudflare-token
+```
+
+- `*.illogical.widgets.wtf` is a Cloudflare DNS record (DNS only) pointing
+  at geek's tailnet address, so only the tailnet reaches it. Port 443 there
+  is `tailscale serve`'s and 8443 is wispd's, hence 7443.
+- The daemon gets the wildcard certificate from Let's Encrypt itself, with a
+  DNS-01 challenge through Cloudflare (the token wisp already uses), and
+  renews it two thirds of the way through its life. It lives in
+  `<state>/acme/<CA>/`. `--block-acme-directory staging` uses the test CA;
+  `--block-cert`/`--block-key` serve files you renew yourself.
+- Callers are checked with `tailscale whois`: only the owner gets in.
+- **Dev mode:** `--block-listen 127.0.0.1:7701` without `--block-domain`
+  serves `http://b-<id>-<key>.localhost:7701` on loopback, where browsers
+  resolve `*.localhost` themselves. There's no identity there, so each
+  block's name carries a random key (kept in its config): only the app and
+  the CLI know it. The tests use this.
 
 **Pane environment.** At boot the daemon starts before you log in, so its own
 environment has no `WAYLAND_DISPLAY`, `DISPLAY` or desktop `SSH_AUTH_SOCK`.
@@ -216,11 +306,15 @@ against the running one.
   policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
   integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
   search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
-  (`machine.rs`: the Sprites API and exec TTY sessions), the WebSocket
-  server, embedded web client, access checks, `install`. Federation: the
-  host list and invites (`hosts.rs`), tailscaled's local API and WhoIs
-  (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install --tailnet` and
-  the `sandbox` supervisor).
+  (`machine.rs`: the Sprites API and exec TTY sessions), blocks
+  (`block.rs`, `browser.rs`; agents in `agent/`: the ACP client, the
+  transcript, agent definitions, the local and VM pipes), block sites
+  (`sites.rs`: per-block origins and their HTTP proxy; `ports.rs`: reaching
+  a port here or in a VM; `tls.rs`: the wildcard certificate and ACME), the
+  WebSocket server, embedded web client, access checks, `install`.
+  Federation: the host list and invites (`hosts.rs`), tailscaled's local
+  API and WhoIs (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install
+  --tailnet` and the `sandbox` supervisor).
 - `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
   another daemon with `--host` (`hosts.rs`).
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that

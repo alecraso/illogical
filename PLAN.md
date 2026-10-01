@@ -644,10 +644,11 @@ instead.
     through the provider tunnel, never a public URL.
   - **Done when:** start `claude` in a resident sprite, let it go cold, reopen
     from the phone, and the layout and scrollback are back.
-- **M4c, dial-out and history.** The dial-out transport, read-only share
-  tokens, and an optional log-segment sync to the home daemon, so history
+- **M4c, dial-out and history.** The dial-out transport (read-only share
+  tokens moved to M15), and an optional log-segment sync to the home daemon, so history
   outlives a deleted sandbox.
-  - **Decide first:** whether to encrypt logs at rest. Synced sandbox logs are
+  - **Decided 2026-10-01: encrypt synced segments at rest, with a key held
+    by the home daemon.** The question was whether to encrypt logs at rest. Synced sandbox logs are
     where an agent's secrets end up. The likely answer is to encrypt synced
     segments with a key held by the home daemon, and later fetch that key with
     the secrets-manager identity under Risks.
@@ -660,8 +661,8 @@ for: agents, and the dev servers they start in throwaway machines. A terminal
 becomes one block type among several. Tabs, splits, drag, close, `host`, the
 event stream and the CLI all work the same for every type.
 
-M6 ships two types: **browser** (M6a) and **agent** (M6b). Job, file and diff
-blocks are candidates, listed at the end.
+M6 ships two types: **browser** (M6a) and **agent** (M6b). S8 chooses what comes next;
+M10 (job and service) and M11 (file and diff) are the expected result.
 
 **The block contract.** Every block type provides:
 
@@ -732,11 +733,20 @@ to it, on the desktop and the phone.
       rather than through `tailscale serve`;
     - it identifies the caller by asking tailscaled who is connecting
       (`WhoIs`), the same path M4 uses for direct connections.
-  - **To check before building it:**
-    - which domain to use;
-    - that the DNS record resolves only to the tailnet IP;
-    - which port the listener uses (443 on the tailnet IP is serve's);
-    - that the certificate renews.
+  - **Checked (2026-10-01):**
+    - the domain is `illogical.widgets.wtf`: blocks are
+      `b-<id>.illogical.widgets.wtf`;
+    - `*.illogical.widgets.wtf` is an A record (DNS only) for
+      100.71.195.119, and resolves to nothing else (no AAAA) through 1.1.1.1
+      and 8.8.8.8;
+    - the listener is `100.71.195.119:7443` (443 is serve's, 8443 wispd's);
+    - the daemon gets the wildcard certificate itself (Let's Encrypt,
+      DNS-01 through Cloudflare's API with wisp's token: staging, then
+      production, about 25s each) and renews it two thirds of the way
+      through its life. A client on the tailnet verifies the chain.
+  - **Dev scheme, for tests:** with no domain, blocks are
+    `http://b-<id>-<key>.localhost:<port>` on loopback. There is no WhoIs
+    there, so the name carries a random key from the block's config.
 - **Security: proxied pages must never share the app's origin.**
   - `tailscale serve` adds your identity to every request, so any script
     served from the app's origin can drive every terminal you have. A dev
@@ -768,6 +778,10 @@ to it, on the desktop and the phone.
   - hot reload works on the desktop and the phone;
   - a script in that app can't reach the illogical API;
   - closing the tab deletes the VM and both blocks.
+- **Done 2026-10-01** (`web/e2e/vm-dev-server.spec.ts`, against a real
+  Vite in a VM tab; `browser-ports.spec.ts` and `crates/daemon/tests/sites.rs`
+  in the dev scheme). The real-domain scheme was checked by hand on geek;
+  the S6 checklist on real phones is still open.
 
 #### M6b: agent blocks (ACP clients)
 
@@ -908,6 +922,13 @@ permissions.
     `CLAUDE_CODE_EXECUTABLE` points at yours;
   - Claude's own transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) is the
     source of truth for anything said while the daemon was down.
+- **Credentials in VMs (decided 2026-10-01):** a token from a file only the
+  user controls, passed into the agent server's environment in the VM and
+  never written to the VM's disk or logged: a Claude Code OAuth token from
+  `claude setup-token` (`~/.config/illogical/claude-oauth-token`, as
+  `CLAUDE_CODE_OAUTH_TOKEN`), or an API key
+  (`~/.config/illogical/anthropic-key`, as `ANTHROPIC_API_KEY`). Local agents use the user's own
+  Claude Code login.
 - **CLI:**
   - `illogical agent [--acp <cmd> | --fountain <agent>] [--host m|--vm]
     [--cwd d] "prompt"` prints the block id;
@@ -957,31 +978,397 @@ never creates a sandbox without a conversation, and a VM pane is exactly that.
 M3b stays on wisp. Fountain machines are reached through Fountain agent
 blocks.
 
-**Candidates after M6 (not committed):**
+**More block types** are explored in S8 and built in M10 and M11, below.
 
-- **job blocks:** a non-interactive command, or a hal0 or CI job. Status,
-  exit code, retries and logs, with no PTY.
-- **file and diff blocks:** a read-only view of a file, or the diff an agent
-  just made, on any host. This needs the filesystem-listing method from the
-  directory picker under Later.
+### After M6: order and triggers
 
-### Later
+Everything below is planned, but each item starts when its trigger holds, not
+on a date. The suggested order:
 
-- **M5:** a `-CC` front end on the daemon. First capture iTerm2's attach sequence through a logging proxy against real tmux, and read HTM's tests.
-- **ghostty-web:** swap it in behind `TerminalView` once it is past its current bugs. Then attach can send GHOSTSNP directly, and history really does arrive newest first.
-- **Parking** (Superlogical's numbers are about 400KB per terminal against 5MB for tmux; unparking takes about 200µs):
-  - **Terminal parking:** after 60s with no PTY reads, write the VT state to disk (encrypted, because scrollback holds secrets) and free the engine. Typing doesn't unpark it; attaching streams the parked snapshot from disk. This reuses the checkpoint path, so S5's format decision covers it.
-  - **PTY parking:** idle or unwatched PTYs move off their own read tasks onto one shared epoll task.
-  - **Client buffer parking:** free an idle client's per-pane buffers.
-  - Do this once there are tens of panes or agent fleets, not before.
-- **Small UX items (from Superlogical, decided 2026-10-01):**
-  - **A go-to-directory picker** that works on remote hosts. It needs a small
-    filesystem-listing method on each daemon. "New pane here" and "cd there"
-    are mouse-first.
-  - **Mosh-style local echo** for the phone on cellular and for remote hosts:
-    predict typed characters and underline them until the server confirms.
-  - **Automatically generated session names** ("drifting cedar") in place of
-    `$1`, which you can rename.
+1. **M7**, because M11 needs its filesystem method, and the picker and session
+   names are cheap.
+2. **S8**, to choose block types from real use of M6.
+3. **M10 / M11.**
+4. **M5** when a tmux client is wanted.
+5. **M8** when ghostty-web is ready.
+6. **M9** when the scale numbers say so.
+
+### M5: tmux control mode (`-CC`) front end
+
+Lets iTerm2, and anything else that speaks tmux control mode, attach to
+illogicald and show its tabs and splits as native windows. It is independent
+of M4 and M6. The protocol was shaped for this from the start (the M5 rule
+under Protocol).
+
+- **First:**
+  - capture iTerm2's attach sequence through a logging proxy against real
+    tmux;
+  - read HTM's tests;
+  - list the `%` notifications and commands iTerm2 actually uses.
+- **Entry point:** `illogical tmux -CC [attach -t $s]`, which runs over ssh or
+  locally. It pretends to be a tmux client on stdio and talks to the daemon
+  over its socket.
+- **Mapping:**
+  - session to session, tab to window, leaf block to `%pane`;
+  - layout changes become `%layout-change`, with cells derived from stored
+    ratios;
+  - output becomes `%output`, which needs octal escaping and flow control
+    (`%pause` / `refresh-client -A`).
+- **Non-terminal blocks** show as read-only panes drawn from
+  `capture --text`, with a one-line hint to open them in the web app.
+- **Done when:**
+  - iTerm2 attaches to geek over ssh and shows the session's tabs and splits
+    as native tabs and splits;
+  - a split or drag in iTerm2 shows up in the web client, and the other way
+    round;
+  - vim in a pane survives detach and reattach;
+  - an agent block appears as a readable read-only pane.
+
+### M7: files and navigation
+
+Superlogical's go-to-directory picker, and the filesystem method that M11's
+file and diff blocks also need.
+
+- **`fs` methods on every host:**
+  - `fs.list(path)`, `fs.stat(path)`, `fs.read(path, range)`,
+    `fs.watch(path)`;
+  - read-only, scoped to the host's user, with sizes capped.
+  - **Hosts with a daemon** (local, M4a peers, resident sandboxes) answer
+    these themselves.
+  - **Provider-only hosts** (VM panes and no-install sprite shells) go
+    through the provider's filesystem API. S4 found the Sprites API has list,
+    read and write. This becomes an optional `Provider` capability.
+- **The picker.**
+  - It opens from the right-click menu, the tab bar's `+`, and an optional
+    shortcut.
+  - It shows a fuzzy directory list on the focused block's host, starting at
+    the block's cwd (from OSC 7) and with recent cwds from `history` first.
+  - Actions: "new pane here", "new tab here", "cd there" (sent as input to an
+    idle shell only, using M3's `needs-input`/`idle` state).
+  - It works on the phone.
+- **Generated session names.**
+  - New sessions get an adjective-noun name ("drifting cedar") instead of
+    `$1`, unique per daemon. VM tabs name their machine the same way.
+  - Rename stays a double-click, and the IDs are unchanged.
+- **Done when:**
+  - from the phone, open the picker on a VM tab, browse to a directory in the
+    VM, choose "new pane here", and get a shell in that directory;
+  - the same works on a local host and an M4a host;
+  - new sessions show generated names.
+
+### M8: client terminal engine (ghostty-web) and local echo
+
+Swaps xterm.js for ghostty-web behind the `BlockView` terminal renderer, so
+client and server run the same engine. This is Superlogical's replica model.
+
+- **Trigger:** ghostty-web passes the S1/S5 fixture corpus in a browser,
+  including the phone, and its rendering bugs are fixed upstream. Re-check
+  each time libghostty-rs is bumped.
+- **Wire.**
+  - `snapshot` can carry GHOSTSNP, negotiated per client in `hello`. xterm
+    clients keep formatter VT bytes.
+  - Attach becomes visible-first: screen, then READY, then history newest
+    first (the protocol already has `part: screen|history`).
+- **Predictive local echo** (Mosh-style), for the phone on cellular and for
+  remote hosts.
+  - Typed printable characters are drawn at once and underlined until the
+    server's output confirms them; mismatches are rolled back.
+  - It is off in alt-screen apps and when a password prompt is detected (echo
+    off).
+  - It's a per-host setting that is on automatically when the measured round
+    trip exceeds about 80ms.
+- **Done when:**
+  - the web client runs ghostty-web on desktop and phone, and the S1 fixture
+    corpus renders identically to the daemon's `plain_text()`;
+  - a 64k-row pane is usable within 50ms of attach;
+  - typing in a Fly-hosted shell from the phone on cellular feels local,
+    with underlined predictions that settle correctly.
+
+### M9: parking (scale)
+
+Superlogical's server numbers are about 400KB per terminal against 5MB for
+tmux, and unparking takes about 200µs.
+
+- **Trigger:** any one of these:
+  - geek's daemon holds more than about 50 panes;
+  - an agent fleet runs;
+  - RSS per idle pane is measured above 2MB.
+
+  Measure first. The milestone starts with a benchmark (RSS per pane at
+  empty, full screen and 10k scrollback; per attached client) committed as a
+  test.
+- **Terminal parking.**
+  - After 60s with no PTY reads, write the VT state as a GHOSTSNP checkpoint,
+    using the M2 path and S5's format, and free the engine.
+  - Typing doesn't unpark it.
+  - Attaching streams the parked snapshot from disk.
+  - Parked state is encrypted with the key decided for M4c.
+- **PTY parking.** Idle or unwatched PTYs move off their own read tasks onto
+  one shared epoll task.
+- **Client buffer parking.** Free an idle client's per-pane buffers.
+- **Done when:**
+  - 500 idle shells on geek cost under 1MB each in daemon RSS;
+  - attaching to a parked pane draws it in under 50ms;
+  - the benchmark guards against regressions in CI.
+
+### S8: block exploration (after M6 has been used for about two weeks)
+
+This spike decides which block types come next, from evidence instead of a
+list.
+
+- **Read the friction log** (`docs/dogfood.md`) and `history` for things done
+  in terminals that wanted structure:
+  - polling a build;
+  - tailing a service's logs;
+  - re-reading a diff an agent made;
+  - opening a file only to read it.
+- **Prototype each candidate as a throwaway type** behind the M6 block
+  contract: config, state, attention, `capture --text`, methods, log. Note
+  where the contract doesn't fit.
+- **Candidates:**
+  - **job:** a non-interactive command, or a hal0 or CI job;
+  - **service:** a long-running process with restart, logs and a port, for
+    example a sprite service or a dev server. It might subsume part of M6a's
+    browser block;
+  - **file:** a read-only view;
+  - **diff:** from `git diff` on a host, or from an agent's edits;
+  - **notes:** a Markdown scratchpad per tab, as a wildcard.
+- **Output:** a short README choosing types, and changes to the block contract
+  if any. M10 and M11 below are the expected outcome, and S8 can reshape or
+  drop them.
+
+### M10: job and service blocks
+
+Structured views of work that has no human typing into it. These are
+Superlogical's "automatic work disappears into jobs and logs".
+
+- **Job block.**
+  - Config: `{ host, cmd, cwd, env, retries, timeout }`, or an adapter
+    reference, `{ hal0: job_id }` or `{ ci: url }`.
+  - It runs without a PTY: stdout and stderr go into the block log,
+    separately.
+  - State: queued, running, succeeded or failed with an exit code, the
+    attempt number, and duration.
+  - Attention maps to `working` / `done`, or `needs-input` on failure.
+  - Methods: `retry`, `cancel`, `logs`.
+  - `illogical run --job` creates one.
+  - **Adapters:** local and host processes first. hal0 jobs and a CI provider
+    are separate, optional adapters with the same state shape.
+- **Service block.**
+  - Config: `{ host, cmd, port?, restart }`.
+  - On sprites it maps onto `sprite-env services`; on other hosts the daemon
+    supervises it.
+  - State: up or down, restarts, the last exit, and the port.
+  - If it has a port, "open" makes an M6a browser block next to it.
+- **Done when:**
+  - a job block runs a build on a VM tab, fails, and shows as `needs-input`
+    on the phone;
+  - `retry` from the phone succeeds;
+  - a service block keeps a dev server up across a cold wake, and opens a
+    browser block on its port.
+
+### M11: file and diff blocks (after M7)
+
+Read-only views for checking an agent's work from anywhere, especially the
+phone.
+
+- **File block.**
+  - Config: `{ host, path }`, read through M7's `fs` methods.
+  - Syntax highlighting and line numbers.
+  - It follows `fs.watch` live, which matters while an agent edits.
+  - `capture --text` returns the file.
+- **Diff block.** It takes any of three sources:
+  - `{ host, repo, rev_a, rev_b }`, computed by the host's daemon;
+  - a working-tree diff;
+  - the edit diffs from an M6b agent block's tool-call cards (ACP tool calls
+    carry diff content). "Open diff" on a tool call opens one.
+  - Unified on the phone, split on the desktop. It is read-only, with "open
+    file" per hunk.
+- **Done when:**
+  - from the phone, open the diff of what an agent just changed in a VM tab,
+    tap a hunk, and land in a live file block showing that line;
+  - both keep updating while the agent keeps editing.
+
+### Multiplayer track (M12–M15, added 2026-10-01)
+
+Superlogical builds sharing in "from the start". illogical adds it as its own
+track, for a small group: a few people you'd hand a shell to, plus their
+agents. Enterprise access control stays a non-goal (BRIEF.md).
+
+**What changes from single-user:**
+- `config.owner` becomes a list of principals with roles.
+- "Last input wins" becomes per-pane driving.
+- Every input byte gets an author.
+
+**Order:**
+- S12, then M12 and M13 are the core.
+- M14 makes write access safe enough to give out.
+- M15 reaches people outside your tailnet.
+- The track needs M3c (VM tabs) and M4a (federation). It's independent of M6
+  to M11, but agent blocks (M6b) gain per-person approvals when both exist.
+
+**Decisions this track makes:**
+
+| Question | Decision | Why |
+|---|---|---|
+| Unit of sharing | **The session.** Tabs, blocks and machines inherit. Block-level sharing comes later if ever. | One grant to reason about; layout stays one shared tree. |
+| Layout | **One shared tree per session, as today.** Focus, scroll, selection and the active tab stay per client. | M1's "same layout live everywhere" already is multiplayer layout, like a shared document. |
+| Who types | **One driver per pane.** Viewers take or request control. Free-for-all only in panes marked "pair". | Interleaved keystrokes from two people corrupt commands. Superlogical serializes input; we also make it visible. |
+| Pane size | **Follows the driver.** Everyone else letterboxes, as non-owners already do. | Extends the existing rule; no new mechanism. |
+| Guests typing on your machine | **Not by default.** A guest's new panes run on a VM (M3b/M3c). Driving one of your local panes needs a per-pane, time-limited "trust" grant. | Write access to a local shell is code execution as your uid. VMs make sharing safe by default. |
+| Identity | **Tailnet identity first** (including users from tailnets you share a node with); M15 adds invites for everyone else. | Zero new auth for the common case, and it's already proven (S2). |
+
+#### S12: spike before M12 (about half a day)
+
+- **Node sharing.** Share geek with a second tailnet (a test account).
+  - What do `Tailscale-User-Login`/`-Name`/`-Profile-Pic` and WhoIs report
+    for a shared-in user, behind serve and on direct connections?
+  - Can the ACL limit them to port 443?
+- **Funnel.**
+  - Is `tailscale funnel` on a second port usable for M15's invite flow?
+  - What headers arrive, given there is no identity?
+  - What are the rate limits?
+- **Input attribution cost.** Add a per-input index record
+  `(offset, principal, len)` to the M2 index. Measure index growth with the
+  full typing of a day of use, and with `paste` of 1MB.
+- **"From now" sharing.** Can a viewer's first snapshot be taken without
+  scrollback (screen only, via GHOSTSNP partial encode or the formatter), so
+  history before the share point never leaves the daemon?
+
+#### M12: principals and roles
+
+Every request has an author, and every session has an access list.
+
+- **Principals:**
+  - **user:** a tailnet login, or an M15 invitee;
+  - **agent:** an M6b block, or a CLI/API token. It acts *for* a user, with
+    at most that user's role;
+  - **host:** an M4 peer daemon.
+- **Roles per session:**
+  - **owner:** everything, including sharing;
+  - **editor:** create, close and arrange blocks; drive panes; approve
+    agents;
+  - **viewer:** watch, scroll, select, copy, `capture`, `tail`.
+
+  The daemon's owner is owner of every session.
+- **Enforced on every path in one place** (a `core` authorization function
+  over intents and API calls): the WebSocket, HTTP API, Unix socket (uid maps
+  to the daemon owner), CLI, M5's tmux front end, and federation between
+  daemons. M4's per-daemon allowlist becomes this.
+- **Grants are data.** `acl.json` per session is written atomically like
+  `layout.json`, and an audit log records grant changes (who, what, when).
+- **Push and approvals are per user.** Web Push subscriptions belong to a
+  principal. `needs-input` goes to editors who opted in. An agent permission
+  request records who approved it.
+- **Done when:**
+  - a second tailnet user with `viewer` on one session sees it live and
+    nothing else;
+  - typing, method calls, `send` and `approve` from them are refused, with a
+    403 on the API and a toast in the UI;
+  - granting `editor` takes effect without reconnecting, and revoking
+    disconnects them within a second;
+  - the audit log shows each grant and revoke.
+
+#### M13: live sharing and presence
+
+What it feels like to be in a session with someone.
+
+- **Share dialog** (right-click on the session or tab bar):
+  - pick a person, set the role;
+  - choose **with history** or **from now**. "From now" means the viewer's
+    first snapshot is the screen only, and logs before the share offset are
+    never sent (S12).
+  - Shows who has access and lets you revoke.
+- **Presence.**
+  - Avatars (from `Tailscale-Profile-Pic`) on the session, on each tab, and
+    on each pane someone is focused on.
+  - Each person's focused pane gets an outline in their colour.
+  - The `hello`/`layout` messages gain a `presence` list.
+- **Driving.**
+  - Each pane shows its driver.
+  - "Take control" is instant for owners and editors, and leaves the previous
+    driver a notice. "Request control" asks the driver.
+  - Only the driver's input reaches the PTY; anyone else's keystrokes are
+    held with a "you're not driving" hint.
+  - "Pair" mode on a pane lets every editor type at once.
+  - The driver owns the size.
+- **Follow.** Clicking an avatar follows that person's focus (tab and pane)
+  until you act.
+- **Attribution.**
+  - Every input record in the index carries its principal (S12).
+  - `history` and command marks show who ran each command.
+  - `illogical log %p --who` lists the drivers over time.
+- **Done when:**
+  - two people on two machines plus a phone are in one session, and each sees
+    the others' avatars and focus;
+  - control passes back and forth with no interleaved keystrokes;
+  - `history` attributes each command to the right person;
+  - a "from now" viewer cannot reach earlier output by `tail`, `capture` or
+    scrolling.
+
+#### M14: safe write access
+
+Make `editor` something you can hand out.
+
+- **Guest panes run on machines.** A non-owner's new pane or tab defaults to
+  a VM (M3b/M3c) in your wisp, with its own quota. A local pane for a guest
+  is an owner-only option.
+- **Trust grants for local panes.** Before a guest can drive a pane on a real
+  host, the owner grants trust for that pane, for a set time (default 30
+  minutes), from a prompt they can answer on the phone. It's revocable, and
+  it ends when the pane closes.
+- **Quotas per principal:** machines, CPU and memory, and concurrent agent
+  blocks. Limits are visible in the share dialog.
+- **Secrets.** A pane marked "private" is never shown to non-owners. Shared
+  sessions warn before showing a pane whose recent output matches common
+  token patterns. It's a heuristic, and it says so.
+- **Agents.** An editor's agent blocks act as that editor, run on their VM,
+  and their approvals go to them. Owners can approve anything.
+- **Done when:**
+  - an editor opens a tab, gets a VM, and runs `claude` in it;
+  - they can't drive the owner's local shell until the owner approves from a
+    phone notification;
+  - access ends by itself after the grant expires;
+  - quotas stop a fourth VM.
+
+#### M15: beyond the tailnet
+
+Share with someone who isn't on your tailnet and won't install anything.
+
+- **Invites.**
+  - An owner creates an invite link (role, session, expiry, single-use)
+    served over Tailscale Funnel on its own hostname (S12). It is never the
+    app's origin on 443.
+  - The invitee signs in with GitHub (OAuth) or a passkey. Their principal is
+    that GitHub login.
+  - Funnel traffic reaches only the invite and session endpoints, never the
+    host list or other sessions.
+- **Read-only share links** (this replaces M4c's share tokens).
+  - A link that shows one session live, read-only, with no sign-in, until it
+    expires.
+  - It's "from now" by default.
+- **Hardening** (needed once the app faces the internet):
+  - rate limits and lockouts per invite;
+  - a CSP, and the M6a origin rules for proxied pages;
+  - audit entries carry the invitee's IP;
+  - a kill switch, `illogical sharing off`, that closes Funnel and revokes
+    every outside principal.
+- **Sessions shared with you.** Your client lists sessions other people's
+  daemons share with you, using M4a federation with your identity, under a
+  "shared with me" section of the host list.
+- **Done when:**
+  - someone with only a browser and a GitHub account opens an invite, signs
+    in, watches a session, takes control of a pane in their own VM, and loses
+    access when the invite is revoked;
+  - a read-only link stops working at expiry;
+  - `illogical sharing off` cuts everyone outside the tailnet within a
+    second.
+
+**Not planned in this track:**
+- organisations, SSO/SCIM and policy engines (Superlogical's step 3);
+- text chat and comments (for now, use a notes block from S8 if it exists);
+- voice;
+- shared undo of layout changes.
 
 ## Acceptance tests (automated where possible)
 

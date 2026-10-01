@@ -81,6 +81,13 @@ impl Access {
         Self { hosts, public: public.into_iter().collect(), origins, owner }
     }
 
+    /// The app's own origins (the pages allowed to frame a block).
+    pub fn origins(&self) -> Vec<String> {
+        let mut o: Vec<String> = self.origins.iter().cloned().collect();
+        o.sort();
+        o
+    }
+
     /// Every request: the Host check and the identity check (the server
     /// runs them separately, for the join exception).
     #[cfg(test)]
