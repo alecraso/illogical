@@ -15,7 +15,11 @@
 //!   send `{"host": "localhost", "port": N}`, get `{"status": "connected"}`
 //!   (or an error and a close), then binary frames both ways. It wakes the
 //!   sprite, and holds it awake while open;
-//! - **fs**: `PUT /{name}/fs/write?path=…&mode=…`;
+//! - **fs**: `PUT /{name}/fs/write?path=…&mode=…`; `GET /{name}/fs/list?path=…`
+//!   (a directory's entries, or the one entry of anything else, not
+//!   following a symlink) and `GET /{name}/fs/read?path=…` (the whole file:
+//!   we stop reading past the range we want). The guest agent serves these
+//!   as root, so the daemon adds its own limits (`fs.rs`);
 //! - **services**: `PUT /{name}/services/{svc}` defines and starts one
 //!   (streaming NDJSON events), `DELETE` removes it. Services start on
 //!   every boot and restart when they exit.
@@ -49,6 +53,7 @@ use super::{
     Sandbox, ServiceDef,
 };
 use crate::pane::Spawn;
+use illogical_proto::fs::{FsEntry, FsKind, FsList};
 
 /// How long a session survives with nobody attached: longer than any
 /// daemon restart or upgrade.
@@ -108,6 +113,7 @@ fn wisp_caps() -> Caps {
         kill_grace_ms: 10_000,
         cold: Cold::Reboot,
         fs: true,
+        fs_browse: true,
         services: true,
     }
 }
@@ -125,6 +131,7 @@ fn fly_caps() -> Caps {
         kill_grace_ms: 10_000,
         cold: Cold::Restore,
         fs: true,
+        fs_browse: true,
         services: true,
     }
 }
@@ -362,6 +369,71 @@ impl Sprites {
         Ok(())
     }
 
+    /// `path` as the agent wants it: `~` is the sprite user's home, which
+    /// is where relative paths start.
+    fn fs_url(&self, name: &str, op: &str, path: &str) -> Url {
+        let path = match path.strip_prefix('~') {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => rest.trim_start_matches('/'),
+            _ => path,
+        };
+        let path = if path.is_empty() { "." } else { path };
+        let mut u = self.url(&format!("/{name}/fs/{op}"));
+        u.query_pairs_mut().append_pair("path", path);
+        u
+    }
+
+    async fn fs_failed(name: &str, path: &str, r: reqwest::Response) -> anyhow::Error {
+        use crate::fs::FsError;
+        let status = r.status();
+        let v: serde_json::Value = r.json().await.unwrap_or_default();
+        let why = v["error"].as_str().unwrap_or("failed").to_owned();
+        match status {
+            StatusCode::NOT_FOUND if v["code"] == "not_found" => FsError::NotFound(format!("{path}: {why}")).into(),
+            // The sprite itself.
+            StatusCode::NOT_FOUND => FsError::Unavailable(format!("{name}: no such sandbox")).into(),
+            StatusCode::FORBIDDEN => FsError::Denied(format!("{path}: {why}")).into(),
+            StatusCode::BAD_REQUEST => FsError::Bad(format!("{path}: {why}")).into(),
+            s => FsError::Unavailable(format!("{name}: {s} {why}")).into(),
+        }
+    }
+
+    async fn do_fs_list(&self, name: &str, path: &str) -> anyhow::Result<FsList> {
+        let r = self.http.get(self.fs_url(name, "list", path)).bearer_auth(&self.token).send().await?;
+        if !r.status().is_success() {
+            return Err(Self::fs_failed(name, path, r).await);
+        }
+        let list: WispList = r.json().await?;
+        let mut entries: Vec<FsEntry> = list.entries.into_iter().map(WispEntry::into_entry).collect();
+        let truncated = entries.len() > illogical_proto::fs::LIST_MAX;
+        entries.truncate(illogical_proto::fs::LIST_MAX);
+        let parent = std::path::Path::new(&list.path).parent().map(|p| p.display().to_string());
+        Ok(FsList { path: list.path, parent, entries, truncated })
+    }
+
+    async fn do_fs_read(&self, name: &str, path: &str, offset: u64, len: u64) -> anyhow::Result<(Vec<u8>, u64)> {
+        let mut r = self.slow.get(self.fs_url(name, "read", path)).bearer_auth(&self.token).send().await?;
+        if !r.status().is_success() {
+            return Err(Self::fs_failed(name, path, r).await);
+        }
+        let size = r.content_length().unwrap_or(0);
+        let (mut skip, mut out) = (offset, Vec::new());
+        let read = async {
+            // Dropping the response mid-file stops the agent's copy.
+            while (out.len() as u64) < len
+                && let Some(chunk) = r.chunk().await?
+            {
+                let from = skip.min(chunk.len() as u64) as usize;
+                skip -= from as u64;
+                let want = (len - out.len() as u64) as usize;
+                let rest = &chunk[from..];
+                out.extend_from_slice(&rest[..rest.len().min(want)]);
+            }
+            anyhow::Ok(())
+        };
+        tokio::time::timeout(Duration::from_secs(60), read).await??;
+        Ok((out, size))
+    }
+
     async fn do_put_service(&self, name: &str, service: &str, def: &ServiceDef) -> anyhow::Result<()> {
         let mut u = self.url(&format!("/{name}/services/{service}"));
         // Long enough to see it crash at once, short enough not to wait.
@@ -519,6 +591,88 @@ impl Provider for Sprites {
     fn delete_service<'a>(&'a self, name: &'a str, service: &'a str) -> BoxFuture<'a, anyhow::Result<()>> {
         self.do_delete_service(name, service).boxed()
     }
+
+    fn fs_list<'a>(&'a self, name: &'a str, path: &'a str) -> BoxFuture<'a, anyhow::Result<FsList>> {
+        self.do_fs_list(name, path).boxed()
+    }
+
+    fn fs_read<'a>(
+        &'a self,
+        name: &'a str,
+        path: &'a str,
+        offset: u64,
+        len: u64,
+    ) -> BoxFuture<'a, anyhow::Result<(Vec<u8>, u64)>> {
+        self.do_fs_read(name, path, offset, len).boxed()
+    }
+}
+
+/// `GET /fs/list`'s answer.
+#[derive(Deserialize)]
+struct WispList {
+    path: String,
+    #[serde(default)]
+    entries: Vec<WispEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WispEntry {
+    name: String,
+    path: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    size: i64,
+    /// Octal, `"0644"`.
+    #[serde(default)]
+    mode: String,
+    /// RFC 3339, UTC.
+    #[serde(default)]
+    mod_time: String,
+}
+
+impl WispEntry {
+    fn into_entry(self) -> FsEntry {
+        let kind = match self.kind.as_str() {
+            "directory" => FsKind::Directory,
+            "symlink" => FsKind::Symlink,
+            "file" => FsKind::File,
+            _ => FsKind::Other,
+        };
+        FsEntry {
+            name: self.name,
+            path: self.path,
+            kind,
+            size: self.size.max(0) as u64,
+            mode: u32::from_str_radix(&self.mode, 8).unwrap_or(0),
+            mtime_ms: rfc3339_ms(&self.mod_time).unwrap_or(0),
+            // The agent doesn't say what a link points at.
+            target: None,
+        }
+    }
+}
+
+/// `2026-10-01T12:34:56.789Z` as milliseconds since the epoch (UTC only,
+/// which is what the agent sends).
+fn rfc3339_ms(s: &str) -> Option<u64> {
+    let b = s.as_bytes();
+    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || !s.ends_with('Z') {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    let (h, mi, sec) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    let frac = s[19..s.len() - 1].strip_prefix('.').unwrap_or("");
+    let ms = format!("{frac:0<3}").get(..3)?.parse::<i64>().ok()?;
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (mo + if mo > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(((days * 24 + h) * 60 + mi) * 60 * 1000 + sec * 1000 + ms).ok()
 }
 
 async fn drive(
@@ -767,6 +921,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_times_and_paths() {
+        assert_eq!(rfc3339_ms("1970-01-01T00:00:01Z"), Some(1000));
+        assert_eq!(rfc3339_ms("2026-10-01T12:00:00.5Z"), Some(1_790_856_000_500));
+        assert_eq!(rfc3339_ms("2000-03-01T00:00:00.123456789Z"), Some(951_868_800_123));
+        assert_eq!(rfc3339_ms("garbage"), None);
+        let wisp = Sprites::new("http://127.0.0.1:7788", "t".into()).unwrap();
+        let q = |p: &str| wisp.fs_url("s", "list", p).query().unwrap().to_owned();
+        assert_eq!(q("~"), "path=.");
+        assert_eq!(q("~/src/app"), "path=src%2Fapp");
+        assert_eq!(q("/etc"), "path=%2Fetc");
+        assert_eq!(q(""), "path=.");
+        assert_eq!(q("~other"), "path=%7Eother");
+    }
+
+    #[test]
     fn capabilities_follow_the_api() {
         let wisp = Sprites::new("http://127.0.0.1:7788", "t".into()).unwrap();
         assert_eq!(wisp.name(), "wisp");
@@ -778,6 +947,7 @@ mod tests {
         assert!(fly.caps().exec_replay < 8 * 1024, "Fly keeps about 6.5 KB");
         assert_eq!(fly.caps().cold, Cold::Restore);
         assert!(fly.caps().reattach_owner);
+        assert!(wisp.caps().fs_browse && fly.caps().fs_browse);
         // The token never shows in debug output.
         assert!(!format!("{wisp:?}").contains("\"t\""));
     }

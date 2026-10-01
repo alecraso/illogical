@@ -24,6 +24,7 @@
 //! | GET | `/api/events` | `pane=`, `type=a,b`, `follow=1` | NDJSON `Event`s |
 //! | GET | `/api/history` | `pane=`, `failed=1`, `since=` secs, `cwd=`, `match=` | `[HistoryEntry]` |
 //! | GET | `/api/search` | `re=`, `since=` secs | `[SearchHit]` |
+//! | GET | `/api/fs/…`, POST `/api/panes/N/cd` | | files on a host: see [`crate::fs`] |
 //! | GET | `/api/host` | | `HostInfo`: this daemon's name and version |
 //! | GET | `/api/hosts` | | `HostList`: the daemons a client can switch between |
 //! | POST | `/api/hosts` | `AddHost` | `Host` (replaces one with the same name) |
@@ -132,6 +133,11 @@ pub struct RunRequest {
     /// Split this pane instead of opening a tab.
     #[serde(default)]
     pub split: Option<PaneId>,
+    /// With `split`: the new pane runs where the split pane does (its tab's
+    /// machine, or the sandbox it has a shell on) instead of this host.
+    #[serde(default)]
+    pub join: bool,
+    /// Where it starts. On a machine, a directory there.
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]

@@ -15,7 +15,10 @@
 //! - run a non-TTY exec with pipes (agent servers in VMs), and a command to
 //!   completion;
 //! - optionally write files and keep a **service** running (start on boot,
-//!   restart on exit): how a daemon becomes resident.
+//!   restart on exit): how a daemon becomes resident;
+//! - optionally **browse files** (M7, [`Caps::fs_browse`]): list a
+//!   directory and read part of a file, which is how the picker and `fs`
+//!   reach a machine with no daemon of ours in it.
 //!
 //! **Differences are capabilities, not assumptions** ([`Caps`]). S4 found
 //! two "compatible" implementations differ in how much exec output they
@@ -26,7 +29,8 @@ pub mod sprites;
 
 use std::{io, sync::Arc, time::Duration};
 
-use futures_util::future::BoxFuture;
+use futures_util::{FutureExt, future::BoxFuture};
+use illogical_proto::fs::FsList;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -72,6 +76,9 @@ pub struct Caps {
     pub cold: Cold,
     /// Files can be written into a sandbox.
     pub fs: bool,
+    /// Files can be listed and read ([`Provider::fs_list`], `fs_read`).
+    #[serde(default)]
+    pub fs_browse: bool,
     /// Services: started on boot and restarted when they exit.
     pub services: bool,
 }
@@ -235,6 +242,27 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     ) -> BoxFuture<'a, anyhow::Result<()>>;
     /// Stop and remove a service; no such service is fine.
     fn delete_service<'a>(&'a self, name: &'a str, service: &'a str) -> BoxFuture<'a, anyhow::Result<()>>;
+
+    /// A directory's entries, or (for anything else, a symlink included) a
+    /// one-entry list of the thing itself, with `path` the absolute path the
+    /// provider resolved. Relative paths (and `~`) are from the sandbox
+    /// user's home. Errors are [`crate::fs::FsError`]s where the provider
+    /// says why.
+    fn fs_list<'a>(&'a self, name: &'a str, path: &'a str) -> BoxFuture<'a, anyhow::Result<FsList>> {
+        let _ = (name, path);
+        async { Err(crate::fs::FsError::Unavailable("this provider can't browse files".into()).into()) }.boxed()
+    }
+    /// Up to `len` bytes of a file from `offset`, and the file's size.
+    fn fs_read<'a>(
+        &'a self,
+        name: &'a str,
+        path: &'a str,
+        offset: u64,
+        len: u64,
+    ) -> BoxFuture<'a, anyhow::Result<(Vec<u8>, u64)>> {
+        let _ = (name, path, offset, len);
+        async { Err(crate::fs::FsError::Unavailable("this provider can't read files".into()).into()) }.boxed()
+    }
 }
 
 /// Tries, half a second apart, before giving up on a provider that isn't

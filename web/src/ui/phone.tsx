@@ -10,6 +10,7 @@ import { HostCrumb, HostSection } from "./hosts";
 import { openPort } from "../blocks";
 import { startAgent } from "./agent-dialog";
 import { openSandboxes } from "./sandboxes";
+import { openPicker } from "./picker";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -96,6 +97,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           </button>
           <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
           <button onClick={act(() => client.session !== null && startAgent(client, { session: client.session, from: active }))}>New agent</button>
+          {active !== undefined && <button onClick={act(() => openPicker(client, active, true))}>Go to directory</button>}
           {active !== undefined && (
             <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right" }))}>Split pane</button>
           )}

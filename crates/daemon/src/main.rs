@@ -7,6 +7,7 @@ mod block;
 mod browser;
 mod dial;
 mod dialout_mux;
+mod fs;
 mod history;
 mod hosts;
 mod install;
@@ -534,6 +535,18 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
         provider::sprites::Sprites::open(&args.wisp_url, &token_file)
             .map(|p| std::sync::Arc::new(p) as std::sync::Arc<dyn provider::Provider>);
     info!(url = args.wisp_url, on = provider.is_some(), "VM panes");
+    let secrets = {
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".config"))
+            .join("illogical");
+        block::Secrets {
+            anthropic_key: args.anthropic_key_file.clone().unwrap_or_else(|| config.join("anthropic-key")),
+            claude_token: args.claude_token_file.clone().unwrap_or_else(|| config.join("claude-oauth-token")),
+        }
+    };
+    // What `fs` never serves, besides the state directory.
+    let private = vec![token_file.clone(), secrets.anthropic_key.clone(), secrets.claude_token.clone()];
     let config = mux::Config {
         shell,
         shell_args,
@@ -544,16 +557,8 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
         socket: socket.clone(),
         provider: provider.clone(),
         daemon_id: daemon_id(&store),
-        secrets: {
-            let config = std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home().join(".config"))
-                .join("illogical");
-            block::Secrets {
-                anthropic_key: args.anthropic_key_file.clone().unwrap_or_else(|| config.join("anthropic-key")),
-                claude_token: args.claude_token_file.clone().unwrap_or_else(|| config.join("claude-oauth-token")),
-            }
-        },
+        secrets,
+        private,
     };
     let mux = mux::start(config, store, kept, push.clone());
 

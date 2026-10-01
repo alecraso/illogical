@@ -97,6 +97,8 @@ pub struct MuxHandle {
     pub provider: Option<Arc<dyn Provider>>,
     /// Tags execs on machines (`ILLOGICAL_EXEC`; see `mux::exec_tag`).
     pub daemon_id: String,
+    /// This host's files, as the `fs` methods may read them.
+    pub fs: Arc<crate::fs::Scope>,
 }
 
 impl MuxHandle {
@@ -140,6 +142,9 @@ pub struct Config {
     pub daemon_id: String,
     /// Where agents in VMs get their credentials from.
     pub secrets: crate::block::Secrets,
+    /// Secrets the `fs` methods never serve (the provider's token, agents'
+    /// credentials); the state directory is added to these.
+    pub private: Vec<PathBuf>,
 }
 
 impl Config {
@@ -195,7 +200,7 @@ impl Config {
         let cwd = meta.cwd.as_ref().map(PathBuf::from).unwrap_or_else(|| self.home.clone());
         let on = meta.integration.unwrap_or(true);
         let shell = match meta.host {
-            Some(_) => self.guest_shell(pane, on),
+            Some(_) => self.guest_shell(pane, on, None),
             None => self.shell(pane, cwd.clone(), on),
         };
         let then = |command: &str| match meta.host {
@@ -232,10 +237,11 @@ impl Config {
         format!("illogical-eph-{}-", self.daemon_id)
     }
 
-    /// A login shell on a machine (in its home directory).
-    fn guest_shell(&self, pane: PaneId, integrate: bool) -> Spawn {
-        let mut s =
-            Spawn { program: "bash".into(), args: vec!["-l".into()], cwd: PathBuf::new(), env: self.guest_env(pane) };
+    /// A login shell on a machine, in its home directory unless given one
+    /// of its own directories.
+    fn guest_shell(&self, pane: PaneId, integrate: bool, cwd: Option<PathBuf>) -> Spawn {
+        let (program, args, env) = ("bash".into(), vec!["-l".into()], self.guest_env(pane));
+        let mut s = Spawn { program, args, cwd: cwd.unwrap_or_default(), env };
         if integrate && self.integration.is_some() {
             crate::shellint::apply_guest(&mut s);
         }
@@ -252,7 +258,7 @@ impl Config {
     }
 
     fn guest_run_then_shell(&self, pane: PaneId, command: &str, integrate: bool) -> Spawn {
-        let shell = self.guest_shell(pane, integrate);
+        let shell = self.guest_shell(pane, integrate, None);
         let then = std::iter::once(shell.program.as_str()).chain(shell.args.iter().map(String::as_str));
         let args = vec!["-lc".into(), format!("{command}; exec {}", then.collect::<Vec<_>>().join(" "))];
         Spawn { args, ..shell }
@@ -261,6 +267,22 @@ impl Config {
 
 /// What was last written to layout.json, to skip writing it unchanged.
 type SavedParts = (Mux, BTreeMap<PaneId, PaneMeta>, BTreeMap<MachineId, Machine>);
+
+/// Where `run --split %N --join` puts the new pane.
+enum Join {
+    /// This host.
+    Here,
+    /// The split pane's tab's machine.
+    TabMachine,
+    /// A sandbox the split pane has a shell on: borrowed again.
+    Borrow(String),
+}
+
+/// A random number for generated names.
+fn seed() -> u64 {
+    use std::hash::BuildHasher;
+    std::collections::hash_map::RandomState::new().hash_one(now_ms())
+}
 
 /// Tags a pane's execs on machines (`ILLOGICAL_EXEC`).
 pub fn exec_tag(daemon_id: &str, pane: PaneId) -> String {
@@ -295,6 +317,8 @@ struct Daemon {
     next_host: Option<MachineId>,
     /// ...which belongs to the new pane's tab, not the pane.
     next_owner_tab: bool,
+    /// ...and starts its shell here (a directory on its host).
+    next_cwd: Option<PathBuf>,
     /// To ourselves, for work finished in the background.
     tx: mpsc::UnboundedSender<Cmd>,
     machines: BTreeMap<MachineId, Machine>,
@@ -328,6 +352,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         next_spawn: None,
         next_host: None,
         next_owner_tab: false,
+        next_cwd: None,
         tx: tx.clone(),
         machines: BTreeMap::new(),
         next_machine: 1,
@@ -343,8 +368,11 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
     }
     d.sweep_machines();
     let (provider, daemon_id) = (d.config.provider.clone(), d.config.daemon_id.clone());
+    let mut private = d.config.private.clone();
+    private.push(store.root().to_path_buf());
+    let fs = Arc::new(crate::fs::Scope::new(d.config.home.clone(), private));
     tokio::spawn(d.run(rx, notices_rx));
-    MuxHandle { tx, events, store, provider, daemon_id }
+    MuxHandle { tx, events, store, provider, daemon_id, fs }
 }
 
 fn info_of(rec: CommandRec) -> CommandInfo {
@@ -488,7 +516,7 @@ impl Daemon {
             }
         };
         let shell = match machine {
-            Some(m) => self.config.guest_shell(m, integrate),
+            Some(m) => self.config.guest_shell(m, integrate, None),
             None => self.config.shell(id, cwd, integrate),
         };
         let log = PaneLog::open(self.store.pane_dir(id))?;
@@ -825,10 +853,25 @@ impl Daemon {
             .unwrap_or_else(|| self.config.home.clone());
         let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();
-        let host = match &req.sandbox {
-            Some(sandbox) => Some(self.borrow_machine(sandbox)?),
-            None if req.vm || req.vm_tab => Some(self.new_machine(req.image.clone())?),
-            None => None,
+        // Joining a split pane's host: its tab's machine (which a split
+        // takes anyway), or a sandbox it has a shell on (borrowed again).
+        let join = match req.split.filter(|_| req.join) {
+            Some(pane) => self.join_host(pane)?,
+            None => Join::Here,
+        };
+        let host = match (&req.sandbox, &join) {
+            (Some(sandbox), _) => Some(self.borrow_machine(sandbox)?),
+            (None, Join::Borrow(sprite)) => Some(self.borrow_machine(&sprite.clone())?),
+            (None, _) if req.vm || req.vm_tab => Some(self.new_machine(req.image.clone())?),
+            (None, _) => None,
+        };
+        let on_machine = host.is_some() || matches!(join, Join::TabMachine);
+        // A shell started in a directory: this host's (the default is the
+        // pane it came from), or the machine's when one is given.
+        self.next_cwd = match (&req.command, on_machine) {
+            (Some(_), _) => None,
+            (None, true) => req.cwd.clone().map(PathBuf::from),
+            (None, false) => req.cwd.is_some().then(|| cwd.clone()),
         };
         self.next_spawn = req.command.as_ref().map(|command| {
             let spawn = match host {
@@ -842,14 +885,19 @@ impl Daemon {
         self.next_owner_tab = req.vm_tab;
         let split = req.split.filter(|_| !req.vm_tab);
         let intent = match (split, session) {
-            // Here: a script's command is for this host, even in a VM tab.
-            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: true, cwd: None },
+            // Here: a script's command is for this host, even in a VM tab
+            // (unless it asked to join the pane's machine).
+            (Some(pane), _) => {
+                let local = !matches!(join, Join::TabMachine);
+                Intent::Split { pane, edge: illogical_proto::Edge::Right, local, cwd: None }
+            }
             (None, Some(session)) => Intent::NewTab { session, from_pane: from, cwd: None },
             (None, None) => Intent::NewSession { name: None, from_pane: from },
         };
         let result = self.intent(None, intent);
         self.next_spawn = None;
         self.next_owner_tab = false;
+        self.next_cwd = None;
         if let Some(m) = self.next_host.take() {
             // Nothing took it.
             self.machines.remove(&m);
@@ -860,6 +908,19 @@ impl Daemon {
             self.meta.entry(pane).or_default().policy = policy;
         }
         Ok(pane)
+    }
+
+    /// Where a pane joining `pane`'s host runs (`run --split --join`).
+    fn join_host(&self, pane: PaneId) -> Result<Join, String> {
+        let Some(m) = self.machine_of(pane) else { return Ok(Join::Here) };
+        if m.borrowed {
+            return Ok(Join::Borrow(m.sprite.clone()));
+        }
+        let tab = self.mux.tab_of(pane).map_err(|e| e.to_string())?;
+        if self.tab_machine(tab) == Some(m.id) {
+            return Ok(Join::TabMachine);
+        }
+        Err(format!("%{pane}'s machine is its own: share it with the tab first (Share machine with tab)"))
     }
 
     /// Which session a new tab goes in: one named (made if missing), else
@@ -962,7 +1023,13 @@ impl Daemon {
         self.next_machine += 1;
         let provider = self.config.provider.as_ref().map_or("wisp", |p| p.name()).to_owned();
         let owner = Owner::Pane(0);
-        let m = Machine { id, provider, sprite, image, owner, state: MachineState::Starting, borrowed };
+        // Ours get a name to show; a borrowed sandbox has its own.
+        let name = (!borrowed).then(|| {
+            let taken = |n: &str| self.machines.values().any(|m| m.name.as_deref() == Some(n));
+            illogical_core::names::generate(seed(), taken)
+        });
+        let state = MachineState::Starting;
+        let m = Machine { id, provider, sprite, name, image, owner, state, borrowed };
         self.machines.insert(id, m);
         id
     }
@@ -1193,6 +1260,14 @@ impl Daemon {
     }
 
     fn intent(&mut self, client: Option<ClientId>, intent: Intent) -> Result<(), String> {
+        // A new session without a name gets one ("drifting cedar").
+        let intent = match intent {
+            Intent::NewSession { name: None, from_pane } => {
+                let taken = |n: &str| self.mux.sessions.iter().any(|s| s.name == n);
+                Intent::NewSession { name: Some(illogical_core::names::generate(seed(), taken)), from_pane }
+            }
+            i => i,
+        };
         let refused = |why: String| {
             info!(?client, ?intent, why, "intent refused");
             why
@@ -1207,6 +1282,7 @@ impl Daemon {
                 Effect::Spawn { pane, cwd_from, cwd } => {
                     let from_meta = cwd_from.and_then(|p| self.meta.get(&p)).and_then(|m| m.integration);
                     let integrate = from_meta.unwrap_or(true);
+                    let asked = self.next_cwd.take();
                     // A directory asked for (if it exists), else the source
                     // pane's, else home.
                     let cwd = cwd
@@ -1258,8 +1334,12 @@ impl Daemon {
                             (Start::Run { spawn, text }, true, cwd)
                         }
                         _ => {
+                            let cwd = match (host, asked.clone()) {
+                                (None, Some(c)) => c,
+                                _ => cwd,
+                            };
                             let shell = match host {
-                                Some(_) => self.config.guest_shell(pane, integrate),
+                                Some(_) => self.config.guest_shell(pane, integrate, asked),
                                 None => self.config.shell(pane, cwd.clone(), integrate),
                             };
                             (Start::Now(shell), false, cwd)

@@ -1042,6 +1042,9 @@ under Protocol).
 
 ### M7: files and navigation
 
+**Done 2026-10-01.** See the README's *Files and navigation*; the fs
+methods and their scope are documented in `crates/daemon/src/fs.rs`.
+
 Superlogical's go-to-directory picker, and the filesystem method that M11's
 file and diff blocks also need.
 

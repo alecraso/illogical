@@ -15,6 +15,7 @@ pub use illogical_core::{
 };
 
 pub mod api;
+pub mod fs;
 pub mod hosts;
 pub mod keys;
 
@@ -221,6 +222,10 @@ pub struct Machine {
     pub provider: String,
     /// The provider's name for it.
     pub sprite: String,
+    /// What to call it ("drifting cedar", M7): a display name for the
+    /// machines we make. The sprite keeps its own name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default)]
     pub image: Option<String>,
     /// What it belongs to; the machine goes when that closes.

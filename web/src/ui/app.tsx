@@ -14,6 +14,7 @@ import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { openPort } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
+import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -51,6 +52,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
 
   useHoverToSwitchTabs(client);
   useReportFocus(client, phone);
+  usePickerShortcut(client, phone);
 
   const state = client.state;
   const tab = client.tabView();
@@ -80,6 +82,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <PromptLayer />
       <AgentDialogLayer />
       <SandboxesLayer />
+      <PickerLayer />
       <DragGhost />
       <StatusPill client={client} />
     </div>
@@ -166,6 +169,7 @@ function TopBar({
             openMenu(e, [
               { label: "New tab", run: () => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null }) },
               { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
+              { label: "In a directory…", disabled: client.active() === undefined, run: () => openPicker(client, client.active()) },
             ])
           }
         >
@@ -229,6 +233,7 @@ function TabItem({
           { label: "Rename tab", run: () => setRenaming({ kind: "tab", id: tab.id }) },
           { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
           { label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) },
+          { label: "Go to directory…", run: () => openPicker(client, client.active(tab.id)) },
           ...machineItems(client, tab),
           "separator",
           { label: machine ? "Close tab and machine" : "Close tab", danger: true, run: close },
@@ -236,7 +241,10 @@ function TabItem({
       }
     >
       {machine ? (
-        <span class={`host-tag ${machineState(client, machine)}`} title={`${machine.sprite}: ${machineState(client, machine)}; deleted with the tab`}>
+        <span
+          class={`host-tag ${machineState(client, machine)}`}
+          title={`${machine.name ?? machine.sprite} (${machine.sprite}): ${machineState(client, machine)}; deleted with the tab`}
+        >
           VM
         </span>
       ) : (
@@ -476,6 +484,7 @@ function PaneSlot({
         disabled: (client.tabOfPane(id) && paneIds(client.tabOfPane(id)!).length < 2) ?? true,
         run: () => client.intent({ op: "break_pane", pane: id, session: client.session!, index: null }),
       },
+      { label: "Go to directory…", run: () => openPicker(client, id, phone) },
       { label: "Copy working directory", disabled: !cwd, run: () => cwd && void navigator.clipboard?.writeText(cwd) },
       // A dial-out host's links would be on a daemon nobody can reach.
       ...(client.base.startsWith("/")
@@ -577,7 +586,10 @@ function HostBadge({ client, id }: { client: Client; id: PaneId }) {
     );
   }
   return (
-    <div class={`host-badge ${m.state}`} title={`${m.sprite} (${m.provider}${m.image ? `, ${m.image}` : ""}); deleted when this pane closes`}>
+    <div
+      class={`host-badge ${m.state}`}
+      title={`${m.name ? `${m.name}: ` : ""}${m.sprite} (${m.provider}${m.image ? `, ${m.image}` : ""}); deleted when this pane closes`}
+    >
       VM{state}
     </div>
   );
@@ -596,7 +608,7 @@ function machineItems(client: Client, tab: TabView): MenuItem[] {
   const anchor = client.active(tab.id) ?? paneIds(tab)[0];
   return [
     "separator",
-    { header: `Machine ${m.sprite} · ${machineState(client, m)}` },
+    { header: `Machine ${m.name ?? m.sprite} · ${machineState(client, m)}` },
     {
       label: "New pane on machine",
       disabled: anchor === undefined,

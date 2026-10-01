@@ -180,6 +180,8 @@ pub struct Response {
     length: Option<usize>,
     chunk_left: usize,
     done: bool,
+    /// Lowercase names.
+    headers: Vec<(String, String)>,
 }
 
 pub fn request(
@@ -202,7 +204,7 @@ pub fn request(
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let status: u16 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).context("bad HTTP response")?;
-    let (mut chunked, mut length) = (false, None);
+    let (mut chunked, mut length, mut headers) = (false, None, Vec::new());
     loop {
         line.clear();
         reader.read_line(&mut line)?;
@@ -211,13 +213,14 @@ pub fn request(
             break;
         }
         let (k, v) = l.split_once(':').unwrap_or((l, ""));
+        headers.push((k.trim().to_ascii_lowercase(), v.trim().to_owned()));
         match k.trim().to_ascii_lowercase().as_str() {
             "transfer-encoding" => chunked = v.to_ascii_lowercase().contains("chunked"),
             "content-length" => length = v.trim().parse().ok(),
             _ => {}
         }
     }
-    Ok(Response { status, reader, chunked, length, chunk_left: 0, done: false })
+    Ok(Response { status, reader, chunked, length, chunk_left: 0, done: false, headers })
 }
 
 impl Read for Response {
@@ -260,6 +263,17 @@ impl Read for Response {
 }
 
 impl Response {
+    /// A header's value (`name` in lowercase).
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+    }
+
+    pub fn bytes(mut self) -> anyhow::Result<Vec<u8>> {
+        let mut b = Vec::new();
+        self.read_to_end(&mut b)?;
+        Ok(b)
+    }
+
     pub fn text(mut self) -> anyhow::Result<String> {
         let mut s = String::new();
         self.read_to_string(&mut s)?;
