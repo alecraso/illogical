@@ -16,6 +16,7 @@ pub use illogical_core::{
 
 pub mod api;
 pub mod hosts;
+pub mod keys;
 
 /// Control messages from a client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -469,5 +470,13 @@ mod tests {
             }
         );
         assert_eq!(serde_json::to_string(&ServerMsg::Pong { id: 2 }).unwrap(), r#"{"type":"pong","id":2}"#);
+        // Options keyed by id survive the trip inside a tagged message.
+        let mut options = Options::default();
+        options.sessions.insert(1, [("@a".to_owned(), "b".to_owned())].into());
+        options.panes.insert(7, [("@uservars".to_owned(), "x".to_owned())].into());
+        let state = State { rev: 1, sessions: vec![], tabs: vec![], panes: vec![], machines: vec![], options };
+        let msg = ServerMsg::State { state };
+        let back: ServerMsg = serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
+        assert_eq!(back, msg);
     }
 }

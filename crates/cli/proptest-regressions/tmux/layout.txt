@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b0e16c9fd17a636718109db22fcf2d129c5145da2ce4eef334bd91c5799cbe90 # shrinks to tree = Split { id: 0, dir: Column, children: [Child { weight: 0.056378650587215376, node: Pane { pane: 0 } }, Child { weight: 0.0218616092462955, node: Pane { pane: 0 } }, Child { weight: 0.0072872030820985, node: Pane { pane: 0 } }, Child { weight: 0.0072872030820985, node: Pane { pane: 0 } }, Child { weight: 0.0072872030820985, node: Pane { pane: 0 } }, Child { weight: 0.8998981309201937, node: Pane { pane: 0 } }] }, w = 20, h = 108

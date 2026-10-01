@@ -110,9 +110,9 @@ export type PaneOp =
 /** Clients' named options (tmux `@` options), per scope. */
 export interface Options {
   global?: Record<string, string>;
-  sessions?: Record<string, Record<string, string>>;
-  tabs?: Record<string, Record<string, string>>;
-  panes?: Record<string, Record<string, string>>;
+  sessions?: [SessionId, Record<string, string>][];
+  tabs?: [TabId, Record<string, string>][];
+  panes?: [PaneId, Record<string, string>][];
 }
 
 export type OptionScope =

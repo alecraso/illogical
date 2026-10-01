@@ -14,7 +14,7 @@ use libghostty_vt::{
     screen::{CellWide, Screen},
     snapshot::Decoder,
     style::{StyleColor, Underline},
-    terminal::{Point, PointCoordinate},
+    terminal::{Mode, ModeKind, Point, PointCoordinate},
 };
 
 use super::GhosttyEngine;
@@ -65,6 +65,11 @@ impl GhosttyEngine {
     /// Cursor column and row on the active screen, from 0.
     pub fn cursor(&self) -> (u16, u16) {
         (self.term.cursor_x().unwrap_or(0), self.term.cursor_y().unwrap_or(0))
+    }
+
+    /// Whether an ANSI mode (`CSI n h`, e.g. 4 for insert) is set.
+    pub fn ansi_mode(&self, mode: u16) -> bool {
+        self.term.mode(Mode::new(mode, ModeKind::Ansi)).unwrap_or(false)
     }
 
     /// Lines of scrollback above the screen.

@@ -1132,8 +1132,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "illogical-core",
  "illogical-proto",
+ "illogical-vt",
  "nix",
+ "proptest",
  "rustls",
  "rustls-platform-verifier",
  "serde_json",

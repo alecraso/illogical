@@ -56,12 +56,29 @@ pub type OptionMap = BTreeMap<String, String>;
 pub struct Options {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub global: OptionMap,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "by_id")]
     pub sessions: BTreeMap<SessionId, OptionMap>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "by_id")]
     pub tabs: BTreeMap<TabId, OptionMap>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "by_id")]
     pub panes: BTreeMap<PaneId, OptionMap>,
+}
+
+/// A map keyed by id as `[[id, value], ...]`. JSON object keys are strings,
+/// and serde can't turn them back into numbers inside an internally tagged
+/// enum (`ServerMsg::State` carries these).
+mod by_id {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer, V: Serialize>(m: &BTreeMap<u32, V>, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(m.iter())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>, V: Deserialize<'de>>(d: D) -> Result<BTreeMap<u32, V>, D::Error> {
+        Ok(Vec::<(u32, V)>::deserialize(d)?.into_iter().collect())
+    }
 }
 
 impl Options {

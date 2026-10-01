@@ -82,7 +82,11 @@ pub fn distribute(total: u16, weights: &[f64]) -> Vec<u16> {
     }
     let avail = (total as usize).saturating_sub(n - 1).max(n);
     let sum: f64 = weights.iter().sum();
-    let exact: Vec<f64> = weights.iter().map(|w| w / sum * avail as f64).collect();
+    // Weights taken from cell extents (a tmux layout) must give those cells
+    // back: 2/103 * 103 is 1.999..., so snap what is an integer but for
+    // rounding.
+    let snap = |e: f64| if (e - e.round()).abs() < 1e-9 { e.round() } else { e };
+    let exact: Vec<f64> = weights.iter().map(|w| snap(w / sum * avail as f64)).collect();
     let mut sizes: Vec<usize> = exact.iter().map(|e| (e.floor() as usize).max(1)).collect();
     // Hand out what's left by largest remainder; take back any excess from
     // the largest children.
