@@ -2,7 +2,7 @@
 // block's AskUserQuestion (several questions, a multi-select, "Other",
 // previews), an MCP form, a sign-in link, Stop with a question open; and
 // Claude Code in a terminal asking through its hook (`illogical ask`, fed
-// the hook input S12 recorded), answered from the card beside the terminal
+// the hook input S13 recorded), answered from the card beside the terminal
 // or left to the terminal. Desktop and phone. The agent is the scripted fake
 // ACP server, so nothing here costs anything.
 
@@ -12,7 +12,7 @@ import { paneEl, panes, reset, text } from "./helpers";
 import type { PaneId } from "../src/proto";
 
 const fake = fileURLToPath(new URL("../../crates/daemon/tests/fake_acp.py", import.meta.url));
-const hookInput = fileURLToPath(new URL("../../crates/daemon/tests/fixtures/s12-hook-ask.json", import.meta.url));
+const hookInput = fileURLToPath(new URL("../../crates/daemon/tests/fixtures/s13-hook-ask.json", import.meta.url));
 const cli = fileURLToPath(new URL("../../target/debug/illogical", import.meta.url));
 
 /** An agent block on the fake server beside the terminal, shown. */

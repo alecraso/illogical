@@ -1,15 +1,16 @@
 //! Agent definitions: which ACP agent server a block runs, as a command line
 //! plus a few defaults.
 //!
-//! - **claude**: Claude Code through `claude-agent-acp` (pinned 0.81.2, as
-//!   Fountain pins it), with no settings sources so your own hooks don't
-//!   fire inside the block.
+//! - **claude**: Claude Code through `claude-agent-acp` (pinned 0.85.0:
+//!   0.81.2, Fountain's pin, asks AskUserQuestion and MCP forms too, but its
+//!   Claude Code refuses MCP servers' sign-in links), with no settings
+//!   sources so your own hooks don't fire inside the block.
 //! - **codex**: `codex-acp` against the installed `codex`.
 //! - **fountain**: `fountain acp --agent X`, an agent in a Fountain sandbox.
 //! - **acp**: any other ACP agent server, by its command line.
 //!
 //! The npm adapters are looked for in `~/.local/share/illogical/agents/`
-//! (`npm install --prefix …/claude @agentclientprotocol/claude-agent-acp@0.81.2`),
+//! (`npm install --prefix …/claude @agentclientprotocol/claude-agent-acp@0.85.0`),
 //! then on `PATH`.
 
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-pub const CLAUDE_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.81.2";
+pub const CLAUDE_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.85.0";
 pub const CODEX_ACP: &str = "@agentclientprotocol/codex-acp@2.1.0";
 
 /// The parent Claude Code session's variables, which would make the

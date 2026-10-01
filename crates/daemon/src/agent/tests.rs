@@ -208,7 +208,7 @@ fn a_prompt_queued_while_the_agent_is_down_survives_a_restart() {
     assert!(inner.queue.is_empty(), "cancel drops what's queued");
 }
 
-/// Frames as claude-agent-acp 0.81.2 sent them in S12: the tool call, its
+/// Frames as claude-agent-acp 0.81.2 sent them in S13: the tool call, its
 /// questions, then the form.
 fn question_lines() -> Vec<Vec<u8>> {
     let u = |update: Value| {

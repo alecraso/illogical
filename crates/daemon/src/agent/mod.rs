@@ -98,6 +98,11 @@ pub struct Config {
     /// The ACP session, once there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// MCP servers the session gets, as ACP takes them (`{name, command,
+    /// args, env}` for a stdio one). Their forms and sign-in links come as
+    /// questions (M6c).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<Value>,
     /// What "always allow" allowed; the block answers these itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<Rule>,
@@ -846,6 +851,19 @@ impl Agent {
         if let Some(c) = config["command"].as_str() {
             config["command"] = json!(defs::split_command(c));
         }
+        // An MCP server as `NAME=COMMAND LINE` (the CLI's `--mcp`).
+        if let Some(list) = config.get_mut("mcp_servers").and_then(Value::as_array_mut) {
+            for m in list.iter_mut() {
+                let Some(spec) = m.as_str() else { continue };
+                let (name, line) = spec.split_once('=').ok_or_else(|| format!("--mcp {spec}: want NAME=COMMAND"))?;
+                let mut argv = defs::split_command(line);
+                if argv.is_empty() {
+                    return Err(format!("--mcp {spec}: no command"));
+                }
+                let command = argv.remove(0);
+                *m = json!({ "name": name, "command": command, "args": argv, "env": [] });
+            }
+        }
         let cfg: Config = serde_json::from_value(config).map_err(|e| format!("agent config: {e}"))?;
         cfg.def.check()?;
         let vm = ctx.sprite.is_some();
@@ -1032,7 +1050,7 @@ impl Agent {
                     "_meta": { "terminal_output": true },
                     // Questions and forms (M6c). Objects, not booleans: the
                     // ACP SDK drops `true`, and the adapter then disables
-                    // AskUserQuestion (S12).
+                    // AskUserQuestion (S13).
                     "elicitation": { "form": {}, "url": {} },
                 },
                 "clientInfo": { "name": "illogical", "version": env!("CARGO_PKG_VERSION") },
@@ -1203,7 +1221,8 @@ async fn run(
                             g.interrupted = false;
                             let session = g.session();
                             let cwd = g.cfg.cwd.clone().unwrap_or_else(|| "/".into());
-                            g.request("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": [] }));
+                            let mcp = g.cfg.mcp_servers.clone();
+                            g.request("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": mcp }));
                         } else if g.status == Status::Remote {
                             remote_check = Some(tokio::time::Instant::now() + REMOTE_POLL);
                         }
@@ -1254,11 +1273,13 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             match &g.cfg.session_id {
                 Some(sid) if resume && !g.t.entries.is_empty() => {
                     let sid = sid.clone();
-                    g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": [] }));
+                    let mcp = g.cfg.mcp_servers.clone();
+                    g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 Some(sid) if load => {
                     let sid = sid.clone();
-                    g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": [] }));
+                    let mcp = g.cfg.mcp_servers.clone();
+                    g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 _ => new_session(ctx, g, &cwd),
             }
@@ -1330,7 +1351,8 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
 
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
     let meta = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default();
-    g.request("session/new", json!({ "cwd": cwd, "mcpServers": [], "_meta": meta }));
+    let mcp = g.cfg.mcp_servers.clone();
+    g.request("session/new", json!({ "cwd": cwd, "mcpServers": mcp, "_meta": meta }));
 }
 
 /// Send the next queued prompt, if the agent can take it.
@@ -1494,7 +1516,7 @@ impl Agent {
         g.note(json!({ "e": "queue_clear" }));
         // Open questions aren't answered: the agent withdraws them itself
         // (`$/cancel_request`), and answering `cancel` would only fail the
-        // tool and let the turn carry on (S12).
+        // tool and let the turn carry on (S13).
         let open: Vec<Value> = g.pending.iter().map(|p| p.rpc.clone()).collect();
         if g.prompt_id.is_none() && open.is_empty() {
             drop(g);

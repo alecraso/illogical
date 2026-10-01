@@ -152,6 +152,10 @@ enum Command {
         /// A model to switch to (e.g. `haiku`).
         #[arg(long)]
         model: Option<String>,
+        /// An MCP server for the session, `NAME=COMMAND LINE` (stdio; may be
+        /// repeated). Its forms and sign-in links show as cards.
+        #[arg(long = "mcp", value_name = "NAME=COMMAND")]
+        mcp: Vec<String>,
         /// On a new throwaway VM of its own.
         #[arg(long, conflicts_with = "host")]
         vm: bool,
@@ -675,7 +679,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 println!("%{}", v["block"]);
             }
         }
-        Command::Agent { acp, fountain, codex, vault, model, vm, host, cwd, session, split, wait, prompt } => {
+        Command::Agent { acp, fountain, codex, vault, model, mcp, vm, host, cwd, session, split, wait, prompt } => {
             let mut config = match (&acp, &fountain) {
                 (Some(cmd), _) => json!({ "agent": "acp", "command": cmd }),
                 (_, Some(name)) => json!({ "agent": "fountain", "fountain_agent": name, "vault": vault }),
@@ -690,6 +694,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             };
             config["cwd"] = json!(cwd);
             config["model"] = json!(model);
+            if !mcp.is_empty() {
+                config["mcp_servers"] = json!(mcp);
+            }
             let prompt = prompt.join(" ");
             if !prompt.is_empty() {
                 config["prompt"] = json!(prompt);

@@ -1,13 +1,13 @@
 //! M6c: questions and forms from agents.
 //!
 //! Agent blocks, against the fake ACP server (`fake_acp.py`), which sends
-//! AskUserQuestion, MCP forms, sign-in links and Codex's form exactly as S12
+//! AskUserQuestion, MCP forms, sign-in links and Codex's form exactly as S13
 //! recorded the real adapters doing: the card's answer, skipping, Stop,
 //! history and search, the push notification, and (under systemd) a
 //! question that outlives a daemon restart.
 //!
 //! Claude Code in a terminal: `illogical ask` run in a pane with the hook
-//! input S12 recorded from Claude Code 2.1.286, answered, skipped, left to
+//! input S13 recorded from Claude Code 2.1.286, answered, skipped, left to
 //! the terminal, withdrawn by SIGTERM, and (under systemd) across a daemon
 //! restart.
 
@@ -273,6 +273,22 @@ fn the_block_declares_form_and_url_elicitation() {
     }
     let init: Value = serde_json::from_str(&init.expect("initialize in the log")).unwrap();
     assert_eq!(init["m"]["params"]["clientCapabilities"]["elicitation"], json!({ "form": {}, "url": {} }));
+
+    // MCP servers (`--mcp NAME=COMMAND`) go to the session.
+    let config = json!({ "agent": "acp", "command": ["python3", fake()], "cwd": d.sessions, "prompt": "hello",
+        "mcp_servers": ["forms=python3 /srv/forms.py --log 'a b'"] });
+    let id = d.open_with(json!({ "type": "agent", "config": config }));
+    d.wait(id, "idle");
+    let mut new = None;
+    for f in std::fs::read_dir(d.state.join("blocks").join(id.to_string())).unwrap().flatten() {
+        let text = String::from_utf8_lossy(&std::fs::read(f.path()).unwrap_or_default()).into_owned();
+        new = new.or(text.lines().find(|l| l.contains(r#""method":"session/new""#)).map(str::to_owned));
+    }
+    let new: Value = serde_json::from_str(&new.expect("session/new in the log")).unwrap();
+    assert_eq!(
+        new["m"]["params"]["mcpServers"],
+        json!([{ "name": "forms", "command": "python3", "args": ["/srv/forms.py", "--log", "a b"], "env": [] }])
+    );
 }
 
 // ---------------------------------------------------------------- terminals
@@ -285,7 +301,7 @@ fn cli_bin() -> PathBuf {
 }
 
 fn fixture() -> String {
-    format!("{}/tests/fixtures/s12-hook-ask.json", env!("CARGO_MANIFEST_DIR"))
+    format!("{}/tests/fixtures/s13-hook-ask.json", env!("CARGO_MANIFEST_DIR"))
 }
 
 /// Runs `illogical ask` in a new pane as Claude Code's hook would (the

@@ -239,7 +239,7 @@ mod tests {
         ])
     }
 
-    /// The answers S12 recorded from claude-agent-acp for the same content.
+    /// The answers S13 recorded from claude-agent-acp for the same content.
     #[test]
     fn answers_as_claude_takes_them() {
         let content = json!({ "question_0": "Red", "question_0_custom": "dark red please",

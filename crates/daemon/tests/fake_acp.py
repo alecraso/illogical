@@ -11,7 +11,7 @@ Prompts:
   remember WORD  remembers WORD; "recall" says it (across processes)
   crash          exits with code 3 mid-turn
   ask [one|two|preview]
-                 AskUserQuestion as claude-agent-acp 0.81.2 sends it (S12):
+                 AskUserQuestion as claude-agent-acp 0.81.2 sends it (S13):
                  a tool call, then elicitation/create with question_<n>
                  fields; the reply says what was answered. Three questions
                  by default; one with two options; two (a multi-select and
@@ -23,7 +23,7 @@ Prompts:
   codex ask      Codex's plan-mode question form
 
 Only clients that declare elicitation {form: {}, url: {}} get questions; the
-others get "I don't have access to an AskUserQuestion tool" (S12).
+others get "I don't have access to an AskUserQuestion tool" (S13).
 """
 
 import json
