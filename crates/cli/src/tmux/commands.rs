@@ -420,6 +420,10 @@ impl Front {
         if let Some(n) = c.get('n') {
             more.push(intent(Intent::RenameTab { tab, name: Some(n.to_owned()) }));
         }
+        // It starts at the client's size, as a new tmux window would.
+        if let Some((cols, rows)) = self.default_size {
+            more.push(ClientMsg::View { tab, cols, rows, zoom: None, claim: false });
+        }
         if !more.is_empty() {
             self.sync(more)?;
         }

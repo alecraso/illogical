@@ -327,6 +327,18 @@ mod tests {
     }
 
     #[test]
+    fn a_snapshot_keeps_the_alternate_screens_saved_cursor() {
+        let mut a = GhosttyEngine::mirror(40, 10, 100);
+        a.feed(b"$ vi\r\n\x1b[?1049h\x1b[H\x1b[2Jhello\x1b[5;7H");
+        let mut b = GhosttyEngine::mirror(40, 10, 100);
+        b.feed(&a.snapshot());
+        assert_eq!(b.alt_saved_cursor(), Some((0, 1)));
+        assert_eq!(b.cursor(), (6, 4));
+        b.feed(b"\x1b[?1049l");
+        assert_eq!(b.cursor(), (0, 1), "the shell carries on below its command");
+    }
+
+    #[test]
     fn capture_takes_history_joins_wraps_and_keeps_spaces() {
         let mut e = GhosttyEngine::mirror(10, 3, 100);
         for i in 0..5 {

@@ -111,7 +111,8 @@ impl Ctx<'_> {
             "window_zoomed_flag" => (t.zoom.is_some() as u8).to_string(),
             "window_panes" => t.root.panes().len().to_string(),
             "window_bigger" | "window_activity_flag" | "window_bell_flag" | "window_silence_flag" => "0".into(),
-            "window_linked" | "window_marked_flag" | "window_start_flag" => "0".into(),
+            "window_linked" | "window_marked_flag" => "0".into(),
+            "window_start_flag" => ((index == 0) as u8).to_string(),
             "window_end_flag" => ((index + 1 == f.session_tabs(self.session).len()) as u8).to_string(),
             "window_offset_x" | "window_offset_y" | "window_activity" => String::new(),
             "history_limit" => HISTORY.to_string(),
@@ -155,6 +156,10 @@ impl Ctx<'_> {
             "pane_in_mode" | "pane_synchronized" | "pane_marked" | "pane_marked_set" | "pane_pipe" => "0".into(),
             "pane_input_off" | "pane_unseen_changes" | "pane_last" => "0".into(),
             "pane_key_mode" => "VT10x".into(),
+            // What tmux says until a program sets them.
+            "cursor_shape" => "default".into(),
+            "cursor_colour" => "none".into(),
+            "cursor_blinking" => "0".into(),
             "pane_tabs" => mirror
                 .map(|e| e.tab_stops().iter().map(u16::to_string).collect::<Vec<_>>().join(","))
                 .unwrap_or_default(),
@@ -181,9 +186,8 @@ impl Ctx<'_> {
             "mouse_any_flag" | "mouse_all_flag" => dec(1003),
             "mouse_utf8_flag" => dec(1005),
             "mouse_sgr_flag" => dec(1006),
-            "focus_flag" => dec(1004),
-            // tmux 3.6 has no such variable: empty, as it answers.
-            "bracket_paste_flag" => String::new(),
+            // tmux 3.6 has no such variables: empty, as it answers.
+            "bracket_paste_flag" | "bracketed_paste" | "focus_flag" => String::new(),
             _ => return None,
         })
     }

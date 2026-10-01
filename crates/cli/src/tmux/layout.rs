@@ -7,9 +7,12 @@
 //! `layout-custom.c`'s checksum in front. Parsing one back gives cell
 //! extents, and weights of extent ÷ total reproduce those cells exactly.
 
+#[cfg(test)]
 use illogical_core::Child;
 use illogical_core::layout::{Layout, layout};
-use illogical_proto::{Dir, Node, NodeId, PaneId};
+#[cfg(test)]
+use illogical_proto::NodeId;
+use illogical_proto::{Dir, Node, PaneId};
 
 /// `layout_checksum()` from tmux's layout-custom.c.
 pub fn checksum(body: &str) -> u16 {
