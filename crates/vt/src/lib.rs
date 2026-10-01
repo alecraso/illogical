@@ -10,7 +10,7 @@ mod compat;
 mod ghostty;
 
 pub use compat::Capabilities;
-pub use ghostty::{CheckpointError, GhosttyEngine, engine_tag};
+pub use ghostty::{CaptureOpts, CheckpointError, GhosttyEngine, Line, engine_tag};
 
 pub trait VtEngine {
     /// Process PTY output.

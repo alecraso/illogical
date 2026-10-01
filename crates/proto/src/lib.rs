@@ -10,7 +10,8 @@
 use serde::{Deserialize, Serialize};
 
 pub use illogical_core::{
-    ClientId, Dir, Edge, Intent, Layout, Node, NodeId, PaneId, Rect, Session, SessionId, SplitRect, TabId,
+    ClientId, Dir, Edge, Intent, Layout, Node, NodeId, OptionMap, OptionScope, Options, PaneId, Rect, Session,
+    SessionId, SplitRect, TabId,
 };
 
 pub mod api;
@@ -39,6 +40,11 @@ pub enum ClientMsg {
     /// The pane this client is looking at, if its window has focus (`None`
     /// when it doesn't). Attention notifications skip panes someone sees.
     Focus { pane: Option<PaneId> },
+    /// Answered with [`ServerMsg::Pong`] once everything sent before it has
+    /// been handled (and its `State` sent), so a client can wait for its
+    /// own intents to land: an intent that failed answers with an `Error`
+    /// before the `Pong`.
+    Ping { id: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +188,8 @@ pub enum ServerMsg {
     /// A non-terminal block's state, whole: on connecting, and whenever it
     /// changes. Its type's renderer draws it.
     Block { block: PaneId, state: serde_json::Value },
+    /// The answer to [`ClientMsg::Ping`].
+    Pong { id: u64 },
 }
 
 /// Everything a client needs to draw: sessions in order, each tab's tree
@@ -195,6 +203,9 @@ pub struct State {
     /// Machines that blocks run on, other than this host.
     #[serde(default)]
     pub machines: Vec<Machine>,
+    /// Clients' named options (tmux `@` options), per scope.
+    #[serde(default)]
+    pub options: Options,
 }
 
 pub type MachineId = u32;
@@ -437,7 +448,26 @@ mod tests {
                 .unwrap();
         assert_eq!(
             m,
-            ClientMsg::Intent { id: Some(4), intent: Intent::Split { pane: 1, edge: Edge::Bottom, local: false } }
+            ClientMsg::Intent {
+                id: Some(4),
+                intent: Intent::Split { pane: 1, edge: Edge::Bottom, local: false, cwd: None }
+            }
         );
+        let m: ClientMsg = serde_json::from_str(
+            r#"{"type":"intent","id":5,"intent":{"op":"set_option","scope":{"kind":"session","id":1},"name":"@a","value":"b"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            m,
+            ClientMsg::Intent {
+                id: Some(5),
+                intent: Intent::SetOption {
+                    scope: OptionScope::Session(1),
+                    name: "@a".into(),
+                    value: Some("b".into())
+                }
+            }
+        );
+        assert_eq!(serde_json::to_string(&ServerMsg::Pong { id: 2 }).unwrap(), r#"{"type":"pong","id":2}"#);
     }
 }

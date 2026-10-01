@@ -837,8 +837,8 @@ impl Daemon {
         let split = req.split.filter(|_| !req.vm_tab);
         let intent = match (split, session) {
             // Here: a script's command is for this host, even in a VM tab.
-            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: true },
-            (None, Some(session)) => Intent::NewTab { session, from_pane: from },
+            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: true, cwd: None },
+            (None, Some(session)) => Intent::NewTab { session, from_pane: from, cwd: None },
             (None, None) => Intent::NewSession { name: None, from_pane: from },
         };
         let result = self.intent(None, intent);
@@ -902,8 +902,8 @@ impl Daemon {
         let local = req.local || (req.kind == BlockType::Agent && self.next_host.is_none());
         self.next_block = Some((req.kind, req.config));
         let intent = match (req.split, session) {
-            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local },
-            (None, Some(session)) => Intent::NewTab { session, from_pane: from },
+            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local, cwd: None },
+            (None, Some(session)) => Intent::NewTab { session, from_pane: from, cwd: None },
             (None, None) => Intent::NewSession { name: None, from_pane: from },
         };
         let result = self.intent(None, intent);
@@ -1105,6 +1105,9 @@ impl Daemon {
                     let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id, message }));
                 }
             }
+            ClientMsg::Ping { id } => {
+                let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Pong { id }));
+            }
             ClientMsg::Focus { pane } => {
                 match pane {
                     Some(p) => {
@@ -1170,11 +1173,16 @@ impl Daemon {
         let rects = self.mux.pane_rects();
         for e in effects {
             match e {
-                Effect::Spawn { pane, cwd_from } => {
+                Effect::Spawn { pane, cwd_from, cwd } => {
                     let from_meta = cwd_from.and_then(|p| self.meta.get(&p)).and_then(|m| m.integration);
                     let integrate = from_meta.unwrap_or(true);
-                    let cwd =
-                        cwd_from.and_then(|p| self.panes.get(&p)?.cwd()).unwrap_or_else(|| self.config.home.clone());
+                    // A directory asked for (if it exists), else the source
+                    // pane's, else home.
+                    let cwd = cwd
+                        .map(PathBuf::from)
+                        .filter(|d| d.is_dir())
+                        .or_else(|| cwd_from.and_then(|p| self.panes.get(&p)?.cwd()))
+                        .unwrap_or_else(|| self.config.home.clone());
                     let (cols, rows) = rects.get(&pane).map(|r| (r.cols, r.rows)).unwrap_or((80, 24));
                     // A machine made for it, else its tab's (unless asked
                     // for this host).
@@ -1459,6 +1467,7 @@ impl Daemon {
         panes.extend(self.blocks.iter().map(|(id, b)| self.block_info(*id, b)));
         panes.sort_by_key(|p| p.id);
         let machines = self.machines.values().cloned().collect();
-        State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes, machines }
+        let options = self.mux.options.clone();
+        State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes, machines, options }
     }
 }

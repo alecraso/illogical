@@ -12,7 +12,7 @@ fn mux_with_session() -> Mux {
 fn new_session_spawns_one_pane_in_one_tab() {
     let mut m = Mux::new();
     let fx = m.apply(Intent::NewSession { name: Some("work".into()), from_pane: None }).unwrap();
-    assert_eq!(fx, vec![Effect::Spawn { pane: 1, cwd_from: None }]);
+    assert_eq!(fx, vec![Effect::Spawn { pane: 1, cwd_from: None, cwd: None }]);
     assert_eq!(m.sessions[0].name, "work");
     assert_eq!(m.tab(1).unwrap().root, Node::pane(1));
 }
@@ -20,15 +20,15 @@ fn new_session_spawns_one_pane_in_one_tab() {
 #[test]
 fn split_spawns_with_the_source_pane_cwd() {
     let mut m = mux_with_session();
-    let fx = m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
-    assert_eq!(fx, vec![Effect::Spawn { pane: 2, cwd_from: Some(1) }]);
+    let fx = m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None }).unwrap();
+    assert_eq!(fx, vec![Effect::Spawn { pane: 2, cwd_from: Some(1), cwd: None }]);
     assert_eq!(m.tab(1).unwrap().root.panes(), vec![1, 2]);
 }
 
 #[test]
 fn closing_the_last_pane_closes_tab_and_session() {
     let mut m = mux_with_session();
-    m.apply(Intent::NewTab { session: 1, from_pane: None }).unwrap();
+    m.apply(Intent::NewTab { session: 1, from_pane: None, cwd: None }).unwrap();
     m.apply(Intent::ClosePane { pane: 2 }).unwrap();
     assert_eq!(m.sessions[0].tabs, vec![1]);
     let fx = m.apply(Intent::ClosePane { pane: 1 }).unwrap();
@@ -39,7 +39,7 @@ fn closing_the_last_pane_closes_tab_and_session() {
 #[test]
 fn move_pane_across_tabs_and_break_it_out_again() {
     let mut m = mux_with_session();
-    m.apply(Intent::NewTab { session: 1, from_pane: None }).unwrap();
+    m.apply(Intent::NewTab { session: 1, from_pane: None, cwd: None }).unwrap();
     // Pane 2 (tab 2) docks left of pane 1; tab 2 is now empty and goes away.
     m.apply(Intent::MovePane { pane: 2, target: 1, edge: Edge::Left }).unwrap();
     assert_eq!(m.sessions[0].tabs, vec![1]);
@@ -53,8 +53,8 @@ fn move_pane_across_tabs_and_break_it_out_again() {
 #[test]
 fn swap_with_center() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
-    m.apply(Intent::NewTab { session: 1, from_pane: None }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None }).unwrap();
+    m.apply(Intent::NewTab { session: 1, from_pane: None, cwd: None }).unwrap();
     m.apply(Intent::MovePane { pane: 3, target: 1, edge: Edge::Center }).unwrap();
     assert_eq!(m.tab(1).unwrap().root.panes(), vec![3, 2]);
     assert_eq!(m.tab(2).unwrap().root.panes(), vec![1]);
@@ -63,8 +63,8 @@ fn swap_with_center() {
 #[test]
 fn dock_tab_merges_its_whole_layout() {
     let mut m = mux_with_session();
-    m.apply(Intent::NewTab { session: 1, from_pane: None }).unwrap();
-    m.apply(Intent::Split { pane: 2, edge: Edge::Bottom, local: false }).unwrap();
+    m.apply(Intent::NewTab { session: 1, from_pane: None, cwd: None }).unwrap();
+    m.apply(Intent::Split { pane: 2, edge: Edge::Bottom, local: false, cwd: None }).unwrap();
     m.apply(Intent::DockTab { tab: 2, target: 1, edge: Edge::Right }).unwrap();
     assert_eq!(m.sessions[0].tabs, vec![1]);
     assert_eq!(m.tab(1).unwrap().root.panes(), vec![1, 2, 3]);
@@ -74,7 +74,7 @@ fn dock_tab_merges_its_whole_layout() {
 #[test]
 fn resize_split_renormalizes() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None }).unwrap();
     let split = match &m.tab(1).unwrap().root {
         Node::Split { id, .. } => *id,
         n => panic!("{n:?}"),
@@ -89,7 +89,7 @@ fn resize_split_renormalizes() {
 #[test]
 fn view_ownership_and_zoom() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None }).unwrap();
     // First viewer sizes the tab even without claiming.
     assert!(m.view(7, 1, 120, 40, None, false).unwrap());
     // Another client's unclaimed view doesn't change it...
@@ -108,13 +108,13 @@ fn view_ownership_and_zoom() {
 #[test]
 fn layout_serializes_for_clients() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Bottom, local: false }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Bottom, local: false, cwd: None }).unwrap();
     let json = serde_json::to_value(&m.tab(1).unwrap().root).unwrap();
     assert_eq!(json["type"], "split");
     assert_eq!(json["dir"], "column");
     assert_eq!(json["children"][0]["node"], serde_json::json!({"type": "pane", "pane": 1}));
     let intent: Intent = serde_json::from_str(r#"{"op":"split","pane":1,"edge":"right"}"#).unwrap();
-    assert_eq!(intent, Intent::Split { pane: 1, edge: Edge::Right, local: false });
+    assert_eq!(intent, Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None });
 }
 
 /// An intent built from small random numbers, aimed at IDs that may or may
@@ -125,8 +125,12 @@ fn arb_intent() -> impl Strategy<Value = Intent> {
         prop_oneof![Just(Edge::Left), Just(Edge::Right), Just(Edge::Top), Just(Edge::Bottom), Just(Edge::Center)];
     prop_oneof![
         Just(Intent::NewSession { name: None, from_pane: None }),
-        (id.clone(), id.clone()).prop_map(|(s, p)| Intent::NewTab { session: s % 3 + 1, from_pane: Some(p) }),
-        (id.clone(), edge.clone()).prop_map(|(pane, edge)| Intent::Split { pane, edge, local: false }),
+        (id.clone(), id.clone()).prop_map(|(s, p)| Intent::NewTab {
+            session: s % 3 + 1,
+            from_pane: Some(p),
+            cwd: None
+        }),
+        (id.clone(), edge.clone()).prop_map(|(pane, edge)| Intent::Split { pane, edge, local: false, cwd: None }),
         id.clone().prop_map(|pane| Intent::ClosePane { pane }),
         id.clone().prop_map(|tab| Intent::CloseTab { tab }),
         id.clone().prop_map(|session| Intent::CloseSession { session: session % 3 + 1 }),
@@ -185,8 +189,62 @@ proptest! {
         for (tab, t) in &m.tabs {
             for (_, r) in m.layout(*tab).unwrap().panes {
                 prop_assert!(r.cols >= 1 && r.rows >= 1);
-                prop_assert!(r.x < t.cols.max(2) * 4, "rect way outside tab");
+                // Never outside the tab, which is never smaller than its
+                // tree (tmux refuses a layout that is).
+                prop_assert!(r.x + r.cols <= t.cols && r.y + r.rows <= t.rows, "{:?} outside {}x{}", r, t.cols, t.rows);
             }
         }
     }
+}
+
+#[test]
+fn options_are_kept_per_scope_and_go_with_their_owner() {
+    use crate::OptionScope;
+    let mut m = mux_with_session();
+    let set = |scope, name: &str, value: Option<&str>| Intent::SetOption {
+        scope,
+        name: name.into(),
+        value: value.map(str::to_owned),
+    };
+    m.apply(set(OptionScope::Global, "@g", Some("1"))).unwrap();
+    m.apply(set(OptionScope::Session(1), "@iterm2_id", Some("UUID"))).unwrap();
+    m.apply(set(OptionScope::Pane(1), "@uservars", Some("x"))).unwrap();
+    assert!(m.apply(set(OptionScope::Pane(9), "@uservars", Some("x"))).is_err());
+    assert_eq!(m.options.get(OptionScope::Session(1)).unwrap()["@iterm2_id"], "UUID");
+    m.apply(set(OptionScope::Global, "@g", None)).unwrap();
+    assert!(m.options.global.is_empty());
+    // Saved with the layout.
+    let back: Mux = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+    assert_eq!(back.options, m.options);
+    // A pane's options go with it; the session's with the session.
+    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None }).unwrap();
+    m.apply(Intent::ClosePane { pane: 1 }).unwrap();
+    assert!(m.options.panes.is_empty());
+    m.apply(Intent::CloseSession { session: 1 }).unwrap();
+    assert!(m.options.sessions.is_empty());
+}
+
+#[test]
+fn a_tab_is_never_smaller_than_its_tree() {
+    let mut m = mux_with_session();
+    for _ in 0..4 {
+        let last = *m.tab(1).unwrap().root.panes().last().unwrap();
+        m.apply(Intent::Split { pane: last, edge: Edge::Right, local: false, cwd: None }).unwrap();
+    }
+    // Five side by side need 9 columns.
+    m.view(7, 1, 4, 2, None, true).unwrap();
+    let t = m.tab(1).unwrap();
+    assert_eq!((t.cols, t.rows), (9, 2));
+    for (_, r) in m.layout(1).unwrap().panes {
+        assert!(r.cols >= 1 && r.x + r.cols <= 9);
+    }
+}
+
+#[test]
+fn a_split_or_tab_can_name_its_directory() {
+    let mut m = mux_with_session();
+    let fx = m.apply(Intent::Split { pane: 1, edge: Edge::Bottom, local: false, cwd: Some("/tmp".into()) }).unwrap();
+    assert_eq!(fx, vec![Effect::Spawn { pane: 2, cwd_from: Some(1), cwd: Some("/tmp".into()) }]);
+    let fx = m.apply(Intent::NewTab { session: 1, from_pane: None, cwd: Some("/srv".into()) }).unwrap();
+    assert_eq!(fx, vec![Effect::Spawn { pane: 3, cwd_from: None, cwd: Some("/srv".into()) }]);
 }

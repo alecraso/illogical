@@ -375,5 +375,8 @@ impl VtEngine for GhosttyEngine {
     }
 }
 
+mod inspect;
+pub use inspect::{CaptureOpts, Line};
+
 #[cfg(test)]
 mod tests;

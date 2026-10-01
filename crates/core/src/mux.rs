@@ -36,6 +36,54 @@ pub struct Tab {
     pub zoom: Option<PaneId>,
 }
 
+/// Where an option lives, as in tmux: the server, a session, a window (tab)
+/// or a pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum OptionScope {
+    Global,
+    Session(SessionId),
+    Tab(TabId),
+    Pane(PaneId),
+}
+
+pub type OptionMap = BTreeMap<String, String>;
+
+/// Opaque named strings that clients keep with the layout (tmux's `@user`
+/// options: iTerm2's tab grouping and attach guard, `@affinities`). Saved
+/// with the layout; an entry goes when what it belongs to does.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Options {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub global: OptionMap,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sessions: BTreeMap<SessionId, OptionMap>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tabs: BTreeMap<TabId, OptionMap>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub panes: BTreeMap<PaneId, OptionMap>,
+}
+
+impl Options {
+    pub fn get(&self, scope: OptionScope) -> Option<&OptionMap> {
+        match scope {
+            OptionScope::Global => Some(&self.global),
+            OptionScope::Session(s) => self.sessions.get(&s),
+            OptionScope::Tab(t) => self.tabs.get(&t),
+            OptionScope::Pane(p) => self.panes.get(&p),
+        }
+    }
+
+    fn map_mut(&mut self, scope: OptionScope) -> &mut OptionMap {
+        match scope {
+            OptionScope::Global => &mut self.global,
+            OptionScope::Session(s) => self.sessions.entry(s).or_default(),
+            OptionScope::Tab(t) => self.tabs.entry(t).or_default(),
+            OptionScope::Pane(p) => self.panes.entry(p).or_default(),
+        }
+    }
+}
+
 pub const DEFAULT_COLS: u16 = 80;
 pub const DEFAULT_ROWS: u16 = 24;
 
@@ -55,9 +103,13 @@ pub enum Intent {
     CloseSession {
         session: SessionId,
     },
+    /// `cwd`, when given, is the new pane's directory instead of
+    /// `from_pane`'s.
     NewTab {
         session: SessionId,
         from_pane: Option<PaneId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
     RenameTab {
         tab: TabId,
@@ -74,12 +126,14 @@ pub enum Intent {
     },
     /// A new pane beside `pane` on the given side. `local`: on this host
     /// even in a tab that has a machine (the daemon's business; the layout
-    /// doesn't care).
+    /// doesn't care). `cwd`: the new pane's directory [default: `pane`'s].
     Split {
         pane: PaneId,
         edge: Edge,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         local: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
     ClosePane {
         pane: PaneId,
@@ -106,12 +160,26 @@ pub enum Intent {
         split: NodeId,
         weights: Vec<f64>,
     },
+    /// Set an option, or unset it (`value: None`).
+    SetOption {
+        scope: OptionScope,
+        name: String,
+        value: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    Spawn { pane: PaneId, cwd_from: Option<PaneId> },
-    Kill { pane: PaneId },
+    /// Start a pane's process, in `cwd` if given, else in `cwd_from`'s
+    /// directory.
+    Spawn {
+        pane: PaneId,
+        cwd_from: Option<PaneId>,
+        cwd: Option<String>,
+    },
+    Kill {
+        pane: PaneId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +212,8 @@ pub struct Mux {
     pub tabs: BTreeMap<TabId, Tab>,
     /// Bumped on every change.
     pub rev: u64,
+    #[serde(default)]
+    pub options: Options,
     next_session: SessionId,
     next_tab: TabId,
     next_pane: PaneId,
@@ -232,6 +302,8 @@ impl Mux {
 
     pub fn apply(&mut self, intent: Intent) -> Result<Vec<Effect>, Error> {
         let effects = self.apply_inner(intent)?;
+        self.fit_tabs();
+        self.prune_options();
         self.rev += 1;
         debug_assert_eq!(self.validate(), Ok(()));
         Ok(effects)
@@ -246,7 +318,7 @@ impl Mux {
                 self.sessions.push(Session { id, name: name.unwrap_or_else(|| id.to_string()), tabs: vec![] });
                 let pane = self.new_pane();
                 self.add_tab(id, Node::pane(pane), None)?;
-                Ok(vec![Effect::Spawn { pane, cwd_from: from_pane }])
+                Ok(vec![Effect::Spawn { pane, cwd_from: from_pane, cwd: None }])
             }
             RenameSession { session, name } => {
                 self.session_mut(session)?.name = name;
@@ -261,10 +333,10 @@ impl Mux {
                 }
                 Ok(effects)
             }
-            NewTab { session, from_pane } => {
+            NewTab { session, from_pane, cwd } => {
                 let pane = self.new_pane();
                 self.add_tab(session, Node::pane(pane), None)?;
-                Ok(vec![Effect::Spawn { pane, cwd_from: from_pane }])
+                Ok(vec![Effect::Spawn { pane, cwd_from: from_pane, cwd }])
             }
             RenameTab { tab, name } => {
                 self.tabs.get_mut(&tab).ok_or(Error::NoTab(tab))?.name = name.filter(|n| !n.trim().is_empty());
@@ -287,7 +359,7 @@ impl Mux {
                 self.sessions.retain(|s| !s.tabs.is_empty());
                 Ok(vec![])
             }
-            Split { pane, edge, .. } => {
+            Split { pane, edge, cwd, .. } => {
                 if edge == Edge::Center {
                     return Err(Error::Invalid("split needs a side"));
                 }
@@ -298,7 +370,7 @@ impl Mux {
                 let tab = self.tabs.get_mut(&tab_id).unwrap();
                 tab.root = root;
                 tab.zoom = None;
-                Ok(vec![Effect::Spawn { pane: new, cwd_from: Some(pane) }])
+                Ok(vec![Effect::Spawn { pane: new, cwd_from: Some(pane), cwd }])
             }
             ClosePane { pane } => {
                 self.detach_pane(pane)?;
@@ -375,7 +447,40 @@ impl Mux {
                 normalize_weights(children);
                 Ok(vec![])
             }
+            SetOption { scope, name, value } => {
+                match scope {
+                    OptionScope::Global => {}
+                    OptionScope::Session(s) => _ = self.session(s)?,
+                    OptionScope::Tab(t) => _ = self.tab(t)?,
+                    OptionScope::Pane(p) => _ = self.tab_of(p)?,
+                }
+                let map = self.options.map_mut(scope);
+                match value {
+                    Some(v) => _ = map.insert(name, v),
+                    None => _ = map.remove(&name),
+                }
+                Ok(vec![])
+            }
         }
+    }
+
+    /// Grow any tab smaller than its tree's minimum size.
+    fn fit_tabs(&mut self) {
+        for t in self.tabs.values_mut() {
+            let (cols, rows) = t.root.min_size();
+            t.cols = t.cols.max(cols);
+            t.rows = t.rows.max(rows);
+        }
+    }
+
+    /// Drop options whose session, tab or pane has gone (and empty maps).
+    fn prune_options(&mut self) {
+        let panes: std::collections::HashSet<PaneId> = self.panes().into_iter().collect();
+        let sessions: Vec<SessionId> = self.sessions.iter().map(|s| s.id).collect();
+        let o = &mut self.options;
+        o.sessions.retain(|s, m| sessions.contains(s) && !m.is_empty());
+        o.tabs.retain(|t, m| self.tabs.contains_key(t) && !m.is_empty());
+        o.panes.retain(|p, m| panes.contains(p) && !m.is_empty());
     }
 
     /// A client shows `tab` in a `cols`×`rows` cell area. With `claim`, its
@@ -395,7 +500,10 @@ impl Mux {
             return Ok(false);
         }
         let zoom = zoom.filter(|p| t.root.contains(*p) && t.root.panes().len() > 1);
-        let next = (cols.max(2), rows.max(1), Some(client), zoom);
+        // Never smaller than the tree: a client too small for it sees a
+        // bigger tab, as tmux does.
+        let (min_cols, min_rows) = t.root.min_size();
+        let next = (cols.max(2).max(min_cols), rows.max(1).max(min_rows), Some(client), zoom);
         if (t.cols, t.rows, t.owner, t.zoom) == next {
             return Ok(false);
         }

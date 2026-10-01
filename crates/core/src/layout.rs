@@ -50,7 +50,14 @@ fn place(node: &Node, rect: Rect, out: &mut Layout) {
                 Dir::Column => rect.rows,
             };
             let weights: Vec<f64> = children.iter().map(|c| c.weight).collect();
-            let extents = distribute(total, &weights);
+            let mins: Vec<u16> = children
+                .iter()
+                .map(|c| {
+                    let (cols, rows) = c.node.min_size();
+                    if *dir == Dir::Row { cols } else { rows }
+                })
+                .collect();
+            let extents = distribute_min(total, &weights, &mins);
             out.splits.push(SplitRect { id: *id, dir: *dir, rect, extents: extents.clone() });
             let mut at = 0u16;
             for (child, len) in children.iter().zip(extents) {
@@ -99,6 +106,26 @@ pub fn distribute(total: u16, weights: &[f64]) -> Vec<u16> {
     sizes.into_iter().map(|s| s.min(u16::MAX as usize) as u16).collect()
 }
 
+/// [`distribute`], then cells moved to any child that got fewer than its
+/// minimum (a nested split needs room for its own panes and dividers), one
+/// at a time from the child with the most to spare. Sizes that already meet
+/// the minimums come out unchanged, so weights derived from cells (a tmux
+/// layout) reproduce those cells exactly.
+pub fn distribute_min(total: u16, weights: &[f64], mins: &[u16]) -> Vec<u16> {
+    let mut sizes = distribute(total, weights);
+    loop {
+        let Some(short) = (0..sizes.len()).find(|&i| sizes[i] < mins.get(i).copied().unwrap_or(1)) else {
+            return sizes;
+        };
+        let spare = |i: usize| sizes[i] as i32 - mins.get(i).copied().unwrap_or(1) as i32;
+        let Some(donor) = (0..sizes.len()).filter(|&i| spare(i) > 0).max_by_key(|&i| spare(i)) else {
+            return sizes;
+        };
+        sizes[donor] -= 1;
+        sizes[short] += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +141,29 @@ mod tests {
         for total in 5..200 {
             let s = distribute(total, &[0.3, 0.3, 0.4]);
             assert_eq!(s.iter().sum::<u16>() + 2, total, "total {total}: {s:?}");
+        }
+    }
+
+    #[test]
+    fn nested_splits_get_room_for_their_panes() {
+        // A thin column holding a row of three panes needs 5 cells.
+        assert_eq!(distribute_min(20, &[0.9, 0.1], &[1, 5]), vec![14, 5]);
+        // Already enough: unchanged.
+        assert_eq!(distribute_min(20, &[0.5, 0.5], &[1, 5]), distribute(20, &[0.5, 0.5]));
+        let mut n = 0;
+        let mut next = || {
+            n += 1;
+            n
+        };
+        let mut t = Node::pane(1);
+        t.insert(1, Edge::Right, Node::pane(2), &mut next);
+        t.insert(2, Edge::Bottom, Node::pane(3), &mut next);
+        t.insert(3, Edge::Right, Node::pane(4), &mut next);
+        t.insert(4, Edge::Right, Node::pane(5), &mut next);
+        assert_eq!(t.min_size(), (7, 3));
+        let l = layout(&t, 7, 3);
+        for (_, r) in &l.panes {
+            assert!(r.x + r.cols <= 7 && r.y + r.rows <= 3, "{:?}", l.panes);
         }
     }
 
