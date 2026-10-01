@@ -4,6 +4,7 @@
 //! programs.
 
 mod attach;
+mod fs;
 mod hosts;
 mod http;
 
@@ -59,6 +60,11 @@ enum Command {
         /// Split this pane instead of opening a tab.
         #[arg(long)]
         split: Option<Pane>,
+        /// With --split: run where that pane runs (its VM tab's machine, or
+        /// the sandbox it has a shell on) instead of this host.
+        #[arg(long, requires = "split")]
+        join: bool,
+        /// Where it starts (with --join, or on a VM: a directory there).
         #[arg(long)]
         cwd: Option<String>,
         /// After a restart: shell, none, rerun, rerun-ask, or hook:COMMAND.
@@ -84,12 +90,22 @@ enum Command {
         #[arg(long, conflicts_with_all = ["vm", "vm_tab", "image"])]
         sandbox: Option<String>,
         /// One argument is a shell command line (`'make && ./app'`);
-        /// several are a program and its arguments, quoted as given.
-        #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab", "sandbox"])]
+        /// several are a program and its arguments, quoted as given. None
+        /// (with --cwd, --join or a VM): a shell.
+        #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab", "sandbox", "join", "cwd"])]
         command: Vec<String>,
     },
     /// Machines that panes run on (VM panes).
     Machines,
+    /// Files on a host, read-only: `ls`, `stat`, `cat`, `watch`, `recent`.
+    /// `%N:PATH` is on the host pane %N runs on (its VM), `mN:PATH` on
+    /// machine N.
+    Fs {
+        #[command(subcommand)]
+        cmd: fs::FsCmd,
+    },
+    /// Type `cd DIR` into a pane's shell, if it's waiting at its prompt.
+    Cd { pane: Pane, dir: String },
     /// A block's type, place and state (any type).
     Describe { block: Pane },
     /// Call one of a block's methods, e.g. `call %4 navigate '{"url":"…"}'`.
@@ -678,17 +694,20 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                     (_, Some(p)) => format!("%{p}"),
                     _ => "?".into(),
                 };
-                let (state, sprite, provider) = (s("state"), s("sprite"), s("provider"));
-                println!("m{:<4} {owner:<5} {state:<9} {sprite:<34} {provider} ({image})", m["id"]);
+                let (state, sprite, provider, name) = (s("state"), s("sprite"), s("provider"), s("name"));
+                println!("m{:<4} {owner:<5} {state:<9} {name:<18} {sprite:<34} {provider} ({image})", m["id"]);
             }
         }
-        Command::Run { session, split, cwd, policy: pol, wait, vm, vm_tab, image, sandbox, command } => {
+        Command::Fs { cmd } => return fs::run(&sock, cmd, json_out, REMOTE.load(std::sync::atomic::Ordering::Relaxed)),
+        Command::Cd { pane, dir } => return fs::cd(&sock, pane.0, &dir),
+        Command::Run { session, split, join, cwd, policy: pol, wait, vm, vm_tab, image, sandbox, command } => {
             if image.is_some() && !vm && !vm_tab {
                 anyhow::bail!("--image is for --vm or --vm-tab");
             }
             // A VM (or another daemon's host) has none of this host's
             // directories.
-            let cwd = if vm || vm_tab || sandbox.is_some() || REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
+            let cwd = if vm || vm_tab || join || sandbox.is_some() || REMOTE.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 cwd
             } else {
                 cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))
@@ -701,6 +720,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 "sandbox": sandbox,
                 "session": session,
                 "split": split.map(|p| p.0),
+                "join": join,
                 "cwd": cwd,
                 "policy": pol.as_deref().map(policy).transpose()?,
                 "from_pane": env_pane(),

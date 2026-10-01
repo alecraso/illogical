@@ -137,6 +137,9 @@ pub struct Status {
     /// How the last process ended (`Some(code)`), until another starts.
     pub exited: Option<Option<i32>>,
     pub modes: crate::keys::Modes,
+    /// The shell drew its prompt and nothing has started since (shell
+    /// integration says so): typing a line there runs it in the shell.
+    pub at_prompt: bool,
 }
 
 /// Quiet this long and a busy pane counts as quiet.
@@ -1029,6 +1032,7 @@ impl State {
         {
             let mut st = self.status.lock().unwrap();
             st.busy = false;
+            st.at_prompt = false;
             st.exited = Some(None);
         }
         let note = if machine_gone {
@@ -1076,6 +1080,7 @@ impl State {
         {
             let mut st = self.status.lock().unwrap();
             st.exited = None;
+            st.at_prompt = false;
             if self.host.is_none() {
                 st.cwd.get_or_insert_with(|| spawn.cwd.display().to_string());
             }
@@ -1117,6 +1122,7 @@ impl State {
         let (pending, end) = {
             let mut st = self.status.lock().unwrap();
             st.busy = false;
+            st.at_prompt = false;
             st.exited = Some(code);
             (st.current.is_some(), st.end)
         };
@@ -1269,7 +1275,10 @@ impl State {
     fn signal(&mut self, at: u64, signal: Signal) {
         let ms = now_ms();
         match &signal {
-            Signal::Prompt => self.index(at, Event::Prompt { at_ms: ms }),
+            Signal::Prompt => {
+                self.status.lock().unwrap().at_prompt = true;
+                self.index(at, Event::Prompt { at_ms: ms })
+            }
             Signal::CommandLine { text } => {
                 self.pending_text = Some(text.clone()).filter(|t| !t.is_empty());
                 return;
@@ -1279,7 +1288,9 @@ impl State {
                 let cwd = self.status.lock().unwrap().cwd.clone();
                 self.index(at, Event::Command { at_ms: ms, text: text.clone(), cwd: cwd.clone() });
                 let rec = CommandRec { text, cwd, start: at, started_ms: ms, ..Default::default() };
-                self.status.lock().unwrap().current = Some(rec);
+                let mut st = self.status.lock().unwrap();
+                st.current = Some(rec);
+                st.at_prompt = false;
             }
             Signal::CommandEnd { exit } => {
                 let mut st = self.status.lock().unwrap();

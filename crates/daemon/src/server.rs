@@ -85,7 +85,7 @@ impl App {
 
 /// What a daemon serves to its owner: its own API.
 fn own_routes() -> Router<Arc<App>> {
-    crate::api::routes().merge(crate::hosts::routes()).merge(crate::share::api_routes())
+    crate::api::routes().merge(crate::fs::routes()).merge(crate::hosts::routes()).merge(crate::share::api_routes())
 }
 
 /// Plus what makes it a home daemon: hosts dialing in and pushing history,
