@@ -158,6 +158,19 @@ test.describe("phone", () => {
   });
 });
 
+test("a new sandbox is a tagged node, not one of yours", async () => {
+  // An untagged key makes the sandbox a device of yours: it could reach
+  // your other machines as you. (A reused sprite is whatever it joined as.)
+  test.skip(!!missing || !!reuse, missing || "reusing a sandbox");
+  const status = JSON.parse(execFileSync("tailscale", ["status", "--json"], { encoding: "utf8" }));
+  const peer = Object.values(status.Peer as Record<string, { HostName: string; Tags?: string[] }>).find(
+    (p) => p.HostName === sprite,
+  );
+  expect(peer, "the sandbox is a peer").toBeDefined();
+  console.log(`${sprite} tags: ${JSON.stringify(peer!.Tags ?? [])}`);
+  expect(peer!.Tags ?? []).toContain("tag:sandbox");
+});
+
 test("the sandbox is on the home daemon's list, and its page switches to it", async ({ page }) => {
   test.skip(!!missing, missing);
   test.setTimeout(90_000);
