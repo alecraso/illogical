@@ -57,6 +57,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
         .route("/api/machines", get(machines))
+        .route("/api/machines/{id}/reset", post(reset_machine))
+        .route("/api/panes/{id}/share-machine", post(share_machine))
         .route("/api/events", get(events))
         .route("/api/history", get(history_))
         .route("/api/search", get(search))
@@ -262,10 +264,26 @@ done
 exit 1
 "#;
 
-async fn guest_process(app: &App, machine: &illogical_proto::Machine) -> Res<Json<Process>> {
+async fn reset_machine(State(app): AppState, Path(id): Path<u32>) -> Res<Json<serde_json::Value>> {
+    match app.mux.api(|r| Api::ResetMachine(id, r)).await {
+        Some(Ok(())) => Ok(Json(serde_json::json!({}))),
+        Some(Err(e)) => Err(ApiError(StatusCode::NOT_FOUND, e)),
+        None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }
+}
+
+async fn share_machine(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+    match app.mux.api(|r| Api::ShareMachine(id, r)).await {
+        Some(Ok(())) => Ok(Json(serde_json::json!({}))),
+        Some(Err(e)) => Err(ApiError(StatusCode::CONFLICT, e)),
+        None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }
+}
+
+async fn guest_process(app: &App, pane: PaneId, machine: &illogical_proto::Machine) -> Res<Json<Process>> {
     let unavailable = |why: String| ApiError(StatusCode::SERVICE_UNAVAILABLE, why);
     let wisp = app.mux.wisp.clone().ok_or_else(|| unavailable("VM panes aren't set up".into()))?;
-    let tag = format!("{}-{}", app.mux.daemon_id, machine.id);
+    let tag = crate::mux::exec_tag(&app.mux.daemon_id, pane);
     let argv = ["bash", "-c", GUEST_PROCESS, "illogical-process", &tag];
     let (out, code) = wisp.run(&machine.sprite, &argv).await.map_err(|e| unavailable(format!("unavailable: {e}")))?;
     let text = String::from_utf8_lossy(&out);
@@ -288,7 +306,7 @@ async fn process(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Proce
     let p = pane(&app, id).await?;
     // On a machine: ask it (its processes aren't ours to read).
     if let Some(Some(m)) = app.mux.api(|r| Api::MachineOf(id, r)).await {
-        return guest_process(&app, &m).await;
+        return guest_process(&app, id, &m).await;
     }
     let pid = p.pid_now().ok_or_else(|| ApiError(StatusCode::CONFLICT, "nothing is running in that pane".into()))?;
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();

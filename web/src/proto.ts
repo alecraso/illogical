@@ -97,7 +97,7 @@ export interface Machine {
   provider: string;
   sprite: string;
   image: string | null;
-  owner: PaneId;
+  owner: { pane: PaneId } | { tab: TabId };
   state: MachineState;
 }
 
@@ -123,7 +123,7 @@ export type Intent =
   | { op: "rename_tab"; tab: TabId; name: string | null }
   | { op: "close_tab"; tab: TabId }
   | { op: "move_tab"; tab: TabId; session: SessionId; index: number }
-  | { op: "split"; pane: PaneId; edge: Edge }
+  | { op: "split"; pane: PaneId; edge: Edge; local?: boolean }
   | { op: "close_pane"; pane: PaneId }
   | { op: "move_pane"; pane: PaneId; target: PaneId; edge: Edge }
   | { op: "break_pane"; pane: PaneId; session: SessionId; index: number | null }

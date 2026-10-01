@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M3b (throwaway VM panes) works
+## Status: M3c (VM tabs) works
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -52,16 +52,25 @@ the daemon stopping, crashing, or the machine rebooting:
   opens the pane.
 - **History.** Closed panes' output is kept for 7 days, and `illogical
   history` / `search` look across all panes.
-- **VM panes** (M3b). *New VM tab* (session menu, tab menu, the phone's
-  sheet), *New VM pane on the right* (pane menu), or `illogical run --vm`
-  gives a pane its own throwaway Firecracker microVM, a wisp sprite on this
-  host, deleted when the pane closes. It's for agents and untrusted builds.
+- **VM tabs and panes** (M3b, M3c). *New VM tab* (the `+` button's
+  right-click, the tab and session menus, the phone's sheet) or `illogical
+  run --vm-tab` opens a tab with its own throwaway Firecracker microVM, a
+  wisp sprite on this host. Splits in it join the VM, so a shell and
+  `claude` side by side see the same files; *Split (local)* adds a shell on
+  this host instead (badged `local`). Panes on the tab's VM can't be
+  dragged out of it (local ones can). The tab's menu can start a new pane
+  on the VM or reset it (delete and recreate it; the panes restart by
+  policy), and closing the tab deletes it. *New VM pane on the right* or
+  `illogical run --vm` gives one pane a VM of its own, deleted with the
+  pane; *Share machine with tab* hands it to the tab. It's for agents and
+  untrusted builds.
   Its shell gets the same integration (marks, `wait`, history), `process`
   asks the VM, and the output is logged here, so `illogical tail` still has
   the session after the VM is gone. Restarting the daemon reattaches to the
   VM's shell without losing or repeating output. If the VM is deleted from
-  under a pane, or lost in a reboot, Enter (or the pane's restart policy)
-  starts a new one. Needs wispd's token at `~/.local/share/wisp/token`
+  under a pane, Enter starts a new one; after a reboot, each VM comes back
+  as one fresh VM (one per tab, not per pane) and its panes restore by
+  policy. Needs wispd's token at `~/.local/share/wisp/token`
   (`--wisp-url`, `--wisp-token-file`); without it VM panes are off. The
   base image is plain Ubuntu 24.04: install what you need, e.g. Claude Code
   with `curl -fsSL https://claude.ai/install.sh | bash`.
@@ -85,7 +94,8 @@ illogical history --failed --since 2h
 illogical search 'panic|Traceback' --since 1d
 illogical export %3 -o session.cast           # asciinema play session.cast
 illogical run --vm -- 'git clone … && make'   # on a throwaway VM (no command: a shell)
-illogical machines                            # VMs, their panes and state
+illogical run --vm-tab                        # a tab whose panes share a new VM
+illogical machines                            # VMs, their owner (@tab or %pane) and state
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
@@ -165,7 +175,7 @@ against the running one.
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M3b taught us
+## Things M0–M3c taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -235,3 +245,6 @@ against the running one.
   environment variable and `ENV='$(…)'` writes it to a temporary file.
 - **`kill?signal=HUP` ends a VM shell at once;** wisp's default TERM waits
   10s, because an interactive bash ignores it.
+- **A tab's title follows its active pane,** so grabbing a pane to drag it
+  can resize its tab under the pointer. The tests aim after the pane is
+  active, and anything that measures the tab bar mid-drag should too.

@@ -65,12 +65,16 @@ enum Command {
         /// command: a shell on one.
         #[arg(long)]
         vm: bool,
-        /// The VM's image (with --vm).
-        #[arg(long, requires = "vm")]
+        /// In a new tab whose panes share one throwaway VM (splits join it),
+        /// deleted when the tab closes.
+        #[arg(long, conflicts_with_all = ["vm", "split"])]
+        vm_tab: bool,
+        /// The VM's image (with --vm or --vm-tab).
+        #[arg(long)]
         image: Option<String>,
         /// One argument is a shell command line (`'make && ./app'`);
         /// several are a program and its arguments, quoted as given.
-        #[arg(trailing_var_arg = true, required_unless_present = "vm")]
+        #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab"])]
         command: Vec<String>,
     },
     /// Machines that panes run on (VM panes).
@@ -334,23 +338,29 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             for m in v.as_array().into_iter().flatten() {
                 let s = |k: &str| m.get(k).and_then(Value::as_str).unwrap_or("");
                 let image = m["image"].as_str().unwrap_or("default image");
-                println!(
-                    "m{:<4} %{:<4} {:<9} {:<34} {} ({image})",
-                    m["id"],
-                    m["owner"],
-                    s("state"),
-                    s("sprite"),
-                    s("provider")
-                );
+                let owner = match (m["owner"]["tab"].as_u64(), m["owner"]["pane"].as_u64()) {
+                    (Some(t), _) => format!("@{t}"),
+                    (_, Some(p)) => format!("%{p}"),
+                    _ => "?".into(),
+                };
+                let (state, sprite, provider) = (s("state"), s("sprite"), s("provider"));
+                println!("m{:<4} {owner:<5} {state:<9} {sprite:<34} {provider} ({image})", m["id"]);
             }
         }
-        Command::Run { session, split, cwd, policy: pol, wait, vm, image, command } => {
+        Command::Run { session, split, cwd, policy: pol, wait, vm, vm_tab, image, command } => {
+            if image.is_some() && !vm && !vm_tab {
+                anyhow::bail!("--image is for --vm or --vm-tab");
+            }
             // A VM has none of this host's directories.
-            let cwd =
-                if vm { cwd } else { cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string())) };
+            let cwd = if vm || vm_tab {
+                cwd
+            } else {
+                cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))
+            };
             let body = json!({
                 "command": (!command.is_empty()).then(|| shell_command(&command)),
                 "vm": vm,
+                "vm_tab": vm_tab,
                 "image": image,
                 "session": session,
                 "split": split.map(|p| p.0),

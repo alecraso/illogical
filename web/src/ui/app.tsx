@@ -1,7 +1,7 @@
 import { Fragment } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
-import type { Edge, Intent, PaneId, Policy, Rect, SplitRect, TabId, TabView } from "../proto";
+import type { Edge, Intent, Machine, PaneId, Policy, Rect, SplitRect, TabId, TabView } from "../proto";
 import type { Cell } from "./cells";
 import { drag, startDrag, type Dragged, type Target } from "./drag";
 import { useSubscribe, usePhone } from "./hooks";
@@ -92,7 +92,7 @@ function TopBar({
       })),
       "separator",
       { label: "New session", run: () => client.intent({ op: "new_session", name: null, from_pane: client.active() ?? null }) },
-      { label: "New VM tab", run: () => void client.newVm({ session: session.id }) },
+      { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
       { label: "Rename session", run: () => setRenaming({ kind: "session", id: session.id }) },
       "separator",
       ...notificationItems(client),
@@ -138,8 +138,14 @@ function TopBar({
         {marker === session.tabs.length && <div class="drop-marker" />}
         <button
           class="new-tab"
-          title="New tab"
+          title="New tab (right-click for a VM tab)"
           onClick={() => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null })}
+          onContextMenu={(e) =>
+            openMenu(e, [
+              { label: "New tab", run: () => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null }) },
+              { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
+            ])
+          }
         >
           +
         </button>
@@ -165,6 +171,7 @@ function TabItem({
   setRenaming: (r: Renaming) => void;
 }) {
   const label = tabLabel(client, tab);
+  const machine = client.tabMachine(tab.id);
   const close = () => client.intent({ op: "close_tab", tab: tab.id });
   if (renaming) {
     return (
@@ -199,16 +206,23 @@ function TabItem({
         openMenu(e, [
           { label: "Rename tab", run: () => setRenaming({ kind: "tab", id: tab.id }) },
           { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
-          { label: "New VM tab", run: () => void client.newVm({ session: client.session! }) },
+          { label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) },
+          ...machineItems(client, tab),
           "separator",
-          { label: "Close tab", danger: true, run: close },
+          { label: machine ? "Close tab and machine" : "Close tab", danger: true, run: close },
         ])
       }
     >
-      {paneIds(tab).some((p) => client.machine(p)) && (
-        <span class="host-tag" title="Runs on a throwaway VM">
+      {machine ? (
+        <span class={`host-tag ${machineState(client, machine)}`} title={`${machine.sprite}: ${machineState(client, machine)}; deleted with the tab`}>
           VM
         </span>
+      ) : (
+        paneIds(tab).some((p) => client.machine(p)) && (
+          <span class="host-tag" title="A pane here runs on a throwaway VM">
+            VM
+          </span>
+        )
       )}
       <span class="tab-label">{label}</span>
       <AttentionBadge state={tabAttention(client, tab)} />
@@ -409,10 +423,18 @@ function PaneSlot({
     // A program that tracks the mouse gets right-clicks; Shift reaches us.
     if (entry?.view.mouseTracking && !e.shiftKey) return;
     const cwd = client.cwd(id);
+    const tabId = client.tabOfPane(id)?.id;
+    const tabMachine = tabId === undefined ? undefined : client.tabMachine(tabId);
+    const mine = client.machine(id);
+    const own = mine !== undefined && "pane" in mine.owner && mine.owner.pane === id;
     openMenu(e, [
       { label: "Split right", run: () => client.intent({ op: "split", pane: id, edge: "right" }) },
       { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
+      ...(tabMachine ? [{ label: "Split (local)", run: () => client.intent({ op: "split", pane: id, edge: "right", local: true }) } as MenuItem] : []),
       { label: "New VM pane on the right", run: () => void client.newVm({ split: id }) },
+      ...(own && !tabMachine
+        ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
+        : []),
       "separator",
       {
         label: "Move to new tab",
@@ -480,16 +502,55 @@ function PaneSlot({
   );
 }
 
-/** Where a pane runs, when it isn't this host: its VM and how it's doing. */
+/**
+ * Where a pane runs, when that isn't where its tab says: a VM pane in an
+ * ordinary tab, or a local pane in a VM tab.
+ */
 function HostBadge({ client, id }: { client: Client; id: PaneId }) {
   const m = client.machine(id);
-  if (!m) return null;
+  const tab = client.tabOfPane(id);
+  const tabMachine = tab ? client.tabMachine(tab.id) : undefined;
+  if (tabMachine && !m) {
+    return (
+      <div class="host-badge local" title="Runs on this host, not the tab's machine">
+        local
+      </div>
+    );
+  }
+  if (!m || m.id === tabMachine?.id) return null;
   const state = m.state === "running" ? "" : ` · ${m.state === "gone" ? "gone" : "starting"}`;
   return (
     <div class={`host-badge ${m.state}`} title={`${m.sprite} (${m.provider}${m.image ? `, ${m.image}` : ""}); deleted when this pane closes`}>
       VM{state}
     </div>
   );
+}
+
+/** "idle" when nothing in the tab runs on its machine any more. */
+function machineState(client: Client, m: Machine): string {
+  return m.state === "running" && client.panesOn(m.id).length === 0 ? "idle" : m.state;
+}
+
+/** The tab's machine: how it is, a new pane on it, reset. */
+function machineItems(client: Client, tab: TabView): MenuItem[] {
+  const m = client.tabMachine(tab.id);
+  if (!m) return [];
+  const on = client.panesOn(m.id);
+  const anchor = client.active(tab.id) ?? paneIds(tab)[0];
+  return [
+    "separator",
+    { header: `Machine ${m.sprite} · ${machineState(client, m)}` },
+    {
+      label: "New pane on machine",
+      disabled: anchor === undefined,
+      run: () => anchor !== undefined && client.intent({ op: "split", pane: anchor, edge: "right", local: false }),
+    },
+    {
+      label: "Reset machine",
+      disabled: on.length === 0,
+      run: () => void client.api(`/api/machines/${m.id}/reset`, {}, "couldn't reset the machine"),
+    },
+  ];
 }
 
 /** What the pane does when the daemon starts again, e.g. after a reboot. */

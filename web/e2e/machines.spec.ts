@@ -18,6 +18,13 @@ async function sprites(prefix: string): Promise<string[]> {
   return ((await r.json()).sprites ?? []).map((s: { name: string }) => s.name);
 }
 
+// A test that fails midway leaves its machine behind (the daemon is killed,
+// not restarted, so its sweep never runs): delete what this file made.
+const made: string[] = [];
+test.afterAll(async () => {
+  for (const name of made) await fetch(`${WISP}/v1/sprites/${name}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+});
+
 test.describe("phone", () => {
   const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["Pixel 7"];
   test.use({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch });
@@ -34,7 +41,10 @@ test.describe("phone", () => {
       .not.toBeNull()
       .then(() => page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.host !== null)!.id));
     const sprite = await page.evaluate((p) => window.__illogical.client.machine(p)!.sprite, pane);
-    await expect(page.locator(`.pane[data-pane="${pane}"] .host-badge`)).toHaveText("VM");
+    made.push(sprite);
+    // A VM tab: the tab carries the badge (here, the header), not its pane.
+    await expect(page.locator(".phone-bar .host-tag")).toHaveText("VM");
+    await expect(page.locator(`.pane[data-pane="${pane}"] .host-badge`)).toHaveCount(0);
     await expect(page.locator(".sheet-button")).toBeVisible();
 
     // The shell is the VM's, with the integration loaded.

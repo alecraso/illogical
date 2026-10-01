@@ -197,10 +197,43 @@ pub struct Machine {
     pub sprite: String,
     #[serde(default)]
     pub image: Option<String>,
-    /// The block it belongs to; the machine goes when it closes.
-    pub owner: PaneId,
+    /// What it belongs to; the machine goes when that closes.
+    pub owner: Owner,
     #[serde(default)]
     pub state: MachineState,
+}
+
+/// A machine's owner: one pane (M3b), or a tab whose panes share it (M3c).
+/// JSON `{"pane": 3}` or `{"tab": 2}`; a bare number (M3b's layout.json) is
+/// a pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", from = "OwnerRepr")]
+pub enum Owner {
+    Pane(PaneId),
+    Tab(TabId),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OwnerRepr {
+    Tagged(OwnerTagged),
+    Bare(PaneId),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OwnerTagged {
+    Pane(PaneId),
+    Tab(TabId),
+}
+
+impl From<OwnerRepr> for Owner {
+    fn from(r: OwnerRepr) -> Self {
+        match r {
+            OwnerRepr::Tagged(OwnerTagged::Pane(p)) | OwnerRepr::Bare(p) => Owner::Pane(p),
+            OwnerRepr::Tagged(OwnerTagged::Tab(t)) => Owner::Tab(t),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,6 +417,9 @@ mod tests {
         let m: ClientMsg =
             serde_json::from_str(r#"{"type":"intent","id":4,"intent":{"op":"split","pane":1,"edge":"bottom"}}"#)
                 .unwrap();
-        assert_eq!(m, ClientMsg::Intent { id: Some(4), intent: Intent::Split { pane: 1, edge: Edge::Bottom } });
+        assert_eq!(
+            m,
+            ClientMsg::Intent { id: Some(4), intent: Intent::Split { pane: 1, edge: Edge::Bottom, local: false } }
+        );
     }
 }

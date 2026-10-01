@@ -11,6 +11,8 @@
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
 //! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
 //! | GET | `/api/machines` | | `[Machine]` |
+//! | POST | `/api/machines/N/reset` | | `{}`: delete and recreate it; its panes restart by policy |
+//! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |
 //! | GET | `/api/panes/N/capture` | `format=text\|ansi\|html`, `scope=screen\|scrollback\|last-command` | text |
 //! | GET | `/api/panes/N/process` | | `Process` |
 //! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `follow=1`, `text=1` | bytes (streamed with follow) |
@@ -45,6 +47,9 @@ pub struct RunRequest {
     /// Run it on a new throwaway machine owned by the pane.
     #[serde(default)]
     pub vm: bool,
+    /// In a new tab whose panes all share a new throwaway machine.
+    #[serde(default)]
+    pub vm_tab: bool,
     /// The machine's image (the provider's default if none).
     #[serde(default)]
     pub image: Option<String>,

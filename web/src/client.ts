@@ -112,29 +112,50 @@ export class Client {
     return host == null ? undefined : this.state?.machines?.find((m) => m.id === host);
   }
 
-  /** A shell on a new throwaway VM: a tab in `session`, or a split of `split`. */
-  async newVm(where: { session?: number; split?: PaneId }) {
+  /** The machine a tab owns, which its panes share. */
+  tabMachine(tab: TabId) {
+    return this.state?.machines?.find((m) => "tab" in m.owner && m.owner.tab === tab);
+  }
+
+  /** Panes running on a machine. */
+  panesOn(machine: number): PaneId[] {
+    return (this.state?.panes ?? []).filter((p) => p.host === machine).map((p) => p.id);
+  }
+
+  /** POST to the API; a failure shows as a toast. */
+  async api(path: string, body: unknown = {}, failure = "that didn't work") {
+    try {
+      const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok) this.toast(((await res.json().catch(() => null))?.error as string) ?? `${failure} (${res.status})`);
+      return res.ok;
+    } catch {
+      this.toast(failure);
+      return false;
+    }
+  }
+
+  /**
+   * A shell on a new throwaway VM: a tab in `session` whose panes share it
+   * (`tab`), a pane-owned one in a tab of its own, or a split of `split`.
+   */
+  async newVm(where: { session?: number; split?: PaneId; tab?: boolean }) {
     // The session's own pane names it exactly (a session id given as text
     // could also be another session's name).
     const tab = where.session === undefined ? undefined : this.state?.sessions.find((s) => s.id === where.session)?.tabs[0];
     const fromPane = tab === undefined ? null : (this.active(tab) ?? null);
     // Show it when it appears, as for a tab made here.
     this.lastIntentAt = Date.now();
-    try {
-      const res = await fetch("/api/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vm: true,
-          from_pane: fromPane,
-          session: fromPane === null ? (where.session?.toString() ?? null) : null,
-          split: where.split ?? null,
-        }),
-      });
-      if (!res.ok) this.toast(((await res.json().catch(() => null))?.error as string) ?? `couldn't start a VM (${res.status})`);
-    } catch {
-      this.toast("couldn't start a VM");
-    }
+    await this.api(
+      "/api/run",
+      {
+        vm: !where.tab,
+        vm_tab: !!where.tab,
+        from_pane: fromPane,
+        session: fromPane === null ? (where.session?.toString() ?? null) : null,
+        split: where.tab ? null : (where.split ?? null),
+      },
+      "couldn't start a VM",
+    );
   }
 
   paneOp(pane: PaneId, op: PaneOp) {

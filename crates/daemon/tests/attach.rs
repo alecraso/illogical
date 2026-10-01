@@ -287,7 +287,11 @@ async fn slow_client_is_resynced() {
 async fn split_spawns_a_pane_and_exit_closes_it() {
     let d = start().await;
     let (mut ws, _) = connect_state(&d).await;
-    send(&mut ws, ClientMsg::Intent { id: Some(1), intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
+    send(
+        &mut ws,
+        ClientMsg::Intent { id: Some(1), intent: Intent::Split { pane: 1, edge: Edge::Right, local: false } },
+    )
+    .await;
     let state = state_where(&mut ws, |s| s.panes.len() == 2).await;
     let ids: Vec<u32> = state.panes.iter().map(|p| p.id).collect();
     assert_eq!(ids, vec![1, 2]);
@@ -393,7 +397,8 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     let mut d = start_in(&state).await;
     let (mut ws, s) = connect_state(&d).await;
     let tab = s.tabs[0].id;
-    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
+    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right, local: false } })
+        .await;
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::RenameTab { tab, name: Some("kept".into()) } }).await;
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "cd /tmp && echo marker-$((6*7))").await;
@@ -535,7 +540,8 @@ async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
     type_in(&mut ws, 1, "echo fresh-$((1+1))").await;
     read_pane_until(&mut ws, 1, "fresh-2").await;
 
-    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
+    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right, local: false } })
+        .await;
     until(&mut ws, |m| matches!(m, In::Msg(ServerMsg::State { state }) if state.panes.len() == 2).then_some(())).await;
     assert!(state.join("panes/2").exists());
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::ClosePane { pane: 2 } }).await;

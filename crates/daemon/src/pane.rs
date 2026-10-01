@@ -161,6 +161,13 @@ enum Cmd {
         key: u64,
         event: ExecEvent,
     },
+    /// Let go of the machine session quietly: it's about to be deleted.
+    Release,
+    /// Drop what's running (its machine was replaced) and start again.
+    Restart {
+        start: Start,
+        note: String,
+    },
     Attach {
         sub: Subscriber,
         offset: Option<u64>,
@@ -205,6 +212,16 @@ impl PaneHandle {
     }
     pub fn input(&self, data: Vec<u8>) {
         let _ = self.tx.send(Cmd::Input(data));
+    }
+    /// Let go of the session on the pane's machine without a word, before
+    /// the machine is deleted (and `restart` follows).
+    pub fn release(&self) {
+        let _ = self.tx.send(Cmd::Release);
+    }
+    /// Start over as `start` says, after a `── note ──` rule: the pane's
+    /// machine was reset, so what ran on the old one is gone.
+    pub fn restart(&self, start: Start, note: &str) {
+        let _ = self.tx.send(Cmd::Restart { start, note: note.into() });
     }
     pub fn purge(&self) {
         let _ = self.tx.send(Cmd::Purge);
@@ -834,6 +851,35 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
                     Some(p) => p.hang_up(),
                     None => return st.finish(),
                 }
+            }
+            Cmd::Release => {
+                if matches!(st.process, Some(Backend::Vm { .. })) {
+                    st.ended();
+                    st.forget_exec();
+                }
+            }
+            Cmd::Restart { start, note } => {
+                if st.closing {
+                    continue;
+                }
+                if let Some(Backend::Local(p)) = &st.process {
+                    p.hang_up();
+                }
+                st.ended();
+                st.forget_exec();
+                st.waiting = None;
+                st.resume_otherwise = None;
+                let end = {
+                    let mut s = st.status.lock().unwrap();
+                    s.busy = false;
+                    s.current.is_some().then_some(s.end)
+                };
+                if let Some(end) = end {
+                    st.signal(end, Signal::CommandEnd { exit: None });
+                }
+                st.output(format!("\x1b[0m\r\n\x1b[2m── {note} ──\x1b[0m\r\n").as_bytes());
+                st.begin(start);
+                st.notify(What::Started);
             }
             Cmd::Exec { key, event } => {
                 if st.process.as_ref().map(|p| p.key()) != Some(key) {

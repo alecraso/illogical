@@ -33,6 +33,23 @@ impl Drop for Daemon {
             let _ = c.kill();
             let _ = c.wait();
         }
+        // A failed test leaves its machines behind: delete this daemon's.
+        if let (Some(token), Ok(id)) = (token(), std::fs::read_to_string(self.state.join("daemon-id"))) {
+            let auth = format!("Authorization: Bearer {token}");
+            let list = Command::new("curl")
+                .args(["-s", "-H", &auth])
+                .arg(format!("{WISP}/v1/sprites?prefix=illogical-eph-{}-", id.trim()))
+                .output()
+                .map(|o| o.stdout)
+                .unwrap_or_default();
+            let names: Value = serde_json::from_slice(&list).unwrap_or_default();
+            for n in names["sprites"].as_array().into_iter().flatten().filter_map(|s| s["name"].as_str()) {
+                let _ = Command::new("curl")
+                    .args(["-s", "-o", "/dev/null", "-X", "DELETE", "-H", &auth])
+                    .arg(format!("{WISP}/v1/sprites/{n}"))
+                    .status();
+            }
+        }
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }
@@ -152,7 +169,7 @@ fn a_vm_pane_survives_a_restart_and_takes_its_machine_when_it_closes() {
     let pane = d.post("/api/run", json!({"vm": true}))["pane"].as_u64().unwrap();
     let machine = d.get("/api/machines")[0].clone();
     let sprite = machine["sprite"].as_str().unwrap().to_owned();
-    assert_eq!(machine["owner"], pane);
+    assert_eq!(machine["owner"], json!({ "pane": pane }));
     // The guest's shell, with the integration (OSC 7 reports its home).
     d.wait_for("the guest prompt", || {
         d.get("/api/panes").as_array().unwrap().iter().any(|p| p["id"] == pane && p["cwd"] == "/home/sprite")

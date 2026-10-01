@@ -17,7 +17,9 @@ export function PhoneHeader({ client }: { client: Client }) {
     <>
       <header class="bar phone-bar">
         <button class="sheet-button" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {client.state?.panes.some((p) => p.attention === "needs_input") ? <span class="att needs_input">●</span> : "☰"} <span class="crumb">{session?.name}</span> › <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
+          {client.state?.panes.some((p) => p.attention === "needs_input") ? <span class="att needs_input">●</span> : "☰"} <span class="crumb">{session?.name}</span> ›{" "}
+          {tab && client.tabMachine(tab.id) && <span class="host-tag">VM</span>}
+          <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
         </button>
         {panes.length > 1 && (
           <span class="pane-count">
@@ -62,7 +64,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
               return (
                 <div key={tid} class="sheet-tab">
                   <button class={tid === client.tab ? "sheet-item current" : "sheet-item"} onClick={act(() => client.selectTab(tid))}>
-                    {panes.some((p) => client.machine(p)) && <span class="host-tag">VM</span>}
+                    {(client.tabMachine(tid) || panes.some((p) => client.machine(p))) && <span class="host-tag">VM</span>}
                     {tabLabel(client, t)}
                   </button>
                   {panes.length > 1 &&
@@ -86,14 +88,22 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
             New tab
           </button>
-          <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session }))}>New VM tab</button>
+          <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
           {active !== undefined && (
             <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right" }))}>Split pane</button>
+          )}
+          {active !== undefined && client.tab !== null && client.tabMachine(client.tab) && (
+            <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right", local: true }))}>Split (local)</button>
           )}
           <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
           {active !== undefined && (
             <button class="danger" onClick={act(() => client.intent({ op: "close_pane", pane: active }))}>
               Close pane
+            </button>
+          )}
+          {client.tab !== null && (client.tabMachine(client.tab) || paneIds(client.tabView(client.tab)!).length > 1) && (
+            <button class="danger" onClick={act(() => client.tab !== null && client.intent({ op: "close_tab", tab: client.tab }))}>
+              {client.tabMachine(client.tab) ? "Close tab and machine" : "Close tab"}
             </button>
           )}
         </div>

@@ -13,8 +13,8 @@ use std::{
 
 use illogical_core::{Effect, Intent, Mux};
 use illogical_proto::{
-    Attention, BlockType, ClientId, ClientMsg, CommandInfo, Event, EventKind, Machine, MachineId, MachineState, PaneId,
-    PaneInfo, PaneOp, Policy, ServerMsg, State, TabView,
+    Attention, BlockType, ClientId, ClientMsg, CommandInfo, Event, EventKind, Machine, MachineId, MachineState, Owner,
+    PaneId, PaneInfo, PaneOp, Policy, ServerMsg, State, TabId, TabView,
     api::{PaneSummary, RunRequest},
 };
 use tokio::{
@@ -62,6 +62,8 @@ pub enum Cmd {
         data: Vec<u8>,
     },
     Api(Api),
+    /// A reset machine's sprite is gone: start its panes again on a new one.
+    MachineReset(MachineId),
     /// Checkpoint every pane and save the layout, then reply.
     Shutdown(oneshot::Sender<()>),
 }
@@ -76,6 +78,10 @@ pub enum Api {
     Machines(oneshot::Sender<Vec<Machine>>),
     /// The machine a pane runs on.
     MachineOf(PaneId, oneshot::Sender<Option<Machine>>),
+    /// Give a pane's machine to its tab.
+    ShareMachine(PaneId, oneshot::Sender<Result<(), String>>),
+    /// Delete and recreate a machine; its panes restart by policy.
+    ResetMachine(MachineId, oneshot::Sender<Result<(), String>>),
 }
 
 #[derive(Clone)]
@@ -84,7 +90,7 @@ pub struct MuxHandle {
     events: broadcast::Sender<Event>,
     pub store: StateDir,
     pub wisp: Option<Arc<Wisp>>,
-    /// Tags execs on machines (`ILLOGICAL_EXEC`), with the machine id.
+    /// Tags execs on machines (`ILLOGICAL_EXEC`; see `mux::exec_tag`).
     pub daemon_id: String,
 }
 
@@ -182,11 +188,11 @@ impl Config {
         let cwd = meta.cwd.as_ref().map(PathBuf::from).unwrap_or_else(|| self.home.clone());
         let on = meta.integration.unwrap_or(true);
         let shell = match meta.host {
-            Some(m) => self.guest_shell(m, on),
+            Some(_) => self.guest_shell(pane, on),
             None => self.shell(pane, cwd.clone(), on),
         };
         let then = |command: &str| match meta.host {
-            Some(m) => self.guest_run_then_shell(m, command, on),
+            Some(_) => self.guest_run_then_shell(pane, command, on),
             None => self.run_then_shell(pane, cwd.clone(), command, on),
         };
         let note = |s: &str| format!("\x1b[2m[{s}]\x1b[0m\r\n");
@@ -203,18 +209,15 @@ impl Config {
         }
     }
 
-    /// The environment of a program on a machine: what the terminal is, and
-    /// a tag `process` finds its shell by. None of this host's.
-    fn guest_env(&self, machine: MachineId) -> Vec<(String, String)> {
+    /// The environment of a pane's program on a machine: what the terminal
+    /// is, and a tag `process` finds its shell by (machines are shared, so
+    /// it names the pane). None of this host's.
+    fn guest_env(&self, pane: PaneId) -> Vec<(String, String)> {
         vec![
             ("TERM".into(), "xterm-256color".into()),
             ("COLORTERM".into(), "truecolor".into()),
-            ("ILLOGICAL_EXEC".into(), self.exec_tag(machine)),
+            ("ILLOGICAL_EXEC".into(), exec_tag(&self.daemon_id, pane)),
         ]
-    }
-
-    pub fn exec_tag(&self, machine: MachineId) -> String {
-        format!("{}-{machine}", self.daemon_id)
     }
 
     /// The sprite names this daemon's machines get.
@@ -223,30 +226,26 @@ impl Config {
     }
 
     /// A login shell on a machine (in its home directory).
-    fn guest_shell(&self, machine: MachineId, integrate: bool) -> Spawn {
-        let mut s = Spawn {
-            program: "bash".into(),
-            args: vec!["-l".into()],
-            cwd: PathBuf::new(),
-            env: self.guest_env(machine),
-        };
+    fn guest_shell(&self, pane: PaneId, integrate: bool) -> Spawn {
+        let mut s =
+            Spawn { program: "bash".into(), args: vec!["-l".into()], cwd: PathBuf::new(), env: self.guest_env(pane) };
         if integrate && self.integration.is_some() {
             crate::shellint::apply_guest(&mut s);
         }
         s
     }
 
-    fn guest_run(&self, machine: MachineId, cwd: Option<PathBuf>, command: &str) -> Spawn {
+    fn guest_run(&self, pane: PaneId, cwd: Option<PathBuf>, command: &str) -> Spawn {
         Spawn {
             program: "bash".into(),
             args: vec!["-lc".into(), command.into()],
             cwd: cwd.unwrap_or_default(),
-            env: self.guest_env(machine),
+            env: self.guest_env(pane),
         }
     }
 
-    fn guest_run_then_shell(&self, machine: MachineId, command: &str, integrate: bool) -> Spawn {
-        let shell = self.guest_shell(machine, integrate);
+    fn guest_run_then_shell(&self, pane: PaneId, command: &str, integrate: bool) -> Spawn {
+        let shell = self.guest_shell(pane, integrate);
         let then = std::iter::once(shell.program.as_str()).chain(shell.args.iter().map(String::as_str));
         let args = vec!["-lc".into(), format!("{command}; exec {}", then.collect::<Vec<_>>().join(" "))];
         Spawn { args, ..shell }
@@ -255,6 +254,11 @@ impl Config {
 
 /// What was last written to layout.json, to skip writing it unchanged.
 type SavedParts = (Mux, BTreeMap<PaneId, PaneMeta>, BTreeMap<MachineId, Machine>);
+
+/// Tags a pane's execs on machines (`ILLOGICAL_EXEC`).
+pub fn exec_tag(daemon_id: &str, pane: PaneId) -> String {
+    format!("{daemon_id}-p{pane}")
+}
 
 struct Daemon {
     mux: Mux,
@@ -275,6 +279,10 @@ struct Daemon {
     next_spawn: Option<(Spawn, Option<String>)>,
     /// ...and runs it on this machine.
     next_host: Option<MachineId>,
+    /// ...which belongs to the new pane's tab, not the pane.
+    next_owner_tab: bool,
+    /// To ourselves, for work finished in the background.
+    tx: mpsc::UnboundedSender<Cmd>,
     machines: BTreeMap<MachineId, Machine>,
     next_machine: MachineId,
     save_due: Option<Instant>,
@@ -302,6 +310,8 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         push,
         next_spawn: None,
         next_host: None,
+        next_owner_tab: false,
+        tx: tx.clone(),
         machines: BTreeMap::new(),
         next_machine: 1,
         save_due: None,
@@ -349,10 +359,14 @@ impl Daemon {
         let Saved { mux, panes: meta, machines, next_machine, .. } = saved;
         self.mux = mux;
         self.next_machine = next_machine.max(1);
-        // A machine is only kept with the pane that owns it.
-        let owned: Vec<PaneId> = self.mux.panes();
+        // A machine is only kept with what owns it.
+        let panes: Vec<PaneId> = self.mux.panes();
         for (id, m) in machines {
-            if owned.contains(&m.owner) {
+            let owned = match m.owner {
+                Owner::Pane(p) => panes.contains(&p),
+                Owner::Tab(t) => self.mux.tab(t).is_ok(),
+            };
+            if owned {
                 self.machines.insert(id, Machine { state: MachineState::Starting, ..m });
             }
         }
@@ -401,7 +415,10 @@ impl Daemon {
         if self.mux.sessions.is_empty() {
             return false;
         }
-        self.machines.retain(|_, m| self.meta.get(&m.owner).is_some_and(|p| p.host == Some(m.id)));
+        self.machines.retain(|_, m| match m.owner {
+            Owner::Pane(p) => self.meta.get(&p).is_some_and(|p| p.host == Some(m.id)),
+            Owner::Tab(_) => true,
+        });
         self.last_saved = Some((self.mux.clone(), self.meta.clone().into_iter().collect(), self.machines.clone()));
         true
     }
@@ -647,6 +664,7 @@ impl Daemon {
             Cmd::Input { pane, data } => self.input(pane, data),
             Cmd::Msg { client, msg } => self.message(client, msg),
             Cmd::Api(api) => self.api(api),
+            Cmd::MachineReset(id) => self.machine_reset(id),
             Cmd::Shutdown(_) => unreachable!("handled in run"),
         }
     }
@@ -679,6 +697,12 @@ impl Daemon {
             }
             Api::MachineOf(pane, reply) => {
                 let _ = reply.send(self.machine_of(pane).cloned());
+            }
+            Api::ShareMachine(pane, reply) => {
+                let _ = reply.send(self.share_machine(pane));
+            }
+            Api::ResetMachine(id, reply) => {
+                let _ = reply.send(self.reset_machine(id));
             }
             Api::Close(pane, reply) => {
                 let known = self.panes.contains_key(&pane);
@@ -718,23 +742,27 @@ impl Daemon {
                 .or_else(|| self.mux.sessions.first().map(|s| s.id)),
         };
         let before: Vec<PaneId> = self.mux.panes();
-        let host = if req.vm { Some(self.new_machine(req.image.clone())?) } else { None };
+        let host = if req.vm || req.vm_tab { Some(self.new_machine(req.image.clone())?) } else { None };
         self.next_spawn = req.command.as_ref().map(|command| {
             let spawn = match host {
                 // Not this host's directory: the guest's, if one was asked for.
-                Some(m) => self.config.guest_run(m, req.cwd.clone().map(PathBuf::from), command),
+                Some(_) => self.config.guest_run(0, req.cwd.clone().map(PathBuf::from), command),
                 None => self.config.run_only(0, cwd, command),
             };
             (spawn, Some(command.clone()))
         });
         self.next_host = host;
-        let intent = match (req.split, session) {
-            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right },
+        self.next_owner_tab = req.vm_tab;
+        let split = req.split.filter(|_| !req.vm_tab);
+        let intent = match (split, session) {
+            // Here: a script's command is for this host, even in a VM tab.
+            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: true },
             (None, Some(session)) => Intent::NewTab { session, from_pane: from },
             (None, None) => Intent::NewSession { name: None, from_pane: from },
         };
         let result = self.intent(None, intent);
         self.next_spawn = None;
+        self.next_owner_tab = false;
         if let Some(m) = self.next_host.take() {
             // Nothing took it.
             self.machines.remove(&m);
@@ -756,7 +784,8 @@ impl Daemon {
         let id = self.next_machine;
         self.next_machine += 1;
         let sprite = format!("{}{id}", self.config.sprite_prefix());
-        let m = Machine { id, provider: "wisp".into(), sprite, image, owner: 0, state: MachineState::Starting };
+        let owner = Owner::Pane(0);
+        let m = Machine { id, provider: "wisp".into(), sprite, image, owner, state: MachineState::Starting };
         self.machines.insert(id, m);
         Ok(id)
     }
@@ -765,10 +794,106 @@ impl Daemon {
         self.machines.get(&self.meta.get(&pane)?.host?)
     }
 
+    /// The machine a tab owns.
+    fn tab_machine(&self, tab: TabId) -> Option<MachineId> {
+        self.machines.values().find(|m| m.owner == Owner::Tab(tab)).map(|m| m.id)
+    }
+
+    /// Whether a pane runs on its own tab's machine (and so can't leave it).
+    fn on_tab_machine(&self, pane: PaneId) -> bool {
+        let tab = self.mux.tab_of(pane).ok();
+        let host = self.meta.get(&pane).and_then(|m| m.host);
+        host.is_some() && tab.and_then(|t| self.tab_machine(t)) == host
+    }
+
+    /// Refuse moves that would take a pane away from its tab's machine.
+    fn check_move(&self, intent: &Intent) -> Result<(), String> {
+        let stuck = |pane: PaneId| format!("%{pane} runs on this tab's machine, so it stays in the tab");
+        match *intent {
+            Intent::MovePane { pane, target, .. }
+                if self.on_tab_machine(pane) && self.mux.tab_of(pane).ok() != self.mux.tab_of(target).ok() =>
+            {
+                Err(stuck(pane))
+            }
+            Intent::BreakPane { pane, .. } if self.on_tab_machine(pane) => Err(stuck(pane)),
+            Intent::DockTab { tab, .. } if self.tab_machine(tab).is_some() => {
+                Err("this tab has a machine: move the whole tab instead".into())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Delete machines whose tab has closed.
+    fn reap_machines(&mut self) {
+        let gone: Vec<MachineId> = self
+            .machines
+            .values()
+            .filter(|m| matches!(m.owner, Owner::Tab(t) if self.mux.tab(t).is_err()))
+            .map(|m| m.id)
+            .collect();
+        for m in gone {
+            self.delete_machine(m);
+        }
+    }
+
+    /// "Share machine with tab": the pane's own machine becomes its tab's,
+    /// and new splits in the tab join it.
+    fn share_machine(&mut self, pane: PaneId) -> Result<(), String> {
+        let tab = self.mux.tab_of(pane).map_err(|e| e.to_string())?;
+        if self.tab_machine(tab).is_some() {
+            return Err("this tab already has a machine".into());
+        }
+        let id = self.meta.get(&pane).and_then(|m| m.host).ok_or("that pane runs on this host")?;
+        let m = self.machines.get_mut(&id).ok_or("no such machine")?;
+        if m.owner != Owner::Pane(pane) {
+            return Err("that pane's machine isn't its own".into());
+        }
+        m.owner = Owner::Tab(tab);
+        info!(pane, tab, machine = id, "machine shared with tab");
+        self.changed();
+        Ok(())
+    }
+
+    /// "Reset machine": delete its sprite, then start every pane on it again
+    /// by its policy, on a new one.
+    fn reset_machine(&mut self, id: MachineId) -> Result<(), String> {
+        let m = self.machines.get_mut(&id).ok_or("no such machine")?;
+        m.state = MachineState::Starting;
+        let sprite = m.sprite.clone();
+        let wisp = self.config.wisp.clone().ok_or("VM panes aren't set up")?;
+        info!(machine = id, sprite, "resetting machine");
+        self.emit(None, EventKind::Machine { machine: id, state: MachineState::Starting });
+        self.broadcast();
+        // Let go first, so its panes don't report the machine gone.
+        for (pane, meta) in &self.meta {
+            if meta.host == Some(id)
+                && let Some(h) = self.panes.get(pane)
+            {
+                h.release();
+            }
+        }
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = wisp.delete(&sprite).await {
+                warn!(sprite, error = %e, "can't delete machine to reset it");
+            }
+            let _ = tx.send(Cmd::MachineReset(id));
+        });
+        Ok(())
+    }
+
+    fn machine_reset(&mut self, id: MachineId) {
+        let panes: Vec<PaneId> = self.meta.iter().filter(|(_, m)| m.host == Some(id)).map(|(p, _)| *p).collect();
+        for pane in panes {
+            let (Some(h), Some(meta)) = (self.panes.get(&pane), self.meta.get(&pane)) else { continue };
+            h.restart(self.config.restore(pane, meta), "machine reset");
+        }
+    }
+
     /// Delete a machine and everything on it, in the background.
     fn delete_machine(&mut self, id: MachineId) {
         let Some(m) = self.machines.remove(&id) else { return };
-        self.emit(Some(m.owner), EventKind::Machine { machine: id, state: MachineState::Gone });
+        self.emit(None, EventKind::Machine { machine: id, state: MachineState::Gone });
         let Some(wisp) = self.config.wisp.clone() else { return };
         tokio::spawn(async move {
             match wisp.delete(&m.sprite).await {
@@ -868,7 +993,13 @@ impl Daemon {
     }
 
     fn intent(&mut self, client: Option<ClientId>, intent: Intent) -> Result<(), String> {
-        let effects = self.mux.apply(intent.clone()).map_err(|e| e.to_string())?;
+        let refused = |why: String| {
+            info!(?client, ?intent, why, "intent refused");
+            why
+        };
+        self.check_move(&intent).map_err(refused)?;
+        let local = matches!(intent, Intent::Split { local: true, .. });
+        let effects = self.mux.apply(intent.clone()).map_err(|e| refused(e.to_string()))?;
         info!(?client, ?intent, "intent");
         let rects = self.mux.pane_rects();
         for e in effects {
@@ -879,25 +1010,35 @@ impl Daemon {
                     let cwd =
                         cwd_from.and_then(|p| self.panes.get(&p)?.cwd()).unwrap_or_else(|| self.config.home.clone());
                     let (cols, rows) = rects.get(&pane).map(|r| (r.cols, r.rows)).unwrap_or((80, 24));
-                    let host = self.next_host.take();
+                    // A machine made for it, else its tab's (unless asked
+                    // for this host).
+                    let tab = self.mux.tab_of(pane).ok();
+                    let made = self.next_host.take();
+                    let host = made.or_else(|| tab.filter(|_| !local).and_then(|t| self.tab_machine(t)));
                     let (start, hold, cwd) = match self.next_spawn.take() {
                         // A command from `run`: fill in the pane id it gets.
                         Some((mut spawn, Some(text))) => {
-                            spawn.env.retain(|(k, _)| k != "ILLOGICAL_PANE");
+                            spawn.env.retain(|(k, _)| k != "ILLOGICAL_PANE" && k != "ILLOGICAL_EXEC");
                             spawn.env.push(("ILLOGICAL_PANE".into(), pane.to_string()));
+                            if host.is_some() {
+                                spawn.env.push(("ILLOGICAL_EXEC".into(), exec_tag(&self.config.daemon_id, pane)));
+                            }
                             let cwd = spawn.cwd.clone();
                             (Start::Run { spawn, text }, true, cwd)
                         }
                         _ => {
                             let shell = match host {
-                                Some(m) => self.config.guest_shell(m, integrate),
+                                Some(_) => self.config.guest_shell(pane, integrate),
                                 None => self.config.shell(pane, cwd.clone(), integrate),
                             };
                             (Start::Now(shell), false, cwd)
                         }
                     };
-                    if let Some(m) = host.and_then(|m| self.machines.get_mut(&m)) {
-                        m.owner = pane;
+                    if let Some(m) = made.and_then(|m| self.machines.get_mut(&m)) {
+                        m.owner = match (self.next_owner_tab, tab) {
+                            (true, Some(t)) => Owner::Tab(t),
+                            _ => Owner::Pane(pane),
+                        };
                     }
                     match self.open_pane(pane, cols, rows, false, start, cwd, integrate, hold, host) {
                         Ok(()) => {
@@ -907,7 +1048,7 @@ impl Daemon {
                         }
                         Err(e) => {
                             warn!(pane, error = %e, "could not start pane");
-                            if let Some(m) = host {
+                            if let Some(m) = made {
                                 self.machines.remove(&m);
                             }
                             let _ = self.mux.apply(Intent::ClosePane { pane });
@@ -918,9 +1059,9 @@ impl Daemon {
                     if let Some(p) = self.panes.remove(&pane) {
                         p.close();
                     }
-                    // A pane's machine goes with it.
-                    if let Some(m) = self.meta.get(&pane).and_then(|m| m.host) {
-                        self.delete_machine(m);
+                    // A pane's own machine goes with it (a tab's, with the tab).
+                    if let Some(m) = self.machine_of(pane).filter(|m| m.owner == Owner::Pane(pane)) {
+                        self.delete_machine(m.id);
                     }
                     self.sizes.remove(&pane);
                     self.meta.remove(&pane);
@@ -929,6 +1070,7 @@ impl Daemon {
                 }
             }
         }
+        self.reap_machines();
         self.changed();
         self.emit(None, EventKind::Layout { rev: self.mux.rev });
         Ok(())

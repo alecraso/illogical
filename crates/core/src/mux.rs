@@ -72,10 +72,14 @@ pub enum Intent {
         session: SessionId,
         index: usize,
     },
-    /// A new pane beside `pane` on the given side.
+    /// A new pane beside `pane` on the given side. `local`: on this host
+    /// even in a tab that has a machine (the daemon's business; the layout
+    /// doesn't care).
     Split {
         pane: PaneId,
         edge: Edge,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        local: bool,
     },
     ClosePane {
         pane: PaneId,
@@ -283,7 +287,7 @@ impl Mux {
                 self.sessions.retain(|s| !s.tabs.is_empty());
                 Ok(vec![])
             }
-            Split { pane, edge } => {
+            Split { pane, edge, .. } => {
                 if edge == Edge::Center {
                     return Err(Error::Invalid("split needs a side"));
                 }

@@ -20,7 +20,7 @@ fn new_session_spawns_one_pane_in_one_tab() {
 #[test]
 fn split_spawns_with_the_source_pane_cwd() {
     let mut m = mux_with_session();
-    let fx = m.apply(Intent::Split { pane: 1, edge: Edge::Right }).unwrap();
+    let fx = m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
     assert_eq!(fx, vec![Effect::Spawn { pane: 2, cwd_from: Some(1) }]);
     assert_eq!(m.tab(1).unwrap().root.panes(), vec![1, 2]);
 }
@@ -53,7 +53,7 @@ fn move_pane_across_tabs_and_break_it_out_again() {
 #[test]
 fn swap_with_center() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Right }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
     m.apply(Intent::NewTab { session: 1, from_pane: None }).unwrap();
     m.apply(Intent::MovePane { pane: 3, target: 1, edge: Edge::Center }).unwrap();
     assert_eq!(m.tab(1).unwrap().root.panes(), vec![3, 2]);
@@ -64,7 +64,7 @@ fn swap_with_center() {
 fn dock_tab_merges_its_whole_layout() {
     let mut m = mux_with_session();
     m.apply(Intent::NewTab { session: 1, from_pane: None }).unwrap();
-    m.apply(Intent::Split { pane: 2, edge: Edge::Bottom }).unwrap();
+    m.apply(Intent::Split { pane: 2, edge: Edge::Bottom, local: false }).unwrap();
     m.apply(Intent::DockTab { tab: 2, target: 1, edge: Edge::Right }).unwrap();
     assert_eq!(m.sessions[0].tabs, vec![1]);
     assert_eq!(m.tab(1).unwrap().root.panes(), vec![1, 2, 3]);
@@ -74,7 +74,7 @@ fn dock_tab_merges_its_whole_layout() {
 #[test]
 fn resize_split_renormalizes() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Right }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
     let split = match &m.tab(1).unwrap().root {
         Node::Split { id, .. } => *id,
         n => panic!("{n:?}"),
@@ -89,7 +89,7 @@ fn resize_split_renormalizes() {
 #[test]
 fn view_ownership_and_zoom() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Right }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Right, local: false }).unwrap();
     // First viewer sizes the tab even without claiming.
     assert!(m.view(7, 1, 120, 40, None, false).unwrap());
     // Another client's unclaimed view doesn't change it...
@@ -108,13 +108,13 @@ fn view_ownership_and_zoom() {
 #[test]
 fn layout_serializes_for_clients() {
     let mut m = mux_with_session();
-    m.apply(Intent::Split { pane: 1, edge: Edge::Bottom }).unwrap();
+    m.apply(Intent::Split { pane: 1, edge: Edge::Bottom, local: false }).unwrap();
     let json = serde_json::to_value(&m.tab(1).unwrap().root).unwrap();
     assert_eq!(json["type"], "split");
     assert_eq!(json["dir"], "column");
     assert_eq!(json["children"][0]["node"], serde_json::json!({"type": "pane", "pane": 1}));
     let intent: Intent = serde_json::from_str(r#"{"op":"split","pane":1,"edge":"right"}"#).unwrap();
-    assert_eq!(intent, Intent::Split { pane: 1, edge: Edge::Right });
+    assert_eq!(intent, Intent::Split { pane: 1, edge: Edge::Right, local: false });
 }
 
 /// An intent built from small random numbers, aimed at IDs that may or may
@@ -126,7 +126,7 @@ fn arb_intent() -> impl Strategy<Value = Intent> {
     prop_oneof![
         Just(Intent::NewSession { name: None, from_pane: None }),
         (id.clone(), id.clone()).prop_map(|(s, p)| Intent::NewTab { session: s % 3 + 1, from_pane: Some(p) }),
-        (id.clone(), edge.clone()).prop_map(|(pane, edge)| Intent::Split { pane, edge }),
+        (id.clone(), edge.clone()).prop_map(|(pane, edge)| Intent::Split { pane, edge, local: false }),
         id.clone().prop_map(|pane| Intent::ClosePane { pane }),
         id.clone().prop_map(|tab| Intent::CloseTab { tab }),
         id.clone().prop_map(|session| Intent::CloseSession { session: session % 3 + 1 }),
