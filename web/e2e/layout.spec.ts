@@ -151,9 +151,12 @@ test("sessions: create, switch, close", async ({ page }) => {
   await page.getByRole("menuitem", { name: "New session" }).click();
   await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.sessions.length)).toBe(2);
   const [s1, s2] = await page.evaluate(() => window.__illogical.client.state!.sessions.map((s) => s.id));
+  // Sessions are named ("drifting cedar"), not numbered.
+  const name1 = await page.evaluate(() => window.__illogical.client.state!.sessions[0].name);
+  expect(name1).toMatch(/^[a-z]+ [a-z]+$/);
   await expect.poll(() => page.evaluate(() => window.__illogical.client.session)).toBe(s2);
   await page.locator(".session-button").click();
-  await page.getByRole("menuitem", { name: new RegExp(`${s1}$`) }).click();
+  await page.getByRole("menuitem", { name: new RegExp(`${name1}$`) }).click();
   await expect.poll(() => page.evaluate(() => window.__illogical.client.session)).toBe(s1);
   await page.locator(".session-button").click();
   await page.getByRole("menuitem", { name: "Close session" }).click();
