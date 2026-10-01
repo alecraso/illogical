@@ -1,0 +1,28 @@
+[package]
+name = "illogicald"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["ws"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+crossbeam-channel = "0.5.17"
+illogical-proto = { version = "0.1.0", path = "../proto" }
+illogical-vt = { version = "0.1.0", path = "../vt" }
+nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll"] }
+rust-embed = { version = "8.12.0", features = ["mime-guess"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+futures-util = "0.3.34"
+tokio-tungstenite = "0.30.0"

@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "ssh://git@git.tailb2e8f2.ts.net/jhgaylor/illogical.git"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

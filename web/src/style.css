@@ -1,0 +1,47 @@
+:root {
+  --bg: #1e1e2e;
+  --fg: #cdd6f4;
+  --letterbox: #11111b;
+  --pill: #313244;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--letterbox);
+  color: var(--fg);
+  font-family: system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* Fills the window. When another client owns the pane's size, the
+   terminal is drawn at that size and centered on the darker letterbox. */
+#pane {
+  position: fixed;
+  inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+#pane .xterm {
+  background: var(--bg);
+  flex: none;
+  transform-origin: center;
+}
+
+#status {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--pill);
+  font-size: 12px;
+  opacity: 0.9;
+  pointer-events: none;
+}

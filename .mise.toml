@@ -1,0 +1,4 @@
+# Toolchain for this repo. libghostty-vt-sys builds Ghostty from a pinned
+# commit that requires exactly this Zig.
+[tools]
+zig = "0.15.2"

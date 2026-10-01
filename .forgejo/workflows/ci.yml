@@ -1,0 +1,44 @@
+# Format, lint and test the Rust workspace; typecheck and build the web
+# client. Browser tests (`just e2e`) need Chrome and run locally.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # libghostty-vt-sys builds Ghostty from a pinned commit that needs
+      # exactly this Zig (see .mise.toml).
+      - name: Install Zig 0.15.2
+        run: |
+          curl -sSfL -o zig.tar.xz https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  zig.tar.xz" | sha256sum -c
+          mkdir -p "$HOME/zig" && tar -xJf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+
+      - name: Install Rust (rust-toolchain.toml)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Web client
+        working-directory: web
+        run: |
+          npm install -g pnpm@12
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Rust
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace

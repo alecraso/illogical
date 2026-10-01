@@ -1,0 +1,188 @@
+//! Wire protocol shared by illogicald and its clients.
+//!
+//! Two kinds of WebSocket message:
+//! - Text frames carry JSON control messages ([`ClientMsg`], [`ServerMsg`]).
+//! - Binary frames carry terminal bytes with a fixed header ([`Frame`]).
+//!
+//! The web client mirrors these types by hand in `web/src/proto.ts`; keep
+//! them in step.
+
+use serde::{Deserialize, Serialize};
+
+pub type PaneId = u32;
+pub type ClientId = u64;
+
+/// Control messages from a client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientMsg {
+    /// Start (or resume) receiving panes. The server replays from each
+    /// pane's offset when it still has the bytes, otherwise it sends a
+    /// snapshot.
+    Attach { panes: Vec<AttachPane> },
+    /// The client's size for a pane. The latest client to send one owns the
+    /// pane's size; everyone else renders at that size.
+    Resize { pane: PaneId, cols: u16, rows: u16 },
+}
+
+/// Control messages from the server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMsg {
+    /// First message on every connection.
+    Hello {
+        version: String,
+        client: ClientId,
+        panes: Vec<PaneInfo>,
+    },
+    /// A pane's size changed; `owner` is the client whose size it is.
+    Size {
+        pane: PaneId,
+        cols: u16,
+        rows: u16,
+        owner: Option<ClientId>,
+    },
+    /// The client fell too far behind and was unsubscribed; attach again to
+    /// get a fresh snapshot.
+    Resync { pane: PaneId },
+    /// The pane's process exited.
+    Exit { pane: PaneId, code: Option<i32> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachPane {
+    pub pane: PaneId,
+    /// Offset just past the last byte the client has, or `None` for a fresh
+    /// view.
+    pub offset: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneInfo {
+    pub id: PaneId,
+    /// Identifies this pane's output stream. Offsets are only meaningful
+    /// within one epoch; a client holding an offset from another epoch (an
+    /// earlier daemon, a recreated pane) must attach with `None`.
+    pub epoch: u64,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// Binary frame kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FrameKind {
+    /// Server -> client: PTY output starting at `offset`.
+    Output = 1,
+    /// Server -> client: VT bytes that reproduce the pane as of `offset`.
+    /// The client resets its terminal before writing them.
+    Snapshot = 2,
+    /// Client -> server: input for the pane (`offset` is unused).
+    Input = 3,
+}
+
+impl TryFrom<u8> for FrameKind {
+    type Error = DecodeError;
+    fn try_from(v: u8) -> Result<Self, DecodeError> {
+        match v {
+            1 => Ok(Self::Output),
+            2 => Ok(Self::Snapshot),
+            3 => Ok(Self::Input),
+            k => Err(DecodeError::UnknownKind(k)),
+        }
+    }
+}
+
+/// `[u8 kind][u32 pane][u64 offset][payload]`, integers big-endian.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    pub kind: FrameKind,
+    pub pane: PaneId,
+    pub offset: u64,
+    pub data: Vec<u8>,
+}
+
+pub const HEADER_LEN: usize = 1 + 4 + 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeError {
+    TooShort(usize),
+    UnknownKind(u8),
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooShort(n) => write!(f, "frame too short: {n} bytes"),
+            Self::UnknownKind(k) => write!(f, "unknown frame kind {k}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
+impl Frame {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(HEADER_LEN + self.data.len());
+        out.push(self.kind as u8);
+        out.extend_from_slice(&self.pane.to_be_bytes());
+        out.extend_from_slice(&self.offset.to_be_bytes());
+        out.extend_from_slice(&self.data);
+        out
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
+        if buf.len() < HEADER_LEN {
+            return Err(DecodeError::TooShort(buf.len()));
+        }
+        Ok(Self {
+            kind: buf[0].try_into()?,
+            pane: u32::from_be_bytes(buf[1..5].try_into().unwrap()),
+            offset: u64::from_be_bytes(buf[5..13].try_into().unwrap()),
+            data: buf[HEADER_LEN..].to_vec(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_round_trip() {
+        let f = Frame {
+            kind: FrameKind::Output,
+            pane: 7,
+            offset: 1 << 40,
+            data: b"hi\x1b[0m".to_vec(),
+        };
+        assert_eq!(Frame::decode(&f.encode()).unwrap(), f);
+    }
+
+    #[test]
+    fn frame_rejects_garbage() {
+        assert_eq!(Frame::decode(&[1, 2]), Err(DecodeError::TooShort(2)));
+        assert_eq!(Frame::decode(&[9; 13]), Err(DecodeError::UnknownKind(9)));
+    }
+
+    #[test]
+    fn json_shape() {
+        let m: ClientMsg = serde_json::from_str(
+            r#"{"type":"attach","panes":[{"pane":1,"offset":null},{"pane":2,"offset":42}]}"#,
+        )
+        .unwrap();
+        let panes = vec![
+            AttachPane {
+                pane: 1,
+                offset: None,
+            },
+            AttachPane {
+                pane: 2,
+                offset: Some(42),
+            },
+        ];
+        assert_eq!(m, ClientMsg::Attach { panes });
+        let s = serde_json::to_string(&ServerMsg::Resync { pane: 3 }).unwrap();
+        assert_eq!(s, r#"{"type":"resync","pane":3}"#);
+    }
+}

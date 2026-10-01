@@ -1,0 +1,16 @@
+[package]
+name = "illogical-vt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+libghostty-vt = "0.2.2"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
