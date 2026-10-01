@@ -57,6 +57,13 @@ pub struct OpenRequest {
     pub split: Option<PaneId>,
     #[serde(default)]
     pub from_pane: Option<PaneId>,
+    /// Run it on this machine [default: the tab's, when splitting in a VM
+    /// tab; else this host].
+    #[serde(default)]
+    pub host: Option<crate::MachineId>,
+    /// On this host, even split in a VM tab.
+    #[serde(default)]
+    pub local: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -97,6 +97,8 @@ pub enum What {
     BlockChanged,
     /// A block asks for attention (or lets go of it), and why.
     Attention(illogical_proto::Attention, String),
+    /// A block's own event, for the event stream.
+    Event(illogical_proto::EventKind),
 }
 
 pub type NoticeSink = mpsc::UnboundedSender<Notice>;

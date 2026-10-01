@@ -2,3 +2,4 @@
 import "./browser";
 
 export { makeBlockView, type BlockView } from "./view";
+export { openPort } from "./browser";

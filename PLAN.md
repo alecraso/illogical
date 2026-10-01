@@ -733,12 +733,20 @@ to it, on the desktop and the phone.
       rather than through `tailscale serve`;
     - it identifies the caller by asking tailscaled who is connecting
       (`WhoIs`), the same path M4 uses for direct connections.
-  - **Domain (decided 2026-10-01):** `illogical.widgets.wtf` (geek already
-    has ACME and a Cloudflare token for `widgets.wtf`).
-  - **To check before building it:**
-    - that the DNS record resolves only to the tailnet IP;
-    - which port the listener uses (443 on the tailnet IP is serve's);
-    - that the certificate renews.
+  - **Checked (2026-10-01):**
+    - the domain is `illogical.widgets.wtf`: blocks are
+      `b-<id>.illogical.widgets.wtf`;
+    - `*.illogical.widgets.wtf` is an A record (DNS only) for
+      100.71.195.119, and resolves to nothing else (no AAAA) through 1.1.1.1
+      and 8.8.8.8;
+    - the listener is `100.71.195.119:7443` (443 is serve's, 8443 wispd's);
+    - the daemon gets the wildcard certificate itself (Let's Encrypt,
+      DNS-01 through Cloudflare's API with wisp's token: staging, then
+      production, about 25s each) and renews it two thirds of the way
+      through its life. A client on the tailnet verifies the chain.
+  - **Dev scheme, for tests:** with no domain, blocks are
+    `http://b-<id>-<key>.localhost:<port>` on loopback. There is no WhoIs
+    there, so the name carries a random key from the block's config.
 - **Security: proxied pages must never share the app's origin.**
   - `tailscale serve` adds your identity to every request, so any script
     served from the app's origin can drive every terminal you have. A dev
@@ -770,6 +778,10 @@ to it, on the desktop and the phone.
   - hot reload works on the desktop and the phone;
   - a script in that app can't reach the illogical API;
   - closing the tab deletes the VM and both blocks.
+- **Done 2026-10-01** (`web/e2e/vm-dev-server.spec.ts`, against a real
+  Vite in a VM tab; `browser-ports.spec.ts` and `crates/daemon/tests/sites.rs`
+  in the dev scheme). The real-domain scheme was checked by hand on geek;
+  the S6 checklist on real phones is still open.
 
 #### M6b: agent blocks (ACP clients)
 

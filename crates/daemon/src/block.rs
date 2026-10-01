@@ -83,6 +83,11 @@ impl BlockCtx {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Attention(state, why.into()) });
     }
 
+    /// Something happened that the event stream should carry.
+    pub fn event(&self, kind: illogical_proto::EventKind) {
+        let _ = self.notices.send(Notice { pane: self.id, what: What::Event(kind) });
+    }
+
     /// The block's log: its own segment store.
     pub fn log(&self) -> std::io::Result<PaneLog> {
         PaneLog::open(self.dir.clone())
