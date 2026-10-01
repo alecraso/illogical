@@ -57,6 +57,18 @@ pub fn install(start: bool, daemon_args: &[String]) -> anyhow::Result<()> {
         println!("installed {}", dest.display());
     }
 
+    // The CLI, built next to the daemon, goes next to it too (panes find it
+    // on PATH there).
+    if let Some(cli) = exe.parent().map(|d| d.join("illogical")).filter(|p| p.exists()) {
+        let tmp = bin_dir.join(".illogical.new");
+        fs::copy(&cli, &tmp).with_context(|| format!("copying {}", cli.display()))?;
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))?;
+        fs::rename(&tmp, bin_dir.join("illogical"))?;
+        println!("installed {}", bin_dir.join("illogical").display());
+    } else {
+        println!("note: no `illogical` CLI next to {}; build it with `cargo build -p illogical`", exe.display());
+    }
+
     let unit_dir = home.join(".config/systemd/user");
     fs::create_dir_all(&unit_dir)?;
     let unit = unit_dir.join(UNIT);

@@ -350,6 +350,18 @@ impl VtEngine for GhosttyEngine {
         String::from_utf8_lossy(&self.format(Format::Plain, false, false)).into_owned()
     }
 
+    fn vt_text(&self) -> String {
+        String::from_utf8_lossy(&self.format(Format::Vt, false, false)).into_owned()
+    }
+
+    fn html(&self) -> String {
+        String::from_utf8_lossy(&self.format(Format::Html, false, false)).into_owned()
+    }
+
+    fn dec_mode(&self, mode: u16) -> bool {
+        self.term.mode(Mode::new(mode, ModeKind::Dec)).unwrap_or(false)
+    }
+
     fn alt_screen(&self) -> bool {
         self.term.active_screen().ok() == Some(Screen::Alternate)
     }

@@ -10,6 +10,7 @@ declare global {
       screen(pane: PaneId): string;
       size(pane: PaneId): [number, number] | null;
       offset(pane: PaneId): number | null;
+      selection(pane: PaneId): string;
     };
   }
 }

@@ -13,6 +13,8 @@ pub use illogical_core::{
     ClientId, Dir, Edge, Intent, Layout, Node, NodeId, PaneId, Rect, Session, SessionId, SplitRect, TabId,
 };
 
+pub mod api;
+
 /// Control messages from a client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -33,6 +35,9 @@ pub enum ClientMsg {
     Intent { id: Option<u64>, intent: Intent },
     /// Something about one pane rather than the layout.
     Pane { pane: PaneId, op: PaneOp },
+    /// The pane this client is looking at, if its window has focus (`None`
+    /// when it doesn't). Attention notifications skip panes someone sees.
+    Focus { pane: Option<PaneId> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +48,67 @@ pub enum PaneOp {
     SetPolicy { policy: Policy },
     /// Delete the pane's saved history and clear its scrollback.
     Purge,
+    /// Shell integration (command marks, exit codes, cwd) for shells started
+    /// in this pane from now on.
+    SetIntegration { on: bool },
+    /// Set the pane's attention state (a client dismissing a badge).
+    Attention { state: Attention },
+}
+
+/// Whether a pane wants you: the cheap version of an "agent block".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Attention {
+    /// At a prompt, or nothing to report.
+    #[default]
+    Idle,
+    /// A command is running and producing output.
+    Working,
+    /// It asked for you (a notification, a bell, an agent's hook) or an agent
+    /// went quiet mid-command.
+    NeedsInput,
+    /// A long command finished while nobody was looking.
+    Done,
+}
+
+/// A command the shell integration reported.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub text: Option<String>,
+    pub cwd: Option<String>,
+    pub exit: Option<i32>,
+    pub started_ms: u64,
+    pub ended_ms: Option<u64>,
+    /// Stream offsets of its output: `tail --from start`.
+    pub start: u64,
+    pub end: Option<u64>,
+}
+
+/// Something that happened, as streamed by `illogical events` and the event
+/// API (one JSON object per line).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Event {
+    pub at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+    #[serde(flatten)]
+    pub kind: EventKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EventKind {
+    Prompt,
+    CommandStart { text: Option<String> },
+    CommandEnd { text: Option<String>, exit: Option<i32> },
+    Cwd { path: String },
+    Notify { title: String, body: String },
+    Bell,
+    Attention { state: Attention },
+    Exit { code: Option<i32> },
+    Opened,
+    Closed,
+    Layout { rev: u64 },
 }
 
 /// What a pane does when the daemon restores it. Its scrollback always comes
@@ -125,6 +191,21 @@ pub struct PaneInfo {
     /// Enter).
     pub running: bool,
     pub policy: Policy,
+    /// Running now, per the shell integration.
+    #[serde(default)]
+    pub current: Option<CommandInfo>,
+    /// The last command that finished.
+    #[serde(default)]
+    pub last: Option<CommandInfo>,
+    #[serde(default)]
+    pub attention: Attention,
+    /// Shell integration for shells started in this pane.
+    #[serde(default = "yes")]
+    pub integration: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// Binary frame kinds.

@@ -56,6 +56,18 @@ export type Policy =
   | { kind: "rerun"; confirm: boolean }
   | { kind: "hook"; command: string };
 
+export type Attention = "idle" | "working" | "needs_input" | "done";
+
+export interface CommandInfo {
+  text: string | null;
+  cwd: string | null;
+  exit: number | null;
+  started_ms: number;
+  ended_ms: number | null;
+  start: number;
+  end: number | null;
+}
+
 export interface PaneInfo {
   id: PaneId;
   epoch: number;
@@ -65,9 +77,18 @@ export interface PaneInfo {
   /** False while a restored pane waits for Enter. */
   running: boolean;
   policy: Policy;
+  current: CommandInfo | null;
+  last: CommandInfo | null;
+  attention: Attention;
+  /** Shell integration for shells started in this pane. */
+  integration: boolean;
 }
 
-export type PaneOp = { op: "set_policy"; policy: Policy } | { op: "purge" };
+export type PaneOp =
+  | { op: "set_policy"; policy: Policy }
+  | { op: "purge" }
+  | { op: "set_integration"; on: boolean }
+  | { op: "attention"; state: Attention };
 
 export interface State {
   rev: number;
@@ -96,7 +117,8 @@ export type ClientMsg =
   | { type: "detach"; panes: PaneId[] }
   | { type: "view"; tab: TabId; cols: number; rows: number; zoom: PaneId | null; claim: boolean }
   | { type: "intent"; id: number | null; intent: Intent }
-  | { type: "pane"; pane: PaneId; op: PaneOp };
+  | { type: "pane"; pane: PaneId; op: PaneOp }
+  | { type: "focus"; pane: PaneId | null };
 
 export type ServerMsg =
   | { type: "hello"; version: string; client: ClientId; state: State }

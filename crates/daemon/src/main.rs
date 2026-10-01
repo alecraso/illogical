@@ -1,10 +1,16 @@
 //! illogicald: owns the terminals; clients attach over WebSocket.
 
 mod access;
+mod api;
+mod history;
 mod install;
+mod keys;
 mod mux;
+mod osc;
 mod pane;
+mod push;
 mod server;
+mod shellint;
 mod shim;
 mod store;
 mod sys;
@@ -69,6 +75,11 @@ struct RunArgs {
     /// Don't merge the systemd user manager's environment into new panes.
     #[arg(long)]
     no_manager_env: bool,
+
+    /// Start shells without the integration that marks prompts, commands
+    /// and exit codes.
+    #[arg(long)]
+    no_shell_integration: bool,
 }
 
 fn home() -> PathBuf {
@@ -107,6 +118,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
         owner = owner.or(t.login);
     }
     info!(owner = owner.as_deref().unwrap_or("<none: tailnet requests refused>"), "tailnet owner");
+    let owner_login = owner.clone();
     let access = access::Access::new(args.listen.port(), &public_hosts, &args.allow_origins, owner);
 
     let (shell, shell_args) = match &args.shell {
@@ -127,12 +139,46 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     info!(state = %state_dir.display(), "state directory");
     let launch = pane::Launcher::detect();
     info!(scopes = launch.scopes, fd_store = launch.fd_store, kept = kept.len(), "pane launcher");
-    let config = mux::Config { shell, shell_args, home: home(), manager_env: !args.no_manager_env, launch };
-    let mux = mux::start(config, store, kept);
+    store.prune_closed(store::CLOSED_RETENTION_MS);
+    let integration = if args.no_shell_integration {
+        None
+    } else {
+        match shellint::Integration::install(state_dir.join("shell")) {
+            Ok(i) => Some(i),
+            Err(e) => {
+                tracing::warn!(error = %e, "can't install shell integration; panes run without it");
+                None
+            }
+        }
+    };
+    let socket = state_dir.join("sock");
+    let subject = format!("mailto:{}", owner_login.clone().unwrap_or_else(|| "illogical@localhost".into()));
+    let push = match push::Push::open(state_dir.join("push"), subject) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            tracing::warn!(error = %e, "web push is off");
+            None
+        }
+    };
+    let config = mux::Config {
+        shell,
+        shell_args,
+        home: home(),
+        manager_env: !args.no_manager_env,
+        launch,
+        integration,
+        socket: socket.clone(),
+    };
+    let mux = mux::start(config, store, kept, push.clone());
 
-    let app = server::App::new(access, mux.clone());
+    let app = server::App::new(access, mux.clone(), push);
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
+    // The CLI's socket: replace a stale one from a previous run.
+    let _ = std::fs::remove_file(&socket);
+    let local = tokio::net::UnixListener::bind(&socket)?;
+    info!(socket = %socket.display(), "listening");
+    tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
     sys::notify("READY=1");
     tokio::select! {
         r = axum::serve(listener, server::router(app)) => r?,

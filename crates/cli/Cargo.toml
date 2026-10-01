@@ -1,0 +1,17 @@
+[package]
+name = "illogical"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+illogical-proto = { version = "0.1.0", path = "../proto" }
+nix = { version = "0.31.3", features = ["term", "poll", "signal", "ioctl"] }
+serde_json = "1.0.151"
+tungstenite = "0.30.0"
+
+[lints]
+workspace = true

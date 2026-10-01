@@ -45,6 +45,17 @@ export class Client {
   readonly panes = new Map<PaneId, PaneEntry>();
   /** Sticky modifiers from the phone key bar, applied to the next key. */
   modifiers: Modifiers = { ctrl: false, alt: false };
+  private focused: PaneId | null | undefined = undefined;
+
+  /** Tell the daemon which pane this client is looking at (`null`: none,
+   * the window is in the background). Attention skips panes being looked
+   * at. */
+  focusPane(pane: PaneId | null) {
+    if (pane === this.focused || !this.connected) return;
+    this.focused = pane;
+    this.send({ type: "focus", pane });
+  }
+
   /** Set by the UI: make this client's size the tab's size. */
   claim: (tab: TabId) => void = () => {};
 
@@ -191,6 +202,11 @@ export class Client {
     return out;
   }
 
+  /** Show a short message in the status pill. */
+  toast(message: string) {
+    this.showError(message);
+  }
+
   private showError(message: string) {
     this.error = message;
     clearTimeout(this.errorTimer);
@@ -206,6 +222,7 @@ export class Client {
       case "hello":
         this.clientId = msg.client;
         this.connected = true;
+        this.focused = undefined;
         this.retry = 0;
         this.applyState(msg.state, true);
         break;

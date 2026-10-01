@@ -1,7 +1,7 @@
 // The one place that knows about xterm.js, so the renderer can be swapped
 // (ghostty-web) without touching the rest of the client.
 
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IDecoration, type IMarker } from "@xterm/xterm";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -16,10 +16,32 @@ export const FONT_SIZE = 14;
  * and a phone shows one pane at a time, so the speed isn't needed. */
 const WEBGL = !matchMedia("(pointer: coarse)").matches;
 
+/** A finished command, from the shell integration's OSC 133/633 marks. */
+export interface CommandMark {
+  text: string;
+  exit: number | null;
+  /** First line of its output. */
+  start: IMarker;
+  /** The line after its output (the next prompt). */
+  end: IMarker;
+  deco?: IDecoration;
+}
+
+/** VS Code's OSC 633;E escaping: `\\` and `\xHH`. */
+function unescape633(s: string): string {
+  return s.replace(/\\(\\|x([0-9a-fA-F]{2}))/g, (_, all: string, hex?: string) =>
+    hex ? String.fromCharCode(parseInt(hex, 16)) : all,
+  );
+}
+
 export class TerminalView {
   readonly host: HTMLDivElement;
   private term: Terminal;
   private webgl: WebglAddon | undefined;
+  readonly marks: CommandMark[] = [];
+  private pendingText = "";
+  private pending: { text: string; start: IMarker } | null = null;
+  private markMenu: ((mark: CommandMark, e: MouseEvent) => void) | undefined;
 
   constructor() {
     this.host = document.createElement("div");
@@ -32,11 +54,13 @@ export class TerminalView {
       scrollback: 10000,
       allowProposedApi: true,
       macOptionIsMeta: true,
+      overviewRuler: { width: 8 },
     });
     this.term.loadAddon(new Unicode11Addon());
     this.term.unicode.activeVersion = "11";
     this.term.loadAddon(new WebLinksAddon());
     this.swallowQueries();
+    this.watchCommands();
     this.term.attachCustomKeyEventHandler((e) => this.clipboardKeys(e));
     this.term.open(this.host);
   }
@@ -61,6 +85,82 @@ export class TerminalView {
       // Color queries contain "?"; setting colors still goes through.
       p.registerOscHandler(osc, (data) => data.includes("?"));
     }
+  }
+
+  /** Follow the shell integration: where each command's output starts and
+   * ends, and how it exited. Marks live in this browser's terminal; a
+   * snapshot (reconnecting, a new window) starts without them. */
+  private watchCommands() {
+    const p = this.term.parser;
+    p.registerOscHandler(633, (data) => {
+      if (data.startsWith("E;")) this.pendingText = unescape633(data.slice(2).split(";")[0]);
+      return false;
+    });
+    p.registerOscHandler(133, (data) => {
+      const [kind, arg] = data.split(";");
+      if (kind === "C") {
+        const start = this.term.registerMarker(0);
+        if (start) this.pending = { text: this.pendingText, start };
+        this.pendingText = "";
+      } else if (kind === "D" && this.pending) {
+        const end = this.term.registerMarker(0);
+        const exit = arg !== undefined && arg !== "" ? Number(arg) : null;
+        if (end) this.addMark({ ...this.pending, exit, end });
+        this.pending = null;
+      }
+      return false;
+    });
+  }
+
+  private addMark(mark: CommandMark) {
+    const rows = Math.max(1, mark.end.line - mark.start.line);
+    const failed = mark.exit !== null && mark.exit !== 0;
+    const deco = this.term.registerDecoration({
+      marker: mark.start,
+      x: 0,
+      width: 1,
+      height: rows,
+      layer: "top",
+      overviewRulerOptions: { color: failed ? "#f38ba8" : "#a6e3a1", position: "left" },
+    });
+    if (!deco) return;
+    mark.deco = deco;
+    deco.onRender((el) => {
+      el.classList.add("cmd-mark", failed ? "fail" : "ok");
+      // A thin stripe at the left edge rather than covering the first cell.
+      el.style.width = "3px";
+      el.title = `${mark.text || "command"}${mark.exit !== null ? ` · exit ${mark.exit}` : ""}\nClick to select its output`;
+      el.onclick = () => this.selectOutput(mark);
+      el.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.markMenu?.(mark, e);
+      };
+    });
+    mark.start.onDispose(() => {
+      const i = this.marks.indexOf(mark);
+      if (i >= 0) this.marks.splice(i, 1);
+    });
+    this.marks.push(mark);
+  }
+
+  selectOutput(mark: CommandMark) {
+    if (mark.end.line > mark.start.line) this.term.selectLines(mark.start.line, mark.end.line - 1);
+  }
+
+  outputText(mark: CommandMark): string {
+    const b = this.term.buffer.active;
+    const lines: string[] = [];
+    for (let i = mark.start.line; i < mark.end.line; i++) lines.push(b.getLine(i)?.translateToString(true) ?? "");
+    return lines.join("\n");
+  }
+
+  selection(): string {
+    return this.term.getSelection();
+  }
+
+  onMarkMenu(cb: (mark: CommandMark, e: MouseEvent) => void) {
+    this.markMenu = cb;
   }
 
   /** Ctrl+Shift+C copies the selection; Ctrl+Shift+V is left to the
@@ -139,6 +239,8 @@ export class TerminalView {
   /** Clear everything (screen, scrollback, modes) before a snapshot. */
   reset() {
     this.term.reset();
+    for (const m of this.marks.splice(0)) m.deco?.dispose();
+    this.pending = null;
   }
 
   focus() {

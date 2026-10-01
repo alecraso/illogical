@@ -36,21 +36,44 @@ struct Assets;
 pub struct App {
     pub access: Access,
     pub mux: MuxHandle,
+    pub push: Option<crate::push::Push>,
     next_client: AtomicU64,
 }
 
 impl App {
-    pub fn new(access: Access, mux: MuxHandle) -> Arc<Self> {
-        Arc::new(Self { access, mux, next_client: AtomicU64::new(1) })
+    pub fn new(access: Access, mux: MuxHandle, push: Option<crate::push::Push>) -> Arc<Self> {
+        Arc::new(Self { access, mux, push, next_client: AtomicU64::new(1) })
     }
 }
 
+/// Over TCP (loopback, behind `tailscale serve`): every request passes the
+/// access checks, and API calls from a browser must come from our own pages.
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws))
+        .merge(crate::api::routes().layer(middleware::from_fn_with_state(app.clone(), api_origin)))
         .fallback(asset)
         .layer(middleware::from_fn_with_state(app.clone(), guard))
         .with_state(app)
+}
+
+/// Over the Unix socket (the CLI, programs in panes): the socket lives in
+/// the user's private state directory, so reaching it is the check.
+pub fn local_router(app: Arc<App>) -> Router {
+    Router::new().route("/ws", get(local_ws)).merge(crate::api::routes()).with_state(app)
+}
+
+/// Cross-site requests can't read our answers, but a POST still lands: so a
+/// browser's API call must come from one of our own origins. Programs (no
+/// Origin header) are fine.
+async fn api_origin(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
+    match app.access.check_origin(req.headers()) {
+        Ok(()) => next.run(req).await,
+        Err((status, why)) => {
+            warn!(%why, uri = %req.uri(), "rejected API request");
+            (status, why).into_response()
+        }
+    }
 }
 
 async fn guard(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
@@ -92,6 +115,10 @@ async fn ws(State(app): State<Arc<App>>, headers: HeaderMap, upgrade: WebSocketU
         warn!(%why, "rejected websocket");
         return (status, why).into_response();
     }
+    upgrade.on_upgrade(move |socket| connection(app, socket))
+}
+
+async fn local_ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| connection(app, socket))
 }
 

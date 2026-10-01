@@ -1,0 +1,247 @@
+//! Reading history back: commands across panes (open and recently closed),
+//! full-text search of their output, and asciicast export. Everything here
+//! reads the pane directories the store writes; nothing needs the panes to
+//! be running.
+
+use std::path::Path;
+
+use illogical_proto::{
+    Event as ApiEvent, EventKind, PaneId,
+    api::{HistoryEntry, SearchHit},
+};
+use regex::Regex;
+
+use crate::{
+    osc::strip,
+    store::{Event, PaneLog, StateDir, read_events},
+};
+
+#[derive(Debug, Default)]
+pub struct Filter {
+    pub pane: Option<PaneId>,
+    pub failed: bool,
+    pub since_ms: Option<u64>,
+    pub cwd: Option<String>,
+    pub matching: Option<Regex>,
+}
+
+/// Commands (from the shell integration's marks), oldest first.
+pub fn commands(dir: &Path, pane: PaneId, open: bool) -> Vec<HistoryEntry> {
+    let mut out: Vec<HistoryEntry> = Vec::new();
+    let mut cwd: Option<String> = None;
+    for (offset, e) in read_events(dir) {
+        match e {
+            Event::Cwd { path } => cwd = Some(path),
+            Event::Command { at_ms, text, cwd: c } => out.push(HistoryEntry {
+                pane,
+                open,
+                text,
+                cwd: c.or(cwd.clone()),
+                exit: None,
+                started_ms: at_ms,
+                ended_ms: None,
+                start: offset,
+                end: None,
+            }),
+            Event::End { at_ms, exit } => {
+                if let Some(last) = out.last_mut().filter(|l| l.end.is_none()) {
+                    last.end = Some(offset);
+                    last.ended_ms = Some(at_ms);
+                    last.exit = exit;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+pub fn history(store: &StateDir, f: &Filter, limit: usize) -> Vec<HistoryEntry> {
+    let mut all: Vec<HistoryEntry> = store
+        .pane_dirs()
+        .into_iter()
+        .filter(|(id, _, _)| f.pane.is_none_or(|p| p == *id))
+        .flat_map(|(id, open, dir)| commands(&dir, id, open))
+        .filter(|c| !f.failed || c.exit.is_some_and(|e| e != 0))
+        .filter(|c| f.since_ms.is_none_or(|s| c.started_ms >= s))
+        .filter(|c| f.cwd.as_ref().is_none_or(|d| c.cwd.as_ref().is_some_and(|x| x.starts_with(d.as_str()))))
+        .filter(|c| f.matching.as_ref().is_none_or(|re| c.text.as_deref().is_some_and(|t| re.is_match(t))))
+        .collect();
+    all.sort_by_key(|c| c.started_ms);
+    let skip = all.len().saturating_sub(limit);
+    all.split_off(skip)
+}
+
+/// Lines of output (escape sequences stripped) matching `re`, newest panes
+/// first, with the command each came from.
+pub fn search(store: &StateDir, re: &Regex, since_ms: Option<u64>, limit: usize) -> Vec<SearchHit> {
+    let mut hits = Vec::new();
+    for (pane, open, dir) in store.pane_dirs() {
+        let events = read_events(&dir);
+        // Skip output older than `since`: start at the first time mark at
+        // or after it, and skip panes with nothing that recent.
+        let from = match since_ms {
+            None => 0,
+            Some(s) => match events.iter().find_map(|(o, e)| match e {
+                Event::Time { at_ms } | Event::Command { at_ms, .. } if *at_ms >= s => Some(*o),
+                _ => None,
+            }) {
+                Some(o) => o,
+                None => continue,
+            },
+        };
+        let cmds = commands(&dir, pane, open);
+        let Ok(log) = PaneLog::open(dir.clone()) else { continue };
+        let Ok((start, bytes)) = log.read_from(from) else { continue };
+        let mut at = start;
+        for raw in bytes.split(|b| *b == b'\n') {
+            let line = strip(raw);
+            let line = line.trim_end_matches('\n');
+            if re.is_match(line) {
+                // The first output line begins before the command's start
+                // mark (the mark's own bytes open that line), so compare
+                // with where the line ends.
+                let line_end = at + raw.len() as u64;
+                let command = cmds
+                    .iter()
+                    .rev()
+                    .find(|c| c.start <= line_end && c.end.is_none_or(|e| at < e))
+                    .and_then(|c| c.text.clone());
+                hits.push(SearchHit { pane, open, offset: at, line: line.to_owned(), command });
+                if hits.len() >= limit {
+                    return hits;
+                }
+            }
+            at += raw.len() as u64 + 1;
+        }
+    }
+    hits
+}
+
+/// What a pane's index says happened, as API events (for `events` without
+/// `--follow`).
+pub fn stored_events(dir: &Path, pane: PaneId, since_ms: u64) -> Vec<ApiEvent> {
+    let mut out = Vec::new();
+    let mut last_text: Option<String> = None;
+    for (_, e) in read_events(dir) {
+        let (at_ms, kind) = match e {
+            Event::Prompt { at_ms } => (at_ms, EventKind::Prompt),
+            Event::Command { at_ms, text, .. } => {
+                last_text = text.clone();
+                (at_ms, EventKind::CommandStart { text })
+            }
+            Event::End { at_ms, exit } => (at_ms, EventKind::CommandEnd { text: last_text.take(), exit }),
+            Event::Notify { at_ms, title, body } => (at_ms, EventKind::Notify { title, body }),
+            Event::Bell { at_ms } => (at_ms, EventKind::Bell),
+            _ => continue,
+        };
+        if at_ms >= since_ms {
+            out.push(ApiEvent { at_ms, pane: Some(pane), kind });
+        }
+    }
+    out
+}
+
+/// The pane's output as asciicast v3 (`asciinema play`). Timing comes from
+/// the index's time marks, so it's accurate to about a second.
+pub fn export_cast(dir: &Path, title: &str) -> std::io::Result<String> {
+    let log = PaneLog::open(dir.to_owned())?;
+    let (start, bytes) = log.read_from(0)?;
+    let events = read_events(dir);
+    let (cols, rows) = events
+        .iter()
+        .find_map(|(_, e)| match e {
+            Event::Resize { cols, rows } => Some((*cols, *rows)),
+            _ => None,
+        })
+        .unwrap_or((80, 24));
+    let first_ms = events
+        .iter()
+        .find_map(|(_, e)| match e {
+            Event::Time { at_ms } | Event::Restore { at_ms } | Event::Command { at_ms, .. } => Some(*at_ms),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let header = serde_json::json!({
+        "version": 3,
+        "term": { "cols": cols, "rows": rows },
+        "timestamp": first_ms / 1000,
+        "title": title,
+    });
+    let mut out = format!("{header}\n");
+    let mut last_ms = first_ms;
+    let mut at = start;
+    let mut emit = |out: &mut String, at_ms: u64, code: &str, data: String| {
+        let interval = at_ms.saturating_sub(last_ms) as f64 / 1000.0;
+        last_ms = last_ms.max(at_ms);
+        out.push_str(&serde_json::json!([interval, code, data]).to_string());
+        out.push('\n');
+    };
+    let mut now = first_ms;
+    for (offset, e) in events.iter().filter(|(o, _)| *o >= start) {
+        if *offset > at {
+            let chunk = &bytes[(at - start) as usize..((*offset - start) as usize).min(bytes.len())];
+            emit(&mut out, now, "o", String::from_utf8_lossy(chunk).into_owned());
+            at = *offset;
+        }
+        match e {
+            Event::Time { at_ms } | Event::Restore { at_ms } | Event::Prompt { at_ms } | Event::Bell { at_ms } => {
+                now = now.max(*at_ms)
+            }
+            Event::Command { at_ms, text, .. } => {
+                now = now.max(*at_ms);
+                emit(&mut out, now, "m", text.clone().unwrap_or_default());
+            }
+            Event::End { at_ms, .. } => now = now.max(*at_ms),
+            Event::Resize { cols, rows } => emit(&mut out, now, "r", format!("{cols}x{rows}")),
+            _ => {}
+        }
+    }
+    if (at - start) < bytes.len() as u64 {
+        emit(&mut out, now, "o", String::from_utf8_lossy(&bytes[(at - start) as usize..]).into_owned());
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{PaneLog, now_ms};
+
+    #[test]
+    fn commands_search_and_cast_from_a_pane_dir() {
+        let root = std::env::temp_dir().join(format!("illogical-history-{}-{}", std::process::id(), now_ms()));
+        let store = StateDir::open(root.clone()).unwrap();
+        let mut log = PaneLog::open(store.pane_dir(3)).unwrap();
+        log.record(0, Event::Resize { cols: 100, rows: 30 }).unwrap();
+        log.record(0, Event::Time { at_ms: 1_000 }).unwrap();
+        log.append(b"$ make test\r\n").unwrap();
+        log.record(13, Event::Command { at_ms: 1_000, text: Some("make test".into()), cwd: Some("/src".into()) })
+            .unwrap();
+        log.append(b"\x1b[31mFAILED\x1b[0m: 2 tests\r\n").unwrap();
+        log.record(log.end(), Event::End { at_ms: 4_000, exit: Some(2) }).unwrap();
+        log.append(b"$ ").unwrap();
+
+        let h = history(&store, &Filter { failed: true, ..Default::default() }, 10);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].text.as_deref(), Some("make test"));
+        assert_eq!((h[0].exit, h[0].cwd.as_deref(), h[0].start), (Some(2), Some("/src"), 13));
+
+        let hits = search(&store, &Regex::new("FAILED").unwrap(), None, 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].line, "FAILED: 2 tests");
+        assert_eq!(hits[0].command.as_deref(), Some("make test"));
+
+        let cast = export_cast(&store.pane_dir(3), "t").unwrap();
+        let lines: Vec<&str> = cast.lines().collect();
+        assert!(lines[0].contains("\"version\":3") && lines[0].contains("\"cols\":100"));
+        assert!(cast.contains(r#""m","make test""#));
+        assert!(cast.contains("FAILED"));
+
+        // Retired (closed) panes still answer.
+        log.retire(3);
+        let h = history(&store, &Filter::default(), 10);
+        assert_eq!((h.len(), h[0].open), (1, false));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

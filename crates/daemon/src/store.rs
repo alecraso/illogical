@@ -50,6 +50,9 @@ pub struct PaneMeta {
     pub policy: Policy,
     pub cwd: Option<String>,
     pub command: Option<String>,
+    /// Shell integration for this pane's shells (`None`: the default, on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integration: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,24 +123,101 @@ impl StateDir {
     }
 
     /// Pane directories with no pane in the layout (closed while the daemon
-    /// was down, or left by a crash).
+    /// was down, or left by a crash) are retired like closed panes.
     pub fn remove_strays(&self, keep: &[PaneId]) {
         let Ok(entries) = fs::read_dir(self.root.join("panes")) else {
             return;
         };
         for e in entries.flatten() {
             let id = e.file_name().to_str().and_then(|n| n.parse::<PaneId>().ok());
-            if id.is_some_and(|id| !keep.contains(&id)) {
+            if let Some(id) = id.filter(|id| !keep.contains(id)) {
+                retire_dir(&e.path(), id);
+            }
+        }
+    }
+
+    /// Delete closed panes' history older than `max_age_ms`.
+    pub fn prune_closed(&self, max_age_ms: u64) {
+        let Ok(entries) = fs::read_dir(self.root.join("closed")) else { return };
+        let cutoff = now_ms().saturating_sub(max_age_ms);
+        for e in entries.flatten() {
+            let closed_at = e.file_name().to_str().and_then(|n| n.rsplit_once('-')?.1.parse::<u64>().ok());
+            if closed_at.is_some_and(|t| t < cutoff) {
                 let _ = fs::remove_dir_all(e.path());
             }
         }
     }
+
+    /// Every pane directory with history: open panes, then closed ones.
+    pub fn pane_dirs(&self) -> Vec<(PaneId, bool, PathBuf)> {
+        let mut out = Vec::new();
+        for (sub, open) in [("panes", true), ("closed", false)] {
+            let Ok(entries) = fs::read_dir(self.root.join(sub)) else { continue };
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let id = name.split('-').next().and_then(|n| n.parse::<PaneId>().ok());
+                if let Some(id) = id {
+                    out.push((id, open, e.path()));
+                }
+            }
+        }
+        out.sort_by_key(|(id, open, _)| (!*open, *id));
+        out
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "e", rename_all = "snake_case")]
 pub enum Event {
-    Resize { cols: u16, rows: u16 },
-    Restore { at_ms: u64 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    Restore {
+        at_ms: u64,
+    },
+    /// Wall time at this offset (written at most once a second of output),
+    /// for timing exports.
+    Time {
+        at_ms: u64,
+    },
+    /// A prompt was drawn.
+    Prompt {
+        at_ms: u64,
+    },
+    /// A command started; its output follows.
+    Command {
+        at_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+    },
+    /// The command that started last finished.
+    End {
+        at_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit: Option<i32>,
+    },
+    Cwd {
+        path: String,
+    },
+    Notify {
+        at_ms: u64,
+        title: String,
+        body: String,
+    },
+    Bell {
+        at_ms: u64,
+    },
+}
+
+/// One index line: `{"o":offset,"e":kind,...}`.
+#[derive(Serialize, Deserialize)]
+struct Line {
+    o: u64,
+    #[serde(flatten)]
+    event: Event,
 }
 
 /// One pane's output on disk: append-only segments, an index of events by
@@ -240,30 +320,14 @@ impl PaneLog {
     }
 
     pub fn record(&mut self, offset: u64, event: Event) -> io::Result<()> {
-        let line = match event {
-            Event::Resize { cols, rows } => format!("{offset} resize {cols} {rows}\n"),
-            Event::Restore { at_ms } => format!("{offset} restore {at_ms}\n"),
-        };
+        let mut line = serde_json::to_vec(&Line { o: offset, event }).map_err(io::Error::other)?;
+        line.push(b'\n');
         let path = self.dir.join("index");
-        private_file().create(true).append(true).open(&path)?.write_all(line.as_bytes())
+        private_file().create(true).append(true).open(&path)?.write_all(&line)
     }
 
     pub fn events(&self) -> Vec<(u64, Event)> {
-        let Ok(text) = fs::read_to_string(self.dir.join("index")) else {
-            return vec![];
-        };
-        text.lines()
-            .filter_map(|l| {
-                let mut w = l.split_whitespace();
-                let offset = w.next()?.parse().ok()?;
-                let event = match w.next()? {
-                    "resize" => Event::Resize { cols: w.next()?.parse().ok()?, rows: w.next()?.parse().ok()? },
-                    "restore" => Event::Restore { at_ms: w.next()?.parse().ok()? },
-                    _ => return None,
-                };
-                Some((offset, event))
-            })
-            .collect()
+        read_events(&self.dir)
     }
 
     pub fn save_checkpoint(&mut self, offset: u64, bytes: &[u8]) -> io::Result<()> {
@@ -291,8 +355,44 @@ impl PaneLog {
         Ok(())
     }
 
-    pub fn remove(self) {
-        let _ = fs::remove_dir_all(&self.dir);
+    /// The pane closed: keep its history a while (for `illogical history`
+    /// and `search`) under `closed/<id>-<time>`.
+    pub fn retire(self, pane: PaneId) {
+        retire_dir(&self.dir, pane);
+    }
+}
+
+/// A pane directory's index. Reads M2's space-separated lines too.
+pub fn read_events(dir: &Path) -> Vec<(u64, Event)> {
+    let Ok(text) = fs::read_to_string(dir.join("index")) else {
+        return vec![];
+    };
+    text.lines()
+        .filter_map(|l| {
+            if l.starts_with('{') {
+                let line: Line = serde_json::from_str(l).ok()?;
+                return Some((line.o, line.event));
+            }
+            let mut w = l.split_whitespace();
+            let offset = w.next()?.parse().ok()?;
+            let event = match w.next()? {
+                "resize" => Event::Resize { cols: w.next()?.parse().ok()?, rows: w.next()?.parse().ok()? },
+                "restore" => Event::Restore { at_ms: w.next()?.parse().ok()? },
+                _ => return None,
+            };
+            Some((offset, event))
+        })
+        .collect()
+}
+
+/// Days a closed pane's history is kept.
+pub const CLOSED_RETENTION_MS: u64 = 7 * 24 * 3600 * 1000;
+
+fn retire_dir(dir: &Path, pane: PaneId) {
+    let Some(root) = dir.parent().and_then(Path::parent) else { return };
+    let closed = root.join("closed");
+    if private_dir(&closed).is_err() || fs::rename(dir, closed.join(format!("{pane}-{}", now_ms()))).is_err() {
+        let _ = fs::remove_dir_all(dir);
     }
 }
 
@@ -351,7 +451,15 @@ mod tests {
         let mut log = PaneLog::open(dir.clone()).unwrap();
         log.record(0, Event::Resize { cols: 80, rows: 24 }).unwrap();
         log.record(42, Event::Restore { at_ms: 7 }).unwrap();
-        assert_eq!(log.events(), vec![(0, Event::Resize { cols: 80, rows: 24 }), (42, Event::Restore { at_ms: 7 })]);
+        let cmd = Event::Command { at_ms: 9, text: Some("echo \"a;b\"".into()), cwd: None };
+        log.record(50, cmd.clone()).unwrap();
+        assert_eq!(
+            log.events(),
+            vec![(0, Event::Resize { cols: 80, rows: 24 }), (42, Event::Restore { at_ms: 7 }), (50, cmd)]
+        );
+        // M2's format still reads.
+        fs::write(dir.join("index"), "0 resize 80 24\n60 restore 5\n").unwrap();
+        assert_eq!(log.events(), vec![(0, Event::Resize { cols: 80, rows: 24 }), (60, Event::Restore { at_ms: 5 })]);
         log.save_checkpoint(42, b"state\nbytes").unwrap();
         assert_eq!(log.load_checkpoint(), Some((42, b"state\nbytes".to_vec())));
         log.append(b"abc").unwrap();
@@ -374,8 +482,11 @@ mod tests {
             version: LAYOUT_VERSION,
             saved_at_ms: 1,
             mux,
-            panes: [(1, PaneMeta { policy: Policy::Rerun { confirm: true }, cwd: Some("/tmp".into()), command: None })]
-                .into(),
+            panes: [(
+                1,
+                PaneMeta { policy: Policy::Rerun { confirm: true }, cwd: Some("/tmp".into()), ..Default::default() },
+            )]
+            .into(),
         };
         state.save_layout(&saved).unwrap();
         assert_eq!(state.load_layout().unwrap(), Some(saved));

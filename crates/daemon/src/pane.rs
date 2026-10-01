@@ -33,7 +33,10 @@ use nix::{
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::store::{Event, PaneLog, now_ms};
+use crate::{
+    osc::Signal,
+    store::{Event, PaneLog, now_ms},
+};
 
 /// Output kept in memory for clients that reconnect: anything within this
 /// many bytes of the end is replayed instead of snapshotted.
@@ -66,17 +69,80 @@ pub struct Subscriber {
     pub ctrl: mpsc::UnboundedSender<ToClient>,
 }
 
-/// Told to the multiplexer when a pane's process ends. `close` is false when
-/// the pane stays (the process was killed by a signal, so it didn't mean to
-/// go away: a reboot, an OOM kill), true for an ordinary exit.
-#[derive(Debug, Clone, Copy)]
-pub struct Exit {
+/// What a pane tells the multiplexer.
+#[derive(Debug, Clone)]
+pub struct Notice {
     pub pane: PaneId,
-    pub code: Option<i32>,
-    pub close: bool,
+    pub what: What,
 }
 
-pub type ExitSink = mpsc::UnboundedSender<Exit>;
+#[derive(Debug, Clone)]
+pub enum What {
+    /// The process ended. `close` is false when the pane stays: the process
+    /// was killed by a signal (it didn't mean to go away: a reboot, an OOM
+    /// kill), or the pane holds on exit (`illogical run`).
+    Exited { code: Option<i32>, close: bool },
+    /// A process started in a pane that was waiting.
+    Started,
+    /// Structure in the output: prompts, commands, cwd, notifications.
+    Signal(Signal),
+    /// Output started flowing (true) or has been quiet for a while (false).
+    Busy(bool),
+}
+
+pub type NoticeSink = mpsc::UnboundedSender<Notice>;
+
+/// A command as the shell integration reported it, with where its output
+/// sits in the pane's stream.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct CommandRec {
+    pub text: Option<String>,
+    pub cwd: Option<String>,
+    /// Stream offset where its output starts.
+    pub start: u64,
+    /// Stream offset where it finished, once it has.
+    pub end: Option<u64>,
+    pub started_ms: u64,
+    pub ended_ms: Option<u64>,
+    pub exit: Option<i32>,
+}
+
+/// What a pane's thread knows that others want to read without asking it.
+#[derive(Debug, Clone, Default)]
+pub struct Status {
+    /// From OSC 7, which (unlike /proc) works over ssh too.
+    pub cwd: Option<String>,
+    /// Running now.
+    pub current: Option<CommandRec>,
+    /// The last one that finished.
+    pub last: Option<CommandRec>,
+    pub busy: bool,
+    /// Stream offset just past the last byte of output.
+    pub end: u64,
+    /// Stream offset when input was last written: `wait` looks for what
+    /// happened after it.
+    pub input_at: u64,
+    /// How the last process ended (`Some(code)`), until another starts.
+    pub exited: Option<Option<i32>>,
+    pub modes: crate::keys::Modes,
+}
+
+/// Quiet this long and a busy pane counts as quiet.
+const QUIET: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureFormat {
+    Text,
+    Ansi,
+    Html,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureScope {
+    Screen,
+    Scrollback,
+    LastCommand,
+}
 
 enum Cmd {
     Output(Vec<u8>),
@@ -87,6 +153,7 @@ enum Cmd {
     Input(Vec<u8>),
     Purge,
     Checkpoint(Sender<()>),
+    Capture { format: CaptureFormat, scope: CaptureScope, reply: Sender<String> },
     Close,
 }
 
@@ -96,6 +163,7 @@ pub struct PaneHandle {
     pub epoch: u64,
     pid: Arc<AtomicU32>,
     running: Arc<AtomicBool>,
+    status: Arc<std::sync::Mutex<Status>>,
     tx: Sender<Cmd>,
 }
 
@@ -126,6 +194,25 @@ impl PaneHandle {
         if self.tx.send(Cmd::Checkpoint(tx)).is_ok() {
             let _ = rx.recv_timeout(timeout);
         }
+    }
+    pub fn status(&self) -> Status {
+        self.status.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+    /// The pane's screen, scrollback or last command as text, ANSI or HTML.
+    pub fn capture(&self, format: CaptureFormat, scope: CaptureScope) -> Option<String> {
+        let (tx, rx) = bounded(1);
+        self.tx.send(Cmd::Capture { format, scope, reply: tx }).ok()?;
+        rx.recv_timeout(Duration::from_secs(5)).ok()
+    }
+    /// Note that input is about to be sent, before it's queued: a `wait`
+    /// that follows a `send` then sees only what happens after it.
+    pub fn mark_input(&self) {
+        if let Ok(mut st) = self.status.lock() {
+            st.input_at = st.end;
+        }
+    }
+    pub fn pid_now(&self) -> Option<u32> {
+        self.pid()
     }
     pub fn running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
@@ -182,6 +269,12 @@ pub enum Start {
     /// Take over a terminal (and the program on it) that outlived the
     /// previous daemon.
     Adopt(OwnedFd),
+    /// Run a command (`illogical run`), recorded as a command with this
+    /// text, so it has history, events and an exit code like any other.
+    Run {
+        spawn: Spawn,
+        text: String,
+    },
     /// Show `banner` and wait: Enter runs `enter`, Escape runs `escape`.
     Wait {
         banner: String,
@@ -201,7 +294,10 @@ pub struct Setup {
     /// What a pane whose process was killed offers to run instead.
     pub shell: Spawn,
     pub launch: Launcher,
-    pub on_exit: ExitSink,
+    /// Keep the pane when its program exits normally (`illogical run`), so
+    /// its output and exit code can still be read.
+    pub hold: bool,
+    pub notices: NoticeSink,
 }
 
 /// How pane processes are started: through the shim (so a restarted daemon
@@ -453,22 +549,30 @@ struct State {
     launch: Launcher,
     /// The shim's record of the pane's program.
     record: PathBuf,
-    on_exit: ExitSink,
+    hold: bool,
+    notices: NoticeSink,
     events: Sender<Cmd>,
     pid: Arc<AtomicU32>,
     running: Arc<AtomicBool>,
     unsaved: u64,
     last_output: Instant,
+    scanner: crate::osc::Scanner,
+    /// The command line reported just before its command starts.
+    pending_text: Option<String>,
+    status: Arc<std::sync::Mutex<Status>>,
+    last_time_mark: Instant,
 }
 
 pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
-    let Setup { id, cols, rows, log, restore, start, shell, launch, on_exit } = setup;
+    let Setup { id, cols, rows, log, restore, start, shell, launch, hold, notices } = setup;
     let record = log.dir().join("process");
     let (tx, rx) = unbounded();
     let epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
     let pid = Arc::new(AtomicU32::new(0));
     let running = Arc::new(AtomicBool::new(false));
-    let handle = PaneHandle { id, epoch, pid: pid.clone(), running: running.clone(), tx: tx.clone() };
+    let status = Arc::new(std::sync::Mutex::new(Status { end: log.end(), ..Default::default() }));
+    let handle =
+        PaneHandle { id, epoch, pid: pid.clone(), running: running.clone(), status: status.clone(), tx: tx.clone() };
     thread::Builder::new().name(format!("pane{id}-vt")).spawn(move || {
         let mut log = log;
         let engine = if restore { restore_engine(&log, id, cols, rows) } else { GhosttyEngine::new(cols, rows) };
@@ -487,12 +591,17 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             shell,
             launch,
             record,
-            on_exit,
+            hold,
+            notices,
             events: tx,
             pid,
             running,
             unsaved: 0,
             last_output: Instant::now(),
+            scanner: crate::osc::Scanner::new(),
+            pending_text: None,
+            status,
+            last_time_mark: Instant::now() - Duration::from_secs(60),
         };
         let adopting = matches!(start, Start::Adopt(_));
         if restore && !adopting {
@@ -500,6 +609,13 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
         }
         match start {
             Start::Now(spawn) => st.start(&spawn),
+            Start::Run { spawn, text } => {
+                st.status.lock().unwrap().cwd = Some(spawn.cwd.display().to_string());
+                let at = st.ring.end();
+                st.signal(at, Signal::CommandLine { text });
+                st.signal(at, Signal::CommandStart);
+                st.start(&spawn);
+            }
             Start::Adopt(master) => match Process::adopt(master, &st.record, id, st.events.clone()) {
                 Ok(p) => {
                     st.pid.store(p.pid, Ordering::Relaxed);
@@ -600,6 +716,7 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
                 if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
                     st.checkpoint();
                 }
+                st.check_quiet();
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => return,
@@ -621,6 +738,9 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
             Cmd::Checkpoint(done) => {
                 st.checkpoint();
                 let _ = done.send(());
+            }
+            Cmd::Capture { format, scope, reply } => {
+                let _ = reply.send(st.capture(format, scope));
             }
             Cmd::Close => {
                 st.closing = true;
@@ -649,6 +769,11 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
 
 impl State {
     fn start(&mut self, spawn: &Spawn) {
+        {
+            let mut st = self.status.lock().unwrap();
+            st.exited = None;
+            st.cwd.get_or_insert_with(|| spawn.cwd.display().to_string());
+        }
         let (cols, rows) = self.engine.size();
         match Process::start(spawn, &self.launch, &self.record, cols, rows, self.id, self.events.clone()) {
             Ok(p) => {
@@ -660,7 +785,7 @@ impl State {
                 warn!(pane = self.id, error = %e, "can't start process");
                 self.output(format!("\x1b[31m[could not start {}: {e}]\x1b[0m\r\n", spawn.program).as_bytes());
                 // Leave the pane to the mux: it closes like an exit.
-                let _ = self.on_exit.send(Exit { pane: self.id, code: None, close: true });
+                self.notify(What::Exited { code: None, close: true });
             }
         }
     }
@@ -669,21 +794,41 @@ impl State {
     /// reboot, the OOM killer) didn't mean to go: keep the pane, its
     /// scrollback, and offer a new shell.
     fn exited(&mut self, code: Option<i32>, signal: Option<i32>) {
+        // A program that ends mid-command never reports the end itself (a
+        // `run` command, a killed shell): close it with the exit code.
+        let (pending, end) = {
+            let mut st = self.status.lock().unwrap();
+            st.busy = false;
+            st.exited = Some(code);
+            (st.current.is_some(), st.end)
+        };
+        if pending {
+            self.signal(end, Signal::CommandEnd { exit: code });
+        }
         match signal {
+            None if !self.hold => self.notify(What::Exited { code, close: true }),
             None => {
-                let _ = self.on_exit.send(Exit { pane: self.id, code, close: true });
+                let c = code.unwrap_or(-1);
+                let note = format!("\r\n\x1b[0m\x1b[2m[exited with code {c} · press Enter for a shell]\x1b[0m\r\n");
+                self.output(note.as_bytes());
+                self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+                self.notify(What::Exited { code, close: false });
             }
             Some(sig) => {
                 let note =
                     format!("\r\n\x1b[0m\x1b[2m[process ended by signal {sig} · press Enter for a shell]\x1b[0m\r\n");
                 self.output(note.as_bytes());
                 self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
-                let _ = self.on_exit.send(Exit { pane: self.id, code: Some(128 + sig), close: false });
+                self.notify(What::Exited { code: Some(128 + sig), close: false });
             }
         }
     }
 
     fn input(&mut self, data: Vec<u8>) {
+        {
+            let mut st = self.status.lock().unwrap();
+            st.input_at = st.end;
+        }
         if let Some(p) = &self.process {
             let _ = p.writer.send(data);
             return;
@@ -700,7 +845,8 @@ impl State {
             self.waiting = None;
             self.output(b"\x1b[0m\r\n");
             self.start(&spawn);
-            let _ = self.on_exit.send(Exit { pane: self.id, code: None, close: false });
+            self.hold = false;
+            self.notify(What::Started);
         }
     }
 
@@ -739,9 +885,136 @@ impl State {
             warn!(pane = self.id, error = %e, "can't write pane log");
         }
         self.unsaved += data.len() as u64;
+        let was_quiet = self.last_output.elapsed() >= QUIET;
         self.last_output = Instant::now();
         let frame = Frame { kind: FrameKind::Output, pane: self.id, offset, data: data.to_vec() }.encode();
         self.broadcast(|| ToClient::Frame(frame.clone()));
+
+        let end = offset + data.len() as u64;
+        if self.last_time_mark.elapsed() >= Duration::from_secs(1) {
+            self.last_time_mark = Instant::now();
+            self.index(offset, Event::Time { at_ms: now_ms() });
+        }
+        for (at, signal) in self.scanner.feed(data, offset) {
+            self.signal(at, signal);
+        }
+        let modes = crate::keys::Modes {
+            app_cursor: self.engine.dec_mode(1),
+            mouse: [1000, 1002, 1003].iter().any(|m| self.engine.dec_mode(*m)),
+            sgr_mouse: self.engine.dec_mode(1006),
+        };
+        let busy_now = {
+            let mut st = self.status.lock().unwrap();
+            st.end = end;
+            st.modes = modes;
+            let flip = !st.busy;
+            st.busy = true;
+            flip || was_quiet
+        };
+        if busy_now {
+            self.notify(What::Busy(true));
+        }
+    }
+
+    fn check_quiet(&mut self) {
+        let mut st = self.status.lock().unwrap();
+        if st.busy && self.last_output.elapsed() >= QUIET {
+            st.busy = false;
+            drop(st);
+            self.notify(What::Busy(false));
+        }
+    }
+
+    fn notify(&self, what: What) {
+        let _ = self.notices.send(Notice { pane: self.id, what });
+    }
+
+    fn index(&mut self, offset: u64, event: Event) {
+        if let Some(log) = &mut self.log
+            && let Err(e) = log.record(offset, event)
+        {
+            warn!(pane = self.id, error = %e, "can't write pane index");
+        }
+    }
+
+    /// Record what the shell integration (or a program) said, and keep the
+    /// pane's command status current.
+    fn signal(&mut self, at: u64, signal: Signal) {
+        let ms = now_ms();
+        match &signal {
+            Signal::Prompt => self.index(at, Event::Prompt { at_ms: ms }),
+            Signal::CommandLine { text } => {
+                self.pending_text = Some(text.clone()).filter(|t| !t.is_empty());
+                return;
+            }
+            Signal::CommandStart => {
+                let text = self.pending_text.take();
+                let cwd = self.status.lock().unwrap().cwd.clone();
+                self.index(at, Event::Command { at_ms: ms, text: text.clone(), cwd: cwd.clone() });
+                let rec = CommandRec { text, cwd, start: at, started_ms: ms, ..Default::default() };
+                self.status.lock().unwrap().current = Some(rec);
+            }
+            Signal::CommandEnd { exit } => {
+                let mut st = self.status.lock().unwrap();
+                // A prompt after an empty line reports an end with no start.
+                let Some(mut rec) = st.current.take() else { return };
+                rec.end = Some(at);
+                rec.ended_ms = Some(ms);
+                rec.exit = *exit;
+                st.last = Some(rec);
+                drop(st);
+                self.index(at, Event::End { at_ms: ms, exit: *exit });
+            }
+            Signal::Cwd { path } => {
+                self.status.lock().unwrap().cwd = Some(path.clone());
+                self.index(at, Event::Cwd { path: path.clone() });
+            }
+            Signal::Notify { title, body } => {
+                self.index(at, Event::Notify { at_ms: ms, title: title.clone(), body: body.clone() })
+            }
+            Signal::Bell => self.index(at, Event::Bell { at_ms: ms }),
+        }
+        self.notify(What::Signal(signal));
+    }
+
+    /// The screen, the scrollback, or the last command's output.
+    fn capture(&mut self, format: CaptureFormat, scope: CaptureScope) -> String {
+        if scope == CaptureScope::LastCommand {
+            let st = self.status.lock().unwrap().clone();
+            let Some(rec) = st.current.or(st.last) else { return String::new() };
+            let to = rec.end.unwrap_or(st.end);
+            let bytes = match &self.log {
+                Some(log) => log.read_from(rec.start).map(|(from, b)| {
+                    let skip = (rec.start.saturating_sub(from)) as usize;
+                    let take = (to.saturating_sub(rec.start)) as usize;
+                    b.get(skip..(skip + take).min(b.len())).unwrap_or_default().to_vec()
+                }),
+                None => Ok(vec![]),
+            }
+            .unwrap_or_default();
+            return match format {
+                CaptureFormat::Text => crate::osc::strip(&bytes),
+                CaptureFormat::Ansi => String::from_utf8_lossy(&bytes).into_owned(),
+                CaptureFormat::Html => {
+                    let (cols, _) = self.engine.size();
+                    let mut e = GhosttyEngine::new(cols, 500);
+                    e.feed(&bytes);
+                    e.html()
+                }
+            };
+        }
+        let full = match format {
+            CaptureFormat::Text => self.engine.plain_text(),
+            CaptureFormat::Ansi => self.engine.vt_text(),
+            CaptureFormat::Html => self.engine.html(),
+        };
+        if scope == CaptureScope::Scrollback || format != CaptureFormat::Text {
+            return full;
+        }
+        // The visible screen: the last screenful of lines.
+        let rows = self.engine.size().1 as usize;
+        let lines: Vec<&str> = full.lines().collect();
+        lines[lines.len().saturating_sub(rows)..].join("\n")
     }
 
     fn checkpoint(&mut self) {
@@ -775,7 +1048,7 @@ impl State {
             crate::sys::remove_fd(&fd_name(self.id));
         }
         if let Some(log) = self.log.take() {
-            log.remove();
+            log.retire(self.id);
         }
     }
 

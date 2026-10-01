@@ -28,8 +28,15 @@ pub trait VtEngine {
     /// Plain text of the active screen, including scrollback when the
     /// primary screen is active.
     fn plain_text(&self) -> String;
+    /// The same with colors and styles as escape sequences (no modes or
+    /// cursor), for `capture --ansi`.
+    fn vt_text(&self) -> String;
+    /// The same as HTML with inline styles.
+    fn html(&self) -> String;
     fn title(&self) -> String;
     /// Whether a full-screen program's alternate screen is showing.
     fn alt_screen(&self) -> bool;
+    /// Whether a DEC private mode (`CSI ? n h`) is set.
+    fn dec_mode(&self, mode: u16) -> bool;
     fn pwd(&self) -> String;
 }

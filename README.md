@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M2b (in-place upgrade) works
+## Status: M3 (structure and CLI) works
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -35,7 +35,65 @@ the daemon stopping, crashing, or the machine rebooting:
   in place. `systemctl --user stop` is still the end of the panes, like a
   reboot.
 
-Not yet: the CLI and shell integration (M3).
+- **Panes know about commands** (M3). bash gets shell integration
+  automatically (the way Ghostty does it: no dotfile changes), so each pane
+  knows where every command starts and ends, its exit code and its directory.
+  In the browser each finished command gets a mark in the gutter (green or
+  red); click it to select the output, right-click to copy it or run it
+  again. zsh and fish scripts are included but untested.
+- **`illogical`, a CLI for scripts and agents**, works from any shell and
+  from inside every pane (`ILLOGICAL_PANE` and `ILLOGICAL_SOCK` are set and
+  it's on `PATH`). See below.
+- **Attention.** A pane that rings the bell, sends a notification (OSC 9,
+  777, 99), has an agent go quiet mid-command, or is told by a hook, shows a
+  badge on its tab and pane (and in a "Needs you" list on the phone). A long
+  command finishing while you're elsewhere shows "done". With *Notify this
+  device* on (session menu), the phone gets a push notification; tapping it
+  opens the pane.
+- **History.** Closed panes' output is kept for 7 days, and `illogical
+  history` / `search` look across all panes.
+
+### The CLI
+
+```
+illogical ls                                  # panes, what they're running, who needs you
+illogical run -- make test                    # in a new tab; prints its pane (%N)
+illogical run --wait -- cargo build           # and exits with its exit code
+illogical send %3 'git status' -e             # type a line and press Enter
+illogical keys %3 C-c Up Enter                # named keys
+illogical wait %3 --command-end               # exit code of what that started
+illogical wait %3 --match 'listening on' --timeout 30
+illogical tail %3 -f --text                   # follow output, escapes stripped
+illogical tail %3 --last-command              # just the last command's output
+illogical capture %3 --scrollback [--ansi|--html]
+illogical process %3                          # the foreground process
+illogical events -f [--pane %3] [--type command_end,attention]
+illogical history --failed --since 2h
+illogical search 'panic|Traceback' --since 1d
+illogical export %3 -o session.cast           # asciinema play session.cast
+illogical attach %3                           # from a real terminal; Ctrl-] detaches
+illogical close %3                            # its output stays in history
+illogical attention needs-input               # from a hook, in the current pane
+```
+
+`--json` prints the API's JSON. `send` then `wait` only sees what happened
+after the send. The same calls are an HTTP API (`/api/...`, documented in
+`crates/proto/src/api.rs`) on the Unix socket and, behind the usual access
+checks, over the tailnet.
+
+**Claude Code** can tell you when it needs you. In `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Notification": [{ "hooks": [{ "type": "command", "command": "illogical attention needs-input" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "illogical attention done" }] }]
+  }
+}
+```
+
+Outside an illogical pane the command does nothing, so the hooks are safe
+everywhere. Without them, an agent going quiet mid-command is the fallback.
 
 ## Use it
 
@@ -78,17 +136,20 @@ against the running one.
   `master`, Zig 0.16). VT snapshots for xterm.js (spike S1's fix-ups),
   checkpoints for disk (GHOSTSNP + zstd, spike S5), answers to terminal
   queries limited to what xterm.js can draw, recorded fixtures.
-- `crates/daemon`: `illogicald`. A multiplexer task owning the layout, a PTY
-  + VT thread per pane with its log and checkpoints (`store.rs`), restore
-  and restart policies, the pane shim and FD store handling (`shim.rs`,
-  `sys.rs`), axum WebSocket server, embedded web client,
-  Host/Origin/tailnet-identity checks, `install`.
+- `crates/daemon`: `illogicald`. A multiplexer task owning the layout and
+  attention (`mux.rs`), a PTY + VT thread per pane with its log, checkpoints
+  and OSC scanner (`pane.rs`, `store.rs`, `osc.rs`), restore and restart
+  policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
+  integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
+  search in `history.rs`), Web Push (`push.rs`), the WebSocket server,
+  embedded web client, access checks, `install`.
+- `crates/cli`: `illogical`, over the daemon's Unix socket.
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M2b taught us
+## Things M0–M3 taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -140,3 +201,11 @@ against the running one.
 - **DECSTR doesn't reset input modes.** A pane restored after its program
   died kept that program's mouse and focus reporting, so clicking sent stray
   `ESC [ O` to the new shell. The restore marker now turns them off.
+- **"What happened after I typed" needs the offset at send time.** `send`
+  then `wait` raced: the pane recorded the input when it processed it, so a
+  quick `wait` could return the previous command. The API now records it
+  before queueing the input.
+- **A notification outlives its command.** Attention set by OSC 9 was
+  cleared a moment later when the `printf` that sent it finished.
+- **Unix socket paths max out at ~108 bytes.** Long state directories get a
+  socket in `$XDG_RUNTIME_DIR` instead, recorded in `state/sock.path`.

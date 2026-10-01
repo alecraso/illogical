@@ -5,6 +5,7 @@
 import { useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
 import { useSubscribe } from "./hooks";
+import { AttentionBadge } from "./attention";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -16,7 +17,7 @@ export function PhoneHeader({ client }: { client: Client }) {
     <>
       <header class="bar phone-bar">
         <button class="sheet-button" aria-expanded={open} onClick={() => setOpen(!open)}>
-          ☰ <span class="crumb">{session?.name}</span> › <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
+          {client.state?.panes.some((p) => p.attention === "needs_input") ? <span class="att needs_input">●</span> : "☰"} <span class="crumb">{session?.name}</span> › <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
         </button>
         {panes.length > 1 && (
           <span class="pane-count">
@@ -32,6 +33,7 @@ export function PhoneHeader({ client }: { client: Client }) {
 function Sheet({ client, close }: { client: Client; close: () => void }) {
   const state = client.state!;
   const active = client.active();
+  const wanting = state.panes.filter((p) => p.attention === "needs_input" || p.attention === "done");
   const act = (fn: () => void) => () => {
     fn();
     close();
@@ -39,6 +41,17 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
   return (
     <div class="sheet-backdrop" onClick={close}>
       <nav class="sheet" onClick={(e) => e.stopPropagation()}>
+        {wanting.length > 0 && (
+          <section class="needs-you">
+            <h2>Needs you</h2>
+            {wanting.map((p) => (
+              <button key={p.id} class="sheet-item" onClick={act(() => client.setActive(p.id))}>
+                <AttentionBadge state={p.attention} />{" "}
+                {client.panes.get(p.id)?.title || p.current?.text || p.last?.text || p.cwd || `pane %${p.id}`}
+              </button>
+            ))}
+          </section>
+        )}
         {state.sessions.map((s) => (
           <section key={s.id}>
             <h2>{s.name}</h2>

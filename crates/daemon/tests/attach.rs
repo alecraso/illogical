@@ -100,13 +100,14 @@ async fn send(ws: &mut Ws, msg: ClientMsg) {
     ws.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await.unwrap();
 }
 
-/// Skip messages until the next layout state.
-async fn next_state(ws: &mut Ws) -> State {
-    loop {
-        if let In::Msg(ServerMsg::State { state }) = recv(ws).await {
-            return state;
-        }
-    }
+/// Skip messages until a layout state satisfies `f` (other state, such as a
+/// new prompt or directory, may arrive first).
+async fn state_where(ws: &mut Ws, f: impl Fn(&State) -> bool) -> State {
+    until(ws, |m| match m {
+        In::Msg(ServerMsg::State { state }) if f(state) => Some(state.clone()),
+        _ => None,
+    })
+    .await
 }
 
 /// Skip everything until a message matches.
@@ -287,7 +288,7 @@ async fn split_spawns_a_pane_and_exit_closes_it() {
     let d = start().await;
     let (mut ws, _) = connect_state(&d).await;
     send(&mut ws, ClientMsg::Intent { id: Some(1), intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
-    let state = next_state(&mut ws).await;
+    let state = state_where(&mut ws, |s| s.panes.len() == 2).await;
     let ids: Vec<u32> = state.panes.iter().map(|p| p.id).collect();
     assert_eq!(ids, vec![1, 2]);
     let tab = &state.tabs[0];
@@ -321,7 +322,12 @@ async fn the_tab_takes_the_claiming_clients_size() {
     let (mut b, _) = connect_state(&d).await;
     send(&mut b, ClientMsg::View { tab, cols: 60, rows: 20, zoom: None, claim: false }).await;
     send(&mut b, ClientMsg::View { tab, cols: 61, rows: 20, zoom: None, claim: true }).await;
-    let state = next_state(&mut a).await;
+    // Other state (prompts, directories) may come first; wait for the size.
+    let state = until(&mut a, |m| match m {
+        In::Msg(ServerMsg::State { state }) if state.tabs[0].cols != 101 => Some(state.clone()),
+        _ => None,
+    })
+    .await;
     assert_eq!((state.tabs[0].cols, state.tabs[0].rows), (61, 20), "B's claim, not its plain view");
     assert_ne!(state.tabs[0].owner, None);
 }
@@ -340,8 +346,7 @@ async fn bad_intents_report_errors_and_others_see_changes() {
     assert_eq!(err, (Some(9), "no pane %999".to_string()));
 
     send(&mut a, ClientMsg::Intent { id: None, intent: Intent::NewTab { session: 1, from_pane: Some(1) } }).await;
-    let state = next_state(&mut b).await;
-    assert_eq!(state.sessions[0].tabs.len(), 2);
+    state_where(&mut b, |s| s.sessions[0].tabs.len() == 2).await;
 }
 
 // ---------------------------------------------------------------- M2: restore
@@ -492,16 +497,15 @@ async fn a_killed_shell_keeps_its_pane_and_offers_a_new_one() {
     .await;
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL).unwrap();
     read_pane_until(&mut ws, 1, "press Enter for a shell").await;
-    let state = next_state(&mut ws).await;
+    let state = state_where(&mut ws, |s| !s.panes[0].running).await;
     assert_eq!(state.panes.len(), 1, "the pane stays");
-    assert!(!state.panes[0].running);
     type_in(&mut ws, 1, "").await;
     type_in(&mut ws, 1, "echo again-$((3+3))").await;
     read_pane_until(&mut ws, 1, "again-6").await;
 }
 
 #[tokio::test]
-async fn policy_none_waits_purge_forgets_and_closing_deletes_history() {
+async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
     let state = temp_state();
     let mut d = start_in(&state).await;
     let (mut ws, _) = connect_state(&d).await;
@@ -532,7 +536,7 @@ async fn policy_none_waits_purge_forgets_and_closing_deletes_history() {
     read_pane_until(&mut ws, 1, "fresh-2").await;
 
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
-    next_state(&mut ws).await;
+    until(&mut ws, |m| matches!(m, In::Msg(ServerMsg::State { state }) if state.panes.len() == 2).then_some(())).await;
     assert!(state.join("panes/2").exists());
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::ClosePane { pane: 2 } }).await;
     for _ in 0..50 {
@@ -541,7 +545,12 @@ async fn policy_none_waits_purge_forgets_and_closing_deletes_history() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(!state.join("panes/2").exists(), "a closed pane's history is deleted");
+    assert!(!state.join("panes/2").exists(), "a closed pane leaves the live panes");
+    let retired = std::fs::read_dir(state.join("closed"))
+        .unwrap()
+        .flatten()
+        .any(|e| e.file_name().to_string_lossy().starts_with("2-"));
+    assert!(retired, "its history is kept a while under closed/");
     d.stop(nix::sys::signal::Signal::SIGTERM);
     let _ = std::fs::remove_dir_all(state);
 }

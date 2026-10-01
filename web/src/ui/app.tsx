@@ -6,7 +6,9 @@ import type { Cell } from "./cells";
 import { drag, startDrag, type Dragged, type Target } from "./drag";
 import { useSubscribe, usePhone } from "./hooks";
 import { askText, closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./menu";
+import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
+import { AttentionBadge, tabAttention } from "./attention";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -32,6 +34,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
   }, [client]);
 
   useHoverToSwitchTabs(client);
+  useReportFocus(client, phone);
 
   const state = client.state;
   const tab = client.tabView();
@@ -90,6 +93,8 @@ function TopBar({
       "separator",
       { label: "New session", run: () => client.intent({ op: "new_session", name: null, from_pane: client.active() ?? null }) },
       { label: "Rename session", run: () => setRenaming({ kind: "session", id: session.id }) },
+      "separator",
+      ...notificationItems(client),
       "separator",
       { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session: session.id }) },
     ];
@@ -199,6 +204,7 @@ function TabItem({
       }
     >
       <span class="tab-label">{label}</span>
+      <AttentionBadge state={tabAttention(client, tab)} />
       <button
         class="tab-close"
         title="Close tab"
@@ -371,6 +377,27 @@ function PaneSlot({
     };
   }, [entry]);
 
+  const info = client.info(id);
+
+  // Right-clicking a command's mark.
+  useEffect(() => {
+    entry?.view.onMarkMenu((mark, e) => {
+      const view = entry.view;
+      openMenu(e, [
+        { header: mark.text || "command" },
+        { label: "Select output", run: () => view.selectOutput(mark) },
+        { label: "Copy output", run: () => void navigator.clipboard?.writeText(view.outputText(mark)) },
+        { label: "Copy command", disabled: !mark.text, run: () => void navigator.clipboard?.writeText(mark.text) },
+        "separator",
+        {
+          label: "Run again",
+          disabled: !mark.text || client.info(id)?.current !== null,
+          run: () => client.input(id, new TextEncoder().encode(`${mark.text}\r`)),
+        },
+      ]);
+    });
+  }, [entry, client, id]);
+
   const menu = (e: MouseEvent) => {
     // A program that tracks the mouse gets right-clicks; Shift reaches us.
     if (entry?.view.mouseTracking && !e.shiftKey) return;
@@ -388,6 +415,14 @@ function PaneSlot({
       "separator",
       ...restartItems(client, id),
       "separator",
+      ...(info && (info.attention === "needs_input" || info.attention === "done")
+        ? [{ label: "Dismiss", run: () => client.paneOp(id, { op: "attention", state: "idle" }) } as MenuItem]
+        : []),
+      {
+        label: "Shell integration (new shells)",
+        checked: info?.integration ?? true,
+        run: () => client.paneOp(id, { op: "set_integration", on: !(info?.integration ?? true) }),
+      },
       {
         label: "Forget history",
         run: () => client.paneOp(id, { op: "purge" }),
@@ -406,6 +441,9 @@ function PaneSlot({
       onPointerDownCapture={() => client.setActive(id)}
       onContextMenu={menu}
     >
+      {!active && (info?.attention === "needs_input" || info?.attention === "done") && (
+        <div class={`pane-badge ${info.attention}`}>{info.attention === "done" ? "done" : "needs you"}</div>
+      )}
       {waiting && (
         <button
           class="start-pane"
@@ -620,4 +658,51 @@ function useHoverToSwitchTabs(client: Client) {
       }
     });
   }, [client]);
+}
+
+// ---------------------------------------------------------------- attention
+
+/** Tell the daemon which pane this window is looking at, so it doesn't
+ * notify you about the pane in front of you. */
+function useReportFocus(client: Client, phone: boolean) {
+  const active = client.active();
+  useEffect(() => {
+    const report = () => {
+      const looking = document.visibilityState === "visible" && (phone || document.hasFocus());
+      client.focusPane(looking ? (client.active() ?? null) : null);
+    };
+    report();
+    window.addEventListener("focus", report);
+    window.addEventListener("blur", report);
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      window.removeEventListener("focus", report);
+      window.removeEventListener("blur", report);
+      document.removeEventListener("visibilitychange", report);
+    };
+  }, [client, active, phone, client.connected]);
+}
+
+// ---------------------------------------------------------------- push
+
+let push: PushState = "unsupported";
+void pushState().then((s) => (push = s));
+
+function notificationItems(client: Client): MenuItem[] {
+  if (push === "unsupported") return [{ label: "Notifications need HTTPS", disabled: true, run: () => {} }];
+  if (push === "denied") return [{ label: "Notifications are blocked", disabled: true, run: () => {} }];
+  return [
+    {
+      label: "Notify this device",
+      checked: push === "on",
+      run: async () => {
+        try {
+          push = push === "on" ? await disablePush() : await enablePush();
+        } catch (e) {
+          client.toast(String(e));
+        }
+        client.emit();
+      },
+    },
+  ];
 }
