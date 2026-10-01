@@ -97,6 +97,44 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
+    /// Start an agent block (Claude Code by default) and send it a prompt;
+    /// prints its block. Then: `wait %N --idle`, `tail %N`, `call %N approve`.
+    Agent {
+        /// Any ACP agent server, by its command line.
+        #[arg(long, conflicts_with_all = ["fountain", "codex"])]
+        acp: Option<String>,
+        /// A Fountain agent (name or id), run in Fountain's sandbox.
+        #[arg(long, conflicts_with = "codex")]
+        fountain: Option<String>,
+        /// Codex instead of Claude Code.
+        #[arg(long)]
+        codex: bool,
+        /// Fountain: a vault for its secrets.
+        #[arg(long, requires = "fountain")]
+        vault: Option<String>,
+        /// A model to switch to (e.g. `haiku`).
+        #[arg(long)]
+        model: Option<String>,
+        /// On a new throwaway VM of its own.
+        #[arg(long, conflicts_with = "host")]
+        vm: bool,
+        /// On this existing machine (`m3` or `3`).
+        #[arg(long)]
+        host: Option<String>,
+        /// Where it works [default: here, or the VM's home].
+        #[arg(long)]
+        cwd: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        /// Split this block instead of opening a tab.
+        #[arg(long)]
+        split: Option<Pane>,
+        /// Wait for the turn to end (or to need you); prints the transcript.
+        #[arg(long)]
+        wait: bool,
+        /// The first prompt.
+        prompt: Vec<String>,
+    },
     /// Type text into a pane (`-` reads stdin).
     Send {
         pane: Pane,
@@ -151,6 +189,13 @@ enum Command {
         /// A regular expression to wait for in the output.
         #[arg(long = "match", group = "until")]
         matching: Option<String>,
+        /// Until it's no longer working (an agent's turn ended, or it needs
+        /// you): any block.
+        #[arg(long, group = "until")]
+        idle: bool,
+        /// Until it needs you (an agent asks to run something).
+        #[arg(long, group = "until")]
+        needs_input: bool,
         /// Seconds.
         #[arg(long)]
         timeout: Option<f64>,
@@ -373,6 +418,49 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 println!("%{}", v["block"]);
             }
         }
+        Command::Agent { acp, fountain, codex, vault, model, vm, host, cwd, session, split, wait, prompt } => {
+            let mut config = match (&acp, &fountain) {
+                (Some(cmd), _) => json!({ "agent": "acp", "command": cmd }),
+                (_, Some(name)) => json!({ "agent": "fountain", "fountain_agent": name, "vault": vault }),
+                _ if codex => json!({ "agent": "codex" }),
+                _ => json!({ "agent": "claude" }),
+            };
+            // A VM has none of this host's directories.
+            let cwd = if vm || host.is_some() {
+                cwd
+            } else {
+                cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))
+            };
+            config["cwd"] = json!(cwd);
+            config["model"] = json!(model);
+            let prompt = prompt.join(" ");
+            if !prompt.is_empty() {
+                config["prompt"] = json!(prompt);
+            }
+            let host = host.map(|h| h.trim_start_matches('m').parse::<u32>()).transpose().context("--host: m<N>")?;
+            let body = json!({
+                "type": "agent",
+                "config": config,
+                "vm": vm,
+                "host": host,
+                "split": split.map(|p| p.0),
+                "session": session,
+                "from_pane": std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
+            });
+            let v = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?;
+            let block = v["block"].as_u64().context("no block in the answer")?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("%{block}");
+            }
+            if wait && !prompt.is_empty() {
+                let w = request(&sock, "GET", &format!("/api/panes/{block}/wait?until=idle"), None)?.json()?;
+                let text = request(&sock, "GET", &format!("/api/panes/{block}/capture"), None)?.ok()?.text()?;
+                print!("{text}");
+                return Ok(if w["state"] == "needs_input" { 2 } else { 0 });
+            }
+        }
         Command::Machines => {
             let v = request(&sock, "GET", "/api/machines", None)?.json()?;
             if json_out {
@@ -472,9 +560,11 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 out.flush()?;
             }
         }
-        Command::Wait { pane, command_end, exit, matching, timeout } => {
+        Command::Wait { pane, command_end, exit, matching, idle, needs_input, timeout } => {
             let pane = here(pane)?;
             let mut q = match (command_end, exit, &matching) {
+                _ if idle => "until=idle".to_owned(),
+                _ if needs_input => "until=needs-input".to_owned(),
                 (_, true, _) => "until=exit".to_owned(),
                 (_, _, Some(re)) => format!("until=match&re={}", enc(re)),
                 _ => "until=command-end".to_owned(),
@@ -500,6 +590,12 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                     v["exit"].as_i64().unwrap_or(0) as i32
                 }
                 Some("exit") => v["code"].as_i64().unwrap_or(0) as i32,
+                Some("attention") => {
+                    if !json_out {
+                        println!("{}", v["state"].as_str().unwrap_or("").replace('_', "-"));
+                    }
+                    0
+                }
                 Some("match") => {
                     if !json_out {
                         println!("{}", v["text"].as_str().unwrap_or(""));

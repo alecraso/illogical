@@ -78,6 +78,24 @@ pub fn search(store: &StateDir, re: &Regex, since_ms: Option<u64>, limit: usize)
     let mut hits = Vec::new();
     for (pane, open, dir) in store.pane_dirs() {
         let events = read_events(&dir);
+        // An agent's log is its JSON-RPC stream: search what it said and
+        // ran instead (offsets are line numbers in `capture --text`).
+        if let Some(text) = crate::agent::transcript_of(&dir) {
+            if since_ms
+                .is_some_and(|s| !events.iter().any(|(_, e)| matches!(e, Event::Command { at_ms, .. } if *at_ms >= s)))
+            {
+                continue;
+            }
+            for (n, line) in text.lines().enumerate() {
+                if re.is_match(line) {
+                    hits.push(SearchHit { pane, open, offset: n as u64, line: line.to_owned(), command: None });
+                    if hits.len() >= limit {
+                        return hits;
+                    }
+                }
+            }
+            continue;
+        }
         // Skip output older than `since`: start at the first time mark at
         // or after it, and skip panes with nothing that recent.
         let from = match since_ms {

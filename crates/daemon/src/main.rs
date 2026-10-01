@@ -1,6 +1,7 @@
 //! illogicald: owns the terminals; clients attach over WebSocket.
 
 mod access;
+mod agent;
 mod api;
 mod block;
 mod browser;
@@ -90,6 +91,15 @@ struct RunArgs {
     /// `$XDG_DATA_HOME/wisp/token`.
     #[arg(long, env = "ILLOGICAL_WISP_TOKEN_FILE")]
     wisp_token_file: Option<PathBuf>,
+    /// An Anthropic API key for Claude Code agents in VMs, passed to them as
+    /// ANTHROPIC_API_KEY [default: ~/.config/illogical/anthropic-key].
+    #[arg(long, env = "ILLOGICAL_ANTHROPIC_KEY_FILE")]
+    anthropic_key_file: Option<PathBuf>,
+    /// A Claude Code token (`claude setup-token`) for agents in VMs when
+    /// there's no API key, passed as CLAUDE_CODE_OAUTH_TOKEN [default:
+    /// ~/.config/illogical/claude-oauth-token].
+    #[arg(long, env = "ILLOGICAL_CLAUDE_TOKEN_FILE")]
+    claude_token_file: Option<PathBuf>,
 }
 
 /// A random name for this daemon's state directory, kept in it: the
@@ -230,6 +240,16 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
         socket: socket.clone(),
         wisp,
         daemon_id: daemon_id(&store),
+        secrets: {
+            let config = std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home().join(".config"))
+                .join("illogical");
+            block::Secrets {
+                anthropic_key: args.anthropic_key_file.clone().unwrap_or_else(|| config.join("anthropic-key")),
+                claude_token: args.claude_token_file.clone().unwrap_or_else(|| config.join("claude-oauth-token")),
+            }
+        },
     };
     let mux = mux::start(config, store, kept, push.clone());
 

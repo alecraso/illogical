@@ -213,6 +213,53 @@ impl Wisp {
         Ok((out, code))
     }
 
+    /// Make sure the sprite exists, creating it if not; waits for a wispd
+    /// that isn't answering yet (at boot).
+    pub async fn ensure(&self, name: &str, image: Option<&str>) -> anyhow::Result<()> {
+        let mut tries = 0;
+        loop {
+            match self.exists(name).await {
+                Ok(true) => return Ok(()),
+                Ok(false) => return self.create(name, image).await,
+                Err(e) if tries >= WISP_PATIENCE => return Err(e),
+                Err(_) => {
+                    tries += 1;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+    }
+
+    /// A non-TTY exec with stdin (an agent server's pipes): stdin frames are
+    /// `0` + data, output `1` (stdout) and `2` (stderr) + data, `3` + exit
+    /// code.
+    pub fn pipe_exec(
+        &self,
+        name: &str,
+        argv: &[String],
+    ) -> anyhow::Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
+        let mut u = self.ws_url(&format!("/{name}/exec"));
+        {
+            let mut q = u.query_pairs_mut();
+            for a in argv {
+                q.append_pair("cmd", a);
+            }
+            q.append_pair("stdin", "true");
+            q.append_pair("max_run_after_disconnect", DETACHED_FOR);
+        }
+        self.request(u)
+    }
+
+    /// Reattach to a non-TTY exec, past the output we already have.
+    pub fn pipe_attach(
+        &self,
+        name: &str,
+        session: &str,
+        offset: u64,
+    ) -> anyhow::Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
+        self.request(self.attach_url(name, session, offset))
+    }
+
     fn request(&self, url: Url) -> anyhow::Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
         let mut req = url.as_str().into_client_request()?;
         req.headers_mut().insert("Authorization", format!("Bearer {}", self.token).parse()?);

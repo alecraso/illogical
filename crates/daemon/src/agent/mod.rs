@@ -1,0 +1,1340 @@
+//! Agent blocks (M6b): an agent run as structured UI, driven over the Agent
+//! Client Protocol (JSON-RPC 2.0 on the agent server's stdio).
+//!
+//! The block is an ACP client. It starts an agent server (Claude Code
+//! through `claude-agent-acp`, Codex through `codex-acp`, a Fountain agent
+//! through `fountain acp`, or any ACP command; see [`defs`]), opens a
+//! session, and turns `session/update`s into a transcript: your prompts, the
+//! agent's messages and thoughts, and tool calls with their commands'
+//! output. Permission requests become cards with approve and deny.
+//!
+//! **The log is the JSON-RPC stream.** Every frame in either direction is a
+//! line in the block's log (`{"t":ms,"d":"in"|"out","m":frame}`), plus notes
+//! of our own (`"d":"note"`: the server started or stopped, a denial's
+//! reason). Everything else (the transcript, open permission requests, our
+//! outstanding requests and next id, cost) is rebuilt from it by the same
+//! code that handles frames live, so a restarted daemon picks up exactly
+//! where the last one was.
+//!
+//! **Turn state** comes from the protocol: `working` while our
+//! `session/prompt` is outstanding, `needs-input` while a permission request
+//! is open (which pushes to the phone), `done` or `idle` from the stop
+//! reason.
+//!
+//! **Permissions.** "Always allow" is a rule in the block's config, answered
+//! by the block itself: it never picks the agent's `allow_always`, which
+//! `claude-agent-acp` writes into your repo's `.claude/settings.local.json`.
+//! Cancelling a turn answers open requests `cancelled`; a card goes when its
+//! tool call ends (Fountain refuses an unanswered request after 5 minutes
+//! without telling the client).
+//!
+//! **Restarts.** A local agent server keeps running through a daemon
+//! restart (its own scope; its pipes in the FD store; see [`link`]). After a
+//! reboot the block starts it again and reopens the session with
+//! `session/resume` (no replay; the transcript is ours) or `session/load`
+//! (whose replay is merged in). The restart policy decides whether that
+//! happens by itself (`none` and `rerun-ask` wait for "Resume").
+
+pub mod defs;
+mod link;
+pub mod transcript;
+
+use std::{
+    collections::{BTreeMap, VecDeque},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+use futures_util::future::BoxFuture;
+use illogical_proto::{Attention, BlockType, Policy};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+
+use self::{
+    defs::{Def, Kind},
+    link::{FromAgent, Link, Sink},
+    transcript::{Applied, Entry, Transcript},
+};
+use crate::{
+    block::{Block, BlockCtx, no_method},
+    store::{Event, PaneLog, now_ms},
+};
+
+/// Entries in the state clients get (the rest are in `capture --text`).
+const ENTRIES_IN_STATE: usize = 400;
+/// Clients get the new state at most this often while the agent streams.
+const PUBLISH_EVERY: Duration = Duration::from_millis(120);
+/// How often to ask Fountain whether a turn that ran while we were away is
+/// over.
+const REMOTE_POLL: Duration = Duration::from_secs(15);
+
+/// What makes the block again (`layout.json`). Nothing secret.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Config {
+    #[serde(flatten)]
+    pub def: Def,
+    /// Where it works (on its machine, for a VM agent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// The ACP session, once there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// What "always allow" allowed; the block answers these itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<Rule>,
+    /// The first prompt, sent once the session is open (not kept).
+    #[serde(default, skip_serializing)]
+    pub prompt: Option<String>,
+}
+
+/// A request this block approves without asking: a tool (by name, else
+/// kind), and the exact title (the command line) unless any is fine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Rule {
+    pub tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    /// The agent server is starting, or the session opening.
+    Starting,
+    /// Waiting for you.
+    Ready,
+    /// A turn is running.
+    Working,
+    /// A Fountain turn is running on Fountain while this block isn't
+    /// following it (it reconnected mid-turn); it loads again when it ends.
+    Remote,
+    /// Not running (after a restart with policy `none`, until "Resume").
+    Stopped,
+    /// The agent server went away.
+    Exited,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Opt {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+/// An open `session/request_permission`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Perm {
+    /// Its JSON-RPC id, as a string: what `approve`/`deny` take.
+    pub id: String,
+    #[serde(skip)]
+    rpc: Value,
+    pub tool_call_id: String,
+    pub tool: String,
+    pub title: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    pub options: Vec<Opt>,
+    pub at_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TurnStat {
+    pub prompt: String,
+    pub started_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<String>,
+    /// This turn's share of the session's cumulative cost.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<Value>,
+    #[serde(skip)]
+    cost_base: Option<f64>,
+}
+
+/// Why we sent a request, for when its answer comes.
+#[derive(Debug, Clone, PartialEq)]
+enum Purpose {
+    Init,
+    New,
+    /// `merge`: we already have a transcript; fold the replay into it.
+    Load {
+        merge: bool,
+    },
+    Resume,
+    SetModel,
+    Prompt,
+    Other,
+}
+
+/// What handling a frame asks for, live (nothing happens while rebuilding
+/// from the log).
+#[derive(Debug, Clone, PartialEq)]
+enum Effect {
+    /// The server is initialized: open (or reopen) the session.
+    OpenSession,
+    /// The session is open (`fresh`: just made).
+    SessionOpen { fresh: bool },
+    /// Reopening failed: make a new session instead.
+    SessionLost(String),
+    /// A turn ended: send what's queued.
+    TurnEnded,
+    /// A permission request came: answer it if a rule allows it.
+    Permission(String),
+    /// An agent request we don't serve.
+    Unsupported(Value, String),
+    /// A tool call finished (for history).
+    ToolFinished(String),
+    /// Fountain: a turn may still be running remotely.
+    CheckRemote,
+}
+
+struct Inner {
+    cfg: Config,
+    t: Transcript,
+    /// A `session/load` replay being collected, to merge when it ends.
+    replay: Option<Transcript>,
+    status: Status,
+    error: Option<String>,
+    pending: Vec<Perm>,
+    ours: BTreeMap<u64, Purpose>,
+    next_id: u64,
+    agent_info: Value,
+    caps: Value,
+    title: Option<String>,
+    prompt_id: Option<u64>,
+    queue: VecDeque<String>,
+    cost: Option<f64>,
+    currency: Option<String>,
+    turns: Vec<TurnStat>,
+    last_stop: Option<String>,
+    /// A turn was outstanding when the server we followed went away.
+    interrupted: bool,
+    log: Option<PaneLog>,
+    link: Option<Link>,
+    /// Bumped for each server started, so a dead one's last words are
+    /// ignored.
+    generation: u64,
+    pid: Option<u32>,
+    reported: Option<Attention>,
+    closing: bool,
+    /// While rebuilding from the log, effects aren't acted on.
+    live: bool,
+}
+
+enum Msg {
+    Frame(u64, Value),
+    Closed(u64, String),
+    /// Something changed outside the actor (a method call).
+    Changed,
+}
+
+pub struct Agent {
+    ctx: BlockCtx,
+    inner: Arc<Mutex<Inner>>,
+    tx: mpsc::UnboundedSender<Msg>,
+}
+
+fn is_finished_stop(s: &str) -> bool {
+    !matches!(s, "cancelled")
+}
+
+fn rpc_key(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    }
+}
+
+impl Inner {
+    fn new(cfg: Config, log: Option<PaneLog>) -> Self {
+        Self {
+            cfg,
+            t: Transcript::default(),
+            replay: None,
+            status: Status::Starting,
+            error: None,
+            pending: vec![],
+            ours: BTreeMap::new(),
+            next_id: 1,
+            agent_info: Value::Null,
+            caps: Value::Null,
+            title: None,
+            prompt_id: None,
+            queue: VecDeque::new(),
+            cost: None,
+            currency: None,
+            turns: vec![],
+            last_stop: None,
+            interrupted: false,
+            log,
+            link: None,
+            generation: 0,
+            pid: None,
+            reported: None,
+            closing: false,
+            live: false,
+        }
+    }
+
+    fn write_log(&mut self, d: &str, m: &Value) {
+        if let Some(log) = self.log.as_mut() {
+            let mut line = json!({ "t": now_ms(), "d": d, "m": m }).to_string().into_bytes();
+            line.push(b'\n');
+            if let Err(e) = log.append(&line) {
+                warn!(error = %e, "can't write the agent log");
+            }
+        }
+    }
+
+    fn note(&mut self, e: Value) {
+        self.write_log("note", &e);
+        self.on_note(&e, now_ms());
+    }
+
+    /// Send a frame: log it, account for it, then write it.
+    fn out(&mut self, frame: Value) {
+        self.write_log("out", &frame);
+        self.on_out(&frame, now_ms());
+        if let Some(link) = &self.link {
+            link.send(frame.to_string().into_bytes());
+        }
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> u64 {
+        let id = self.next_id;
+        self.out(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
+        id
+    }
+
+    fn notify(&mut self, method: &str, params: Value) {
+        self.out(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+    }
+
+    fn session(&self) -> Value {
+        self.cfg.session_id.clone().map(Value::String).unwrap_or(Value::Null)
+    }
+
+    // ---- frames, live or from the log -----------------------------------
+
+    fn on_note(&mut self, e: &Value, at: u64) {
+        match e["e"].as_str().unwrap_or("") {
+            "spawn" => {
+                // A new server: nothing outstanding carries over.
+                if self.prompt_id.is_some() || !self.pending.is_empty() {
+                    self.interrupted = true;
+                }
+                self.ours.clear();
+                self.pending.clear();
+                self.prompt_id = None;
+                self.replay = None;
+                self.status = Status::Starting;
+                self.error = None;
+                if e["resume"].as_bool() == Some(true) {
+                    self.t.note("Started the agent again", at);
+                }
+            }
+            "exit" | "stopped" => {
+                if self.prompt_id.is_some() {
+                    self.interrupted = true;
+                }
+                self.ours.clear();
+                self.pending.clear();
+                self.prompt_id = None;
+                self.replay = None;
+                let why = e["why"].as_str().unwrap_or("stopped").to_owned();
+                if e["e"] == "exit" && e["closing"].as_bool() != Some(true) {
+                    self.t.note(format!("The agent {why}"), at);
+                    self.status = Status::Exited;
+                    self.error = Some(format!("the agent {why}"));
+                } else {
+                    self.status = Status::Stopped;
+                }
+            }
+            "deny" => {
+                let title = e["title"].as_str().unwrap_or("that");
+                match e["reason"].as_str().filter(|r| !r.is_empty()) {
+                    Some(r) => self.t.note(format!("Denied {title}: {r}"), at),
+                    None => self.t.note(format!("Denied {title}"), at),
+                }
+            }
+            "approve" => {
+                let title = e["title"].as_str().unwrap_or("that");
+                let how = e["how"].as_str().unwrap_or("once");
+                let text = match how {
+                    "rule" => format!("Allowed {title} (always allowed)"),
+                    "always" => format!("Allowed {title}, and always from now on"),
+                    _ => format!("Allowed {title}"),
+                };
+                self.t.note(text, at);
+            }
+            "remote" => {
+                self.status = Status::Remote;
+                self.t.note("The turn is still running on Fountain; it shows here when it ends", at);
+            }
+            "remote_done" => {
+                if self.status == Status::Remote {
+                    self.status = Status::Ready;
+                }
+            }
+            "error" => {
+                let msg = e["message"].as_str().unwrap_or("error").to_owned();
+                self.t.note(msg.clone(), at);
+                self.error = Some(msg);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_out(&mut self, m: &Value, at: u64) {
+        let method = m["method"].as_str();
+        match (m.get("id"), method) {
+            (Some(id), Some(method)) => {
+                let Some(id) = id.as_u64() else { return };
+                self.next_id = self.next_id.max(id + 1);
+                let purpose = match method {
+                    "initialize" => Purpose::Init,
+                    "session/new" => Purpose::New,
+                    "session/load" => {
+                        let merge = !self.t.entries.is_empty();
+                        self.replay = Some(Transcript::default());
+                        Purpose::Load { merge }
+                    }
+                    "session/resume" => Purpose::Resume,
+                    "session/set_config_option" => Purpose::SetModel,
+                    "session/prompt" => {
+                        let text: String = m["params"]["prompt"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|c| c["text"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.t.user(&text, at);
+                        self.prompt_id = Some(id);
+                        self.status = Status::Working;
+                        self.error = None;
+                        self.last_stop = None;
+                        self.interrupted = false;
+                        self.turns.push(TurnStat {
+                            prompt: text.chars().take(120).collect(),
+                            started_ms: at,
+                            cost_base: self.cost,
+                            ..Default::default()
+                        });
+                        Purpose::Prompt
+                    }
+                    _ => Purpose::Other,
+                };
+                self.ours.insert(id, purpose);
+            }
+            // Our answer to one of the agent's requests.
+            (Some(id), None) => {
+                let key = rpc_key(id);
+                self.pending.retain(|p| p.id != key);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_in(&mut self, m: &Value, at: u64) -> Vec<Effect> {
+        let mut fx = vec![];
+        let method = m["method"].as_str();
+        match (m.get("id"), method) {
+            // An answer to one of ours.
+            (Some(id), None) => {
+                let Some(purpose) = id.as_u64().and_then(|id| self.ours.remove(&id)) else { return fx };
+                let error = m.get("error").map(|e| e["message"].as_str().unwrap_or("error").to_owned());
+                let r = &m["result"];
+                match (purpose, error) {
+                    (Purpose::Init, None) => {
+                        self.caps = r["agentCapabilities"].clone();
+                        self.agent_info = r["agentInfo"].clone();
+                        fx.push(Effect::OpenSession);
+                    }
+                    (Purpose::New, None) => {
+                        self.cfg.session_id = r["sessionId"].as_str().map(str::to_owned);
+                        fx.push(Effect::SessionOpen { fresh: true });
+                    }
+                    (Purpose::Load { merge }, None) => {
+                        if let Some(replay) = self.replay.take() {
+                            if merge {
+                                self.t.merge(replay);
+                            } else {
+                                self.t = replay;
+                            }
+                        }
+                        fx.push(Effect::SessionOpen { fresh: false });
+                    }
+                    (Purpose::Resume, None) => fx.push(Effect::SessionOpen { fresh: false }),
+                    (Purpose::Load { .. } | Purpose::Resume, Some(e)) => {
+                        self.replay = None;
+                        fx.push(Effect::SessionLost(e));
+                    }
+                    (Purpose::Prompt, result) => {
+                        self.prompt_id = None;
+                        if self.status == Status::Working {
+                            self.status = Status::Ready;
+                        }
+                        let stop = match &result {
+                            None => r["stopReason"].as_str().unwrap_or("end_turn").to_owned(),
+                            Some(_) => "error".to_owned(),
+                        };
+                        if let Some(t) = self.turns.last_mut() {
+                            t.ended_ms = Some(at);
+                            t.stop = Some(stop.clone());
+                            if r["usage"].is_object() {
+                                t.tokens = Some(r["usage"].clone());
+                            }
+                        }
+                        if let Some(e) = result {
+                            self.t.note(format!("The turn failed: {e}"), at);
+                            self.error = Some(e);
+                        }
+                        self.last_stop = Some(stop);
+                        // Requests the turn left open are moot.
+                        self.pending.clear();
+                        fx.push(Effect::TurnEnded);
+                    }
+                    (Purpose::Init | Purpose::New, Some(e)) => {
+                        self.t.note(format!("The agent couldn't start a session: {e}"), at);
+                        self.error = Some(e);
+                    }
+                    (_, Some(e)) => warn!(error = e, "agent request failed"),
+                    _ => {}
+                }
+            }
+            (None, Some("session/update")) => {
+                let u = &m["params"]["update"];
+                match u["sessionUpdate"].as_str().unwrap_or("") {
+                    "usage_update" => {
+                        if let Some(amount) = u["cost"]["amount"].as_f64() {
+                            self.cost = Some(amount);
+                            self.currency = u["cost"]["currency"].as_str().map(str::to_owned);
+                            if let Some(t) = self.turns.last_mut() {
+                                t.cost = Some(amount - t.cost_base.unwrap_or(0.0));
+                            }
+                        }
+                    }
+                    "session_info_update" => {
+                        if let Some(title) = u["title"].as_str() {
+                            self.title = Some(title.to_owned());
+                        }
+                    }
+                    _ => {
+                        let applied = match self.replay.as_mut() {
+                            Some(r) => r.apply(u, at),
+                            None => self.t.apply(u, at),
+                        };
+                        if let Applied::ToolFinished(id) = applied {
+                            // Its card is moot (Fountain's refusal says only this).
+                            self.pending.retain(|p| p.tool_call_id != id);
+                            if self.replay.is_none() {
+                                fx.push(Effect::ToolFinished(id));
+                            }
+                        }
+                    }
+                }
+            }
+            (Some(id), Some("session/request_permission")) => {
+                let key = rpc_key(id);
+                if self.pending.iter().any(|p| p.id == key) {
+                    return fx;
+                }
+                let p = &m["params"];
+                let tc = &p["toolCall"];
+                let tool_call_id = tc["toolCallId"].as_str().unwrap_or("").to_owned();
+                // What the transcript knows about it, for a card that makes sense.
+                let known = self.t.tool(&tool_call_id).cloned();
+                let tool = tc["name"]
+                    .as_str()
+                    .or(tc["_meta"]["claudeCode"]["toolName"].as_str())
+                    .or(tc["kind"].as_str())
+                    .or(known.as_ref().map(|k| k.kind.as_str()))
+                    .unwrap_or("tool")
+                    .to_owned();
+                let title = tc["title"]
+                    .as_str()
+                    .or(p["_meta"]["permission"]["title"].as_str())
+                    .map(str::to_owned)
+                    .or(known.as_ref().map(|k| k.title.clone()))
+                    .unwrap_or_else(|| tool.clone());
+                let command = tc["rawInput"]["command"].as_str().map(str::to_owned).or(known.and_then(|k| k.command));
+                let options = p["options"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|o| Opt {
+                        id: o["optionId"].as_str().unwrap_or("").to_owned(),
+                        name: o["name"].as_str().unwrap_or("").to_owned(),
+                        kind: o["kind"].as_str().unwrap_or("").to_owned(),
+                    })
+                    .collect();
+                self.pending.push(Perm {
+                    id: key.clone(),
+                    rpc: id.clone(),
+                    tool_call_id,
+                    tool,
+                    title,
+                    kind: tc["kind"].as_str().unwrap_or("").to_owned(),
+                    command,
+                    options,
+                    at_ms: at,
+                });
+                fx.push(Effect::Permission(key));
+            }
+            (Some(id), Some(method)) => fx.push(Effect::Unsupported(id.clone(), method.to_owned())),
+            _ => {}
+        }
+        if self.cfg.def.agent == Kind::Fountain && fx.iter().any(|f| matches!(f, Effect::SessionOpen { fresh: false }))
+        {
+            fx.push(Effect::CheckRemote);
+        }
+        fx
+    }
+
+    /// Replay a log line.
+    fn rebuild_line(&mut self, line: &[u8]) {
+        let Ok(v) = serde_json::from_slice::<Value>(line) else { return };
+        let at = v["t"].as_u64().unwrap_or(0);
+        match v["d"].as_str() {
+            Some("in") => {
+                self.on_in(&v["m"], at);
+            }
+            Some("out") => self.on_out(&v["m"], at),
+            Some("note") => self.on_note(&v["m"], at),
+            _ => {}
+        }
+    }
+
+    // ---- what clients see -------------------------------------------------
+
+    fn attention(&self) -> (Attention, String) {
+        if let Some(p) = self.pending.first() {
+            return (Attention::NeedsInput, format!("wants to run {}", p.title));
+        }
+        match self.status {
+            Status::Exited => (Attention::NeedsInput, self.error.clone().unwrap_or_else(|| "the agent stopped".into())),
+            Status::Working | Status::Remote => (Attention::Working, "working".into()),
+            Status::Starting if !self.queue.is_empty() => (Attention::Working, "starting".into()),
+            Status::Ready | Status::Starting if self.error.is_some() => {
+                (Attention::NeedsInput, self.error.clone().unwrap_or_default())
+            }
+            Status::Ready => match self.last_stop.as_deref() {
+                Some(s) if is_finished_stop(s) => (Attention::Done, self.done_text()),
+                _ => (Attention::Idle, "idle".into()),
+            },
+            _ => (Attention::Idle, "idle".into()),
+        }
+    }
+
+    fn done_text(&self) -> String {
+        self.t
+            .entries
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                Entry::Agent { text, .. } => Some(text.trim().chars().take(140).collect::<String>()),
+                _ => None,
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "finished".into())
+    }
+
+    fn state(&self, ctx: &BlockCtx) -> Value {
+        let (from, entries) = self.t.for_state(ENTRIES_IN_STATE);
+        let (attention, _) = self.attention();
+        let total_tokens: u64 = self.turns.iter().filter_map(|t| t.tokens.as_ref()?["totalTokens"].as_u64()).sum();
+        json!({
+            "agent": self.cfg.def.agent,
+            "label": self.cfg.def.label(),
+            "title": self.title,
+            "cwd": self.cfg.cwd,
+            "vm": ctx.sprite.is_some(),
+            "session_id": self.cfg.session_id,
+            "server": self.agent_info,
+            "status": self.status,
+            "pid": self.pid,
+            "attention": attention,
+            "error": self.error,
+            "last_stop": self.last_stop,
+            "current_tool": self.t.current_tool().map(|t| json!({ "id": t.id, "title": t.title, "kind": t.kind })),
+            "pending": self.pending,
+            "queued": self.queue,
+            "cost": self.cost.map(|c| json!({ "total": c, "currency": self.currency, "last_turn": self.turns.last().and_then(|t| t.cost) })),
+            "tokens": { "total": total_tokens, "last_turn": self.turns.last().and_then(|t| t.tokens.clone()) },
+            "turns": self.turns.len(),
+            "recent_turns": self.turns.iter().rev().take(20).collect::<Vec<_>>(),
+            "allow": self.cfg.allow,
+            "entries_from": from,
+            "entries": entries,
+        })
+    }
+}
+
+impl Agent {
+    pub fn create(ctx: BlockCtx, config: Value) -> Result<Arc<dyn Block>, String> {
+        let mut config = config;
+        // A command line as one string is split into words.
+        if let Some(c) = config["command"].as_str() {
+            config["command"] = json!(defs::split_command(c));
+        }
+        let cfg: Config = serde_json::from_value(config).map_err(|e| format!("agent config: {e}"))?;
+        cfg.def.check()?;
+        let vm = ctx.sprite.is_some();
+        if vm && ctx.wisp.is_none() {
+            return Err("VM agents need wisp (VM panes aren't set up)".into());
+        }
+        // Fail now, with a clear reason, rather than in the VM later.
+        if vm && cfg.def.agent == Kind::Claude && !ctx.restoring {
+            secret_env(&ctx)?;
+        }
+        if vm && cfg.def.agent == Kind::Fountain {
+            return Err("Fountain agents run in Fountain's sandboxes, not in a VM here".into());
+        }
+        let log = ctx.log().map_err(|e| format!("agent log: {e}"))?;
+        let _ = std::fs::write(ctx.dir.join("kind"), "agent\n");
+        let mut inner = Inner::new(cfg, None);
+        // Everything it did before, from its log.
+        if ctx.restoring
+            && let Ok((_, bytes)) = log.read_from(log.start())
+        {
+            for line in bytes.split(|b| *b == b'\n') {
+                inner.rebuild_line(line);
+            }
+        }
+        inner.log = Some(log);
+        inner.live = true;
+        let (tx, rx) = mpsc::unbounded_channel();
+        let agent = Arc::new(Agent { ctx: ctx.clone(), inner: Arc::new(Mutex::new(inner)), tx });
+        agent.begin();
+        ctx.rt.spawn(run(agent.ctx.clone(), agent.inner.clone(), agent.tx.clone(), rx));
+        Ok(agent)
+    }
+
+    /// Start, adopt, or (by policy) wait.
+    fn begin(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(p) = inner.cfg.prompt.take() {
+            inner.queue.push_back(p);
+        }
+        if self.ctx.restoring {
+            // Still running from before the restart: carry on with it.
+            if self.adopt(&mut inner) {
+                if inner.status == Status::Starting && inner.cfg.session_id.is_some() && inner.ours.is_empty() {
+                    inner.status = Status::Ready;
+                }
+                return;
+            }
+            // It's gone. Kill a straggler we can't talk to.
+            if let Some(pid) = link::alive_pid(&self.ctx.dir) {
+                link::kill_group(pid, self.ctx.dir.clone());
+            }
+            let wait = matches!(self.ctx.policy, Policy::None | Policy::Rerun { confirm: true });
+            if wait && inner.cfg.session_id.is_some() {
+                inner.note(json!({ "e": "stopped" }));
+                return;
+            }
+        }
+        self.spawn(&mut inner);
+    }
+
+    fn sink(&self, generation: u64) -> Sink {
+        let (inner, tx) = (Arc::downgrade(&self.inner), self.tx.clone());
+        Arc::new(move |f| match f {
+            FromAgent::Line(line) => {
+                let v: Value = match serde_json::from_slice(&line) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        info!(line = %String::from_utf8_lossy(&line), "agent said something that isn't JSON");
+                        return;
+                    }
+                };
+                // Logged before it's taken off the pipe.
+                if let Some(inner) = inner.upgrade() {
+                    let mut inner = inner.lock().unwrap();
+                    if inner.generation == generation {
+                        inner.write_log("in", &v);
+                    }
+                }
+                let _ = tx.send(Msg::Frame(generation, v));
+            }
+            FromAgent::Closed(why) => {
+                let _ = tx.send(Msg::Closed(generation, why));
+            }
+        })
+    }
+
+    fn adopt(&self, inner: &mut Inner) -> bool {
+        match &self.ctx.sprite {
+            None => {
+                let mut kept = self.ctx.kept.lock().unwrap();
+                inner.generation += 1;
+                let sink = self.sink(inner.generation);
+                match link::adopt_local(self.ctx.id, &self.ctx.dir, &mut kept, self.ctx.launch.fd_store, sink) {
+                    Some((l, pid)) => {
+                        inner.link = Some(l);
+                        inner.pid = Some(pid);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            Some(sprite) => {
+                let Some(rec) = link::ExecRecord::read(&self.ctx.dir) else { return false };
+                let Some(wisp) = self.ctx.wisp.clone() else { return false };
+                inner.generation += 1;
+                let sink = self.sink(inner.generation);
+                let begin = link::VmBegin::Resume(rec);
+                inner.link =
+                    Some(link::spawn_vm(&self.ctx.rt, wisp, sprite.clone(), self.ctx.dir.clone(), begin, sink));
+                true
+            }
+        }
+    }
+
+    /// Start the agent server and initialize it.
+    fn spawn(&self, inner: &mut Inner) {
+        if let Some(old) = inner.link.take() {
+            old.stop();
+        }
+        let vm = self.ctx.sprite.is_some();
+        let launch = match inner.cfg.def.launch(&self.ctx.home, vm) {
+            Ok(l) => l,
+            Err(e) => return self.failed(inner, e),
+        };
+        let resume = inner.cfg.session_id.is_some();
+        inner.note(json!({ "e": "spawn", "argv": launch.argv, "resume": resume }));
+        inner.generation += 1;
+        let sink = self.sink(inner.generation);
+        match &self.ctx.sprite {
+            None => {
+                let cwd = inner.cfg.cwd.clone().map(PathBuf::from).unwrap_or_else(|| self.ctx.home.clone());
+                let mut env = self.ctx.env.clone();
+                env.extend(launch.env.iter().cloned());
+                with_node_on_path(&mut env, &self.ctx.home);
+                let spawn = link::LocalSpawn {
+                    id: self.ctx.id,
+                    dir: &self.ctx.dir,
+                    argv: &launch.argv,
+                    cwd: &cwd,
+                    env: &env,
+                    remove: &launch.remove,
+                    launch: &self.ctx.launch,
+                };
+                match link::spawn_local(spawn, sink) {
+                    Ok((l, pid)) => {
+                        inner.link = Some(l);
+                        inner.pid = Some(pid);
+                    }
+                    Err(e) => return self.failed(inner, format!("couldn't start the agent: {e}")),
+                }
+            }
+            Some(sprite) => {
+                let Some(wisp) = self.ctx.wisp.clone() else {
+                    return self.failed(inner, "VM agents need wisp".into());
+                };
+                let mut secret = match inner.cfg.def.agent {
+                    Kind::Claude => match secret_env(&self.ctx) {
+                        Ok(s) => s,
+                        Err(e) => return self.failed(inner, e),
+                    },
+                    _ => vec![],
+                };
+                secret.extend(launch.env.iter().cloned());
+                let begin = link::VmBegin::New {
+                    npm: launch.npm.map(str::to_owned),
+                    cwd: inner.cfg.cwd.clone().unwrap_or_else(|| "/home/sprite".into()),
+                    argv: launch.argv.clone(),
+                    secret_env: secret,
+                };
+                link::ExecRecord::clear(&self.ctx.dir);
+                inner.link =
+                    Some(link::spawn_vm(&self.ctx.rt, wisp, sprite.clone(), self.ctx.dir.clone(), begin, sink));
+                self.ctx.machine(true);
+            }
+        }
+        inner.request(
+            "initialize",
+            json!({
+                "protocolVersion": 1,
+                // Zed's extension: command output on the tool call. No client
+                // fs or terminals: no adapter uses them (S7).
+                "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false, "_meta": { "terminal_output": true } },
+                "clientInfo": { "name": "illogical", "version": env!("CARGO_PKG_VERSION") },
+            }),
+        );
+    }
+
+    fn failed(&self, inner: &mut Inner, why: String) {
+        warn!(block = self.ctx.id, why, "agent failed to start");
+        inner.note(json!({ "e": "exit", "why": format!("couldn't start: {why}") }));
+        inner.error = Some(why);
+    }
+}
+
+/// The credentials an agent in a VM gets in its environment: an Anthropic
+/// API key if there's one, else a Claude Code token.
+fn secret_env(ctx: &BlockCtx) -> Result<Vec<(String, String)>, String> {
+    let read = |p: &Path| std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+    if let Some(k) = read(&ctx.secrets.anthropic_key) {
+        return Ok(vec![("ANTHROPIC_API_KEY".into(), k)]);
+    }
+    if let Some(t) = read(&ctx.secrets.claude_token) {
+        return Ok(vec![("CLAUDE_CODE_OAUTH_TOKEN".into(), t)]);
+    }
+    Err(format!(
+        "Claude Code in a VM needs credentials: put a token from `claude setup-token` in {} (or an API key in {})",
+        ctx.secrets.claude_token.display(),
+        ctx.secrets.anthropic_key.display()
+    ))
+}
+
+/// npm adapters are Node scripts: make sure a Node is on PATH even when the
+/// daemon runs as a service with a bare one (mise's shims, if there).
+fn with_node_on_path(env: &mut Vec<(String, String)>, home: &Path) {
+    let shims = home.join(".local/share/mise/shims");
+    if !shims.join("node").exists() {
+        return;
+    }
+    let shims = shims.display().to_string();
+    let path = env
+        .iter()
+        .rev()
+        .find(|(k, _)| k == "PATH")
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var("PATH").ok())
+        .unwrap_or_default();
+    if path.split(':').any(|p| p == shims) {
+        return;
+    }
+    env.retain(|(k, _)| k != "PATH");
+    env.push(("PATH".into(), format!("{path}:{shims}")));
+}
+
+/// The block's task: frames from the agent server, and publishing.
+async fn run(
+    ctx: BlockCtx,
+    inner: Arc<Mutex<Inner>>,
+    tx: mpsc::UnboundedSender<Msg>,
+    mut rx: mpsc::UnboundedReceiver<Msg>,
+) {
+    let mut tick = tokio::time::interval(PUBLISH_EVERY);
+    let mut dirty = true;
+    let mut remote_check: Option<tokio::time::Instant> = None;
+    // What it was before a restart, for the "needs you" list.
+    publish(&ctx, &inner, true);
+    loop {
+        tokio::select! {
+            m = rx.recv() => {
+                let Some(m) = m else { return };
+                let mut fx = vec![];
+                {
+                    let mut g = inner.lock().unwrap();
+                    if g.closing {
+                        return;
+                    }
+                    match m {
+                        Msg::Frame(generation, v) if generation == g.generation => {
+                            fx = g.on_in(&v, now_ms());
+                        }
+                        Msg::Closed(generation, why) if generation == g.generation => {
+                            g.link = None;
+                            g.pid = None;
+                            info!(block = ctx.id, why, "agent server stopped");
+                            g.note(json!({ "e": "exit", "why": why }));
+                            if ctx.sprite.is_some() {
+                                ctx.machine(!why.contains("machine is gone"));
+                            }
+                        }
+                        _ => {}
+                    }
+                    for f in fx.drain(..) {
+                        if f == Effect::CheckRemote {
+                            if g.interrupted {
+                                g.note(json!({ "e": "remote" }));
+                                remote_check = Some(tokio::time::Instant::now() + REMOTE_POLL);
+                            }
+                            continue;
+                        }
+                        act(&ctx, &mut g, f);
+                    }
+                }
+                dirty = true;
+                // A burst of frames: draw once it settles.
+                if rx.is_empty() {
+                    publish(&ctx, &inner, false);
+                }
+            }
+            _ = tick.tick() => {
+                if dirty {
+                    dirty = false;
+                    publish(&ctx, &inner, false);
+                }
+                if remote_check.is_some_and(|t| tokio::time::Instant::now() >= t) {
+                    remote_check = None;
+                    let (session, def) = {
+                        let g = inner.lock().unwrap();
+                        (g.cfg.session_id.clone(), g.cfg.def.clone())
+                    };
+                    if let Some(sid) = session {
+                        let busy = fountain_busy(&def, &sid).await;
+                        let mut g = inner.lock().unwrap();
+                        if busy == Some(false) && g.status == Status::Remote {
+                            g.note(json!({ "e": "remote_done" }));
+                            g.interrupted = false;
+                            let session = g.session();
+                            let cwd = g.cfg.cwd.clone().unwrap_or_else(|| "/".into());
+                            g.request("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": [] }));
+                        } else if g.status == Status::Remote {
+                            remote_check = Some(tokio::time::Instant::now() + REMOTE_POLL);
+                        }
+                        drop(g);
+                        let _ = tx.send(Msg::Changed);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Whether a Fountain conversation is still running a turn.
+async fn fountain_busy(def: &Def, session: &str) -> Option<bool> {
+    let mut cmd = tokio::process::Command::new(def.launch(Path::new("/"), false).ok()?.argv.first()?.clone());
+    if let Some(p) = &def.profile {
+        cmd.args(["--profile", p]);
+    }
+    let out = cmd.args(["conv", "show", session]).output().await.ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let status = text.lines().find_map(|l| l.trim().strip_prefix("status:"))?.trim().to_owned();
+    Some(matches!(status.as_str(), "running" | "pending" | "busy" | "active"))
+}
+
+fn publish(ctx: &BlockCtx, inner: &Arc<Mutex<Inner>>, first: bool) {
+    let mut g = inner.lock().unwrap();
+    let (a, why) = g.attention();
+    if g.reported != Some(a) {
+        g.reported = Some(a);
+        // Coming back after a restart, a finished turn isn't news.
+        let a = if first && a == Attention::Done { Attention::Idle } else { a };
+        ctx.attention(a, why);
+    }
+    drop(g);
+    ctx.changed();
+}
+
+/// Act on what a frame asked for.
+fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
+    match f {
+        Effect::OpenSession => {
+            let cwd = g.cfg.cwd.clone().unwrap_or_else(|| match ctx.sprite {
+                Some(_) => "/home/sprite".into(),
+                None => ctx.home.display().to_string(),
+            });
+            let resume = g.caps["sessionCapabilities"]["resume"].is_object();
+            let load = g.caps["loadSession"].as_bool() == Some(true);
+            match &g.cfg.session_id {
+                Some(sid) if resume && !g.t.entries.is_empty() => {
+                    let sid = sid.clone();
+                    g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": [] }));
+                }
+                Some(sid) if load => {
+                    let sid = sid.clone();
+                    g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": [] }));
+                }
+                _ => new_session(ctx, g, &cwd),
+            }
+        }
+        Effect::SessionLost(why) => {
+            g.t.note(format!("Couldn't reopen the session ({why}); starting a new one"), now_ms());
+            g.cfg.session_id = None;
+            let cwd = g.cfg.cwd.clone().unwrap_or_else(|| ctx.home.display().to_string());
+            new_session(ctx, g, &cwd);
+        }
+        Effect::SessionOpen { fresh: _ } => {
+            if let Some(model) = g.cfg.def.model.clone() {
+                let session = g.session();
+                g.request(
+                    "session/set_config_option",
+                    json!({ "sessionId": session, "configId": "model", "value": model }),
+                );
+            }
+            if g.status == Status::Starting {
+                g.status = Status::Ready;
+            }
+            send_next(ctx, g);
+        }
+        Effect::TurnEnded => {
+            // In history as a command of its own: the prompt, and whether
+            // the turn finished.
+            if let Some(t) = g.turns.last().cloned() {
+                let cwd = g.cfg.cwd.clone();
+                let label = format!("{}: {}", g.cfg.def.label(), t.prompt.lines().next().unwrap_or(""));
+                if let Some(log) = g.log.as_mut() {
+                    let at = log.end();
+                    let exit = Some(if t.stop.as_deref() == Some("end_turn") { 0 } else { 1 });
+                    let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(label), cwd });
+                    let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit });
+                }
+            }
+            send_next(ctx, g)
+        }
+        Effect::Permission(key) => {
+            let Some(p) = g.pending.iter().find(|p| p.id == key).cloned() else { return };
+            let allowed =
+                g.cfg.allow.iter().any(|r| r.tool == p.tool && r.title.as_ref().is_none_or(|t| *t == p.title));
+            if allowed && let Some(opt) = p.options.iter().find(|o| o.kind == "allow_once") {
+                g.note(json!({ "e": "approve", "title": p.title, "how": "rule" }));
+                let opt = opt.id.clone();
+                g.out(json!({ "jsonrpc": "2.0", "id": p.rpc, "result": { "outcome": { "outcome": "selected", "optionId": opt } } }));
+            }
+        }
+        Effect::Unsupported(id, method) => {
+            g.out(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("{method} isn't supported") } }));
+        }
+        Effect::ToolFinished(id) => {
+            let Some(t) = g.t.tool(&id).cloned() else { return };
+            let cwd = g.cfg.cwd.clone();
+            if let Some(log) = g.log.as_mut() {
+                let at = log.end();
+                let exit = t.exit.or(Some(if t.status == "completed" { 0 } else { 1 }));
+                let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(t.label()), cwd });
+                let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit });
+            }
+        }
+        Effect::CheckRemote => {}
+    }
+}
+
+fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
+    let meta = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default();
+    g.request("session/new", json!({ "cwd": cwd, "mcpServers": [], "_meta": meta }));
+}
+
+/// Send the next queued prompt, if the agent can take it.
+fn send_next(ctx: &BlockCtx, g: &mut Inner) {
+    if g.status != Status::Ready || g.prompt_id.is_some() || g.cfg.session_id.is_none() {
+        return;
+    }
+    let Some(text) = g.queue.pop_front() else { return };
+    let session = g.session();
+    let mut params = json!({ "sessionId": session, "prompt": [{ "type": "text", "text": text }] });
+    if g.cfg.def.agent == Kind::Fountain {
+        params["_meta"] = json!({ "clientRequestId": format!("illogical-{}-{}", ctx.id, g.next_id) });
+    }
+    g.request("session/prompt", params);
+}
+
+impl Agent {
+    fn changed(&self) {
+        let _ = self.tx.send(Msg::Changed);
+    }
+
+    fn find(g: &Inner, id: &Value) -> Result<Perm, String> {
+        let key = match id {
+            Value::Null => return g.pending.first().cloned().ok_or_else(|| "nothing is waiting for approval".into()),
+            v => rpc_key(v),
+        };
+        g.pending
+            .iter()
+            .find(|p| p.id == key || p.tool_call_id == key)
+            .cloned()
+            .ok_or_else(|| format!("no open request {key} (it was answered, or its tool call ended)"))
+    }
+
+    fn approve(&self, args: &Value) -> Result<Value, String> {
+        let mut g = self.inner.lock().unwrap();
+        let p = Self::find(&g, &args["id"])?;
+        let option = args["option"].as_str().unwrap_or("once");
+        let chosen = match option {
+            "once" | "always" | "always_tool" => p.options.iter().find(|o| o.kind == "allow_once"),
+            id => p.options.iter().find(|o| o.id == id),
+        }
+        .ok_or_else(|| {
+            format!(
+                "{option}: not an option here ({})",
+                p.options.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")
+            )
+        })?
+        .clone();
+        if chosen.kind == "allow_always" {
+            // It would write a rule into the agent's repo (S7); ours is in
+            // the block instead.
+            return Err("use option \"always\": the block remembers it, not the agent".into());
+        }
+        if option.starts_with("always") {
+            let rule = Rule { tool: p.tool.clone(), title: (option == "always").then(|| p.title.clone()) };
+            if !g.cfg.allow.contains(&rule) {
+                g.cfg.allow.push(rule);
+            }
+        }
+        let how = if option.starts_with("always") { "always" } else { "once" };
+        g.note(json!({ "e": "approve", "title": p.title, "how": how }));
+        g.out(json!({ "jsonrpc": "2.0", "id": p.rpc, "result": { "outcome": { "outcome": "selected", "optionId": chosen.id } } }));
+        drop(g);
+        self.changed();
+        Ok(json!({ "approved": p.id, "option": chosen.id }))
+    }
+
+    fn deny(&self, args: &Value) -> Result<Value, String> {
+        let mut g = self.inner.lock().unwrap();
+        let p = Self::find(&g, &args["id"])?;
+        let reason = args["reason"].as_str().unwrap_or("");
+        let reject = p
+            .options
+            .iter()
+            .find(|o| o.kind == "reject_once")
+            .or(p.options.iter().find(|o| o.kind.starts_with("reject")));
+        let outcome = match reject {
+            Some(o) => json!({ "outcome": "selected", "optionId": o.id }),
+            None => json!({ "outcome": "cancelled" }),
+        };
+        g.note(json!({ "e": "deny", "title": p.title, "reason": reason }));
+        g.out(json!({ "jsonrpc": "2.0", "id": p.rpc, "result": { "outcome": outcome } }));
+        drop(g);
+        self.changed();
+        Ok(json!({ "denied": p.id }))
+    }
+
+    fn cancel(&self) -> Result<Value, String> {
+        let mut g = self.inner.lock().unwrap();
+        g.queue.clear();
+        let open: Vec<Value> = g.pending.iter().map(|p| p.rpc.clone()).collect();
+        if g.prompt_id.is_none() && open.is_empty() {
+            drop(g);
+            self.changed();
+            return Ok(json!({ "cancelled": false }));
+        }
+        let session = g.session();
+        g.notify("session/cancel", json!({ "sessionId": session }));
+        // The spec: open requests are answered `cancelled`.
+        for rpc in open {
+            g.out(json!({ "jsonrpc": "2.0", "id": rpc, "result": { "outcome": { "outcome": "cancelled" } } }));
+        }
+        drop(g);
+        self.changed();
+        Ok(json!({ "cancelled": true }))
+    }
+
+    fn send(&self, args: &Value) -> Result<Value, String> {
+        let text = args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or("send needs {\"text\": …}")?;
+        let mut g = self.inner.lock().unwrap();
+        g.queue.push_back(text.to_owned());
+        g.error = None;
+        match g.status {
+            Status::Exited | Status::Stopped => self.spawn(&mut g),
+            _ => send_next(&self.ctx, &mut g),
+        }
+        let answer = json!({ "status": g.status, "queued": g.queue.len() });
+        drop(g);
+        self.changed();
+        Ok(answer)
+    }
+
+    fn start(&self) -> Result<Value, String> {
+        let mut g = self.inner.lock().unwrap();
+        if g.link.is_some() && !matches!(g.status, Status::Exited | Status::Stopped) {
+            return Err("it's already running".into());
+        }
+        self.spawn(&mut g);
+        drop(g);
+        self.changed();
+        Ok(json!({}))
+    }
+}
+
+impl Block for Agent {
+    fn kind(&self) -> BlockType {
+        BlockType::Agent
+    }
+
+    fn config(&self) -> Value {
+        serde_json::to_value(&self.inner.lock().unwrap().cfg).unwrap_or_default()
+    }
+
+    fn state(&self) -> Value {
+        self.inner.lock().unwrap().state(&self.ctx)
+    }
+
+    fn text(&self) -> String {
+        let g = self.inner.lock().unwrap();
+        let mut head = format!("# {}", g.title.clone().unwrap_or_else(|| g.cfg.def.label()));
+        if let Some(cwd) = &g.cfg.cwd {
+            head.push_str(&format!(" in {cwd}"));
+        }
+        let mut out = format!("{head}\n\n{}", g.t.markdown());
+        for p in &g.pending {
+            out.push_str(&format!("**Waiting for approval:** `{}` (`approve {}`)\n\n", p.title, p.id));
+        }
+        out
+    }
+
+    fn call(&self, method: &str, args: Value) -> BoxFuture<'static, Result<Value, String>> {
+        let result = match method {
+            "send" => self.send(&args),
+            "approve" => self.approve(&args),
+            "deny" => self.deny(&args),
+            "cancel" => self.cancel(),
+            "start" | "resume" => self.start(),
+            "forget" => {
+                let mut g = self.inner.lock().unwrap();
+                let before = g.cfg.allow.len();
+                match args["index"].as_u64() {
+                    Some(i) if (i as usize) < before => {
+                        g.cfg.allow.remove(i as usize);
+                    }
+                    Some(_) => return Box::pin(async { Err("no such rule".into()) }),
+                    None => g.cfg.allow.clear(),
+                }
+                drop(g);
+                self.changed();
+                Ok(json!({}))
+            }
+            "state" => Ok(self.state()),
+            m => Err(no_method(BlockType::Agent, m)),
+        };
+        Box::pin(async move { result })
+    }
+
+    fn close(&self) {
+        let mut g = self.inner.lock().unwrap();
+        g.closing = true;
+        if let Some(l) = g.link.take() {
+            l.stop();
+        }
+        if self.ctx.sprite.is_none() {
+            link::forget_fds(self.ctx.id);
+        }
+        g.note(json!({ "e": "exit", "why": "closed", "closing": true }));
+    }
+
+    fn push_extra(&self) -> Option<Value> {
+        let g = self.inner.lock().unwrap();
+        let p = g.pending.first()?;
+        Some(json!({ "approve": { "id": p.id, "title": p.title } }))
+    }
+}
+
+/// An agent block's transcript from its directory alone (for search over
+/// closed blocks too).
+pub fn transcript_of(dir: &Path) -> Option<String> {
+    if std::fs::read_to_string(dir.join("kind")).ok()?.trim() != "agent" {
+        return None;
+    }
+    let log = PaneLog::open(dir.to_owned()).ok()?;
+    let (_, bytes) = log.read_from(log.start()).ok()?;
+    let mut inner = Inner::new(Config::default(), None);
+    for line in bytes.split(|b| *b == b'\n') {
+        inner.rebuild_line(line);
+    }
+    Some(inner.t.markdown())
+}
+
+#[cfg(test)]
+mod tests;
