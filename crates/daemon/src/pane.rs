@@ -1189,8 +1189,10 @@ impl State {
         // reporting, focus reports, application cursor keys and keypad, the
         // kitty keyboard stack; and show the cursor.
         const INPUT_RESET: &str = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?1004l\x1b[?1l\x1b>\x1b[<99u\x1b[?25h";
-        let banner =
-            format!("{leave_alt}\x1b[!p{INPUT_RESET}{below}\x1b[0m\r\n\x1b[2m── restored {} ──\x1b[0m\r\n", local_time(at));
+        let banner = format!(
+            "{leave_alt}\x1b[!p{INPUT_RESET}{below}\x1b[0m\r\n\x1b[2m── restored {} ──\x1b[0m\r\n",
+            local_time(at)
+        );
         self.output(banner.as_bytes());
     }
 

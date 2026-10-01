@@ -45,8 +45,8 @@ pub enum SandboxesCmd {
     Promote {
         sandbox: String,
         /// Its name in the host list [default: the sandbox's].
-        #[arg(long = "as")]
-        host: Option<String>,
+        #[arg(long = "as", value_name = "HOST")]
+        name: Option<String>,
         /// Its port inside the sandbox [default: 7681].
         #[arg(long)]
         port: Option<u16>,
@@ -79,8 +79,8 @@ pub fn sandboxes(target: &Target, cmd: Option<SandboxesCmd>, json_out: bool) -> 
             }
             v
         }
-        Some(SandboxesCmd::Promote { sandbox, host, port }) => {
-            let body = json!({"host": host, "port": port});
+        Some(SandboxesCmd::Promote { sandbox, name, port }) => {
+            let body = json!({"host": name, "port": port});
             let v = request(
                 target,
                 "POST",
