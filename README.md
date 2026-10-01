@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M3 (structure and CLI) works
+## Status: M3b (throwaway VM panes) works
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -52,6 +52,19 @@ the daemon stopping, crashing, or the machine rebooting:
   opens the pane.
 - **History.** Closed panes' output is kept for 7 days, and `illogical
   history` / `search` look across all panes.
+- **VM panes** (M3b). *New VM tab* (session menu, tab menu, the phone's
+  sheet), *New VM pane on the right* (pane menu), or `illogical run --vm`
+  gives a pane its own throwaway Firecracker microVM, a wisp sprite on this
+  host, deleted when the pane closes. It's for agents and untrusted builds.
+  Its shell gets the same integration (marks, `wait`, history), `process`
+  asks the VM, and the output is logged here, so `illogical tail` still has
+  the session after the VM is gone. Restarting the daemon reattaches to the
+  VM's shell without losing or repeating output. If the VM is deleted from
+  under a pane, or lost in a reboot, Enter (or the pane's restart policy)
+  starts a new one. Needs wispd's token at `~/.local/share/wisp/token`
+  (`--wisp-url`, `--wisp-token-file`); without it VM panes are off. The
+  base image is plain Ubuntu 24.04: install what you need, e.g. Claude Code
+  with `curl -fsSL https://claude.ai/install.sh | bash`.
 
 ### The CLI
 
@@ -71,6 +84,8 @@ illogical events -f [--pane %3] [--type command_end,attention]
 illogical history --failed --since 2h
 illogical search 'panic|Traceback' --since 1d
 illogical export %3 -o session.cast           # asciinema play session.cast
+illogical run --vm -- 'git clone … && make'   # on a throwaway VM (no command: a shell)
+illogical machines                            # VMs, their panes and state
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
@@ -141,15 +156,16 @@ against the running one.
   and OSC scanner (`pane.rs`, `store.rs`, `osc.rs`), restore and restart
   policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
   integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
-  search in `history.rs`), Web Push (`push.rs`), the WebSocket server,
-  embedded web client, access checks, `install`.
+  search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
+  (`machine.rs`: the Sprites API and exec TTY sessions), the WebSocket
+  server, embedded web client, access checks, `install`.
 - `crates/cli`: `illogical`, over the daemon's Unix socket.
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M3 taught us
+## Things M0–M3b taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -209,3 +225,13 @@ against the running one.
   cleared a moment later when the `printf` that sent it finished.
 - **Unix socket paths max out at ~108 bytes.** Long state directories get a
   socket in `$XDG_RUNTIME_DIR` instead, recorded in `state/sock.path`.
+- **wisp already had the fix for its replay.** The M3b spike found that
+  reattaching resends the whole session and planned to ask for a `since=`
+  parameter, but wisp's `output_offset` (not one of the names the spike
+  tried) does exactly that. Each VM pane keeps its session id and how many
+  bytes it has logged in `exec.json`, and reattaches from there.
+- **bash expands `ENV`, command substitution included,** so a VM's shell
+  gets the integration with nothing installed: the script travels in an
+  environment variable and `ENV='$(…)'` writes it to a temporary file.
+- **`kill?signal=HUP` ends a VM shell at once;** wisp's default TERM waits
+  10s, because an interactive bash ignores it.

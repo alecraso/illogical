@@ -61,11 +61,20 @@ enum Command {
         /// Wait for it to finish and exit with its exit code.
         #[arg(long)]
         wait: bool,
+        /// On a new throwaway VM, deleted when the pane closes. Without a
+        /// command: a shell on one.
+        #[arg(long)]
+        vm: bool,
+        /// The VM's image (with --vm).
+        #[arg(long, requires = "vm")]
+        image: Option<String>,
         /// One argument is a shell command line (`'make && ./app'`);
         /// several are a program and its arguments, quoted as given.
-        #[arg(trailing_var_arg = true, required = true)]
+        #[arg(trailing_var_arg = true, required_unless_present = "vm")]
         command: Vec<String>,
     },
+    /// Machines that panes run on (VM panes).
+    Machines,
     /// Type text into a pane (`-` reads stdin).
     Send {
         pane: Pane,
@@ -204,10 +213,15 @@ enum Command {
 
 fn socket(cli: &Cli) -> PathBuf {
     cli.socket.clone().unwrap_or_else(|| {
-        std::env::var_os("XDG_STATE_HOME")
+        let state = std::env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"))
-            .join("illogical/sock")
+            .join("illogical");
+        // A state directory too deep for a socket path puts it elsewhere.
+        match std::fs::read_to_string(state.join("sock.path")) {
+            Ok(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
+            _ => state.join("sock"),
+        }
     })
 }
 
@@ -301,15 +315,46 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                     "idle" | "" => String::new(),
                     a => format!("  [{a}]"),
                 };
-                println!("%{:<4} {:<12} {:<14} {:<36} {what}{attention}", p["id"], s("session_name"), tab, s("cwd"));
+                let host = p["host"].as_u64().map(|m| format!("  (vm m{m})")).unwrap_or_default();
+                println!(
+                    "%{:<4} {:<12} {:<14} {:<36} {what}{attention}{host}",
+                    p["id"],
+                    s("session_name"),
+                    tab,
+                    s("cwd")
+                );
             }
         }
-        Command::Run { session, split, cwd, policy: pol, wait, command } => {
+        Command::Machines => {
+            let v = request(&sock, "GET", "/api/machines", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            for m in v.as_array().into_iter().flatten() {
+                let s = |k: &str| m.get(k).and_then(Value::as_str).unwrap_or("");
+                let image = m["image"].as_str().unwrap_or("default image");
+                println!(
+                    "m{:<4} %{:<4} {:<9} {:<34} {} ({image})",
+                    m["id"],
+                    m["owner"],
+                    s("state"),
+                    s("sprite"),
+                    s("provider")
+                );
+            }
+        }
+        Command::Run { session, split, cwd, policy: pol, wait, vm, image, command } => {
+            // A VM has none of this host's directories.
+            let cwd =
+                if vm { cwd } else { cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string())) };
             let body = json!({
-                "command": shell_command(&command),
+                "command": (!command.is_empty()).then(|| shell_command(&command)),
+                "vm": vm,
+                "image": image,
                 "session": session,
                 "split": split.map(|p| p.0),
-                "cwd": cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string())),
+                "cwd": cwd,
                 "policy": pol.as_deref().map(policy).transpose()?,
                 "from_pane": std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
             });

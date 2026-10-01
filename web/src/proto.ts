@@ -82,6 +82,23 @@ export interface PaneInfo {
   attention: Attention;
   /** Shell integration for shells started in this pane. */
   integration: boolean;
+  type: BlockType;
+  /** The machine it runs on; null is the daemon's host. */
+  host: MachineId | null;
+}
+
+export type BlockType = "terminal";
+export type MachineId = number;
+export type MachineState = "starting" | "running" | "gone";
+
+/** A throwaway VM a pane runs on, deleted when the pane closes. */
+export interface Machine {
+  id: MachineId;
+  provider: string;
+  sprite: string;
+  image: string | null;
+  owner: PaneId;
+  state: MachineState;
 }
 
 export type PaneOp =
@@ -95,6 +112,7 @@ export interface State {
   sessions: Session[];
   tabs: TabView[];
   panes: PaneInfo[];
+  machines: Machine[];
 }
 
 export type Intent =

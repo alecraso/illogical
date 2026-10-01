@@ -7,13 +7,14 @@ use std::{
     collections::{BTreeMap, HashMap},
     os::fd::OwnedFd,
     path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 
 use illogical_core::{Effect, Intent, Mux};
 use illogical_proto::{
-    Attention, ClientId, ClientMsg, CommandInfo, Event, EventKind, PaneId, PaneInfo, PaneOp, Policy, ServerMsg, State,
-    TabView,
+    Attention, BlockType, ClientId, ClientMsg, CommandInfo, Event, EventKind, Machine, MachineId, MachineState, PaneId,
+    PaneInfo, PaneOp, Policy, ServerMsg, State, TabView,
     api::{PaneSummary, RunRequest},
 };
 use tokio::{
@@ -23,8 +24,11 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
+    machine::Wisp,
     osc::Signal,
-    pane::{self, CommandRec, Notice, NoticeSink, PaneHandle, Setup, Spawn, Start, Subscriber, ToClient, What},
+    pane::{
+        self, CommandRec, ExecRecord, Notice, NoticeSink, PaneHandle, Setup, Spawn, Start, Subscriber, ToClient, What,
+    },
     push::Push,
     shellint::Integration,
     store::{LAYOUT_VERSION, PaneLog, PaneMeta, Saved, StateDir, now_ms},
@@ -69,6 +73,9 @@ pub enum Api {
     Pane(PaneId, oneshot::Sender<Option<PaneHandle>>),
     Attention(PaneId, Attention, oneshot::Sender<bool>),
     Close(PaneId, oneshot::Sender<bool>),
+    Machines(oneshot::Sender<Vec<Machine>>),
+    /// The machine a pane runs on.
+    MachineOf(PaneId, oneshot::Sender<Option<Machine>>),
 }
 
 #[derive(Clone)]
@@ -76,6 +83,9 @@ pub struct MuxHandle {
     tx: mpsc::UnboundedSender<Cmd>,
     events: broadcast::Sender<Event>,
     pub store: StateDir,
+    pub wisp: Option<Arc<Wisp>>,
+    /// Tags execs on machines (`ILLOGICAL_EXEC`), with the machine id.
+    pub daemon_id: String,
 }
 
 impl MuxHandle {
@@ -113,6 +123,10 @@ pub struct Config {
     pub integration: Option<Integration>,
     /// The CLI's socket, for `ILLOGICAL_SOCK` in panes.
     pub socket: PathBuf,
+    /// Where VM panes get their machines; `None` if not set up.
+    pub wisp: Option<Arc<Wisp>>,
+    /// Names this daemon's sprites, so a crash sweep only touches ours.
+    pub daemon_id: String,
 }
 
 impl Config {
@@ -167,21 +181,80 @@ impl Config {
     fn restore(&self, pane: PaneId, meta: &PaneMeta) -> Start {
         let cwd = meta.cwd.as_ref().map(PathBuf::from).unwrap_or_else(|| self.home.clone());
         let on = meta.integration.unwrap_or(true);
-        let shell = self.shell(pane, cwd.clone(), on);
+        let shell = match meta.host {
+            Some(m) => self.guest_shell(m, on),
+            None => self.shell(pane, cwd.clone(), on),
+        };
+        let then = |command: &str| match meta.host {
+            Some(m) => self.guest_run_then_shell(m, command, on),
+            None => self.run_then_shell(pane, cwd.clone(), command, on),
+        };
         let note = |s: &str| format!("\x1b[2m[{s}]\x1b[0m\r\n");
         match (&meta.policy, &meta.command) {
             (Policy::None, _) => Start::Wait { banner: note("press Enter for a shell"), enter: shell, escape: None },
             (Policy::Rerun { confirm: true }, Some(cmd)) => Start::Wait {
                 banner: note(&format!("press Enter to re-run: {cmd}  ·  Esc for a shell")),
-                enter: self.run_then_shell(pane, cwd, cmd, on),
+                enter: then(cmd),
                 escape: Some(shell),
             },
-            (Policy::Rerun { confirm: false }, Some(cmd)) => Start::Now(self.run_then_shell(pane, cwd, cmd, on)),
-            (Policy::Hook { command }, _) => Start::Now(self.run_then_shell(pane, cwd, command, on)),
+            (Policy::Rerun { confirm: false }, Some(cmd)) => Start::Now(then(cmd)),
+            (Policy::Hook { command }, _) => Start::Now(then(command)),
             (Policy::Shell | Policy::Rerun { .. }, _) => Start::Now(shell),
         }
     }
+
+    /// The environment of a program on a machine: what the terminal is, and
+    /// a tag `process` finds its shell by. None of this host's.
+    fn guest_env(&self, machine: MachineId) -> Vec<(String, String)> {
+        vec![
+            ("TERM".into(), "xterm-256color".into()),
+            ("COLORTERM".into(), "truecolor".into()),
+            ("ILLOGICAL_EXEC".into(), self.exec_tag(machine)),
+        ]
+    }
+
+    pub fn exec_tag(&self, machine: MachineId) -> String {
+        format!("{}-{machine}", self.daemon_id)
+    }
+
+    /// The sprite names this daemon's machines get.
+    fn sprite_prefix(&self) -> String {
+        format!("illogical-eph-{}-", self.daemon_id)
+    }
+
+    /// A login shell on a machine (in its home directory).
+    fn guest_shell(&self, machine: MachineId, integrate: bool) -> Spawn {
+        let mut s = Spawn {
+            program: "bash".into(),
+            args: vec!["-l".into()],
+            cwd: PathBuf::new(),
+            env: self.guest_env(machine),
+        };
+        if integrate && self.integration.is_some() {
+            crate::shellint::apply_guest(&mut s);
+        }
+        s
+    }
+
+    fn guest_run(&self, machine: MachineId, cwd: Option<PathBuf>, command: &str) -> Spawn {
+        Spawn {
+            program: "bash".into(),
+            args: vec!["-lc".into(), command.into()],
+            cwd: cwd.unwrap_or_default(),
+            env: self.guest_env(machine),
+        }
+    }
+
+    fn guest_run_then_shell(&self, machine: MachineId, command: &str, integrate: bool) -> Spawn {
+        let shell = self.guest_shell(machine, integrate);
+        let then = std::iter::once(shell.program.as_str()).chain(shell.args.iter().map(String::as_str));
+        let args = vec!["-lc".into(), format!("{command}; exec {}", then.collect::<Vec<_>>().join(" "))];
+        Spawn { args, ..shell }
+    }
 }
+
+/// What was last written to layout.json, to skip writing it unchanged.
+type SavedParts = (Mux, BTreeMap<PaneId, PaneMeta>, BTreeMap<MachineId, Machine>);
 
 struct Daemon {
     mux: Mux,
@@ -200,8 +273,12 @@ struct Daemon {
     push: Option<Push>,
     /// The next pane an intent spawns runs this instead of a shell.
     next_spawn: Option<(Spawn, Option<String>)>,
+    /// ...and runs it on this machine.
+    next_host: Option<MachineId>,
+    machines: BTreeMap<MachineId, Machine>,
+    next_machine: MachineId,
     save_due: Option<Instant>,
-    last_saved: Option<(Mux, BTreeMap<PaneId, PaneMeta>)>,
+    last_saved: Option<SavedParts>,
     shutting_down: bool,
 }
 
@@ -224,6 +301,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         events: events.clone(),
         push,
         next_spawn: None,
+        next_host: None,
+        machines: BTreeMap::new(),
+        next_machine: 1,
         save_due: None,
         last_saved: None,
         shutting_down: false,
@@ -234,8 +314,10 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
             warn!(error = %e, "could not create the first session");
         }
     }
+    d.sweep_machines();
+    let (wisp, daemon_id) = (d.config.wisp.clone(), d.config.daemon_id.clone());
     tokio::spawn(d.run(rx, notices_rx));
-    MuxHandle { tx, events, store }
+    MuxHandle { tx, events, store, wisp, daemon_id }
 }
 
 fn info_of(rec: CommandRec) -> CommandInfo {
@@ -264,8 +346,16 @@ impl Daemon {
                 return false;
             }
         };
-        let Saved { mux, panes: meta, .. } = saved;
+        let Saved { mux, panes: meta, machines, next_machine, .. } = saved;
         self.mux = mux;
+        self.next_machine = next_machine.max(1);
+        // A machine is only kept with the pane that owns it.
+        let owned: Vec<PaneId> = self.mux.panes();
+        for (id, m) in machines {
+            if owned.contains(&m.owner) {
+                self.machines.insert(id, Machine { state: MachineState::Starting, ..m });
+            }
+        }
         // Nobody is connected yet; whoever views a tab next sizes it.
         let owners: Vec<ClientId> = self.mux.tabs.values().filter_map(|t| t.owner).collect();
         for o in owners {
@@ -281,12 +371,23 @@ impl Daemon {
             // Still running on a terminal systemd kept for us: carry on with
             // it. Otherwise restore by policy.
             let record = crate::shim::read_record(&self.store.pane_dir(id).join("process"));
-            let start = match kept.remove(&format!("pane-{id}")) {
-                Some(master) if crate::shim::alive(&record) => Start::Adopt(master),
+            let mut meta = meta;
+            meta.host = meta.host.filter(|m| self.machines.contains_key(m));
+            let start = match (kept.remove(&format!("pane-{id}")), meta.host) {
+                (Some(master), None) if crate::shim::alive(&record) => Start::Adopt(master),
+                // On a machine: reattach to the session if there is one.
+                (_, Some(_)) => match ExecRecord::read(&self.store.pane_dir(id)) {
+                    Some(r) => Start::Resume {
+                        session: r.session,
+                        received: r.received,
+                        otherwise: Box::new(self.config.restore(id, &meta)),
+                    },
+                    None => self.config.restore(id, &meta),
+                },
                 _ => self.config.restore(id, &meta),
             };
             let integrate = meta.integration.unwrap_or(true);
-            match self.open_pane(id, cols, rows, true, start, cwd, integrate, false) {
+            match self.open_pane(id, cols, rows, true, start, cwd, integrate, false, meta.host) {
                 Ok(()) => {
                     self.meta.insert(id, meta);
                 }
@@ -300,7 +401,8 @@ impl Daemon {
         if self.mux.sessions.is_empty() {
             return false;
         }
-        self.last_saved = Some((self.mux.clone(), self.meta.clone().into_iter().collect()));
+        self.machines.retain(|_, m| self.meta.get(&m.owner).is_some_and(|p| p.host == Some(m.id)));
+        self.last_saved = Some((self.mux.clone(), self.meta.clone().into_iter().collect(), self.machines.clone()));
         true
     }
 
@@ -315,7 +417,25 @@ impl Daemon {
         cwd: PathBuf,
         integrate: bool,
         hold: bool,
+        machine: Option<MachineId>,
     ) -> std::io::Result<()> {
+        let host = match machine {
+            None => None,
+            Some(m) => {
+                let wisp = self.config.wisp.clone().ok_or_else(|| std::io::Error::other("VM panes aren't set up"))?;
+                let machine = self.machines.get(&m).ok_or_else(|| std::io::Error::other("no such machine"))?;
+                Some(pane::Host {
+                    wisp,
+                    sprite: machine.sprite.clone(),
+                    image: machine.image.clone(),
+                    rt: tokio::runtime::Handle::current(),
+                })
+            }
+        };
+        let shell = match machine {
+            Some(m) => self.config.guest_shell(m, integrate),
+            None => self.config.shell(id, cwd, integrate),
+        };
         let log = PaneLog::open(self.store.pane_dir(id))?;
         let h = pane::spawn_pane(Setup {
             id,
@@ -324,10 +444,11 @@ impl Daemon {
             log,
             restore,
             start,
-            shell: self.config.shell(id, cwd, integrate),
+            shell,
             launch: self.config.launch.clone(),
             hold,
             notices: self.notices.clone(),
+            host,
         })?;
         self.panes.insert(id, h);
         self.sizes.insert(id, (cols, rows));
@@ -403,7 +524,8 @@ impl Daemon {
         let running_command = || self.panes.get(&pane).is_some_and(|h| h.status().current.is_some());
         match n.what {
             What::Exited { code, close } => {
-                self.emit(Some(pane), EventKind::Exit { code });
+                let machine_gone = self.machine_of(pane).is_some_and(|m| m.state == MachineState::Gone);
+                self.emit(Some(pane), EventKind::Exit { code, machine_gone });
                 if close {
                     info!(pane, ?code, "pane exited; closing it");
                     let _ = self.intent(None, Intent::ClosePane { pane });
@@ -413,6 +535,19 @@ impl Daemon {
                     self.set_attention(pane, Attention::Done, &format!("exited with code {}", code.unwrap_or(-1)));
                 }
                 self.changed();
+            }
+            What::Machine(up) => {
+                let state = if up { MachineState::Running } else { MachineState::Gone };
+                let id = self.meta.get(&pane).and_then(|m| m.host);
+                if let Some(m) = id.and_then(|id| self.machines.get_mut(&id))
+                    && m.state != state
+                {
+                    m.state = state;
+                    let machine = m.id;
+                    info!(pane, machine, ?state, "machine");
+                    self.emit(Some(pane), EventKind::Machine { machine, state });
+                    self.broadcast();
+                }
             }
             What::Started => {
                 self.set_attention(pane, Attention::Idle, "started");
@@ -539,6 +674,12 @@ impl Daemon {
                 self.set_attention(pane, state, "set by the API");
                 let _ = reply.send(known);
             }
+            Api::Machines(reply) => {
+                let _ = reply.send(self.machines.values().cloned().collect());
+            }
+            Api::MachineOf(pane, reply) => {
+                let _ = reply.send(self.machine_of(pane).cloned());
+            }
             Api::Close(pane, reply) => {
                 let known = self.panes.contains_key(&pane);
                 if known {
@@ -557,6 +698,7 @@ impl Daemon {
         let from = req.from_pane.filter(|p| self.panes.contains_key(p));
         let cwd = req
             .cwd
+            .clone()
             .map(PathBuf::from)
             .or_else(|| from.and_then(|p| self.panes.get(&p)?.cwd()))
             .unwrap_or_else(|| self.config.home.clone());
@@ -576,8 +718,16 @@ impl Daemon {
                 .or_else(|| self.mux.sessions.first().map(|s| s.id)),
         };
         let before: Vec<PaneId> = self.mux.panes();
-        let spawn = self.config.run_only(0, cwd, &req.command);
-        self.next_spawn = Some((spawn, Some(req.command.clone())));
+        let host = if req.vm { Some(self.new_machine(req.image.clone())?) } else { None };
+        self.next_spawn = req.command.as_ref().map(|command| {
+            let spawn = match host {
+                // Not this host's directory: the guest's, if one was asked for.
+                Some(m) => self.config.guest_run(m, req.cwd.clone().map(PathBuf::from), command),
+                None => self.config.run_only(0, cwd, command),
+            };
+            (spawn, Some(command.clone()))
+        });
+        self.next_host = host;
         let intent = match (req.split, session) {
             (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right },
             (None, Some(session)) => Intent::NewTab { session, from_pane: from },
@@ -585,12 +735,67 @@ impl Daemon {
         };
         let result = self.intent(None, intent);
         self.next_spawn = None;
+        if let Some(m) = self.next_host.take() {
+            // Nothing took it.
+            self.machines.remove(&m);
+        }
         result?;
         let pane = self.mux.panes().into_iter().find(|p| !before.contains(p)).ok_or("no pane was created")?;
         if let Some(policy) = req.policy {
             self.meta.entry(pane).or_default().policy = policy;
         }
         Ok(pane)
+    }
+
+    /// A new machine for the next pane; it's created when its first
+    /// program starts.
+    fn new_machine(&mut self, image: Option<String>) -> Result<MachineId, String> {
+        if self.config.wisp.is_none() {
+            return Err("VM panes aren't set up: illogicald found no wisp token (see --wisp-token-file)".into());
+        }
+        let id = self.next_machine;
+        self.next_machine += 1;
+        let sprite = format!("{}{id}", self.config.sprite_prefix());
+        let m = Machine { id, provider: "wisp".into(), sprite, image, owner: 0, state: MachineState::Starting };
+        self.machines.insert(id, m);
+        Ok(id)
+    }
+
+    fn machine_of(&self, pane: PaneId) -> Option<&Machine> {
+        self.machines.get(&self.meta.get(&pane)?.host?)
+    }
+
+    /// Delete a machine and everything on it, in the background.
+    fn delete_machine(&mut self, id: MachineId) {
+        let Some(m) = self.machines.remove(&id) else { return };
+        self.emit(Some(m.owner), EventKind::Machine { machine: id, state: MachineState::Gone });
+        let Some(wisp) = self.config.wisp.clone() else { return };
+        tokio::spawn(async move {
+            match wisp.delete(&m.sprite).await {
+                Ok(()) => info!(machine = m.id, sprite = m.sprite, "deleted machine"),
+                Err(e) => warn!(machine = m.id, sprite = m.sprite, error = %e, "can't delete machine"),
+            }
+        });
+    }
+
+    /// Delete our sprites that no machine owns: left by a crash, or by a
+    /// pane closed while the daemon was down.
+    fn sweep_machines(&self) {
+        let Some(wisp) = self.config.wisp.clone() else { return };
+        let prefix = self.config.sprite_prefix();
+        let keep: Vec<String> = self.machines.values().map(|m| m.sprite.clone()).collect();
+        tokio::spawn(async move {
+            let names = match wisp.list(&prefix).await {
+                Ok(n) => n,
+                Err(e) => return warn!(error = %e, "can't list machines to sweep"),
+            };
+            for name in names.into_iter().filter(|n| !keep.contains(n)) {
+                match wisp.delete(&name).await {
+                    Ok(()) => info!(sprite = name, "deleted a machine nothing owns"),
+                    Err(e) => warn!(sprite = name, error = %e, "can't delete stray machine"),
+                }
+            }
+        });
     }
 
     fn message(&mut self, client: ClientId, msg: ClientMsg) {
@@ -674,6 +879,7 @@ impl Daemon {
                     let cwd =
                         cwd_from.and_then(|p| self.panes.get(&p)?.cwd()).unwrap_or_else(|| self.config.home.clone());
                     let (cols, rows) = rects.get(&pane).map(|r| (r.cols, r.rows)).unwrap_or((80, 24));
+                    let host = self.next_host.take();
                     let (start, hold, cwd) = match self.next_spawn.take() {
                         // A command from `run`: fill in the pane id it gets.
                         Some((mut spawn, Some(text))) => {
@@ -682,16 +888,28 @@ impl Daemon {
                             let cwd = spawn.cwd.clone();
                             (Start::Run { spawn, text }, true, cwd)
                         }
-                        _ => (Start::Now(self.config.shell(pane, cwd.clone(), integrate)), false, cwd),
+                        _ => {
+                            let shell = match host {
+                                Some(m) => self.config.guest_shell(m, integrate),
+                                None => self.config.shell(pane, cwd.clone(), integrate),
+                            };
+                            (Start::Now(shell), false, cwd)
+                        }
                     };
-                    match self.open_pane(pane, cols, rows, false, start, cwd, integrate, hold) {
+                    if let Some(m) = host.and_then(|m| self.machines.get_mut(&m)) {
+                        m.owner = pane;
+                    }
+                    match self.open_pane(pane, cols, rows, false, start, cwd, integrate, hold, host) {
                         Ok(()) => {
-                            let meta = PaneMeta { integration: from_meta, ..Default::default() };
+                            let meta = PaneMeta { integration: from_meta, host, ..Default::default() };
                             self.meta.insert(pane, meta);
                             self.emit(Some(pane), EventKind::Opened);
                         }
                         Err(e) => {
                             warn!(pane, error = %e, "could not start pane");
+                            if let Some(m) = host {
+                                self.machines.remove(&m);
+                            }
                             let _ = self.mux.apply(Intent::ClosePane { pane });
                         }
                     }
@@ -699,6 +917,10 @@ impl Daemon {
                 Effect::Kill { pane } => {
                     if let Some(p) = self.panes.remove(&pane) {
                         p.close();
+                    }
+                    // A pane's machine goes with it.
+                    if let Some(m) = self.meta.get(&pane).and_then(|m| m.host) {
+                        self.delete_machine(m);
                     }
                     self.sizes.remove(&pane);
                     self.meta.remove(&pane);
@@ -765,12 +987,19 @@ impl Daemon {
             self.broadcast();
         }
         let panes: BTreeMap<PaneId, PaneMeta> = self.meta.iter().map(|(k, v)| (*k, v.clone())).collect();
-        if self.last_saved.as_ref().is_some_and(|(m, p)| *m == self.mux && *p == panes) {
+        if self.last_saved.as_ref().is_some_and(|(m, p, ms)| *m == self.mux && *p == panes && *ms == self.machines) {
             return;
         }
-        let saved = Saved { version: LAYOUT_VERSION, saved_at_ms: now_ms(), mux: self.mux.clone(), panes };
+        let saved = Saved {
+            version: LAYOUT_VERSION,
+            saved_at_ms: now_ms(),
+            mux: self.mux.clone(),
+            panes,
+            machines: self.machines.clone(),
+            next_machine: self.next_machine,
+        };
         match self.store.save_layout(&saved) {
-            Ok(()) => self.last_saved = Some((saved.mux, saved.panes)),
+            Ok(()) => self.last_saved = Some((saved.mux, saved.panes, saved.machines)),
             Err(e) => warn!(error = %e, "can't save layout"),
         }
     }
@@ -802,6 +1031,8 @@ impl Daemon {
             last: status.last.map(info_of),
             attention: self.attention.get(&p.id).copied().unwrap_or_default(),
             integration: meta.integration.unwrap_or(true),
+            kind: BlockType::Terminal,
+            host: meta.host,
         }
     }
 
@@ -847,6 +1078,7 @@ impl Daemon {
             .collect();
         let mut panes: Vec<PaneInfo> = self.panes.values().map(|p| self.pane_info(p)).collect();
         panes.sort_by_key(|p| p.id);
-        State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes }
+        let machines = self.machines.values().cloned().collect();
+        State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes, machines }
     }
 }

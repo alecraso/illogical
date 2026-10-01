@@ -92,6 +92,7 @@ function TopBar({
       })),
       "separator",
       { label: "New session", run: () => client.intent({ op: "new_session", name: null, from_pane: client.active() ?? null }) },
+      { label: "New VM tab", run: () => void client.newVm({ session: session.id }) },
       { label: "Rename session", run: () => setRenaming({ kind: "session", id: session.id }) },
       "separator",
       ...notificationItems(client),
@@ -198,11 +199,17 @@ function TabItem({
         openMenu(e, [
           { label: "Rename tab", run: () => setRenaming({ kind: "tab", id: tab.id }) },
           { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
+          { label: "New VM tab", run: () => void client.newVm({ session: client.session! }) },
           "separator",
           { label: "Close tab", danger: true, run: close },
         ])
       }
     >
+      {paneIds(tab).some((p) => client.machine(p)) && (
+        <span class="host-tag" title="Runs on a throwaway VM">
+          VM
+        </span>
+      )}
       <span class="tab-label">{label}</span>
       <AttentionBadge state={tabAttention(client, tab)} />
       <button
@@ -405,6 +412,7 @@ function PaneSlot({
     openMenu(e, [
       { label: "Split right", run: () => client.intent({ op: "split", pane: id, edge: "right" }) },
       { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
+      { label: "New VM pane on the right", run: () => void client.newVm({ split: id }) },
       "separator",
       {
         label: "Move to new tab",
@@ -441,6 +449,7 @@ function PaneSlot({
       onPointerDownCapture={() => client.setActive(id)}
       onContextMenu={menu}
     >
+      <HostBadge client={client} id={id} />
       {!active && (info?.attention === "needs_input" || info?.attention === "done") && (
         <div class={`pane-badge ${info.attention}`}>{info.attention === "done" ? "done" : "needs you"}</div>
       )}
@@ -467,6 +476,18 @@ function PaneSlot({
           ⠿
         </div>
       )}
+    </div>
+  );
+}
+
+/** Where a pane runs, when it isn't this host: its VM and how it's doing. */
+function HostBadge({ client, id }: { client: Client; id: PaneId }) {
+  const m = client.machine(id);
+  if (!m) return null;
+  const state = m.state === "running" ? "" : ` · ${m.state === "gone" ? "gone" : "starting"}`;
+  return (
+    <div class={`host-badge ${m.state}`} title={`${m.sprite} (${m.provider}${m.image ? `, ${m.image}` : ""}); deleted when this pane closes`}>
+      VM{state}
     </div>
   );
 }

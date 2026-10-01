@@ -56,6 +56,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/tail", get(tail))
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
+        .route("/api/machines", get(machines))
         .route("/api/events", get(events))
         .route("/api/history", get(history_))
         .route("/api/search", get(search))
@@ -137,7 +138,7 @@ async fn panes(State(app): AppState) -> Res<Response> {
 }
 
 async fn run(State(app): AppState, Json(req): Json<RunRequest>) -> Res<Json<RunResponse>> {
-    if req.command.trim().is_empty() {
+    if req.command.as_deref().is_some_and(|c| c.trim().is_empty()) {
         return Err(bad("empty command"));
     }
     match app.mux.api(|r| Api::Run(req, r)).await {
@@ -236,8 +237,59 @@ async fn capture(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<C
     Ok(([(header::CONTENT_TYPE, ctype)], text).into_response())
 }
 
+async fn machines(State(app): AppState) -> Res<Json<Vec<illogical_proto::Machine>>> {
+    Ok(Json(app.mux.api(Api::Machines).await.unwrap_or_default()))
+}
+
+/// Finds a VM pane's shell by the tag in its environment (a session leader
+/// carrying `ILLOGICAL_EXEC=$1`) and prints: its pid, the foreground
+/// process's pid, comm, exe, cwd, and argv separated by \x1f.
+const GUEST_PROCESS: &str = r#"
+for d in /proc/[0-9]*; do
+  p=${d#/proc/}
+  tr '\0' '\n' <"$d/environ" 2>/dev/null | grep -qx "ILLOGICAL_EXEC=$1" || continue
+  st=$(sed 's/^.*) //' "$d/stat" 2>/dev/null) || continue
+  set -- "$1" $st
+  [ "$5" = "$p" ] || continue
+  f=$7; [ "$f" -gt 0 ] 2>/dev/null || f=$p
+  printf '%s\n%s\n' "$p" "$f"
+  cat "/proc/$f/comm"
+  readlink "/proc/$f/exe" || echo
+  readlink "/proc/$f/cwd" || echo
+  tr '\0' '\037' <"/proc/$f/cmdline"; echo
+  exit 0
+done
+exit 1
+"#;
+
+async fn guest_process(app: &App, machine: &illogical_proto::Machine) -> Res<Json<Process>> {
+    let unavailable = |why: String| ApiError(StatusCode::SERVICE_UNAVAILABLE, why);
+    let wisp = app.mux.wisp.clone().ok_or_else(|| unavailable("VM panes aren't set up".into()))?;
+    let tag = format!("{}-{}", app.mux.daemon_id, machine.id);
+    let argv = ["bash", "-c", GUEST_PROCESS, "illogical-process", &tag];
+    let (out, code) = wisp.run(&machine.sprite, &argv).await.map_err(|e| unavailable(format!("unavailable: {e}")))?;
+    let text = String::from_utf8_lossy(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    if code != Some(0) || lines.len() < 6 {
+        return Err(ApiError(StatusCode::CONFLICT, "nothing is running in that pane".into()));
+    }
+    let some = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+    Ok(Json(Process {
+        pid: lines[0].parse().unwrap_or(0),
+        foreground: lines[1].parse().unwrap_or(0),
+        comm: lines[2].to_owned(),
+        exe: some(lines[3]),
+        cwd: some(lines[4]),
+        argv: lines[5].split('\x1f').filter(|a| !a.is_empty()).map(str::to_owned).collect(),
+    }))
+}
+
 async fn process(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Process>> {
     let p = pane(&app, id).await?;
+    // On a machine: ask it (its processes aren't ours to read).
+    if let Some(Some(m)) = app.mux.api(|r| Api::MachineOf(id, r)).await {
+        return guest_process(&app, &m).await;
+    }
     let pid = p.pid_now().ok_or_else(|| ApiError(StatusCode::CONFLICT, "nothing is running in that pane".into()))?;
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
     let tpgid: u32 = stat
@@ -275,8 +327,34 @@ struct TailQuery {
     text: Option<u8>,
 }
 
+/// A closed pane's output, from its retired log: no following, and offsets
+/// only (no command marks).
+fn tail_closed(app: &App, id: PaneId, q: &TailQuery) -> Res<Response> {
+    let dir = app
+        .mux
+        .store
+        .pane_dirs()
+        .into_iter()
+        // Just closed, it may not have been moved to `closed/` yet.
+        .find(|(p, _, _)| *p == id)
+        .map(|(_, _, d)| d)
+        .ok_or(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}")))?;
+    let log = PaneLog::open(dir).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let from = match q.from.as_deref() {
+        None => log.end().saturating_sub(64 * 1024),
+        Some(n) => n.parse().map_err(|_| bad(format!("pane %{id} is closed: from takes an offset")))?,
+    };
+    let (_, bytes) = log.read_from(from).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(if q.text == Some(1) { strip(&bytes).into_bytes() } else { bytes }.into_response())
+}
+
 async fn tail(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<TailQuery>) -> Res<Response> {
-    let p = pane(&app, id).await?;
+    let p = match pane(&app, id).await {
+        Ok(p) => p,
+        // Closed: what it left behind.
+        Err(ApiError(StatusCode::NOT_FOUND, _)) => return tail_closed(&app, id, &q),
+        Err(e) => return Err(e),
+    };
     let status = p.status();
     let from = match q.from.as_deref() {
         None => status.end.saturating_sub(64 * 1024),
@@ -365,7 +443,7 @@ async fn wait_for(app: &App, id: PaneId, p: PaneHandle, q: &WaitQuery) -> Res<Wa
             loop {
                 let Ok(e) = events.recv().await else { continue };
                 if e.pane == Some(id)
-                    && let EventKind::Exit { code } = e.kind
+                    && let EventKind::Exit { code, .. } = e.kind
                 {
                     return Ok(WaitResult::Exit { code });
                 }

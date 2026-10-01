@@ -682,3 +682,46 @@ button {
 .needs-you h2 {
   color: var(--accent);
 }
+
+/* Where a pane runs, when it's a throwaway VM rather than this host. */
+.host-badge {
+  position: absolute;
+  z-index: 5;
+  right: 6px;
+  bottom: 4px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: auto;
+  cursor: default;
+  background: #89b4fa33;
+  color: #89b4fa;
+  border: 1px solid #89b4fa66;
+  opacity: 0.85;
+}
+
+.host-badge.starting {
+  color: #f9e2af;
+  border-color: #f9e2af66;
+  background: #f9e2af22;
+}
+
+.host-badge.gone {
+  color: #f38ba8;
+  border-color: #f38ba866;
+  background: #f38ba822;
+}
+
+.host-tag {
+  margin-right: 5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+  color: #89b4fa;
+  border: 1px solid #89b4fa66;
+}

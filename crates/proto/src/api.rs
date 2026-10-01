@@ -10,6 +10,7 @@
 //! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
 //! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
+//! | GET | `/api/machines` | | `[Machine]` |
 //! | GET | `/api/panes/N/capture` | `format=text\|ansi\|html`, `scope=screen\|scrollback\|last-command` | text |
 //! | GET | `/api/panes/N/process` | | `Process` |
 //! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `follow=1`, `text=1` | bytes (streamed with follow) |
@@ -37,8 +38,16 @@ pub struct PaneSummary {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RunRequest {
-    /// Run with the pane's shell (`$SHELL -l -c COMMAND`).
-    pub command: String,
+    /// Run with the pane's shell (`$SHELL -l -c COMMAND`); none for just a
+    /// shell.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Run it on a new throwaway machine owned by the pane.
+    #[serde(default)]
+    pub vm: bool,
+    /// The machine's image (the provider's default if none).
+    #[serde(default)]
+    pub image: Option<String>,
     /// Session name or id; created if no session has that name. Default: the
     /// session of `from_pane`, else the first.
     #[serde(default)]

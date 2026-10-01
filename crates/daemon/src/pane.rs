@@ -1,5 +1,6 @@
-//! A pane: a process on a PTY, the server-side terminal state it draws, its
-//! history on disk, and the clients watching it.
+//! A pane: a process on a PTY (here, or an exec TTY on a machine), the
+//! server-side terminal state it draws, its history on disk, and the clients
+//! watching it.
 //!
 //! Each pane runs a VT thread that owns everything stateful (libghostty's
 //! terminal is `!Send`). PTY output, client attaches, resizes and process
@@ -34,6 +35,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::{
+    machine::{Begin, Exec, ExecEvent, Wisp},
     osc::Signal,
     store::{Event, PaneLog, now_ms},
 };
@@ -82,6 +84,9 @@ pub enum What {
     /// was killed by a signal (it didn't mean to go away: a reboot, an OOM
     /// kill), or the pane holds on exit (`illogical run`).
     Exited { code: Option<i32>, close: bool },
+    /// The pane's machine is up (true), or gone (false): deleted from under
+    /// it, or lost in a reboot of the host it ran on.
+    Machine(bool),
     /// A process started in a pane that was waiting.
     Started,
     /// Structure in the output: prompts, commands, cwd, notifications.
@@ -146,14 +151,35 @@ pub enum CaptureScope {
 
 enum Cmd {
     Output(Vec<u8>),
-    Exited { pid: u32, code: Option<i32>, signal: Option<i32> },
-    Attach { sub: Subscriber, offset: Option<u64> },
-    Detach { client: ClientId },
-    Resize { cols: u16, rows: u16 },
+    /// The process `key` (a local pid, or a machine exec) ended.
+    Exited {
+        key: u64,
+        code: Option<i32>,
+        signal: Option<i32>,
+    },
+    Exec {
+        key: u64,
+        event: ExecEvent,
+    },
+    Attach {
+        sub: Subscriber,
+        offset: Option<u64>,
+    },
+    Detach {
+        client: ClientId,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Input(Vec<u8>),
     Purge,
     Checkpoint(Sender<()>),
-    Capture { format: CaptureFormat, scope: CaptureScope, reply: Sender<String> },
+    Capture {
+        format: CaptureFormat,
+        scope: CaptureScope,
+        reply: Sender<String>,
+    },
     Close,
 }
 
@@ -269,6 +295,14 @@ pub enum Start {
     /// Take over a terminal (and the program on it) that outlived the
     /// previous daemon.
     Adopt(OwnedFd),
+    /// Reattach to a session on the pane's machine that outlived the
+    /// previous daemon, having logged `received` bytes of it; if it's gone,
+    /// start as `otherwise` says.
+    Resume {
+        session: String,
+        received: u64,
+        otherwise: Box<Start>,
+    },
     /// Run a command (`illogical run`), recorded as a command with this
     /// text, so it has history, events and an exit code like any other.
     Run {
@@ -298,8 +332,33 @@ pub struct Setup {
     /// its output and exit code can still be read.
     pub hold: bool,
     pub notices: NoticeSink,
+    /// The machine the pane's programs run on; `None` for this host.
+    pub host: Option<Host>,
 }
 
+/// A machine a pane's programs run on.
+#[derive(Clone)]
+pub struct Host {
+    pub wisp: Arc<Wisp>,
+    pub sprite: String,
+    pub image: Option<String>,
+    pub rt: tokio::runtime::Handle,
+}
+
+/// Where a VM pane's session is, so a restarted daemon can reattach:
+/// `exec.json` in the pane's directory.
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ExecRecord {
+    pub session: String,
+    /// Bytes of it in the log.
+    pub received: u64,
+}
+
+impl ExecRecord {
+    pub fn read(dir: &Path) -> Option<Self> {
+        serde_json::from_slice(&std::fs::read(dir.join("exec.json")).ok()?).ok()
+    }
+}
 /// How pane processes are started: through the shim (so a restarted daemon
 /// can still learn how they exit), in their own systemd scope (so restarting
 /// the daemon's service doesn't kill them), with their terminal kept in the
@@ -455,7 +514,7 @@ impl Process {
 
         thread::Builder::new().name(format!("pane{pane}-wait")).spawn(move || {
             let (code, signal) = wait_for_exit(pid, &record);
-            let _ = events.send(Cmd::Exited { pid, code, signal });
+            let _ = events.send(Cmd::Exited { key: pid as u64, code, signal });
         })?;
 
         Ok(Self { pid, master, writer })
@@ -482,6 +541,44 @@ impl Process {
         });
     }
 }
+
+/// What a pane's program runs on: a local PTY, or an exec on its machine.
+enum Backend {
+    Local(Process),
+    Vm { exec: Exec, key: u64 },
+}
+
+impl Backend {
+    fn key(&self) -> u64 {
+        match self {
+            Backend::Local(p) => p.pid as u64,
+            Backend::Vm { key, .. } => *key,
+        }
+    }
+    fn send(&self, data: Vec<u8>) {
+        match self {
+            Backend::Local(p) => {
+                let _ = p.writer.send(data);
+            }
+            Backend::Vm { exec, .. } => exec.input(data),
+        }
+    }
+    fn resize(&self, cols: u16, rows: u16) {
+        match self {
+            Backend::Local(p) => p.resize(cols, rows),
+            Backend::Vm { exec, .. } => exec.resize(cols, rows),
+        }
+    }
+    fn hang_up(&self) {
+        match self {
+            Backend::Local(p) => p.hang_up(),
+            Backend::Vm { exec, .. } => exec.hang_up(),
+        }
+    }
+}
+
+/// Keys for machine execs, above any pid.
+static NEXT_EXEC: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 32);
 
 /// Wait for a process that may not be our child (a restarted daemon is no
 /// longer its parent), then read how it ended from the shim's record.
@@ -539,7 +636,14 @@ struct Waiting {
 struct State {
     id: PaneId,
     engine: GhosttyEngine,
-    process: Option<Process>,
+    process: Option<Backend>,
+    host: Option<Host>,
+    /// The exec session followed now, and how many of its bytes are logged
+    /// (and what `exec.json` says, to write it only when that changes).
+    exec: Option<ExecRecord>,
+    exec_saved: Option<(String, u64)>,
+    /// A resumed session that turns out to be gone starts like this.
+    resume_otherwise: Option<Start>,
     waiting: Option<Waiting>,
     ring: Ring,
     log: Option<PaneLog>,
@@ -564,7 +668,7 @@ struct State {
 }
 
 pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
-    let Setup { id, cols, rows, log, restore, start, shell, launch, hold, notices } = setup;
+    let Setup { id, cols, rows, log, restore, start, shell, launch, hold, notices, host } = setup;
     let record = log.dir().join("process");
     let (tx, rx) = unbounded();
     let epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
@@ -583,6 +687,10 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             id,
             engine,
             process: None,
+            host,
+            exec: None,
+            exec_saved: None,
+            resume_otherwise: None,
             waiting: None,
             ring: Ring { buf: VecDeque::new(), start: log.end() },
             log: Some(log),
@@ -603,35 +711,11 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             status,
             last_time_mark: Instant::now() - Duration::from_secs(60),
         };
-        let adopting = matches!(start, Start::Adopt(_));
+        let adopting = matches!(start, Start::Adopt(_) | Start::Resume { .. });
         if restore && !adopting {
             st.restored_banner();
         }
-        match start {
-            Start::Now(spawn) => st.start(&spawn),
-            Start::Run { spawn, text } => {
-                st.status.lock().unwrap().cwd = Some(spawn.cwd.display().to_string());
-                let at = st.ring.end();
-                st.signal(at, Signal::CommandLine { text });
-                st.signal(at, Signal::CommandStart);
-                st.start(&spawn);
-            }
-            Start::Adopt(master) => match Process::adopt(master, &st.record, id, st.events.clone()) {
-                Ok(p) => {
-                    st.pid.store(p.pid, Ordering::Relaxed);
-                    st.running.store(true, Ordering::Relaxed);
-                    st.process = Some(p);
-                }
-                Err(e) => {
-                    info!(pane = id, error = %e, "can't adopt; treating as ended");
-                    st.exited(None, Some(libc::SIGKILL));
-                }
-            },
-            Start::Wait { banner, enter, escape } => {
-                st.output(banner.as_bytes());
-                st.waiting = Some(Waiting { enter, escape });
-            }
-        }
+        st.begin(start);
         run(st, rx);
     })?;
     Ok(handle)
@@ -717,6 +801,7 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
                     st.checkpoint();
                 }
                 st.check_quiet();
+                st.save_exec();
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => return,
@@ -750,10 +835,51 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
                     None => return st.finish(),
                 }
             }
-            Cmd::Exited { pid, code, signal } => {
-                if st.process.as_ref().map(|p| p.pid) != Some(pid) {
+            Cmd::Exec { key, event } => {
+                if st.process.as_ref().map(|p| p.key()) != Some(key) {
                     continue;
                 }
+                match event {
+                    ExecEvent::Output(data) => {
+                        if let Some(e) = &mut st.exec {
+                            e.received += data.len() as u64;
+                        }
+                        st.output(&data);
+                        if st.unsaved >= CHECKPOINT_BYTES {
+                            st.checkpoint();
+                        }
+                    }
+                    ExecEvent::Session(session) => {
+                        info!(pane = st.id, session, "attached to machine session");
+                        st.resume_otherwise = None;
+                        let received = st.exec.as_ref().map_or(0, |e| e.received);
+                        st.exec = Some(ExecRecord { session, received });
+                        st.save_exec();
+                        st.notify(What::Machine(true));
+                    }
+                    ExecEvent::Exited(code) => {
+                        info!(pane = st.id, ?code, "machine process exited");
+                        st.forget_exec();
+                        if st.ended() {
+                            return st.finish();
+                        }
+                        st.exited(code, None);
+                    }
+                    ExecEvent::Lost { machine_gone } => {
+                        info!(pane = st.id, machine_gone, "lost the machine session");
+                        st.forget_exec();
+                        if st.ended() {
+                            return st.finish();
+                        }
+                        st.lost(machine_gone);
+                    }
+                }
+            }
+            Cmd::Exited { key, code, signal } => {
+                if st.process.as_ref().map(|p| p.key()) != Some(key) {
+                    continue;
+                }
+                let pid = key;
                 info!(pane = st.id, pid, ?code, ?signal, "process exited");
                 st.process = None;
                 st.pid.store(0, Ordering::Relaxed);
@@ -768,18 +894,155 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
 }
 
 impl State {
+    fn begin(&mut self, start: Start) {
+        let id = self.id;
+        match start {
+            Start::Now(spawn) => self.start(&spawn),
+            Start::Run { spawn, text } => {
+                if self.host.is_none() {
+                    self.status.lock().unwrap().cwd = Some(spawn.cwd.display().to_string());
+                }
+                let at = self.ring.end();
+                self.signal(at, Signal::CommandLine { text });
+                self.signal(at, Signal::CommandStart);
+                self.start(&spawn);
+            }
+            Start::Adopt(master) => match Process::adopt(master, &self.record, id, self.events.clone()) {
+                Ok(p) => {
+                    self.pid.store(p.pid, Ordering::Relaxed);
+                    self.running.store(true, Ordering::Relaxed);
+                    self.process = Some(Backend::Local(p));
+                }
+                Err(e) => {
+                    info!(pane = id, error = %e, "can't adopt; treating as ended");
+                    self.exited(None, Some(libc::SIGKILL));
+                }
+            },
+            Start::Resume { session, received, otherwise } => {
+                let Some(host) = self.host.clone() else { return self.begin(*otherwise) };
+                info!(pane = id, sprite = host.sprite, session, received, "reattaching to machine session");
+                self.exec = Some(ExecRecord { session: session.clone(), received });
+                self.exec_saved = Some((session.clone(), received));
+                self.resume_otherwise = Some(*otherwise);
+                self.attach_exec(&host, Begin::Resume { session, received });
+            }
+            Start::Wait { banner, enter, escape } => {
+                self.output(banner.as_bytes());
+                self.waiting = Some(Waiting { enter, escape });
+            }
+        }
+    }
+
+    fn attach_exec(&mut self, host: &Host, begin: Begin) {
+        let key = NEXT_EXEC.fetch_add(1, Ordering::Relaxed);
+        let events = self.events.clone();
+        let exec =
+            crate::machine::start(&host.rt, host.wisp.clone(), host.sprite.clone(), begin, self.engine.size(), {
+                move |event| events.send(Cmd::Exec { key, event }).is_ok()
+            });
+        self.running.store(true, Ordering::Relaxed);
+        self.process = Some(Backend::Vm { exec, key });
+    }
+
+    /// The process is gone; true if the pane is closing and should finish.
+    fn ended(&mut self) -> bool {
+        self.process = None;
+        self.pid.store(0, Ordering::Relaxed);
+        self.running.store(false, Ordering::Relaxed);
+        self.closing
+    }
+
+    /// A VM pane lost its session: the machine is gone, or the session is.
+    fn lost(&mut self, machine_gone: bool) {
+        if let Some(otherwise) = self.resume_otherwise.take() {
+            // Restored after the machine went (a reboot of its host): start
+            // as the pane's policy says, on a fresh machine.
+            self.restored_banner();
+            let note: &[u8] = if machine_gone {
+                b"\x1b[2m[the machine was lost; this is a new one]\x1b[0m\r\n"
+            } else {
+                b"\x1b[2m[the session on the machine was lost]\x1b[0m\r\n"
+            };
+            self.output(note);
+            return self.begin(otherwise);
+        }
+        let pending = self.status.lock().unwrap().current.is_some();
+        if pending {
+            let end = self.status.lock().unwrap().end;
+            self.signal(end, Signal::CommandEnd { exit: None });
+        }
+        {
+            let mut st = self.status.lock().unwrap();
+            st.busy = false;
+            st.exited = Some(None);
+        }
+        let note = if machine_gone {
+            self.notify(What::Machine(false));
+            "machine gone · press Enter for a new one"
+        } else {
+            "lost the session on the machine · press Enter for a shell"
+        };
+        self.output(format!("\r\n\x1b[0m\x1b[2m[{note}]\x1b[0m\r\n").as_bytes());
+        self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+        self.notify(What::Exited { code: None, close: false });
+    }
+
+    /// The session ended: a restart has nothing to reattach to, and restores
+    /// the pane by its policy, as for a local pane.
+    fn forget_exec(&mut self) {
+        self.exec = None;
+        self.exec_saved = None;
+        if let Some(log) = &self.log {
+            let _ = std::fs::remove_file(log.dir().join("exec.json"));
+        }
+    }
+
+    /// Write `exec.json` if it changed. Not synced: it matters across a
+    /// daemon restart, where the page cache survives.
+    fn save_exec(&mut self) {
+        let Some(e) = &self.exec else { return };
+        let now = (e.session.clone(), e.received);
+        if self.exec_saved.as_ref() == Some(&now) {
+            return;
+        }
+        let Some(log) = &self.log else { return };
+        match serde_json::to_vec(e) {
+            Ok(b) => {
+                if let Err(err) = std::fs::write(log.dir().join("exec.json"), b) {
+                    warn!(pane = self.id, error = %err, "can't write exec.json");
+                }
+            }
+            Err(_) => return,
+        }
+        self.exec_saved = Some(now);
+    }
+
     fn start(&mut self, spawn: &Spawn) {
         {
             let mut st = self.status.lock().unwrap();
             st.exited = None;
-            st.cwd.get_or_insert_with(|| spawn.cwd.display().to_string());
+            if self.host.is_none() {
+                st.cwd.get_or_insert_with(|| spawn.cwd.display().to_string());
+            }
+        }
+        if let Some(host) = self.host.clone() {
+            // A new session: what the old one left in exec.json no longer
+            // applies.
+            self.exec = Some(ExecRecord::default());
+            self.exec_saved = None;
+            if let Some(log) = &self.log {
+                let _ = std::fs::remove_file(log.dir().join("exec.json"));
+            }
+            info!(pane = self.id, sprite = host.sprite, program = %spawn.program, "starting on machine");
+            let image = host.image.clone();
+            return self.attach_exec(&host, Begin::New { spawn: spawn.clone(), image });
         }
         let (cols, rows) = self.engine.size();
         match Process::start(spawn, &self.launch, &self.record, cols, rows, self.id, self.events.clone()) {
             Ok(p) => {
                 self.pid.store(p.pid, Ordering::Relaxed);
                 self.running.store(true, Ordering::Relaxed);
-                self.process = Some(p);
+                self.process = Some(Backend::Local(p));
             }
             Err(e) => {
                 warn!(pane = self.id, error = %e, "can't start process");
@@ -830,7 +1093,7 @@ impl State {
             st.input_at = st.end;
         }
         if let Some(p) = &self.process {
-            let _ = p.writer.send(data);
+            p.send(data);
             return;
         }
         let Some(w) = &self.waiting else { return };
@@ -876,7 +1139,7 @@ impl State {
         if !replies.is_empty()
             && let Some(p) = &self.process
         {
-            let _ = p.writer.send(replies);
+            p.send(replies);
         }
         self.ring.push(data);
         if let Some(log) = &mut self.log
@@ -1018,6 +1281,7 @@ impl State {
     }
 
     fn checkpoint(&mut self) {
+        self.save_exec();
         let Some(log) = &mut self.log else { return };
         let started = Instant::now();
         let bytes = self.engine.checkpoint();
@@ -1038,7 +1302,7 @@ impl State {
         // ask whatever is running to redraw (Ctrl-L) on the clean screen.
         self.output(b"\x1b[H\x1b[2J\x1b[3J");
         if let Some(p) = &self.process {
-            let _ = p.writer.send(vec![0x0c]);
+            p.send(vec![0x0c]);
         }
         self.checkpoint();
     }

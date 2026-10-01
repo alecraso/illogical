@@ -5,6 +5,7 @@ mod api;
 mod history;
 mod install;
 mod keys;
+mod machine;
 mod mux;
 mod osc;
 mod pane;
@@ -18,7 +19,7 @@ mod sys;
 use std::{net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "illogical daemon: owns terminals that clients attach to")]
@@ -80,6 +81,55 @@ struct RunArgs {
     /// and exit codes.
     #[arg(long)]
     no_shell_integration: bool,
+    /// The wispd that VM panes get their machines from.
+    #[arg(long, env = "ILLOGICAL_WISP_URL", default_value = "http://127.0.0.1:7788")]
+    wisp_url: String,
+    /// Its API token. VM panes are off without one. Default:
+    /// `$XDG_DATA_HOME/wisp/token`.
+    #[arg(long, env = "ILLOGICAL_WISP_TOKEN_FILE")]
+    wisp_token_file: Option<PathBuf>,
+}
+
+/// A random name for this daemon's state directory, kept in it: the
+/// machines it creates carry it, so it never sweeps away another daemon's.
+fn daemon_id(store: &store::StateDir) -> String {
+    let path = store.root().join("daemon-id");
+    if let Ok(id) = std::fs::read_to_string(&path)
+        && !id.trim().is_empty()
+    {
+        return id.trim().to_owned();
+    }
+    let mut b = [0u8; 4];
+    let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b));
+    let id: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    if let Err(e) = store::write_atomic(&path, id.as_bytes()) {
+        warn!(error = %e, "can't save the daemon id");
+    }
+    id
+}
+
+/// The CLI's socket: `sock` in the state directory, unless that path is too
+/// long for a Unix socket (about 108 bytes); then one in `$XDG_RUNTIME_DIR`
+/// (else /tmp) named by a hash of the directory, recorded in `sock.path`.
+fn socket_path(state_dir: &std::path::Path) -> PathBuf {
+    let plain = state_dir.join("sock");
+    let record = state_dir.join("sock.path");
+    if plain.as_os_str().len() < 100 {
+        let _ = std::fs::remove_file(record);
+        return plain;
+    }
+    // FNV-1a: stable across runs, unlike std's hasher.
+    let hash = state_dir
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let socket = dir.join(format!("illogical-{hash:016x}.sock"));
+    if let Err(e) = store::write_atomic(&record, socket.as_os_str().as_encoded_bytes()) {
+        warn!(error = %e, "can't record the socket's path");
+    }
+    socket
 }
 
 fn home() -> PathBuf {
@@ -151,7 +201,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
             }
         }
     };
-    let socket = state_dir.join("sock");
+    let socket = socket_path(&state_dir);
     let subject = format!("mailto:{}", owner_login.clone().unwrap_or_else(|| "illogical@localhost".into()));
     let push = match push::Push::open(state_dir.join("push"), subject) {
         Ok(p) => Some(p),
@@ -160,6 +210,14 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
             None
         }
     };
+    let token_file = args.wisp_token_file.clone().unwrap_or_else(|| {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".local/share"))
+            .join("wisp/token")
+    });
+    let wisp = machine::Wisp::open(&args.wisp_url, &token_file).map(std::sync::Arc::new);
+    info!(url = args.wisp_url, on = wisp.is_some(), "VM panes");
     let config = mux::Config {
         shell,
         shell_args,
@@ -168,6 +226,8 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
         launch,
         integration,
         socket: socket.clone(),
+        wisp,
+        daemon_id: daemon_id(&store),
     };
     let mux = mux::start(config, store, kept, push.clone());
 

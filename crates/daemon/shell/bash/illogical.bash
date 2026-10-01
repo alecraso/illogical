@@ -9,6 +9,13 @@
 # command line) where prompts and commands begin and end, the exit code, and
 # the working directory (OSC 7). Nothing here changes how the shell behaves.
 
+# On a machine (a VM pane) this file arrives in $ILLOGICAL_BASH_SCRIPT and
+# ENV writes it to a temporary file; tidy both away.
+if [[ -n "${ILLOGICAL_BASH_SCRIPT:-}" ]]; then
+  builtin unset ILLOGICAL_BASH_SCRIPT
+  command rm -f -- "${BASH_SOURCE[0]}"
+fi
+
 if [[ -n "${ILLOGICAL_BASH_INJECT:-}" ]]; then
   builtin unset ENV ILLOGICAL_BASH_INJECT
   builtin set +o posix

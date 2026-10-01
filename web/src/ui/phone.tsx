@@ -62,6 +62,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
               return (
                 <div key={tid} class="sheet-tab">
                   <button class={tid === client.tab ? "sheet-item current" : "sheet-item"} onClick={act(() => client.selectTab(tid))}>
+                    {panes.some((p) => client.machine(p)) && <span class="host-tag">VM</span>}
                     {tabLabel(client, t)}
                   </button>
                   {panes.length > 1 &&
@@ -85,6 +86,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
             New tab
           </button>
+          <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session }))}>New VM tab</button>
           {active !== undefined && (
             <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right" }))}>Split pane</button>
           )}

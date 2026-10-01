@@ -3,13 +3,15 @@
 //!
 //! ```text
 //! $XDG_STATE_HOME/illogical/          0700
-//!   layout.json                       sessions, tabs, splits, pane details
+//!   layout.json                       sessions, tabs, splits, pane details,
+//!                                     machines
 //!   panes/<id>/
 //!     seg-<offset>.log                raw output; the name is the stream
 //!                                     offset of its first byte
 //!     index                           "<offset> resize <cols> <rows>",
 //!                                     "<offset> restore <unix ms>"
 //!     checkpoint                      "offset <n>\n" + engine checkpoint
+//!     exec.json                       a VM pane's session on its machine
 //! ```
 //!
 //! The log is the truth. A checkpoint is a cache of the terminal at some
@@ -29,7 +31,7 @@ use std::{
 };
 
 use illogical_core::Mux;
-use illogical_proto::{PaneId, Policy};
+use illogical_proto::{Machine, MachineId, PaneId, Policy};
 use serde::{Deserialize, Serialize};
 
 pub const LAYOUT_VERSION: u32 = 1;
@@ -42,6 +44,12 @@ pub struct Saved {
     pub saved_at_ms: u64,
     pub mux: Mux,
     pub panes: BTreeMap<PaneId, PaneMeta>,
+    #[serde(default)]
+    pub machines: BTreeMap<MachineId, Machine>,
+    /// Machine ids aren't reused: a sprite named after a deleted machine
+    /// could still be on its way out.
+    #[serde(default)]
+    pub next_machine: MachineId,
 }
 
 /// What a restore needs to know about a pane beyond its place in the layout.
@@ -53,6 +61,9 @@ pub struct PaneMeta {
     /// Shell integration for this pane's shells (`None`: the default, on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration: Option<bool>,
+    /// The machine it runs on; `None` is this host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<MachineId>,
 }
 
 #[derive(Debug, Clone)]
@@ -487,6 +498,8 @@ mod tests {
                 PaneMeta { policy: Policy::Rerun { confirm: true }, cwd: Some("/tmp".into()), ..Default::default() },
             )]
             .into(),
+            machines: BTreeMap::new(),
+            next_machine: 1,
         };
         state.save_layout(&saved).unwrap();
         assert_eq!(state.load_layout().unwrap(), Some(saved));

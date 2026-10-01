@@ -10,6 +10,10 @@
 //!   user's `ZDOTDIR` and reads their `.zshenv`.
 //! - **fish** gets our directory prepended to `XDG_DATA_DIRS`, where it loads
 //!   `fish/vendor_conf.d/illogical.fish`.
+//!
+//! On a machine (a VM pane) our files aren't there, so bash gets the script
+//! in an environment variable, and `ENV` (which bash expands, command
+//! substitution included) writes it to a temporary file and names that.
 
 use std::{
     fs, io,
@@ -78,6 +82,25 @@ impl Integration {
             _ => {}
         }
     }
+}
+
+/// Integration for a login bash on a machine, which has none of our files.
+pub fn apply_guest(spawn: &mut Spawn) {
+    if shell_name(&spawn.program) != "bash" || spawn.args.iter().any(|a| a == "-c") {
+        return;
+    }
+    spawn.args.retain(|a| a != "-l" && a != "--login");
+    spawn.args.insert(0, "--posix".into());
+    spawn.env.extend([
+        ("ILLOGICAL_BASH_LOGIN".into(), "1".into()),
+        ("ILLOGICAL_BASH_INJECT".into(), "1".into()),
+        ("ILLOGICAL_BASH_SCRIPT".into(), BASH.into()),
+        (
+            "ENV".into(),
+            r#"$(f=$(mktemp "${TMPDIR:-/tmp}/illogical.XXXXXX") && printf %s "$ILLOGICAL_BASH_SCRIPT" >"$f" && echo "$f")"#
+                .into(),
+        ),
+    ]);
 }
 
 fn shell_name(program: &str) -> &str {

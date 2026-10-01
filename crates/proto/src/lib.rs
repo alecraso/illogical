@@ -99,16 +99,40 @@ pub struct Event {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventKind {
     Prompt,
-    CommandStart { text: Option<String> },
-    CommandEnd { text: Option<String>, exit: Option<i32> },
-    Cwd { path: String },
-    Notify { title: String, body: String },
+    CommandStart {
+        text: Option<String>,
+    },
+    CommandEnd {
+        text: Option<String>,
+        exit: Option<i32>,
+    },
+    Cwd {
+        path: String,
+    },
+    Notify {
+        title: String,
+        body: String,
+    },
     Bell,
-    Attention { state: Attention },
-    Exit { code: Option<i32> },
+    Attention {
+        state: Attention,
+    },
+    Exit {
+        code: Option<i32>,
+        /// The machine it ran on went away (not the program ending).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        machine_gone: bool,
+    },
+    /// A machine was created, reached, or lost.
+    Machine {
+        machine: MachineId,
+        state: MachineState,
+    },
     Opened,
     Closed,
-    Layout { rev: u64 },
+    Layout {
+        rev: u64,
+    },
 }
 
 /// What a pane does when the daemon restores it. Its scrollback always comes
@@ -154,6 +178,49 @@ pub struct State {
     pub sessions: Vec<Session>,
     pub tabs: Vec<TabView>,
     pub panes: Vec<PaneInfo>,
+    /// Machines that blocks run on, other than this host.
+    #[serde(default)]
+    pub machines: Vec<Machine>,
+}
+
+pub type MachineId = u32;
+
+/// A machine that blocks can run on instead of this host: today a
+/// throwaway wisp sprite (a Firecracker microVM) owned by one pane, and
+/// deleted when that pane closes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Machine {
+    pub id: MachineId,
+    /// Who runs it: `wisp`.
+    pub provider: String,
+    /// The provider's name for it.
+    pub sprite: String,
+    #[serde(default)]
+    pub image: Option<String>,
+    /// The block it belongs to; the machine goes when it closes.
+    pub owner: PaneId,
+    #[serde(default)]
+    pub state: MachineState,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineState {
+    /// Created or being reached; the first program boots it.
+    #[default]
+    Starting,
+    Running,
+    /// Deleted from under us (or lost in a reboot of its host).
+    Gone,
+}
+
+/// What a block is. Only terminals exist so far; where one runs is its
+/// `host`, not its type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockType {
+    #[default]
+    Terminal,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -202,6 +269,11 @@ pub struct PaneInfo {
     /// Shell integration for shells started in this pane.
     #[serde(default = "yes")]
     pub integration: bool,
+    #[serde(default, rename = "type")]
+    pub kind: BlockType,
+    /// The machine it runs on; `None` is this host.
+    #[serde(default)]
+    pub host: Option<MachineId>,
 }
 
 fn yes() -> bool {

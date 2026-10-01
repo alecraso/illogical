@@ -56,7 +56,10 @@ fn start() -> Daemon {
 
 impl Daemon {
     fn sock(&self) -> PathBuf {
-        self.state.join("sock")
+        match std::fs::read_to_string(self.state.join("sock.path")) {
+            Ok(p) => PathBuf::from(p.trim()),
+            Err(_) => self.state.join("sock"),
+        }
     }
 
     /// One HTTP request over the socket; the whole body.

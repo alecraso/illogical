@@ -106,6 +106,37 @@ export class Client {
     return this.state?.panes.find((p) => p.id === pane);
   }
 
+  /** The machine a pane runs on, if not the daemon's host. */
+  machine(pane: PaneId) {
+    const host = this.info(pane)?.host;
+    return host == null ? undefined : this.state?.machines?.find((m) => m.id === host);
+  }
+
+  /** A shell on a new throwaway VM: a tab in `session`, or a split of `split`. */
+  async newVm(where: { session?: number; split?: PaneId }) {
+    // The session's own pane names it exactly (a session id given as text
+    // could also be another session's name).
+    const tab = where.session === undefined ? undefined : this.state?.sessions.find((s) => s.id === where.session)?.tabs[0];
+    const fromPane = tab === undefined ? null : (this.active(tab) ?? null);
+    // Show it when it appears, as for a tab made here.
+    this.lastIntentAt = Date.now();
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vm: true,
+          from_pane: fromPane,
+          session: fromPane === null ? (where.session?.toString() ?? null) : null,
+          split: where.split ?? null,
+        }),
+      });
+      if (!res.ok) this.toast(((await res.json().catch(() => null))?.error as string) ?? `couldn't start a VM (${res.status})`);
+    } catch {
+      this.toast("couldn't start a VM");
+    }
+  }
+
   paneOp(pane: PaneId, op: PaneOp) {
     this.send({ type: "pane", pane, op });
   }
