@@ -37,7 +37,9 @@ used; only the public description.
 
 ## Non-goals
 
-- Multi-user, multi-tenant, or enterprise access control.
+- Multi-tenant or enterprise access control. (Sharing with a few people is
+  planned as PLAN.md's multiplayer track, M12–M15; organisations, SSO and policy
+  engines stay out.)
 - Writing a terminal emulator. Rendering is borrowed (xterm.js, libghostty).
 - Windows.
 - tmux keybinding compatibility.
