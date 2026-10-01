@@ -249,7 +249,12 @@ impl Transcript {
                     }
                     let body =
                         if t.output.is_empty() { t.text.clone() } else { crate::osc::strip(t.output.as_bytes()) };
-                    if !body.trim().is_empty() {
+                    if body.contains("```") {
+                        // Already fenced (Fountain's ```console blocks).
+                        out.push('\n');
+                        out.push_str(body.trim_end());
+                        out.push('\n');
+                    } else if !body.trim().is_empty() {
                         out.push_str("\n```\n");
                         out.push_str(body.trim_end());
                         out.push_str("\n```\n");

@@ -70,6 +70,9 @@ const PUBLISH_EVERY: Duration = Duration::from_millis(120);
 /// How often to ask Fountain whether a turn that ran while we were away is
 /// over.
 const REMOTE_POLL: Duration = Duration::from_secs(15);
+/// When an agent says "retry shortly" (Fountain provisioning a sandbox).
+const RETRY_AFTER: Duration = Duration::from_secs(5);
+const MAX_RETRIES: u32 = 12;
 
 /// What makes the block again (`layout.json`). Nothing secret.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -193,6 +196,8 @@ enum Effect {
     ToolFinished(String),
     /// Fountain: a turn may still be running remotely.
     CheckRemote,
+    /// The agent said to try the prompt again shortly.
+    Retry(String),
 }
 
 struct Inner {
@@ -381,6 +386,12 @@ impl Inner {
             "remote_done" => {
                 if self.status == Status::Remote {
                     self.status = Status::Ready;
+                    // It ended on Fountain, which sent us no stop reason.
+                    self.last_stop = Some("end_turn".into());
+                    if let Some(t) = self.turns.last_mut().filter(|t| t.ended_ms.is_none()) {
+                        t.ended_ms = Some(at);
+                        t.stop = Some("end_turn".into());
+                    }
                 }
             }
             "error" => {
@@ -476,6 +487,17 @@ impl Inner {
                     (Purpose::Load { .. } | Purpose::Resume, Some(e)) => {
                         self.replay = None;
                         fx.push(Effect::SessionLost(e));
+                    }
+                    // Fountain, while it provisions a sandbox: "retry shortly".
+                    // The prompt goes again, as if this one hadn't happened.
+                    (Purpose::Prompt, Some(e)) if e.contains("retry") => {
+                        self.prompt_id = None;
+                        self.status = Status::Ready;
+                        self.turns.pop();
+                        if let Some(Entry::User { text, .. }) = self.t.entries.last().cloned() {
+                            self.t.entries.pop();
+                            fx.push(Effect::Retry(text));
+                        }
                     }
                     (Purpose::Prompt, result) => {
                         self.prompt_id = None;
@@ -622,7 +644,7 @@ impl Inner {
         match self.status {
             Status::Exited => (Attention::NeedsInput, self.error.clone().unwrap_or_else(|| "the agent stopped".into())),
             Status::Working | Status::Remote => (Attention::Working, "working".into()),
-            Status::Starting if !self.queue.is_empty() => (Attention::Working, "starting".into()),
+            Status::Starting | Status::Ready if !self.queue.is_empty() => (Attention::Working, "starting".into()),
             Status::Ready | Status::Starting if self.error.is_some() => {
                 (Attention::NeedsInput, self.error.clone().unwrap_or_default())
             }
@@ -857,7 +879,6 @@ impl Agent {
                 link::ExecRecord::clear(&self.ctx.dir);
                 inner.link =
                     Some(link::spawn_vm(&self.ctx.rt, wisp, sprite.clone(), self.ctx.dir.clone(), begin, sink));
-                self.ctx.machine(true);
             }
         }
         inner.request(
@@ -928,6 +949,8 @@ async fn run(
     let mut tick = tokio::time::interval(PUBLISH_EVERY);
     let mut dirty = true;
     let mut remote_check: Option<tokio::time::Instant> = None;
+    let mut machine_up = false;
+    let (mut retry_at, mut retries): (Option<tokio::time::Instant>, u32) = (None, 0);
     // What it was before a restart, for the "needs you" list.
     publish(&ctx, &inner, true);
     loop {
@@ -943,19 +966,38 @@ async fn run(
                     match m {
                         Msg::Frame(generation, v) if generation == g.generation => {
                             fx = g.on_in(&v, now_ms());
+                            // Hearing from it means its machine is up.
+                            if ctx.sprite.is_some() && !machine_up {
+                                machine_up = true;
+                                ctx.machine(true);
+                            }
                         }
                         Msg::Closed(generation, why) if generation == g.generation => {
                             g.link = None;
                             g.pid = None;
                             info!(block = ctx.id, why, "agent server stopped");
                             g.note(json!({ "e": "exit", "why": why }));
-                            if ctx.sprite.is_some() {
-                                ctx.machine(!why.contains("machine is gone"));
+                            if ctx.sprite.is_some() && why.contains("machine is gone") {
+                                machine_up = false;
+                                ctx.machine(false);
                             }
                         }
                         _ => {}
                     }
                     for f in fx.drain(..) {
+                        if let Effect::Retry(text) = &f {
+                            retries += 1;
+                            if retries > MAX_RETRIES {
+                                g.note(json!({ "e": "error", "message": "The agent kept asking to retry; send it again later" }));
+                            } else {
+                                g.queue.push_front(text.clone());
+                                retry_at = Some(tokio::time::Instant::now() + RETRY_AFTER);
+                            }
+                            continue;
+                        }
+                        if f == Effect::TurnEnded {
+                            retries = 0;
+                        }
                         if f == Effect::CheckRemote {
                             if g.interrupted {
                                 g.note(json!({ "e": "remote" }));
@@ -976,6 +1018,11 @@ async fn run(
                 if dirty {
                     dirty = false;
                     publish(&ctx, &inner, false);
+                }
+                if retry_at.is_some_and(|t| tokio::time::Instant::now() >= t) {
+                    retry_at = None;
+                    send_next(&ctx, &mut inner.lock().unwrap());
+                    dirty = true;
                 }
                 if remote_check.is_some_and(|t| tokio::time::Instant::now() >= t) {
                     remote_check = None;
@@ -1108,7 +1155,7 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
                 let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit });
             }
         }
-        Effect::CheckRemote => {}
+        Effect::CheckRemote | Effect::Retry(_) => {}
     }
 }
 
