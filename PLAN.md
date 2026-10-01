@@ -120,7 +120,14 @@ Each milestone ends with a demo against the acceptance list.
   - A WSS echo worked through serve.
   - HTTP and WebSocket upgrade requests both carry `Tailscale-User-Login`, `-Name` and `-Profile-Pic`, plus `X-Forwarded-*`. A client-sent `Tailscale-User-Login` was replaced by the real one.
   - Still to do: open it from the phone once M0 serves a page.
-- **S3 fd store.** A 50-line Rust test service under the user manager. It stores a PTY master with `FDSTORE=1`, gets restarted, gets the fd back, and the shell running in a `systemd-run --user --scope` survives.
+- **S3 fd store: done 2026-10-01, passed.** See [spikes/s3-fdstore](spikes/s3-fdstore/README.md).
+  - The shell runs in its own `systemd-run --user --scope`, with the PTY master in the FD store.
+  - Restarts and a `kill -9` with `Restart=on-failure` both keep the same shell attached.
+  - `stop` ends the panes. That follows from the default `FileDescriptorStorePreserve=restart`, so upgrades must use `restart`.
+  - Must-dos for M2b:
+    - set `O_CLOEXEC` on masters (openpty doesn't);
+    - give each pane a unique scope name;
+    - use the exit-status shim, because a restarted daemon isn't the shell's parent.
 
 ### M0: the loop
 
