@@ -3,11 +3,14 @@
 import { render } from "preact";
 import "./style.css";
 import { Client } from "./client";
+import { directory } from "./hosts";
 import { App } from "./ui/app";
 import { measureCell } from "./ui/cells";
 import { registerWorker } from "./push";
 
-const client = new Client();
+// One client for the host shown (M4a); switching hosts closes it and opens
+// one to the other daemon, so hidden hosts hold no connection.
+let client = new Client(directory.base());
 
 // The visible height excludes a phone's on-screen keyboard, so the key bar
 // sits just above it.
@@ -17,11 +20,25 @@ vv?.addEventListener("resize", fitViewport);
 fitViewport();
 
 const cell = await measureCell();
-render(<App client={client} cell={cell} />, document.getElementById("root")!);
+const root = document.getElementById("root")!;
+const draw = () => render(<App key={client.base} client={client} cell={cell} />, root);
+draw();
 client.connect();
 
+directory.subscribe(() => {
+  const base = directory.base();
+  if (base === client.base) return;
+  client.close();
+  client = new Client(base);
+  draw();
+  client.connect();
+});
+void directory.refresh();
+
 // Opened from a notification (`#pane=N`), or told to by the service worker.
+// Notifications come from the home daemon, so show it first.
 const openPane = (pane: number) => {
+  if (directory.home !== null) directory.select(directory.home);
   const go = () => {
     if (!client.info(pane)) return false;
     client.setActive(pane);
@@ -41,7 +58,10 @@ void registerWorker(openPane);
 // For end-to-end tests.
 Object.assign(window, {
   __illogical: {
-    client,
+    get client() {
+      return client;
+    },
+    hosts: directory,
     cell,
     text: (pane: number) => client.panes.get(pane)?.view.text() ?? client.blocks.get(pane)?.view.text() ?? "",
     screen: (pane: number) => client.panes.get(pane)?.view.screen() ?? "",

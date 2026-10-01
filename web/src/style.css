@@ -839,3 +839,45 @@ button {
   text-decoration: none;
   font-weight: 600;
 }
+
+/* ---- hosts (M4a): which daemon this window shows */
+
+.host-button {
+  padding: 0 10px;
+  white-space: nowrap;
+  color: #89b4fa;
+  border-right: 1px solid var(--divider);
+}
+
+.host-button:hover {
+  background: var(--raised);
+}
+
+.host-crumb {
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: #89b4fa;
+  border: 1px solid #89b4fa66;
+}
+
+.sheet-host {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.host-seen {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.host-picker {
+  gap: 8px;
+}
+
+.host-picker button {
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--raised);
+}

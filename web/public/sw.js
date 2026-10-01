@@ -1,9 +1,36 @@
 // illogical service worker: shows push notifications (a pane needs you)
-// and opens that pane when one is tapped. Nothing is cached: the app needs
-// the daemon anyway.
+// and opens that pane when one is tapped. It also keeps the last copy of
+// the page itself, used only when the daemon that serves it doesn't
+// answer: the page can then still reach the other hosts on its saved list
+// (M4a). Nothing else is cached.
+
+const SHELL = "illogical-shell-v1";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
+  const page = req.mode === "navigate" && url.pathname === "/";
+  const asset = url.pathname.startsWith("/assets/") || url.pathname === "/icon.svg";
+  if (req.method !== "GET" || url.origin !== self.location.origin || !(page || asset)) return;
+  event.respondWith(
+    (async () => {
+      const cache = await caches.open(SHELL);
+      const key = page ? "/" : req;
+      try {
+        const res = await fetch(req);
+        if (res.ok) await cache.put(key, res.clone());
+        return res;
+      } catch (e) {
+        const saved = await cache.match(key);
+        if (saved) return saved;
+        throw e;
+      }
+    })(),
+  );
+});
 
 self.addEventListener("push", (event) => {
   let msg = { title: "illogical", body: "" };

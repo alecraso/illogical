@@ -42,6 +42,11 @@ export interface Modifiers {
 }
 
 export class Client {
+  /** The daemon's origin (`https://box.….ts.net`), or "" for the one this
+   * page came from. Another daemon must list this page's origin as
+   * allowed (`--allow-origin`). */
+  constructor(readonly base = "") {}
+
   state: State | null = null;
   clientId: number | null = null;
   connected = false;
@@ -146,7 +151,7 @@ export class Client {
   /** POST to the API; a failure shows as a toast. */
   async api(path: string, body: unknown = {}, failure = "that didn't work") {
     try {
-      const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const res = await fetch(this.base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) this.toast(((await res.json().catch(() => null))?.error as string) ?? `${failure} (${res.status})`);
       return res.ok;
     } catch {
@@ -210,7 +215,10 @@ export class Client {
   // ---- talking to the daemon
 
   connect() {
-    const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+    if (this.closed) return;
+    const url = this.base
+      ? `${this.base.replace(/^http/, "ws")}/ws`
+      : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
     const sock = new WebSocket(url);
     sock.binaryType = "arraybuffer";
     this.ws = sock;
@@ -230,9 +238,26 @@ export class Client {
     };
   }
 
+  /** Done with this daemon (another host is shown): disconnect for good,
+   * so a sandbox isn't kept awake, and let go of its terminals. */
+  close() {
+    this.closed = true;
+    const sock = this.ws;
+    this.ws = undefined;
+    this.connected = false;
+    sock?.close();
+    for (const p of this.panes.values()) p.view.dispose();
+    for (const b of this.blocks.values()) b.view.dispose();
+    this.panes.clear();
+    this.blocks.clear();
+    this.listeners.clear();
+  }
+
+  private closed = false;
+
   /** Reconnect now if the socket is down (a phone coming back). */
   wake() {
-    if (!this.ws) {
+    if (!this.ws && !this.closed) {
       this.retry = 0;
       this.connect();
     }
