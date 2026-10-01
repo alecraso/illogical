@@ -5,6 +5,7 @@ mod install;
 mod mux;
 mod pane;
 mod server;
+mod shim;
 mod store;
 mod sys;
 
@@ -14,10 +15,7 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 #[derive(Parser, Debug)]
-#[command(
-    version,
-    about = "illogical daemon: owns terminals that clients attach to"
-)]
+#[command(version, about = "illogical daemon: owns terminals that clients attach to")]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
@@ -74,30 +72,33 @@ struct RunArgs {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| "/".into())
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // The pane shim forks, so it runs before any threads exist.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("_shim") {
+        shim::run(&argv[2..]);
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "illogicald=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogicald=info".into()),
         )
         .init();
     let args = Args::parse();
     match args.command {
-        Some(Command::Install {
-            no_start,
-            daemon_args,
-        }) => install::install(!no_start, &daemon_args),
-        None => run(args.run).await,
+        Some(Command::Install { no_start, daemon_args }) => install::install(!no_start, &daemon_args),
+        None => {
+            // Pane terminals kept for us across a restart; taken before any
+            // threads start.
+            let kept = sys::take_listen_fds();
+            tokio::runtime::Runtime::new()?.block_on(run(args.run, kept))
+        }
     }
 }
 
-async fn run(args: RunArgs) -> anyhow::Result<()> {
+async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd::OwnedFd>) -> anyhow::Result<()> {
     let mut public_hosts = args.public_hosts.clone();
     let mut owner = args.owner.clone();
     if let Some(t) = access::tailnet() {
@@ -105,31 +106,16 @@ async fn run(args: RunArgs) -> anyhow::Result<()> {
         public_hosts.push(t.host);
         owner = owner.or(t.login);
     }
-    info!(
-        owner = owner
-            .as_deref()
-            .unwrap_or("<none: tailnet requests refused>"),
-        "tailnet owner"
-    );
-    let access = access::Access::new(
-        args.listen.port(),
-        &public_hosts,
-        &args.allow_origins,
-        owner,
-    );
+    info!(owner = owner.as_deref().unwrap_or("<none: tailnet requests refused>"), "tailnet owner");
+    let access = access::Access::new(args.listen.port(), &public_hosts, &args.allow_origins, owner);
 
     let (shell, shell_args) = match &args.shell {
         Some(cmd) => {
             let mut words = cmd.split_whitespace().map(String::from);
-            let program = words
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("--shell is empty"))?;
+            let program = words.next().ok_or_else(|| anyhow::anyhow!("--shell is empty"))?;
             (program, words.collect())
         }
-        None => (
-            std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()),
-            vec!["-l".into()],
-        ),
+        None => (std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()), vec!["-l".into()]),
     };
     let state_dir = args.state_dir.unwrap_or_else(|| {
         std::env::var_os("XDG_STATE_HOME")
@@ -139,13 +125,10 @@ async fn run(args: RunArgs) -> anyhow::Result<()> {
     });
     let store = store::StateDir::open(state_dir.clone())?;
     info!(state = %state_dir.display(), "state directory");
-    let config = mux::Config {
-        shell,
-        shell_args,
-        home: home(),
-        manager_env: !args.no_manager_env,
-    };
-    let mux = mux::start(config, store);
+    let launch = pane::Launcher::detect();
+    info!(scopes = launch.scopes, fd_store = launch.fd_store, kept = kept.len(), "pane launcher");
+    let config = mux::Config { shell, shell_args, home: home(), manager_env: !args.no_manager_env, launch };
+    let mux = mux::start(config, store, kept);
 
     let app = server::App::new(access, mux.clone());
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
@@ -165,8 +148,7 @@ async fn run(args: RunArgs) -> anyhow::Result<()> {
 }
 
 async fn signalled() {
-    let mut term =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM");
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = term.recv() => {}

@@ -24,6 +24,9 @@ RestartSec=1
 # shells killed, so a shutdown can't race the save.
 KillMode=mixed
 TimeoutStopSec=15
+# Pane terminals are kept here while the daemon restarts, so the programs
+# in them carry on (each pane runs in its own scope, outside this service).
+FileDescriptorStoreMax=4096
 
 [Install]
 WantedBy=default.target
@@ -32,11 +35,7 @@ WantedBy=default.target
 }
 
 fn systemctl(args: &[&str]) -> anyhow::Result<()> {
-    let status = Command::new("systemctl")
-        .arg("--user")
-        .args(args)
-        .status()
-        .context("running systemctl")?;
+    let status = Command::new("systemctl").arg("--user").args(args).status().context("running systemctl")?;
     if !status.success() {
         bail!("systemctl --user {} failed", args.join(" "));
     }
@@ -67,26 +66,18 @@ pub fn install(start: bool, daemon_args: &[String]) -> anyhow::Result<()> {
     systemctl(&["daemon-reload"])?;
     systemctl(&["enable", UNIT])?;
     if start {
-        // Restart picks up a new binary; panes come back from their
-        // checkpoints (in-place upgrades without that are M2b).
+        // Restart picks up a new binary; running panes are adopted by the
+        // new daemon and keep running.
         systemctl(&["restart", UNIT])?;
         println!("started {UNIT}");
     }
     let linger = Command::new("loginctl")
-        .args([
-            "show-user",
-            &std::env::var("USER").unwrap_or_default(),
-            "-p",
-            "Linger",
-            "--value",
-        ])
+        .args(["show-user", &std::env::var("USER").unwrap_or_default(), "-p", "Linger", "--value"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "yes")
         .unwrap_or(false);
     if !linger {
-        println!(
-            "note: lingering is off, so it starts at login, not boot: `loginctl enable-linger $USER`"
-        );
+        println!("note: lingering is off, so it starts at login, not boot: `loginctl enable-linger $USER`");
     }
     Ok(())
 }
@@ -99,5 +90,6 @@ mod tests {
         assert!(t.contains("ExecStart=%h/.local/bin/illogicald --listen 127.0.0.1:9000\n"));
         assert!(t.contains("KillMode=mixed"));
         assert!(t.contains("Type=notify"));
+        assert!(t.contains("FileDescriptorStoreMax="));
     }
 }

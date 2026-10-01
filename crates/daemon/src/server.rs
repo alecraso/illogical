@@ -41,11 +41,7 @@ pub struct App {
 
 impl App {
     pub fn new(access: Access, mux: MuxHandle) -> Arc<Self> {
-        Arc::new(Self {
-            access,
-            mux,
-            next_client: AtomicU64::new(1),
-        })
+        Arc::new(Self { access, mux, next_client: AtomicU64::new(1) })
     }
 }
 
@@ -73,31 +69,19 @@ async fn asset(uri: Uri) -> Response {
     match Assets::get(path) {
         Some(file) => {
             // Vite fingerprints everything under assets/; the rest must revalidate.
-            let cache = if path.starts_with("assets/") {
-                "public, max-age=31536000, immutable"
-            } else {
-                "no-cache"
-            };
+            let cache = if path.starts_with("assets/") { "public, max-age=31536000, immutable" } else { "no-cache" };
             Response::builder()
                 .header(header::CONTENT_TYPE, file.metadata.mimetype())
                 .header(header::CACHE_CONTROL, cache)
                 .body(Body::from(file.data))
                 .unwrap()
         }
-        None if path == "index.html" => (
-            StatusCode::NOT_FOUND,
-            "web client not built: run `just web`",
-        )
-            .into_response(),
+        None if path == "index.html" => (StatusCode::NOT_FOUND, "web client not built: run `just web`").into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
-async fn ws(
-    State(app): State<Arc<App>>,
-    headers: HeaderMap,
-    upgrade: WebSocketUpgrade,
-) -> Response {
+async fn ws(State(app): State<Arc<App>>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
     if let Err((status, why)) = app.access.check_origin(&headers) {
         warn!(%why, "rejected websocket");
         return (status, why).into_response();
@@ -110,13 +94,7 @@ async fn connection(app: Arc<App>, mut socket: WebSocket) {
     info!(client, "client connected");
     let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
-    app.mux.send(Cmd::Connect {
-        sub: Subscriber {
-            client,
-            data: data_tx,
-            ctrl: ctrl_tx,
-        },
-    });
+    app.mux.send(Cmd::Connect { sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx } });
 
     loop {
         tokio::select! {
@@ -149,10 +127,7 @@ fn handle(app: &App, client: ClientId, msg: Message) -> anyhow::Result<()> {
         Message::Binary(bytes) => {
             let frame = Frame::decode(&bytes)?;
             match frame.kind {
-                FrameKind::Input => app.mux.send(Cmd::Input {
-                    pane: frame.pane,
-                    data: frame.data,
-                }),
+                FrameKind::Input => app.mux.send(Cmd::Input { pane: frame.pane, data: frame.data }),
                 k => anyhow::bail!("unexpected frame kind {k:?} from client"),
             }
         }

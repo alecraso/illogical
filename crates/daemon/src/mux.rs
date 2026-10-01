@@ -5,14 +5,13 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    os::fd::OwnedFd,
     path::PathBuf,
     time::Duration,
 };
 
 use illogical_core::{Effect, Intent, Mux};
-use illogical_proto::{
-    ClientId, ClientMsg, PaneId, PaneInfo, PaneOp, Policy, ServerMsg, State, TabView,
-};
+use illogical_proto::{ClientId, ClientMsg, PaneId, PaneInfo, PaneOp, Policy, ServerMsg, State, TabView};
 use tokio::{
     sync::{mpsc, oneshot},
     time::{Instant, sleep_until},
@@ -76,58 +75,33 @@ pub struct Config {
     pub home: PathBuf,
     /// Merge the systemd user manager's environment into new panes.
     pub manager_env: bool,
+    pub launch: pane::Launcher,
 }
 
 impl Config {
     fn env(&self) -> Vec<(String, String)> {
-        if self.manager_env {
-            sys::manager_env()
-        } else {
-            vec![]
-        }
+        if self.manager_env { sys::manager_env() } else { vec![] }
     }
 
     fn shell(&self, cwd: PathBuf) -> Spawn {
-        Spawn {
-            program: self.shell.clone(),
-            args: self.shell_args.clone(),
-            cwd,
-            env: self.env(),
-        }
+        Spawn { program: self.shell.clone(), args: self.shell_args.clone(), cwd, env: self.env() }
     }
 
     /// Run `command`, then carry on with an interactive shell in the pane.
     fn run(&self, cwd: PathBuf, command: &str) -> Spawn {
         let mut args = self.shell_args.clone();
-        let then =
-            std::iter::once(self.shell.as_str()).chain(self.shell_args.iter().map(String::as_str));
-        args.extend([
-            "-c".into(),
-            format!("{command}; exec {}", then.collect::<Vec<_>>().join(" ")),
-        ]);
-        Spawn {
-            program: self.shell.clone(),
-            args,
-            cwd,
-            env: self.env(),
-        }
+        let then = std::iter::once(self.shell.as_str()).chain(self.shell_args.iter().map(String::as_str));
+        args.extend(["-c".into(), format!("{command}; exec {}", then.collect::<Vec<_>>().join(" "))]);
+        Spawn { program: self.shell.clone(), args, cwd, env: self.env() }
     }
 
     /// What a restored pane does, by its policy.
     fn restore(&self, meta: &PaneMeta) -> Start {
-        let cwd = meta
-            .cwd
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.home.clone());
+        let cwd = meta.cwd.as_ref().map(PathBuf::from).unwrap_or_else(|| self.home.clone());
         let shell = self.shell(cwd.clone());
         let note = |s: &str| format!("\x1b[2m[{s}]\x1b[0m\r\n");
         match (&meta.policy, &meta.command) {
-            (Policy::None, _) => Start::Wait {
-                banner: note("press Enter for a shell"),
-                enter: shell,
-                escape: None,
-            },
+            (Policy::None, _) => Start::Wait { banner: note("press Enter for a shell"), enter: shell, escape: None },
             (Policy::Rerun { confirm: true }, Some(cmd)) => Start::Wait {
                 banner: note(&format!("press Enter to re-run: {cmd}  ·  Esc for a shell")),
                 enter: self.run(cwd, cmd),
@@ -155,7 +129,8 @@ struct Daemon {
     shutting_down: bool,
 }
 
-pub fn start(config: Config, store: StateDir) -> MuxHandle {
+/// `kept`: pane terminals systemd kept for us across a restart, by FD name.
+pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>) -> MuxHandle {
     let (tx, rx) = mpsc::unbounded_channel();
     let (exits, exits_rx) = mpsc::unbounded_channel();
     let mut d = Daemon {
@@ -171,15 +146,9 @@ pub fn start(config: Config, store: StateDir) -> MuxHandle {
         last_saved: None,
         shutting_down: false,
     };
-    if !d.restore() {
+    if !d.restore(kept) {
         // Something to attach to on first start.
-        if let Err(e) = d.intent(
-            None,
-            Intent::NewSession {
-                name: None,
-                from_pane: None,
-            },
-        ) {
+        if let Err(e) = d.intent(None, Intent::NewSession { name: None, from_pane: None }) {
             warn!(error = %e, "could not create the first session");
         }
     }
@@ -190,23 +159,18 @@ pub fn start(config: Config, store: StateDir) -> MuxHandle {
 impl Daemon {
     /// Bring back the saved layout and every pane in it. False if there was
     /// nothing (usable) to restore.
-    fn restore(&mut self) -> bool {
+    fn restore(&mut self, mut kept: HashMap<String, OwnedFd>) -> bool {
         let saved = match self.store.load_layout() {
             Ok(Some(saved)) => saved,
             Ok(None) => return false,
             Err(e) => {
-                let aside = self
-                    .store
-                    .root()
-                    .join(format!("layout.json.unreadable-{}", now_ms()));
+                let aside = self.store.root().join(format!("layout.json.unreadable-{}", now_ms()));
                 warn!(error = %e, aside = %aside.display(), "can't read the saved layout; starting fresh");
                 let _ = std::fs::rename(self.store.root().join("layout.json"), aside);
                 return false;
             }
         };
-        let Saved {
-            mux, panes: meta, ..
-        } = saved;
+        let Saved { mux, panes: meta, .. } = saved;
         self.mux = mux;
         // Nobody is connected yet; whoever views a tab next sizes it.
         let owners: Vec<ClientId> = self.mux.tabs.values().filter_map(|t| t.owner).collect();
@@ -219,12 +183,15 @@ impl Daemon {
         for id in ids {
             let meta = meta.get(&id).cloned().unwrap_or_default();
             let (cols, rows) = rects.get(&id).map(|r| (r.cols, r.rows)).unwrap_or((80, 24));
-            let cwd = meta
-                .cwd
-                .as_ref()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| self.config.home.clone());
-            match self.open_pane(id, cols, rows, true, self.config.restore(&meta), cwd) {
+            let cwd = meta.cwd.as_ref().map(PathBuf::from).unwrap_or_else(|| self.config.home.clone());
+            // Still running on a terminal systemd kept for us: carry on with
+            // it. Otherwise restore by policy.
+            let record = crate::shim::read_record(&self.store.pane_dir(id).join("process"));
+            let start = match kept.remove(&format!("pane-{id}")) {
+                Some(master) if crate::shim::alive(&record) => Start::Adopt(master),
+                _ => self.config.restore(&meta),
+            };
+            match self.open_pane(id, cols, rows, true, start, cwd) {
                 Ok(()) => {
                     self.meta.insert(id, meta);
                 }
@@ -234,11 +201,7 @@ impl Daemon {
                 }
             }
         }
-        info!(
-            sessions = self.mux.sessions.len(),
-            panes = self.panes.len(),
-            "restored"
-        );
+        info!(sessions = self.mux.sessions.len(), panes = self.panes.len(), "restored");
         if self.mux.sessions.is_empty() {
             return false;
         }
@@ -264,6 +227,7 @@ impl Daemon {
             restore,
             start,
             shell: self.config.shell(cwd),
+            launch: self.config.launch.clone(),
             on_exit: self.exits.clone(),
         })?;
         self.panes.insert(id, h);
@@ -271,16 +235,10 @@ impl Daemon {
         Ok(())
     }
 
-    async fn run(
-        mut self,
-        mut rx: mpsc::UnboundedReceiver<Cmd>,
-        mut exits: mpsc::UnboundedReceiver<Exit>,
-    ) {
+    async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Cmd>, mut exits: mpsc::UnboundedReceiver<Exit>) {
         let mut refresh = tokio::time::interval(REFRESH);
         loop {
-            let due = self
-                .save_due
-                .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+            let due = self.save_due.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
             tokio::select! {
                 cmd = rx.recv() => match cmd {
                     Some(Cmd::Shutdown(done)) => {
@@ -295,13 +253,7 @@ impl Daemon {
                     self.save_due = None;
                     self.save();
                 }
-                _ = refresh.tick() => {
-                    if self.refresh_meta() {
-                        // Clients show working directories and commands too.
-                        self.broadcast();
-                    }
-                    self.save();
-                }
+                _ = refresh.tick() => self.save(),
             }
         }
     }
@@ -368,30 +320,20 @@ impl Daemon {
                     }
                 }
             }
-            ClientMsg::View {
-                tab,
-                cols,
-                rows,
-                zoom,
-                claim,
-            } => {
+            ClientMsg::View { tab, cols, rows, zoom, claim } => {
                 if let Ok(true) = self.mux.view(client, tab, cols, rows, zoom, claim) {
                     self.changed();
                 }
             }
             ClientMsg::Intent { id, intent } => {
                 if let Err(message) = self.intent(Some(client), intent) {
-                    let _ = sub
-                        .ctrl
-                        .send(ToClient::Msg(ServerMsg::Error { id, message }));
+                    let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id, message }));
                 }
             }
             ClientMsg::Pane { pane, op } => {
                 let Some(handle) = self.panes.get(&pane) else {
                     let message = format!("no pane %{pane}");
-                    let _ = sub
-                        .ctrl
-                        .send(ToClient::Msg(ServerMsg::Error { id: None, message }));
+                    let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id: None, message }));
                     return;
                 };
                 match op {
@@ -416,13 +358,9 @@ impl Daemon {
         for e in effects {
             match e {
                 Effect::Spawn { pane, cwd_from } => {
-                    let cwd = cwd_from
-                        .and_then(|p| self.panes.get(&p)?.cwd())
-                        .unwrap_or_else(|| self.config.home.clone());
-                    let (cols, rows) = rects
-                        .get(&pane)
-                        .map(|r| (r.cols, r.rows))
-                        .unwrap_or((80, 24));
+                    let cwd =
+                        cwd_from.and_then(|p| self.panes.get(&p)?.cwd()).unwrap_or_else(|| self.config.home.clone());
+                    let (cols, rows) = rects.get(&pane).map(|r| (r.cols, r.rows)).unwrap_or((80, 24));
                     let start = Start::Now(self.config.shell(cwd.clone()));
                     match self.open_pane(pane, cols, rows, false, start, cwd) {
                         Ok(()) => {
@@ -459,16 +397,13 @@ impl Daemon {
             }
         }
         self.broadcast();
-        self.save_due
-            .get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
+        self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
     }
 
     fn broadcast(&self) {
         let state = self.state();
         for sub in self.clients.values() {
-            let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::State {
-                state: state.clone(),
-            }));
+            let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::State { state: state.clone() }));
         }
     }
 
@@ -492,22 +427,15 @@ impl Daemon {
     /// Write the layout and pane details if anything changed since the last
     /// write.
     fn save(&mut self) {
-        self.refresh_meta();
-        let panes: BTreeMap<PaneId, PaneMeta> =
-            self.meta.iter().map(|(k, v)| (*k, v.clone())).collect();
-        if self
-            .last_saved
-            .as_ref()
-            .is_some_and(|(m, p)| *m == self.mux && *p == panes)
-        {
+        // Whichever notices a new directory or command tells the clients.
+        if self.refresh_meta() {
+            self.broadcast();
+        }
+        let panes: BTreeMap<PaneId, PaneMeta> = self.meta.iter().map(|(k, v)| (*k, v.clone())).collect();
+        if self.last_saved.as_ref().is_some_and(|(m, p)| *m == self.mux && *p == panes) {
             return;
         }
-        let saved = Saved {
-            version: LAYOUT_VERSION,
-            saved_at_ms: now_ms(),
-            mux: self.mux.clone(),
-            panes,
-        };
+        let saved = Saved { version: LAYOUT_VERSION, saved_at_ms: now_ms(), mux: self.mux.clone(), panes };
         match self.store.save_layout(&saved) {
             Ok(()) => self.last_saved = Some((saved.mux, saved.panes)),
             Err(e) => warn!(error = %e, "can't save layout"),
@@ -563,11 +491,6 @@ impl Daemon {
             })
             .collect();
         panes.sort_by_key(|p| p.id);
-        State {
-            rev: self.mux.rev,
-            sessions: self.mux.sessions.clone(),
-            tabs,
-            panes,
-        }
+        State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes }
     }
 }

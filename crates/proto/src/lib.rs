@@ -10,8 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 pub use illogical_core::{
-    ClientId, Dir, Edge, Intent, Layout, Node, NodeId, PaneId, Rect, Session, SessionId, SplitRect,
-    TabId,
+    ClientId, Dir, Edge, Intent, Layout, Node, NodeId, PaneId, Rect, Session, SessionId, SplitRect, TabId,
 };
 
 /// Control messages from a client.
@@ -28,13 +27,7 @@ pub enum ClientMsg {
     /// with one pane zoomed to fill it. With `claim` (the client was opened,
     /// focused or typed in), that becomes the tab's size; otherwise it only
     /// does if the client already owns the tab's size or nobody does.
-    View {
-        tab: TabId,
-        cols: u16,
-        rows: u16,
-        zoom: Option<PaneId>,
-        claim: bool,
-    },
+    View { tab: TabId, cols: u16, rows: u16, zoom: Option<PaneId>, claim: bool },
     /// Change sessions, tabs or splits. Errors come back as
     /// [`ServerMsg::Error`] with the same id.
     Intent { id: Option<u64>, intent: Intent },
@@ -74,11 +67,7 @@ pub enum Policy {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
     /// First message on every connection.
-    Hello {
-        version: String,
-        client: ClientId,
-        state: State,
-    },
+    Hello { version: String, client: ClientId, state: State },
     /// The whole layout, after every change.
     State { state: State },
     /// A pane's size changed. Sent in order with its output, so the client
@@ -220,12 +209,7 @@ mod tests {
 
     #[test]
     fn frame_round_trip() {
-        let f = Frame {
-            kind: FrameKind::Output,
-            pane: 7,
-            offset: 1 << 40,
-            data: b"hi\x1b[0m".to_vec(),
-        };
+        let f = Frame { kind: FrameKind::Output, pane: 7, offset: 1 << 40, data: b"hi\x1b[0m".to_vec() };
         assert_eq!(Frame::decode(&f.encode()).unwrap(), f);
     }
 
@@ -237,36 +221,16 @@ mod tests {
 
     #[test]
     fn json_shape() {
-        let m: ClientMsg = serde_json::from_str(
-            r#"{"type":"attach","panes":[{"pane":1,"offset":null},{"pane":2,"offset":42}]}"#,
-        )
-        .unwrap();
-        let panes = vec![
-            AttachPane {
-                pane: 1,
-                offset: None,
-            },
-            AttachPane {
-                pane: 2,
-                offset: Some(42),
-            },
-        ];
+        let m: ClientMsg =
+            serde_json::from_str(r#"{"type":"attach","panes":[{"pane":1,"offset":null},{"pane":2,"offset":42}]}"#)
+                .unwrap();
+        let panes = vec![AttachPane { pane: 1, offset: None }, AttachPane { pane: 2, offset: Some(42) }];
         assert_eq!(m, ClientMsg::Attach { panes });
         let s = serde_json::to_string(&ServerMsg::Resync { pane: 3 }).unwrap();
         assert_eq!(s, r#"{"type":"resync","pane":3}"#);
-        let m: ClientMsg = serde_json::from_str(
-            r#"{"type":"intent","id":4,"intent":{"op":"split","pane":1,"edge":"bottom"}}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            m,
-            ClientMsg::Intent {
-                id: Some(4),
-                intent: Intent::Split {
-                    pane: 1,
-                    edge: Edge::Bottom
-                }
-            }
-        );
+        let m: ClientMsg =
+            serde_json::from_str(r#"{"type":"intent","id":4,"intent":{"op":"split","pane":1,"edge":"bottom"}}"#)
+                .unwrap();
+        assert_eq!(m, ClientMsg::Intent { id: Some(4), intent: Intent::Split { pane: 1, edge: Edge::Bottom } });
     }
 }

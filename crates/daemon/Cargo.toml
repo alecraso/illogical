@@ -13,7 +13,7 @@ crossbeam-channel = "0.5.17"
 illogical-core = { version = "0.1.0", path = "../core" }
 illogical-proto = { version = "0.1.0", path = "../proto" }
 illogical-vt = { version = "0.1.0", path = "../vt" }
-nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll"] }
+nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll", "socket", "uio"] }
 rust-embed = { version = "8.12.0", features = ["mime-guess"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

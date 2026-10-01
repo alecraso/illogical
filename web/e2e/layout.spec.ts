@@ -168,6 +168,8 @@ test("a second window sees layout changes live, and the same terminal", async ({
   const first = await active(a);
   await menu(a, paneEl(a, first), "Split right");
   await expect.poll(() => panes(b)).toHaveLength(2);
+  // A learns of its own split no sooner than B does.
+  await expect.poll(() => panes(a)).toHaveLength(2);
   const second = (await panes(a))[1];
   await ready(b, second);
   await run(a, second, "echo shared-$((7*6))", "shared-42");

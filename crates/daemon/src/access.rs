@@ -26,38 +26,19 @@ pub struct Access {
 }
 
 impl Access {
-    pub fn new(
-        port: u16,
-        public_hosts: &[String],
-        extra_origins: &[String],
-        owner: Option<String>,
-    ) -> Self {
-        let mut hosts: HashSet<String> = ["127.0.0.1", "localhost", "[::1]"]
-            .iter()
-            .map(|h| format!("{h}:{port}"))
-            .collect();
+    pub fn new(port: u16, public_hosts: &[String], extra_origins: &[String], owner: Option<String>) -> Self {
+        let mut hosts: HashSet<String> =
+            ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
         hosts.extend(public_hosts.iter().map(|h| h.to_ascii_lowercase()));
-        let origins = extra_origins
-            .iter()
-            .map(|o| o.trim_end_matches('/').to_ascii_lowercase())
-            .collect();
-        Self {
-            hosts,
-            origins,
-            owner,
-        }
+        let origins = extra_origins.iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()).collect();
+        Self { hosts, origins, owner }
     }
 
     /// Checks for every request.
     pub fn check(&self, headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
-        let host = header_str(headers, header::HOST.as_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
+        let host = header_str(headers, header::HOST.as_str()).unwrap_or_default().to_ascii_lowercase();
         if !self.hosts.contains(&host) {
-            return Err((
-                StatusCode::MISDIRECTED_REQUEST,
-                format!("unknown host {host:?}"),
-            ));
+            return Err((StatusCode::MISDIRECTED_REQUEST, format!("unknown host {host:?}")));
         }
         if let Some(login) = header_str(headers, "tailscale-user-login") {
             match &self.owner {
@@ -68,8 +49,7 @@ impl Access {
                 None => {
                     return Err((
                         StatusCode::FORBIDDEN,
-                        "tailnet request but no owner configured; start illogicald with --owner"
-                            .into(),
+                        "tailnet request but no owner configured; start illogicald with --owner".into(),
                     ));
                 }
             }
@@ -88,10 +68,7 @@ impl Access {
         if self.hosts.contains(host) || self.origins.contains(&origin) {
             Ok(())
         } else {
-            Err((
-                StatusCode::FORBIDDEN,
-                format!("origin {origin} not allowed"),
-            ))
+            Err((StatusCode::FORBIDDEN, format!("origin {origin} not allowed")))
         }
     }
 }
@@ -109,25 +86,13 @@ pub struct Tailnet {
 }
 
 pub fn tailnet() -> Option<Tailnet> {
-    let out = std::process::Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-        .ok()?;
+    let out = std::process::Command::new("tailscale").args(["status", "--json"]).output().ok()?;
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
     let me = v.get("Self")?;
-    let host = me
-        .get("DNSName")?
-        .as_str()?
-        .trim_end_matches('.')
-        .to_owned();
+    let host = me.get("DNSName")?.as_str()?.trim_end_matches('.').to_owned();
     let login = me
         .get("UserID")
-        .and_then(|id| {
-            v.get("User")?
-                .get(id.to_string())?
-                .get("LoginName")?
-                .as_str()
-        })
+        .and_then(|id| v.get("User")?.get(id.to_string())?.get("LoginName")?.as_str())
         .map(str::to_owned);
     (!host.is_empty()).then_some(Tailnet { host, login })
 }
@@ -139,31 +104,20 @@ mod tests {
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut h = HeaderMap::new();
         for (k, v) in pairs {
-            h.insert(
-                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
-                v.parse().unwrap(),
-            );
+            h.insert(axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(), v.parse().unwrap());
         }
         h
     }
 
     fn access() -> Access {
-        Access::new(
-            7681,
-            &["geek.example.ts.net".into()],
-            &["http://localhost:5173".into()],
-            Some("me@x.com".into()),
-        )
+        Access::new(7681, &["geek.example.ts.net".into()], &["http://localhost:5173".into()], Some("me@x.com".into()))
     }
 
     #[test]
     fn host_must_be_known() {
         let a = access();
         assert!(a.check(&headers(&[("host", "127.0.0.1:7681")])).is_ok());
-        assert!(
-            a.check(&headers(&[("host", "geek.example.ts.net")]))
-                .is_ok()
-        );
+        assert!(a.check(&headers(&[("host", "geek.example.ts.net")])).is_ok());
         assert!(a.check(&headers(&[("host", "evil.com")])).is_err());
         assert!(a.check(&headers(&[("host", "127.0.0.1:9999")])).is_err());
         assert!(a.check(&headers(&[])).is_err());
@@ -172,15 +126,9 @@ mod tests {
     #[test]
     fn tailnet_identity_must_be_owner() {
         let a = access();
-        let ok = headers(&[
-            ("host", "geek.example.ts.net"),
-            ("tailscale-user-login", "ME@x.com"),
-        ]);
+        let ok = headers(&[("host", "geek.example.ts.net"), ("tailscale-user-login", "ME@x.com")]);
         assert!(a.check(&ok).is_ok());
-        let other = headers(&[
-            ("host", "geek.example.ts.net"),
-            ("tailscale-user-login", "friend@x.com"),
-        ]);
+        let other = headers(&[("host", "geek.example.ts.net"), ("tailscale-user-login", "friend@x.com")]);
         assert_eq!(a.check(&other).unwrap_err().0, StatusCode::FORBIDDEN);
         let no_owner = Access::new(7681, &["geek.example.ts.net".into()], &[], None);
         assert!(no_owner.check(&ok).is_err());
@@ -190,22 +138,10 @@ mod tests {
     fn websocket_origin() {
         let a = access();
         assert!(a.check_origin(&headers(&[])).is_ok());
-        assert!(
-            a.check_origin(&headers(&[("origin", "https://geek.example.ts.net")]))
-                .is_ok()
-        );
-        assert!(
-            a.check_origin(&headers(&[("origin", "http://127.0.0.1:7681")]))
-                .is_ok()
-        );
-        assert!(
-            a.check_origin(&headers(&[("origin", "http://localhost:5173")]))
-                .is_ok()
-        );
-        assert!(
-            a.check_origin(&headers(&[("origin", "https://evil.com")]))
-                .is_err()
-        );
+        assert!(a.check_origin(&headers(&[("origin", "https://geek.example.ts.net")])).is_ok());
+        assert!(a.check_origin(&headers(&[("origin", "http://127.0.0.1:7681")])).is_ok());
+        assert!(a.check_origin(&headers(&[("origin", "http://localhost:5173")])).is_ok());
+        assert!(a.check_origin(&headers(&[("origin", "https://evil.com")])).is_err());
         assert!(a.check_origin(&headers(&[("origin", "null")])).is_err());
     }
 }

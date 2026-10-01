@@ -22,19 +22,14 @@ impl Capabilities {
     /// keeping those it reports as set, reset or permanently set.
     pub const XTERM_JS: Self = Self {
         dec_modes: &[
-            1, 6, 7, 8, 9, 12, 25, 45, 47, 66, 1000, 1002, 1003, 1004, 1006, 1016, 1047, 1048,
-            1049, 2004, 2026,
+            1, 6, 7, 8, 9, 12, 25, 45, 47, 66, 1000, 1002, 1003, 1004, 1006, 1016, 1047, 1048, 1049, 2004, 2026,
         ],
         ansi_modes: &[4, 12, 20],
         kitty_keyboard: false,
     };
 
     /// Everything libghostty answers passes through unchanged.
-    pub const ALL: Self = Self {
-        dec_modes: &[],
-        ansi_modes: &[],
-        kitty_keyboard: true,
-    };
+    pub const ALL: Self = Self { dec_modes: &[], ansi_modes: &[], kitty_keyboard: true };
 
     fn unrestricted(&self) -> bool {
         self.dec_modes.is_empty() && self.ansi_modes.is_empty() && self.kitty_keyboard
@@ -67,11 +62,7 @@ impl Capabilities {
             // DECRPM: CSI ? Ps ; Pm $ y (DEC) or CSI Ps ; Pm $ y (ANSI).
             (private, Some(b'$'), b'y') => {
                 let mode: u16 = csi.params.first()?.parse().ok()?;
-                let supported = if private {
-                    self.dec_modes
-                } else {
-                    self.ansi_modes
-                };
+                let supported = if private { self.dec_modes } else { self.ansi_modes };
                 if supported.contains(&mode) {
                     return None;
                 }
@@ -107,22 +98,13 @@ fn parse_csi(b: &[u8]) -> Option<Csi<'_>> {
     while b.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b';') {
         i += 1;
     }
-    let params = std::str::from_utf8(&b[params_start..i])
-        .ok()?
-        .split(';')
-        .collect();
+    let params = std::str::from_utf8(&b[params_start..i]).ok()?.split(';').collect();
     let intermediate = b.get(i).copied().filter(|c| (0x20..=0x2f).contains(c));
     if intermediate.is_some() {
         i += 1;
     }
     let final_byte = *b.get(i).filter(|c| (0x40..=0x7e).contains(*c))?;
-    Some(Csi {
-        raw: &b[..=i],
-        private,
-        params,
-        intermediate,
-        final_byte,
-    })
+    Some(Csi { raw: &b[..=i], private, params, intermediate, final_byte })
 }
 
 #[cfg(test)]

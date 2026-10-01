@@ -22,9 +22,8 @@ use libghostty_vt::{
     snapshot::Decoder,
     style::{RgbColor, StyleColor},
     terminal::{
-        ConformanceLevel, DeviceAttributeFeature, DeviceAttributes, DeviceType, Mode, ModeKind,
-        Point, PointCoordinate, PrimaryDeviceAttributes, SecondaryDeviceAttributes,
-        TertiaryDeviceAttributes,
+        ConformanceLevel, DeviceAttributeFeature, DeviceAttributes, DeviceType, Mode, ModeKind, Point, PointCoordinate,
+        PrimaryDeviceAttributes, SecondaryDeviceAttributes, TertiaryDeviceAttributes,
     },
 };
 
@@ -41,10 +40,7 @@ const CHECKPOINT_MAGIC: &[u8] = b"ILLOGICAL-CKPT1\n";
 /// without bumping its version, so a checkpoint is only trusted by the
 /// exact libghostty it came from.
 pub fn engine_tag() -> String {
-    format!(
-        "libghostty-rs@8953a74 ghostty@{}",
-        libghostty_vt::build_info::version_string().unwrap_or("unknown")
-    )
+    format!("libghostty-rs@8953a74 ghostty@{}", libghostty_vt::build_info::version_string().unwrap_or("unknown"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,29 +65,17 @@ impl std::error::Error for CheckpointError {}
 /// Modes [`modes`] carries across. 47/1047/1049 are excluded: the snapshot
 /// switches screens itself.
 const DEC_MODES: &[u16] = &[
-    1, 5, 6, 7, 12, 25, 45, 66, 69, 1000, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 1035,
-    1036, 1039, 2004, 2026, 2027, 2031, 2048,
+    1, 5, 6, 7, 12, 25, 45, 66, 69, 1000, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 1035, 1036, 1039, 2004, 2026,
+    2027, 2031, 2048,
 ];
 const DEC_DEFAULT_ON: &[u16] = &[7, 25];
 const ANSI_MODES: &[u16] = &[4, 20];
 
 /// Default colors, reported in answer to OSC 10/11/12 queries. The web
 /// client's theme uses the same values (`web/src/theme.ts`).
-pub const DEFAULT_FG: RgbColor = RgbColor {
-    r: 0xcd,
-    g: 0xd6,
-    b: 0xf4,
-};
-pub const DEFAULT_BG: RgbColor = RgbColor {
-    r: 0x1e,
-    g: 0x1e,
-    b: 0x2e,
-};
-pub const DEFAULT_CURSOR: RgbColor = RgbColor {
-    r: 0xf5,
-    g: 0xe0,
-    b: 0xdc,
-};
+pub const DEFAULT_FG: RgbColor = RgbColor { r: 0xcd, g: 0xd6, b: 0xf4 };
+pub const DEFAULT_BG: RgbColor = RgbColor { r: 0x1e, g: 0x1e, b: 0x2e };
+pub const DEFAULT_CURSOR: RgbColor = RgbColor { r: 0xf5, g: 0xe0, b: 0xdc };
 
 pub struct GhosttyEngine {
     term: Terminal<'static, 'static>,
@@ -115,24 +99,15 @@ impl GhosttyEngine {
     /// they are corrupt or were written by a different libghostty (the
     /// format has changed without a version bump; spike S5).
     pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, CheckpointError> {
-        let body = bytes
-            .strip_prefix(CHECKPOINT_MAGIC)
-            .ok_or(CheckpointError::NotACheckpoint)?;
-        let (tag, body) = body.split_at(
-            body.iter()
-                .position(|b| *b == b'\n')
-                .ok_or(CheckpointError::NotACheckpoint)?
-                + 1,
-        );
+        let body = bytes.strip_prefix(CHECKPOINT_MAGIC).ok_or(CheckpointError::NotACheckpoint)?;
+        let (tag, body) =
+            body.split_at(body.iter().position(|b| *b == b'\n').ok_or(CheckpointError::NotACheckpoint)? + 1);
         if tag != format!("{}\n", engine_tag()).as_bytes() {
-            return Err(CheckpointError::OtherEngine(
-                String::from_utf8_lossy(&tag[..tag.len() - 1]).into_owned(),
-            ));
+            return Err(CheckpointError::OtherEngine(String::from_utf8_lossy(&tag[..tag.len() - 1]).into_owned()));
         }
         let snap = zstd::decode_all(body).map_err(|_| CheckpointError::Corrupt)?;
         let decoder = Decoder::new_buf(&snap).map_err(|_| CheckpointError::Corrupt)?;
-        let term: Terminal<'static, 'static> =
-            decoder.decode().map_err(|_| CheckpointError::Corrupt)?;
+        let term: Terminal<'static, 'static> = decoder.decode().map_err(|_| CheckpointError::Corrupt)?;
         Ok(Self::configure(term, Capabilities::XTERM_JS))
     }
 
@@ -141,13 +116,7 @@ impl GhosttyEngine {
     /// For checkpoints on disk, not for clients (xterm.js needs
     /// [`VtEngine::snapshot`]).
     pub fn checkpoint(&self) -> Vec<u8> {
-        let snap = self
-            .term
-            .encode_snapshot_alloc(None)
-            .ok()
-            .flatten()
-            .map(|b| b.to_vec())
-            .unwrap_or_default();
+        let snap = self.term.encode_snapshot_alloc(None).ok().flatten().map(|b| b.to_vec()).unwrap_or_default();
         let mut out = Vec::with_capacity(snap.len() / 20 + 64);
         out.extend_from_slice(CHECKPOINT_MAGIC);
         out.extend_from_slice(engine_tag().as_bytes());
@@ -157,21 +126,15 @@ impl GhosttyEngine {
     }
 
     fn configure(mut term: Terminal<'static, 'static>, caps: Capabilities) -> Self {
-        term.set_scrollback_max_bytes(Some(SCROLLBACK_BYTES))
-            .expect("scrollback limit");
+        term.set_scrollback_max_bytes(Some(SCROLLBACK_BYTES)).expect("scrollback limit");
         // Lets a checkpoint be taken in the middle of an escape sequence.
-        term.set_continuation_max_bytes(CONTINUATION_BYTES)
-            .expect("continuation tracking");
+        term.set_continuation_max_bytes(CONTINUATION_BYTES).expect("continuation tracking");
         let replies = Rc::new(RefCell::new(Vec::new()));
         let sink = replies.clone();
-        term.on_pty_write(move |_, data| sink.borrow_mut().extend_from_slice(data))
-            .expect("pty write callback");
+        term.on_pty_write(move |_, data| sink.borrow_mut().extend_from_slice(data)).expect("pty write callback");
         term.on_device_attributes(|_| {
             Some(DeviceAttributes {
-                primary: PrimaryDeviceAttributes::new(
-                    ConformanceLevel::VT220,
-                    &[DeviceAttributeFeature::ANSI_COLOR],
-                ),
+                primary: PrimaryDeviceAttributes::new(ConformanceLevel::VT220, &[DeviceAttributeFeature::ANSI_COLOR]),
                 secondary: SecondaryDeviceAttributes {
                     device_type: DeviceType::VT220,
                     firmware_version: 1,
@@ -181,23 +144,16 @@ impl GhosttyEngine {
             })
         })
         .expect("device attributes callback");
-        term.on_xtversion(|_| Some(concat!("illogical ", env!("CARGO_PKG_VERSION"))))
-            .expect("xtversion callback");
+        term.on_xtversion(|_| Some(concat!("illogical ", env!("CARGO_PKG_VERSION")))).expect("xtversion callback");
         term.set_default_fg_color(Some(DEFAULT_FG))
             .and_then(|t| t.set_default_bg_color(Some(DEFAULT_BG)))
             .and_then(|t| t.set_default_cursor_color(Some(DEFAULT_CURSOR)))
             .expect("default colors");
-        Self {
-            term,
-            replies,
-            caps,
-        }
+        Self { term, replies, caps }
     }
 
     fn format(&self, format: Format, extras: bool, modes: bool) -> Vec<u8> {
-        let mut o = FormatterOptions::new()
-            .with_format(format)
-            .with_modes(modes);
+        let mut o = FormatterOptions::new().with_format(format).with_modes(modes);
         if extras {
             o = o
                 .with_palette(true)
@@ -214,11 +170,7 @@ impl GhosttyEngine {
         }
         let mut f = Formatter::new(&self.term, o).expect("formatter");
         let out = f.format_alloc(None).expect("format").to_vec();
-        if extras {
-            move_tabstops_to_end(out)
-        } else {
-            out
-        }
+        if extras { move_tabstops_to_end(out) } else { out }
     }
 
     /// Non-default modes as CSI h/l.
@@ -227,17 +179,11 @@ impl GhosttyEngine {
         for &m in DEC_MODES {
             let on = self.term.mode(Mode::new(m, ModeKind::Dec)).unwrap_or(false);
             if on != DEC_DEFAULT_ON.contains(&m) {
-                out.extend_from_slice(
-                    format!("\x1b[?{m}{}", if on { 'h' } else { 'l' }).as_bytes(),
-                );
+                out.extend_from_slice(format!("\x1b[?{m}{}", if on { 'h' } else { 'l' }).as_bytes());
             }
         }
         for &m in ANSI_MODES {
-            if self
-                .term
-                .mode(Mode::new(m, ModeKind::Ansi))
-                .unwrap_or(false)
-            {
+            if self.term.mode(Mode::new(m, ModeKind::Ansi)).unwrap_or(false) {
                 out.extend_from_slice(format!("\x1b[{m}h").as_bytes());
             }
         }
@@ -252,33 +198,22 @@ impl GhosttyEngine {
         let mut paint = Vec::new();
         for y in (0..rows).rev() {
             for x in 0..cols {
-                let g = self
-                    .term
-                    .grid_ref(Point::Active(PointCoordinate { x, y: y.into() }))
-                    .expect("grid ref");
+                let g = self.term.grid_ref(Point::Active(PointCoordinate { x, y: y.into() })).expect("grid ref");
                 let cell = g.cell().expect("cell");
                 if cell.has_text().unwrap_or(false) {
                     return (n, paint);
                 }
-                let bg = match (
-                    g.style().map(|s| s.bg_color).unwrap_or(StyleColor::None),
-                    cell.content_tag(),
-                ) {
+                let bg = match (g.style().map(|s| s.bg_color).unwrap_or(StyleColor::None), cell.content_tag()) {
                     (StyleColor::Rgb(c), _) => Some(sgr_rgb(c)),
                     (StyleColor::Palette(p), _) => Some(format!("48;5;{}", p.0)),
-                    (StyleColor::None, Ok(CellContentTag::BgColorRgb)) => {
-                        cell.bg_color_rgb().ok().map(sgr_rgb)
+                    (StyleColor::None, Ok(CellContentTag::BgColorRgb)) => cell.bg_color_rgb().ok().map(sgr_rgb),
+                    (StyleColor::None, Ok(CellContentTag::BgColorPalette)) => {
+                        cell.bg_color_palette().ok().map(|p| format!("48;5;{}", p.0))
                     }
-                    (StyleColor::None, Ok(CellContentTag::BgColorPalette)) => cell
-                        .bg_color_palette()
-                        .ok()
-                        .map(|p| format!("48;5;{}", p.0)),
                     _ => None,
                 };
                 if let Some(bg) = bg {
-                    paint.extend_from_slice(
-                        format!("\x1b[{};{}H\x1b[0;{bg}m ", y + 1, x + 1).as_bytes(),
-                    );
+                    paint.extend_from_slice(format!("\x1b[{};{}H\x1b[0;{bg}m ", y + 1, x + 1).as_bytes());
                 }
             }
             n += 1;
@@ -322,10 +257,7 @@ impl GhosttyEngine {
             out.extend(paint);
             out.extend_from_slice(b"\x1b8");
         }
-        let (x, y) = (
-            self.term.cursor_x().unwrap_or(0),
-            self.term.cursor_y().unwrap_or(0),
-        );
+        let (x, y) = (self.term.cursor_x().unwrap_or(0), self.term.cursor_y().unwrap_or(0));
         out.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
         out
     }
@@ -347,9 +279,7 @@ fn move_tabstops_to_end(out: Vec<u8>) -> Vec<u8> {
     let mut end = start + 4;
     loop {
         let rest = &out[end..];
-        let Some(digits) = rest
-            .strip_prefix(b"\x1b[")
-            .map(|r| r.iter().take_while(|c| c.is_ascii_digit()).count())
+        let Some(digits) = rest.strip_prefix(b"\x1b[").map(|r| r.iter().take_while(|c| c.is_ascii_digit()).count())
         else {
             break;
         };
@@ -385,11 +315,7 @@ impl VtEngine for GhosttyEngine {
 
     fn take_replies(&mut self) -> Vec<u8> {
         let raw = std::mem::take(&mut *self.replies.borrow_mut());
-        if raw.is_empty() {
-            raw
-        } else {
-            self.caps.filter_replies(&raw)
-        }
+        if raw.is_empty() { raw } else { self.caps.filter_replies(&raw) }
     }
 
     fn snapshot(&mut self) -> Vec<u8> {

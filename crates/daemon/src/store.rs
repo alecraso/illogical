@@ -58,17 +58,11 @@ pub struct StateDir {
 }
 
 pub fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
 fn private_dir(path: &Path) -> io::Result<()> {
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(path)
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(path)
 }
 
 fn private_file() -> OpenOptions {
@@ -82,11 +76,7 @@ fn private_file() -> OpenOptions {
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     {
-        let mut f = private_file()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&tmp)?;
+        let mut f = private_file().write(true).create(true).truncate(true).open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }
@@ -120,19 +110,13 @@ impl StateDir {
         };
         let saved: Saved = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
         if saved.version != LAYOUT_VERSION {
-            return Err(io::Error::other(format!(
-                "layout.json version {} (want {LAYOUT_VERSION})",
-                saved.version
-            )));
+            return Err(io::Error::other(format!("layout.json version {} (want {LAYOUT_VERSION})", saved.version)));
         }
         Ok(Some(saved))
     }
 
     pub fn save_layout(&self, saved: &Saved) -> io::Result<()> {
-        write_atomic(
-            &self.root.join("layout.json"),
-            &serde_json::to_vec_pretty(saved).map_err(io::Error::other)?,
-        )
+        write_atomic(&self.root.join("layout.json"), &serde_json::to_vec_pretty(saved).map_err(io::Error::other)?)
     }
 
     /// Pane directories with no pane in the layout (closed while the daemon
@@ -142,10 +126,7 @@ impl StateDir {
             return;
         };
         for e in entries.flatten() {
-            let id = e
-                .file_name()
-                .to_str()
-                .and_then(|n| n.parse::<PaneId>().ok());
+            let id = e.file_name().to_str().and_then(|n| n.parse::<PaneId>().ok());
             if id.is_some_and(|id| !keep.contains(&id)) {
                 let _ = fs::remove_dir_all(e.path());
             }
@@ -179,27 +160,18 @@ impl PaneLog {
         private_dir(&dir)?;
         let mut segments: Vec<u64> = fs::read_dir(&dir)?
             .flatten()
-            .filter_map(|e| {
-                e.file_name()
-                    .to_str()?
-                    .strip_prefix("seg-")?
-                    .strip_suffix(".log")?
-                    .parse()
-                    .ok()
-            })
+            .filter_map(|e| e.file_name().to_str()?.strip_prefix("seg-")?.strip_suffix(".log")?.parse().ok())
             .collect();
         segments.sort_unstable();
         let end = match segments.last() {
             Some(start) => start + fs::metadata(dir.join(seg_name(*start)))?.len(),
             None => 0,
         };
-        Ok(Self {
-            dir,
-            segments,
-            current: None,
-            end,
-            retain,
-        })
+        Ok(Self { dir, segments, current: None, end, retain })
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// Stream offset just past the last byte written.
@@ -273,11 +245,7 @@ impl PaneLog {
             Event::Restore { at_ms } => format!("{offset} restore {at_ms}\n"),
         };
         let path = self.dir.join("index");
-        private_file()
-            .create(true)
-            .append(true)
-            .open(&path)?
-            .write_all(line.as_bytes())
+        private_file().create(true).append(true).open(&path)?.write_all(line.as_bytes())
     }
 
     pub fn events(&self) -> Vec<(u64, Event)> {
@@ -289,13 +257,8 @@ impl PaneLog {
                 let mut w = l.split_whitespace();
                 let offset = w.next()?.parse().ok()?;
                 let event = match w.next()? {
-                    "resize" => Event::Resize {
-                        cols: w.next()?.parse().ok()?,
-                        rows: w.next()?.parse().ok()?,
-                    },
-                    "restore" => Event::Restore {
-                        at_ms: w.next()?.parse().ok()?,
-                    },
+                    "resize" => Event::Resize { cols: w.next()?.parse().ok()?, rows: w.next()?.parse().ok()? },
+                    "restore" => Event::Restore { at_ms: w.next()?.parse().ok()? },
                     _ => return None,
                 };
                 Some((offset, event))
@@ -313,11 +276,7 @@ impl PaneLog {
     pub fn load_checkpoint(&self) -> Option<(u64, Vec<u8>)> {
         let bytes = fs::read(self.dir.join("checkpoint")).ok()?;
         let nl = bytes.iter().position(|b| *b == b'\n')?;
-        let offset = std::str::from_utf8(&bytes[..nl])
-            .ok()?
-            .strip_prefix("offset ")?
-            .parse()
-            .ok()?;
+        let offset = std::str::from_utf8(&bytes[..nl]).ok()?.strip_prefix("offset ")?.parse().ok()?;
         Some((offset, bytes[nl + 1..].to_vec()))
     }
 
@@ -346,11 +305,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "illogical-store-{name}-{}-{}",
-            std::process::id(),
-            now_ms()
-        ));
+        let d = std::env::temp_dir().join(format!("illogical-store-{name}-{}-{}", std::process::id(), now_ms()));
         let _ = fs::remove_dir_all(&d);
         d
     }
@@ -373,10 +328,7 @@ mod tests {
         let log = PaneLog::open(dir.clone()).unwrap();
         assert_eq!(log.end(), 6 * 1024 * 1024 + 5);
         let mode = fs::metadata(dir.join(seg_name(0))).unwrap().permissions();
-        assert_eq!(
-            std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
-            0o600
-        );
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777, 0o600);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -389,11 +341,7 @@ mod tests {
         }
         assert_eq!(log.segments.len(), 2);
         assert_eq!(log.start(), 3 * SEGMENT_BYTES);
-        assert_eq!(
-            log.read_from(0).unwrap().0,
-            3 * SEGMENT_BYTES,
-            "clamped to what is kept"
-        );
+        assert_eq!(log.read_from(0).unwrap().0, 3 * SEGMENT_BYTES, "clamped to what is kept");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -403,13 +351,7 @@ mod tests {
         let mut log = PaneLog::open(dir.clone()).unwrap();
         log.record(0, Event::Resize { cols: 80, rows: 24 }).unwrap();
         log.record(42, Event::Restore { at_ms: 7 }).unwrap();
-        assert_eq!(
-            log.events(),
-            vec![
-                (0, Event::Resize { cols: 80, rows: 24 }),
-                (42, Event::Restore { at_ms: 7 })
-            ]
-        );
+        assert_eq!(log.events(), vec![(0, Event::Resize { cols: 80, rows: 24 }), (42, Event::Restore { at_ms: 7 })]);
         log.save_checkpoint(42, b"state\nbytes").unwrap();
         assert_eq!(log.load_checkpoint(), Some((42, b"state\nbytes".to_vec())));
         log.append(b"abc").unwrap();
@@ -417,11 +359,7 @@ mod tests {
         assert_eq!(log.load_checkpoint(), None);
         assert!(log.events().is_empty());
         log.append(b"def").unwrap();
-        assert_eq!(
-            log.read_from(0).unwrap(),
-            (3, b"def".to_vec()),
-            "offsets carry on after a purge"
-        );
+        assert_eq!(log.read_from(0).unwrap(), (3, b"def".to_vec()), "offsets carry on after a purge");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -431,32 +369,18 @@ mod tests {
         let state = StateDir::open(dir.clone()).unwrap();
         assert_eq!(state.load_layout().unwrap(), None);
         let mut mux = Mux::new();
-        mux.apply(illogical_core::Intent::NewSession {
-            name: None,
-            from_pane: None,
-        })
-        .unwrap();
+        mux.apply(illogical_core::Intent::NewSession { name: None, from_pane: None }).unwrap();
         let saved = Saved {
             version: LAYOUT_VERSION,
             saved_at_ms: 1,
             mux,
-            panes: [(
-                1,
-                PaneMeta {
-                    policy: Policy::Rerun { confirm: true },
-                    cwd: Some("/tmp".into()),
-                    command: None,
-                },
-            )]
-            .into(),
+            panes: [(1, PaneMeta { policy: Policy::Rerun { confirm: true }, cwd: Some("/tmp".into()), command: None })]
+                .into(),
         };
         state.save_layout(&saved).unwrap();
         assert_eq!(state.load_layout().unwrap(), Some(saved));
         let mode = fs::metadata(&dir).unwrap().permissions();
-        assert_eq!(
-            std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
-            0o700
-        );
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777, 0o700);
         fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -11,10 +11,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fs::File,
     io::{Read, Write},
-    os::{
-        fd::{AsRawFd, OwnedFd},
-        unix::process::{CommandExt, ExitStatusExt},
-    },
+    os::fd::{AsRawFd, OwnedFd},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -83,22 +80,10 @@ pub type ExitSink = mpsc::UnboundedSender<Exit>;
 
 enum Cmd {
     Output(Vec<u8>),
-    Exited {
-        pid: u32,
-        code: Option<i32>,
-        signal: Option<i32>,
-    },
-    Attach {
-        sub: Subscriber,
-        offset: Option<u64>,
-    },
-    Detach {
-        client: ClientId,
-    },
-    Resize {
-        cols: u16,
-        rows: u16,
-    },
+    Exited { pid: u32, code: Option<i32>, signal: Option<i32> },
+    Attach { sub: Subscriber, offset: Option<u64> },
+    Detach { client: ClientId },
+    Resize { cols: u16, rows: u16 },
     Input(Vec<u8>),
     Purge,
     Checkpoint(Sender<()>),
@@ -161,13 +146,7 @@ impl PaneHandle {
         // The shell is a session leader; its foreground job is the
         // terminal's foreground process group.
         let fg = std::fs::read_to_string(format!("/proc/{shell}/stat")).ok()?;
-        let tpgid: i32 = fg
-            .rsplit_once(')')?
-            .1
-            .split_whitespace()
-            .nth(5)?
-            .parse()
-            .ok()?;
+        let tpgid: i32 = fg.rsplit_once(')')?.1.split_whitespace().nth(5)?.parse().ok()?;
         if tpgid <= 0 || tpgid as u32 == shell {
             return None;
         }
@@ -182,11 +161,7 @@ impl PaneHandle {
 }
 
 fn shell_quote(arg: &str) -> String {
-    if !arg.is_empty()
-        && arg
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-_./=:,+@%".contains(&b))
-    {
+    if !arg.is_empty() && arg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:,+@%".contains(&b)) {
         arg.to_owned()
     } else {
         format!("'{}'", arg.replace('\'', r"'\''"))
@@ -204,6 +179,9 @@ pub struct Spawn {
 /// How a pane begins.
 pub enum Start {
     Now(Spawn),
+    /// Take over a terminal (and the program on it) that outlived the
+    /// previous daemon.
+    Adopt(OwnedFd),
     /// Show `banner` and wait: Enter runs `enter`, Escape runs `escape`.
     Wait {
         banner: String,
@@ -222,7 +200,42 @@ pub struct Setup {
     pub start: Start,
     /// What a pane whose process was killed offers to run instead.
     pub shell: Spawn,
+    pub launch: Launcher,
     pub on_exit: ExitSink,
+}
+
+/// How pane processes are started: through the shim (so a restarted daemon
+/// can still learn how they exit), in their own systemd scope (so restarting
+/// the daemon's service doesn't kill them), with their terminal kept in the
+/// FD store (so it stays open while the daemon is gone).
+#[derive(Clone, Debug)]
+pub struct Launcher {
+    /// This executable, which also serves as the shim.
+    pub exe: PathBuf,
+    pub scopes: bool,
+    pub fd_store: bool,
+}
+
+impl Launcher {
+    /// What works here: scopes and the FD store need a systemd user service.
+    pub fn detect() -> Self {
+        let systemd = crate::sys::under_systemd();
+        let have_run = std::process::Command::new("systemd-run")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        Self {
+            exe: std::env::current_exe().unwrap_or_else(|_| "illogicald".into()),
+            scopes: systemd && have_run,
+            fd_store: systemd,
+        }
+    }
+}
+
+fn fd_name(pane: PaneId) -> String {
+    format!("pane-{pane}")
 }
 
 /// A running process on its own PTY.
@@ -235,30 +248,39 @@ struct Process {
 impl Process {
     fn start(
         spawn: &Spawn,
+        launch: &Launcher,
+        record: &Path,
         cols: u16,
         rows: u16,
         pane: PaneId,
         events: Sender<Cmd>,
     ) -> std::io::Result<Self> {
-        let ws = Winsize {
-            ws_row: rows,
-            ws_col: cols,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
+        let ws = Winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
         let pty = openpty(Some(&ws), None)?;
         // openpty leaves the master inheritable; the child must not hold its
         // own master or it never sees a hangup (spike S3).
         fcntl(&pty.master, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
         let stdio = |fd: &OwnedFd| fd.try_clone().map(Stdio::from);
 
-        let cwd = if spawn.cwd.is_dir() {
-            spawn.cwd.as_path()
+        let cwd = if spawn.cwd.is_dir() { spawn.cwd.as_path() } else { Path::new("/") };
+        let _ = std::fs::remove_file(record);
+        let mut cmd = if launch.scopes {
+            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let mut c = Command::new("systemd-run");
+            c.args(["--user", "--scope", "--quiet", "--collect"])
+                .arg(format!("--unit=illogical-pane-{pane}-{nanos}"))
+                .arg("--")
+                .arg(&launch.exe);
+            c
         } else {
-            Path::new("/")
+            Command::new(&launch.exe)
         };
-        let mut cmd = Command::new(&spawn.program);
-        cmd.args(&spawn.args)
+        cmd.arg("_shim")
+            .arg("--record")
+            .arg(record)
+            .arg("--")
+            .arg(&spawn.program)
+            .args(&spawn.args)
             .current_dir(cwd)
             .envs(spawn.env.iter().map(|(k, v)| (k, v)))
             .env("TERM", "xterm-256color")
@@ -267,78 +289,84 @@ impl Process {
             .stdin(stdio(&pty.slave)?)
             .stdout(stdio(&pty.slave)?)
             .stderr(stdio(&pty.slave)?);
-        // SAFETY: only async-signal-safe calls between fork and exec.
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let child: Child = cmd.spawn()?;
+        let mut child: Child = cmd.spawn()?;
         drop(pty.slave);
-        let pid = child.id();
-        info!(pane, pid, program = %spawn.program, cwd = %cwd.display(), "started process");
-
+        // The shim reports the program's pid once it has forked it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (pid, _) = loop {
+            if let Some(p) = crate::shim::read_record(record).pid {
+                break p;
+            }
+            if Instant::now() > deadline || child.try_wait().ok().flatten().is_some() {
+                let _ = child.kill();
+                return Err(std::io::Error::other("the pane shim did not start the program"));
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        // Reap the shim (or systemd-run) if it ends while we're its parent.
+        thread::spawn(move || {
+            let _ = child.wait();
+        });
+        info!(pane, pid, program = %spawn.program, cwd = %cwd.display(), scope = launch.scopes, "started process");
         let master = File::from(pty.master);
+        if launch.fd_store {
+            crate::sys::remove_fd(&fd_name(pane));
+            if !crate::sys::store_fd(&fd_name(pane), master.as_raw_fd()) {
+                warn!(pane, "couldn't keep the terminal in the FD store");
+            }
+        }
+        Self::run(pid, master, record.to_owned(), pane, events)
+    }
+
+    /// Take over a pane whose terminal and program outlived the previous
+    /// daemon.
+    fn adopt(master: OwnedFd, record: &Path, pane: PaneId, events: Sender<Cmd>) -> std::io::Result<Self> {
+        let r = crate::shim::read_record(record);
+        let Some((pid, _)) = r.pid.filter(|_| crate::shim::alive(&r)) else {
+            return Err(std::io::Error::other("the pane's program is gone"));
+        };
+        info!(pane, pid, "adopted process");
+        Self::run(pid, File::from(master), record.to_owned(), pane, events)
+    }
+
+    fn run(pid: u32, master: File, record: PathBuf, pane: PaneId, events: Sender<Cmd>) -> std::io::Result<Self> {
         let mut reader = master.try_clone()?;
         let out = events.clone();
-        thread::Builder::new()
-            .name(format!("pane{pane}-read"))
-            .spawn(move || {
-                let mut buf = vec![0u8; 64 * 1024];
-                loop {
-                    match reader.read(&mut buf) {
-                        // EIO is how a PTY master reports that the slave closed.
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            if out.send(Cmd::Output(buf[..n].to_vec())).is_err() {
-                                break;
-                            }
+        thread::Builder::new().name(format!("pane{pane}-read")).spawn(move || {
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                match reader.read(&mut buf) {
+                    // EIO is how a PTY master reports that the slave closed.
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if out.send(Cmd::Output(buf[..n].to_vec())).is_err() {
+                            break;
                         }
                     }
                 }
-            })?;
+            }
+        })?;
 
         let (writer, inputs) = unbounded::<Vec<u8>>();
         let mut w = master.try_clone()?;
-        thread::Builder::new()
-            .name(format!("pane{pane}-write"))
-            .spawn(move || {
-                for data in inputs {
-                    if w.write_all(&data).is_err() {
-                        break;
-                    }
+        thread::Builder::new().name(format!("pane{pane}-write")).spawn(move || {
+            for data in inputs {
+                if w.write_all(&data).is_err() {
+                    break;
                 }
-            })?;
+            }
+        })?;
 
-        thread::Builder::new()
-            .name(format!("pane{pane}-wait"))
-            .spawn(move || {
-                let mut child = child;
-                let status = child.wait().ok();
-                let _ = events.send(Cmd::Exited {
-                    pid,
-                    code: status.and_then(|s| s.code()),
-                    signal: status.and_then(|s| s.signal()),
-                });
-            })?;
+        thread::Builder::new().name(format!("pane{pane}-wait")).spawn(move || {
+            let (code, signal) = wait_for_exit(pid, &record);
+            let _ = events.send(Cmd::Exited { pid, code, signal });
+        })?;
 
-        Ok(Self {
-            pid,
-            master,
-            writer,
-        })
+        Ok(Self { pid, master, writer })
     }
 
     fn resize(&self, cols: u16, rows: u16) {
-        let ws = Winsize {
-            ws_row: rows,
-            ws_col: cols,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
+        let ws = Winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
         // SAFETY: TIOCSWINSZ reads one Winsize from the pointer.
         let rc = unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
         if rc < 0 {
@@ -357,6 +385,28 @@ impl Process {
             unsafe { libc::killpg(pgid, libc::SIGKILL) };
         });
     }
+}
+
+/// Wait for a process that may not be our child (a restarted daemon is no
+/// longer its parent), then read how it ended from the shim's record.
+fn wait_for_exit(pid: u32, record: &Path) -> (Option<i32>, Option<i32>) {
+    // SAFETY: pidfd_open takes a pid and flags and returns a new fd.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) } as i32;
+    if fd >= 0 {
+        let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        // SAFETY: one valid pollfd; the fd is ours and closed below.
+        while unsafe { libc::poll(&mut pfd, 1, -1) } < 0 {}
+        unsafe { libc::close(fd) };
+    }
+    // The shim writes the status right after reaping; give it a moment.
+    for _ in 0..200 {
+        match crate::shim::read_record(record).exit {
+            Some(crate::shim::Ended::Code(c)) => return (Some(c), None),
+            Some(crate::shim::Ended::Signal(s)) => return (Some(128 + s), Some(s)),
+            None => thread::sleep(Duration::from_millis(10)),
+        }
+    }
+    (None, Some(libc::SIGKILL))
 }
 
 /// Recent output, addressed by absolute stream offset.
@@ -381,12 +431,7 @@ impl Ring {
         if offset < self.start || offset > self.end() {
             return None;
         }
-        Some(
-            self.buf
-                .range((offset - self.start) as usize..)
-                .copied()
-                .collect(),
-        )
+        Some(self.buf.range((offset - self.start) as usize..).copied().collect())
     }
 }
 
@@ -405,6 +450,9 @@ struct State {
     subs: HashMap<ClientId, Subscriber>,
     closing: bool,
     shell: Spawn,
+    launch: Launcher,
+    /// The shim's record of the pane's program.
+    record: PathBuf,
     on_exit: ExitSink,
     events: Sender<Cmd>,
     pid: Arc<AtomicU32>,
@@ -414,78 +462,62 @@ struct State {
 }
 
 pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
-    let Setup {
-        id,
-        cols,
-        rows,
-        log,
-        restore,
-        start,
-        shell,
-        on_exit,
-    } = setup;
+    let Setup { id, cols, rows, log, restore, start, shell, launch, on_exit } = setup;
+    let record = log.dir().join("process");
     let (tx, rx) = unbounded();
-    let epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
     let pid = Arc::new(AtomicU32::new(0));
     let running = Arc::new(AtomicBool::new(false));
-    let handle = PaneHandle {
-        id,
-        epoch,
-        pid: pid.clone(),
-        running: running.clone(),
-        tx: tx.clone(),
-    };
-    thread::Builder::new()
-        .name(format!("pane{id}-vt"))
-        .spawn(move || {
-            let mut log = log;
-            let engine = if restore {
-                restore_engine(&log, id, cols, rows)
-            } else {
-                GhosttyEngine::new(cols, rows)
-            };
-            if let Err(e) = log.record(log.end(), Event::Resize { cols, rows }) {
-                warn!(pane = id, error = %e, "can't write pane index");
-            }
-            let mut st = State {
-                id,
-                engine,
-                process: None,
-                waiting: None,
-                ring: Ring {
-                    buf: VecDeque::new(),
-                    start: log.end(),
-                },
-                log: Some(log),
-                subs: HashMap::new(),
-                closing: false,
-                shell,
-                on_exit,
-                events: tx,
-                pid,
-                running,
-                unsaved: 0,
-                last_output: Instant::now(),
-            };
-            if restore {
-                st.restored_banner();
-            }
-            match start {
-                Start::Now(spawn) => st.start(&spawn),
-                Start::Wait {
-                    banner,
-                    enter,
-                    escape,
-                } => {
-                    st.output(banner.as_bytes());
-                    st.waiting = Some(Waiting { enter, escape });
+    let handle = PaneHandle { id, epoch, pid: pid.clone(), running: running.clone(), tx: tx.clone() };
+    thread::Builder::new().name(format!("pane{id}-vt")).spawn(move || {
+        let mut log = log;
+        let engine = if restore { restore_engine(&log, id, cols, rows) } else { GhosttyEngine::new(cols, rows) };
+        if let Err(e) = log.record(log.end(), Event::Resize { cols, rows }) {
+            warn!(pane = id, error = %e, "can't write pane index");
+        }
+        let mut st = State {
+            id,
+            engine,
+            process: None,
+            waiting: None,
+            ring: Ring { buf: VecDeque::new(), start: log.end() },
+            log: Some(log),
+            subs: HashMap::new(),
+            closing: false,
+            shell,
+            launch,
+            record,
+            on_exit,
+            events: tx,
+            pid,
+            running,
+            unsaved: 0,
+            last_output: Instant::now(),
+        };
+        let adopting = matches!(start, Start::Adopt(_));
+        if restore && !adopting {
+            st.restored_banner();
+        }
+        match start {
+            Start::Now(spawn) => st.start(&spawn),
+            Start::Adopt(master) => match Process::adopt(master, &st.record, id, st.events.clone()) {
+                Ok(p) => {
+                    st.pid.store(p.pid, Ordering::Relaxed);
+                    st.running.store(true, Ordering::Relaxed);
+                    st.process = Some(p);
                 }
+                Err(e) => {
+                    info!(pane = id, error = %e, "can't adopt; treating as ended");
+                    st.exited(None, Some(libc::SIGKILL));
+                }
+            },
+            Start::Wait { banner, enter, escape } => {
+                st.output(banner.as_bytes());
+                st.waiting = Some(Waiting { enter, escape });
             }
-            run(st, rx);
-        })?;
+        }
+        run(st, rx);
+    })?;
     Ok(handle)
 }
 
@@ -508,10 +540,7 @@ fn restore_engine(log: &PaneLog, id: PaneId, cols: u16, rows: u16) -> GhosttyEng
     let (from, mut engine) = match from_checkpoint {
         Some(x) => x,
         None => {
-            let from = log
-                .end()
-                .saturating_sub(RESTORE_REPLAY_BYTES)
-                .max(log.start());
+            let from = log.end().saturating_sub(RESTORE_REPLAY_BYTES).max(log.start());
             let (c, r) = events
                 .iter()
                 .rev()
@@ -621,7 +650,7 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
 impl State {
     fn start(&mut self, spawn: &Spawn) {
         let (cols, rows) = self.engine.size();
-        match Process::start(spawn, cols, rows, self.id, self.events.clone()) {
+        match Process::start(spawn, &self.launch, &self.record, cols, rows, self.id, self.events.clone()) {
             Ok(p) => {
                 self.pid.store(p.pid, Ordering::Relaxed);
                 self.running.store(true, Ordering::Relaxed);
@@ -629,19 +658,9 @@ impl State {
             }
             Err(e) => {
                 warn!(pane = self.id, error = %e, "can't start process");
-                self.output(
-                    format!(
-                        "\x1b[31m[could not start {}: {e}]\x1b[0m\r\n",
-                        spawn.program
-                    )
-                    .as_bytes(),
-                );
+                self.output(format!("\x1b[31m[could not start {}: {e}]\x1b[0m\r\n", spawn.program).as_bytes());
                 // Leave the pane to the mux: it closes like an exit.
-                let _ = self.on_exit.send(Exit {
-                    pane: self.id,
-                    code: None,
-                    close: true,
-                });
+                let _ = self.on_exit.send(Exit { pane: self.id, code: None, close: true });
             }
         }
     }
@@ -652,26 +671,14 @@ impl State {
     fn exited(&mut self, code: Option<i32>, signal: Option<i32>) {
         match signal {
             None => {
-                let _ = self.on_exit.send(Exit {
-                    pane: self.id,
-                    code,
-                    close: true,
-                });
+                let _ = self.on_exit.send(Exit { pane: self.id, code, close: true });
             }
             Some(sig) => {
-                let note = format!(
-                    "\r\n\x1b[0m\x1b[2m[process ended by signal {sig} · press Enter for a shell]\x1b[0m\r\n"
-                );
+                let note =
+                    format!("\r\n\x1b[0m\x1b[2m[process ended by signal {sig} · press Enter for a shell]\x1b[0m\r\n");
                 self.output(note.as_bytes());
-                self.waiting = Some(Waiting {
-                    enter: self.shell.clone(),
-                    escape: None,
-                });
-                let _ = self.on_exit.send(Exit {
-                    pane: self.id,
-                    code: Some(128 + sig),
-                    close: false,
-                });
+                self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+                let _ = self.on_exit.send(Exit { pane: self.id, code: Some(128 + sig), close: false });
             }
         }
     }
@@ -693,11 +700,7 @@ impl State {
             self.waiting = None;
             self.output(b"\x1b[0m\r\n");
             self.start(&spawn);
-            let _ = self.on_exit.send(Exit {
-                pane: self.id,
-                code: None,
-                close: false,
-            });
+            let _ = self.on_exit.send(Exit { pane: self.id, code: None, close: false });
         }
     }
 
@@ -709,15 +712,14 @@ impl State {
         // Leave whatever full-screen program was running (only if one was:
         // 1049l also restores the saved cursor, which would move us), reset
         // modes, and mark where the old output ends.
-        let leave_alt = if self.engine.alt_screen() {
-            "\x1b[?1049l"
-        } else {
-            ""
-        };
-        let banner = format!(
-            "{leave_alt}\x1b[!p\x1b[0m\r\n\x1b[2m── restored {} ──\x1b[0m\r\n",
-            local_time(at)
-        );
+        let leave_alt = if self.engine.alt_screen() { "\x1b[?1049l" } else { "" };
+        // DECSTR (`CSI ! p`) leaves input modes alone, so also turn off what
+        // a program that died with the old daemon may have left on: mouse
+        // reporting, focus reports, application cursor keys and keypad, the
+        // kitty keyboard stack; and show the cursor.
+        const INPUT_RESET: &str = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?1004l\x1b[?1l\x1b>\x1b[<99u\x1b[?25h";
+        let banner =
+            format!("{leave_alt}\x1b[!p{INPUT_RESET}\x1b[0m\r\n\x1b[2m── restored {} ──\x1b[0m\r\n", local_time(at));
         self.output(banner.as_bytes());
     }
 
@@ -738,13 +740,7 @@ impl State {
         }
         self.unsaved += data.len() as u64;
         self.last_output = Instant::now();
-        let frame = Frame {
-            kind: FrameKind::Output,
-            pane: self.id,
-            offset,
-            data: data.to_vec(),
-        }
-        .encode();
+        let frame = Frame { kind: FrameKind::Output, pane: self.id, offset, data: data.to_vec() }.encode();
         self.broadcast(|| ToClient::Frame(frame.clone()));
     }
 
@@ -754,12 +750,7 @@ impl State {
         let bytes = self.engine.checkpoint();
         match log.save_checkpoint(log.end(), &bytes) {
             Ok(()) => {
-                debug!(
-                    pane = self.id,
-                    bytes = bytes.len(),
-                    ms = started.elapsed().as_millis() as u64,
-                    "checkpoint"
-                );
+                debug!(pane = self.id, bytes = bytes.len(), ms = started.elapsed().as_millis() as u64, "checkpoint");
                 self.unsaved = 0;
             }
             Err(e) => warn!(pane = self.id, error = %e, "can't write checkpoint"),
@@ -780,6 +771,9 @@ impl State {
     }
 
     fn finish(mut self) {
+        if self.launch.fd_store {
+            crate::sys::remove_fd(&fd_name(self.id));
+        }
         if let Some(log) = self.log.take() {
             log.remove();
         }
@@ -787,18 +781,12 @@ impl State {
 
     /// Queue an item for every subscriber, resyncing any that are full.
     fn broadcast(&mut self, item: impl Fn() -> ToClient) {
-        let lagged: Vec<ClientId> = self
-            .subs
-            .iter()
-            .filter(|(_, sub)| sub.data.try_send(item()).is_err())
-            .map(|(id, _)| *id)
-            .collect();
+        let lagged: Vec<ClientId> =
+            self.subs.iter().filter(|(_, sub)| sub.data.try_send(item()).is_err()).map(|(id, _)| *id).collect();
         for id in lagged {
             if let Some(sub) = self.subs.remove(&id) {
                 debug!(pane = self.id, client = id, "client fell behind; resync");
-                let _ = sub
-                    .ctrl
-                    .send(ToClient::Msg(ServerMsg::Resync { pane: self.id }));
+                let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Resync { pane: self.id }));
             }
         }
     }
@@ -809,37 +797,19 @@ impl State {
         }
         let end = self.ring.end();
         let (cols, rows) = self.engine.size();
-        let replay = offset
-            .filter(|o| end.saturating_sub(*o) <= MAX_REPLAY_BYTES)
-            .and_then(|o| self.ring.since(o));
+        let replay = offset.filter(|o| end.saturating_sub(*o) <= MAX_REPLAY_BYTES).and_then(|o| self.ring.since(o));
         let frame = match replay {
             Some(bytes) if bytes.is_empty() => None,
-            Some(bytes) => Some(Frame {
-                kind: FrameKind::Output,
-                pane: self.id,
-                offset: offset.unwrap(),
-                data: bytes,
-            }),
-            None => Some(Frame {
-                kind: FrameKind::Snapshot,
-                pane: self.id,
-                offset: end,
-                data: self.engine.snapshot(),
-            }),
+            Some(bytes) => Some(Frame { kind: FrameKind::Output, pane: self.id, offset: offset.unwrap(), data: bytes }),
+            None => Some(Frame { kind: FrameKind::Snapshot, pane: self.id, offset: end, data: self.engine.snapshot() }),
         };
         debug!(pane = self.id, client = sub.client, ?offset, end, kind = ?frame.as_ref().map(|f| f.kind), "attach");
         // The size goes first so the client resizes before drawing.
-        let size = ServerMsg::Size {
-            pane: self.id,
-            cols,
-            rows,
-        };
+        let size = ServerMsg::Size { pane: self.id, cols, rows };
         let queued = sub.data.try_send(ToClient::Msg(size)).is_ok()
             && frame.is_none_or(|f| sub.data.try_send(ToClient::Frame(f.encode())).is_ok());
         if !queued {
-            let _ = sub
-                .ctrl
-                .send(ToClient::Msg(ServerMsg::Resync { pane: self.id }));
+            let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Resync { pane: self.id }));
             return;
         }
         self.subs.insert(sub.client, sub);
@@ -857,13 +827,7 @@ impl State {
             let _ = log.record(log.end(), Event::Resize { cols, rows });
         }
         let id = self.id;
-        self.broadcast(|| {
-            ToClient::Msg(ServerMsg::Size {
-                pane: id,
-                cols,
-                rows,
-            })
-        });
+        self.broadcast(|| ToClient::Msg(ServerMsg::Size { pane: id, cols, rows }));
     }
 }
 
@@ -873,10 +837,7 @@ mod tests {
 
     #[test]
     fn ring_keeps_the_tail_and_addresses_by_offset() {
-        let mut r = Ring {
-            buf: VecDeque::new(),
-            start: 0,
-        };
+        let mut r = Ring { buf: VecDeque::new(), start: 0 };
         r.push(b"hello ");
         r.push(b"world");
         assert_eq!(r.end(), 11);

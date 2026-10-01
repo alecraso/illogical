@@ -37,16 +37,7 @@ pub struct Layout {
 
 pub fn layout(root: &Node, cols: u16, rows: u16) -> Layout {
     let mut out = Layout::default();
-    place(
-        root,
-        Rect {
-            x: 0,
-            y: 0,
-            cols: cols.max(1),
-            rows: rows.max(1),
-        },
-        &mut out,
-    );
+    place(root, Rect { x: 0, y: 0, cols: cols.max(1), rows: rows.max(1) }, &mut out);
     out
 }
 
@@ -60,27 +51,12 @@ fn place(node: &Node, rect: Rect, out: &mut Layout) {
             };
             let weights: Vec<f64> = children.iter().map(|c| c.weight).collect();
             let extents = distribute(total, &weights);
-            out.splits.push(SplitRect {
-                id: *id,
-                dir: *dir,
-                rect,
-                extents: extents.clone(),
-            });
+            out.splits.push(SplitRect { id: *id, dir: *dir, rect, extents: extents.clone() });
             let mut at = 0u16;
             for (child, len) in children.iter().zip(extents) {
                 let r = match dir {
-                    Dir::Row => Rect {
-                        x: rect.x + at,
-                        y: rect.y,
-                        cols: len,
-                        rows: rect.rows,
-                    },
-                    Dir::Column => Rect {
-                        x: rect.x,
-                        y: rect.y + at,
-                        cols: rect.cols,
-                        rows: len,
-                    },
+                    Dir::Row => Rect { x: rect.x + at, y: rect.y, cols: len, rows: rect.rows },
+                    Dir::Column => Rect { x: rect.x, y: rect.y + at, cols: rect.cols, rows: len },
                 };
                 place(&child.node, r, out);
                 at = at.saturating_add(len).saturating_add(1);
@@ -120,10 +96,7 @@ pub fn distribute(total: u16, weights: &[f64]) -> Vec<u16> {
         sizes[big] -= 1;
         used -= 1;
     }
-    sizes
-        .into_iter()
-        .map(|s| s.min(u16::MAX as usize) as u16)
-        .collect()
+    sizes.into_iter().map(|s| s.min(u16::MAX as usize) as u16).collect()
 }
 
 #[cfg(test)]
@@ -158,33 +131,9 @@ mod tests {
         assert_eq!(
             l.panes,
             vec![
-                (
-                    1,
-                    Rect {
-                        x: 0,
-                        y: 0,
-                        cols: 40,
-                        rows: 25
-                    }
-                ),
-                (
-                    2,
-                    Rect {
-                        x: 41,
-                        y: 0,
-                        cols: 40,
-                        rows: 12
-                    }
-                ),
-                (
-                    3,
-                    Rect {
-                        x: 41,
-                        y: 13,
-                        cols: 40,
-                        rows: 12
-                    }
-                ),
+                (1, Rect { x: 0, y: 0, cols: 40, rows: 25 }),
+                (2, Rect { x: 41, y: 0, cols: 40, rows: 12 }),
+                (3, Rect { x: 41, y: 13, cols: 40, rows: 12 }),
             ]
         );
         assert_eq!(l.splits.len(), 2);

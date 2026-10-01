@@ -106,13 +106,8 @@ pub enum Intent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    Spawn {
-        pane: PaneId,
-        cwd_from: Option<PaneId>,
-    },
-    Kill {
-        pane: PaneId,
-    },
+    Spawn { pane: PaneId, cwd_from: Option<PaneId> },
+    Kill { pane: PaneId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,17 +152,11 @@ impl Mux {
     }
 
     pub fn session(&self, id: SessionId) -> Result<&Session, Error> {
-        self.sessions
-            .iter()
-            .find(|s| s.id == id)
-            .ok_or(Error::NoSession(id))
+        self.sessions.iter().find(|s| s.id == id).ok_or(Error::NoSession(id))
     }
 
     fn session_mut(&mut self, id: SessionId) -> Result<&mut Session, Error> {
-        self.sessions
-            .iter_mut()
-            .find(|s| s.id == id)
-            .ok_or(Error::NoSession(id))
+        self.sessions.iter_mut().find(|s| s.id == id).ok_or(Error::NoSession(id))
     }
 
     pub fn tab(&self, id: TabId) -> Result<&Tab, Error> {
@@ -175,19 +164,11 @@ impl Mux {
     }
 
     pub fn tab_of(&self, pane: PaneId) -> Result<TabId, Error> {
-        self.tabs
-            .values()
-            .find(|t| t.root.contains(pane))
-            .map(|t| t.id)
-            .ok_or(Error::NoPane(pane))
+        self.tabs.values().find(|t| t.root.contains(pane)).map(|t| t.id).ok_or(Error::NoPane(pane))
     }
 
     pub fn session_of_tab(&self, tab: TabId) -> Result<SessionId, Error> {
-        self.sessions
-            .iter()
-            .find(|s| s.tabs.contains(&tab))
-            .map(|s| s.id)
-            .ok_or(Error::NoTab(tab))
+        self.sessions.iter().find(|s| s.tabs.contains(&tab)).map(|s| s.id).ok_or(Error::NoTab(tab))
     }
 
     pub fn panes(&self) -> Vec<PaneId> {
@@ -207,27 +188,12 @@ impl Mux {
     }
 
     /// A new tab holding `root`, inserted into `session` at `index`.
-    fn add_tab(
-        &mut self,
-        session: SessionId,
-        root: Node,
-        index: Option<usize>,
-    ) -> Result<TabId, Error> {
+    fn add_tab(&mut self, session: SessionId, root: Node, index: Option<usize>) -> Result<TabId, Error> {
         self.session(session)?;
         self.next_tab += 1;
         let id = self.next_tab;
-        self.tabs.insert(
-            id,
-            Tab {
-                id,
-                name: None,
-                root,
-                cols: DEFAULT_COLS,
-                rows: DEFAULT_ROWS,
-                owner: None,
-                zoom: None,
-            },
-        );
+        self.tabs
+            .insert(id, Tab { id, name: None, root, cols: DEFAULT_COLS, rows: DEFAULT_ROWS, owner: None, zoom: None });
         let s = self.session_mut(session)?;
         let at = index.unwrap_or(s.tabs.len()).min(s.tabs.len());
         s.tabs.insert(at, id);
@@ -273,17 +239,10 @@ impl Mux {
             NewSession { name, from_pane } => {
                 self.next_session += 1;
                 let id = self.next_session;
-                self.sessions.push(Session {
-                    id,
-                    name: name.unwrap_or_else(|| id.to_string()),
-                    tabs: vec![],
-                });
+                self.sessions.push(Session { id, name: name.unwrap_or_else(|| id.to_string()), tabs: vec![] });
                 let pane = self.new_pane();
                 self.add_tab(id, Node::pane(pane), None)?;
-                Ok(vec![Effect::Spawn {
-                    pane,
-                    cwd_from: from_pane,
-                }])
+                Ok(vec![Effect::Spawn { pane, cwd_from: from_pane }])
             }
             RenameSession { session, name } => {
                 self.session_mut(session)?.name = name;
@@ -293,13 +252,7 @@ impl Mux {
                 let tabs = self.session(session)?.tabs.clone();
                 let mut effects = vec![];
                 for t in tabs {
-                    effects.extend(
-                        self.tab(t)?
-                            .root
-                            .panes()
-                            .into_iter()
-                            .map(|pane| Effect::Kill { pane }),
-                    );
+                    effects.extend(self.tab(t)?.root.panes().into_iter().map(|pane| Effect::Kill { pane }));
                     self.remove_tab(t);
                 }
                 Ok(effects)
@@ -307,29 +260,18 @@ impl Mux {
             NewTab { session, from_pane } => {
                 let pane = self.new_pane();
                 self.add_tab(session, Node::pane(pane), None)?;
-                Ok(vec![Effect::Spawn {
-                    pane,
-                    cwd_from: from_pane,
-                }])
+                Ok(vec![Effect::Spawn { pane, cwd_from: from_pane }])
             }
             RenameTab { tab, name } => {
-                self.tabs.get_mut(&tab).ok_or(Error::NoTab(tab))?.name =
-                    name.filter(|n| !n.trim().is_empty());
+                self.tabs.get_mut(&tab).ok_or(Error::NoTab(tab))?.name = name.filter(|n| !n.trim().is_empty());
                 Ok(vec![])
             }
             CloseTab { tab } => {
                 let panes = self.tab(tab)?.root.panes();
                 self.remove_tab(tab);
-                Ok(panes
-                    .into_iter()
-                    .map(|pane| Effect::Kill { pane })
-                    .collect())
+                Ok(panes.into_iter().map(|pane| Effect::Kill { pane }).collect())
             }
-            MoveTab {
-                tab,
-                session,
-                index,
-            } => {
+            MoveTab { tab, session, index } => {
                 self.tab(tab)?;
                 self.session(session)?;
                 for s in &mut self.sessions {
@@ -347,16 +289,12 @@ impl Mux {
                 }
                 let tab_id = self.tab_of(pane)?;
                 let new = self.new_pane();
-                let mut root =
-                    std::mem::replace(&mut self.tabs.get_mut(&tab_id).unwrap().root, Node::pane(0));
+                let mut root = std::mem::replace(&mut self.tabs.get_mut(&tab_id).unwrap().root, Node::pane(0));
                 root.insert(pane, edge, Node::pane(new), &mut self.node_ids());
                 let tab = self.tabs.get_mut(&tab_id).unwrap();
                 tab.root = root;
                 tab.zoom = None;
-                Ok(vec![Effect::Spawn {
-                    pane: new,
-                    cwd_from: Some(pane),
-                }])
+                Ok(vec![Effect::Spawn { pane: new, cwd_from: Some(pane) }])
             }
             ClosePane { pane } => {
                 self.detach_pane(pane)?;
@@ -379,23 +317,17 @@ impl Mux {
                 }
                 self.detach_pane(pane)?;
                 let to = self.tab_of(target)?;
-                let mut root =
-                    std::mem::replace(&mut self.tabs.get_mut(&to).unwrap().root, Node::pane(0));
+                let mut root = std::mem::replace(&mut self.tabs.get_mut(&to).unwrap().root, Node::pane(0));
                 root.insert(target, edge, Node::pane(pane), &mut self.node_ids());
                 let tab = self.tabs.get_mut(&to).unwrap();
                 tab.root = root;
                 tab.zoom = None;
                 Ok(vec![])
             }
-            BreakPane {
-                pane,
-                session,
-                index,
-            } => {
+            BreakPane { pane, session, index } => {
                 self.session(session)?;
                 let from = self.tab_of(pane)?;
-                if self.tab(from)?.root == Node::pane(pane) && self.session_of_tab(from)? == session
-                {
+                if self.tab(from)?.root == Node::pane(pane) && self.session_of_tab(from)? == session {
                     return Err(Error::Invalid("pane already has its own tab"));
                 }
                 self.detach_pane(pane)?;
@@ -420,8 +352,7 @@ impl Mux {
                 // Removing the tab can't remove the target's session: the
                 // target's tab is still in it.
                 self.remove_tab(tab);
-                let mut dest =
-                    std::mem::replace(&mut self.tabs.get_mut(&to).unwrap().root, Node::pane(0));
+                let mut dest = std::mem::replace(&mut self.tabs.get_mut(&to).unwrap().root, Node::pane(0));
                 dest.insert(target, edge, root, &mut self.node_ids());
                 let t = self.tabs.get_mut(&to).unwrap();
                 t.root = dest;
@@ -429,11 +360,7 @@ impl Mux {
                 Ok(vec![])
             }
             ResizeSplit { split, weights } => {
-                let tab = self
-                    .tabs
-                    .values_mut()
-                    .find(|t| t.root.has_split(split))
-                    .ok_or(Error::NoSplit(split))?;
+                let tab = self.tabs.values_mut().find(|t| t.root.has_split(split)).ok_or(Error::NoSplit(split))?;
                 let (_, children) = tab.root.find_split_mut(split).unwrap();
                 if weights.len() != children.len() {
                     return Err(Error::Invalid("one weight per child"));
@@ -491,18 +418,7 @@ impl Mux {
     pub fn layout(&self, tab: TabId) -> Result<Layout, Error> {
         let t = self.tab(tab)?;
         Ok(match t.zoom {
-            Some(p) => Layout {
-                panes: vec![(
-                    p,
-                    Rect {
-                        x: 0,
-                        y: 0,
-                        cols: t.cols,
-                        rows: t.rows,
-                    },
-                )],
-                splits: vec![],
-            },
+            Some(p) => Layout { panes: vec![(p, Rect { x: 0, y: 0, cols: t.cols, rows: t.rows })], splits: vec![] },
             None => layout::layout(&t.root, t.cols, t.rows),
         })
     }
@@ -510,18 +426,13 @@ impl Mux {
     /// The size every visible pane should have. Panes hidden behind a zoom
     /// are left out, so they keep their last size.
     pub fn pane_rects(&self) -> BTreeMap<PaneId, Rect> {
-        self.tabs
-            .keys()
-            .flat_map(|t| self.layout(*t).unwrap().panes)
-            .collect()
+        self.tabs.keys().flat_map(|t| self.layout(*t).unwrap().panes).collect()
     }
 
     pub fn validate(&self) -> Result<(), String> {
         let mut seen = std::collections::HashSet::new();
         for t in self.tabs.values() {
-            t.root
-                .validate()
-                .map_err(|e| format!("tab {}: {e}", t.id))?;
+            t.root.validate().map_err(|e| format!("tab {}: {e}", t.id))?;
             for p in t.root.panes() {
                 if !seen.insert(p) {
                     return Err(format!("pane {p} is in two tabs"));
@@ -530,11 +441,7 @@ impl Mux {
             if t.zoom.is_some_and(|z| !t.root.contains(z)) {
                 return Err(format!("tab {} zooms a pane it doesn't have", t.id));
             }
-            let homes = self
-                .sessions
-                .iter()
-                .filter(|s| s.tabs.contains(&t.id))
-                .count();
+            let homes = self.sessions.iter().filter(|s| s.tabs.contains(&t.id)).count();
             if homes != 1 {
                 return Err(format!("tab {} is in {homes} sessions", t.id));
             }

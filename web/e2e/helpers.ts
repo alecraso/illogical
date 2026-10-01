@@ -43,7 +43,20 @@ export async function reset(page: Page) {
 
 /** Wait until a pane has drawn something (its snapshot arrived). */
 export async function ready(page: Page, pane: PaneId) {
-  await expect.poll(() => page.evaluate((p) => window.__illogical.offset(p), pane)).not.toBeNull();
+  try {
+    await expect.poll(() => page.evaluate((p) => window.__illogical.offset(p), pane)).not.toBeNull();
+  } catch (e) {
+    console.log(
+      "NOT READY",
+      pane,
+      await page.evaluate((p) => {
+        const c = window.__illogical.client;
+        const e = c.panes.get(p);
+        return JSON.stringify({ me: c.clientId, connected: c.connected, has: !!e, offset: e?.offset, epoch: e?.epoch, info: c.state?.panes.find((x) => x.id === p), text: e?.view.text().slice(0, 80) });
+      }, pane),
+    );
+    throw e;
+  }
 }
 
 /** Panes of the shown tab, in layout order. */

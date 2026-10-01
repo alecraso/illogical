@@ -48,19 +48,9 @@ fn temp_state() -> PathBuf {
 
 #[expect(clippy::zombie_processes, reason = "Daemon's Drop kills and waits")]
 async fn start_in(state: &Path) -> Daemon {
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args([
-            "--listen",
-            &format!("127.0.0.1:{port}"),
-            "--shell",
-            "bash --norc --noprofile",
-            "--no-manager-env",
-        ])
+        .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
         .arg("--state-dir")
         .arg(state)
         .env("PS1", "$ ")
@@ -85,11 +75,7 @@ enum In {
 
 async fn recv(ws: &mut Ws) -> In {
     loop {
-        let msg = timeout(Duration::from_secs(5), ws.next())
-            .await
-            .expect("timed out")
-            .unwrap()
-            .unwrap();
+        let msg = timeout(Duration::from_secs(5), ws.next()).await.expect("timed out").unwrap().unwrap();
         match msg {
             Message::Text(t) => return In::Msg(serde_json::from_str(&t).unwrap()),
             Message::Binary(b) => return In::Frame(Frame::decode(&b).unwrap()),
@@ -104,20 +90,14 @@ async fn connect(d: &Daemon) -> (Ws, u64) {
 }
 
 async fn connect_state(d: &Daemon) -> (Ws, State) {
-    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port))
-        .await
-        .unwrap();
-    let In::Msg(ServerMsg::Hello { state, .. }) = recv(&mut ws).await else {
-        panic!("expected hello")
-    };
+    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port)).await.unwrap();
+    let In::Msg(ServerMsg::Hello { state, .. }) = recv(&mut ws).await else { panic!("expected hello") };
     assert!(!state.panes.is_empty(), "the daemon starts with a session");
     (ws, state)
 }
 
 async fn send(ws: &mut Ws, msg: ClientMsg) {
-    ws.send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
-        .await
-        .unwrap();
+    ws.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await.unwrap();
 }
 
 /// Skip messages until the next layout state.
@@ -140,12 +120,8 @@ async fn until<T>(ws: &mut Ws, mut f: impl FnMut(&In) -> Option<T>) -> T {
 }
 
 async fn attach(ws: &mut Ws, offset: Option<u64>) {
-    let m = ClientMsg::Attach {
-        panes: vec![AttachPane { pane: 1, offset }],
-    };
-    ws.send(Message::Text(serde_json::to_string(&m).unwrap().into()))
-        .await
-        .unwrap();
+    let m = ClientMsg::Attach { panes: vec![AttachPane { pane: 1, offset }] };
+    ws.send(Message::Text(serde_json::to_string(&m).unwrap().into())).await.unwrap();
 }
 
 async fn type_line(ws: &mut Ws, line: &str) {
@@ -153,12 +129,7 @@ async fn type_line(ws: &mut Ws, line: &str) {
 }
 
 async fn type_in(ws: &mut Ws, pane: u32, line: &str) {
-    let f = Frame {
-        kind: FrameKind::Input,
-        pane,
-        offset: 0,
-        data: format!("{line}\r").into_bytes(),
-    };
+    let f = Frame { kind: FrameKind::Input, pane, offset: 0, data: format!("{line}\r").into_bytes() };
     ws.send(Message::Binary(f.encode().into())).await.unwrap();
 }
 
@@ -189,18 +160,8 @@ async fn fresh_attach_gets_size_then_snapshot() {
     let d = start().await;
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, None).await;
-    assert!(matches!(
-        recv(&mut ws).await,
-        In::Msg(ServerMsg::Size {
-            pane: 1,
-            cols: 80,
-            rows: 24,
-            ..
-        })
-    ));
-    let In::Frame(f) = recv(&mut ws).await else {
-        panic!("expected snapshot")
-    };
+    assert!(matches!(recv(&mut ws).await, In::Msg(ServerMsg::Size { pane: 1, cols: 80, rows: 24, .. })));
+    let In::Frame(f) = recv(&mut ws).await else { panic!("expected snapshot") };
     assert_eq!(f.kind, FrameKind::Snapshot);
 }
 
@@ -210,9 +171,7 @@ async fn reconnect_resumes_from_offset_without_gaps() {
     let (mut ws, epoch) = connect(&d).await;
     attach(&mut ws, None).await;
     let _size = recv(&mut ws).await;
-    let In::Frame(snap) = recv(&mut ws).await else {
-        panic!()
-    };
+    let In::Frame(snap) = recv(&mut ws).await else { panic!() };
     type_line(&mut ws, "echo hello-$((40+2))").await;
     let end = read_until(&mut ws, Some(snap.offset), "hello-42").await;
     drop(ws);
@@ -241,9 +200,7 @@ async fn unknown_offset_falls_back_to_snapshot() {
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, Some(10_000_000)).await;
     let _size = recv(&mut ws).await;
-    let In::Frame(f) = recv(&mut ws).await else {
-        panic!()
-    };
+    let In::Frame(f) = recv(&mut ws).await else { panic!() };
     assert_eq!(f.kind, FrameKind::Snapshot);
 }
 
@@ -254,63 +211,33 @@ async fn snapshot_shows_a_full_screen_app() {
     attach(&mut ws, None).await;
     let _ = (recv(&mut ws).await, recv(&mut ws).await);
     // A tiny full-screen "app": alt screen, draw, wait.
-    type_line(
-        &mut ws,
-        r"printf '\e[?1049h\e[H\e[2JFULLSCREEN-%s' $((6*7)); sleep 30",
-    )
-    .await;
+    type_line(&mut ws, r"printf '\e[?1049h\e[H\e[2JFULLSCREEN-%s' $((6*7)); sleep 30").await;
     read_until(&mut ws, None, "FULLSCREEN-42").await;
     drop(ws);
 
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, None).await;
     let _size = recv(&mut ws).await;
-    let In::Frame(f) = recv(&mut ws).await else {
-        panic!()
-    };
+    let In::Frame(f) = recv(&mut ws).await else { panic!() };
     let text = String::from_utf8_lossy(&f.data);
-    assert!(
-        text.contains("\x1b[?1049h"),
-        "snapshot enters the alt screen"
-    );
-    assert!(
-        text.contains("FULLSCREEN-42"),
-        "snapshot has the app's screen"
-    );
+    assert!(text.contains("\x1b[?1049h"), "snapshot enters the alt screen");
+    assert!(text.contains("FULLSCREEN-42"), "snapshot has the app's screen");
 }
 
 #[tokio::test]
 async fn rejects_foreign_host_and_origin() {
     let d = start().await;
-    let mut req = format!("ws://127.0.0.1:{}/ws", d.port)
-        .into_client_request()
-        .unwrap();
-    req.headers_mut()
-        .insert("origin", "https://evil.example".parse().unwrap());
-    assert!(
-        connect_async(req).await.is_err(),
-        "foreign origin must be refused"
-    );
+    let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+    req.headers_mut().insert("origin", "https://evil.example".parse().unwrap());
+    assert!(connect_async(req).await.is_err(), "foreign origin must be refused");
 
-    let mut req = format!("ws://127.0.0.1:{}/ws", d.port)
-        .into_client_request()
-        .unwrap();
-    req.headers_mut()
-        .insert("host", "evil.example".parse().unwrap());
-    assert!(
-        connect_async(req).await.is_err(),
-        "foreign host must be refused"
-    );
+    let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+    req.headers_mut().insert("host", "evil.example".parse().unwrap());
+    assert!(connect_async(req).await.is_err(), "foreign host must be refused");
 
-    let mut req = format!("ws://127.0.0.1:{}/ws", d.port)
-        .into_client_request()
-        .unwrap();
-    req.headers_mut()
-        .insert("tailscale-user-login", "someone@else".parse().unwrap());
-    assert!(
-        connect_async(req).await.is_err(),
-        "tailnet user without --owner must be refused"
-    );
+    let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+    req.headers_mut().insert("tailscale-user-login", "someone@else".parse().unwrap());
+    assert!(connect_async(req).await.is_err(), "tailnet user without --owner must be refused");
 }
 
 #[tokio::test]
@@ -344,38 +271,16 @@ async fn slow_client_is_resynced() {
 async fn split_spawns_a_pane_and_exit_closes_it() {
     let d = start().await;
     let (mut ws, _) = connect_state(&d).await;
-    send(
-        &mut ws,
-        ClientMsg::Intent {
-            id: Some(1),
-            intent: Intent::Split {
-                pane: 1,
-                edge: Edge::Right,
-            },
-        },
-    )
-    .await;
+    send(&mut ws, ClientMsg::Intent { id: Some(1), intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
     let state = next_state(&mut ws).await;
     let ids: Vec<u32> = state.panes.iter().map(|p| p.id).collect();
     assert_eq!(ids, vec![1, 2]);
     let tab = &state.tabs[0];
     assert_eq!(tab.layout.panes.len(), 2);
-    assert_eq!(
-        (tab.layout.panes[0].1.cols, tab.layout.panes[1].1.cols),
-        (40, 39)
-    );
+    assert_eq!((tab.layout.panes[0].1.cols, tab.layout.panes[1].1.cols), (40, 39));
 
     // The new pane runs a shell of its own.
-    send(
-        &mut ws,
-        ClientMsg::Attach {
-            panes: vec![AttachPane {
-                pane: 2,
-                offset: None,
-            }],
-        },
-    )
-    .await;
+    send(&mut ws, ClientMsg::Attach { panes: vec![AttachPane { pane: 2, offset: None }] }).await;
     type_in(&mut ws, 2, "echo in-pane-$((1+1)); exit").await;
     let state = until(&mut ws, |m| match m {
         In::Msg(ServerMsg::State { state }) if state.panes.len() == 1 => Some(state.clone()),
@@ -383,11 +288,7 @@ async fn split_spawns_a_pane_and_exit_closes_it() {
     })
     .await;
     assert_eq!(state.panes[0].id, 1);
-    assert_eq!(
-        state.tabs[0].layout.panes.len(),
-        1,
-        "exiting closed the split"
-    );
+    assert_eq!(state.tabs[0].layout.panes.len(), 1, "exiting closed the split");
 }
 
 #[tokio::test]
@@ -395,72 +296,18 @@ async fn the_tab_takes_the_claiming_clients_size() {
     let d = start().await;
     let (mut a, state) = connect_state(&d).await;
     let tab = state.tabs[0].id;
-    send(
-        &mut a,
-        ClientMsg::Attach {
-            panes: vec![AttachPane {
-                pane: 1,
-                offset: None,
-            }],
-        },
-    )
-    .await;
-    send(
-        &mut a,
-        ClientMsg::View {
-            tab,
-            cols: 101,
-            rows: 30,
-            zoom: None,
-            claim: true,
-        },
-    )
-    .await;
-    until(&mut a, |m| {
-        matches!(
-            m,
-            In::Msg(ServerMsg::Size {
-                pane: 1,
-                cols: 101,
-                rows: 30
-            })
-        )
-        .then_some(())
-    })
-    .await;
+    send(&mut a, ClientMsg::Attach { panes: vec![AttachPane { pane: 1, offset: None }] }).await;
+    send(&mut a, ClientMsg::View { tab, cols: 101, rows: 30, zoom: None, claim: true }).await;
+    until(&mut a, |m| matches!(m, In::Msg(ServerMsg::Size { pane: 1, cols: 101, rows: 30 })).then_some(())).await;
     type_line(&mut a, "stty size").await;
     read_until(&mut a, None, "30 101").await;
 
     // Another client's unclaimed view doesn't take over; a claimed one does.
     let (mut b, _) = connect_state(&d).await;
-    send(
-        &mut b,
-        ClientMsg::View {
-            tab,
-            cols: 60,
-            rows: 20,
-            zoom: None,
-            claim: false,
-        },
-    )
-    .await;
-    send(
-        &mut b,
-        ClientMsg::View {
-            tab,
-            cols: 61,
-            rows: 20,
-            zoom: None,
-            claim: true,
-        },
-    )
-    .await;
+    send(&mut b, ClientMsg::View { tab, cols: 60, rows: 20, zoom: None, claim: false }).await;
+    send(&mut b, ClientMsg::View { tab, cols: 61, rows: 20, zoom: None, claim: true }).await;
     let state = next_state(&mut a).await;
-    assert_eq!(
-        (state.tabs[0].cols, state.tabs[0].rows),
-        (61, 20),
-        "B's claim, not its plain view"
-    );
+    assert_eq!((state.tabs[0].cols, state.tabs[0].rows), (61, 20), "B's claim, not its plain view");
     assert_ne!(state.tabs[0].owner, None);
 }
 
@@ -469,14 +316,7 @@ async fn bad_intents_report_errors_and_others_see_changes() {
     let d = start().await;
     let (mut a, _) = connect_state(&d).await;
     let (mut b, _) = connect_state(&d).await;
-    send(
-        &mut a,
-        ClientMsg::Intent {
-            id: Some(9),
-            intent: Intent::ClosePane { pane: 999 },
-        },
-    )
-    .await;
+    send(&mut a, ClientMsg::Intent { id: Some(9), intent: Intent::ClosePane { pane: 999 } }).await;
     let err = until(&mut a, |m| match m {
         In::Msg(ServerMsg::Error { id, message }) => Some((*id, message.clone())),
         _ => None,
@@ -484,17 +324,7 @@ async fn bad_intents_report_errors_and_others_see_changes() {
     .await;
     assert_eq!(err, (Some(9), "no pane %999".to_string()));
 
-    send(
-        &mut a,
-        ClientMsg::Intent {
-            id: None,
-            intent: Intent::NewTab {
-                session: 1,
-                from_pane: Some(1),
-            },
-        },
-    )
-    .await;
+    send(&mut a, ClientMsg::Intent { id: None, intent: Intent::NewTab { session: 1, from_pane: Some(1) } }).await;
     let state = next_state(&mut b).await;
     assert_eq!(state.sessions[0].tabs.len(), 2);
 }
@@ -512,13 +342,7 @@ impl Daemon {
 use illogical_proto::{PaneOp, Policy};
 
 async fn attach_pane(ws: &mut Ws, pane: u32) -> String {
-    send(
-        ws,
-        ClientMsg::Attach {
-            panes: vec![AttachPane { pane, offset: None }],
-        },
-    )
-    .await;
+    send(ws, ClientMsg::Attach { panes: vec![AttachPane { pane, offset: None }] }).await;
     until(ws, |m| match m {
         In::Frame(f) if f.kind == FrameKind::Snapshot && f.pane == pane => {
             Some(String::from_utf8_lossy(&f.data).into_owned())
@@ -549,51 +373,17 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     let mut d = start_in(&state).await;
     let (mut ws, s) = connect_state(&d).await;
     let tab = s.tabs[0].id;
-    send(
-        &mut ws,
-        ClientMsg::Intent {
-            id: None,
-            intent: Intent::Split {
-                pane: 1,
-                edge: Edge::Right,
-            },
-        },
-    )
-    .await;
-    send(
-        &mut ws,
-        ClientMsg::Intent {
-            id: None,
-            intent: Intent::RenameTab {
-                tab,
-                name: Some("kept".into()),
-            },
-        },
-    )
-    .await;
+    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
+    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::RenameTab { tab, name: Some("kept".into()) } }).await;
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "cd /tmp && echo marker-$((6*7))").await;
     read_pane_until(&mut ws, 1, "marker-42").await;
     attach_pane(&mut ws, 2).await;
     let policy = Policy::Rerun { confirm: true };
-    send(
-        &mut ws,
-        ClientMsg::Pane {
-            pane: 2,
-            op: PaneOp::SetPolicy {
-                policy: policy.clone(),
-            },
-        },
-    )
-    .await;
+    send(&mut ws, ClientMsg::Pane { pane: 2, op: PaneOp::SetPolicy { policy: policy.clone() } }).await;
     // The trailing `true` stops bash from exec'ing into `sleep`, which would
     // leave only "sleep 300" to see (the M2 command capture reads /proc).
-    type_in(
-        &mut ws,
-        2,
-        "bash -c 'echo rerun-ok-$((1+1)); sleep 300; true'",
-    )
-    .await;
+    type_in(&mut ws, 2, "bash -c 'echo rerun-ok-$((1+1)); sleep 300; true'").await;
     read_pane_until(&mut ws, 2, "rerun-ok-2").await;
     drop(ws);
 
@@ -606,11 +396,7 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     let p2 = s.panes.iter().find(|p| p.id == 2).unwrap();
     assert_eq!(p2.policy, policy);
     assert!(!p2.running, "a confirm-first rerun waits");
-    assert!(
-        p2.command.as_deref().unwrap_or("").contains("sleep 300"),
-        "{:?}",
-        p2.command
-    );
+    assert!(p2.command.as_deref().unwrap_or("").contains("sleep 300"), "{:?}", p2.command);
 
     // Scrollback is back, marked, and the shell starts where it was.
     let snap = attach_pane(&mut ws, 1).await;
@@ -665,8 +451,7 @@ async fn idle_panes_are_checkpointed() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(ckpt.exists(), "checkpoint after ~5s idle");
-    let mode =
-        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&ckpt).unwrap().permissions());
+    let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&ckpt).unwrap().permissions());
     assert_eq!(mode & 0o777, 0o600);
     d.stop(nix::sys::signal::Signal::SIGTERM);
     let _ = std::fs::remove_dir_all(state);
@@ -685,20 +470,12 @@ async fn a_killed_shell_keeps_its_pane_and_offers_a_new_one() {
             seen.push_str(&String::from_utf8_lossy(&f.data));
         }
         seen.match_indices("pid=").find_map(|(i, _)| {
-            let digits: String = seen[i + 4..]
-                .chars()
-                .take_while(char::is_ascii_digit)
-                .collect();
-            (!digits.is_empty() && seen[i + 4 + digits.len()..].starts_with('x'))
-                .then(|| digits.parse().unwrap())
+            let digits: String = seen[i + 4..].chars().take_while(char::is_ascii_digit).collect();
+            (!digits.is_empty() && seen[i + 4 + digits.len()..].starts_with('x')).then(|| digits.parse().unwrap())
         })
     })
     .await;
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(pid),
-        nix::sys::signal::Signal::SIGKILL,
-    )
-    .unwrap();
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL).unwrap();
     read_pane_until(&mut ws, 1, "press Enter for a shell").await;
     let state = next_state(&mut ws).await;
     assert_eq!(state.panes.len(), 1, "the pane stays");
@@ -716,24 +493,8 @@ async fn policy_none_waits_purge_forgets_and_closing_deletes_history() {
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "echo secret-$((9*9))").await;
     read_pane_until(&mut ws, 1, "secret-81").await;
-    send(
-        &mut ws,
-        ClientMsg::Pane {
-            pane: 1,
-            op: PaneOp::Purge,
-        },
-    )
-    .await;
-    send(
-        &mut ws,
-        ClientMsg::Pane {
-            pane: 1,
-            op: PaneOp::SetPolicy {
-                policy: Policy::None,
-            },
-        },
-    )
-    .await;
+    send(&mut ws, ClientMsg::Pane { pane: 1, op: PaneOp::Purge }).await;
+    send(&mut ws, ClientMsg::Pane { pane: 1, op: PaneOp::SetPolicy { policy: Policy::None } }).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     let logs: Vec<u8> = std::fs::read_dir(state.join("panes/1"))
         .unwrap()
@@ -741,10 +502,7 @@ async fn policy_none_waits_purge_forgets_and_closing_deletes_history() {
         .filter(|e| e.file_name().to_string_lossy().starts_with("seg-"))
         .flat_map(|e| std::fs::read(e.path()).unwrap())
         .collect();
-    assert!(
-        !String::from_utf8_lossy(&logs).contains("secret-81"),
-        "purged from disk"
-    );
+    assert!(!String::from_utf8_lossy(&logs).contains("secret-81"), "purged from disk");
     drop(ws);
     d.stop(nix::sys::signal::Signal::SIGTERM);
 
@@ -758,37 +516,44 @@ async fn policy_none_waits_purge_forgets_and_closing_deletes_history() {
     type_in(&mut ws, 1, "echo fresh-$((1+1))").await;
     read_pane_until(&mut ws, 1, "fresh-2").await;
 
-    send(
-        &mut ws,
-        ClientMsg::Intent {
-            id: None,
-            intent: Intent::Split {
-                pane: 1,
-                edge: Edge::Right,
-            },
-        },
-    )
-    .await;
+    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right } }).await;
     next_state(&mut ws).await;
     assert!(state.join("panes/2").exists());
-    send(
-        &mut ws,
-        ClientMsg::Intent {
-            id: None,
-            intent: Intent::ClosePane { pane: 2 },
-        },
-    )
-    .await;
+    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::ClosePane { pane: 2 } }).await;
     for _ in 0..50 {
         if !state.join("panes/2").exists() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(
-        !state.join("panes/2").exists(),
-        "a closed pane's history is deleted"
-    );
+    assert!(!state.join("panes/2").exists(), "a closed pane's history is deleted");
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[tokio::test]
+async fn a_restored_pane_drops_the_dead_programs_input_modes() {
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    attach_pane(&mut ws, 1).await;
+    // A "program" that turns on mouse and focus reporting, then is killed
+    // with the daemon.
+    type_in(&mut ws, 1, r"printf '\e[?1000h\e[?1006h\e[?1004h\e[?1hmodes-%s' on; sleep 300").await;
+    read_pane_until(&mut ws, 1, "modes-on").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(ws);
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    let snap = attach_pane(&mut ws, 1).await;
+    // A snapshot is drawn from the terminal's state (not the old bytes), so
+    // any mode it turns on is one the terminal still has.
+    assert!(snap.contains("restored"), "restore marker");
+    for m in ["\x1b[?1000h", "\x1b[?1006h", "\x1b[?1004h", "\x1b[?1h"] {
+        assert!(!snap.contains(m), "mode {m:?} survived the restore");
+    }
     d.stop(nix::sys::signal::Signal::SIGTERM);
     let _ = std::fs::remove_dir_all(state);
 }

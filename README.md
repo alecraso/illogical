@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M2 (durability) works
+## Status: M2b (in-place upgrade) works
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -26,8 +26,16 @@ the daemon stopping, crashing, or the machine rebooting:
   History is kept to 256 MB per pane, in `~/.local/state/illogical`, which
   is private to you (0700/0600).
 
-Not yet: panes surviving a daemon *restart* without losing their processes
-(M2b; today a restart is a restore), the CLI (M3).
+- **Restarting the daemon doesn't touch running programs** (M2b). Each pane's
+  program runs in its own systemd scope behind a small shim, and its terminal
+  is kept in systemd's FD store while the daemon is gone. A restarted (or
+  crashed and auto-restarted) daemon adopts every live pane: vim keeps its
+  screen, a build keeps building, output from the gap is read from the
+  terminal, and open windows reconnect on their own. `just install` upgrades
+  in place. `systemctl --user stop` is still the end of the panes, like a
+  reboot.
+
+Not yet: the CLI and shell integration (M3).
 
 ## Use it
 
@@ -72,14 +80,15 @@ against the running one.
   queries limited to what xterm.js can draw, recorded fixtures.
 - `crates/daemon`: `illogicald`. A multiplexer task owning the layout, a PTY
   + VT thread per pane with its log and checkpoints (`store.rs`), restore
-  and restart policies, axum WebSocket server, embedded web client,
+  and restart policies, the pane shim and FD store handling (`shim.rs`,
+  `sys.rs`), axum WebSocket server, embedded web client,
   Host/Origin/tailnet-identity checks, `install`.
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M2 taught us
+## Things M0–M2b taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -124,3 +133,10 @@ against the running one.
   one.
 - **"Re-run" reads /proc**, so `bash -c 'a; b'` that exec'd into `b` re-runs
   `b`. The typed command line needs shell integration (M3).
+- **A restarted daemon isn't anyone's parent.** The shim records each
+  program's pid, start time and exit status; the daemon watches through a
+  `pidfd` (which works for non-children) and checks the start time before
+  adopting, so a reused pid is never mistaken for the pane's program.
+- **DECSTR doesn't reset input modes.** A pane restored after its program
+  died kept that program's mouse and focus reporting, so clicking sent stray
+  `ESC [ O` to the new shell. The restore marker now turns them off.

@@ -1,0 +1,172 @@
+//! M2b: restarting (or crashing) the daemon under systemd leaves the
+//! programs in its panes running. Runs the real binary as a transient
+//! systemd user service, so it needs a systemd user manager; it skips
+//! itself where there isn't one.
+
+use std::{
+    net::TcpListener,
+    path::PathBuf,
+    process::Command,
+    time::{Duration, Instant},
+};
+
+use futures_util::{SinkExt, StreamExt};
+use illogical_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg, State};
+use tokio::{net::TcpStream, time::timeout};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+
+type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+fn systemctl(args: &[&str]) -> bool {
+    Command::new("systemctl").arg("--user").args(args).output().is_ok_and(|o| o.status.success())
+}
+
+struct Service {
+    unit: String,
+    port: u16,
+    state: PathBuf,
+}
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        systemctl(&["stop", &self.unit]);
+        systemctl(&["reset-failed", &self.unit]);
+        let _ = std::fs::remove_dir_all(&self.state);
+    }
+}
+
+impl Service {
+    fn start() -> Option<Self> {
+        if !systemctl(&["show-environment"]) {
+            eprintln!("no systemd user manager; skipping");
+            return None;
+        }
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let unit = format!("illogical-test-{}-{port}", std::process::id());
+        let state = std::env::temp_dir().join(&unit);
+        let ok = Command::new("systemd-run")
+            .args(["--user", "--quiet", &format!("--unit={unit}")])
+            .args(["-p", "Type=notify", "-p", "NotifyAccess=main", "-p", "FileDescriptorStoreMax=64"])
+            .args(["-p", "KillMode=mixed", "-p", "Restart=on-failure", "-p", "RestartSec=100ms"])
+            .args(["--setenv=PS1=$ ", "--"])
+            .arg(env!("CARGO_BIN_EXE_illogicald"))
+            .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile"])
+            .args(["--no-manager-env", "--state-dir"])
+            .arg(&state)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "systemd-run failed");
+        Some(Self { unit: format!("{unit}.service"), port, state })
+    }
+
+    async fn connect(&self) -> (Ws, State) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Ok((mut ws, _)) = connect_async(format!("ws://127.0.0.1:{}/ws", self.port)).await
+                && let In::Msg(ServerMsg::Hello { state, .. }) = recv(&mut ws).await
+            {
+                return (ws, state);
+            }
+            assert!(Instant::now() < deadline, "daemon did not come back");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+}
+
+enum In {
+    Msg(ServerMsg),
+    Frame(Frame),
+}
+
+async fn recv(ws: &mut Ws) -> In {
+    loop {
+        match timeout(Duration::from_secs(10), ws.next()).await.expect("timed out").unwrap().unwrap() {
+            Message::Text(t) => return In::Msg(serde_json::from_str(&t).unwrap()),
+            Message::Binary(b) => return In::Frame(Frame::decode(&b).unwrap()),
+            _ => {}
+        }
+    }
+}
+
+async fn send(ws: &mut Ws, msg: ClientMsg) {
+    ws.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await.unwrap();
+}
+
+async fn type_in(ws: &mut Ws, text: &str) {
+    let f = Frame { kind: FrameKind::Input, pane: 1, offset: 0, data: text.as_bytes().to_vec() };
+    ws.send(Message::Binary(f.encode().into())).await.unwrap();
+}
+
+/// Attach to pane 1 and collect its text (snapshot, then live output) until
+/// `done` says so.
+async fn watch(ws: &mut Ws, mut done: impl FnMut(&str) -> bool) -> String {
+    send(ws, ClientMsg::Attach { panes: vec![AttachPane { pane: 1, offset: None }] }).await;
+    let mut seen = String::new();
+    loop {
+        if let In::Frame(f) = recv(ws).await
+            && f.pane == 1
+        {
+            seen.push_str(&String::from_utf8_lossy(&f.data));
+            if done(&seen) {
+                return seen;
+            }
+        }
+    }
+}
+
+fn ticks(text: &str) -> Vec<u32> {
+    text.split("tick-").skip(1).filter_map(|t| t.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()).collect()
+}
+
+fn shell_pid(text: &str) -> Option<i32> {
+    text.match_indices("pid=").find_map(|(i, _)| {
+        let digits: String = text[i + 4..].chars().take_while(char::is_ascii_digit).collect();
+        (!digits.is_empty() && text[i + 4 + digits.len()..].starts_with('x')).then(|| digits.parse().ok())?
+    })
+}
+
+#[tokio::test]
+async fn panes_keep_running_through_restart_and_crash() {
+    let Some(svc) = Service::start() else { return };
+    let (mut ws, _) = svc.connect().await;
+    type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
+    let pid = shell_pid(&watch(&mut ws, |s| shell_pid(s).is_some()).await).unwrap();
+    type_in(&mut ws, "for i in $(seq 1 100000); do echo tick-$i; sleep 0.05; done\r").await;
+    watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 10)).await;
+    drop(ws);
+
+    // Restart: the loop carries on, and nothing it printed is missing.
+    assert!(systemctl(&["restart", &svc.unit]));
+    let (mut ws, state) = svc.connect().await;
+    assert!(state.panes[0].running, "adopted, still running");
+    let before = Instant::now();
+    let seen = watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 60)).await;
+    let t = ticks(&seen);
+    assert!(before.elapsed() < Duration::from_secs(8), "ticking resumed");
+    let first = t[0];
+    let expected: Vec<u32> = (first..=*t.last().unwrap()).collect();
+    let mut got = t.clone();
+    got.dedup();
+    assert_eq!(got, expected, "ticks across the restart are contiguous");
+    drop(ws);
+
+    // Crash: systemd restarts it and the pane is adopted again.
+    assert!(systemctl(&["kill", "--kill-whom=main", "--signal=SIGKILL", &svc.unit]));
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (mut ws, _) = svc.connect().await;
+    watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 80)).await;
+    type_in(&mut ws, "\x03").await;
+    type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
+    let again = watch(&mut ws, |s| s.rsplit("tick-").next().is_some_and(|tail| shell_pid(tail).is_some())).await;
+    let again = shell_pid(again.rsplit("tick-").next().unwrap()).unwrap();
+    assert_eq!(again, pid, "the same shell, through a restart and a crash");
+    drop(ws);
+
+    // Stop is the end (like a reboot): the shell goes away.
+    assert!(systemctl(&["stop", &svc.unit]));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        assert!(Instant::now() < deadline, "shell {pid} survived a stop");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}

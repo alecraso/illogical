@@ -49,14 +49,8 @@ impl Edge {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Node {
-    Pane {
-        pane: PaneId,
-    },
-    Split {
-        id: NodeId,
-        dir: Dir,
-        children: Vec<Child>,
-    },
+    Pane { pane: PaneId },
+    Split { id: NodeId, dir: Dir, children: Vec<Child> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,12 +92,7 @@ impl Node {
             Node::Split { id, dir, children } => {
                 let children: Vec<Child> = children
                     .into_iter()
-                    .filter_map(|c| {
-                        c.node.remove(pane).map(|node| Child {
-                            weight: c.weight,
-                            node,
-                        })
-                    })
+                    .filter_map(|c| c.node.remove(pane).map(|node| Child { weight: c.weight, node }))
                     .collect();
                 let mut node = match children.len() {
                     0 => return None,
@@ -119,13 +108,7 @@ impl Node {
     /// Put `node` beside `target`, on the side `edge` names. Returns false if
     /// `target` is not in the tree or `edge` is [`Edge::Center`] (a swap,
     /// which callers do with [`Node::replace_pane`]).
-    pub fn insert(
-        &mut self,
-        target: PaneId,
-        edge: Edge,
-        node: Node,
-        next_id: &mut impl FnMut() -> NodeId,
-    ) -> bool {
+    pub fn insert(&mut self, target: PaneId, edge: Edge, node: Node, next_id: &mut impl FnMut() -> NodeId) -> bool {
         let Some(dir) = edge.dir() else { return false };
         let mut node = Some(node);
         let done = self.insert_inner(target, dir, edge.after(), &mut node, next_id);
@@ -151,25 +134,12 @@ impl Node {
                 *self = Node::Split {
                     id: next_id(),
                     dir,
-                    children: vec![
-                        Child {
-                            weight: 0.5,
-                            node: a,
-                        },
-                        Child {
-                            weight: 0.5,
-                            node: b,
-                        },
-                    ],
+                    children: vec![Child { weight: 0.5, node: a }, Child { weight: 0.5, node: b }],
                 };
                 true
             }
             Node::Pane { .. } => false,
-            Node::Split {
-                dir: split_dir,
-                children,
-                ..
-            } => {
+            Node::Split { dir: split_dir, children, .. } => {
                 // A sibling in a split that already runs the right way.
                 if *split_dir == dir
                     && let Some(i) = children.iter().position(|c| c.node == Node::pane(target))
@@ -177,18 +147,10 @@ impl Node {
                     let half = children[i].weight / 2.0;
                     children[i].weight = half;
                     let at = if after { i + 1 } else { i };
-                    children.insert(
-                        at,
-                        Child {
-                            weight: half,
-                            node: node.take().expect("inserted once"),
-                        },
-                    );
+                    children.insert(at, Child { weight: half, node: node.take().expect("inserted once") });
                     return true;
                 }
-                children
-                    .iter_mut()
-                    .any(|c| c.node.insert_inner(target, dir, after, node, next_id))
+                children.iter_mut().any(|c| c.node.insert_inner(target, dir, after, node, next_id))
             }
         }
     }
@@ -202,18 +164,14 @@ impl Node {
                 true
             }
             Node::Pane { .. } => false,
-            Node::Split { children, .. } => {
-                children.iter_mut().any(|c| c.node.replace_pane(old, new))
-            }
+            Node::Split { children, .. } => children.iter_mut().any(|c| c.node.replace_pane(old, new)),
         }
     }
 
     pub fn has_split(&self, split: NodeId) -> bool {
         match self {
             Node::Pane { .. } => false,
-            Node::Split { id, children, .. } => {
-                *id == split || children.iter().any(|c| c.node.has_split(split))
-            }
+            Node::Split { id, children, .. } => *id == split || children.iter().any(|c| c.node.has_split(split)),
         }
     }
 
@@ -224,9 +182,7 @@ impl Node {
                 if *id == split {
                     return Some((dir, children));
                 }
-                children
-                    .iter_mut()
-                    .find_map(|c| c.node.find_split_mut(split))
+                children.iter_mut().find_map(|c| c.node.find_split_mut(split))
             }
         }
     }
@@ -244,20 +200,10 @@ impl Node {
         let mut flat = Vec::with_capacity(children.len());
         for c in std::mem::take(children) {
             match c.node {
-                Node::Split {
-                    dir: d,
-                    children: grand,
-                    ..
-                } if d == dir => {
-                    flat.extend(grand.into_iter().map(|g| Child {
-                        weight: g.weight * c.weight,
-                        node: g.node,
-                    }));
+                Node::Split { dir: d, children: grand, .. } if d == dir => {
+                    flat.extend(grand.into_iter().map(|g| Child { weight: g.weight * c.weight, node: g.node }));
                 }
-                node => flat.push(Child {
-                    weight: c.weight,
-                    node,
-                }),
+                node => flat.push(Child { weight: c.weight, node }),
             }
         }
         *children = flat;
@@ -289,19 +235,13 @@ impl Node {
             return Err(format!("split {id} runs the same way as its parent"));
         }
         let sum: f64 = children.iter().map(|c| c.weight).sum();
-        if children
-            .iter()
-            .any(|c| !c.weight.is_finite() || c.weight <= 0.0)
-            || (sum - 1.0).abs() > 1e-6
-        {
+        if children.iter().any(|c| !c.weight.is_finite() || c.weight <= 0.0) || (sum - 1.0).abs() > 1e-6 {
             return Err(format!(
                 "split {id} has bad weights {:?}",
                 children.iter().map(|c| c.weight).collect::<Vec<_>>()
             ));
         }
-        children
-            .iter()
-            .try_for_each(|c| c.node.validate_inner(Some(*dir)))
+        children.iter().try_for_each(|c| c.node.validate_inner(Some(*dir)))
     }
 }
 
@@ -345,14 +285,7 @@ mod tests {
         assert!(t.insert(2, Edge::Right, Node::pane(3), &mut next));
         t.validate().unwrap();
         // One row of three, not nested splits.
-        let Node::Split {
-            dir: Dir::Row,
-            children,
-            ..
-        } = &t
-        else {
-            panic!("{t:?}")
-        };
+        let Node::Split { dir: Dir::Row, children, .. } = &t else { panic!("{t:?}") };
         assert_eq!(children.len(), 3);
         assert_eq!(t.panes(), vec![1, 2, 3]);
         let w: Vec<f64> = children.iter().map(|c| c.weight).collect();
@@ -391,9 +324,7 @@ mod tests {
         b.insert(2, Edge::Right, Node::pane(3), &mut next);
         a.insert(1, Edge::Right, b, &mut next);
         a.validate().unwrap();
-        let Node::Split { children, .. } = &a else {
-            panic!()
-        };
+        let Node::Split { children, .. } = &a else { panic!() };
         assert_eq!(children.len(), 3);
     }
 

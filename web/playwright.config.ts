@@ -5,6 +5,8 @@ import { defineConfig } from "@playwright/test";
 // daemon that is already running, e.g. through `tailscale serve`.
 const port = 7683;
 const external = process.env.E2E_BASE_URL || undefined;
+// E2E_DAEMON_LOG=/path/to/file keeps the test daemon's debug log.
+const log = process.env.E2E_DAEMON_LOG ? ` >>${process.env.E2E_DAEMON_LOG} 2>&1` : "";
 
 export default defineConfig({
   testDir: "e2e",
@@ -19,10 +21,10 @@ export default defineConfig({
   webServer: external
     ? undefined
     : {
-        command: `RUST_LOG=illogicald=debug ../target/debug/illogicald --listen 127.0.0.1:${port} --shell "bash --norc --noprofile" --no-manager-env --state-dir "$(mktemp -d)"`,
+        command: `RUST_LOG=illogicald=debug ../target/debug/illogicald --listen 127.0.0.1:${port} --shell "bash --norc --noprofile" --no-manager-env --state-dir "$(mktemp -d -t illogical-e2e-XXXXXX)"${log}`,
         url: `http://127.0.0.1:${port}/`,
         reuseExistingServer: false,
         stdout: "ignore",
-        stderr: process.env.E2E_DAEMON_LOG ? "pipe" : "ignore",
+        stderr: "ignore",
       },
 });

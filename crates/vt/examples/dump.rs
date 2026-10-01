@@ -9,10 +9,7 @@ fn main() {
     let mut e = GhosttyEngine::new(100, 30);
     e.feed(&bytes);
     let snap = e.snapshot();
-    let shown: String = String::from_utf8_lossy(&snap)
-        .replace('\x1b', "⎋")
-        .replace('\r', "␍")
-        .replace('\n', "␊\n");
+    let shown: String = String::from_utf8_lossy(&snap).replace('\x1b', "⎋").replace('\r', "␍").replace('\n', "␊\n");
     let start = shown.rfind("⎋]4;255").map(|i| i + 30).unwrap_or(0);
     print!("{}", &shown[start..]);
 }
