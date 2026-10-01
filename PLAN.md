@@ -689,84 +689,173 @@ to it, on the desktop and the phone.
   - a script in that app can't reach the illogical API;
   - closing the tab deletes the VM and both blocks.
 
-#### M6b: agent blocks
+#### M6b: agent blocks (ACP clients)
 
 A structured view of an agent run in place of its TUI: messages, tool calls
 and permission requests as UI, with approve and deny buttons that work well on
 a phone. A Claude Code TUI in a terminal block stays fully supported. The
 agent block is the better phone and audit view, not a replacement.
 
-- **First adapter: Claude Code in headless streaming mode**, with a `cwd`
-  and an optional `host`, so the agent can run in a VM:
+**The agent block is an ACP client (decided 2026-10-01).** It speaks the
+[Agent Client Protocol](https://agentclientprotocol.com) (JSON-RPC over the
+agent process's stdio) to whatever agent server the block names. This
+replaces the earlier design, which drove Claude Code's own `stream-json` mode
+behind a custom `AgentAdapter` trait, with an MCP server as a workaround for
+permissions.
 
-  ```
-  claude -p --verbose --input-format stream-json --output-format stream-json \
-    --mcp-config <daemon's permission server> --strict-mcp-config \
-    --permission-prompt-tool mcp__illogical__approve --setting-sources <chosen>
-  ```
-
-  - `stream-json` output refuses to run without `--verbose`.
-  - `--permission-prompt-tool` works but is hidden from `--help`. Re-check it
-    on every Claude Code upgrade, along with the new
-    `--permission-prompts host|none`.
-  - Choose `--setting-sources` deliberately. Otherwise the user's Claude Code
-    hooks (including M3's attention hooks) fire inside agent blocks too.
-  - One process handles many turns on the same stdin and keeps context. Each
-    stdin line is `{"type":"user","message":{"role":"user","content":"…"}}`.
-  - `total_cost_usd` in `result` events is cumulative per process, not per
-    turn.
-  - S6's README has the full event mapping.
-- **Permissions.** The daemon provides a permission-prompt tool through
-  `--permission-prompt-tool`, a stdio MCP server that relays to the daemon
-  and blocks until you answer.
-  - S6 saw no timeout at 7 minutes. `MCP_TOOL_TIMEOUT`, and waits of hours,
-    are still unchecked.
-  - Read-only commands (`echo hello`) are allowed without asking. Only real
-    side effects reach the tool.
-  - A request puts the block in `needs-input`, which pushes to the phone (M3).
-  - Approve or deny from the block, the notification or
+- **What ACP gives us:**
+  - one protocol for every agent, so there is no per-agent adapter or event
+    mapping;
+  - `session/update` streams messages, thoughts and tool calls;
+  - `session/cancel` interrupts a turn;
+  - `session/request_permission` is the native permission request. It puts
+    the block in `needs-input`, which pushes to the phone (M3).
+  - `session/load` replays a session into a block that was just opened or
+    restored.
+- **Two kinds of agent, the same block:**
+  - **Local agents.** The daemon spawns an ACP agent server with a `cwd` and
+    an optional `host`, so it can run in a VM.
+    - **Agent definitions:** each is a command line plus a few defaults.
+    - **Tested in S7:** Claude Code through `claude-agent-acp` (Fountain pins
+      0.81.2; npm has 0.84.0) and Codex through `codex-acp` 2.1.0, with
+      `CODEX_PATH` pointing at the installed codex-cli.
+    - **Untested:** Gemini CLI and opencode, which aren't installed.
+  - **Fountain agents.** The daemon spawns `fountain acp --agent X
+    [--vault v] [--permission ask]` (see
+    `~/dev/managoat/fountain/docs/integrations/editors.md`).
+    - The agent runs in a Fountain sandbox, and the turn lives on Fountain's
+      servers, so our restarts and reboots don't touch it. The adapter
+      reconnects, and `session/load` replays the transcript.
+    - Secrets come from Fountain vaults, and with the egress broker on they
+      never enter the sandbox.
+    - Idle machines park and cost nothing.
+    - **Limits:** the agent can't see local files. Fountain refuses an
+      approval left unanswered for 5 minutes, and the turn continues without
+      permission. opencode never asks. A reclaimed sandbox keeps the
+      transcript, but the agent loses its memory.
+- **Agent commands as terminal blocks: not viable with today's adapters (S7).**
+  - With `terminal` and `fs` offered, neither `claude-agent-acp` nor
+    `codex-acp` ever called `terminal/*` or `fs/*`. Neither has code that
+    would, and no setting turns it on.
+  - What they send instead is Zed's `_meta.terminal_output` /
+    `terminal_output_delta` extension on the tool call. For Claude it arrives
+    as one chunk after the command exits.
+  - **So M6b renders a command's output inside its tool-call card,** with a
+    read-only terminal renderer for the ANSI.
+  - The client side of `terminal/*` and `fs/*` stays planned but unbuilt, for
+    when an adapter uses it. If that happens, each command becomes a live
+    terminal block. Re-check on adapter upgrades.
+  - Fountain offers the agent neither capability.
+- **Permissions.**
+  - **Shapes (S7):**
+    - a request offers options such as `{optionId:"allow-once",
+      kind:"allow_once"}`, `allow-with-updates` (`allow_always`) and `reject`
+      (`reject_once`). They vary by tool, and `reject_always` never appeared;
+    - the answer is `{outcome:{outcome:"selected",optionId}}` or
+      `{outcome:{outcome:"cancelled"}}`.
+  - **Waits:** `claude-agent-acp` waited 25 minutes with no timeout. Fountain
+    refuses after 300s: the tool call goes to `failed`, and the turn carries
+    on.
+  - **Approve or deny** from the block, the notification or
     `illogical call %N approve`.
-  - Policies such as "always allow `npm test` in this block" are stored in its
-    config.
-- **Methods:** `send{text}`, `approve{id}`, `deny{id, reason}`, `interrupt`.
+  - **"Always allow" lives in the block's config, and the block answers from
+    it itself.** It never selects the agent's `allow_always` option, because
+    `claude-agent-acp` writes that rule into `.claude/settings.local.json` at
+    the git root of the agent's cwd (your repo), even with
+    `settingSources: []`.
+  - **When the block cancels a turn,** it answers every open request with
+    `cancelled`.
+  - **A card clears when its tool call goes `completed` or `failed`.**
+    Fountain's refusal doesn't cancel the client's request.
+  - Read-only commands (`ls`, `echo` without a redirect) never ask; only side
+    effects reach the client. Codex ran a side-effecting command in its own
+    sandbox without asking.
+- **Methods:** `send{text}`, `approve{id, option}`, `deny{id, reason}`,
+  `cancel`.
 - **State:** turn status, the current tool, the pending permission request,
-  cost and tokens.
+  cost and tokens where the agent reports them.
+  - The block is `working` while its `session/prompt` is outstanding,
+    `needs-input` while a permission request is open, and `done` or `idle`
+    from the stop reason.
+  - Cost comes from `usage_update.cost`, which is cumulative per session, so
+    store per-turn deltas. Per-turn tokens come in the prompt response, except
+    through Fountain, which reports none.
 - **History.**
-  - The NDJSON event stream is the block's log.
+  - The JSON-RPC stream is the block's log.
   - `capture --text` renders the transcript as Markdown.
   - `history` and `search` cover agent runs as well as shell commands, which
     makes "where did the agent's work go" one query.
-- **Daemon restarts (M2b).** An agent survives a restart with no lost turn
-  if:
-  - claude runs in its own scope, like a pane's shell;
-  - the daemon's ends of claude's stdin and stdout pipes go in the systemd FD
-    store, like PTY masters;
-  - the permission relay reconnects to the daemon and resends pending
-    requests. S6 killed the daemon with a request pending, restarted it 30s
-    later, and the turn finished.
-
-  Without the FD store, claude finishes its current turn when the pipes go
-  and then exits 0. It does not die from SIGPIPE.
-- **Restore after a reboot.** The session id from the stream is stored in the
+- **Daemon restarts (M2b), for local agents: the FD store is mandatory.**
+  - Unlike `claude -p` in S6, `claude-agent-acp` exits as soon as its
+    connection closes. It records a pending permission as rejected and kills
+    a running command.
+  - Holding the pipes works (S7):
+    - the adapter waited 20s with nothing attached;
+    - a second client answered the old permission request by its id, got the
+      first client's prompt response, and ran another turn on the same
+      process.
+  - So it needs:
+    - the agent server in its own scope, like a pane's shell;
+    - the daemon's ends of its stdio pipes in the FD store, like PTY masters;
+    - the daemon to persist the open request ids with their options, and its
+      own next JSON-RPC id, so ids don't collide after a restart.
+  - No permission relay is needed. That was S6's workaround for the MCP
+    route.
+- **Restore after a reboot.** The ACP session id is stored in the block's
   config.
   - The transcript comes back from the log.
-  - The `rerun` and `hook` policies resume with `--resume <session id>`. S6
-    showed context survives a SIGKILL. A tool call that was cut off comes back
-    as "outcome unknown".
+  - The `rerun` and `hook` policies reopen with `session/load`, which replays
+    prompts, messages and tool calls (560ms in S7), or `session/resume`,
+    which keeps context without replaying.
+  - **Fountain agents need care when reconnecting (S7):**
+    - a turn keeps running on Fountain while we're gone, but after
+      `session/load` the new client gets the replay up to that moment and **no
+      live updates** for the rest of the turn. The block shows "running
+      remotely" and loads again when the conversation goes idle;
+    - a permission request whose client died is **not re-sent**. The
+      conversation is `conversation_busy` until Fountain's 5-minute refusal.
+      So a daemon restart during a Fountain approval costs that tool call;
+    - Fountain's replay leaves out your own prompts (`user_message_chunk`),
+      so the block keeps them in its own log.
+  - A local agent in a VM resumes on a fresh machine, like M3b.
+- **Local Claude Code specifics (S6, S7):**
+  - pass `settingSources: []` in `session/new`, otherwise your Claude Code
+    settings and hooks, including M3's attention hooks, fire inside agent
+    blocks;
+  - the adapter defaults to Opus (`opus[1m]`). A model in `_meta` is silently
+    ignored; set it with `session/set_config_option`;
+  - the adapter runs its own bundled Claude Code (2.1.280 in 0.81.2) unless
+    `CLAUDE_CODE_EXECUTABLE` points at yours;
   - Claude's own transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) is the
     source of truth for anything said while the daemon was down.
-  - In a VM, it resumes on a fresh machine, like M3b.
-- **An `AgentAdapter` trait** keeps the block independent of Claude Code:
-  start, send, the event mapping, the permission hook and resume. Other
-  agents' streaming modes can be added later.
-- **CLI:** `illogical agent [--host m|--vm] [--cwd d] "prompt"` prints the
-  block id. Then use `wait %N --idle|--needs-input` and `tail %N`.
+- **CLI:**
+  - `illogical agent [--acp <cmd> | --fountain <agent>] [--host m|--vm]
+    [--cwd d] "prompt"` prints the block id;
+  - then `wait %N --idle|--needs-input` and `tail %N`.
 - **Done when:**
-  - from the phone, start an agent block in a VM with a prompt;
-  - it asks to run a command, and you approve it from the push notification;
-  - it finishes;
-  - reboot geek, and the transcript is back and the agent resumes from the
-    block.
+  - from the phone, start a local Claude Code agent block in a VM;
+  - its commands' output shows in its tool-call cards;
+  - it asks to run something, and you approve it from the push notification;
+  - restart the daemon mid-turn and with an approval pending, and the turn
+    carries on and the approval still works;
+  - reboot geek, and the transcript is back and the agent resumes;
+  - the same block type drives Codex and a Fountain agent, and a Fountain turn
+    that ran through a daemon restart ends up complete in the block.
+
+#### S7: ACP spike, done 2026-10-01
+
+See [spikes/s7-acp](spikes/s7-acp/README.md). A hand-rolled ACP client of
+about 200 lines drove `claude-agent-acp`, `codex-acp` and `fountain acp`
+unchanged. The findings are folded in above.
+
+**Still open:**
+
+- answering after Fountain's 5-minute refusal;
+- following a Fountain turn live after reattaching;
+- an agent block in a VM;
+- cancelling with a permission request open;
+- permission waits of hours;
+- the adapter against the installed Claude Code (2.1.286).
 
 #### S6: done 2026-10-01
 
@@ -780,6 +869,13 @@ feasible, and the findings are folded in above.
 - `MCP_TOOL_TIMEOUT` and permission waits of hours;
 - Next.js under a `basePath`;
 - an agent block running inside a VM.
+
+**Not a replacement for M3b (noted 2026-10-01):** `fountain runner
+--backend firecracker` would turn geek into a Fountain runner, with Fountain
+agents in Firecracker VMs. It overlaps with wisp, but Fountain deliberately
+never creates a sandbox without a conversation, and a VM pane is exactly that.
+M3b stays on wisp. Fountain machines are reached through Fountain agent
+blocks.
 
 **Candidates after M6 (not committed):**
 
