@@ -910,10 +910,12 @@ permissions.
     `CLAUDE_CODE_EXECUTABLE` points at yours;
   - Claude's own transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) is the
     source of truth for anything said while the daemon was down.
-- **Credentials in VMs (decided 2026-10-01):** an Anthropic API key from a
-  file only the user controls (`~/.config/illogical/anthropic-key`), passed
-  as `ANTHROPIC_API_KEY` into the agent server's environment in the VM, and
-  never written to the VM's disk or logged. Local agents use the user's own
+- **Credentials in VMs (decided 2026-10-01):** a token from a file only the
+  user controls, passed into the agent server's environment in the VM and
+  never written to the VM's disk or logged: a Claude Code OAuth token from
+  `claude setup-token` (`~/.config/illogical/claude-oauth-token`, as
+  `CLAUDE_CODE_OAUTH_TOKEN`), or an API key
+  (`~/.config/illogical/anthropic-key`, as `ANTHROPIC_API_KEY`). Local agents use the user's own
   Claude Code login.
 - **CLI:**
   - `illogical agent [--acp <cmd> | --fountain <agent>] [--host m|--vm]
