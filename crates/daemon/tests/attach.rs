@@ -306,7 +306,10 @@ async fn split_spawns_a_pane_and_exit_closes_it() {
     let (mut ws, _) = connect_state(&d).await;
     send(
         &mut ws,
-        ClientMsg::Intent { id: Some(1), intent: Intent::Split { pane: 1, edge: Edge::Right, local: false } },
+        ClientMsg::Intent {
+            id: Some(1),
+            intent: Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None },
+        },
     )
     .await;
     let state = state_where(&mut ws, |s| s.panes.len() == 2).await;
@@ -366,7 +369,8 @@ async fn bad_intents_report_errors_and_others_see_changes() {
     .await;
     assert_eq!(err, (Some(9), "no pane %999".to_string()));
 
-    send(&mut a, ClientMsg::Intent { id: None, intent: Intent::NewTab { session: 1, from_pane: Some(1) } }).await;
+    send(&mut a, ClientMsg::Intent { id: None, intent: Intent::NewTab { session: 1, from_pane: Some(1), cwd: None } })
+        .await;
     state_where(&mut b, |s| s.sessions[0].tabs.len() == 2).await;
 }
 
@@ -414,8 +418,11 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     let mut d = start_in(&state).await;
     let (mut ws, s) = connect_state(&d).await;
     let tab = s.tabs[0].id;
-    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right, local: false } })
-        .await;
+    send(
+        &mut ws,
+        ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None } },
+    )
+    .await;
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::RenameTab { tab, name: Some("kept".into()) } }).await;
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "cd /tmp && echo marker-$((6*7))").await;
@@ -557,8 +564,11 @@ async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
     type_in(&mut ws, 1, "echo fresh-$((1+1))").await;
     read_pane_until(&mut ws, 1, "fresh-2").await;
 
-    send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right, local: false } })
-        .await;
+    send(
+        &mut ws,
+        ClientMsg::Intent { id: None, intent: Intent::Split { pane: 1, edge: Edge::Right, local: false, cwd: None } },
+    )
+    .await;
     until(&mut ws, |m| matches!(m, In::Msg(ServerMsg::State { state }) if state.panes.len() == 2).then_some(())).await;
     assert!(state.join("blocks/2").exists());
     send(&mut ws, ClientMsg::Intent { id: None, intent: Intent::ClosePane { pane: 2 } }).await;

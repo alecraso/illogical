@@ -6,6 +6,7 @@
 mod attach;
 mod hosts;
 mod http;
+mod tmux;
 
 use std::{
     io::{Read, Write},
@@ -340,6 +341,13 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<hosts::SandboxesCmd>,
     },
+    /// Be a tmux server in control mode for iTerm2 (and other tmux `-CC`
+    /// clients): `illogical tmux -CC [attach -t SESSION | new -s NAME]`.
+    /// Linked or installed as `tmux`, the CLI does this by itself.
+    Tmux {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -369,17 +377,22 @@ fn env_pane() -> Option<u32> {
 }
 
 fn socket(cli: &Cli) -> PathBuf {
-    cli.socket.clone().unwrap_or_else(|| {
-        let state = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"))
-            .join("illogical");
-        // A state directory too deep for a socket path puts it elsewhere.
-        match std::fs::read_to_string(state.join("sock.path")) {
-            Ok(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
-            _ => state.join("sock"),
-        }
-    })
+    cli.socket.clone().unwrap_or_else(default_socket)
+}
+
+fn default_socket() -> PathBuf {
+    if let Some(s) = std::env::var_os("ILLOGICAL_SOCK") {
+        return PathBuf::from(s);
+    }
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"))
+        .join("illogical");
+    // A state directory too deep for a socket path puts it elsewhere.
+    match std::fs::read_to_string(state.join("sock.path")) {
+        Ok(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
+        _ => state.join("sock"),
+    }
 }
 
 /// The pane given, or the one we're running in.
@@ -447,6 +460,20 @@ fn print_json(v: &Value) {
 }
 
 fn main() {
+    // Run as `tmux` (a link, or a copy on an ssh host's PATH): be tmux's
+    // control mode, with tmux's own arguments.
+    let argv0 = std::env::args_os().next().map(PathBuf::from);
+    if argv0.as_deref().and_then(|p| p.file_name()).is_some_and(|n| n == "tmux") {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let target = http::Target::Socket(default_socket());
+        match tmux::run(target, &args) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("tmux (illogical): {e:#}");
+                std::process::exit(1);
+            }
+        }
+    }
     let cli = Cli::parse();
     match real_main(cli) {
         Ok(code) => std::process::exit(code),
@@ -541,6 +568,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
         Command::Install { .. } => unreachable!("handled before connecting"),
+        Command::Tmux { args } => return tmux::run(sock, &args),
         Command::Ls => {
             let v = request(&sock, "GET", "/api/panes", None)?.json()?;
             if json_out {

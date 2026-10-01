@@ -110,28 +110,44 @@ export type PaneOp =
   | { op: "set_integration"; on: boolean }
   | { op: "attention"; state: Attention };
 
+/** Clients' named options (tmux `@` options), per scope. */
+export interface Options {
+  global?: Record<string, string>;
+  sessions?: [SessionId, Record<string, string>][];
+  tabs?: [TabId, Record<string, string>][];
+  panes?: [PaneId, Record<string, string>][];
+}
+
+export type OptionScope =
+  | { kind: "global" }
+  | { kind: "session"; id: SessionId }
+  | { kind: "tab"; id: TabId }
+  | { kind: "pane"; id: PaneId };
+
 export interface State {
   rev: number;
   sessions: Session[];
   tabs: TabView[];
   panes: PaneInfo[];
   machines: Machine[];
+  options?: Options;
 }
 
 export type Intent =
   | { op: "new_session"; name: string | null; from_pane: PaneId | null }
   | { op: "rename_session"; session: SessionId; name: string }
   | { op: "close_session"; session: SessionId }
-  | { op: "new_tab"; session: SessionId; from_pane: PaneId | null }
+  | { op: "new_tab"; session: SessionId; from_pane: PaneId | null; cwd?: string }
   | { op: "rename_tab"; tab: TabId; name: string | null }
   | { op: "close_tab"; tab: TabId }
   | { op: "move_tab"; tab: TabId; session: SessionId; index: number }
-  | { op: "split"; pane: PaneId; edge: Edge; local?: boolean }
+  | { op: "split"; pane: PaneId; edge: Edge; local?: boolean; cwd?: string }
   | { op: "close_pane"; pane: PaneId }
   | { op: "move_pane"; pane: PaneId; target: PaneId; edge: Edge }
   | { op: "break_pane"; pane: PaneId; session: SessionId; index: number | null }
   | { op: "dock_tab"; tab: TabId; target: PaneId; edge: Edge }
-  | { op: "resize_split"; split: NodeId; weights: number[] };
+  | { op: "resize_split"; split: NodeId; weights: number[] }
+  | { op: "set_option"; scope: OptionScope; name: string; value: string | null };
 
 export type ClientMsg =
   | { type: "attach"; panes: { pane: PaneId; offset: number | null }[] }
@@ -139,7 +155,8 @@ export type ClientMsg =
   | { type: "view"; tab: TabId; cols: number; rows: number; zoom: PaneId | null; claim: boolean }
   | { type: "intent"; id: number | null; intent: Intent }
   | { type: "pane"; pane: PaneId; op: PaneOp }
-  | { type: "focus"; pane: PaneId | null };
+  | { type: "focus"; pane: PaneId | null }
+  | { type: "ping"; id: number };
 
 export type ServerMsg =
   | { type: "hello"; version: string; client: ClientId; state: State }
@@ -147,7 +164,8 @@ export type ServerMsg =
   | { type: "size"; pane: PaneId; cols: number; rows: number }
   | { type: "resync"; pane: PaneId }
   | { type: "error"; id: number | null; message: string }
-  | { type: "block"; block: PaneId; state: unknown };
+  | { type: "block"; block: PaneId; state: unknown }
+  | { type: "pong"; id: number };
 
 export const enum FrameKind {
   Output = 1,
