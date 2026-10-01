@@ -9,6 +9,7 @@ import { askText, closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } f
 import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
+import { openPort } from "../blocks";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -442,6 +443,8 @@ function PaneSlot({
           if (url) void client.api("/api/blocks", { type: "browser", config: { url }, split: id }, "couldn't open that page");
         },
       },
+      // A port where this pane runs: its machine, or this host.
+      { label: mine ? "Open a port on this machine…" : "Open a port…", run: () => void openPort(client, { split: id, host: mine?.id, local: !mine }) },
       ...(own && !tabMachine
         ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
         : []),
@@ -554,6 +557,11 @@ function machineItems(client: Client, tab: TabView): MenuItem[] {
       label: "New pane on machine",
       disabled: anchor === undefined,
       run: () => anchor !== undefined && client.intent({ op: "split", pane: anchor, edge: "right", local: false }),
+    },
+    {
+      label: "Open a port on machine…",
+      disabled: anchor === undefined,
+      run: () => anchor !== undefined && void openPort(client, { split: anchor, host: m.id }),
     },
     {
       label: "Reset machine",

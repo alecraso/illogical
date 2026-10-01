@@ -6,6 +6,7 @@ import { useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
 import { useSubscribe } from "./hooks";
 import { AttentionBadge } from "./attention";
+import { openPort } from "../blocks";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -94,6 +95,12 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           )}
           {active !== undefined && client.tab !== null && client.tabMachine(client.tab) && (
             <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right", local: true }))}>Split (local)</button>
+          )}
+          {active !== undefined && (
+            // Where the active pane runs: its machine, or this host.
+            <button onClick={act(() => void openPort(client, { split: active, host: client.machine(active)?.id, local: !client.machine(active) }))}>
+              Open port
+            </button>
           )}
           <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
           {active !== undefined && (
