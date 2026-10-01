@@ -157,6 +157,9 @@ test("a resident daemon's layout and scrollback come back after the sandbox goes
   await ready(page, pane);
   await typeIn(page, pane, "echo before-cold-$((6*7)); uptime -s\n");
   await expect.poll(() => paneText(page, pane), { timeout: 20_000 }).toContain("before-cold-42");
+  const bootLine = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/gm;
+  await expect.poll(async () => (await paneText(page, pane)).match(bootLine)?.length ?? 0).toBe(1);
+  const bootBefore = (await paneText(page, pane)).match(bootLine)![0];
 
   if (claude) {
     const token = read(`${homedir()}/.config/illogical/claude-oauth-token`);
@@ -176,8 +179,9 @@ test("a resident daemon's layout and scrollback come back after the sandbox goes
     // Claude Code's TUI is up (whatever it says: the account may be at its limit).
     await expect
       .poll(() => page.evaluate((p) => window.__illogical.screen(p), pane), { timeout: 60_000 })
-      .toMatch(/Claude Code|claude|Welcome/i);
+      .toMatch(/Welcome to Claude|text style|Claude Code v\d|Try "|limit/i);
     expect(await paneText(page, pane)).not.toContain(token.slice(0, 12));
+    await page.screenshot({ path: "test-results/m4b-claude-before-cold.png" });
   }
   const before = await page.evaluate(() => window.__illogical.client.state!.panes.map((p) => p.id));
   // Let the checkpoint land (5s idle).
@@ -214,8 +218,11 @@ test("a resident daemon's layout and scrollback come back after the sandbox goes
   // It really rebooted: a new boot time.
   await typeIn(page, pane, "uptime -s; echo after-$((7*7))\n");
   await expect.poll(() => paneText(page, pane), { timeout: 20_000 }).toContain("after-49");
-  const boots = (await paneText(page, pane)).match(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/gm) ?? [];
-  expect(new Set(boots).size, boots.join(", ")).toBeGreaterThan(1);
+  const boots = (await paneText(page, pane)).match(bootLine) ?? [];
+  const tail = (await paneText(page, pane)).slice(-1500);
+  expect(boots.at(-1), `booted ${bootBefore}, then ${boots.join(", ")}:\n${tail}`).not.toBe(bootBefore);
+  // Claude Code's screen is in the restored scrollback.
+  if (claude) expect(await paneText(page, pane)).toMatch(/text style|Claude Code v\d|limit/i);
   await page.screenshot({ path: "test-results/m4b-after-cold.png" });
 
   // Over the CLI's route too: the tunnel answers for the API.

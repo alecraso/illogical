@@ -587,3 +587,27 @@ async fn a_restored_pane_drops_the_dead_programs_input_modes() {
     d.stop(nix::sys::signal::Signal::SIGTERM);
     let _ = std::fs::remove_dir_all(state);
 }
+
+#[tokio::test]
+async fn the_restore_marker_goes_below_what_a_program_drew_in_place() {
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    attach_pane(&mut ws, 1).await;
+    // Like Claude Code's TUI: draws on the main screen, then leaves the
+    // cursor above the bottom of what it drew.
+    type_in(&mut ws, 1, r"clear; printf '\e[6;1Hdrawn-%s\e[7;1Hlast-%s\e[2;1H' below row; sleep 300").await;
+    read_pane_until(&mut ws, 1, "last-row").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(ws);
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+
+    let mut d = start_in(&state).await;
+    let (mut ws, _) = connect_state(&d).await;
+    let snap = attach_pane(&mut ws, 1).await;
+    let (drawn, last, marker) = (snap.find("drawn-below"), snap.find("last-row"), snap.find("restored"));
+    assert!(drawn.is_some() && last.is_some(), "what it drew is still there: {snap:?}");
+    assert!(marker > last, "the marker is below it: {snap:?}");
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let _ = std::fs::remove_dir_all(state);
+}

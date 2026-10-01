@@ -1177,13 +1177,20 @@ impl State {
         // 1049l also restores the saved cursor, which would move us), reset
         // modes, and mark where the old output ends.
         let leave_alt = if self.engine.alt_screen() { "\x1b[?1049l" } else { "" };
+        // On the main screen, below everything on it: a program that drew in
+        // place (Claude Code's TUI) may have left the cursor mid-screen, and
+        // the marker would land on top of what it drew.
+        let below = match self.engine.content_rows() {
+            n if !self.engine.alt_screen() && n > 0 => format!("\x1b[{n};1H"),
+            _ => String::new(),
+        };
         // DECSTR (`CSI ! p`) leaves input modes alone, so also turn off what
         // a program that died with the old daemon may have left on: mouse
         // reporting, focus reports, application cursor keys and keypad, the
         // kitty keyboard stack; and show the cursor.
         const INPUT_RESET: &str = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?1004l\x1b[?1l\x1b>\x1b[<99u\x1b[?25h";
         let banner =
-            format!("{leave_alt}\x1b[!p{INPUT_RESET}\x1b[0m\r\n\x1b[2m── restored {} ──\x1b[0m\r\n", local_time(at));
+            format!("{leave_alt}\x1b[!p{INPUT_RESET}{below}\x1b[0m\r\n\x1b[2m── restored {} ──\x1b[0m\r\n", local_time(at));
         self.output(banner.as_bytes());
     }
 

@@ -39,4 +39,7 @@ pub trait VtEngine {
     /// Whether a DEC private mode (`CSI ? n h`) is set.
     fn dec_mode(&self, mode: u16) -> bool;
     fn pwd(&self) -> String;
+    /// The screen's rows down to the last one with text (0 when blank): where
+    /// output that mustn't overwrite anything can start.
+    fn content_rows(&self) -> u16;
 }
