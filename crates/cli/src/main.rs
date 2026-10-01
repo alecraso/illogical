@@ -191,6 +191,10 @@ enum Command {
         /// Strip colors and other escape sequences.
         #[arg(long)]
         text: bool,
+        /// A pane of this host, from the history it synced here (once it's
+        /// gone, say).
+        #[arg(long, value_name = "HOST", conflicts_with_all = ["follow", "last_command"])]
+        synced: Option<String>,
     },
     /// Wait for a command to finish, the program to exit, or output to match.
     /// Exits with the command's exit code; 124 on timeout.
@@ -281,6 +285,9 @@ enum Command {
         matching: Option<String>,
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Another host's history, as synced here (`all`: every host's).
+        #[arg(long, value_name = "HOST")]
+        synced: Option<String>,
     },
     /// Search the output of every pane.
     Search {
@@ -289,6 +296,27 @@ enum Command {
         since: Option<String>,
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Another host's history, as synced here (`all`: every host's).
+        #[arg(long, value_name = "HOST")]
+        synced: Option<String>,
+    },
+    /// A read-only link to a pane: whoever opens it on the tailnet sees it
+    /// live and can't type, resize or see anything else.
+    Share {
+        pane: Option<Pane>,
+        /// How long it works (e.g. 30m, 2h, 7d; a week at most).
+        #[arg(long, default_value = "1h")]
+        ttl: String,
+    },
+    /// Share links that still work; `shares revoke ID` ends one.
+    Shares {
+        #[command(subcommand)]
+        cmd: Option<SharesCmd>,
+    },
+    /// History other hosts synced here (kept encrypted).
+    Synced {
+        #[command(subcommand)]
+        cmd: Option<SyncedCmd>,
     },
     /// Install the daemon: `illogicald install` with these arguments (e.g.
     /// `--tailnet file:KEY --home URL --join TOKEN` in a sandbox).
@@ -301,6 +329,20 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<hosts::HostsCmd>,
     },
+}
+
+#[derive(Subcommand)]
+enum SharesCmd {
+    /// End a share link now; anyone watching is cut off.
+    Revoke { id: u32 },
+}
+
+#[derive(Subcommand)]
+enum SyncedCmd {
+    /// Forget a host's synced history.
+    Rm { name: String },
+    /// Re-encrypt all synced history under a new key, and drop the old one.
+    RotateKey,
 }
 
 /// Talking to another daemon (`--host`): this shell's pane and directory
@@ -375,6 +417,20 @@ fn time(ms: u64) -> String {
     }
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Seconds as the largest whole unit.
+fn span(secs: u64) -> String {
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m", secs / 60),
+        3600..86400 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86400),
+    }
+}
+
 fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
 }
@@ -399,10 +455,78 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         let err = std::process::Command::new(&daemon).arg("install").args(args).exec();
         bail!("running {}: {err}", daemon.display());
     }
-    let sock = hosts::target(socket(&cli), cli.host.as_deref())?;
-    REMOTE.store(matches!(sock, http::Target::Url(_)), std::sync::atomic::Ordering::Relaxed);
+    let reads_history = matches!(cli.cmd, Command::History { .. } | Command::Search { .. } | Command::Tail { .. });
+    let (sock, gone) = match hosts::target(socket(&cli), cli.host.as_deref()) {
+        Ok(t) => (t, None),
+        // A host that's gone (deleted, unreachable) may have left its
+        // history here.
+        Err(e) if reads_history && cli.host.is_some() => {
+            eprintln!("illogical: {e:#}; reading what it synced here instead");
+            (http::Target::Socket(socket(&cli)), cli.host.clone())
+        }
+        Err(e) => return Err(e),
+    };
+    REMOTE.store(!matches!(sock, http::Target::Socket(_)), std::sync::atomic::Ordering::Relaxed);
     let json_out = cli.json;
+    // `host=` for reading synced history.
+    let synced_q = |flag: Option<String>| -> Option<String> {
+        flag.or(gone.clone()).map(|h| format!("host={}", enc(if h == "all" { "*" } else { &h })))
+    };
     match cli.cmd {
+        Command::Share { pane, ttl } => {
+            let body = json!({"pane": here(pane)?, "ttl_secs": duration(&ttl)?});
+            let v = request(&sock, "POST", "/api/shares", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("{}", v["url"].as_str().or(v["path"].as_str()).unwrap_or_default());
+            }
+        }
+        Command::Shares { cmd: None } => {
+            let v = request(&sock, "GET", "/api/shares", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            for s in v.as_array().into_iter().flatten() {
+                let left = s["expires_ms"].as_u64().unwrap_or(0).saturating_sub(now_ms()) / 1000;
+                println!(
+                    "{:<4} %{:<4} made {:>8}, expires in {}",
+                    s["id"],
+                    s["pane"],
+                    time(s["created_ms"].as_u64().unwrap_or(0)),
+                    span(left)
+                );
+            }
+        }
+        Command::Shares { cmd: Some(SharesCmd::Revoke { id }) } => {
+            request(&sock, "DELETE", &format!("/api/shares/{id}"), None)?.json()?;
+        }
+        Command::Synced { cmd } => {
+            let v = match cmd {
+                None => request(&sock, "GET", "/api/synced", None)?.json()?,
+                Some(SyncedCmd::Rm { name }) => {
+                    request(&sock, "DELETE", &format!("/api/synced/{}", enc(&name)), None)?.json()?
+                }
+                Some(SyncedCmd::RotateKey) => request(&sock, "POST", "/api/synced/rotate-key", None)?.json()?,
+            };
+            if json_out || !v.is_array() {
+                print_json(&v);
+                return Ok(0);
+            }
+            for h in v.as_array().into_iter().flatten() {
+                let panes = h["panes"].as_object().cloned().unwrap_or_default();
+                let bytes: u64 = panes.values().filter_map(|p| p["bytes"].as_u64()).sum();
+                let last = panes.values().filter_map(|p| p["last_push_ms"].as_u64()).max().unwrap_or(0);
+                println!(
+                    "{:<20} {} panes, {} KB, last pushed {}",
+                    h["name"].as_str().unwrap_or("?"),
+                    panes.len(),
+                    bytes / 1024,
+                    time(last)
+                );
+            }
+        }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Install { .. } => unreachable!("handled before connecting"),
         Command::Ls => {
@@ -601,9 +725,11 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             let body = json!({"x": x, "y": y, "button": button, "action": action});
             request(&sock, "POST", &format!("/api/panes/{}/mouse", pane.0), Some(&body))?.json()?;
         }
-        Command::Tail { pane, follow, from, last_command, text } => {
-            let pane = here(pane)?;
-            let mut q = vec![];
+        Command::Tail { pane, follow, from, last_command, text, synced } => {
+            let synced = synced_q(synced);
+            // Another host's pane number means nothing here: say which.
+            let pane = if synced.is_some() { pane.map(|p| p.0).context("which pane? (give %N)")? } else { here(pane)? };
+            let mut q: Vec<String> = synced.into_iter().collect();
             if let Some(f) = from {
                 q.push(format!("from={f}"));
             }
@@ -752,8 +878,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             let path = format!("/api/panes/{pane}/attention");
             request(&sock, "POST", &path, Some(&json!({"state": state})))?.json()?;
         }
-        Command::History { pane, failed, since, cwd, matching, limit } => {
+        Command::History { pane, failed, since, cwd, matching, limit, synced } => {
             let mut q = vec![format!("limit={limit}")];
+            q.extend(synced_q(synced));
             if let Some(p) = pane {
                 q.push(format!("pane={}", p.0));
             }
@@ -781,8 +908,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                     None => " …".to_owned(),
                 };
                 let closed = if c["open"].as_bool() == Some(false) { " (closed)" } else { "" };
+                let host = c["host"].as_str().map(|h| format!("{h}:")).unwrap_or_default();
                 println!(
-                    "{exit}  %{:<4} {:>8}  {}{closed}   [{}]",
+                    "{exit}  {host}%{:<4} {:>8}  {}{closed}   [{}]",
                     c["pane"],
                     time(c["started_ms"].as_u64().unwrap_or(0)),
                     c["text"].as_str().unwrap_or("?"),
@@ -790,8 +918,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 );
             }
         }
-        Command::Search { re, since, limit } => {
+        Command::Search { re, since, limit, synced } => {
             let mut q = vec![format!("re={}", enc(&re)), format!("limit={limit}")];
+            q.extend(synced_q(synced));
             if let Some(s) = since {
                 q.push(format!("since={}", duration(&s)?));
             }
@@ -802,7 +931,8 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             }
             for h in v.as_array().into_iter().flatten() {
                 let cmd = h["command"].as_str().map(|c| format!("  ({c})")).unwrap_or_default();
-                println!("%{}@{}: {}{cmd}", h["pane"], h["offset"], h["line"].as_str().unwrap_or(""));
+                let host = h["host"].as_str().map(|h| format!("{h}:")).unwrap_or_default();
+                println!("{host}%{}@{}: {}{cmd}", h["pane"], h["offset"], h["line"].as_str().unwrap_or(""));
             }
         }
     }
