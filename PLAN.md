@@ -16,7 +16,7 @@ draft are dated inline.
 | Size reconciliation | **Per pane, last input wins.** Other viewers letterbox. | Single user moving between devices. "Smallest" would make the desktop suffer whenever the phone is open. |
 | fd holding before M3 | **No; do it as M2b**, right before daily use | During development, run a separate dev daemon (own state dir and port) so restarts don't touch the daily one. Daily use is when upgrades start costing shells. |
 | Local-only panes | **No.** Every pane is a daemon pane. | One model. Each machine can run its own daemon and the client can list several (M4). |
-| Snapshot format | **Formatter + S1 fix-ups for now; decide on Ghostty's `GHOSTSNP` (`ghostty_snapshot_*`) in spike S5, before M2's checkpoints are written.** | GHOSTSNP is upstream's own binary format: READY/HISTORY records, continuation records for joining a live stream, CRC, zstd. It could replace our fix-up layer and checkpoint files, and it is what parking and a visible-first attach want. But `libghostty-vt` 0.2.2 doesn't bind it. And it is binary, so xterm.js clients still need VT bytes from the formatter until a ghostty-web client exists. |
+| Snapshot format | **Checkpoints: GHOSTSNP, zstd-compressed, tagged with the Ghostty commit; discarded and rebuilt from the log on mismatch. Wire: formatter VT bytes + S1 fix-ups until a ghostty-web client exists.** (Decided by S5.) | S5: exact round trip with no fix-ups (including the saved cursor), READY in 0.3 ms for 64k rows, 75x with zstd. But version 1 has already changed incompatibly without a version bump, so checkpoints can only be a cache, and xterm.js still needs VT bytes. |
 
 ## Architecture
 
@@ -175,18 +175,17 @@ Each milestone ends with a demo against the acceptance list.
   - Still pending: a cold wake on wisp; tailscaled on wisp; an ephemeral node
     surviving 60 min cold.
 
-- **S5 upstream snapshot (before M2's checkpoints).** Can `ghostty_snapshot_*`
-  replace the formatter on the server?
-  - Bind it, through a newer `libghostty-vt`, our own `-sys` additions, or an
-    upstream PR to libghostty-rs.
-  - Does it round-trip the S1 fixture corpus with no fix-ups (scrollback,
-    saved cursor, title, alt screen)?
-  - Snapshot size and time against the formatter's 1–3 ms. How long does it
-    take to restore a parked terminal?
-  - Can its READY/HISTORY split produce the `part: screen|history` frames, with
-    the formatter still turning the result into VT bytes for xterm.js?
-  - **Outcome:** checkpoints use GHOSTSNP if it passes. Wire snapshots stay VT
-    bytes either way until a ghostty-web client exists.
+- **S5 upstream snapshot: done 2026-10-01, passed.** See [spikes/s5-snapshot](spikes/s5-snapshot/README.md).
+  - GHOSTSNP, through libghostty-rs `master` (`8953a74`, which pins Ghostty `22d13172` and needs Zig 0.16), round-trips every S1 fixture with **no fix-ups**: alt and primary screens, scrollback, the saved cursor, title, modes.
+  - It is about as fast as the formatter. An 11 MB snapshot (64k rows) reaches READY in 0.31 ms, and its history follows in 70 ms.
+  - zstd -3 shrinks it 75x.
+  - A snapshot taken mid-escape-sequence resumes exactly, as long as continuation tracking is on. Corrupted or truncated snapshots are rejected.
+  - **Catch:** the format changed incompatibly after the pinned commit (BLAKE3 removed) without bumping `version = 1`.
+  - **Outcome:**
+    - Checkpoints are GHOSTSNP, zstd-compressed, and tagged with the Ghostty commit that wrote them.
+    - A mismatched or undecodable checkpoint is discarded, and the log tail is replayed. The log is the truth; checkpoints are a cache.
+    - Wire snapshots stay formatter VT bytes until a ghostty-web client exists.
+    - Moving the daemon to libghostty-rs `master` (and Zig 0.16) happens at the start of M2.
 
 ### M0: the loop
 
