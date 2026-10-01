@@ -1,8 +1,9 @@
 //! The provider tunnel (M4b): how a client reaches a resident daemon in a
 //! sandbox that has no tailnet route, through the home daemon.
 //!
-//! `/tunnel/<host>/<path>` on the home daemon is `<path>` on that host's
-//! daemon. Each request (a WebSocket upgrade included) gets a connection of
+//! `/tunnel/<host>/ws` and `/tunnel/<host>/api/…` on the home daemon are
+//! the same on that host's daemon (the same shapes as a dial-out host's
+//! `/h/<host>/…`, M4c). Each request (a WebSocket upgrade included) gets a connection of
 //! its own through the provider (for sprites, the Sprites proxy to the
 //! daemon's port), which also wakes the sandbox: so connecting is the wake,
 //! and an open WebSocket keeps it awake until the client lets go.
@@ -19,6 +20,11 @@
 //! (`access.rs`). What the caller sent that says who it is, or where it
 //! came from, is dropped: cookies, `Authorization`, `Origin`,
 //! `Tailscale-*`, `X-Forwarded-*`.
+//!
+//! **What comes back is served on our origin,** and the sandbox runs
+//! untrusted agents: so only the WebSocket and the API are forwarded, and
+//! every answer is defanged as a dial-out host's is (`dial::defang`: no
+//! cookies or CORS, `nosniff`, a sandboxing CSP).
 
 use std::{sync::Arc, time::Duration};
 
@@ -39,7 +45,15 @@ use crate::{provider::Conn, server::App};
 const PATIENCE: Duration = Duration::from_secs(45);
 
 pub fn routes() -> axum::Router<Arc<App>> {
-    axum::Router::new().route("/tunnel/{host}/{*rest}", any(tunnel))
+    axum::Router::new().route("/tunnel/{host}/ws", any(via_ws)).route("/tunnel/{host}/api/{*rest}", any(via_api))
+}
+
+async fn via_ws(State(app): State<Arc<App>>, Path(host): Path<String>, req: Request) -> Response {
+    tunnel(app, host, "/ws".into(), req).await
+}
+
+async fn via_api(State(app): State<Arc<App>>, Path((host, rest)): Path<(String, String)>, req: Request) -> Response {
+    tunnel(app, host, format!("/api/{rest}"), req).await
 }
 
 fn text<'h>(h: &'h HeaderMap, name: &str) -> Option<&'h str> {
@@ -101,7 +115,7 @@ fn error(status: StatusCode, msg: impl Into<String>) -> Response {
 
 /// A connection to the host's daemon, waiting out a cold boot.
 async fn dial(app: &App, host: &str) -> Result<(Conn, u16, String), Box<Response>> {
-    let Some((at, token)) = app.hosts.tunnel(host) else {
+    let Some((at, token)) = app.hosts.provider_tunnel(host) else {
         return Err(Box::new(error(StatusCode::NOT_FOUND, format!("no provider host {host}"))));
     };
     let Some(provider) = app.mux.provider.clone().filter(|p| p.name() == at.provider) else {
@@ -138,7 +152,7 @@ async fn dial(app: &App, host: &str) -> Result<(Conn, u16, String), Box<Response
     }
 }
 
-async fn tunnel(State(app): State<Arc<App>>, Path((host, rest)): Path<(String, String)>, mut req: Request) -> Response {
+async fn tunnel(app: Arc<App>, host: String, path: String, mut req: Request) -> Response {
     let (conn, port, token) = match dial(&app, &host).await {
         Ok(c) => c,
         Err(r) => return *r,
@@ -150,7 +164,7 @@ async fn tunnel(State(app): State<Arc<App>>, Path((host, rest)): Path<(String, S
     let (mut parts, body) = req.into_parts();
     rewrite_request(&mut parts.headers, port, &token);
     let query = parts.uri.query().map(|q| format!("?{q}")).unwrap_or_default();
-    parts.uri = match format!("/{rest}{query}").parse::<Uri>() {
+    parts.uri = match format!("{path}{query}").parse::<Uri>() {
         Ok(u) => u,
         Err(e) => return error(StatusCode::BAD_REQUEST, format!("bad path: {e}")),
     };
@@ -172,6 +186,7 @@ async fn tunnel(State(app): State<Arc<App>>, Path((host, rest)): Path<(String, S
             res.headers_mut().remove(*name);
         }
     }
+    crate::dial::defang(res.headers_mut());
     if upgraded && let Some(client) = client_upgrade {
         let server = hyper::upgrade::on(&mut res);
         let host = host.clone();
@@ -217,9 +232,9 @@ mod tests {
             ("content-type", "application/json"),
             ("keep-alive", "timeout=5"),
         ]);
-        rewrite_request(&mut h, 7681, "ilt_ours");
+        rewrite_request(&mut h, 7681, "ilp_ours");
         assert_eq!(h["host"], "127.0.0.1:7681");
-        assert_eq!(h["authorization"], "Bearer ilt_ours");
+        assert_eq!(h["authorization"], "Bearer ilp_ours");
         assert_eq!(h["content-type"], "application/json");
         for gone in ["origin", "referer", "cookie", "tailscale-user-login", "x-forwarded-for", "keep-alive"] {
             assert!(!h.contains_key(gone), "{gone} should be dropped");

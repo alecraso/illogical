@@ -20,7 +20,12 @@ export interface ProviderRef {
 export interface Host {
   name: string;
   urls: string[];
-  transport: "tailnet" | "provider";
+  /** How it's reached: `tailnet`, straight to its URLs; `dial_out` (M4c),
+   * it dials the home daemon and is reached through it at `/h/<name>/…`;
+   * `provider` (M4b), a resident daemon in a sandbox, through the home
+   * daemon's provider tunnel at `/tunnel/<name>/…` (both on this page's
+   * own origin). */
+  transport: "tailnet" | "dial_out" | "provider";
   provider?: ProviderRef;
   added_ms: number;
   last_seen_ms: number | null;
@@ -97,9 +102,9 @@ export class HostDirectory {
   base(name: string | null = this.shown): string {
     if (name === null || name === this.home) return "";
     const h = this.find(name);
-    if (h?.transport === "provider" && !this.upgraded.has(name)) {
-      return `${location.origin}/tunnel/${encodeURIComponent(name)}`;
-    }
+    // The one place a host's URL is chosen.
+    if (h?.transport === "dial_out") return `/h/${encodeURIComponent(h.name)}`;
+    if (h?.transport === "provider" && !this.upgraded.has(name)) return `/tunnel/${encodeURIComponent(h.name)}`;
     return h?.urls[0] ?? "";
   }
 

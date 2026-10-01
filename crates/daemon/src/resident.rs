@@ -12,7 +12,7 @@
 //! every boot and restarts when it exits: after a cold wake (on wisp, a
 //! real reboot) it restores its panes from its own disk (M2). It listens on
 //! loopback only. The home daemon reaches it through the provider's proxy
-//! (`tunnel.rs`), never a public URL, with a token minted here: the daemon
+//! (`provider_tunnel.rs`), never a public URL, with a token minted here: the daemon
 //! there is given only the token's SHA-256 (in its arguments), and refuses
 //! anything on loopback without it. Then it joins the host list as a
 //! provider host.
@@ -93,7 +93,7 @@ fn hex(b: &[u8]) -> String {
 fn mint_token() -> String {
     let mut b = [0u8; 32];
     let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b));
-    format!("ilt_{}", hex(&b))
+    format!("ilp_{}", hex(&b))
 }
 
 async fn promote(
@@ -180,7 +180,7 @@ async fn make_resident(app: &App, sandbox: &str, req: PromoteRequest) -> Result<
             format!("127.0.0.1:{port}"),
             "--name".into(),
             host.clone(),
-            "--tunnel-token-sha256".into(),
+            "--provider-token-sha256".into(),
             digest,
             "--no-manager-env".into(),
         ],
@@ -235,6 +235,6 @@ mod tests {
     fn tokens_are_long_and_unique() {
         let (a, b) = (mint_token(), mint_token());
         assert_ne!(a, b);
-        assert!(a.starts_with("ilt_") && a.len() == 4 + 64);
+        assert!(a.starts_with("ilp_") && a.len() == 4 + 64);
     }
 }

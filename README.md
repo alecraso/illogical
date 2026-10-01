@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M4b (sandboxes, resident daemons) works
+## Status: M4c (sandboxes, resident daemons, dial-out, synced history) works
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -150,6 +150,40 @@ the daemon stopping, crashing, or the machine rebooting:
   `illogical --host NAME …` runs any command on another host. A sandbox
   (a sprite, a container: no systemd needed) gets a static daemon on the
   tailnet with one command and adds itself to the list; see *Use it*.
+- **Hosts that can only dial out** (M4c). A sandbox that allows nothing
+  in but outbound HTTPS runs `illogicald --peer wss://geek.… --token FILE`:
+  it keeps one WebSocket open to the home daemon and serves its own
+  WebSocket and API over it, many streams at once. The home daemon lists it
+  (`dial_out`) and answers for it at `/h/NAME/…`, behind its own access
+  checks, so the page's host switcher and `illogical --host NAME` work as
+  for any host. It's not a hub: only the home daemon opens streams, the
+  host serves nothing that leads elsewhere, and what it answers is served
+  defanged (no cookies or CORS, `nosniff`, a sandboxing CSP), since it
+  lands on the home daemon's origin. It redials with backoff and works on
+  its own meanwhile. The token is per host, minted by the home daemon
+  (`illogical hosts token NAME`, or joining with an invite), stored only
+  as a hash, good for that host alone, and revocable (`hosts revoke`,
+  `hosts rm`).
+- **Read-only share links** (M4c). `illogical share %N --ttl 1h`, or *Share
+  read-only link…* on a pane, gives a `/share/…` link that shows that pane
+  live (its screen and scrollback, then its output) and nothing else: no
+  typing, sizes, other panes or API, and a viewer that sends anything is
+  hung up on. Any tailnet user may open one (someone the node is shared
+  with, say), never a tagged node, Funnel or the internet. Links expire (a
+  week at most), are listed (`illogical shares`) and revocable (`shares
+  revoke ID`), which cuts off anyone watching.
+- **History that outlives a sandbox** (M4c). With `--sync` (closed panes)
+  or `--sync-live` (open ones too), a host pushes its panes' log segments
+  and indexes to the home daemon with its token, resuming from what is
+  already there. The home daemon keeps them encrypted at rest and answers
+  `illogical history|search|tail --synced NAME` (or `--host NAME`, once the
+  host is gone) from them. Kept 256 MB per pane, 30 days after the last
+  push. Encryption: each file is AES-256-GCM records under its own key
+  (HKDF from a key ring only the home daemon holds, `<state>/synced/key`,
+  0600, or `--sync-key-file`; salted per file, bound to the file's place),
+  with counter nonces and the header and record number as associated data.
+  `illogical synced rotate-key` re-encrypts everything under a new key and
+  drops the old one. File names and sizes aren't secret; contents are.
 
 - **Sandboxes** (M4b). *Sandboxes…* (session menu; *Sandboxes* in the
   phone's sheet) or `illogical sandboxes` lists the home daemon's provider's
@@ -179,8 +213,14 @@ the daemon stopping, crashing, or the machine rebooting:
     presents a token it minted for that host when it made it resident; the
     resident daemon keeps only the token's SHA-256 (in its arguments) and
     refuses every loopback connection without it, so other programs in the
-    sandbox can't use the provider's proxy path to it. Tokens stay in the
-    home daemon's `tunnels.json`, never in the host list clients get.
+    sandbox can't use the provider's proxy path to it. These provider
+    tunnel tokens (`ilp_…`, home → host) stay in the home daemon's
+    `provider-tokens.json`, never in the host list clients get; dial-out
+    host tokens (`ilh_…`, host → home, M4c) are the other direction.
+    `hosts revoke` and `hosts rm` drop whatever a host has of both.
+  - Like a dial-out host's (`/h/NAME`), only the WebSocket and the API go
+    through `/tunnel/NAME`, and the answers are defanged: they're served on
+    the home daemon's origin and the sandbox runs untrusted code.
 
 ### The CLI
 
@@ -222,6 +262,13 @@ illogical hosts                               # the home daemon's other hosts, l
 illogical hosts add box https://box.tailb2e8f2.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
 illogical --host box run --wait -- make       # any command, on another host
+illogical hosts token sbx                     # a dial-out host's token (prints it once)
+illogical hosts revoke sbx                    # …revoked, and its connection dropped
+illogical share %3 --ttl 2h                   # a read-only link to a pane
+illogical shares                              # links that still work; shares revoke ID
+illogical search 'panic' --synced sbx         # a host's synced history (all: every host)
+illogical tail %4 --synced sbx --text         # one of its panes, after it's gone
+illogical synced                              # hosts whose history is kept here
 illogical sandboxes                           # the provider's sandboxes and their state
 illogical run --sandbox s1                    # a disposable shell on one, nothing installed there
 illogical sandboxes promote s1 --as s1        # a resident daemon there, a host reached through the tunnel
@@ -319,6 +366,21 @@ by exact origin: `--allow-origin https://geek.tailb2e8f2.ts.net` (install
 sets it from `--home`). Sprites pause when idle and tailnet traffic doesn't
 wake them, so wake one through the provider first (M4b does that).
 
+**A sandbox that can only dial out** (M4c). On geek, `illogical hosts
+token sbx` (or `hosts invite`); in the sandbox:
+
+```
+illogicald --peer wss://geek.tailb2e8f2.ts.net --token ~/.config/illogical/host-token \
+  [--join INVITE] [--sync [--sync-live]] &
+```
+
+The token file is read (or, with `--join`, made from the invite) and kept
+0600. The home daemon must be reachable at that URL from the sandbox and
+accept its name as a Host (`--public-host`); the dial and the pushes carry
+the token, not an identity. Its page and CLI reach the sandbox at
+`/h/sbx/…`, and a share link to one of its panes would be on the
+sandbox's own daemon, so the menu doesn't offer one there.
+
 Development: `just dev` runs a separate daemon on 7682 (state in
 `~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
 alone. `just check` is what CI runs; `just e2e` drives the system Chrome
@@ -344,7 +406,7 @@ against the running one.
   (`machine.rs`), sandbox providers (`provider/`: the `Provider` trait
   and its capabilities, and the Sprites API adapter: exec TTY and piped
   sessions, the proxy, files and services), sandboxes and resident daemons
-  (`resident.rs`), the provider tunnel (`tunnel.rs`), blocks
+  (`resident.rs`), the provider tunnel (`provider_tunnel.rs`), blocks
   (`block.rs`, `browser.rs`; agents in `agent/`: the ACP client, the
   transcript, agent definitions, the local and VM pipes), block sites
   (`sites.rs`: per-block origins and their HTTP proxy; `ports.rs`: reaching
@@ -352,7 +414,9 @@ against the running one.
   WebSocket server, embedded web client, access checks, `install`.
   Federation: the host list and invites (`hosts.rs`), tailscaled's local
   API and WhoIs (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install
-  --tailnet` and the `sandbox` supervisor).
+  --tailnet` and the `sandbox` supervisor). M4c: the dial-out transport
+  (`dial.rs`, over `dialout_mux.rs`'s streams), share links (`share.rs`), and
+  history sync (`sync.rs`, sealed by `seal.rs`).
 - `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
   another daemon with `--host` (`hosts.rs`).
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
@@ -360,7 +424,7 @@ against the running one.
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M4b taught us
+## Things M0–M4c taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -455,6 +519,16 @@ against the running one.
 - **A restarted tailscaled says `Starting` for a moment.** A daemon that
   asked then got no tailnet name (and refused its own URL), and an install
   that asked then logged in again. Both wait for it to settle now.
+- **Through the home daemon, a host's answer is the home daemon's.** A
+  dial-out host's responses are served on geek's origin, so a hostile
+  sandbox could have put a page there with the run of geek's API. Only its
+  WebSocket and `/api` are forwarded, and every answer is defanged (a
+  `sandbox` CSP, `nosniff`, no cookies or CORS).
+- **Match paths exactly where identity is relaxed.** A prefix check let
+  `/share/<token>/../api/panes` through the viewer's door (the router then
+  found nothing, but only by luck); the guard now accepts the exact shapes.
+- **clap gives a subcommand's positional the same id as a global flag of
+  the same name.** `illogical synced rm sbx` set `--host sbx`.
 - **"Cold" can be had on demand.** wisp turns a suspended sprite cold
   after `--warm-ttl` (1h) by dropping its memory snapshot, which makes the
   next wake a real boot. Its web UI's operator endpoints do the same at

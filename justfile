@@ -34,7 +34,7 @@ static: web
     file target/x86_64-unknown-linux-musl/release/illogicald target/x86_64-unknown-linux-musl/release/illogical
 
 # All tests.
-test:
+test: web
     {{cargo}} test --workspace
     cd web && pnpm run typecheck
 

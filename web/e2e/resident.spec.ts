@@ -141,7 +141,7 @@ test("a resident daemon's layout and scrollback come back after the sandbox goes
   const row = await sandboxes(page);
   await row.getByRole("button", { name: "Make resident" }).click();
   await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current), { timeout: 60_000 }).toBe(sprite);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.base)).toBe(`${base}/tunnel/${sprite}`);
+  await expect.poll(() => page.evaluate(() => window.__illogical.client.base)).toBe(`/tunnel/${sprite}`);
   await expect.poll(() => connected(page), { timeout: 30_000 }).toBe(true);
   await expect(page.locator(".host-crumb")).toHaveText(sprite);
   // (The host is named after the sandbox; the API calls below use it.)

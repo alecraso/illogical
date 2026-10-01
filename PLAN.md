@@ -648,9 +648,13 @@ instead.
     `ILLOGICAL_E2E_CLAUDE=1`, cold forced with wispd's suspend + cool).
     The tunnel is `/tunnel/<host>` on the home daemon with a per-host
     token. Not yet exercised against Fly.
-- **M4c, dial-out and history.** The dial-out transport (read-only share
+- **M4c, dial-out and history.** (Done 2026-10-01; see README.) The dial-out transport (read-only share
   tokens moved to M15), and an optional log-segment sync to the home daemon, so history
   outlives a deleted sandbox.
+  - Read-only share links landed here anyway, for tailnet users only (any
+    user, never tagged nodes or Funnel); M15 still owns reaching people
+    outside the tailnet, and S12's "from now" snapshot (a link shows the
+    pane's scrollback too).
   - **Decided 2026-10-01: encrypt synced segments at rest, with a key held
     by the home daemon.** The question was whether to encrypt logs at rest. Synced sandbox logs are
     where an agent's secrets end up. The likely answer is to encrypt synced

@@ -4,14 +4,18 @@
 
 use serde::{Deserialize, Serialize};
 
-/// How a client reaches a host. A loopback URL works for the tailnet
-/// transport too, which is what the tests use.
+/// How a client reaches a host. A loopback URL works for `tailnet` too,
+/// which is what the tests use.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Transport {
     /// Straight to its URLs.
     #[default]
     Tailnet,
+    /// The host dials the home daemon (M4c) and is reached through it, at
+    /// `<home>/h/<name>/ws` and `<home>/h/<name>/api/...`. It has no URLs of
+    /// its own.
+    DialOut,
     /// Through the home daemon's tunnel (`/tunnel/<name>/…`), which reaches
     /// the host's port through its sandbox provider (M4b): for a resident
     /// daemon in a sandbox that sleeps. Its URLs, if any, are tailnet ones
@@ -98,6 +102,20 @@ pub struct JoinRequest {
 pub struct Joined {
     pub host: Host,
     pub owner: Option<String>,
+    /// For a `dial_out` host: its per-host token (see [`HostToken`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+/// `POST /api/hosts/NAME/token`: a per-host token, minted by the home
+/// daemon for a host without tailnet identity. It lets that host, and only
+/// it, dial in (`illogicald --peer … --peer-token-file …`) and push its log
+/// segments (`--sync`). The home daemon keeps only its hash; minting another
+/// replaces it, and `DELETE /api/hosts/NAME/token` revokes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostToken {
+    pub name: String,
+    pub token: String,
 }
 
 /// A sandbox provider's capabilities, as far as a client cares.

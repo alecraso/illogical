@@ -477,6 +477,18 @@ function PaneSlot({
         run: () => client.intent({ op: "break_pane", pane: id, session: client.session!, index: null }),
       },
       { label: "Copy working directory", disabled: !cwd, run: () => cwd && void navigator.clipboard?.writeText(cwd) },
+      // A dial-out host's links would be on a daemon nobody can reach.
+      ...(client.base.startsWith("/")
+        ? []
+        : [
+            {
+              label: "Share read-only link…",
+              run: async () => {
+                const url = await client.share(id);
+                if (url) await askText("Read-only link to this pane, for an hour (copied)", url);
+              },
+            } as MenuItem,
+          ]),
       "separator",
       ...restartItems(client, id),
       "separator",

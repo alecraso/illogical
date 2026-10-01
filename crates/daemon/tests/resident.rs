@@ -134,7 +134,7 @@ fn a_shell_then_a_resident_daemon_through_the_tunnel() {
     let h = &hosts["hosts"][0];
     assert_eq!((h["name"].as_str(), h["transport"].as_str()), (Some("res"), Some("provider")), "{hosts}");
     assert_eq!(h["provider"]["sandbox"], sprite.as_str());
-    assert!(!hosts.to_string().contains("ilt_"), "the tunnel token never leaves the home daemon");
+    assert!(!hosts.to_string().contains("ilp_"), "the tunnel token never leaves the home daemon");
     let p = stdout(&cli(&home, &["--host", "res", "run", "--", "echo resident-$(hostname)-$((7*6))"]));
     let p = p.trim();
     wait_for("output through the tunnel", || {
