@@ -28,6 +28,13 @@ pub fn key(name: &str, modes: Modes) -> Vec<u8> {
         }
         rest = &rest[2..];
     }
+    // Cursor and function keys carry their modifiers in the sequence, as
+    // xterm sends them (`C-Up` is `CSI 1;5 A`).
+    if (ctrl || meta || shift)
+        && let Some(seq) = modified(rest, 1 + shift as u8 + 2 * meta as u8 + 4 * ctrl as u8)
+    {
+        return seq;
+    }
     let mut out = match named(rest, modes, shift) {
         Some(b) => b,
         None if rest.chars().count() == 1 => {
@@ -58,6 +65,37 @@ pub fn key(name: &str, modes: Modes) -> Vec<u8> {
         out.insert(0, 0x1b);
     }
     out
+}
+
+/// A cursor or function key with xterm's modifier parameter.
+fn modified(name: &str, m: u8) -> Option<Vec<u8>> {
+    let letter = |c: char| Some(format!("\x1b[1;{m}{c}").into_bytes());
+    let tilde = |n: u8| Some(format!("\x1b[{n};{m}~").into_bytes());
+    match name {
+        "Up" => letter('A'),
+        "Down" => letter('B'),
+        "Right" => letter('C'),
+        "Left" => letter('D'),
+        "Home" => letter('H'),
+        "End" => letter('F'),
+        "F1" => letter('P'),
+        "F2" => letter('Q'),
+        "F3" => letter('R'),
+        "F4" => letter('S'),
+        "Insert" | "IC" => tilde(2),
+        "Delete" | "DC" => tilde(3),
+        "PageUp" | "PgUp" | "PPage" => tilde(5),
+        "PageDown" | "PgDn" | "NPage" => tilde(6),
+        "F5" => tilde(15),
+        "F6" => tilde(17),
+        "F7" => tilde(18),
+        "F8" => tilde(19),
+        "F9" => tilde(20),
+        "F10" => tilde(21),
+        "F11" => tilde(23),
+        "F12" => tilde(24),
+        _ => None,
+    }
 }
 
 fn named(name: &str, m: Modes, shift: bool) -> Option<Vec<u8>> {
@@ -146,6 +184,11 @@ mod tests {
         assert_eq!(key("Enter", m), b"\r");
         assert_eq!(key("F5", m), b"\x1b[15~");
         assert_eq!(key("S-Tab", m), b"\x1b[Z");
+        assert_eq!(key("C-Up", m), b"\x1b[1;5A");
+        assert_eq!(key("M-Left", m), b"\x1b[1;3D");
+        assert_eq!(key("C-S-End", m), b"\x1b[1;6F");
+        assert_eq!(key("S-F5", m), b"\x1b[15;2~");
+        assert_eq!(key("M-PPage", m), b"\x1b[5;3~");
         assert_eq!(key("hello", m), b"hello", "not a name: literal");
         assert_eq!(key("x", m), b"x");
     }
