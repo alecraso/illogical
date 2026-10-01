@@ -26,10 +26,18 @@
 //!   with no user (a tagged node, or Funnel), so it is refused too. Local
 //!   processes could forge the header, but they could equally use the Unix
 //!   socket; its job is keeping other tailnet users and nodes out.
+//! - **A resident daemon in a sandbox** (M4b) is reached through its
+//!   provider's proxy, which arrives on loopback like a local process.
+//!   There, everything not identified by tailscaled must carry the token
+//!   the home daemon minted for this host (`Authorization: Bearer …`): the
+//!   home daemon checked the owner on its side, and the token says so. Only
+//!   its SHA-256 is kept here, so a process in the sandbox reading our
+//!   arguments or files learns nothing it can use.
 
 use std::{collections::HashSet, net::SocketAddr};
 
 use axum::http::{HeaderMap, StatusCode, header};
+use sha2::{Digest, Sha256};
 
 /// Who is on the other end of a TCP connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +61,10 @@ pub struct Access {
     /// Exact `scheme://host[:port]` values accepted as WebSocket origins.
     origins: HashSet<String>,
     owner: Option<String>,
+    /// SHA-256 of the tunnel token, when loopback connections need it.
+    tunnel: Option<[u8; 32]>,
+    /// This daemon's page, for share links.
+    page: String,
 }
 
 impl Access {
@@ -77,8 +89,58 @@ impl Access {
             .chain(public.iter().map(|h| format!("https://{h}")))
             .chain(extra_origins.iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()))
             .collect();
+        let page = match public.first() {
+            Some(name) => format!("https://{name}"),
+            None => format!("http://127.0.0.1:{port}"),
+        };
         let hosts = loopback.into_iter().chain(public.iter().cloned()).chain(direct).collect();
-        Self { hosts, public: public.into_iter().collect(), origins, owner }
+        Self { hosts, public: public.into_iter().collect(), origins, owner, page, tunnel: None }
+    }
+
+    /// From now on, connections from this machine need the token whose
+    /// SHA-256 this is (hex): a resident daemon reached through its
+    /// provider's tunnel.
+    pub fn require_tunnel_token(mut self, sha256_hex: &str) -> anyhow::Result<Self> {
+        let hex = sha256_hex.trim();
+        if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            anyhow::bail!("a tunnel token's SHA-256 is 64 hex digits");
+        }
+        let mut d = [0u8; 32];
+        for (i, b) in d.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)?;
+        }
+        self.tunnel = Some(d);
+        Ok(self)
+    }
+
+    /// Where this daemon's page is, for links to it: its tailnet name, else
+    /// loopback.
+    pub fn page_origin(&self) -> &str {
+        &self.page
+    }
+
+    /// Who may open a read-only share link (the link itself is the
+    /// credential): any tailnet user, not only the owner, or this machine.
+    /// Never a tagged node (sandboxes run untrusted agents), Funnel, or
+    /// anyone off the tailnet. The Host check applies as usual.
+    pub fn check_viewer(&self, headers: &HeaderMap, peer: &Peer) -> Result<(), Refusal> {
+        match peer {
+            Peer::Tailnet { login: Some(_) } => Ok(()),
+            Peer::Tailnet { login: None } => {
+                Err((StatusCode::FORBIDDEN, "tagged tailnet nodes can't open share links".into()))
+            }
+            Peer::Other => Err((StatusCode::FORBIDDEN, "share links are for the tailnet only".into())),
+            Peer::Local if self.tunnel.is_some() => self.check_tunnel_token(headers),
+            Peer::Local => match header_str(headers, "tailscale-user-login") {
+                // Through serve, from a tailnet user.
+                Some(_) => Ok(()),
+                None if self.public.contains(&host(headers)) => Err((
+                    StatusCode::FORBIDDEN,
+                    "tailnet request without a user identity (a tagged node, or Funnel)".into(),
+                )),
+                None => Ok(()),
+            },
+        }
     }
 
     /// The app's own origins (the pages allowed to frame a block).
@@ -111,6 +173,7 @@ impl Access {
                 Err((StatusCode::FORBIDDEN, "tagged tailnet nodes have no user identity".into()))
             }
             Peer::Other => Err((StatusCode::FORBIDDEN, "not from this machine or the tailnet".into())),
+            Peer::Local if self.tunnel.is_some() => self.check_tunnel_token(headers),
             Peer::Local => match header_str(headers, "tailscale-user-login") {
                 Some(login) => self.must_be_owner(login),
                 None if self.public.contains(&host(headers)) => {
@@ -118,6 +181,20 @@ impl Access {
                 }
                 None => Ok(()),
             },
+        }
+    }
+
+    fn check_tunnel_token(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+        let given = header_str(headers, header::AUTHORIZATION.as_str()).and_then(|v| v.strip_prefix("Bearer "));
+        let (Some(want), Some(given)) = (&self.tunnel, given) else {
+            return Err((StatusCode::UNAUTHORIZED, "this daemon is reached through its home daemon's tunnel".into()));
+        };
+        let got: [u8; 32] = Sha256::digest(given.trim().as_bytes()).into();
+        // Constant time: no early exit on the first differing byte.
+        if got.iter().zip(want).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0 {
+            Ok(())
+        } else {
+            Err((StatusCode::UNAUTHORIZED, "wrong tunnel token".into()))
         }
     }
 
@@ -286,6 +363,47 @@ mod tests {
         assert_eq!(direct_address("100.1.2.3:7681".parse().unwrap()).as_deref(), Some("100.1.2.3"));
         assert_eq!(direct_address("127.0.0.1:7681".parse().unwrap()), None);
         assert_eq!(direct_address("0.0.0.0:7681".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn share_viewers_are_tailnet_users_or_local() {
+        let a = access();
+        let public = headers(&[("host", "geek.example.ts.net")]);
+        let friend = headers(&[("host", "geek.example.ts.net"), ("tailscale-user-login", "friend@x.com")]);
+        // A tailnet user who isn't the owner: may view, may not use the app.
+        assert!(a.check_viewer(&friend, &Peer::Local).is_ok());
+        assert!(a.check_identity(&friend, &Peer::Local).is_err());
+        let direct = Peer::Tailnet { login: Some("friend@x.com".into()) };
+        assert!(a.check_viewer(&public, &direct).is_ok());
+        // Tagged nodes, Funnel and the internet: never.
+        assert!(a.check_viewer(&public, &Peer::Local).is_err(), "serve without a user");
+        assert!(a.check_viewer(&public, &Peer::Tailnet { login: None }).is_err());
+        assert!(a.check_viewer(&public, &Peer::Other).is_err());
+        assert!(a.check_viewer(&friend, &Peer::Other).is_err(), "a forged header changes nothing");
+        // This machine.
+        assert!(a.check_viewer(&headers(&[("host", "127.0.0.1:7681")]), &Peer::Local).is_ok());
+        assert_eq!(a.page_origin(), "https://geek.example.ts.net");
+        assert_eq!(Access::new(7681, &[], &[], &[], None).page_origin(), "http://127.0.0.1:7681");
+    }
+
+    #[test]
+    fn tunnelled_connections_need_the_token() {
+        let token = "ilp_secret";
+        let digest: String = Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        let a = Access::new(7681, &[], &[], &[], None).require_tunnel_token(&digest).unwrap();
+        let local = [("host", "127.0.0.1:7681")];
+        assert_eq!(check(&a, &local).unwrap_err().0, StatusCode::UNAUTHORIZED, "no token");
+        let bearer = format!("Bearer {token}");
+        assert!(check(&a, &[local[0], ("authorization", &bearer)]).is_ok());
+        assert!(check(&a, &[local[0], ("authorization", "Bearer ilp_wrong")]).is_err());
+        assert!(check(&a, &[local[0], ("authorization", token)]).is_err(), "not a bearer");
+        // A forged serve header is no substitute.
+        assert!(check(&a, &[local[0], ("tailscale-user-login", "me@x.com")]).is_err());
+        // Nor for share links.
+        assert!(a.check_viewer(&headers(&local), &Peer::Local).is_err());
+        // The Host check still applies.
+        assert!(check(&a, &[("host", "evil.com"), ("authorization", &bearer)]).is_err());
+        assert!(Access::new(7681, &[], &[], &[], None).require_tunnel_token("abc").is_err());
     }
 
     #[test]

@@ -27,9 +27,14 @@ pub struct Filter {
 
 /// Commands (from the shell integration's marks), oldest first.
 pub fn commands(dir: &Path, pane: PaneId, open: bool) -> Vec<HistoryEntry> {
+    commands_in(read_events(dir), pane, open)
+}
+
+/// The same, from a pane's events (a synced copy's, say).
+pub fn commands_in(events: Vec<(u64, Event)>, pane: PaneId, open: bool) -> Vec<HistoryEntry> {
     let mut out: Vec<HistoryEntry> = Vec::new();
     let mut cwd: Option<String> = None;
-    for (offset, e) in read_events(dir) {
+    for (offset, e) in events {
         match e {
             Event::Cwd { path } => cwd = Some(path),
             Event::Command { at_ms, text, cwd: c } => out.push(HistoryEntry {
@@ -42,6 +47,7 @@ pub fn commands(dir: &Path, pane: PaneId, open: bool) -> Vec<HistoryEntry> {
                 ended_ms: None,
                 start: offset,
                 end: None,
+                host: None,
             }),
             Event::End { at_ms, exit } => {
                 if let Some(last) = out.last_mut().filter(|l| l.end.is_none()) {
@@ -57,11 +63,17 @@ pub fn commands(dir: &Path, pane: PaneId, open: bool) -> Vec<HistoryEntry> {
 }
 
 pub fn history(store: &StateDir, f: &Filter, limit: usize) -> Vec<HistoryEntry> {
-    let mut all: Vec<HistoryEntry> = store
+    let all = store
         .pane_dirs()
         .into_iter()
         .filter(|(id, _, _)| f.pane.is_none_or(|p| p == *id))
-        .flat_map(|(id, open, dir)| commands(&dir, id, open))
+        .flat_map(|(id, open, dir)| commands(&dir, id, open));
+    filtered(all, f, limit)
+}
+
+/// Commands that pass the filter, the last `limit` by start time.
+pub fn filtered(all: impl Iterator<Item = HistoryEntry>, f: &Filter, limit: usize) -> Vec<HistoryEntry> {
+    let mut all: Vec<HistoryEntry> = all
         .filter(|c| !f.failed || c.exit.is_some_and(|e| e != 0))
         .filter(|c| f.since_ms.is_none_or(|s| c.started_ms >= s))
         .filter(|c| f.cwd.as_ref().is_none_or(|d| c.cwd.as_ref().is_some_and(|x| x.starts_with(d.as_str()))))
@@ -88,7 +100,14 @@ pub fn search(store: &StateDir, re: &Regex, since_ms: Option<u64>, limit: usize)
             }
             for (n, line) in text.lines().enumerate() {
                 if re.is_match(line) {
-                    hits.push(SearchHit { pane, open, offset: n as u64, line: line.to_owned(), command: None });
+                    hits.push(SearchHit {
+                        pane,
+                        open,
+                        offset: n as u64,
+                        line: line.to_owned(),
+                        command: None,
+                        host: None,
+                    });
                     if hits.len() >= limit {
                         return hits;
                     }
@@ -96,44 +115,63 @@ pub fn search(store: &StateDir, re: &Regex, since_ms: Option<u64>, limit: usize)
             }
             continue;
         }
-        // Skip output older than `since`: start at the first time mark at
-        // or after it, and skip panes with nothing that recent.
-        let from = match since_ms {
-            None => 0,
-            Some(s) => match events.iter().find_map(|(o, e)| match e {
-                Event::Time { at_ms } | Event::Command { at_ms, .. } if *at_ms >= s => Some(*o),
-                _ => None,
-            }) {
-                Some(o) => o,
-                None => continue,
-            },
-        };
-        let cmds = commands(&dir, pane, open);
-        let Ok(log) = PaneLog::open(dir.clone()) else { continue };
-        let Ok((start, bytes)) = log.read_from(from) else { continue };
-        let mut at = start;
-        for raw in bytes.split(|b| *b == b'\n') {
-            let line = strip(raw);
-            let line = line.trim_end_matches('\n');
-            if re.is_match(line) {
-                // The first output line begins before the command's start
-                // mark (the mark's own bytes open that line), so compare
-                // with where the line ends.
-                let line_end = at + raw.len() as u64;
-                let command = cmds
-                    .iter()
-                    .rev()
-                    .find(|c| c.start <= line_end && c.end.is_none_or(|e| at < e))
-                    .and_then(|c| c.text.clone());
-                hits.push(SearchHit { pane, open, offset: at, line: line.to_owned(), command });
-                if hits.len() >= limit {
-                    return hits;
-                }
-            }
-            at += raw.len() as u64 + 1;
+        let read = |from| PaneLog::open(dir.clone()).and_then(|l| l.read_from(from)).ok();
+        if search_log(pane, open, events, read, re, since_ms, limit, &mut hits) {
+            return hits;
         }
     }
     hits
+}
+
+/// Search one terminal's output (`read` gives its log from an offset),
+/// adding to `hits`; whether `limit` was reached.
+#[allow(clippy::too_many_arguments)]
+pub fn search_log(
+    pane: PaneId,
+    open: bool,
+    events: Vec<(u64, Event)>,
+    read: impl FnOnce(u64) -> Option<(u64, Vec<u8>)>,
+    re: &Regex,
+    since_ms: Option<u64>,
+    limit: usize,
+    hits: &mut Vec<SearchHit>,
+) -> bool {
+    // Skip output older than `since`: start at the first time mark at or
+    // after it, and skip panes with nothing that recent.
+    let from = match since_ms {
+        None => 0,
+        Some(s) => match events.iter().find_map(|(o, e)| match e {
+            Event::Time { at_ms } | Event::Command { at_ms, .. } if *at_ms >= s => Some(*o),
+            _ => None,
+        }) {
+            Some(o) => o,
+            None => return false,
+        },
+    };
+    let cmds = commands_in(events, pane, open);
+    let Some((start, bytes)) = read(from) else { return false };
+    let mut at = start;
+    for raw in bytes.split(|b| *b == b'\n') {
+        let line = strip(raw);
+        let line = line.trim_end_matches('\n');
+        if re.is_match(line) {
+            // The first output line begins before the command's start mark
+            // (the mark's own bytes open that line), so compare with where
+            // the line ends.
+            let line_end = at + raw.len() as u64;
+            let command = cmds
+                .iter()
+                .rev()
+                .find(|c| c.start <= line_end && c.end.is_none_or(|e| at < e))
+                .and_then(|c| c.text.clone());
+            hits.push(SearchHit { pane, open, offset: at, line: line.to_owned(), command, host: None });
+            if hits.len() >= limit {
+                return true;
+            }
+        }
+        at += raw.len() as u64 + 1;
+    }
+    false
 }
 
 /// What a pane's index says happened, as API events (for `events` without

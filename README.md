@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M3c (VM tabs) works
+## Status: M4c (sandboxes, resident daemons, dial-out, synced history) works
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -150,6 +150,77 @@ the daemon stopping, crashing, or the machine rebooting:
   `illogical --host NAME …` runs any command on another host. A sandbox
   (a sprite, a container: no systemd needed) gets a static daemon on the
   tailnet with one command and adds itself to the list; see *Use it*.
+- **Hosts that can only dial out** (M4c). A sandbox that allows nothing
+  in but outbound HTTPS runs `illogicald --peer wss://geek.… --token FILE`:
+  it keeps one WebSocket open to the home daemon and serves its own
+  WebSocket and API over it, many streams at once. The home daemon lists it
+  (`dial_out`) and answers for it at `/h/NAME/…`, behind its own access
+  checks, so the page's host switcher and `illogical --host NAME` work as
+  for any host. It's not a hub: only the home daemon opens streams, the
+  host serves nothing that leads elsewhere, and what it answers is served
+  defanged (no cookies or CORS, `nosniff`, a sandboxing CSP), since it
+  lands on the home daemon's origin. It redials with backoff and works on
+  its own meanwhile. The token is per host, minted by the home daemon
+  (`illogical hosts token NAME`, or joining with an invite), stored only
+  as a hash, good for that host alone, and revocable (`hosts revoke`,
+  `hosts rm`).
+- **Read-only share links** (M4c). `illogical share %N --ttl 1h`, or *Share
+  read-only link…* on a pane, gives a `/share/…` link that shows that pane
+  live (its screen and scrollback, then its output) and nothing else: no
+  typing, sizes, other panes or API, and a viewer that sends anything is
+  hung up on. Any tailnet user may open one (someone the node is shared
+  with, say), never a tagged node, Funnel or the internet. Links expire (a
+  week at most), are listed (`illogical shares`) and revocable (`shares
+  revoke ID`), which cuts off anyone watching.
+- **History that outlives a sandbox** (M4c). With `--sync` (closed panes)
+  or `--sync-live` (open ones too), a host pushes its panes' log segments
+  and indexes to the home daemon with its token, resuming from what is
+  already there. The home daemon keeps them encrypted at rest and answers
+  `illogical history|search|tail --synced NAME` (or `--host NAME`, once the
+  host is gone) from them. Kept 256 MB per pane, 30 days after the last
+  push. Encryption: each file is AES-256-GCM records under its own key
+  (HKDF from a key ring only the home daemon holds, `<state>/synced/key`,
+  0600, or `--sync-key-file`; salted per file, bound to the file's place),
+  with counter nonces and the header and record number as associated data.
+  `illogical synced rotate-key` re-encrypts everything under a new key and
+  drops the old one. File names and sizes aren't secret; contents are.
+
+- **Sandboxes** (M4b). *Sandboxes…* (session menu; *Sandboxes* in the
+  phone's sheet) or `illogical sandboxes` lists the home daemon's provider's
+  sandboxes (wisp sprites here; Fly's Sprites API fits the same adapter)
+  with their state, asked of the provider, which doesn't wake them.
+  - *Shell* (`illogical run --sandbox NAME`) opens a pane here whose
+    terminal is a plain exec on that sandbox: nothing is installed there.
+    It's disposable, and badged so: the output is logged here while it's
+    attached, but the provider keeps only its replay buffer while nothing
+    follows it (1 MB on wisp, about 6.5 KB on Fly), and closing the pane
+    hangs the shell up and leaves the sandbox alone.
+  - *Make resident* (`illogical sandboxes promote NAME [--as HOST]`) copies
+    the static daemon in (`just static`; the home daemon finds it in
+    `--static-dir`, default `~/.local/share/illogical/static`) and registers
+    it as a sprite *service*, so it starts on every boot and restarts if it
+    exits. It becomes a host in the list, a *provider* host: the client and
+    `--host` reach it through the home daemon's **provider tunnel**
+    (`/tunnel/HOST/…`, through the Sprites proxy to its port, never a
+    public URL). Connecting wakes it; the page lets go of it 10s after it's
+    hidden, so it can sleep. After it goes cold (on wisp, a real reboot)
+    its daemon restores its layout and scrollback from its own disk, the
+    way a reboot does here. A provider host with a tailnet URL too is
+    switched to the tailnet if that answers within 5s of the wake.
+    `illogical sandboxes demote NAME` stops it.
+  - **Identity.** The tunnel is for callers the home daemon already let in
+    (the owner, or its Unix socket). It strips their identity headers and
+    presents a token it minted for that host when it made it resident; the
+    resident daemon keeps only the token's SHA-256 (in its arguments) and
+    refuses every loopback connection without it, so other programs in the
+    sandbox can't use the provider's proxy path to it. These provider
+    tunnel tokens (`ilp_…`, home → host) stay in the home daemon's
+    `provider-tokens.json`, never in the host list clients get; dial-out
+    host tokens (`ilh_…`, host → home, M4c) are the other direction.
+    `hosts revoke` and `hosts rm` drop whatever a host has of both.
+  - Like a dial-out host's (`/h/NAME`), only the WebSocket and the API go
+    through `/tunnel/NAME`, and the answers are defanged: they're served on
+    the home daemon's origin and the sandbox runs untrusted code.
 
 - **iTerm2 as a client** (M5). `illogical tmux -CC` speaks tmux's control
   mode, so iTerm2 (and Ghostty's and WezTerm's tmux support) shows
@@ -196,6 +267,17 @@ illogical hosts                               # the home daemon's other hosts, l
 illogical hosts add box https://box.tailb2e8f2.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
 illogical --host box run --wait -- make       # any command, on another host
+illogical hosts token sbx                     # a dial-out host's token (prints it once)
+illogical hosts revoke sbx                    # …revoked, and its connection dropped
+illogical share %3 --ttl 2h                   # a read-only link to a pane
+illogical shares                              # links that still work; shares revoke ID
+illogical search 'panic' --synced sbx         # a host's synced history (all: every host)
+illogical tail %4 --synced sbx --text         # one of its panes, after it's gone
+illogical synced                              # hosts whose history is kept here
+illogical sandboxes                           # the provider's sandboxes and their state
+illogical run --sandbox s1                    # a disposable shell on one, nothing installed there
+illogical sandboxes promote s1 --as s1        # a resident daemon there, a host reached through the tunnel
+illogical --host s1 ls                        # through the tunnel (wakes it)
 illogical tmux -CC attach [-t SESSION]        # be tmux for iTerm2 (see *Use it*)
 ```
 
@@ -289,6 +371,21 @@ hosts add` line to run on geek. Another daemon accepts the home page only
 by exact origin: `--allow-origin https://geek.tailb2e8f2.ts.net` (install
 sets it from `--home`). Sprites pause when idle and tailnet traffic doesn't
 wake them, so wake one through the provider first (M4b does that).
+
+**A sandbox that can only dial out** (M4c). On geek, `illogical hosts
+token sbx` (or `hosts invite`); in the sandbox:
+
+```
+illogicald --peer wss://geek.tailb2e8f2.ts.net --token ~/.config/illogical/host-token \
+  [--join INVITE] [--sync [--sync-live]] &
+```
+
+The token file is read (or, with `--join`, made from the invite) and kept
+0600. The home daemon must be reachable at that URL from the sandbox and
+accept its name as a Host (`--public-host`); the dial and the pushes carry
+the token, not an identity. Its page and CLI reach the sandbox at
+`/h/sbx/…`, and a share link to one of its panes would be on the
+sandbox's own daemon, so the menu doesn't offer one there.
 
 **iTerm2, as a tmux client** (M5). iTerm2's tmux integration works with
 illogical in place of tmux: sessions are sessions, tabs are native windows,
@@ -384,7 +481,10 @@ against the running one.
   policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
   integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
   search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
-  (`machine.rs`: the Sprites API and exec TTY sessions), blocks
+  (`machine.rs`), sandbox providers (`provider/`: the `Provider` trait
+  and its capabilities, and the Sprites API adapter: exec TTY and piped
+  sessions, the proxy, files and services), sandboxes and resident daemons
+  (`resident.rs`), the provider tunnel (`provider_tunnel.rs`), blocks
   (`block.rs`, `browser.rs`; agents in `agent/`: the ACP client, the
   transcript, agent definitions, the local and VM pipes), block sites
   (`sites.rs`: per-block origins and their HTTP proxy; `ports.rs`: reaching
@@ -392,7 +492,9 @@ against the running one.
   WebSocket server, embedded web client, access checks, `install`.
   Federation: the host list and invites (`hosts.rs`), tailscaled's local
   API and WhoIs (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install
-  --tailnet` and the `sandbox` supervisor).
+  --tailnet` and the `sandbox` supervisor). M4c: the dial-out transport
+  (`dial.rs`, over `dialout_mux.rs`'s streams), share links (`share.rs`), and
+  history sync (`sync.rs`, sealed by `seal.rs`).
 - `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
   another daemon with `--host` (`hosts.rs`). `tmux/` is the tmux
   control-mode front end (M5): the command parser and `-F` format expander,
@@ -405,7 +507,7 @@ against the running one.
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M4a taught us
+## Things M0–M4c taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -500,3 +602,26 @@ against the running one.
 - **A restarted tailscaled says `Starting` for a moment.** A daemon that
   asked then got no tailnet name (and refused its own URL), and an install
   that asked then logged in again. Both wait for it to settle now.
+- **Through the home daemon, a host's answer is the home daemon's.** A
+  dial-out host's responses are served on geek's origin, so a hostile
+  sandbox could have put a page there with the run of geek's API. Only its
+  WebSocket and `/api` are forwarded, and every answer is defanged (a
+  `sandbox` CSP, `nosniff`, no cookies or CORS).
+- **Match paths exactly where identity is relaxed.** A prefix check let
+  `/share/<token>/../api/panes` through the viewer's door (the router then
+  found nothing, but only by luck); the guard now accepts the exact shapes.
+- **clap gives a subcommand's positional the same id as a global flag of
+  the same name.** `illogical synced rm sbx` set `--host sbx`.
+- **"Cold" can be had on demand.** wisp turns a suspended sprite cold
+  after `--warm-ttl` (1h) by dropping its memory snapshot, which makes the
+  next wake a real boot. Its web UI's operator endpoints do the same at
+  once (`POST /ui/api/sprites/NAME/suspend`, then `/cool`, with a session
+  from `/ui/login`), which is how `resident.spec.ts` tests a cold wake.
+  Suspending syncs the guest's disks first, so the resident daemon's log
+  and checkpoints are there after the reboot.
+- **A TUI on the main screen leaves the cursor mid-screen.** Claude Code
+  draws in place and doesn't use the alternate screen, so after a restore
+  the marker landed on top of it; it now goes below the last row with
+  text.
+- **Sprites lists are paged** (50 at a time); wisp here holds more than
+  that.

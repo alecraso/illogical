@@ -9,6 +9,8 @@ import { openMenu, type MenuItem } from "./menu";
 function seen(name: string): string {
   const h = directory.find(name);
   if (!h) return "";
+  // A sandbox's state comes from its provider; it may be asleep.
+  if (h.transport === "provider") return `${h.status ?? "?"} · ${h.provider?.provider ?? "sandbox"}`;
   if (h.last_seen_ms === null) return "not seen yet";
   const s = Math.max(0, Math.round((Date.now() - h.last_seen_ms) / 1000));
   const ago = s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;

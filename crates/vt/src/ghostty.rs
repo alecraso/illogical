@@ -360,6 +360,10 @@ impl VtEngine for GhosttyEngine {
         String::from_utf8_lossy(&self.format(Format::Html, false, false)).into_owned()
     }
 
+    fn content_rows(&self) -> u16 {
+        self.size().1 - self.trailing_rows().0
+    }
+
     fn dec_mode(&self, mode: u16) -> bool {
         self.term.mode(Mode::new(mode, ModeKind::Dec)).unwrap_or(false)
     }

@@ -731,7 +731,7 @@ impl Agent {
         let cfg: Config = serde_json::from_value(config).map_err(|e| format!("agent config: {e}"))?;
         cfg.def.check()?;
         let vm = ctx.sprite.is_some();
-        if vm && ctx.wisp.is_none() {
+        if vm && ctx.provider.is_none() {
             return Err("VM agents need wisp (VM panes aren't set up)".into());
         }
         // Fail now, with a clear reason, rather than in the VM later.
@@ -831,12 +831,12 @@ impl Agent {
             }
             Some(sprite) => {
                 let Some(rec) = link::ExecRecord::read(&self.ctx.dir) else { return false };
-                let Some(wisp) = self.ctx.wisp.clone() else { return false };
+                let Some(provider) = self.ctx.provider.clone() else { return false };
                 inner.generation += 1;
                 let sink = self.sink(inner.generation);
                 let begin = link::VmBegin::Resume(rec);
                 inner.link =
-                    Some(link::spawn_vm(&self.ctx.rt, wisp, sprite.clone(), self.ctx.dir.clone(), begin, sink));
+                    Some(link::spawn_vm(&self.ctx.rt, provider, sprite.clone(), self.ctx.dir.clone(), begin, sink));
                 true
             }
         }
@@ -880,7 +880,7 @@ impl Agent {
                 }
             }
             Some(sprite) => {
-                let Some(wisp) = self.ctx.wisp.clone() else {
+                let Some(provider) = self.ctx.provider.clone() else {
                     return self.failed(inner, "VM agents need wisp".into());
                 };
                 let mut secret = match inner.cfg.def.agent {
@@ -899,7 +899,7 @@ impl Agent {
                 };
                 link::ExecRecord::clear(&self.ctx.dir);
                 inner.link =
-                    Some(link::spawn_vm(&self.ctx.rt, wisp, sprite.clone(), self.ctx.dir.clone(), begin, sink));
+                    Some(link::spawn_vm(&self.ctx.rt, provider, sprite.clone(), self.ctx.dir.clone(), begin, sink));
             }
         }
         inner.request(

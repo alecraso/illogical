@@ -48,6 +48,8 @@ const openPane = (pane: number) => {
     const off = client.subscribe(() => go() && off());
   }
 };
+// A pane opened on the home daemon from elsewhere (a sandbox shell).
+window.addEventListener("illogical:open-pane", (e) => openPane((e as CustomEvent<number>).detail));
 const fromHash = /^#pane=(\d+)$/.exec(location.hash);
 if (fromHash) {
   openPane(Number(fromHash[1]));

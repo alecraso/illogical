@@ -29,7 +29,30 @@
 //! | POST | `/api/hosts` | `AddHost` | `Host` (replaces one with the same name) |
 //! | DELETE | `/api/hosts/NAME` | | `{}` |
 //! | POST | `/api/hosts/invite` | | `Invite`: a one-time token for `join` |
-//! | POST | `/api/hosts/join` | `JoinRequest` | `Host`; the token is the credential |
+//! | POST | `/api/hosts/join` | `JoinRequest` | `Joined`; the token is the credential |
+//! | POST | `/api/hosts/NAME/token` | | `HostToken`: a per-host token (replaces the last) |
+//! | DELETE | `/api/hosts/NAME/token` | | `{}`: revoked, and its dial-out connection dropped |
+//! | GET | `/api/dial` | `Authorization: Bearer <host token>` | WebSocket: a dial-out host's tunnel |
+//! | any | `/h/NAME/ws`, `/h/NAME/api/...` | | a dial-out host's own WebSocket and API, through its tunnel |
+//! | POST | `/api/shares` | `ShareRequest` | `Share` (with its token, shown once) |
+//! | GET | `/api/shares` | | `[Share]` (no tokens) |
+//! | DELETE | `/api/shares/N` | | `{}`: revoked; open viewers are cut off |
+//! | GET | `/share/TOKEN` | | the read-only viewer page |
+//! | GET | `/share/TOKEN/ws` | | WebSocket: the shared pane's snapshot and output, nothing else |
+//! | GET | `/api/sync/state` | host token | `SyncState`: how much of each pane the home daemon has |
+//! | POST | `/api/sync/N/log?from=OFFSET` | host token; raw bytes | `SyncedPane` |
+//! | POST | `/api/sync/N/index?from=BYTE` | host token; raw bytes | `SyncedPane` |
+//! | POST | `/api/sync/N/closed?at=MS` | host token | `SyncedPane` |
+//! | GET | `/api/synced` | | `[SyncedHost]`: hosts whose history is kept here |
+//! | DELETE | `/api/synced/NAME` | | `{}`: forget a host's synced history |
+//! | POST | `/api/synced/rotate-key` | | `{"key": id}`: re-encrypt it all under a new key |
+//!
+//! `history`, `search` and `tail` take `host=NAME` (`*`: every host, for
+//! history and search) to read history synced from another host instead.
+//!
+//! `dial`, `sync/*` and `/share/*` are reached without the owner's
+//! identity: a host token or a share token is the credential there, and it
+//! grants nothing else.
 //!
 //! `join` is how a sandbox adds itself to the home daemon's list. Sandboxes
 //! are tagged tailnet nodes with no user identity, so the access checks
@@ -97,6 +120,11 @@ pub struct RunRequest {
     /// The machine's image (the provider's default if none).
     #[serde(default)]
     pub image: Option<String>,
+    /// On a sandbox that already exists (the provider's name for it), over
+    /// a plain exec with no daemon there ("open shell", M4b). The sandbox
+    /// isn't ours: closing the pane leaves it be.
+    #[serde(default)]
+    pub sandbox: Option<String>,
     /// Session name or id; created if no session has that name. Default: the
     /// session of `from_pane`, else the first.
     #[serde(default)]
@@ -221,6 +249,9 @@ pub struct HistoryEntry {
     /// Stream offsets of the output: `tail --from start`.
     pub start: u64,
     pub end: Option<u64>,
+    /// A synced copy of another host's history (`host=NAME`), not ours.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,4 +263,64 @@ pub struct SearchHit {
     pub line: String,
     /// The command whose output it is, if known.
     pub command: Option<String>,
+    /// A synced copy of another host's history (`host=NAME`), not ours.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
+/// `POST /api/shares`: a read-only link to one terminal pane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareRequest {
+    pub pane: PaneId,
+    /// Seconds until it expires [default: an hour; at most a week].
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+}
+
+/// A read-only share of one pane. `token`, `path` and `url` are only in the
+/// answer that minted it; the daemon keeps a hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Share {
+    pub id: u32,
+    pub pane: PaneId,
+    pub created_ms: u64,
+    pub expires_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// `/share/<token>`, on this daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The whole link, on this daemon's tailnet name when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// `GET /api/sync/state`: what the home daemon holds of the calling host's
+/// panes, so a push resumes where the last one stopped.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncState {
+    pub panes: std::collections::BTreeMap<PaneId, SyncedPane>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncedPane {
+    /// Stream offset just past the last output byte held.
+    pub log_end: u64,
+    /// Bytes of the pane's index held.
+    pub index_len: u64,
+    /// When the pane closed on its host, once it has.
+    #[serde(default)]
+    pub closed_ms: Option<u64>,
+    #[serde(default)]
+    pub last_push_ms: u64,
+    /// Output bytes held (after retention).
+    #[serde(default)]
+    pub bytes: u64,
+}
+
+/// `GET /api/synced`: a host whose history the home daemon keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncedHost {
+    pub name: String,
+    pub panes: std::collections::BTreeMap<PaneId, SyncedPane>,
 }

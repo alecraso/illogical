@@ -352,6 +352,24 @@ impl PaneLog {
         Ok((from, out))
     }
 
+    /// At most `max` bytes from `from` (clamped to what is on disk).
+    pub fn read_range(&self, from: u64, max: usize) -> io::Result<(u64, Vec<u8>)> {
+        let from = from.clamp(self.start(), self.end);
+        let want = ((self.end - from) as usize).min(max);
+        let mut out = Vec::with_capacity(want);
+        for (i, start) in self.segments.iter().enumerate() {
+            let next = self.segments.get(i + 1).copied().unwrap_or(self.end);
+            if next <= from || out.len() >= want {
+                continue;
+            }
+            let mut f = File::open(self.dir.join(seg_name(*start)))?;
+            f.seek(SeekFrom::Start(from.max(*start) - start))?;
+            let room = (want - out.len()) as u64;
+            f.take(room).read_to_end(&mut out)?;
+        }
+        Ok((from, out))
+    }
+
     pub fn record(&mut self, offset: u64, event: Event) -> io::Result<()> {
         let mut line = serde_json::to_vec(&Line { o: offset, event }).map_err(io::Error::other)?;
         line.push(b'\n');
@@ -400,6 +418,11 @@ pub fn read_events(dir: &Path) -> Vec<(u64, Event)> {
     let Ok(text) = fs::read_to_string(dir.join("index")) else {
         return vec![];
     };
+    parse_events(&text)
+}
+
+/// An index's lines (a synced copy's, say), as events.
+pub fn parse_events(text: &str) -> Vec<(u64, Event)> {
     text.lines()
         .filter_map(|l| {
             if l.starts_with('{') {
@@ -457,6 +480,11 @@ mod tests {
         assert_eq!(from, 3 * 1024 * 1024);
         assert_eq!(&bytes[..5], b"hello");
         assert_eq!(bytes.len() as u64, log.end() - from);
+        // Bounded reads, across a segment boundary.
+        let (from, part) = log.read_range(SEGMENT_BYTES - 2, 4).unwrap();
+        assert_eq!((from, part.as_slice()), (SEGMENT_BYTES - 2, &b"aaaa"[..]));
+        let (_, tail) = log.read_range(3 * 1024 * 1024, 1 << 30).unwrap();
+        assert_eq!(tail, bytes);
         drop(log);
         let log = PaneLog::open(dir.clone()).unwrap();
         assert_eq!(log.end(), 6 * 1024 * 1024 + 5);

@@ -1196,6 +1196,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rust-embed",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sha2",

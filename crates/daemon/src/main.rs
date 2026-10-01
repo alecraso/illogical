@@ -5,6 +5,8 @@ mod agent;
 mod api;
 mod block;
 mod browser;
+mod dial;
+mod dialout_mux;
 mod history;
 mod hosts;
 mod install;
@@ -14,13 +16,19 @@ mod mux;
 mod osc;
 mod pane;
 mod ports;
+mod provider;
+mod provider_tunnel;
 mod push;
+mod resident;
 mod sandbox;
+mod seal;
 mod server;
+mod share;
 mod shellint;
 mod shim;
 mod sites;
 mod store;
+mod sync;
 mod sys;
 mod tailscale;
 mod tls;
@@ -139,6 +147,17 @@ struct RunArgs {
     /// `$XDG_DATA_HOME/wisp/token`.
     #[arg(long, env = "ILLOGICAL_WISP_TOKEN_FILE")]
     wisp_token_file: Option<PathBuf>,
+    /// Where the static binaries (`just static`) to copy into a sandbox
+    /// are, when making a daemon resident there [default:
+    /// $XDG_DATA_HOME/illogical/static].
+    #[arg(long, env = "ILLOGICAL_STATIC_DIR")]
+    static_dir: Option<PathBuf>,
+    /// A resident daemon in a sandbox (set when it's made resident): the
+    /// SHA-256 of the token the home daemon's tunnel presents. Connections
+    /// from this machine (the provider's proxy arrives on loopback) need
+    /// it; the Unix socket doesn't.
+    #[arg(long, value_name = "HEX")]
+    provider_token_sha256: Option<String>,
     /// An Anthropic API key for Claude Code agents in VMs, passed to them as
     /// ANTHROPIC_API_KEY [default: ~/.config/illogical/anthropic-key].
     #[arg(long, env = "ILLOGICAL_ANTHROPIC_KEY_FILE")]
@@ -151,6 +170,45 @@ struct RunArgs {
 
     #[command(flatten)]
     blocks: BlockArgs,
+
+    #[command(flatten)]
+    reach: ReachArgs,
+}
+
+/// M4c: reaching a home daemon from a host that can only dial out, and
+/// keeping history there.
+#[derive(clap::Args, Debug)]
+struct ReachArgs {
+    /// Dial out to this home daemon (`wss://geek.….ts.net`) and serve this
+    /// daemon through it, for when nothing can connect in. Redials with
+    /// backoff; this daemon works on its own meanwhile.
+    #[arg(long, env = "ILLOGICAL_PEER", requires = "token")]
+    peer: Option<String>,
+    /// The per-host token for --peer (and --sync), in a file. Mint one on
+    /// the home daemon with `illogical hosts token NAME`.
+    #[arg(long, env = "ILLOGICAL_TOKEN_FILE", value_name = "FILE")]
+    token: Option<PathBuf>,
+    /// An invite (`illogical hosts invite`) to trade for a token when the
+    /// --token file doesn't exist yet; the token is saved there.
+    #[arg(long, requires = "peer")]
+    join: Option<String>,
+    /// Push closed panes' history to the home daemon, which keeps it
+    /// encrypted after this host is gone.
+    #[arg(long, requires = "token")]
+    sync: bool,
+    /// Push open panes' history too, as it grows.
+    #[arg(long, requires = "sync")]
+    sync_live: bool,
+    /// Where to push [default: the --peer's https:// origin].
+    #[arg(long, requires = "sync")]
+    sync_to: Option<String>,
+    /// Seconds between pushes.
+    #[arg(long, default_value_t = 30, requires = "sync")]
+    sync_every: u64,
+    /// Home daemon: the key ring synced history is sealed with [default:
+    /// <state>/synced/key, made on first use, 0600].
+    #[arg(long, env = "ILLOGICAL_SYNC_KEY_FILE")]
+    sync_key_file: Option<PathBuf>,
 }
 
 /// Browser blocks on ports: each is served on its own origin by a listener
@@ -254,6 +312,44 @@ fn start_sites(
         };
         info!(%addr, "serving block sites");
         sites::serve(sites, listener, tls).await;
+    });
+    Ok(())
+}
+
+/// Dial out to the home daemon and push history there, if asked to.
+fn start_reach(r: &ReachArgs, app: &std::sync::Arc<server::App>, name: String) -> anyhow::Result<()> {
+    if let (Some(peer), Some(token_file)) = (&r.peer, &r.token) {
+        dial::dial_url(peer)?;
+        let opts = dial::PeerOpts { url: peer.clone(), token_file: token_file.clone(), join: r.join.clone(), name };
+        let (accept, streams) = tokio::sync::mpsc::unbounded_channel();
+        info!(peer, "dialing out to the home daemon");
+        tokio::spawn(axum::serve(dial::Streams(streams), server::tunnel_router(app.clone())).into_future());
+        tokio::spawn(dial::keep_dialing(opts, accept));
+    }
+    if r.sync {
+        let origin = match (&r.sync_to, &r.peer) {
+            (Some(to), _) => to.trim_end_matches('/').to_owned(),
+            (None, Some(peer)) => dial::home_origin(peer)?,
+            (None, None) => anyhow::bail!("--sync needs --peer or --sync-to"),
+        };
+        let opts = sync::PushOpts {
+            origin,
+            token_file: r.token.clone().expect("clap requires --token"),
+            live: r.sync_live,
+            every: std::time::Duration::from_secs(r.sync_every.max(1)),
+        };
+        info!(to = opts.origin, live = opts.live, "syncing history to the home daemon");
+        tokio::spawn(sync::keep_pushing(opts, app.mux.store.clone()));
+    }
+    // Synced history expires a day at a time.
+    let synced = app.synced.clone();
+    tokio::spawn(async move {
+        let mut day = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+        day.tick().await;
+        loop {
+            day.tick().await;
+            synced.prune(sync::RETAIN_MS);
+        }
     });
     Ok(())
 }
@@ -372,7 +468,12 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     if !direct.is_empty() || everywhere || userspace {
         direct.extend(public_hosts.iter().cloned());
     }
-    let access = access::Access::new(args.listen.port(), &public_hosts, &direct, &args.allow_origins, owner.clone());
+    let mut access =
+        access::Access::new(args.listen.port(), &public_hosts, &direct, &args.allow_origins, owner.clone());
+    if let Some(digest) = &args.provider_token_sha256 {
+        access = access.require_tunnel_token(digest)?;
+        info!("resident: loopback connections need the home daemon's tunnel token");
+    }
     let identify = tailscale::Identify::new(local_api, userspace);
     let name = args.name.clone().unwrap_or_else(|| {
         status
@@ -429,8 +530,10 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
             .unwrap_or_else(|| home().join(".local/share"))
             .join("wisp/token")
     });
-    let wisp = machine::Wisp::open(&args.wisp_url, &token_file).map(std::sync::Arc::new);
-    info!(url = args.wisp_url, on = wisp.is_some(), "VM panes");
+    let provider: Option<std::sync::Arc<dyn provider::Provider>> =
+        provider::sprites::Sprites::open(&args.wisp_url, &token_file)
+            .map(|p| std::sync::Arc::new(p) as std::sync::Arc<dyn provider::Provider>);
+    info!(url = args.wisp_url, on = provider.is_some(), "VM panes");
     let config = mux::Config {
         shell,
         shell_args,
@@ -439,7 +542,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
         launch,
         integration,
         socket: socket.clone(),
-        wisp,
+        provider: provider.clone(),
         daemon_id: daemon_id(&store),
         secrets: {
             let config = std::env::var_os("XDG_CONFIG_HOME")
@@ -454,9 +557,20 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     };
     let mux = mux::start(config, store, kept, push.clone());
 
-    let hosts = hosts::Hosts::open(&state_dir, name);
+    let hosts = hosts::Hosts::open(&state_dir, name.clone(), provider);
     hosts.spawn_probe();
-    let app = server::App::new(access, identify, mux.clone(), push, hosts);
+    let shares = share::Shares::open(&state_dir);
+    let synced = sync::Synced::new(&state_dir, args.reach.sync_key_file.clone());
+    synced.prune(sync::RETAIN_MS);
+    let static_dir = args.static_dir.clone().unwrap_or_else(|| {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".local/share"))
+            .join("illogical/static")
+    });
+    let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
+    let app = server::App::new(access, identify, mux.clone(), push, hosts, shares, synced, binaries);
+    start_reach(&args.reach, &app, name)?;
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     info!(addr = %args.listen, "listening");
     // The CLI's socket: replace a stale one from a previous run.

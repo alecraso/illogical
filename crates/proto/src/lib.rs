@@ -227,6 +227,10 @@ pub struct Machine {
     pub owner: Owner,
     #[serde(default)]
     pub state: MachineState,
+    /// Someone else's sandbox, borrowed for a shell (M4b): never created or
+    /// deleted by us; closing its owner only ends our sessions on it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub borrowed: bool,
 }
 
 /// A machine's owner: one pane (M3b), or a tab whose panes share it (M3c).

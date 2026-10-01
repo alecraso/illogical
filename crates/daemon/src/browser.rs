@@ -171,9 +171,11 @@ impl Browser {
 
     /// Where the block's ports are.
     fn target(&self, port: u16) -> Result<Target, String> {
-        match (&self.ctx.sprite, &self.ctx.wisp) {
+        match (&self.ctx.sprite, &self.ctx.provider) {
             (None, _) => Ok(Target::Local(port)),
-            (Some(sprite), Some(wisp)) => Ok(Target::Sprite { wisp: wisp.clone(), sprite: sprite.clone(), port }),
+            (Some(sprite), Some(provider)) => {
+                Ok(Target::Sprite { provider: provider.clone(), sprite: sprite.clone(), port })
+            }
             (Some(_), None) => Err("this block's machine can't be reached: VM panes aren't set up".into()),
         }
     }
