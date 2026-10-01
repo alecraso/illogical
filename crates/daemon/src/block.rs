@@ -28,8 +28,8 @@ use illogical_proto::{Attention, BlockType, PaneId, Policy};
 use serde_json::Value;
 
 use crate::{
-    machine::Wisp,
     pane::{Launcher, Notice, NoticeSink, What},
+    provider::Provider,
     store::PaneLog,
 };
 
@@ -71,7 +71,7 @@ pub struct Secrets {
 #[derive(Clone)]
 pub struct BlockEnv {
     pub notices: NoticeSink,
-    pub wisp: Option<Arc<Wisp>>,
+    pub provider: Option<Arc<dyn Provider>>,
     /// How processes are started on this host (shim, scope, FD store).
     pub launch: Launcher,
     /// The environment they get (as a pane's shell would).
@@ -89,7 +89,7 @@ pub struct BlockCtx {
     pub dir: PathBuf,
     notices: NoticeSink,
     pub rt: tokio::runtime::Handle,
-    pub wisp: Option<Arc<Wisp>>,
+    pub provider: Option<Arc<dyn Provider>>,
     /// The sprite it runs on, if not this host.
     pub sprite: Option<String>,
     /// Whether it's being brought back after a restart.
@@ -120,7 +120,7 @@ impl BlockCtx {
             dir,
             notices: base.notices,
             rt: tokio::runtime::Handle::current(),
-            wisp: base.wisp,
+            provider: base.provider,
             sprite,
             restoring,
             policy,

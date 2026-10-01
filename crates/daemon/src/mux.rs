@@ -25,11 +25,11 @@ use tracing::{info, warn};
 
 use crate::{
     block::{Block, BlockCtx},
-    machine::Wisp,
     osc::Signal,
     pane::{
         self, CommandRec, ExecRecord, Notice, NoticeSink, PaneHandle, Setup, Spawn, Start, Subscriber, ToClient, What,
     },
+    provider::Provider,
     push::Push,
     shellint::Integration,
     store::{LAYOUT_VERSION, PaneLog, PaneMeta, Saved, StateDir, now_ms},
@@ -94,7 +94,7 @@ pub struct MuxHandle {
     tx: mpsc::UnboundedSender<Cmd>,
     events: broadcast::Sender<Event>,
     pub store: StateDir,
-    pub wisp: Option<Arc<Wisp>>,
+    pub provider: Option<Arc<dyn Provider>>,
     /// Tags execs on machines (`ILLOGICAL_EXEC`; see `mux::exec_tag`).
     pub daemon_id: String,
 }
@@ -135,7 +135,7 @@ pub struct Config {
     /// The CLI's socket, for `ILLOGICAL_SOCK` in panes.
     pub socket: PathBuf,
     /// Where VM panes get their machines; `None` if not set up.
-    pub wisp: Option<Arc<Wisp>>,
+    pub provider: Option<Arc<dyn Provider>>,
     /// Names this daemon's sprites, so a crash sweep only touches ours.
     pub daemon_id: String,
     /// Where agents in VMs get their credentials from.
@@ -342,9 +342,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         }
     }
     d.sweep_machines();
-    let (wisp, daemon_id) = (d.config.wisp.clone(), d.config.daemon_id.clone());
+    let (provider, daemon_id) = (d.config.provider.clone(), d.config.daemon_id.clone());
     tokio::spawn(d.run(rx, notices_rx));
-    MuxHandle { tx, events, store, wisp, daemon_id }
+    MuxHandle { tx, events, store, provider, daemon_id }
 }
 
 fn info_of(rec: CommandRec) -> CommandInfo {
@@ -475,10 +475,12 @@ impl Daemon {
         let host = match machine {
             None => None,
             Some(m) => {
-                let wisp = self.config.wisp.clone().ok_or_else(|| std::io::Error::other("VM panes aren't set up"))?;
+                let provider =
+                    self.config.provider.clone().ok_or_else(|| std::io::Error::other("VM panes aren't set up"))?;
                 let machine = self.machines.get(&m).ok_or_else(|| std::io::Error::other("no such machine"))?;
                 Some(pane::Host {
-                    wisp,
+                    provider,
+                    borrowed: machine.borrowed,
                     sprite: machine.sprite.clone(),
                     image: machine.image.clone(),
                     rt: tokio::runtime::Handle::current(),
@@ -522,7 +524,7 @@ impl Daemon {
         let dir = self.store.pane_dir(id);
         let base = crate::block::BlockEnv {
             notices: self.notices.clone(),
-            wisp: self.config.wisp.clone(),
+            provider: self.config.provider.clone(),
             launch: self.config.launch.clone(),
             env: self.config.env(id),
             home: self.config.home.clone(),
@@ -931,16 +933,34 @@ impl Daemon {
     /// A new machine for the next pane; it's created when its first
     /// program starts.
     fn new_machine(&mut self, image: Option<String>) -> Result<MachineId, String> {
-        if self.config.wisp.is_none() {
+        if self.config.provider.is_none() {
             return Err("VM panes aren't set up: illogicald found no wisp token (see --wisp-token-file)".into());
         }
         let id = self.next_machine;
-        self.next_machine += 1;
         let sprite = format!("{}{id}", self.config.sprite_prefix());
+        Ok(self.add_machine(sprite, image, false))
+    }
+
+    /// Someone else's sandbox, borrowed for the next pane's shell ("open
+    /// shell", M4b): never created, reset or deleted by us.
+    fn borrow_machine(&mut self, sprite: &str) -> Result<MachineId, String> {
+        if self.config.provider.is_none() {
+            return Err("no sandbox provider: illogicald found no wisp token (see --wisp-token-file)".into());
+        }
+        if sprite.starts_with(&self.config.sprite_prefix()) {
+            return Err(format!("{sprite} is one of this daemon's own machines"));
+        }
+        Ok(self.add_machine(sprite.to_owned(), None, true))
+    }
+
+    fn add_machine(&mut self, sprite: String, image: Option<String>, borrowed: bool) -> MachineId {
+        let id = self.next_machine;
+        self.next_machine += 1;
+        let provider = self.config.provider.as_ref().map_or("wisp", |p| p.name()).to_owned();
         let owner = Owner::Pane(0);
-        let m = Machine { id, provider: "wisp".into(), sprite, image, owner, state: MachineState::Starting };
+        let m = Machine { id, provider, sprite, image, owner, state: MachineState::Starting, borrowed };
         self.machines.insert(id, m);
-        Ok(id)
+        id
     }
 
     fn machine_of(&self, pane: PaneId) -> Option<&Machine> {
@@ -1011,9 +1031,12 @@ impl Daemon {
     /// by its policy, on a new one.
     fn reset_machine(&mut self, id: MachineId) -> Result<(), String> {
         let m = self.machines.get_mut(&id).ok_or("no such machine")?;
+        if m.borrowed {
+            return Err(format!("{} isn't ours to reset", m.sprite));
+        }
         m.state = MachineState::Starting;
         let sprite = m.sprite.clone();
-        let wisp = self.config.wisp.clone().ok_or("VM panes aren't set up")?;
+        let provider = self.config.provider.clone().ok_or("VM panes aren't set up")?;
         info!(machine = id, sprite, "resetting machine");
         self.emit(None, EventKind::Machine { machine: id, state: MachineState::Starting });
         self.broadcast();
@@ -1027,7 +1050,7 @@ impl Daemon {
         }
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = wisp.delete(&sprite).await {
+            if let Err(e) = provider.delete(&sprite).await {
                 warn!(sprite, error = %e, "can't delete machine to reset it");
             }
             let _ = tx.send(Cmd::MachineReset(id));
@@ -1047,9 +1070,13 @@ impl Daemon {
     fn delete_machine(&mut self, id: MachineId) {
         let Some(m) = self.machines.remove(&id) else { return };
         self.emit(None, EventKind::Machine { machine: id, state: MachineState::Gone });
-        let Some(wisp) = self.config.wisp.clone() else { return };
+        if m.borrowed {
+            // Its shells were hung up as their panes closed.
+            return info!(machine = m.id, sprite = m.sprite, "let go of a borrowed machine");
+        }
+        let Some(provider) = self.config.provider.clone() else { return };
         tokio::spawn(async move {
-            match wisp.delete(&m.sprite).await {
+            match provider.delete(&m.sprite).await {
                 Ok(()) => info!(machine = m.id, sprite = m.sprite, "deleted machine"),
                 Err(e) => warn!(machine = m.id, sprite = m.sprite, error = %e, "can't delete machine"),
             }
@@ -1059,16 +1086,16 @@ impl Daemon {
     /// Delete our sprites that no machine owns: left by a crash, or by a
     /// pane closed while the daemon was down.
     fn sweep_machines(&self) {
-        let Some(wisp) = self.config.wisp.clone() else { return };
+        let Some(provider) = self.config.provider.clone() else { return };
         let prefix = self.config.sprite_prefix();
         let keep: Vec<String> = self.machines.values().map(|m| m.sprite.clone()).collect();
         tokio::spawn(async move {
-            let names = match wisp.list(&prefix).await {
-                Ok(n) => n,
+            let names = match provider.list(&prefix).await {
+                Ok(n) => n.into_iter().map(|s| s.name).collect::<Vec<_>>(),
                 Err(e) => return warn!(error = %e, "can't list machines to sweep"),
             };
             for name in names.into_iter().filter(|n| !keep.contains(n)) {
-                match wisp.delete(&name).await {
+                match provider.delete(&name).await {
                     Ok(()) => info!(sprite = name, "deleted a machine nothing owns"),
                     Err(e) => warn!(sprite = name, error = %e, "can't delete stray machine"),
                 }

@@ -14,6 +14,7 @@ mod mux;
 mod osc;
 mod pane;
 mod ports;
+mod provider;
 mod push;
 mod sandbox;
 mod server;
@@ -429,8 +430,10 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
             .unwrap_or_else(|| home().join(".local/share"))
             .join("wisp/token")
     });
-    let wisp = machine::Wisp::open(&args.wisp_url, &token_file).map(std::sync::Arc::new);
-    info!(url = args.wisp_url, on = wisp.is_some(), "VM panes");
+    let provider: Option<std::sync::Arc<dyn provider::Provider>> =
+        provider::sprites::Sprites::open(&args.wisp_url, &token_file)
+            .map(|p| std::sync::Arc::new(p) as std::sync::Arc<dyn provider::Provider>);
+    info!(url = args.wisp_url, on = provider.is_some(), "VM panes");
     let config = mux::Config {
         shell,
         shell_args,
@@ -439,7 +442,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
         launch,
         integration,
         socket: socket.clone(),
-        wisp,
+        provider: provider.clone(),
         daemon_id: daemon_id(&store),
         secrets: {
             let config = std::env::var_os("XDG_CONFIG_HOME")

@@ -35,8 +35,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::{
-    machine::{Begin, Exec, ExecEvent, Wisp},
+    machine::{Begin, Exec, ExecEvent},
     osc::Signal,
+    provider::Provider,
     store::{Event, PaneLog, now_ms},
 };
 
@@ -362,7 +363,9 @@ pub struct Setup {
 /// A machine a pane's programs run on.
 #[derive(Clone)]
 pub struct Host {
-    pub wisp: Arc<Wisp>,
+    pub provider: Arc<dyn Provider>,
+    /// Someone else's sandbox (an "open shell"): never created by us.
+    pub borrowed: bool,
     pub sprite: String,
     pub image: Option<String>,
     pub rt: tokio::runtime::Handle,
@@ -989,7 +992,7 @@ impl State {
         let key = NEXT_EXEC.fetch_add(1, Ordering::Relaxed);
         let events = self.events.clone();
         let exec =
-            crate::machine::start(&host.rt, host.wisp.clone(), host.sprite.clone(), begin, self.engine.size(), {
+            crate::machine::start(&host.rt, host.provider.clone(), host.sprite.clone(), begin, self.engine.size(), {
                 move |event| events.send(Cmd::Exec { key, event }).is_ok()
             });
         self.running.store(true, Ordering::Relaxed);
@@ -1087,7 +1090,7 @@ impl State {
             }
             info!(pane = self.id, sprite = host.sprite, program = %spawn.program, "starting on machine");
             let image = host.image.clone();
-            return self.attach_exec(&host, Begin::New { spawn: spawn.clone(), image });
+            return self.attach_exec(&host, Begin::New { spawn: spawn.clone(), image, create: !host.borrowed });
         }
         let (cols, rows) = self.engine.size();
         match Process::start(spawn, &self.launch, &self.record, cols, rows, self.id, self.events.clone()) {
