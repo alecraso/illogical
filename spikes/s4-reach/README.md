@@ -44,9 +44,18 @@ SPRITE_TOKEN=... bun probe.ts create|run|replay|detach|attach|kill|sessions|watc
 | Daemon bound to `127.0.0.1` reachable over the tailnet | yes (netstack forwards to loopback) | — |
 | Tailnet traffic **wakes** a paused sprite | **no** (ping and TCP time out; it stays warm) | — |
 | Tailnet usable again after a wake through the proxy | within about 5s, direct path restored | — |
-| Ephemeral node survives a pause | yes after about 5 min `cold` (still listed, comes back); 60 min *pending* | — |
+| Ephemeral node survives a long pause | yes: still listed after about 45 min offline; pong on the first ping after the wake, and the direct path is restored (tailscaled logs "time jump detected") | — |
 
-**Fly's `cold` is not (always) a reboot.** Fly's docs say a cold wake drops
+**Fly's `cold` was a memory restore, not a reboot, every time we saw it.**
+After 5 and 60 minutes `cold`, all processes kept their PIDs (a marker
+`sleep`, the daemon, tailscaled). Uptime excluded the frozen time, so the
+reported boot time shifted. Wakes took 248ms and 836ms to the daemon's first
+byte.
+
+**wisp's `cold` is a real reboot.** Services restart at wake, and the proxy
+holds the connection until the port listens.
+
+**Original note:** Fly's docs say a cold wake drops
 process state and takes 1–2s. In this run, a sprite reported `cold` 4.7 min
 after the last activity and woke in about 250ms with every process intact.
 Dropping processes may happen later or under host pressure. Either way,
@@ -106,3 +115,17 @@ and 6s over local wisp.
    implementations: replay size, owner semantics, content-type strictness,
    kill output. The `Provider` trait should treat exec replay and ownership as
    capabilities to query, not assumptions.
+
+## Cleanup
+
+- Both sprites were deleted (the API returns 404 for each).
+- The local token and key copies were removed.
+- `tailscale logout` inside the sprite hung and didn't finish. The ephemeral
+  node `illogical-s4-probe` was still listed (offline) afterwards. Tailscale
+  should remove it automatically; otherwise remove it in the admin console.
+
+## Still open
+
+- tailscaled on wisp (needs another key).
+- Whether Fly ever drops processes on cold (none seen up to 60 min).
+- How long ephemeral nodes last while their sprite sleeps for days.

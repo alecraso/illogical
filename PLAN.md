@@ -30,10 +30,10 @@ illogicald  127.0.0.1:7681 (+ $XDG_RUNTIME_DIR/illogical/sock)
   pane: PTY master, VtEngine (libghostty-vt), log writer, OSC tap (133/7/633)
   store: ~/.local/state/illogical/
            layout.json                     atomic write, debounced on change
-           panes/%N/log/000001.seg ...     raw output bytes
-           panes/%N/index                  (offset, ts, resize | osc133 | osc7 | exit)
-           panes/%N/meta.json              cmd, cwd, policy, exit status
-           panes/%N/checkpoint             periodic VT snapshot + log offset
+           blocks/%N/log/000001.seg ...    raw output bytes (other block types: their event stream)
+           blocks/%N/index                 (offset, ts, resize | osc133 | osc7 | exit)
+           blocks/%N/meta.json             cmd, cwd, policy, exit status
+           blocks/%N/checkpoint            periodic VT snapshot + log offset
 ```
 
 **Terms.** A *block* is a leaf of the tree. It has a `type`; only `terminal`
@@ -169,11 +169,16 @@ Each milestone ends with a demo against the acceptance list.
     awake; output, held-open proxy connections and attached panes do.
   - A paused sprite can only be woken through the provider (proxy, exec or a
     URL hit). Tailnet packets don't wake it.
-  - Exec replay on reattach: about 6.5KB on Fly, 1 MiB on wisp. Ownership on
+  - Exec replay on reattach: about 6.5KB on Fly, 1 MiB on wisp. (The M3b
+    spike found wisp replays the whole ring from the start of the session,
+    with no end marker.) Ownership on
     reattach differs: `is_owner:true` on Fly, `false` on wisp.
   - Proxy round trip is about 50ms on both, the same as the tailnet from geek.
-  - Still pending: a cold wake on wisp; tailscaled on wisp; an ephemeral node
-    surviving 60 min cold.
+  - Cold wake: on Fly, processes survived about 5 min `cold`. On wisp it is a
+    real cold boot (first byte 305ms): the service restarts, and the proxy
+    holds the connection until the daemon listens.
+  - Still pending: tailscaled on wisp; an ephemeral node surviving 60 min
+    cold.
 
 - **S5 upstream snapshot: done 2026-10-01, passed.** See [spikes/s5-snapshot](spikes/s5-snapshot/README.md).
   - GHOSTSNP, through libghostty-rs `master` (`8953a74`, which pins Ghostty `22d13172` and needs Zig 0.16), round-trips every S1 fixture with **no fix-ups**: alt and primary screens, scrollback, the saved cursor, title, modes.
@@ -212,7 +217,7 @@ Each milestone ends with a demo against the acceptance list.
 
 ### M2: durability
 
-- **Log store:** segments of 4MB, plus the index and checkpoints (on idle 5s or every 2MB). Checkpoints are in whichever format S5 picks. Retention defaults to 256MB per pane and is configurable.
+- **Log store:** segments of 4MB, plus the index and checkpoints (on idle 5s or every 2MB). Checkpoints follow S5: GHOSTSNP, zstd-compressed, tagged with the Ghostty commit, and a cache over the log. Retention defaults to 256MB per pane and is configurable.
 - **Scrollback at rest (decided 2026-10-01).** Logs and checkpoints hold secrets (tokens pasted or echoed). The state dir is `0700` and the files are `0600`. Retention is enforced (above). `illogical purge %p` deletes a pane's history. Encryption is decided before M4c, below.
 - **Layout persistence:** `layout.json` is written atomically (temp file + rename + fsync dir), debounced to 250ms, with a schema version.
 - **Restore on start:** restart policies, scrollback replay as described above.
@@ -328,17 +333,54 @@ and `tail`. So the VM is modelled as *placement*, not as a kind of pane:
 
 **Lifecycle.**
 
-- **Create.** Create the sprite for the machine. For each terminal on it, exec
-  a login shell with `max_run_after_disconnect`, then send a resize after
-  `session_info`.
-- **Close.** When the owner node closes, kill its execs, then `DELETE` the
-  sprite. If a terminal's process exits but its owner node stays open, the
-  machine stays too.
+- **Create.** Create the sprite for the machine.
+  - Create returns in about 14ms and doesn't boot anything. The first exec
+    boots it.
+  - For each terminal on the machine, exec a login shell with the starting
+    size in the URL (`&cols=…&rows=…`; otherwise it starts at 80x24), with
+    `max_run_after_disconnect` set to hours so a slow daemon restart doesn't
+    find its shells killed. Then send a resize after `session_info`.
+  - The spike measured 328ms median from create to a visible prompt
+    (284–602ms).
+- **Close.** When the owner node closes, `DELETE` the sprite (204 in about
+  35ms). Don't kill the execs first: an interactive bash ignores SIGTERM, so
+  wisp waits 10s before SIGKILL. If a terminal's process exits but its owner
+  node stays open, the machine stays too.
+- **Machine gone.** When a sprite disappears, an attached exec closes with
+  WebSocket code 1006 and no exit frame. A 1006 alone could be a network drop,
+  so the daemon then fetches the sprite:
+  - 404 means "machine gone";
+  - 200 means reattach.
+
+  A process that ends normally always sends an exit frame, then close 1000.
 - **Persistence.**
   - Machines are tree state, so they live in `layout.json`.
-  - Exec ids live in each pane's `meta.json`.
+  - Exec ids, and a running count of exec bytes received, live in each pane's
+    `meta.json`.
   - On a restart (M2b), the daemon reattaches the execs and doesn't create
-    new sprites.
+    new sprites. Then it sends a resize; any attached client can resize,
+    `is_owner:false` or not.
+- **Replay on reattach (the one awkward bit).**
+  - wisp resends its whole ring (up to 1 MiB, from the start of the session)
+    on every reattach. That includes bytes the daemon already logged, and
+    nothing marks where the replay ends.
+  - The daemon skips as many bytes as its stored count. That works until a
+    session has produced more than 1 MiB. After that the ring has wrapped and
+    can't be aligned by counting.
+  - **Fallback:** match the tail of the daemon's log against the replay. If
+    that fails, drop the replay and write a `── reattached; output while
+    detached may be missing ──` rule.
+  - **Ask wisp upstream** for a stream offset in `session_info` or a
+    `since=` parameter; that removes the problem.
+- **Panes stay attached (for now).**
+  - An attached idle exec keeps the sprite `running`, even with no output. A
+    detached one pauses after about 31s, and resumes in about 33ms from
+    reattach to echo, with the shell intact.
+  - So M3b ships VM panes always attached: simple and correct, at the cost of
+    never pausing.
+  - Detaching idle, unwatched VM panes so their sprite can pause is a
+    follow-up that depends on the replay fix. Not tested yet: whether
+    WebSocket pings, rather than the open connection, are what keep it awake.
 - **Crash sweep.** Name sprites `illogical-eph-<daemon>-<machine>`. At startup,
   delete any whose machine isn't in the tree.
 - **After geek reboots (decided 2026-10-01).** wisp runs on geek, so a reboot
@@ -366,18 +408,24 @@ and `tail`. So the VM is modelled as *placement*, not as a kind of pane:
 - A "New VM pane" action and a host badge on blocks.
 - "Machine gone" shown in the exit event.
 
-**Spike first (about half a day, against local wisp):**
+**Spike: done 2026-10-01.** See [spikes/m3b-machines](spikes/m3b-machines/README.md).
 
-- How long from create to the first prompt?
-- wisp reattaches with `is_owner:false`. Can a reattached exec still resize?
-  If not, reattach after a restart leaves the size fixed, and we have to ask
-  wisp for an owner handoff.
-- Is exec throughput (about 400KB/s in S4) OK for `seq 1e6`? If not, run the
-  shell through `s4-probe` over the proxy instead of exec.
-- How long does a paused sprite take to resume when you type into an idle VM
-  pane?
-- Do two execs on one sprite behave independently? The tab-owned follow-up
-  depends on it.
+- **Exec TTY is the transport.** `seq 1 1000000` (7.9MB) took 299ms over
+  exec (about 26 MB/s), against 285ms through the proxy to an in-guest
+  daemon, and 327ms on a local PTY. All lines arrived in order. S4's 400KB/s
+  figure doesn't reproduce.
+- **Resizing works after reattach,** whether or not the client is the owner,
+  and the last resize wins. No owner handoff is needed.
+- **Two execs on one sprite are independent:** separate PTYs, sizes and
+  sessions, with separate detach and reattach. They share one process space
+  and one user, which is what tab-owned machines want.
+- **Still open:**
+  - whether pings or the open connection keep a sprite awake;
+  - what wisp does with a slow reader;
+  - a kill with a chosen signal;
+  - a wispd restart;
+  - behaviour after the 1h warm period, when wisp reboots the VM;
+  - how Fly handles a resize from a non-owner, and Fly's exec throughput.
 
 **Done when:**
 
@@ -478,6 +526,25 @@ instead.
    the protocol over that socket. The receiving daemon treats it as one more
    host. It isn't a hub; nothing else routes through it.
 
+**S4 conclusions** ([spikes/s4-reach](spikes/s4-reach/README.md)):
+
+1. **Only the provider can wake a sleeping sandbox.** Tailnet packets to a
+   paused sprite go nowhere. Connecting means: provider wake (a proxy
+   WebSocket or exec), then the data path.
+2. **tailscaled is free to keep.** It doesn't hold a sprite awake, survives
+   60-minute sleeps, and has a direct path again within seconds of a wake.
+   Order: wake through the provider, use the provider tunnel immediately, and
+   upgrade to tailnet when it answers.
+3. **The provider tunnel is a good data path, not just a waker:** about 50ms
+   round trip, the same as the tailnet from geek.
+4. **"Cold" means different things per provider.** On Fly it was a memory
+   restore every time we saw it; on wisp it's a reboot. The resident daemon
+   must handle both: restore from disk if it rebooted, carry on if not.
+5. **Provider exec has no durable scrollback** (Fly replays about 6.5KB).
+   No-install shells are disposable; history requires resident `illogicald`.
+6. **A detached idle shell lets the sprite sleep; output keeps it billed.**
+   Clients drop connections to hidden hosts.
+
 **Milestones:**
 
 - **M4a, federation + tailnet.**
@@ -504,6 +571,223 @@ instead.
     where an agent's secrets end up. The likely answer is to encrypt synced
     segments with a key held by the home daemon, and later fetch that key with
     the secrets-manager identity under Risks.
+
+### M6: non-terminal blocks (after M4b; M5 is independent of it)
+
+This is Superlogical's step 2, "multiplexer for all work" (see
+[docs/superlogical.md](docs/superlogical.md)), cut down to what illogical is
+for: agents, and the dev servers they start in throwaway machines. A terminal
+becomes one block type among several. Tabs, splits, drag, close, `host`, the
+event stream and the CLI all work the same for every type.
+
+M6 ships two types: **browser** (M6a) and **agent** (M6b). Job, file and diff
+blocks are candidates, listed at the end.
+
+**The block contract.** Every block type provides:
+
+- **config**, saved in `layout.json`: whatever it needs to recreate the block
+  (a URL, an agent session id). Restarting it follows the restart policies,
+  read per type.
+- **state**, as JSON: `describe %N` returns it, and changes go out as `event`.
+- **attention**, which reuses M3's `idle | working | needs-input | done`, so
+  badges, the "needs you" list and Web Push work for every type with no extra
+  code.
+- **`capture --text`**, a plain-text rendering. `history`, `search`, M5 and
+  agents can all read every block through this one method.
+- **its own methods**, called as `illogical call %N <method> [json]`. A type
+  can also add CLI sugar on top.
+- **a log** in `blocks/%N/`, using the M2 segment-and-index store. A terminal
+  logs bytes; an agent logs its event stream.
+
+**The rules this sets for earlier milestones:**
+
+- **IDs.** All blocks share one ID space (`%N`). M5's tmux front end needs
+  every leaf to look like a `%pane`.
+- **Store.** The store directory is `blocks/%N/` from M2 onwards (already in
+  the Architecture section), so nothing has to be migrated later.
+- **Web client.** The `TerminalView` pool becomes a `BlockView` pool with a
+  renderer per type. Re-parenting without remounting works the same way.
+- **M5.** A `-CC` client sees a non-terminal block as a read-only pane drawn
+  from `capture --text`, with a hint to open it in the web app.
+
+#### M6a: browser blocks
+
+A block that shows a web page, mainly a dev server inside a machine: run
+`npm run dev` in a terminal block, then open a browser block on port 5173 next
+to it, on the desktop and the phone.
+
+- **Prerequisite: tab-owned machines** (the M3b follow-up). The terminal block
+  and the browser block in a tab have to share one VM.
+- **Config:** `{ host, port, path }` for machine ports, or `{ url }` for other
+  pages.
+- **Routing.**
+  - Machine ports go through the daemon, which reaches a sprite's port through
+    the Sprites proxy (M4b), opening one proxy WebSocket per TCP connection,
+    and a local port directly.
+  - It has to carry WebSockets, so hot reload works. In S6, hot reload worked
+    through the Sprites proxy for Vite 8.3 (about 16–45ms, no full reload) and
+    Next.js 16.3 (React state kept).
+  - **The proxy speaks HTTP, not raw bytes:**
+    - it rewrites `Host` and `Origin` to `localhost:<port>`, which made both
+      dev servers work with no config;
+    - it strips the `Tailscale-User-*` headers, because serve adds them on
+      every port;
+    - it enforces its own owner and `Origin` check, because the rewrite turns
+      off the dev servers' own host and origin guards.
+  - **One hostname per block (decided 2026-10-01).**
+    - Each browser block gets its own origin, such as
+      `b-42.illogical.<domain>`, served at `/`.
+    - Dev servers need no base-path config, and blocks can't read each other's
+      pages or storage.
+    - Rejected: one shared serve port with `/b/%N/` paths, because every dev
+      server needs its base set and all blocks share one origin. Also
+      rejected: one serve port per block, because serve may only allow HTTPS
+      on 443, 8443 and 10000.
+  - **How it works:**
+    - a wildcard DNS record `*.illogical.<domain>` points at geek's tailnet
+      IP, so only the tailnet can reach it;
+    - a wildcard certificate comes from ACME with a DNS-01 challenge (geek
+      already has ACME and a Cloudflare token for wisp);
+    - the daemon terminates TLS for these names itself, on its own listener
+      rather than through `tailscale serve`;
+    - it identifies the caller by asking tailscaled who is connecting
+      (`WhoIs`), the same path M4 uses for direct connections.
+  - **To check before building it:**
+    - which domain to use;
+    - that the DNS record resolves only to the tailnet IP;
+    - which port the listener uses (443 on the tailnet IP is serve's);
+    - that the certificate renews.
+- **Security: proxied pages must never share the app's origin.**
+  - `tailscale serve` adds your identity to every request, so any script
+    served from the app's origin can drive every terminal you have. A dev
+    server in a sandbox is running code an agent wrote.
+  - So proxied pages are served from a separate origin: each block's own
+    hostname (above), never the app's. S6 proved the model with a second
+    serve port (:10000), which had a valid certificate and carried hot reload.
+    Port 8443 is taken by wispd on geek.
+  - The app's WebSocket keeps refusing any `Origin` other than its own. S6
+    confirmed a :10000 page gets a 403. The check must match the **exact**
+    origin, including the scheme; today it ignores the scheme.
+  - The iframe is sandboxed with `allow-scripts allow-forms allow-same-origin`.
+    - `allow-same-origin` here means the frame's *own* origin (its block
+      hostname), never the app's.
+    - Without it, S6 found storage throws, Vite needs `cors: true`, and Next
+      fails completely.
+- **Other pages.** Many external sites refuse to be framed
+  (`X-Frame-Options`, CSP `frame-ancestors`). Those show a card with "open in
+  new tab". This is not a browser engine.
+- **Methods:** `navigate{url}`, `reload`, `back`.
+- **Events:** `navigated{url, title}`, `load_error`.
+- **Attention:** the block is `working` while loading and `needs-input` on a
+  load error (for example, the dev server died).
+- **CLI:** `illogical open [--host m] [--split right] :5173/path` or
+  `illogical open https://…`.
+- **Done when:**
+  - in a tab-owned VM, `npm run dev` runs in one block and its app runs in a
+    browser block beside it;
+  - hot reload works on the desktop and the phone;
+  - a script in that app can't reach the illogical API;
+  - closing the tab deletes the VM and both blocks.
+
+#### M6b: agent blocks
+
+A structured view of an agent run in place of its TUI: messages, tool calls
+and permission requests as UI, with approve and deny buttons that work well on
+a phone. A Claude Code TUI in a terminal block stays fully supported. The
+agent block is the better phone and audit view, not a replacement.
+
+- **First adapter: Claude Code in headless streaming mode**, with a `cwd`
+  and an optional `host`, so the agent can run in a VM:
+
+  ```
+  claude -p --verbose --input-format stream-json --output-format stream-json \
+    --mcp-config <daemon's permission server> --strict-mcp-config \
+    --permission-prompt-tool mcp__illogical__approve --setting-sources <chosen>
+  ```
+
+  - `stream-json` output refuses to run without `--verbose`.
+  - `--permission-prompt-tool` works but is hidden from `--help`. Re-check it
+    on every Claude Code upgrade, along with the new
+    `--permission-prompts host|none`.
+  - Choose `--setting-sources` deliberately. Otherwise the user's Claude Code
+    hooks (including M3's attention hooks) fire inside agent blocks too.
+  - One process handles many turns on the same stdin and keeps context. Each
+    stdin line is `{"type":"user","message":{"role":"user","content":"…"}}`.
+  - `total_cost_usd` in `result` events is cumulative per process, not per
+    turn.
+  - S6's README has the full event mapping.
+- **Permissions.** The daemon provides a permission-prompt tool through
+  `--permission-prompt-tool`, a stdio MCP server that relays to the daemon
+  and blocks until you answer.
+  - S6 saw no timeout at 7 minutes. `MCP_TOOL_TIMEOUT`, and waits of hours,
+    are still unchecked.
+  - Read-only commands (`echo hello`) are allowed without asking. Only real
+    side effects reach the tool.
+  - A request puts the block in `needs-input`, which pushes to the phone (M3).
+  - Approve or deny from the block, the notification or
+    `illogical call %N approve`.
+  - Policies such as "always allow `npm test` in this block" are stored in its
+    config.
+- **Methods:** `send{text}`, `approve{id}`, `deny{id, reason}`, `interrupt`.
+- **State:** turn status, the current tool, the pending permission request,
+  cost and tokens.
+- **History.**
+  - The NDJSON event stream is the block's log.
+  - `capture --text` renders the transcript as Markdown.
+  - `history` and `search` cover agent runs as well as shell commands, which
+    makes "where did the agent's work go" one query.
+- **Daemon restarts (M2b).** An agent survives a restart with no lost turn
+  if:
+  - claude runs in its own scope, like a pane's shell;
+  - the daemon's ends of claude's stdin and stdout pipes go in the systemd FD
+    store, like PTY masters;
+  - the permission relay reconnects to the daemon and resends pending
+    requests. S6 killed the daemon with a request pending, restarted it 30s
+    later, and the turn finished.
+
+  Without the FD store, claude finishes its current turn when the pipes go
+  and then exits 0. It does not die from SIGPIPE.
+- **Restore after a reboot.** The session id from the stream is stored in the
+  config.
+  - The transcript comes back from the log.
+  - The `rerun` and `hook` policies resume with `--resume <session id>`. S6
+    showed context survives a SIGKILL. A tool call that was cut off comes back
+    as "outcome unknown".
+  - Claude's own transcript (`~/.claude/projects/<cwd>/<id>.jsonl`) is the
+    source of truth for anything said while the daemon was down.
+  - In a VM, it resumes on a fresh machine, like M3b.
+- **An `AgentAdapter` trait** keeps the block independent of Claude Code:
+  start, send, the event mapping, the permission hook and resume. Other
+  agents' streaming modes can be added later.
+- **CLI:** `illogical agent [--host m|--vm] [--cwd d] "prompt"` prints the
+  block id. Then use `wait %N --idle|--needs-input` and `tail %N`.
+- **Done when:**
+  - from the phone, start an agent block in a VM with a prompt;
+  - it asks to run a command, and you approve it from the push notification;
+  - it finishes;
+  - reboot geek, and the transcript is back and the agent resumes from the
+    block.
+
+#### S6: done 2026-10-01
+
+See [spikes/s6-blocks](spikes/s6-blocks/README.md). Both block types are
+feasible, and the findings are folded in above.
+
+**Still open:**
+
+- real phones (there's a manual checklist in the README);
+- cookies when the real app on :443 frames a block's hostname;
+- `MCP_TOOL_TIMEOUT` and permission waits of hours;
+- Next.js under a `basePath`;
+- an agent block running inside a VM.
+
+**Candidates after M6 (not committed):**
+
+- **job blocks:** a non-interactive command, or a hal0 or CI job. Status,
+  exit code, retries and logs, with no PTY.
+- **file and diff blocks:** a read-only view of a file, or the diff an agent
+  just made, on any host. This needs the filesystem-listing method from the
+  directory picker under Later.
 
 ### Later
 
@@ -554,6 +838,11 @@ Unit and property tests live in `core`. The `vt` crate is tested with snapshot r
 - **Sandboxes run untrusted agents.** A sandbox daemon must never hold
   credentials that reach other hosts: `tag:sandbox` ACLs, and per-host
   dial-out tokens that can only register that host.
+- **Clickjacking: fixed 2026-10-01, after M2b.** S6 found the app could be framed by any page, because serve authenticates by source.
+  - Every response now carries `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
+  - WebSocket `Origin` must match exactly, scheme and port included: `http://` for loopback and `https://` for the tailnet name.
+  - Still to do in M3: the HTTP API must refuse cross-origin requests that change anything (an `Origin` check, JSON-only bodies, no simple-form POSTs).
+- **Untrusted pages on the app's origin (M6a).** `tailscale serve` adds your identity to every request, so any script served from the app's origin is you. Proxied dev servers must be on a separate origin, and the WebSocket must keep checking `Origin`.
 - **Loopback trust.** Any local process can forge serve headers on 127.0.0.1. That is the same trust as the uid, and acceptable for single-user; require the `Host` header to match anyway.
 
 ## One-time setup (done 2026-10-01)
