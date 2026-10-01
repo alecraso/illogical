@@ -82,6 +82,24 @@ the daemon stopping, crashing, or the machine rebooting:
   a card with "open in new tab". Block directories are `blocks/<id>/` in
   the state directory (`panes/` before; it's moved, and left as a link).
 
+- **Browser blocks on ports** (M6a). Run `npm run dev` in a VM tab, then
+  *Open a port on this machine…* (pane menu), *Open a port on machine…*
+  (tab menu), *Open port* (phone sheet) or `illogical open --split right
+  :5173` puts the app beside it, hot reload and all. A block opened from a
+  pane shows that pane's machine's port (or this host's). Each block is
+  served on an origin of its own, `https://b-<id>.illogical.widgets.wtf:7443`
+  on geek, by the daemon, which proxies it to the port (through the Sprites
+  proxy for a VM). The dev server needs no config: the proxy rewrites
+  `Host` and `Origin` to `localhost:<port>`, and since that switches off the
+  server's own guards, the proxy enforces its own: only you (asked of
+  tailscaled), only the block's own origin, nothing cross-site but page
+  loads, framed only by the app. It strips `Tailscale-*` headers, so agent
+  code never learns who you are, and a script in the page can't reach
+  illogical: the app refuses every origin but its own. The block follows
+  the frame's navigations; when the server dies it asks for you and shows
+  the page again when the server is back. Events: `navigated`,
+  `load_error`.
+
 ### The CLI
 
 ```
@@ -104,6 +122,8 @@ illogical run --vm -- 'git clone … && make'   # on a throwaway VM (no command:
 illogical run --vm-tab                        # a tab whose panes share a new VM
 illogical machines                            # VMs, their owner (@tab or %pane) and state
 illogical open example.com                    # a browser block (--split %3 beside a pane)
+illogical open --split right :5173/about      # a port, beside this pane, on its VM tab's machine
+illogical open --host m2 :3000                # a port on machine m2 (--host local: this host)
 illogical describe %4                         # any block: type, place, state
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
@@ -147,6 +167,30 @@ anywhere on the tailnet (`tailscale serve --bg --https=443
 http://127.0.0.1:7681` is already configured on geek). The daemon accepts
 tailnet requests from the login that owns the node; `--owner` overrides.
 
+**Browser blocks on ports** need a listener for block sites; without one
+they're off. On geek:
+
+```
+illogicald install -- --block-listen 100.71.195.119:7443 \
+  --block-domain illogical.widgets.wtf \
+  --block-acme-cloudflare-token-file ~/.local/share/wisp/cloudflare-token
+```
+
+- `*.illogical.widgets.wtf` is a Cloudflare DNS record (DNS only) pointing
+  at geek's tailnet address, so only the tailnet reaches it. Port 443 there
+  is `tailscale serve`'s and 8443 is wispd's, hence 7443.
+- The daemon gets the wildcard certificate from Let's Encrypt itself, with a
+  DNS-01 challenge through Cloudflare (the token wisp already uses), and
+  renews it two thirds of the way through its life. It lives in
+  `<state>/acme/<CA>/`. `--block-acme-directory staging` uses the test CA;
+  `--block-cert`/`--block-key` serve files you renew yourself.
+- Callers are checked with `tailscale whois`: only the owner gets in.
+- **Dev mode:** `--block-listen 127.0.0.1:7701` without `--block-domain`
+  serves `http://b-<id>-<key>.localhost:7701` on loopback, where browsers
+  resolve `*.localhost` themselves. There's no identity there, so each
+  block's name carries a random key (kept in its config): only the app and
+  the CLI know it. The tests use this.
+
 **Pane environment.** At boot the daemon starts before you log in, so its own
 environment has no `WAYLAND_DISPLAY`, `DISPLAY` or desktop `SSH_AUTH_SOCK`.
 Each new pane takes the systemd user manager's environment as it is at that
@@ -177,8 +221,11 @@ against the running one.
   policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
   integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
   search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
-  (`machine.rs`: the Sprites API and exec TTY sessions), the WebSocket
-  server, embedded web client, access checks, `install`.
+  (`machine.rs`: the Sprites API and exec TTY sessions), blocks
+  (`block.rs`, `browser.rs`), block sites (`sites.rs`: per-block origins
+  and their HTTP proxy; `ports.rs`: reaching a port here or in a VM;
+  `tls.rs`: the wildcard certificate and ACME), the WebSocket server,
+  embedded web client, access checks, `install`.
 - `crates/cli`: `illogical`, over the daemon's Unix socket.
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
