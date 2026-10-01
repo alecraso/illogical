@@ -261,6 +261,8 @@ test("closing the VM tab deletes its machine", async ({ page }) => {
   await tabMenu(page, tab, "Close tab and machine");
   await expect.poll(() => machines(page)).toEqual([]);
   await expect.poll(() => spriteExists(sprite)).toBe(false);
-  const tail = await page.evaluate((p) => fetch(`/api/panes/${p}/tail?from=0&text=1`).then((r) => r.text()), vmB);
-  expect(tail).toContain("shared-42");
+  // (Its log may be moving to closed/ just then; ask until it answers.)
+  await expect
+    .poll(() => page.evaluate((p) => fetch(`/api/panes/${p}/tail?from=0&text=1`).then((r) => r.text()), vmB))
+    .toContain("shared-42");
 });
