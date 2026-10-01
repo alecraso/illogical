@@ -100,12 +100,15 @@ fn error(status: StatusCode, msg: impl Into<String>) -> Response {
 }
 
 /// A connection to the host's daemon, waiting out a cold boot.
-async fn dial(app: &App, host: &str) -> Result<(Conn, u16, String), Response> {
+async fn dial(app: &App, host: &str) -> Result<(Conn, u16, String), Box<Response>> {
     let Some((at, token)) = app.hosts.tunnel(host) else {
-        return Err(error(StatusCode::NOT_FOUND, format!("no provider host {host}")));
+        return Err(Box::new(error(StatusCode::NOT_FOUND, format!("no provider host {host}"))));
     };
     let Some(provider) = app.mux.provider.clone().filter(|p| p.name() == at.provider) else {
-        return Err(error(StatusCode::SERVICE_UNAVAILABLE, format!("provider {} isn't set up here", at.provider)));
+        return Err(Box::new(error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("provider {} isn't set up here", at.provider),
+        )));
     };
     let deadline = tokio::time::Instant::now() + PATIENCE;
     let mut woken = false;
@@ -114,10 +117,10 @@ async fn dial(app: &App, host: &str) -> Result<(Conn, u16, String), Response> {
             Ok(c) => return Ok((c, at.port, token)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 app.hosts.note_status(host, "gone");
-                return Err(error(StatusCode::BAD_GATEWAY, format!("{host}'s sandbox is gone")));
+                return Err(Box::new(error(StatusCode::BAD_GATEWAY, format!("{host}'s sandbox is gone"))));
             }
             Err(e) if tokio::time::Instant::now() >= deadline => {
-                return Err(error(StatusCode::BAD_GATEWAY, format!("{host} isn't answering: {e}")));
+                return Err(Box::new(error(StatusCode::BAD_GATEWAY, format!("{host} isn't answering: {e}"))));
             }
             Err(e) => {
                 debug!(host, error = %e, "tunnel: not answering yet");
@@ -138,7 +141,7 @@ async fn dial(app: &App, host: &str) -> Result<(Conn, u16, String), Response> {
 async fn tunnel(State(app): State<Arc<App>>, Path((host, rest)): Path<(String, String)>, mut req: Request) -> Response {
     let (conn, port, token) = match dial(&app, &host).await {
         Ok(c) => c,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     // Reached: it's running now, whatever the provider said last.
     app.hosts.note_status(&host, "running");
