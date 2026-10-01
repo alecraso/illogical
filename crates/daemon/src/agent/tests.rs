@@ -168,3 +168,42 @@ fn config_keeps_rules_but_not_the_first_prompt() {
         json!({ "agent": "claude", "cwd": "/src", "model": "haiku", "allow": [{ "tool": "Bash", "title": "make" }] })
     );
 }
+
+#[test]
+fn a_real_node_from_mise_not_its_shims() {
+    let root = std::env::temp_dir().join(format!("ilg-node-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for v in ["20.1.0", "22.9.1", "22.23.3", "24.21.0"] {
+        let bin = root.join(v).join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("node"), "").unwrap();
+    }
+    // Aliases mise keeps beside the versions are ignored.
+    std::fs::create_dir_all(root.join("lts/bin")).unwrap();
+    assert_eq!(super::mise_node(&root), Some(root.join("22.23.3/bin")));
+    std::fs::remove_dir_all(root.join("22.9.1")).unwrap();
+    std::fs::remove_dir_all(root.join("22.23.3")).unwrap();
+    assert_eq!(super::mise_node(&root), Some(root.join("24.21.0/bin")));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_prompt_queued_while_the_agent_is_down_survives_a_restart() {
+    let mut inner = Inner::new(Config::default(), None);
+    for l in [
+        frame("note", json!({ "e": "exit", "why": "exited with code 1" })),
+        frame("note", json!({ "e": "queue", "text": "whats this project?", "front": false })),
+    ] {
+        inner.rebuild_line(&l);
+    }
+    assert_eq!(inner.queue, ["whats this project?"]);
+    // Sending it takes it off, here as when it's rebuilt.
+    inner.rebuild_line(&frame(
+        "out",
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "session/prompt", "params": { "sessionId": "s1", "prompt": [{ "type": "text", "text": "whats this project?" }] } }),
+    ));
+    assert!(inner.queue.is_empty());
+    inner.rebuild_line(&frame("note", json!({ "e": "queue", "text": "later", "front": false })));
+    inner.rebuild_line(&frame("note", json!({ "e": "queue_clear" })));
+    assert!(inner.queue.is_empty(), "cancel drops what's queued");
+}

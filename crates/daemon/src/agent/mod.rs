@@ -303,6 +303,13 @@ impl Inner {
         self.on_note(&e, now_ms());
     }
 
+    /// Queue a prompt for the agent. It's in the log, so a prompt queued
+    /// while the agent is down survives a daemon restart; sending it takes
+    /// it off (see `session/prompt` in `on_out`).
+    fn enqueue(&mut self, text: &str, front: bool) {
+        self.note(json!({ "e": "queue", "text": text, "front": front }));
+    }
+
     /// Send a frame: log it, account for it, then write it.
     fn out(&mut self, frame: Value) {
         self.write_log("out", &frame);
@@ -330,6 +337,14 @@ impl Inner {
 
     fn on_note(&mut self, e: &Value, at: u64) {
         match e["e"].as_str().unwrap_or("") {
+            "queue" => {
+                let text = e["text"].as_str().unwrap_or_default().to_owned();
+                match e["front"].as_bool() {
+                    Some(true) => self.queue.push_front(text),
+                    _ => self.queue.push_back(text),
+                }
+            }
+            "queue_clear" => self.queue.clear(),
             "spawn" => {
                 // A new server: nothing outstanding carries over.
                 if self.prompt_id.is_some() || !self.pending.is_empty() {
@@ -427,6 +442,9 @@ impl Inner {
                             .filter_map(|c| c["text"].as_str())
                             .collect::<Vec<_>>()
                             .join("\n");
+                        if self.queue.front() == Some(&text) {
+                            self.queue.pop_front();
+                        }
                         self.t.user(&text, at);
                         self.prompt_id = Some(id);
                         self.status = Status::Working;
@@ -747,7 +765,7 @@ impl Agent {
     fn begin(&self) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(p) = inner.cfg.prompt.take() {
-            inner.queue.push_back(p);
+            inner.enqueue(&p, false);
         }
         if self.ctx.restoring {
             // Still running from before the restart: carry on with it.
@@ -921,13 +939,11 @@ fn secret_env(ctx: &BlockCtx) -> Result<Vec<(String, String)>, String> {
 }
 
 /// npm adapters are Node scripts: make sure a Node is on PATH even when the
-/// daemon runs as a service with a bare one (mise's shims, if there).
+/// daemon runs as a service with a bare one. mise's shims won't do: outside
+/// a directory that pins Node they refuse to pick a version. So: a real
+/// `node` already on PATH, else one mise installed (22, the version the
+/// adapters were tested with, else the newest), put first.
 fn with_node_on_path(env: &mut Vec<(String, String)>, home: &Path) {
-    let shims = home.join(".local/share/mise/shims");
-    if !shims.join("node").exists() {
-        return;
-    }
-    let shims = shims.display().to_string();
     let path = env
         .iter()
         .rev()
@@ -935,11 +951,31 @@ fn with_node_on_path(env: &mut Vec<(String, String)>, home: &Path) {
         .map(|(_, v)| v.clone())
         .or_else(|| std::env::var("PATH").ok())
         .unwrap_or_default();
-    if path.split(':').any(|p| p == shims) {
+    let shims = home.join(".local/share/mise/shims");
+    let real =
+        path.split(':').filter(|d| !d.is_empty() && Path::new(d) != shims).any(|d| Path::new(d).join("node").is_file());
+    if real {
         return;
     }
+    let Some(bin) = mise_node(&home.join(".local/share/mise/installs/node")) else { return };
     env.retain(|(k, _)| k != "PATH");
-    env.push(("PATH".into(), format!("{path}:{shims}")));
+    env.push(("PATH".into(), format!("{}:{path}", bin.display())));
+}
+
+/// The `bin` of a Node that mise installed: 22's if there, else the newest.
+fn mise_node(installs: &Path) -> Option<std::path::PathBuf> {
+    let mut versions: Vec<(Vec<u32>, std::path::PathBuf)> = std::fs::read_dir(installs)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let v: Vec<u32> = name.split('.').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            let bin = e.path().join("bin");
+            (v.len() == 3 && bin.join("node").is_file()).then_some((v, bin))
+        })
+        .collect();
+    versions.sort();
+    versions.iter().rev().find(|(v, _)| v[0] == 22).or_else(|| versions.last()).map(|(_, b)| b.clone())
 }
 
 /// The block's task: frames from the agent server, and publishing.
@@ -993,7 +1029,7 @@ async fn run(
                             if retries > MAX_RETRIES {
                                 g.note(json!({ "e": "error", "message": "The agent kept asking to retry; send it again later" }));
                             } else {
-                                g.queue.push_front(text.clone());
+                                g.enqueue(text, true);
                                 retry_at = Some(tokio::time::Instant::now() + RETRY_AFTER);
                             }
                             continue;
@@ -1172,7 +1208,7 @@ fn send_next(ctx: &BlockCtx, g: &mut Inner) {
     if g.status != Status::Ready || g.prompt_id.is_some() || g.cfg.session_id.is_none() {
         return;
     }
-    let Some(text) = g.queue.pop_front() else { return };
+    let Some(text) = g.queue.front().cloned() else { return };
     let session = g.session();
     let mut params = json!({ "sessionId": session, "prompt": [{ "type": "text", "text": text }] });
     if g.cfg.def.agent == Kind::Fountain {
@@ -1254,7 +1290,7 @@ impl Agent {
 
     fn cancel(&self) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
-        g.queue.clear();
+        g.note(json!({ "e": "queue_clear" }));
         let open: Vec<Value> = g.pending.iter().map(|p| p.rpc.clone()).collect();
         if g.prompt_id.is_none() && open.is_empty() {
             drop(g);
@@ -1275,7 +1311,7 @@ impl Agent {
     fn send(&self, args: &Value) -> Result<Value, String> {
         let text = args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or("send needs {\"text\": …}")?;
         let mut g = self.inner.lock().unwrap();
-        g.queue.push_back(text.to_owned());
+        g.enqueue(text, false);
         g.error = None;
         match g.status {
             Status::Exited | Status::Stopped => self.spawn(&mut g),
