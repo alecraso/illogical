@@ -6,6 +6,7 @@ import { useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
 import { useSubscribe } from "./hooks";
 import { AttentionBadge } from "./attention";
+import { startAgent } from "./agent-dialog";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -89,6 +90,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             New tab
           </button>
           <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
+          <button onClick={act(() => client.session !== null && startAgent(client, { session: client.session, from: active }))}>New agent</button>
           {active !== undefined && (
             <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right" }))}>Split pane</button>
           )}

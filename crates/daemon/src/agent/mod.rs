@@ -549,6 +549,9 @@ impl Inner {
                             self.title = Some(title.to_owned());
                         }
                     }
+                    // Your prompts come from what we sent; an agent echoing
+                    // them live would say them twice. (A replay's count.)
+                    "user_message_chunk" if self.replay.is_none() => {}
                     _ => {
                         let applied = match self.replay.as_mut() {
                             Some(r) => r.apply(u, at),
