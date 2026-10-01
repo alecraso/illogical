@@ -10,6 +10,20 @@ Prompts:
   slow           streams for ~10s unless cancelled
   remember WORD  remembers WORD; "recall" says it (across processes)
   crash          exits with code 3 mid-turn
+  ask [one|two|preview]
+                 AskUserQuestion as claude-agent-acp 0.81.2 sends it (S13):
+                 a tool call, then elicitation/create with question_<n>
+                 fields; the reply says what was answered. Three questions
+                 by default; one with two options; two (a multi-select and
+                 a single); one with previews. Stop withdraws it with
+                 $/cancel_request.
+  form           an MCP server's form (no toolCallId, enum + enumNames)
+  signin         an MCP server's sign-in link; elicitation/complete follows
+                 the accept
+  codex ask      Codex's plan-mode question form
+
+Only clients that declare elicitation {form: {}, url: {}} get questions; the
+others get "I don't have access to an AskUserQuestion tool" (S13).
 """
 
 import json
@@ -25,6 +39,9 @@ out_lock = threading.Lock()
 next_id = [0]
 waiting = {}  # our request id -> [event, answer]
 cancelled = set()  # session ids with a cancel pending
+asking = {}  # session id -> the elicitation request id it waits on
+caps = {}  # the client's capabilities
+WITHDRAWN = {"withdrawn": True}
 
 
 def log(*a):
@@ -80,6 +97,118 @@ def ask(sid, tool_id, cmd):
     return waiting.pop(rid)[1]
 
 
+COLOUR = {"question": "Which colour do you prefer?", "header": "Colour", "multiSelect": False, "options": [
+    {"label": "Red", "description": "A warm, bold colour"}, {"label": "Blue", "description": "A cool, calming colour"}]}
+FRUIT = {"question": "Which fruits do you like?", "header": "Fruit", "multiSelect": True, "options": [
+    {"label": "Apple", "description": "Crisp and sweet"}, {"label": "Pear", "description": "Soft and juicy"},
+    {"label": "Plum", "description": "Tart and sweet"}]}
+PET = {"question": "Which pet do you prefer?", "header": "Pet", "multiSelect": False, "options": [
+    {"label": "Cat", "description": "Independent"}, {"label": "Dog", "description": "Loyal"}]}
+LAYOUT = {"question": "Which layout?", "header": "Layout", "multiSelect": False, "options": [
+    {"label": "Sidebar", "description": "Navigation on the left side",
+     "preview": "+------+--------------+\n| Nav  | Content Area |\n|      | goes here    |\n+------+--------------+"},
+    {"label": "Top bar", "description": "Navigation across the top",
+     "preview": "+---------------------+\n| Nav                 |\n+---------------------+\n| Content Area        |"}]}
+QUESTIONS = {"ask": [COLOUR, FRUIT, PET], "ask one": [COLOUR], "ask two": [FRUIT, PET], "ask preview": [LAYOUT]}
+
+
+def schema_of(questions):
+    """The form claude-agent-acp makes of AskUserQuestion's input."""
+    props = {}
+    for n, q in enumerate(questions):
+        opts = []
+        for o in q["options"]:
+            opt = {"const": o["label"], "title": o["label"], "description": o.get("description", "")}
+            if "preview" in o:
+                opt["_meta"] = {"_claude/askUserQuestionOption": {"preview": o["preview"]}}
+            opts.append(opt)
+        field = {"type": "array", "title": q["header"], "items": {"anyOf": opts}} if q["multiSelect"] else \
+            {"type": "string", "title": q["header"], "oneOf": opts}
+        if len(questions) > 1:
+            field["description"] = q["question"]
+        props[f"question_{n}"] = field
+        props[f"question_{n}_custom"] = {
+            "type": "string", "title": "Other",
+            "description": "Type your own answer to add to your selection above (optional)." if q["multiSelect"]
+            else "Type your own answer, or add a note to the option you chose above (optional).",
+            "_meta": {"_askUserQuestionCustomAnswer": {"questionId": f"question_{n}", "isCustomAnswer": True}}}
+    return {"type": "object", "properties": props}
+
+
+def answers_of(questions, content):
+    answers, notes = {}, {}
+    for n, q in enumerate(questions):
+        pick = content.get(f"question_{n}")
+        picks = [pick] if isinstance(pick, str) and pick else [x for x in (pick or []) if x] if isinstance(pick, list) else []
+        custom = (content.get(f"question_{n}_custom") or "").strip()
+        if q["multiSelect"]:
+            items = picks + ([custom] if custom else [])
+            if items:
+                answers[q["question"]] = ", ".join(items)
+        elif picks:
+            answers[q["question"]] = picks[0]
+            if custom:
+                notes[q["question"]] = {"notes": custom}
+        elif custom:
+            answers[q["question"]] = custom
+    return answers, notes
+
+
+def elicit(sid, params):
+    """Send elicitation/create; wait for the answer (or a withdrawal)."""
+    rid = next_id[0]
+    next_id[0] += 1
+    ev = threading.Event()
+    waiting[rid] = [ev, None]
+    asking[sid] = rid
+    send({"id": rid, "method": "elicitation/create", "params": {"sessionId": sid, **params}})
+    ev.wait()
+    asking.pop(sid, None)
+    return waiting.pop(rid)[1]
+
+
+def ask_user(sid, s, n, questions, msg):
+    """AskUserQuestion. Returns the stop reason."""
+    tid = f"toolu_{n}"
+    meta = {"claudeCode": {"toolName": "AskUserQuestion"}}
+    update(sid, s, {"_meta": meta, "toolCallId": tid, "sessionUpdate": "tool_call", "name": "AskUserQuestion",
+                    "rawInput": {}, "status": "pending", "title": "Asking for your input", "kind": "other",
+                    "content": []})
+    update(sid, s, {"_meta": meta, "toolCallId": tid, "sessionUpdate": "tool_call_update",
+                    "rawInput": {"questions": questions}, "title": "Asking for your input", "kind": "other",
+                    "content": [{"type": "content", "content": {"type": "text", "text": q["question"]}}
+                                for q in questions]})
+    message = questions[0]["question"] if len(questions) == 1 else "Please answer the following questions."
+    answer = elicit(sid, {"mode": "form", "toolCallId": tid, "message": message,
+                          "requestedSchema": schema_of(questions)})
+    if answer is WITHDRAWN:
+        return "cancelled"
+    if (answer or {}).get("action") == "accept":
+        answers, notes = answers_of(questions, answer.get("content") or {})
+        response = {"questions": questions, "answers": answers}
+        if notes:
+            response["annotations"] = notes
+        update(sid, s, {"_meta": {"claudeCode": {"toolResponse": response, "toolName": "AskUserQuestion"}},
+                        "toolCallId": tid, "sessionUpdate": "tool_call_update"})
+        said = ", ".join(f'"{q}"="{a}"' + (f" notes: {notes[q]['notes']}" if q in notes else "")
+                         for q, a in answers.items())
+        text = f"The user answered: {said}."
+        update(sid, s, {"_meta": meta, "toolCallId": tid, "sessionUpdate": "tool_call_update", "status": "completed",
+                        "rawOutput": text, "content": [{"type": "content", "content": {"type": "text", "text": text}}]})
+        msg("You answered: " + "; ".join(f"{q} {a}" + (f" ({notes[q]['notes']})" if q in notes else "")
+                                         for q, a in answers.items()))
+    elif (answer or {}).get("action") == "decline":
+        text = "The user did not answer the questions."
+        update(sid, s, {"_meta": meta, "toolCallId": tid, "sessionUpdate": "tool_call_update", "status": "completed",
+                        "rawOutput": text, "content": [{"type": "content", "content": {"type": "text", "text": text}}]})
+        msg("You didn't answer the question.")
+    else:
+        update(sid, s, {"_meta": meta, "toolCallId": tid, "sessionUpdate": "tool_call_update", "status": "failed",
+                        "rawOutput": "Tool permission request failed: Error: Tool use aborted"})
+        msg("I couldn't ask you.")
+    return "end_turn"
+
+
 def prompt(mid, p):
     sid = p["sessionId"]
     s = load(sid)
@@ -126,6 +255,52 @@ def prompt(mid, p):
         msg("OK")
     elif text == "recall":
         msg(f"You said {s.get('memory', 'nothing')}.")
+    elif text in QUESTIONS:
+        if (caps.get("elicitation") or {}).get("form") is None:
+            msg("I don't have access to an AskUserQuestion tool.")
+        else:
+            stop = ask_user(sid, s, n, QUESTIONS[text], msg)
+    elif text == "form":
+        answer = elicit(sid, {"mode": "form", "message": "Order details", "requestedSchema": {
+            "type": "object", "properties": {
+                "size": {"type": "string", "title": "Size", "enum": ["S", "M", "L"],
+                         "enumNames": ["Small", "Medium", "Large"]},
+                "qty": {"type": "integer", "title": "Quantity", "minimum": 1, "maximum": 9},
+                "gift": {"type": "boolean", "title": "Gift wrap"}},
+            "required": ["size"]}})
+        if answer is WITHDRAWN:
+            stop = "cancelled"
+        else:
+            msg(f"Order: {json.dumps(answer, sort_keys=True)}")
+    elif text == "signin":
+        eid = f"signin-{n}"
+        answer = elicit(sid, {"mode": "url", "message": "Sign in to Fake", "url": "https://example.com/fake-signin",
+                              "elicitationId": eid})
+        if answer is WITHDRAWN:
+            stop = "cancelled"
+        elif (answer or {}).get("action") == "accept":
+            time.sleep(0.5)
+            send({"method": "elicitation/complete", "params": {"elicitationId": eid}})
+            msg("Signed in.")
+        else:
+            msg("Not signed in.")
+    elif text == "codex ask":
+        answer = elicit(sid, {"mode": "form", "toolCallId": f"call_{n}", "message": "Codex needs your input to continue.",
+                              "requestedSchema": {"type": "object", "properties": {
+                                  "colour": {"title": "Which colour do you prefer, red or blue?", "description": "Colour",
+                                             "_meta": {"codex": {"isOther": True, "isSecret": False}}, "type": "string",
+                                             "oneOf": [{"const": "Red", "title": "Red", "description": "Choose red."},
+                                                       {"const": "Blue", "title": "Blue", "description": "Choose blue."},
+                                                       {"const": "None of the above", "title": "None of the above",
+                                                        "description": "Provide a different answer in the note field."}]},
+                                  "colour_note": {"type": "string", "title": "Additional answer or note",
+                                                  "_meta": {"codex": {"questionId": "colour", "role": "user_note"}}}},
+                                  "required": ["colour"]},
+                              "_meta": {"codex": {"autoResolutionMs": None}}})
+        if answer is WITHDRAWN:
+            stop = "cancelled"
+        else:
+            msg(f"Codex got: {json.dumps(answer, sort_keys=True)}")
     elif text == "crash":
         msg("bye")
         os._exit(3)
@@ -147,6 +322,7 @@ def handle(m):
             waiting[mid][0].set()
         return
     if method == "initialize":
+        caps.update(p.get("clientCapabilities") or {})
         send({"id": mid, "result": {"protocolVersion": 1, "agentCapabilities": {
             "loadSession": True, "sessionCapabilities": {"resume": {}}},
             "agentInfo": {"name": "fake-acp", "version": "1"}, "authMethods": []}})
@@ -168,7 +344,16 @@ def handle(m):
     elif method == "session/prompt":
         threading.Thread(target=prompt, args=(mid, p), daemon=True).start()
     elif method == "session/cancel":
-        cancelled.add(p.get("sessionId"))
+        sid = p.get("sessionId")
+        rid = asking.get(sid)
+        if rid is not None and rid in waiting:
+            # As claude-agent-acp does: withdraw our own open request; a late
+            # answer to it is ignored.
+            send({"method": "$/cancel_request", "params": {"requestId": rid}})
+            waiting[rid][1] = WITHDRAWN
+            waiting[rid][0].set()
+        else:
+            cancelled.add(sid)
     elif mid is not None:
         send({"id": mid, "error": {"code": -32601, "message": f"no {method}"}})
 

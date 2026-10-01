@@ -9,6 +9,8 @@
 //! | POST | `/api/panes/N/keys` | `KeysRequest` | `{}` |
 //! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
+//! | POST | `/api/panes/N/ask` | `{questions, id}` (AskUserQuestion's, from `illogical ask`) | when answered: `{action: accept\|decline\|terminal\|withdrawn, content?, output?}` |
+//! | POST | `/api/panes/N/ask/withdraw` | `{id}` | `{}`: the asker gave up |
 //! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
 //! | POST | `/api/blocks` | `OpenRequest` | `{"block": N}` |
 //! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |
@@ -235,9 +237,12 @@ pub enum WaitResult {
         text: String,
         offset: u64,
     },
-    /// `until=idle` (no longer working) or `until=needs-input`: where it got.
+    /// `until=idle` (no longer working) or `until=needs-input`: where it got,
+    /// and the question it's waiting on, if that's why.
     Attention {
         state: Attention,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask: Option<crate::ask::Ask>,
     },
     Timeout,
 }

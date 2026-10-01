@@ -1,6 +1,7 @@
 // Agent blocks (M6b): an agent run as messages, thoughts and tool-call
 // cards, with its commands' output in a read-only terminal, permission
-// requests as approve/deny cards, and a composer. Works the same on a phone.
+// requests as approve/deny cards, questions and forms as cards (M6c), and a
+// composer. Works the same on a phone.
 
 import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -11,10 +12,13 @@ import type { PaneId } from "../proto";
 import { theme } from "../theme";
 import { askText } from "../ui/menu";
 import { registerBlock, type BlockView } from "./view";
+import { AskCard, headline, type Ask, type Question } from "./ask";
 
 export interface Tool {
   type: "tool";
   id: string;
+  /** The agent's name for it (AskUserQuestion), when it says. */
+  name?: string;
   title: string;
   kind: string;
   status: string;
@@ -23,6 +27,7 @@ export interface Tool {
   exit?: number;
   text: string;
   locations: string[];
+  questions?: Question[];
   started_ms: number;
   ended_ms?: number;
 }
@@ -59,6 +64,8 @@ export interface AgentState {
   last_stop: string | null;
   current_tool: { id: string; title: string; kind: string } | null;
   pending: Perm[];
+  /** Open questions and forms. */
+  asks: Ask[];
   queued: string[];
   cost: { total: number; currency: string | null; last_turn: number | null } | null;
   tokens: { total: number; last_turn: Record<string, number> | null };
@@ -139,7 +146,7 @@ function Output({ data }: { data: string }) {
 
 function ToolCard({ t, live }: { t: Tool; live: boolean }) {
   const [open, setOpen] = useState(true);
-  const icon = { execute: "$", edit: "✎", read: "◱", delete: "✕", move: "→", search: "⌕", fetch: "↓", think: "…" }[t.kind] ?? "⚙";
+  const icon = t.name === "AskUserQuestion" ? "?" : { execute: "$", edit: "✎", read: "◱", delete: "✕", move: "→", search: "⌕", fetch: "↓", think: "…" }[t.kind] ?? "⚙";
   const body = t.output || t.text;
   return (
     <div class={`agent-tool ${t.status}`} data-tool={t.id}>
@@ -256,10 +263,12 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
   const liveFrom = tools.length > LIVE_TERMINALS ? (tools[tools.length - LIVE_TERMINALS] as Tool).id : null;
   let live = liveFrom === null;
   const stopped = s.status === "stopped" || s.status === "exited";
+  const open = s.asks.filter((a) => !a.accepted);
+  const call = (method: string, args: unknown) => void client.api(`/api/blocks/${id}/call/${method}`, args, `couldn't ${method}`);
   return (
     <div class="agent">
       <div class="agent-bar">
-        <span class={`agent-status ${s.status}`}>{s.pending.length ? "Needs you" : STATUS[s.status]}</span>
+        <span class={`agent-status ${s.status}`}>{s.pending.length || open.length ? "Needs you" : STATUS[s.status]}</span>
         <span class="agent-name" title={s.server?.name ? `${s.server.name} ${s.server.version ?? ""}` : undefined}>
           {s.title ?? s.label}
         </span>
@@ -317,7 +326,7 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
             }
           }
         })}
-        {s.status === "working" && !s.pending.length && <div class="agent-working">{s.current_tool ? `Running ${s.current_tool.title}…` : "Working…"}</div>}
+        {s.status === "working" && !s.pending.length && !open.length && <div class="agent-working">{s.current_tool ? `Running ${s.current_tool.title}…` : "Working…"}</div>}
         {s.status === "remote" && <div class="agent-working">The turn is running on Fountain; it shows here when it ends.</div>}
         {s.queued.length > 0 && <div class="agent-note">Queued: {s.queued.join(" · ")}</div>}
       </div>
@@ -325,6 +334,21 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
       {s.pending.map((p) => (
         <PermCard key={p.id} client={client} id={id} p={p} />
       ))}
+      {s.asks.length > 0 && (
+        <div class="agent-asks">
+          {s.asks.map((a) => (
+            <AskCard
+              key={a.id}
+              ask={a}
+              actions={{
+                answer: (content) => call("answer", { id: a.id, content }),
+                decline: () => call("decline", { id: a.id }),
+                stop: a.kind === "url" ? undefined : () => call("cancel", {}),
+              }}
+            />
+          ))}
+        </div>
+      )}
       <Composer client={client} id={id} s={s} />
     </div>
   );
@@ -339,6 +363,7 @@ function plain(s: AgentState): string {
     else out.push(e.text);
   }
   for (const p of s.pending) out.push(`(waiting for approval: ${p.title})`);
+  for (const a of s.asks) if (!a.accepted) out.push(`(waiting for your answer: ${headline(a)})`);
   return out.join("\n");
 }
 

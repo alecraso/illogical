@@ -3,6 +3,7 @@
 //! URL, with `--host`); `--json` prints the API's answers as they are, for
 //! programs.
 
+mod ask;
 mod attach;
 mod fs;
 mod hosts;
@@ -151,6 +152,10 @@ enum Command {
         /// A model to switch to (e.g. `haiku`).
         #[arg(long)]
         model: Option<String>,
+        /// An MCP server for the session, `NAME=COMMAND LINE` (stdio; may be
+        /// repeated). Its forms and sign-in links show as cards.
+        #[arg(long = "mcp", value_name = "NAME=COMMAND")]
+        mcp: Vec<String>,
         /// On a new throwaway VM of its own.
         #[arg(long, conflicts_with = "host")]
         vm: bool,
@@ -282,6 +287,11 @@ enum Command {
         #[arg(required = true)]
         panes: Vec<Pane>,
     },
+    /// Claude Code's PreToolUse hook on AskUserQuestion: show its questions
+    /// as a card beside this pane (every client, with a push), wait, and
+    /// print the answer for Claude Code. Outside an illogical pane, or
+    /// "Answer in terminal": no output, so Claude Code shows its picker.
+    Ask,
     /// Tell illogical whether this pane needs you (for agent hooks).
     Attention {
         /// needs-input, done, working or idle.
@@ -509,6 +519,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         let err = std::process::Command::new(&daemon).arg("install").args(args).exec();
         bail!("running {}: {err}", daemon.display());
     }
+    if let Command::Ask = cli.cmd {
+        // A hook: the local daemon only, and never an error.
+        return Ok(ask::run(http::Target::Socket(socket(&cli))));
+    }
     let reads_history = matches!(cli.cmd, Command::History { .. } | Command::Search { .. } | Command::Tail { .. });
     let (sock, gone) = match hosts::target(socket(&cli), cli.host.as_deref()) {
         Ok(t) => (t, None),
@@ -665,7 +679,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 println!("%{}", v["block"]);
             }
         }
-        Command::Agent { acp, fountain, codex, vault, model, vm, host, cwd, session, split, wait, prompt } => {
+        Command::Agent { acp, fountain, codex, vault, model, mcp, vm, host, cwd, session, split, wait, prompt } => {
             let mut config = match (&acp, &fountain) {
                 (Some(cmd), _) => json!({ "agent": "acp", "command": cmd }),
                 (_, Some(name)) => json!({ "agent": "fountain", "fountain_agent": name, "vault": vault }),
@@ -680,6 +694,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             };
             config["cwd"] = json!(cwd);
             config["model"] = json!(model);
+            if !mcp.is_empty() {
+                config["mcp_servers"] = json!(mcp);
+            }
             let prompt = prompt.join(" ");
             if !prompt.is_empty() {
                 config["prompt"] = json!(prompt);
@@ -846,7 +863,12 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 }
                 Some("exit") => v["code"].as_i64().unwrap_or(0) as i32,
                 Some("attention") => {
-                    if !json_out {
+                    if json_out {
+                    } else if v["ask"].is_object() {
+                        // What it asks, for a script (or another agent) to
+                        // answer with `call %N answer`.
+                        print_json(&v["ask"]);
+                    } else {
                         println!("{}", v["state"].as_str().unwrap_or("").replace('_', "-"));
                     }
                     0
@@ -931,6 +953,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 request(&sock, "POST", &format!("/api/panes/{}/close", p.0), None)?.json()?;
             }
         }
+        Command::Ask => unreachable!("handled first"),
         Command::Attention { state, pane } => {
             let state = state.replace('-', "_");
             // Hooks (Claude Code's, say) run this in every terminal; outside an

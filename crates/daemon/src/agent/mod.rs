@@ -28,6 +28,16 @@
 //! tool call ends (Fountain refuses an unanswered request after 5 minutes
 //! without telling the client).
 //!
+//! **Questions and forms** (M6c). The block declares form and URL
+//! elicitation, so Claude's AskUserQuestion arrives as `elicitation/create`
+//! (without the capability the adapter disables the tool). One whose
+//! `toolCallId` is an AskUserQuestion tool call becomes a question card
+//! (its questions from the tool call's `rawInput`); any other form is drawn
+//! from its schema, and a URL elicitation is a card with a link. They are
+//! open requests like permissions: `needs-input`, in the log, answered by
+//! id (`answer`, `decline`). Stop is `session/cancel` alone: the agent
+//! withdraws its own request with `$/cancel_request`.
+//!
 //! **Restarts.** A local agent server keeps running through a daemon
 //! restart (its own scope; its pipes in the FD store; see [`link`]). After a
 //! reboot the block starts it again and reopens the session with
@@ -47,7 +57,10 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use illogical_proto::{Attention, BlockType, Policy};
+use illogical_proto::{
+    Attention, BlockType, Policy,
+    ask::{self, Ask, AskKind},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -85,6 +98,11 @@ pub struct Config {
     /// The ACP session, once there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// MCP servers the session gets, as ACP takes them (`{name, command,
+    /// args, env}` for a stdio one). Their forms and sign-in links come as
+    /// questions (M6c).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<Value>,
     /// What "always allow" allowed; the block answers these itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<Rule>,
@@ -142,6 +160,15 @@ pub struct Perm {
     pub command: Option<String>,
     pub options: Vec<Opt>,
     pub at_ms: u64,
+}
+
+/// An open `elicitation/create`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Elicit {
+    pub ask: Ask,
+    rpc: Value,
+    /// A URL elicitation's id, which `elicitation/complete` names.
+    elicitation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -208,6 +235,8 @@ struct Inner {
     status: Status,
     error: Option<String>,
     pending: Vec<Perm>,
+    /// Open questions and forms.
+    asks: Vec<Elicit>,
     ours: BTreeMap<u64, Purpose>,
     next_id: u64,
     agent_info: Value,
@@ -266,6 +295,7 @@ impl Inner {
             status: Status::Starting,
             error: None,
             pending: vec![],
+            asks: vec![],
             ours: BTreeMap::new(),
             next_id: 1,
             agent_info: Value::Null,
@@ -347,11 +377,12 @@ impl Inner {
             "queue_clear" => self.queue.clear(),
             "spawn" => {
                 // A new server: nothing outstanding carries over.
-                if self.prompt_id.is_some() || !self.pending.is_empty() {
+                if self.prompt_id.is_some() || !self.pending.is_empty() || !self.asks.is_empty() {
                     self.interrupted = true;
                 }
                 self.ours.clear();
                 self.pending.clear();
+                self.asks.clear();
                 self.prompt_id = None;
                 self.replay = None;
                 self.status = Status::Starting;
@@ -366,6 +397,7 @@ impl Inner {
                 }
                 self.ours.clear();
                 self.pending.clear();
+                self.asks.clear();
                 self.prompt_id = None;
                 self.replay = None;
                 let why = e["why"].as_str().unwrap_or("stopped").to_owned();
@@ -408,6 +440,18 @@ impl Inner {
                         t.stop = Some("end_turn".into());
                     }
                 }
+            }
+            "answered" => {
+                let text = e["summary"].as_str().unwrap_or("");
+                self.t.note(format!("Answered: {text}"), at);
+            }
+            "skipped" => {
+                let what = e["question"].as_str().unwrap_or("the question");
+                self.t.note(format!("Skipped: {what}"), at);
+            }
+            "dismissed" => {
+                let key = e["id"].as_str().unwrap_or_default();
+                self.asks.retain(|a| a.ask.id != key);
             }
             "error" => {
                 let msg = e["message"].as_str().unwrap_or("error").to_owned();
@@ -467,6 +511,18 @@ impl Inner {
             (Some(id), None) => {
                 let key = rpc_key(id);
                 self.pending.retain(|p| p.id != key);
+                // A link that was opened stays until the agent says it's done.
+                let opened = m["result"]["action"] == "accept";
+                self.asks.retain_mut(|a| {
+                    if a.ask.id != key {
+                        return true;
+                    }
+                    if a.ask.kind == AskKind::Url && opened {
+                        a.ask.accepted = true;
+                        return true;
+                    }
+                    false
+                });
             }
             _ => {}
         }
@@ -540,6 +596,7 @@ impl Inner {
                         self.last_stop = Some(stop);
                         // Requests the turn left open are moot.
                         self.pending.clear();
+                        self.asks.clear();
                         fx.push(Effect::TurnEnded);
                     }
                     (Purpose::Init | Purpose::New, Some(e)) => {
@@ -578,6 +635,7 @@ impl Inner {
                         if let Applied::ToolFinished(id) = applied {
                             // Its card is moot (Fountain's refusal says only this).
                             self.pending.retain(|p| p.tool_call_id != id);
+                            self.asks.retain(|a| a.ask.tool_call_id.as_deref() != Some(id.as_str()));
                             if self.replay.is_none() {
                                 fx.push(Effect::ToolFinished(id));
                             }
@@ -632,6 +690,27 @@ impl Inner {
                 });
                 fx.push(Effect::Permission(key));
             }
+            (Some(id), Some("elicitation/create")) => {
+                let key = rpc_key(id);
+                if self.asks.iter().any(|a| a.ask.id == key) {
+                    return fx;
+                }
+                let e = self.elicit(key, id, &m["params"], at);
+                self.asks.push(e);
+            }
+            // The agent withdrew a request of its own (after `session/cancel`).
+            (None, Some("$/cancel_request")) => {
+                let key = rpc_key(&m["params"]["requestId"]);
+                if self.asks.iter().any(|a| a.ask.id == key) {
+                    self.asks.retain(|a| a.ask.id != key);
+                    self.t.note("The question was withdrawn", at);
+                }
+                self.pending.retain(|p| p.id != key);
+            }
+            (None, Some("elicitation/complete")) => {
+                let done = m["params"]["elicitationId"].as_str();
+                self.asks.retain(|a| a.elicitation_id.is_none() || a.elicitation_id.as_deref() != done);
+            }
             (Some(id), Some(method)) => fx.push(Effect::Unsupported(id.clone(), method.to_owned())),
             _ => {}
         }
@@ -640,6 +719,46 @@ impl Inner {
             fx.push(Effect::CheckRemote);
         }
         fx
+    }
+
+    /// An `elicitation/create` as a card: AskUserQuestion's questions (by its
+    /// tool call), a link, or a generic form.
+    fn elicit(&self, key: String, rpc: &Value, p: &Value, at: u64) -> Elicit {
+        let message = p["message"].as_str().unwrap_or_default().to_owned();
+        let tool_call_id = p["toolCallId"].as_str().map(str::to_owned);
+        let tool = tool_call_id.as_deref().and_then(|id| self.t.tool(id));
+        let mut ask = Ask {
+            id: key,
+            kind: AskKind::Form,
+            message,
+            questions: None,
+            schema: None,
+            url: None,
+            accepted: false,
+            tool_call_id,
+            source: "agent".into(),
+            at_ms: at,
+        };
+        if p["mode"] == "url" {
+            ask.kind = AskKind::Url;
+            ask.url = p["url"].as_str().map(str::to_owned);
+            let elicitation_id = p["elicitationId"].as_str().map(str::to_owned);
+            return Elicit { ask, rpc: rpc.clone(), elicitation_id };
+        }
+        let schema = p["requestedSchema"].clone();
+        if let Some(t) = tool.filter(|t| t.is_question()) {
+            ask.questions = t.questions.clone().or_else(|| ask::questions_from_schema(&ask.message, &schema));
+            if ask.questions.is_some() {
+                ask.kind = AskKind::Questions;
+            }
+        }
+        ask.schema = Some(schema);
+        Elicit { ask, rpc: rpc.clone(), elicitation_id: None }
+    }
+
+    /// The question waiting for an answer (not a link already opened).
+    fn open_ask(&self) -> Option<&Elicit> {
+        self.asks.iter().find(|a| !a.ask.accepted)
     }
 
     /// Replay a log line.
@@ -661,6 +780,9 @@ impl Inner {
     fn attention(&self) -> (Attention, String) {
         if let Some(p) = self.pending.first() {
             return (Attention::NeedsInput, format!("wants to run {}", p.title));
+        }
+        if let Some(a) = self.open_ask() {
+            return (Attention::NeedsInput, a.ask.headline());
         }
         match self.status {
             Status::Exited => (Attention::NeedsInput, self.error.clone().unwrap_or_else(|| "the agent stopped".into())),
@@ -709,6 +831,7 @@ impl Inner {
             "last_stop": self.last_stop,
             "current_tool": self.t.current_tool().map(|t| json!({ "id": t.id, "title": t.title, "kind": t.kind })),
             "pending": self.pending,
+            "asks": self.asks.iter().map(|a| &a.ask).collect::<Vec<_>>(),
             "queued": self.queue,
             "cost": self.cost.map(|c| json!({ "total": c, "currency": self.currency, "last_turn": self.turns.last().and_then(|t| t.cost) })),
             "tokens": { "total": total_tokens, "last_turn": self.turns.last().and_then(|t| t.tokens.clone()) },
@@ -727,6 +850,19 @@ impl Agent {
         // A command line as one string is split into words.
         if let Some(c) = config["command"].as_str() {
             config["command"] = json!(defs::split_command(c));
+        }
+        // An MCP server as `NAME=COMMAND LINE` (the CLI's `--mcp`).
+        if let Some(list) = config.get_mut("mcp_servers").and_then(Value::as_array_mut) {
+            for m in list.iter_mut() {
+                let Some(spec) = m.as_str() else { continue };
+                let (name, line) = spec.split_once('=').ok_or_else(|| format!("--mcp {spec}: want NAME=COMMAND"))?;
+                let mut argv = defs::split_command(line);
+                if argv.is_empty() {
+                    return Err(format!("--mcp {spec}: no command"));
+                }
+                let command = argv.remove(0);
+                *m = json!({ "name": name, "command": command, "args": argv, "env": [] });
+            }
         }
         let cfg: Config = serde_json::from_value(config).map_err(|e| format!("agent config: {e}"))?;
         cfg.def.check()?;
@@ -908,7 +1044,15 @@ impl Agent {
                 "protocolVersion": 1,
                 // Zed's extension: command output on the tool call. No client
                 // fs or terminals: no adapter uses them (S7).
-                "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false, "_meta": { "terminal_output": true } },
+                "clientCapabilities": {
+                    "fs": { "readTextFile": false, "writeTextFile": false },
+                    "terminal": false,
+                    "_meta": { "terminal_output": true },
+                    // Questions and forms (M6c). Objects, not booleans: the
+                    // ACP SDK drops `true`, and the adapter then disables
+                    // AskUserQuestion (S13).
+                    "elicitation": { "form": {}, "url": {} },
+                },
                 "clientInfo": { "name": "illogical", "version": env!("CARGO_PKG_VERSION") },
             }),
         );
@@ -1077,7 +1221,8 @@ async fn run(
                             g.interrupted = false;
                             let session = g.session();
                             let cwd = g.cfg.cwd.clone().unwrap_or_else(|| "/".into());
-                            g.request("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": [] }));
+                            let mcp = g.cfg.mcp_servers.clone();
+                            g.request("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": mcp }));
                         } else if g.status == Status::Remote {
                             remote_check = Some(tokio::time::Instant::now() + REMOTE_POLL);
                         }
@@ -1128,11 +1273,13 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             match &g.cfg.session_id {
                 Some(sid) if resume && !g.t.entries.is_empty() => {
                     let sid = sid.clone();
-                    g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": [] }));
+                    let mcp = g.cfg.mcp_servers.clone();
+                    g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 Some(sid) if load => {
                     let sid = sid.clone();
-                    g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": [] }));
+                    let mcp = g.cfg.mcp_servers.clone();
+                    g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 _ => new_session(ctx, g, &cwd),
             }
@@ -1186,6 +1333,10 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
         }
         Effect::ToolFinished(id) => {
             let Some(t) = g.t.tool(&id).cloned() else { return };
+            // Its question and answer are in history from `answer`.
+            if t.is_question() {
+                return;
+            }
             let cwd = g.cfg.cwd.clone();
             if let Some(log) = g.log.as_mut() {
                 let at = log.end();
@@ -1200,7 +1351,8 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
 
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
     let meta = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default();
-    g.request("session/new", json!({ "cwd": cwd, "mcpServers": [], "_meta": meta }));
+    let mcp = g.cfg.mcp_servers.clone();
+    g.request("session/new", json!({ "cwd": cwd, "mcpServers": mcp, "_meta": meta }));
 }
 
 /// Send the next queued prompt, if the agent can take it.
@@ -1288,9 +1440,83 @@ impl Agent {
         Ok(json!({ "denied": p.id }))
     }
 
+    fn find_ask(g: &Inner, id: &Value) -> Result<Elicit, String> {
+        match id {
+            Value::Null => g.open_ask().cloned().ok_or_else(|| "no question is waiting for an answer".into()),
+            v => {
+                let key = rpc_key(v);
+                g.asks
+                    .iter()
+                    .find(|a| a.ask.id == key || a.ask.tool_call_id.as_deref() == Some(key.as_str()))
+                    .cloned()
+                    .ok_or_else(|| format!("no open question {key} (it was answered, or withdrawn)"))
+            }
+        }
+    }
+
+    /// Record a question and its answer in history (live only).
+    fn ask_history(g: &mut Inner, a: &Ask, text: String, exit: i32) {
+        let cwd = g.cfg.cwd.clone();
+        if let Some(log) = g.log.as_mut() {
+            let at = log.end();
+            let _ = log.record(at, Event::Command { at_ms: a.at_ms, text: Some(text), cwd });
+            let _ = log.record(at, Event::End { at_ms: now_ms(), exit: Some(exit) });
+        }
+    }
+
+    /// `answer {id?, content}`: submit a question card or form (`content` is
+    /// its fields; without a `content` key, the arguments are), or open a
+    /// link.
+    fn answer(&self, args: &Value) -> Result<Value, String> {
+        let mut g = self.inner.lock().unwrap();
+        let e = Self::find_ask(&g, &args["id"])?;
+        if e.ask.accepted {
+            return Err("that link was already opened; it closes when the agent says it's done".into());
+        }
+        let content = match args.get("content") {
+            Some(c) if c.is_object() => c.clone(),
+            _ => {
+                let mut c = args.as_object().cloned().unwrap_or_default();
+                c.remove("id");
+                Value::Object(c)
+            }
+        };
+        let summary = ask::summary(&e.ask, &content);
+        g.note(json!({ "e": "answered", "id": e.ask.id, "summary": summary }));
+        let result = match e.ask.kind {
+            AskKind::Url => json!({ "action": "accept" }),
+            _ => json!({ "action": "accept", "content": content }),
+        };
+        g.out(json!({ "jsonrpc": "2.0", "id": e.rpc, "result": result }));
+        Self::ask_history(&mut g, &e.ask, format!("{} → {summary}", e.ask.headline()), 0);
+        drop(g);
+        self.changed();
+        Ok(json!({ "answered": e.ask.id }))
+    }
+
+    /// `decline {id?}`: skip a question or form; for a link already opened,
+    /// just close its card.
+    fn decline(&self, args: &Value) -> Result<Value, String> {
+        let mut g = self.inner.lock().unwrap();
+        let e = Self::find_ask(&g, &args["id"])?;
+        if e.ask.accepted {
+            g.note(json!({ "e": "dismissed", "id": e.ask.id }));
+        } else {
+            g.note(json!({ "e": "skipped", "id": e.ask.id, "question": e.ask.headline() }));
+            g.out(json!({ "jsonrpc": "2.0", "id": e.rpc, "result": { "action": "decline" } }));
+            Self::ask_history(&mut g, &e.ask, format!("{} → skipped", e.ask.headline()), 1);
+        }
+        drop(g);
+        self.changed();
+        Ok(json!({ "declined": e.ask.id }))
+    }
+
     fn cancel(&self) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
         g.note(json!({ "e": "queue_clear" }));
+        // Open questions aren't answered: the agent withdraws them itself
+        // (`$/cancel_request`), and answering `cancel` would only fail the
+        // tool and let the turn carry on (S13).
         let open: Vec<Value> = g.pending.iter().map(|p| p.rpc.clone()).collect();
         if g.prompt_id.is_none() && open.is_empty() {
             drop(g);
@@ -1358,6 +1584,9 @@ impl Block for Agent {
         for p in &g.pending {
             out.push_str(&format!("**Waiting for approval:** `{}` (`approve {}`)\n\n", p.title, p.id));
         }
+        for a in g.asks.iter().filter(|a| !a.ask.accepted) {
+            out.push_str(&format!("**Waiting for your answer:** {} (`answer {}`)\n\n", a.ask.headline(), a.ask.id));
+        }
         out
     }
 
@@ -1366,6 +1595,8 @@ impl Block for Agent {
             "send" => self.send(&args),
             "approve" => self.approve(&args),
             "deny" => self.deny(&args),
+            "answer" => self.answer(&args),
+            "decline" => self.decline(&args),
             "cancel" => self.cancel(),
             "start" | "resume" => self.start(),
             "forget" => {
@@ -1402,8 +1633,11 @@ impl Block for Agent {
 
     fn push_extra(&self) -> Option<Value> {
         let g = self.inner.lock().unwrap();
-        let p = g.pending.first()?;
-        Some(json!({ "approve": { "id": p.id, "title": p.title } }))
+        if let Some(p) = g.pending.first() {
+            return Some(json!({ "approve": { "id": p.id, "title": p.title } }));
+        }
+        let choice = g.open_ask()?.ask.push_choice()?;
+        Some(json!({ "ask": choice }))
     }
 }
 

@@ -123,10 +123,30 @@ the daemon stopping, crashing, or the machine rebooting:
     `rerun-ask` (then *Resume*). A Fountain turn that ran on while nothing
     followed it shows "running on Fountain" and appears when it ends.
   - The adapters, pinned, go in `~/.local/share/illogical/agents/`:
-    `npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.81.2`
+    `npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0`
     and `npm install --omit=optional --prefix ~/.local/share/illogical/agents/codex @agentclientprotocol/codex-acp@2.1.0`
     (Codex uses `~/.local/bin/codex`). They need Node on PATH (mise's
     shims are added if present).
+  - **Questions and forms** (M6c). Claude Code's AskUserQuestion is a
+    question card: buttons for one answer, checkboxes for several, each
+    option's description, an "Other" box (on its own it's the answer; next
+    to a pick it's a note), and an option's preview (mockups, code) in
+    monospace when it's picked. *Submit*, *Skip* (the agent hears you
+    didn't answer and goes on) or *Stop* (ends the turn). Any other form (an
+    MCP server's, Codex's plan-mode question) is drawn from its schema, and
+    an MCP server's sign-in link is a card with *Open link* that closes when
+    the server says you're done. A question waits as long as it takes: the
+    block needs you, the push notification says the first question (one
+    question with two options is answered from the notification's
+    buttons), and it survives a daemon restart and a reload; the first
+    answer from any client wins. From a script: `wait %N --needs-input`
+    prints it as JSON, `call %N answer '{"question_0":"Red"}'` answers
+    (`question_<n>_custom` is "Other"; a multi-select takes a list), and
+    `call %N decline` skips. The question and the answer are in the
+    transcript, `history` and `search`. `illogical agent --mcp
+    'NAME=COMMAND'` gives the session an MCP server. Fountain agents can't
+    ask (Fountain doesn't pass questions on, so they ask in plain text),
+    and Codex only asks this way in its plan mode.
   - **In a VM** (`--vm`, or the dialog's checkbox) the agent server runs
     over a non-TTY exec on the block's own machine; its first start
     installs Node and the adapter there (about 15s). Claude Code there
@@ -287,11 +307,14 @@ illogical agent "fix the failing test"        # Claude Code here; prints %N (--c
 illogical wait %5 --needs-input               # it asks to run something…
 illogical call %5 approve                     # …or '{"option":"always"}'; deny '{"reason":"…"}'; cancel
 illogical call %5 send '{"text":"and then?"}' # the next message (queued while it works)
+illogical wait %5 --needs-input               # a question: printed as JSON…
+illogical call %5 answer '{"question_0":"Red","question_1":["A","B"]}'  # …answered (decline: skip it)
 illogical wait %5 --idle                      # the turn ended: prints idle, done or needs-input
 illogical tail %5 -f                          # any block's text as it grows
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
+illogical ask                                 # Claude Code's AskUserQuestion hook (below)
 illogical hosts                               # the home daemon's other hosts, last seen
 illogical hosts add box https://box.tailb2e8f2.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
@@ -334,6 +357,32 @@ checks, over the tailnet.
 
 Outside an illogical pane the command does nothing, so the hooks are safe
 everywhere. Without them, an agent going quiet mid-command is the fallback.
+
+**Claude Code's questions** (AskUserQuestion) can be answered from a card
+beside its terminal, on any client and from the phone, instead of its
+keyboard picker. Add a `PreToolUse` hook beside the others:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [{ "type": "command", "command": "illogical ask", "timeout": 604800 }]
+      }
+    ]
+  }
+}
+```
+
+`illogical ask` shows the questions as a card over the pane (the pane needs
+you, with a push notification), waits, and hands your answers to Claude
+Code, which then never shows its picker. *Answer in terminal* on the card
+gives you the picker instead; Esc or Ctrl-C in Claude Code withdraws the
+card. The timeout (7 days, in seconds) is how long a question may wait;
+Claude Code's default would give up after 10 minutes and show its picker.
+If the daemon restarts while it waits, the card comes back. Outside an
+illogical pane it does nothing, and Claude Code shows its picker as usual.
 
 ## Use it
 
@@ -530,9 +579,13 @@ against the running one.
   --tailnet` and the `sandbox` supervisor). M4c: the dial-out transport
   (`dial.rs`, over `dialout_mux.rs`'s streams), share links (`share.rs`), and
   history sync (`sync.rs`, sealed by `seal.rs`). M7: files on a host
-  (`fs.rs`), names (`illogical_core::names`).
+  (`fs.rs`), names (`illogical_core::names`). M6c: questions and forms
+  (`illogical_proto::ask`: the card's shape and how its answer becomes
+  Claude Code's; agent blocks' elicitations in `agent/`; a terminal's
+  questions in `mux.rs` and the `/ask` route).
 - `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
-  another daemon with `--host` (`hosts.rs`). `tmux/` is the tmux
+  another daemon with `--host` (`hosts.rs`); `ask.rs` is Claude Code's
+  AskUserQuestion hook. `tmux/` is the tmux
   control-mode front end (M5): the command parser and `-F` format expander,
   layout strings derived from the daemon's ratios (spike S11's converter),
   and a mirror terminal per pane so captures line up with the output

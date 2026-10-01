@@ -15,6 +15,7 @@ import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { openPort } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
+import { TermAsk } from "./term-ask";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -531,6 +532,7 @@ function PaneSlot({
       {!active && (info?.attention === "needs_input" || info?.attention === "done") && (
         <div class={`pane-badge ${info.attention}`}>{info.attention === "done" ? "done" : "needs you"}</div>
       )}
+      {info?.ask && <TermAsk client={client} id={id} ask={info.ask} />}
       {waiting && (
         <button
           class="start-pane"

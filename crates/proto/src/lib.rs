@@ -15,6 +15,7 @@ pub use illogical_core::{
 };
 
 pub mod api;
+pub mod ask;
 pub mod fs;
 pub mod hosts;
 pub mod keys;
@@ -346,6 +347,10 @@ pub struct PaneInfo {
     /// The machine it runs on; `None` is this host.
     #[serde(default)]
     pub host: Option<MachineId>,
+    /// A question open in a terminal (Claude Code's AskUserQuestion, through
+    /// its hook), drawn as a card beside it (M6c).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<ask::Ask>,
 }
 
 fn yes() -> bool {

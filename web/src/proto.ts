@@ -85,6 +85,9 @@ export interface PaneInfo {
   type: BlockType;
   /** The machine it runs on; null is the daemon's host. */
   host: MachineId | null;
+  /** A question Claude Code asks in this terminal (through its hook), drawn
+   * as a card beside it (M6c). */
+  ask?: import("./blocks/ask").Ask | null;
 }
 
 export type BlockType = "terminal" | "browser" | "agent";

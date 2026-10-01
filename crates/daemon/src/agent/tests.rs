@@ -207,3 +207,80 @@ fn a_prompt_queued_while_the_agent_is_down_survives_a_restart() {
     inner.rebuild_line(&frame("note", json!({ "e": "queue_clear" })));
     assert!(inner.queue.is_empty(), "cancel drops what's queued");
 }
+
+/// Frames as claude-agent-acp 0.81.2 sent them in S13: the tool call, its
+/// questions, then the form.
+fn question_lines() -> Vec<Vec<u8>> {
+    let u = |update: Value| {
+        frame("in", json!({ "jsonrpc": "2.0", "method": "session/update", "params": { "update": update } }))
+    };
+    let meta = json!({ "claudeCode": { "toolName": "AskUserQuestion" } });
+    let mut lines = log_lines()[..6].to_vec();
+    lines.extend([
+        u(json!({ "_meta": meta, "toolCallId": "toolu_1", "sessionUpdate": "tool_call", "name": "AskUserQuestion", "rawInput": {}, "status": "pending", "title": "Asking for your input", "kind": "other" })),
+        u(json!({ "_meta": meta, "toolCallId": "toolu_1", "sessionUpdate": "tool_call_update", "rawInput": { "questions": [
+            { "question": "Which colour?", "header": "Colour", "multiSelect": false, "options": [{ "label": "Red", "preview": "R" }, { "label": "Blue" }] }] } })),
+        frame(
+            "in",
+            json!({ "jsonrpc": "2.0", "id": 0, "method": "elicitation/create", "params": { "mode": "form", "sessionId": "s1", "toolCallId": "toolu_1", "message": "Which colour?",
+                "requestedSchema": { "type": "object", "properties": { "question_0": { "type": "string", "title": "Colour", "oneOf": [{ "const": "Red", "title": "Red" }, { "const": "Blue", "title": "Blue" }] }, "question_0_custom": { "type": "string", "title": "Other" } } } } }),
+        ),
+    ]);
+    lines
+}
+
+#[test]
+fn a_question_is_rebuilt_from_the_log_as_a_question_card() {
+    let mut g = Inner::new(Config::default(), None);
+    for l in question_lines() {
+        g.rebuild_line(&l);
+    }
+    assert_eq!(g.asks.len(), 1);
+    let a = &g.asks[0].ask;
+    assert_eq!((a.id.as_str(), a.kind, a.tool_call_id.as_deref()), ("0", AskKind::Questions, Some("toolu_1")));
+    assert_eq!(a.questions.as_ref().unwrap()[0]["options"][0]["preview"], "R", "from the tool call's input");
+    assert_eq!(g.attention(), (Attention::NeedsInput, "Which colour?".into()));
+    let md = g.t.markdown();
+    assert!(md.contains("**Asked** `Asking for your input` (pending)\n\n- Colour: Which colour? (Red / Blue)"), "{md}");
+    // Again (re-read after a crash): still one card.
+    g.rebuild_line(&question_lines()[8]);
+    assert_eq!(g.asks.len(), 1);
+    // Answered: gone.
+    g.on_out(
+        &json!({ "jsonrpc": "2.0", "id": 0, "result": { "action": "accept", "content": { "question_0": "Red" } } }),
+        2,
+    );
+    assert!(g.asks.is_empty());
+    assert_eq!(g.attention().0, Attention::Working);
+}
+
+#[test]
+fn the_agent_withdraws_its_question_and_links_close_when_complete() {
+    let mut g = Inner::new(Config::default(), None);
+    for l in question_lines() {
+        g.rebuild_line(&l);
+    }
+    g.on_in(&json!({ "jsonrpc": "2.0", "method": "$/cancel_request", "params": { "requestId": 0 } }), 3);
+    assert!(g.asks.is_empty());
+    assert!(g.t.markdown().contains("_The question was withdrawn_"));
+
+    // A form without a tool call is a form, whatever its fields.
+    let form = json!({ "jsonrpc": "2.0", "id": 1, "method": "elicitation/create", "params": { "mode": "form", "message": "Order",
+        "requestedSchema": { "type": "object", "properties": { "size": { "type": "string", "enum": ["S", "M"] } } } } });
+    g.on_in(&form, 4);
+    assert_eq!(g.asks[0].ask.kind, AskKind::Form);
+    // The turn ending takes it with it.
+    g.on_in(&json!({ "jsonrpc": "2.0", "id": 3, "result": { "stopReason": "cancelled" } }), 5);
+    assert!(g.asks.is_empty());
+
+    // A link: opening it accepts, and it waits for elicitation/complete.
+    let url = json!({ "jsonrpc": "2.0", "id": 2, "method": "elicitation/create", "params": { "mode": "url", "message": "Sign in",
+        "url": "https://example.com/x", "elicitationId": "e1" } });
+    g.on_in(&url, 6);
+    assert_eq!(g.attention(), (Attention::NeedsInput, "Sign in".into()));
+    g.on_out(&json!({ "jsonrpc": "2.0", "id": 2, "result": { "action": "accept" } }), 7);
+    assert!(g.asks[0].ask.accepted);
+    assert!(g.open_ask().is_none(), "an opened link doesn't ask for you");
+    g.on_in(&json!({ "jsonrpc": "2.0", "method": "elicitation/complete", "params": { "elicitationId": "e1" } }), 8);
+    assert!(g.asks.is_empty());
+}

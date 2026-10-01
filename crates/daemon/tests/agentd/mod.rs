@@ -287,3 +287,98 @@ pub fn alive(pid: u64) -> bool {
     std::path::Path::new(&format!("/proc/{pid}")).exists()
         && !std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default().contains(") Z ")
 }
+
+/// A phone subscribed to push notifications: a push service of our own,
+/// whose messages it decrypts as a browser would (RFC 8291).
+pub struct Phone {
+    service: TcpListener,
+    ua: p256::SecretKey,
+    ua_public: Vec<u8>,
+    auth: [u8; 16],
+}
+
+impl Phone {
+    pub fn subscribe(d: &Daemon) -> Self {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+        let service = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://127.0.0.1:{}/push/abc", service.local_addr().unwrap().port());
+        let ua = p256::SecretKey::from_slice(&[7u8; 32]).unwrap();
+        let ua_public = ua.public_key().to_sec1_bytes().to_vec();
+        let auth = [9u8; 16];
+        d.post(
+            "/api/push/subscribe",
+            json!({"endpoint": endpoint, "keys": {"p256dh": B64.encode(&ua_public), "auth": B64.encode(auth)}}),
+        );
+        Self { service, ua, ua_public, auth }
+    }
+
+    /// The next push.
+    pub fn next(&self) -> Value {
+        use aes_gcm::{Aes128Gcm, KeyInit, aead::Aead};
+        use hkdf::Hkdf;
+        use p256::PublicKey;
+        use sha2::Sha256;
+
+        self.service.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut conn = loop {
+            match self.service.accept() {
+                Ok((c, _)) => break c,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "no push came");
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => panic!("push service: {e}"),
+            }
+        };
+        conn.set_nonblocking(false).unwrap();
+        conn.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        let mut r = BufReader::new(conn.try_clone().unwrap());
+        let mut len = 0;
+        loop {
+            let mut line = String::new();
+            r.read_line(&mut line).unwrap();
+            if line.trim().is_empty() {
+                break;
+            }
+            if let Some((k, v)) = line.split_once(':')
+                && k.eq_ignore_ascii_case("content-length")
+            {
+                len = v.trim().parse().unwrap();
+            }
+        }
+        let mut body = vec![0; len];
+        r.read_exact(&mut body).unwrap();
+        write!(conn, "HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        let (salt, rest) = body.split_at(16);
+        let idlen = rest[4] as usize;
+        let (as_public, sealed) = rest[5..].split_at(idlen);
+        let shared = p256::ecdh::diffie_hellman(
+            self.ua.to_nonzero_scalar(),
+            PublicKey::from_sec1_bytes(as_public).unwrap().as_affine(),
+        );
+        let mut info = b"WebPush: info\0".to_vec();
+        info.extend_from_slice(&self.ua_public);
+        info.extend_from_slice(as_public);
+        let mut ikm = [0u8; 32];
+        Hkdf::<Sha256>::new(Some(&self.auth), shared.raw_secret_bytes().as_ref()).expand(&info, &mut ikm).unwrap();
+        let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
+        let (mut cek, mut nonce) = ([0u8; 16], [0u8; 12]);
+        prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).unwrap();
+        prk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
+        let mut plain = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(&nonce.into(), sealed).unwrap();
+        plain.pop();
+        serde_json::from_slice(&plain).unwrap()
+    }
+
+    /// Pushes come for each attention change nobody is looking at; the next
+    /// one that asks for you.
+    pub fn needs_you(&self) -> Value {
+        loop {
+            let msg = self.next();
+            if msg["title"] == "Needs you" {
+                return msg;
+            }
+        }
+    }
+}
