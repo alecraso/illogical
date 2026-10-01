@@ -42,6 +42,13 @@ impl Access {
         Self { hosts, origins, owner }
     }
 
+    /// The app's own origins (the pages allowed to frame a block).
+    pub fn origins(&self) -> Vec<String> {
+        let mut o: Vec<String> = self.origins.iter().cloned().collect();
+        o.sort();
+        o
+    }
+
     /// Checks for every request.
     pub fn check(&self, headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
         let host = header_str(headers, header::HOST.as_str()).unwrap_or_default().to_ascii_lowercase();

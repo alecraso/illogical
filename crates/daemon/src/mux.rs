@@ -627,6 +627,7 @@ impl Daemon {
                 self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
             }
             What::Attention(state, why) => self.set_attention(pane, state, &why),
+            What::Event(kind) => self.emit(Some(pane), kind),
             What::Started => {
                 // What `run` started is gone; the new program isn't held.
                 if let Some(m) = self.meta.get_mut(&pane) {
@@ -866,19 +867,31 @@ impl Daemon {
         let from = req.from_pane.filter(|p| self.panes.contains_key(p) || self.blocks.contains_key(p));
         let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();
+        self.last_block_error = None;
+        if let Some(m) = req.host {
+            if !self.machines.contains_key(&m) {
+                return Err(format!("no machine m{m}"));
+            }
+            self.next_host = Some(m);
+        }
         self.next_block = Some((req.kind, req.config));
         let intent = match (req.split, session) {
-            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: false },
+            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local: req.local },
             (None, Some(session)) => Intent::NewTab { session, from_pane: from },
             (None, None) => Intent::NewSession { name: None, from_pane: from },
         };
         let result = self.intent(None, intent);
         let unused = self.next_block.take();
+        // A machine named with `host` is someone else's: never ours to drop.
+        self.next_host = None;
         result?;
         if let Some((kind, _)) = unused {
             return Err(format!("no {kind:?} block was made").to_lowercase());
         }
-        let id = self.mux.panes().into_iter().find(|p| !before.contains(p)).ok_or("no block was made")?;
+        let made = self.mux.panes().into_iter().find(|p| !before.contains(p));
+        let Some(id) = made else {
+            return Err(self.last_block_error.take().unwrap_or_else(|| "no block was made".into()));
+        };
         if !self.blocks.contains_key(&id) {
             return Err(self.last_block_error.take().unwrap_or_else(|| "the block couldn't start".into()));
         }

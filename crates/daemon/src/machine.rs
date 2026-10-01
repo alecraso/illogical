@@ -213,6 +213,15 @@ impl Wisp {
         Ok((out, code))
     }
 
+    /// The Sprites proxy to `name`'s ports: one WebSocket per TCP connection
+    /// (the protocol is in `ports.rs`).
+    pub fn proxy_request(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
+        self.request(self.ws_url(&format!("/{name}/proxy")))
+    }
+
     fn request(&self, url: Url) -> anyhow::Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
         let mut req = url.as_str().into_client_request()?;
         req.headers_mut().insert("Authorization", format!("Bearer {}", self.token).parse()?);

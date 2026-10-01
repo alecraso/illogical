@@ -88,12 +88,20 @@ enum Command {
         /// Arguments as JSON.
         args: Option<String>,
     },
-    /// Open a web page in a browser block.
+    /// Open a browser block: a port (`:5173/path`) on its machine, or a web
+    /// page (`https://…`).
     Open {
-        url: String,
-        /// Split this block instead of opening a tab.
+        /// `:PORT[/path]`, or a URL.
+        target: String,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`. In a VM tab the block is on the tab's machine.
         #[arg(long)]
-        split: Option<Pane>,
+        split: Option<String>,
+        /// The machine whose port it is: `mN` (see `illogical machines`), or
+        /// `local` for this host [default: the VM tab's, when splitting
+        /// there; else this host].
+        #[arg(long)]
+        host: Option<String>,
         #[arg(long)]
         session: Option<String>,
     },
@@ -358,11 +366,33 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             let path = format!("/api/blocks/{}/call/{}", block.0, enc(&method));
             print_json(&request(&sock, "POST", &path, Some(&args))?.json()?);
         }
-        Command::Open { url, split, session } => {
+        Command::Open { target, split, host, session } => {
+            let config = match target.strip_prefix(':') {
+                Some(rest) => {
+                    let (port, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+                    let port: u16 = port.parse().with_context(|| format!("not a port: {target}"))?;
+                    json!({ "port": port, "path": if path.is_empty() { "/" } else { path } })
+                }
+                None => json!({ "url": target }),
+            };
+            let split = match split.as_deref() {
+                None => None,
+                Some("right") => Some(here(None)?),
+                Some(p) => Some(p.parse::<Pane>().map_err(anyhow::Error::msg)?.0),
+            };
+            let local = host.as_deref() == Some("local");
+            let host = match host.filter(|_| !local) {
+                Some(m) => {
+                    Some(m.trim_start_matches('m').parse::<u32>().with_context(|| format!("not a machine: {m}"))?)
+                }
+                None => None,
+            };
             let body = json!({
                 "type": "browser",
-                "config": { "url": url },
-                "split": split.map(|p| p.0),
+                "config": config,
+                "split": split,
+                "host": host,
+                "local": local,
                 "session": session,
                 "from_pane": std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
             });

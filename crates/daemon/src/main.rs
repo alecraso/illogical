@@ -11,12 +11,15 @@ mod machine;
 mod mux;
 mod osc;
 mod pane;
+mod ports;
 mod push;
 mod server;
 mod shellint;
 mod shim;
+mod sites;
 mod store;
 mod sys;
+mod tls;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -90,6 +93,114 @@ struct RunArgs {
     /// `$XDG_DATA_HOME/wisp/token`.
     #[arg(long, env = "ILLOGICAL_WISP_TOKEN_FILE")]
     wisp_token_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    blocks: BlockArgs,
+}
+
+/// Browser blocks on ports: each is served on its own origin by a listener
+/// of ours (see `sites.rs`).
+#[derive(clap::Args, Debug)]
+struct BlockArgs {
+    /// Serve browser blocks on ports here [default: off]. Without
+    /// --block-domain this must be loopback, and blocks are
+    /// `http://b-<id>-<key>.localhost:<port>`.
+    #[arg(long, env = "ILLOGICAL_BLOCK_LISTEN")]
+    block_listen: Option<SocketAddr>,
+    /// Name blocks `b-<id>.<DOMAIN>`, over HTTPS, for the owner on the
+    /// tailnet. `*.<DOMAIN>` must resolve to --block-listen's address.
+    #[arg(long, env = "ILLOGICAL_BLOCK_DOMAIN", requires = "block_listen")]
+    block_domain: Option<String>,
+    /// A certificate for `*.<DOMAIN>` (PEM, with its chain); replaced files
+    /// are picked up.
+    #[arg(long, requires = "block_key", requires = "block_domain")]
+    block_cert: Option<PathBuf>,
+    /// The certificate's key (PEM).
+    #[arg(long, requires = "block_cert")]
+    block_key: Option<PathBuf>,
+    /// Get and renew the certificate from an ACME CA with a DNS-01
+    /// challenge, through Cloudflare with this API token (Zone:Read and
+    /// DNS:Edit).
+    #[arg(long, env = "ILLOGICAL_BLOCK_ACME_TOKEN_FILE", conflicts_with = "block_cert", requires = "block_domain")]
+    block_acme_cloudflare_token_file: Option<PathBuf>,
+    /// The ACME account's contact.
+    #[arg(long, env = "ILLOGICAL_BLOCK_ACME_EMAIL")]
+    block_acme_email: Option<String>,
+    /// The ACME directory URL, or `staging` for Let's Encrypt's test CA.
+    #[arg(long, env = "ILLOGICAL_BLOCK_ACME_DIRECTORY", default_value = tls::LETS_ENCRYPT)]
+    block_acme_directory: String,
+}
+
+/// Start serving block sites, if asked to.
+fn start_sites(
+    b: &BlockArgs,
+    app: &access::Access,
+    owner: Option<String>,
+    listen: SocketAddr,
+    state_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let Some(addr) = b.block_listen else { return Ok(()) };
+    let (scheme, tls) = match &b.block_domain {
+        None => {
+            if !addr.ip().is_loopback() {
+                anyhow::bail!("--block-listen {addr}: without --block-domain, block sites are loopback only");
+            }
+            (sites::Scheme::Dev { port: addr.port() }, None)
+        }
+        Some(domain) => {
+            let domain = domain.trim_matches('.').to_ascii_lowercase();
+            let store = match (&b.block_cert, &b.block_key, &b.block_acme_cloudflare_token_file) {
+                (Some(cert), Some(key), _) => {
+                    let store = tls::CertStore::new(cert.clone(), key.clone());
+                    store.load()?;
+                    tokio::spawn(store.clone().watch());
+                    store
+                }
+                (_, _, Some(token)) => {
+                    let directory = match b.block_acme_directory.as_str() {
+                        "staging" => tls::LETS_ENCRYPT_STAGING.to_owned(),
+                        d => d.to_owned(),
+                    };
+                    let acme = tls::Acme {
+                        domain: domain.clone(),
+                        email: b.block_acme_email.clone(),
+                        directory,
+                        dir: state_dir.join("acme"),
+                        dns: tls::Cloudflare::from_file(token)?,
+                    };
+                    let store = tls::CertStore::new(acme.cert_file(), acme.key_file());
+                    tokio::spawn(acme.run(store.clone()));
+                    store
+                }
+                _ => anyhow::bail!(
+                    "--block-domain needs a certificate: --block-cert/--block-key or --block-acme-cloudflare-token-file"
+                ),
+            };
+            if owner.is_none() {
+                warn!("no tailnet owner: block sites will refuse everyone");
+            }
+            (sites::Scheme::Tailnet { domain, port: addr.port() }, Some(tls::server_config(store)?))
+        }
+    };
+    let settings =
+        sites::Settings { scheme, owner, app_origins: app.origins(), reserved: vec![listen.port(), addr.port()] };
+    // Known before any block is restored; served once the address is up.
+    let sites = sites::install(settings);
+    tokio::spawn(async move {
+        // The tailnet address may not be up yet at boot.
+        let listener = loop {
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => break l,
+                Err(e) => {
+                    warn!(%addr, error = %e, "can't listen for block sites yet");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        };
+        info!(%addr, "serving block sites");
+        sites::serve(sites, listener, tls).await;
+    });
+    Ok(())
 }
 
 /// A random name for this daemon's state directory, kept in it: the
@@ -171,7 +282,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     }
     info!(owner = owner.as_deref().unwrap_or("<none: tailnet requests refused>"), "tailnet owner");
     let owner_login = owner.clone();
-    let access = access::Access::new(args.listen.port(), &public_hosts, &args.allow_origins, owner);
+    let access = access::Access::new(args.listen.port(), &public_hosts, &args.allow_origins, owner.clone());
 
     let (shell, shell_args) = match &args.shell {
         Some(cmd) => {
@@ -189,6 +300,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     });
     let store = store::StateDir::open(state_dir.clone())?;
     info!(state = %state_dir.display(), "state directory");
+    start_sites(&args.blocks, &access, owner, args.listen, &state_dir)?;
     let launch = pane::Launcher::detect();
     info!(scopes = launch.scopes, fd_store = launch.fd_store, kept = kept.len(), "pane launcher");
     store.prune_closed(store::CLOSED_RETENTION_MS);
