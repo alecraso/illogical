@@ -20,7 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
-use illogical_proto::hosts::{AddHost, Host, HostInfo, HostList, Invite, JoinRequest};
+use illogical_proto::hosts::{AddHost, Host, HostInfo, HostList, Invite, JoinRequest, Joined};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
@@ -290,7 +290,7 @@ async fn join(State(app): AppState, Json(req): Json<JoinRequest>) -> Response {
         Ok(h) => {
             let hosts = app.hosts.clone();
             tokio::spawn(async move { hosts.probe().await });
-            Json(h).into_response()
+            Json(Joined { host: h, owner: app.access.owner().map(str::to_owned) }).into_response()
         }
         Err(e) => {
             warn!(error = e, "refused a join");

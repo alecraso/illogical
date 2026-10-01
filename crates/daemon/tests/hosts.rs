@@ -229,6 +229,10 @@ fn tailnet_requests_need_the_owner_except_to_join_with_an_invite() {
     assert_eq!(join("ilj_not-a-token").0, 403);
     let (status, _, body) = join(&token);
     assert_eq!(status, 200, "{body}");
+    // The sandbox learns whom to let in: the home daemon's owner.
+    let joined: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(joined["owner"], OWNER);
+    assert_eq!(joined["host"]["name"], "sbx");
     assert_eq!(join(&token).0, 403, "an invite is spent");
     let (_, _, list) = home.http("GET", "/api/hosts", &[host, login], None);
     let list: Value = serde_json::from_str(&list).unwrap();

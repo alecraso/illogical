@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Archiver for musl builds (`just static`), from the same Zig.
+exec zig ar "$@"

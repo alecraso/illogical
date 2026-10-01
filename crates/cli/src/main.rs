@@ -237,6 +237,12 @@ enum Command {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
+    /// Install the daemon: `illogicald install` with these arguments (e.g.
+    /// `--tailnet file:KEY --home URL --join TOKEN` in a sandbox).
+    Install {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Other daemons to switch to (this daemon's host list).
     Hosts {
         #[command(subcommand)]
@@ -332,11 +338,20 @@ fn main() {
 }
 
 fn real_main(cli: Cli) -> anyhow::Result<i32> {
+    if let Command::Install { args } = &cli.cmd {
+        // The daemon beside this binary, else the one on PATH.
+        use std::os::unix::process::CommandExt;
+        let beside = std::env::current_exe()?.with_file_name("illogicald");
+        let daemon = if beside.exists() { beside } else { PathBuf::from("illogicald") };
+        let err = std::process::Command::new(&daemon).arg("install").args(args).exec();
+        bail!("running {}: {err}", daemon.display());
+    }
     let sock = hosts::target(socket(&cli), cli.host.as_deref())?;
     REMOTE.store(matches!(sock, http::Target::Url(_)), std::sync::atomic::Ordering::Relaxed);
     let json_out = cli.json;
     match cli.cmd {
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
+        Command::Install { .. } => unreachable!("handled before connecting"),
         Command::Ls => {
             let v = request(&sock, "GET", "/api/panes", None)?.json()?;
             if json_out {

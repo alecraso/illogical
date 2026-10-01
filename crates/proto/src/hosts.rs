@@ -66,3 +66,11 @@ pub struct JoinRequest {
     pub token: String,
     pub host: AddHost,
 }
+
+/// What `join` answers: the entry, and the login the home daemon lets in,
+/// which the joining daemon should let in too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Joined {
+    pub host: Host,
+    pub owner: Option<String>,
+}

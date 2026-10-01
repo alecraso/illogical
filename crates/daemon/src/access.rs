@@ -56,8 +56,9 @@ pub struct Access {
 }
 
 impl Access {
-    /// `direct`: also reachable without serve, on these addresses (the
-    /// listen address when it isn't loopback), whose pages are plain http.
+    /// `direct`: names and addresses this daemon is also reachable at
+    /// without serve, on its own port (it listens on one, or tailscaled's
+    /// netstack forwards the port to loopback). Their pages are plain http.
     pub fn new(
         port: u16,
         public_hosts: &[String],
@@ -68,10 +69,10 @@ impl Access {
         let loopback: Vec<String> = ["127.0.0.1", "localhost", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect();
         let public: Vec<String> = public_hosts.iter().map(|h| h.to_ascii_lowercase()).collect();
         // With a port: a direct connection (not through serve) names one.
-        let direct: Vec<String> =
-            public.iter().chain(direct.iter()).map(|h| format!("{}:{port}", h.to_ascii_lowercase())).collect();
+        let direct: Vec<String> = direct.iter().map(|h| format!("{}:{port}", h.to_ascii_lowercase())).collect();
         let origins = loopback
             .iter()
+            .chain(&direct)
             .map(|h| format!("http://{h}"))
             .chain(public.iter().map(|h| format!("https://{h}")))
             .chain(extra_origins.iter().map(|o| o.trim_end_matches('/').to_ascii_lowercase()))
@@ -122,6 +123,11 @@ impl Access {
                 "tailnet request but no owner configured; start illogicald with --owner".into(),
             )),
         }
+    }
+
+    /// The login let in from the tailnet.
+    pub fn owner(&self) -> Option<&str> {
+        self.owner.as_deref()
     }
 
     /// Whether a browser on `origin` may use us (exactly one of ours).
@@ -226,7 +232,14 @@ mod tests {
 
     #[test]
     fn direct_tailnet_peers_need_the_owners_login() {
-        let a = access();
+        // Reachable on its own port (a sandbox's netstack forwards it).
+        let a = Access::new(
+            7681,
+            &["geek.example.ts.net".into()],
+            &["geek.example.ts.net".into()],
+            &[],
+            Some("me@x.com".into()),
+        );
         let h = headers(&[("host", "geek.example.ts.net:7681")]);
         let me = Peer::Tailnet { login: Some("me@x.com".into()) };
         assert!(a.check(&h, &me).is_ok());
@@ -247,12 +260,22 @@ mod tests {
     }
 
     #[test]
-    fn direct_addresses_are_hosts() {
-        let a = Access::new(7681, &["box.example.ts.net".into()], &["100.1.2.3".into()], &[], Some("me@x.com".into()));
+    fn direct_addresses_are_hosts_and_their_pages_origins() {
+        let direct = ["box.example.ts.net".into(), "100.1.2.3".into()];
+        let a = Access::new(7681, &["box.example.ts.net".into()], &direct, &[], Some("me@x.com".into()));
         let me = Peer::Tailnet { login: Some("me@x.com".into()) };
         assert!(a.check(&headers(&[("host", "100.1.2.3:7681")]), &me).is_ok());
+        assert!(a.check(&headers(&[("host", "box.example.ts.net:7681")]), &me).is_ok());
         assert!(a.check(&headers(&[("host", "100.1.2.3")]), &me).is_err());
         assert!(a.check(&headers(&[("host", "100.1.2.4:7681")]), &me).is_err());
+        assert!(a.origin_allowed("http://100.1.2.3:7681"));
+        assert!(a.origin_allowed("http://box.example.ts.net:7681"));
+        assert!(!a.origin_allowed("https://100.1.2.3:7681"));
+        assert!(!a.origin_allowed("http://box.example.ts.net"));
+        // Without direct reach (serve only), none of that is ours.
+        let served = access();
+        assert!(served.check(&headers(&[("host", "geek.example.ts.net:7681")]), &me).is_err());
+        assert!(!served.origin_allowed("http://geek.example.ts.net:7681"));
         assert_eq!(direct_address("100.1.2.3:7681".parse().unwrap()).as_deref(), Some("100.1.2.3"));
         assert_eq!(direct_address("127.0.0.1:7681".parse().unwrap()), None);
         assert_eq!(direct_address("0.0.0.0:7681".parse().unwrap()), None);

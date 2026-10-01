@@ -67,12 +67,36 @@ impl LocalApi {
         tokio::time::timeout(Duration::from_secs(3), go).await.context("tailscaled didn't answer")?
     }
 
-    pub async fn status(&self) -> anyhow::Result<Status> {
+    async fn status_json(&self) -> anyhow::Result<Value> {
         let (code, body) = self.get("/localapi/v0/status").await?;
         if code != 200 {
             bail!("tailscaled status: HTTP {code}");
         }
-        parse_status(&serde_json::from_slice(&body)?).context("tailscaled isn't logged in")
+        Ok(serde_json::from_slice(&body)?)
+    }
+
+    pub async fn status(&self) -> anyhow::Result<Status> {
+        parse_status(&self.status_json().await?).context("tailscaled isn't logged in")
+    }
+
+    /// The status once tailscaled has settled: while it says it is still
+    /// starting (it was started beside us, as in a sandbox after a reboot),
+    /// wait up to `within`.
+    pub async fn settled_status(&self, within: Duration) -> anyhow::Result<Status> {
+        let deadline = tokio::time::Instant::now() + within;
+        loop {
+            let v = self.status_json().await?;
+            let starting = matches!(v.get("BackendState").and_then(Value::as_str), Some("NoState" | "Starting"));
+            if !starting || tokio::time::Instant::now() > deadline {
+                return parse_status(&v).context("tailscaled isn't logged in");
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// `Running` once logged in and connected; `NeedsLogin`, `Starting`, …
+    pub async fn backend_state(&self) -> anyhow::Result<String> {
+        Ok(self.status_json().await?.get("BackendState").and_then(Value::as_str).unwrap_or_default().to_owned())
     }
 
     /// Who is at `addr` (the far end of a TCP connection we accepted), or

@@ -24,6 +24,15 @@ web:
 build: web
     {{cargo}} build --release
 
+# Static x86_64 musl binaries (daemon and CLI) for sandboxes and machines
+# without systemd: target/x86_64-unknown-linux-musl/release/. Zig, already
+# here for libghostty, is the C compiler and brings musl.
+static: web
+    rustup target add x86_64-unknown-linux-musl >/dev/null
+    CC_x86_64_unknown_linux_musl="$PWD/scripts/zig-cc-musl" AR_x86_64_unknown_linux_musl="$PWD/scripts/zig-ar" \
+      {{cargo}} build --release --target x86_64-unknown-linux-musl -p illogicald -p illogical
+    file target/x86_64-unknown-linux-musl/release/illogicald target/x86_64-unknown-linux-musl/release/illogical
+
 # All tests.
 test:
     {{cargo}} test --workspace
@@ -33,6 +42,13 @@ test:
 e2e url="":
     {{cargo}} build -p illogicald
     cd web && pnpm run build && E2E_BASE_URL="{{url}}" pnpm exec playwright test
+
+# M4a for real: a wisp sprite installs the static daemon on the tailnet and
+# joins a throwaway home daemon's list; the phone gets vim there. Needs
+# ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE (an ephemeral tag:sandbox key) and wispd.
+e2e-sandbox: static
+    {{cargo}} build -p illogicald
+    cd web && pnpm exec playwright test e2e/sandbox.spec.ts
 
 # What CI runs.
 check: test
