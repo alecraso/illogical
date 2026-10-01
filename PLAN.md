@@ -644,6 +644,10 @@ instead.
     through the provider tunnel, never a public URL.
   - **Done when:** start `claude` in a resident sprite, let it go cold, reopen
     from the phone, and the layout and scrollback are back.
+  - **Done 2026-10-01** (see README; `web/e2e/resident.spec.ts` with
+    `ILLOGICAL_E2E_CLAUDE=1`, cold forced with wispd's suspend + cool).
+    The tunnel is `/tunnel/<host>` on the home daemon with a per-host
+    token. Not yet exercised against Fly.
 - **M4c, dial-out and history.** The dial-out transport (read-only share
   tokens moved to M15), and an optional log-segment sync to the home daemon, so history
   outlives a deleted sandbox.

@@ -6,7 +6,7 @@ terminals, and mouse-first clients attach to them.
 Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
 milestones) and [docs/research.md](docs/research.md).
 
-## Status: M3c (VM tabs) works
+## Status: M4b (sandboxes, resident daemons) works
 
 Everything from M1 (sessions, tabs and splits held by the daemon, driven by
 the mouse, the same live on every window and a phone), and now it survives
@@ -151,6 +151,37 @@ the daemon stopping, crashing, or the machine rebooting:
   (a sprite, a container: no systemd needed) gets a static daemon on the
   tailnet with one command and adds itself to the list; see *Use it*.
 
+- **Sandboxes** (M4b). *Sandboxes…* (session menu; *Sandboxes* in the
+  phone's sheet) or `illogical sandboxes` lists the home daemon's provider's
+  sandboxes (wisp sprites here; Fly's Sprites API fits the same adapter)
+  with their state, asked of the provider, which doesn't wake them.
+  - *Shell* (`illogical run --sandbox NAME`) opens a pane here whose
+    terminal is a plain exec on that sandbox: nothing is installed there.
+    It's disposable, and badged so: the output is logged here while it's
+    attached, but the provider keeps only its replay buffer while nothing
+    follows it (1 MB on wisp, about 6.5 KB on Fly), and closing the pane
+    hangs the shell up and leaves the sandbox alone.
+  - *Make resident* (`illogical sandboxes promote NAME [--as HOST]`) copies
+    the static daemon in (`just static`; the home daemon finds it in
+    `--static-dir`, default `~/.local/share/illogical/static`) and registers
+    it as a sprite *service*, so it starts on every boot and restarts if it
+    exits. It becomes a host in the list, a *provider* host: the client and
+    `--host` reach it through the home daemon's **provider tunnel**
+    (`/tunnel/HOST/…`, through the Sprites proxy to its port, never a
+    public URL). Connecting wakes it; the page lets go of it 10s after it's
+    hidden, so it can sleep. After it goes cold (on wisp, a real reboot)
+    its daemon restores its layout and scrollback from its own disk, the
+    way a reboot does here. A provider host with a tailnet URL too is
+    switched to the tailnet if that answers within 5s of the wake.
+    `illogical sandboxes demote NAME` stops it.
+  - **Identity.** The tunnel is for callers the home daemon already let in
+    (the owner, or its Unix socket). It strips their identity headers and
+    presents a token it minted for that host when it made it resident; the
+    resident daemon keeps only the token's SHA-256 (in its arguments) and
+    refuses every loopback connection without it, so other programs in the
+    sandbox can't use the provider's proxy path to it. Tokens stay in the
+    home daemon's `tunnels.json`, never in the host list clients get.
+
 ### The CLI
 
 ```
@@ -191,6 +222,10 @@ illogical hosts                               # the home daemon's other hosts, l
 illogical hosts add box https://box.tailb2e8f2.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
 illogical --host box run --wait -- make       # any command, on another host
+illogical sandboxes                           # the provider's sandboxes and their state
+illogical run --sandbox s1                    # a disposable shell on one, nothing installed there
+illogical sandboxes promote s1 --as s1        # a resident daemon there, a host reached through the tunnel
+illogical --host s1 ls                        # through the tunnel (wakes it)
 ```
 
 `--json` prints the API's JSON. `send` then `wait` only sees what happened
@@ -306,7 +341,10 @@ against the running one.
   policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
   integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
   search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
-  (`machine.rs`: the Sprites API and exec TTY sessions), blocks
+  (`machine.rs`), sandbox providers (`provider/`: the `Provider` trait
+  and its capabilities, and the Sprites API adapter: exec TTY and piped
+  sessions, the proxy, files and services), sandboxes and resident daemons
+  (`resident.rs`), the provider tunnel (`tunnel.rs`), blocks
   (`block.rs`, `browser.rs`; agents in `agent/`: the ACP client, the
   transcript, agent definitions, the local and VM pipes), block sites
   (`sites.rs`: per-block origins and their HTTP proxy; `ports.rs`: reaching
@@ -322,7 +360,7 @@ against the running one.
   and phone).
 - `spikes`: S1–S3 write-ups and code.
 
-## Things M0–M4a taught us
+## Things M0–M4b taught us
 
 - **Don't promise what the client can't draw.** libghostty answered Neovim's
   "do you support left/right margins?" with yes, Neovim used them for
@@ -417,3 +455,16 @@ against the running one.
 - **A restarted tailscaled says `Starting` for a moment.** A daemon that
   asked then got no tailnet name (and refused its own URL), and an install
   that asked then logged in again. Both wait for it to settle now.
+- **"Cold" can be had on demand.** wisp turns a suspended sprite cold
+  after `--warm-ttl` (1h) by dropping its memory snapshot, which makes the
+  next wake a real boot. Its web UI's operator endpoints do the same at
+  once (`POST /ui/api/sprites/NAME/suspend`, then `/cool`, with a session
+  from `/ui/login`), which is how `resident.spec.ts` tests a cold wake.
+  Suspending syncs the guest's disks first, so the resident daemon's log
+  and checkpoints are there after the reboot.
+- **A TUI on the main screen leaves the cursor mid-screen.** Claude Code
+  draws in place and doesn't use the alternate screen, so after a restore
+  the marker landed on top of it; it now goes below the last row with
+  text.
+- **Sprites lists are paged** (50 at a time); wisp here holds more than
+  that.
