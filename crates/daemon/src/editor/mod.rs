@@ -48,6 +48,9 @@ use crate::{
 
 /// At most this many lines of context come with a report.
 const MAX_LINES: usize = 12;
+/// First in the block's pages: storage in memory where the browser refuses
+/// a third-party frame its own (#69).
+const STORAGE_JS: &str = include_str!("storage.js");
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct Config {
@@ -148,6 +151,9 @@ impl Editor {
                     e.reported(r);
                 }
             });
+            // The script before the target: a page served in between would
+            // come without it (#69).
+            site.set_head_script(STORAGE_JS);
             site.set_target(Target::Service(server.clone() as Arc<dyn Service>));
             Editor {
                 state: Mutex::new(State { machine: ctx.sprite.clone(), ..State::default() }),

@@ -3040,6 +3040,14 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - The pinned release, not a `code-server` on `PATH`: illogical relies on recent flags.
   - code-server's own logs stay in `~/.local/share/code-server`: moving them means a different `XDG_DATA_HOME`, which its terminals and language servers would inherit.
   - `illogical edit --machine`, not `--host`: the global `--host` (another daemon) swallows a subcommand's `--host` (#61 for `open` and `agent`).
+- **Blank in a frame from another site (#69, fixed 2026-10-02):**
+  - **What happened:** with the app and the blocks on different sites, an editor block was white or an empty workbench, while the same address on its own worked.
+  - **Why:** a browser that blocks third-party cookies (Chrome's setting, its Incognito default) refuses a cross-site frame its storage too. VS Code falls back to memory when IndexedDB is refused, but reading `localStorage` threw (the profiles and the secrets provider), and the workbench stopped. The specs ran in Playwright's Chrome, which allows third-party cookies; their app (127.0.0.1) and blocks (`*.localhost`) were already different sites (`Sec-Fetch-Site: cross-site`), and they passed. `sites.rs`'s checks refused nothing here.
+  - **The fix:** a site can carry a head script (`Site::set_head_script`), served at `/.illogical/head.js` on the block's own origin and put first in its HTML navigations (asked for uncompressed, so the proxy can edit them). An editor block's is `editor/storage.js`: in-memory `localStorage` and `sessionStorage` when the real ones are refused. VS Code keeps its settings on the server, so nothing that matters is lost with the page.
+  - **Also:** `frame-ancestors` now lists `'self'` (VS Code frames its own web worker extension host; every ancestor must still match, so a block is only ever inside the app) and leaves out IPv6 literals (CSP can't say them, and Chrome logged an error per page). The site logs each refusal at debug (`illogicald::sites`), with the host, path, `Origin` and `Sec-Fetch-*`.
+  - **Decisions:** a script in the page, not the Storage Access API (it needs a click and a prompt per block, and VS Code would still read `window.localStorage`), and not a patched code-server (VM blocks unpack their own copy, and `--code-server PATH` runs another). The security model is unchanged: the script is illogical's, on the block's own origin, and `check` is as it was.
+  - **Tests:** `editors.spec.ts` opens a file at its line in a Chrome profile that blocks third-party cookies, from the app on another site (`sec-fetch-site: cross-site`, `sec-fetch-storage-access: none`); it fails without the script. `tests/editors.rs`: the page through the site has the script first, uncompressed, and the script is served from the site but not to another site. Unit tests for the script's place, `frame-ancestors`, and `check`'s refusals.
+  - **Not covered:** the window in the report had both sockets connected, which the reproduction never gets to; whether that browser blocks third-party cookies is still to confirm (Needs Jake). Safari and Firefox weren't run.
 - **Not covered:**
   - the 3 s target from a real phone on geek over the tailnet scheme (Needs Jake);
   - a real reboot of geek, and a `systemctl --user restart` of the installed service (the tests restart a daemon run by hand);
@@ -3336,6 +3344,65 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
   - jumping to a pane that runs the conversation, in an automated test: it needs a Claude Code in a scoped pane (systemd scopes), which neither test daemon has. The listing showed real sessions in the daily daemon's panes;
   - the Mac (`~/Library/Application Support/Claude` for the desktop app's records);
   - inotify: a listing finds new sessions, but an open picker doesn't update by itself.
+
+### Workspaces track (S21, M34, added 2026-10-02)
+
+A [chant](https://intentius.io/chant) workspace (a repo with a `chant.workspace.json`, such as `~/dev/intentius/chant`) as a block you work in. Its members are cards you open shells, agents and diffs on. Its records show with their state. A gate waiting in any member is illogical attention you can approve. illogical reads the workspace only through chant's read contract (chant `ws-017`), as one more reader beside hud and behold. Review actions on records stay hud's (`ws-052`).
+
+**Order:** S21 (#70), done below; then M34 (#73), with #74 (the shell environment) first or alongside, and #75 (approve as owner or editor) inside it. #76 holds drafts for chant that Jake files himself.
+
+#### S21: chant workspace as blocks spike
+
+**Done 2026-10-02: go** (see [spikes/s21-chant-workspace](spikes/s21-chant-workspace/README.md); the throwaway block is on branch `s21-workspace-block`).
+
+- **Read contract alone is enough.**
+  - `workspace ls`, `check --format json`, `records --current` and `status <env>` (all `--json`) give members, findings per member, records with `blockedBy` and drift, releases, and **each member's pending gates with chant's approve command**.
+  - No chant change is needed. `graph` runs only kind-`chant` members (24 of chant's 25 are `skipped`), and `lineage` needs a lock file, so neither is used.
+- **It works end to end on a dev daemon.** A gated op shows as `needs_input` ("delivery: ship waits at gate approve-ship") about 1 s after `chant run` exits. *Approve* runs `chant approve` in the member, and the attention clears. *Shell* opens a pane in the member, and a nested workspace opens as a second block.
+- **Cost:**
+  - A full read takes 1.2–1.5 s wall and **about 7.5 CPU-s** (four chant processes, each loading TypeScript through tsx; 285 MB peak).
+  - So, while drawn, the block checks a git fingerprint every 3 s (HEAD, `chant/lifecycle`, `status --porcelain`, `diff HEAD`; about 0.1 CPU-s), and reads in full only when it changes. That's 0.4% of a core when idle.
+- **The daemon has no node.** mise sets it up in `.bashrc`, which the daemon's `sh -c` never reads, so the spike takes PATH from `$SHELL -ic`. #74 makes that a cached per-host shell environment.
+- **Cards, not member blocks.** chant's 25 members as blocks would be 25 tiles of mostly lexicons. Cards launch real blocks in a member when you work on it.
+- **Approve:** chant records `resolvedBy` as the host's user. Decided 2026-10-02: the owner and editors may approve, each as themselves (`--approver`), and view-only guests may not (#75).
+- **For chant (#76):**
+  - a nested workspace's runs write gates under the outer prefix, so its own `status` never shows them;
+  - chant's declaration names no record kinds;
+  - gates need an env;
+  - one process for a workspace read would cut the cost about 4×;
+  - `--json` is inconsistent.
+
+#### M34: chant workspace blocks (#73)
+
+`BlockType::Workspace` as S21 built it, finished:
+
+- the reads through the workspace's own chant;
+- fingerprint freshness;
+- gates as attention, with *Approve* for the owner and editors (#75);
+- *Run op* in a pane;
+- *Shell*, *Agent* and *Changes* on a member;
+- nested workspaces as blocks;
+- `illogical workspace [DIR]`;
+- *Open as workspace* in a pane's menu and the picker when a directory holds a `chant.workspace.json`;
+- an MCP `open_workspace`;
+- web cards, the phone sheet (gates first) and a TUI line.
+
+**Tests:** the composer's fixtures, daemon tests for gate attention and approve, and an e2e spec with a toy gated op (CI needs node and a pinned chant).
+
+**Done when:** on geek, `illogical workspace ~/dev/intentius/chant` (after `npm install`) shows its members, and a gated op shows as attention within about 5 s. The phone can approve it, and the next `chant run` walks through.
+
+### Studio apps track (S22, added 2026-10-02)
+
+arugula-salad's studio makes a box per app on wisp: the app, hud's proxy and panel in front of it, a door, and a steward that runs releases. The idea is that the box shows up in illogical as a block beside its terminals and agents, and whatever it waits on reaches the swarm's needs-you rail. That covers hud's agent asking a question now. Release gates are chant's (`chant approve release ship`), so they come with M34's workspace attention.
+
+#### S22: studio apps spike
+
+**Done 2026-10-02: go** (see [spikes/s22-apps](spikes/s22-apps/README.md)), against a real studio box cloned from `arugula-box-template` on geek's wispd.
+
+- **Framing:** a block's frame is always third party (illogical's page is on `*.ts.net`, the box on its own site), and hud's `SameSite=Lax` session cookie is refused there: 401 in Chrome and Firefox, in illogical's own client too. The same cookie as `SameSite=None; Secure; Partitioned` works in both (200), including Chrome with third-party cookies blocked, and Chrome keys it to illogical's site. A plain web-page block (`illogical open <entry link>`) is enough: the box is already its own origin. With third-party cookies blocked the frame's `localStorage` is still refused (#69). WebKit wasn't run.
+- **Questions:** hud puts a waiting question in every `hud-chat-queue` frame, and a follower of `/__hud/api/chat/stream` turned each one into an M24 `ask` 11 ms after hud asked. That puts it on the pane's card, the swarm's rail, push and `illogical attention`. Answered on the swarm's rail, it reached hud (`/__hud/api/chat/answer`) in 48–74 ms and the agent's turn went on. Answered in hud's own panel, the card was withdrawn 33 ms later.
+- **What it needs:** studio's door hands out the partitioned cookie; `Api::Ask` takes browser blocks (it's terminal-only, so the spike's follower raised the card on a terminal beside the app, and the swarm filed it under the wrong project); the follower moves into the daemon as an app block; illogical gets a studio token to list apps and mint entry links (passkey-only today); and hud learns who answered in illogical (it records the follower's own player).
+- **Found on the way (arugula-salad):** hud's panel never mounts on the template's page, framed or not (the injected client looks for `<body>` from `<head>`). A clone of the box template on geek gets `widgets.wtf` while the template's `~/box/domain` says `studio.arugula.io`.
 
 ## Acceptance tests (automated where possible)
 

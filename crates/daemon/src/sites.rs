@@ -30,8 +30,11 @@
 //!   that isn't a page navigation (`Sec-Fetch-Site`/`Sec-Fetch-Mode`);
 //! - it strips `Tailscale-*`, `X-Forwarded-*` and `Forwarded`, so code in
 //!   the machine never learns who you are;
-//! - only the app may frame a block (`frame-ancestors`), and the dev
-//!   server's own `X-Frame-Options` is dropped;
+//! - only the app may frame a block (`frame-ancestors`, plus the block's
+//!   own pages: VS Code frames itself), and the dev server's own
+//!   `X-Frame-Options` is dropped;
+//! - a site may have a script of illogical's put first in its pages
+//!   (`Site::set_head_script`; editor blocks' storage, #69);
 //! - it carries WebSocket upgrades, so hot reload works;
 //! - it never proxies to the daemon's own ports.
 //!
@@ -70,6 +73,11 @@ type Body = BoxBody<Bytes, hyper::Error>;
 const WHOIS_FOR: Duration = Duration::from_secs(60);
 /// At most this much of a page is read for its title.
 const PROBE_LIMIT: usize = 512 * 1024;
+/// Where a site's head script is served, on the site itself (so the page's
+/// own `script-src 'self'` allows it).
+pub const HEAD_SCRIPT: &str = "/.illogical/head.js";
+/// At most this much of a page is read to put the head script in.
+const PAGE_LIMIT: usize = 4 * 1024 * 1024;
 
 /// How block sites are named and reached.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +119,7 @@ pub struct Site {
     target: Mutex<Option<Target>>,
     down: AtomicBool,
     report: Box<dyn Fn(Report) + Send + Sync>,
+    head: OnceLock<&'static str>,
 }
 
 impl Site {
@@ -127,6 +136,12 @@ impl Site {
 
     pub fn target(&self) -> Option<Target> {
         self.target.lock().unwrap().clone()
+    }
+
+    /// Put `js` first in this site's pages (HTML navigations), served from
+    /// [`HEAD_SCRIPT`]. Once per site.
+    pub fn set_head_script(&self, js: &'static str) {
+        let _ = self.head.set(js);
     }
 
     fn reached(&self, ok: Result<(), &str>) {
@@ -179,6 +194,7 @@ impl Sites {
             target: Mutex::new(None),
             down: AtomicBool::new(false),
             report: Box::new(report),
+            head: OnceLock::new(),
         });
         self.sites.lock().unwrap().insert(id, site.clone());
         site
@@ -371,11 +387,7 @@ fn full(status: StatusCode, text: impl Into<String>) -> Response<Body> {
 
 /// Why a request is refused, if it is (the checks that don't depend on the
 /// port: who, which site, from where).
-fn check(
-    sites: &Sites,
-    admitted: Result<(), String>,
-    req: &Request<Incoming>,
-) -> Result<Arc<Site>, (StatusCode, String)> {
+fn check<B>(sites: &Sites, admitted: Result<(), String>, req: &Request<B>) -> Result<Arc<Site>, (StatusCode, String)> {
     if let Err(why) = admitted {
         return Err((StatusCode::FORBIDDEN, why));
     }
@@ -393,6 +405,23 @@ fn check(
         return Err((StatusCode::FORBIDDEN, "other sites can't fetch from this block".into()));
     }
     Ok(site)
+}
+
+/// A refusal, for finding out why a page in a block doesn't work (#69).
+fn refused(req: &Request<Incoming>, status: StatusCode, why: &str) {
+    let h = req.headers();
+    debug!(
+        status = status.as_u16(),
+        why,
+        method = %req.method(),
+        host = text(h, header::HOST.as_str()).unwrap_or(""),
+        path = req.uri().path(),
+        origin = text(h, header::ORIGIN.as_str()).unwrap_or(""),
+        sec_fetch_site = text(h, "sec-fetch-site").unwrap_or(""),
+        sec_fetch_mode = text(h, "sec-fetch-mode").unwrap_or(""),
+        sec_fetch_dest = text(h, "sec-fetch-dest").unwrap_or(""),
+        "refusing block site request"
+    );
 }
 
 fn text<'h>(h: &'h HeaderMap, name: &str) -> Option<&'h str> {
@@ -483,28 +512,44 @@ async fn handle(
 ) -> Response<Body> {
     let site = match check(sites, admitted, &req) {
         Ok(s) => s,
-        Err((status, why)) => return full(status, why),
+        Err((status, why)) => {
+            refused(&req, status, &why);
+            return full(status, why);
+        }
     };
     let Some(target) = site.target() else {
         return full(StatusCode::SERVICE_UNAVAILABLE, "this block isn't showing a port");
     };
     if let Err(why) = sites.allowed(&target) {
+        refused(&req, StatusCode::FORBIDDEN, &why);
         return full(StatusCode::FORBIDDEN, why);
+    }
+    let head = site.head.get().copied();
+    if let Some(js) = head
+        && req.uri().path() == HEAD_SCRIPT
+    {
+        let mut r = full(StatusCode::OK, js);
+        r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/javascript; charset=utf-8"));
+        r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        return r;
     }
     let local = target.authority();
     let what = target.what();
     let h = req.headers();
-    if req.method() == Method::GET
-        && text(h, "sec-fetch-mode") == Some("navigate")
-        && text(h, "sec-fetch-dest") == Some("iframe")
-    {
+    let navigating = req.method() == Method::GET && text(h, "sec-fetch-mode") == Some("navigate");
+    if navigating && text(h, "sec-fetch-dest") == Some("iframe") {
         let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/").to_owned();
         (site.report)(Report::Navigated(path));
     }
+    // A page that gets the head script comes uncompressed, to be edited.
+    let edit_page = head.is_some() && navigating;
     let upgrade = is_upgrade(req.headers());
     let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut req));
     let (mut parts, body) = req.into_parts();
     rewrite_request(&mut parts.headers, &site, &local);
+    if edit_page {
+        parts.headers.remove(header::ACCEPT_ENCODING);
+    }
     // Origin-form only: the port's server sees a request to itself.
     parts.uri = parts.uri.path_and_query().map(|p| p.as_str()).unwrap_or("/").parse().unwrap_or_default();
     let out = Request::from_parts(parts, body.boxed());
@@ -532,6 +577,16 @@ async fn handle(
     let upgraded = res.status() == StatusCode::SWITCHING_PROTOCOLS;
     let ancestors = frame_ancestors(&sites.settings.app_origins);
     rewrite_response(res.headers_mut(), &site, &local, &ancestors, upgraded);
+    let html = text(res.headers(), header::CONTENT_TYPE.as_str()).is_some_and(|t| t.starts_with("text/html"));
+    if edit_page && html && !res.headers().contains_key(header::CONTENT_ENCODING) {
+        let (mut parts, body) = res.into_parts();
+        let page = match Limited::new(body, PAGE_LIMIT).collect().await {
+            Ok(b) => with_head_script(&b.to_bytes()),
+            Err(e) => return full(StatusCode::BAD_GATEWAY, format!("{what}: {e}")),
+        };
+        parts.headers.remove(header::CONTENT_LENGTH);
+        return Response::from_parts(parts, Full::new(Bytes::from(page)).map_err(|e| match e {}).boxed());
+    }
     if upgraded && let Some(client) = client_upgrade {
         let server = hyper::upgrade::on(&mut res);
         tokio::spawn(async move {
@@ -543,10 +598,33 @@ async fn handle(
     res.map(|b| b.boxed())
 }
 
+/// The app's pages may frame a block, and so may the block's own (VS Code
+/// puts its web worker extension host in a frame of its own origin).
+/// Every ancestor must match, so a block inside a block is still only ever
+/// inside the app. IPv6 literals are left out: CSP has no syntax for them.
 fn frame_ancestors(app: &[String]) -> HeaderValue {
-    let list = if app.is_empty() { "'none'".to_owned() } else { app.join(" ") };
-    HeaderValue::from_str(&format!("frame-ancestors {list}"))
-        .unwrap_or(HeaderValue::from_static("frame-ancestors 'none'"))
+    let mut list = vec!["'self'"];
+    list.extend(app.iter().map(String::as_str).filter(|o| !o.contains("://[")));
+    HeaderValue::from_str(&format!("frame-ancestors {}", list.join(" ")))
+        .unwrap_or(HeaderValue::from_static("frame-ancestors 'self'"))
+}
+
+/// `html` with a `<script>` for [`HEAD_SCRIPT`] first in its `<head>`
+/// (or first of all, without one).
+fn with_head_script(html: &[u8]) -> Vec<u8> {
+    let tag = format!("<script src=\"{HEAD_SCRIPT}\"></script>");
+    let lower = html.to_ascii_lowercase();
+    let at = (0..lower.len())
+        .find(|&i| {
+            lower[i..].starts_with(b"<head") && matches!(lower.get(i + 5), Some(b'>' | b' ' | b'\t' | b'\n' | b'\r'))
+        })
+        .and_then(|i| lower[i..].iter().position(|&c| c == b'>').map(|j| i + j + 1))
+        .unwrap_or(0);
+    let mut out = Vec::with_capacity(html.len() + tag.len());
+    out.extend_from_slice(&html[..at]);
+    out.extend_from_slice(tag.as_bytes());
+    out.extend_from_slice(&html[at..]);
+    out
 }
 
 /// `GET path` on a port, as the proxy would send it: (status, up to
@@ -706,10 +784,66 @@ mod tests {
         assert!(!h.contains_key("x-frame-options"));
         assert_eq!(h["location"], "http://b-3-k.localhost:7690/next");
         let csp: Vec<_> = h.get_all("content-security-policy").iter().map(|v| v.to_str().unwrap()).collect();
-        assert_eq!(csp, ["default-src 'self'", "frame-ancestors http://127.0.0.1:7681 https://geek.example.ts.net"]);
+        assert_eq!(
+            csp,
+            ["default-src 'self'", "frame-ancestors 'self' http://127.0.0.1:7681 https://geek.example.ts.net"]
+        );
         let mut h = headers(&[("location", "https://elsewhere.example/")]);
         rewrite_response(&mut h, &site, "localhost:5173", &fa, false);
         assert_eq!(h["location"], "https://elsewhere.example/");
+    }
+
+    #[test]
+    fn frame_ancestors_leave_out_what_csp_cant_say() {
+        let fa = frame_ancestors(&["http://127.0.0.1:7681".into(), "http://[::1]:7681".into()]);
+        assert_eq!(fa, "frame-ancestors 'self' http://127.0.0.1:7681");
+        assert_eq!(frame_ancestors(&[]), "frame-ancestors 'self'");
+    }
+
+    #[test]
+    fn the_head_script_goes_first_in_the_head() {
+        let tag = format!("<script src=\"{HEAD_SCRIPT}\"></script>");
+        let page = |s: &str| String::from_utf8(with_head_script(s.as_bytes())).unwrap();
+        assert_eq!(
+            page("<!-- c --><html><HEAD lang=x><script>a</script></head></html>"),
+            format!("<!-- c --><html><HEAD lang=x>{tag}<script>a</script></head></html>")
+        );
+        assert_eq!(page("<header><head>x"), format!("<header><head>{tag}x"));
+        assert_eq!(page("<p>no head"), format!("{tag}<p>no head"));
+    }
+
+    #[test]
+    fn refusals() {
+        let s = sites(Scheme::Dev { port: 7690 });
+        let site = s.open(5, "k", |_| {});
+        let req = |pairs: &[(&str, &str)]| {
+            let mut b = Request::get("/");
+            for (k, v) in pairs {
+                b = b.header(*k, *v);
+            }
+            b.body(()).unwrap()
+        };
+        let ok = |r: &Request<()>| check(&s, Ok(()), r).map(|s| s.id).map_err(|(st, _)| st);
+        let host = ("host", "b-5-k.localhost:7690");
+        // The block's own page, and a frame navigating to it from the app.
+        assert_eq!(ok(&req(&[host, ("sec-fetch-site", "same-origin"), ("origin", &site.origin)])), Ok(5));
+        assert_eq!(ok(&req(&[host, ("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "navigate")])), Ok(5));
+        // Another site fetching from it, or claiming another origin.
+        assert_eq!(
+            ok(&req(&[host, ("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "cors")])),
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            ok(&req(&[host, ("sec-fetch-site", "same-site"), ("sec-fetch-mode", "no-cors")])),
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(ok(&req(&[host, ("origin", "http://127.0.0.1:7681")])), Err(StatusCode::FORBIDDEN));
+        assert_eq!(ok(&req(&[host, ("origin", "null")])), Err(StatusCode::FORBIDDEN));
+        assert_eq!(ok(&req(&[("host", "b-5-x.localhost:7690")])), Err(StatusCode::NOT_FOUND));
+        assert_eq!(
+            check(&s, Err("no".into()), &req(&[host])).map(|s| s.id).map_err(|(st, _)| st),
+            Err(StatusCode::FORBIDDEN)
+        );
     }
 
     #[test]

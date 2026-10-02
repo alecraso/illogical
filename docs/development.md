@@ -301,3 +301,16 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   each piece of the format string separately; a handler that answers
   without reading the body (a 404) closed the connection before the body
   went, and the test's next write failed with a broken pipe.
+- **A frame from another site may get no storage at all.** With "Block
+  third-party cookies", Chrome also refuses a cross-site frame its
+  `localStorage`, IndexedDB and service workers. VS Code falls back to
+  memory for IndexedDB but not for `localStorage`: it threw, and an editor
+  block was blank while the same page on its own worked (#69). Playwright's
+  Chrome allows third-party cookies, and 127.0.0.1 and `*.localhost` are
+  already different sites, so the specs never saw it. An editor block's
+  site now puts a script of illogical's first in its pages that gives the
+  window storage in memory when it's refused (`editor/storage.js`), and
+  `editors.spec.ts` runs a block in a Chrome profile that blocks
+  third-party cookies (`sec-fetch-storage-access: none` says it's
+  refused). When a block's page fails in a frame, `RUST_LOG=illogicald::sites=debug`
+  logs every request its site refuses, and why.
