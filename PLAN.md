@@ -3242,14 +3242,14 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
 5. **Two writers.** What actually goes wrong when a block resumes a session that a terminal still has open, and both write turns. This decides whether fork is the default (the expectation) or only advice.
 6. **The desktop app.** Start one session in the desktop app's Code tab on geek. Note its `entrypoint` and `kind`, where its jsonl goes, and whether `~/.claude/sessions` lists it.
 
-**Done 2026-10-02 except item 6: go** (see [spikes/s20-conversations](spikes/s20-conversations/README.md); fixtures in its `fixtures/`).
+**Done 2026-10-02: go** (see [spikes/s20-conversations](spikes/s20-conversations/README.md); fixtures in its `fixtures/`).
 
 - **Shape (1):** 389 sessions and 219 subagent runs (`<id>/subagents/agent-<x>.jsonl` plus `.meta.json`), 931 MiB, all 2.1.x. The index's head-and-tail reads take 9 ms for all of them. The `parentUuid` chain isn't a clean tree: compactions re-link their preserved tail, `away_summary` lines parent the next prompt, and parallel tool calls branch. Walking it drops real exchanges in 18 files. **File order is right:** no result before its call anywhere, and only 5 rewinds in 389 sessions.
 - **Resume (2):** a CLI (2.1.288) session resumed through the daemon's adapter (0.85.0, Claude Code 2.1.286) in 0.6–1.0 s with its whole context, and `claude --resume` showed the new turns. A resume resets the model to the adapter's default and writes `/model` command lines into the transcript.
 - **Settings (3):** `[]` drops `CLAUDE.md`; `project` loads it and the project's hooks with it. `user,project,local` plus `settings: {disableAllHooks: true}` loads `CLAUDE.md`, skills and permissions, and no hook fires.
 - **Fork (4):** 22 ms, leaves the original byte for byte, marks every line `forkedFrom`. It doesn't open the fork: resume the new id before prompting it.
 - **Two writers (5):** each sees only its own turns, and a later resume follows the newest `last-prompt` leaf, so the other writer's turns silently drop out. Forking a live session is required.
-- **Desktop (6): open.** Geek has never run a Code tab session (`claude-code-sessions/` holds only `scheduled-tasks.json`).
+- **Desktop (6):** the Code tab runs its bundled Claude Code (2.1.275) and writes the same jsonl with `entrypoint: claude-desktop`; `~/.claude/sessions` lists it while open, and it forks like any other. The app also keeps `claude-code-sessions/<account>/<org>/local_<uuid>.json` (`cliSessionId`, title, model, effort, `isArchived`). A session with no folder runs in a scratch workspace the app deletes when the session goes.
 
 #### M33: Claude Code conversations as blocks
 
@@ -3257,17 +3257,17 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
    - Watch `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`) with inotify. Index each session's id, cwd (from its lines; the directory slug is lossy), git branch, entrypoint, title, first prompt, last activity, message count and size.
    - The title comes from `custom-title` or `agent-name`, else the latest `ai-title`, else the first prompt. `relocated` moves the cwd; `continued-in` and `forkedFrom` link sessions (the picker shows a fork under its original).
    - Read only the start and end of each file, as the SDK's `listSessions` does. Keep the index in the state directory, keyed by path with mtime and size, so a restart only rereads files that changed. The index builds in the background and never delays startup.
-   - **Sources:** terminal (`cli`), desktop (whatever S20 finds) and other.
+   - **Sources:** terminal (`cli`), desktop (`claude-desktop`; title, model and `isArchived` from the app's `local_*.json` by `cliSessionId`, archived ones hidden like missing folders) and other.
    - **Left out:**
      - sessions any agent block of this daemon has ever had (the daemon keeps a set of them, ended blocks included);
      - sidechain and subagent files;
      - sessions with no prompt;
-     - sessions whose cwd no longer exists, which is how test daemons' `/tmp/ilg-*` sessions disappear. *Show all* brings these back.
+     - sessions whose cwd no longer exists, which is how test daemons' `/tmp/ilg-*` sessions disappear, except desktop ones (their scratch workspace is deleted with the session; *Continue* creates the folder again, empty). *Show all* brings these back.
    - **Liveness:** a session is live while a process in `~/.claude/sessions` holds it and that pid is still alive (`procStart` must equal field 22 of `/proc/<pid>/stat`, so a reused pid doesn't count). `/proc/<pid>/cgroup` then names its scope; `illogical-pane-<N>-….scope` is pane N. If it is, the pane's `PaneInfo` gets the session id, and the conversation says *Live in pane %N*.
    - Each daemon indexes its own machine. M25's fleet view gathers them from every host, the Mac included.
 2. **The converter (jsonl to `transcript::Entry`).**
    - **File order**, not the `parentUuid` chain (S20). A prompt whose parent already had a later child is a rewind and gets a `Note` before it.
-   - `user` text becomes `User`. `assistant` content becomes `Agent` for text, `Thought` for thinking, and `Tool` for a tool_use (name, title, and for Bash the command). A `tool_result` fills in that tool's output and its status (completed, or failed when `is_error` is set). A compaction becomes a `Note` ("Conversation compacted"); its summary line (`isCompactSummary`) is skipped. Slash-command lines (`<command-name>`, `<local-command-stdout>`, `<local-command-caveat>`) become one `Note` (`/model haiku`), and the adapter's own `/model` lines are dropped. Lines of one API response share `message.id`; a subagent call is a `Tool` whose output is the agent's answer (its own transcript stays in `subagents/`).
+   - `user` text becomes `User`, with a leading `<system-reminder>` (the desktop app puts one on the first prompt) removed. `assistant` content becomes `Agent` for text, `Thought` for thinking, and `Tool` for a tool_use (name, title, and for Bash the command). A `tool_result` fills in that tool's output and its status (completed, or failed when `is_error` is set). A compaction becomes a `Note` ("Conversation compacted"); its summary line (`isCompactSummary`) is skipped. Slash-command lines (`<command-name>`, `<local-command-stdout>`, `<local-command-caveat>`) become one `Note` (`/model haiku`), and the adapter's own `/model` lines are dropped. Lines of one API response share `message.id`; a subagent call is a `Tool` whose output is the agent's answer (its own transcript stays in `subagents/`).
    - Meta lines, attachments, bookkeeping and unknown types are skipped, so a new Claude Code version shows less rather than breaking.
    - It is pure and synchronous, and is unit tested against S20's fixtures.
 3. **Conversations as stopped blocks.**

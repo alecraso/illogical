@@ -16,7 +16,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 KEEP = {"type", "subtype", "role", "name", "id", "tool_use_id", "uuid", "parentUuid", "logicalParentUuid",
         "sessionId", "leafUuid", "entrypoint", "version", "userType", "agentId", "media_type", "stop_reason",
         "level", "trigger", "permissionMode", "operation", "model", "timestamp", "promptId", "requestId",
-        "headUuid", "anchorUuid", "tailUuid", "messageUuid", "toolUseID", "continuedInSessionId", "agentType"}
+        "headUuid", "cliSessionId", "titleSource", "effort", "anchorUuid", "tailUuid", "messageUuid", "toolUseID", "continuedInSessionId", "agentType"}
 
 def red(v, key=None):
     if isinstance(v, dict): return {k: red(x, k) for k, x in v.items()}
@@ -131,3 +131,14 @@ for p in [f"{scr}/a683c96a-c2b1-4ed7-bdd4-51b7d759125b.jsonl", f"{scr}/d1ccc1e4-
             s = re.sub(r'"signature": "[^"]*"', '"signature": "<sig>"', s)
             f.write(s + "\n")
 print("fixtures:", sorted(os.listdir(f"{OUT}/shapes")), sorted(os.listdir(f"{OUT}/scratch")))
+
+# The desktop app's Code tab: its own record of a session, and the start of
+# the session's transcript (S20 Q6).
+desk = sorted(glob.glob(f"{HOME}/.config/Claude/claude-code-sessions/*/*/local_*.json"))
+if desk:
+    o = json.load(open(desk[0]))
+    o["enabledMcpTools"] = {"<server>:<tool>": True}
+    o = {k: v for k, v in o.items() if not isinstance(v, (list, dict)) or k == "enabledMcpTools"}  # connector configs name people
+    json.dump(red(o), open(f"{OUT}/shapes/desktop-session.json", "w"), indent=1)
+    p = glob.glob(f"{ROOT}/*/{o['cliSessionId']}.jsonl")
+    if p: write("desktop-transcript", [r for r in lines(p[0]) if r.get("type") in ("user", "assistant", "custom-title", "agent-name")])

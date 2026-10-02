@@ -21,7 +21,9 @@ changes:
   newest `last-prompt` leaf, so the other writer's turns silently drop out of
   the conversation.
 
-Q6 (the desktop app's Code tab) is still open: geek has never run one.
+The desktop app's Code tab (Q6) is the same thing: a Claude Code process
+writing the same jsonl, with `entrypoint: claude-desktop`. It forks like a
+terminal session.
 
 ## Setup
 
@@ -182,14 +184,34 @@ Resuming a live session therefore loses someone's turns. **M33 forks** when
 the session is live in another process, and offers *Continue* once that
 process is gone.
 
-## Q6: the desktop app's Code tab: open
+## Q6: the desktop app's Code tab: the same, with its own record
 
-Geek has the desktop app (`~/.config/Claude`, bundled Claude Code 2.1.275 in
-`claude-code/`) but has never run a Code tab session: `claude-code-sessions/
-<account>/<org>/` holds only `scheduled-tasks.json`, and `main.log` says
-"Loaded 0 persisted sessions" from it. One session started there answers
-which `entrypoint` it writes, where its jsonl goes, and whether
-`~/.claude/sessions` lists it.
+Jake started one Code tab session on geek ("Hello", no folder chosen).
+
+- **The process** is the desktop app's bundled Claude Code
+  (`~/.config/Claude/claude-code/2.1.275/claude`), run as `--output-format
+  stream-json --input-format stream-json --model claude-opus-5 --effort high
+  --permission-prompt-tool stdio …`: the adapter's mode, driven by the app.
+- **The transcript** is an ordinary `~/.claude/projects/<slug>/<id>.jsonl`,
+  `entrypoint: claude-desktop`, `version: 2.1.275`, with `custom-title` and
+  `agent-name` lines holding the app's title.
+- **Live:** `~/.claude/sessions/<pid>.json` lists it (`kind: interactive`,
+  `entrypoint: claude-desktop`, `name`: the title), like a terminal session.
+- **The app's own record** is
+  `~/.config/Claude/claude-code-sessions/<account>/<org>/local_<uuid>.json`:
+  `cliSessionId` (the jsonl's id), `cwd`, `title` and `titleSource`, `model`,
+  `effort`, `permissionMode`, `isArchived`, `createdAt`, `lastActivityAt`, and
+  its MCP tool choices and connector configs. On a Mac it's under
+  `~/Library/Application Support/Claude/` (not checked).
+- **No folder chosen** means a scratch workspace,
+  `~/.config/Claude/scratch-workspaces/<account>/<org>/scratch-<date>-<x>`,
+  which "is removed once the session is gone" (the app's own reminder, which
+  it puts at the top of the first prompt in a `<system-reminder>`). So a
+  desktop session's cwd can vanish while the conversation is still worth
+  continuing.
+- **Fork** of the live desktop session through the adapter (2.1.286 against
+  2.1.275): 20 ms, the original's sha256 unchanged, the fork resumed in a fresh
+  process in 621 ms.
 
 ## Fixtures
 
@@ -200,7 +222,9 @@ which `entrypoint` it writes, where its jsonl goes, and whether
   and every other string replaced by `<N chars>`. Bash, Edit,
   AskUserQuestion, an image, thinking then text, parallel tool calls, a
   compaction, an API error, a local command, a rewind, a subagent call and
-  its transcript and `.meta.json`, the metadata lines, a live-session file.
+  its transcript and `.meta.json`, the metadata lines, a live-session file,
+  the desktop app's record (`desktop-session.json`, connector configs
+  dropped) and the start of its transcript.
 - `scratch/` holds this spike's own session (`a683c96a…`: the CLI turns,
   then the adapter's, then the CLI's branch from Q5) and its fork
   (`d1ccc1e4…`), verbatim but with the home directory rewritten, attachment
