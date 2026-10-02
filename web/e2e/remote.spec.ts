@@ -10,34 +10,38 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { active, at, dragTo, menu, open, paneEl, panes, ready, run, text, type } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
-const HOME = 7850;
-const OTHER = 7851;
-const homeUrl = `http://127.0.0.1:${HOME}`;
-const otherUrl = `http://127.0.0.1:${OTHER}`;
-const states = new Map<number, string>();
-const daemons = new Map<number, ChildProcess>();
+let homeUrl = "";
+let otherUrl = "";
+const states = new Map<string, string>();
+const ports = new Map<string, number>();
+const daemons = new Map<string, ChildProcess>();
 
-test.use({ baseURL: homeUrl });
+test.use({ baseURL: async ({}, use) => use(homeUrl) });
 test.describe.configure({ mode: "serial" });
 
-/** Start a daemon; again on the same state after `stopDaemon` (a reboot). */
-async function startDaemon(port: number, name: string, extra: string[] = []) {
-  const state = states.get(port) ?? mkdtempSync(join(tmpdir(), `illogical-e2e-remote-${name}-`));
-  states.set(port, state);
+/** Start a daemon; again on the same state and port after `stopDaemon` (a
+ * reboot). Its URL. */
+async function startDaemon(name: string, extra: string[] = []) {
+  const state = states.get(name) ?? mkdtempSync(join(tmpdir(), `illogical-e2e-remote-${name}-`));
+  states.set(name, state);
+  const known = ports.get(name);
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+      ...["--listen", known ? `127.0.0.1:${known}` : ANY, "--name", name, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...extra,
     ],
     { stdio: "ignore" },
   );
-  daemons.set(port, d);
+  daemons.set(name, d);
+  const port = known ?? (await daemonPort(state, d));
+  ports.set(name, port);
   for (let i = 0; i < 100; i++) {
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return;
+      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return `http://127.0.0.1:${port}`;
     } catch {
       // not up yet
     }
@@ -46,20 +50,20 @@ async function startDaemon(port: number, name: string, extra: string[] = []) {
   throw new Error(`daemon ${name} did not start`);
 }
 
-async function stopDaemon(port: number) {
-  const d = daemons.get(port);
+async function stopDaemon(name: string) {
+  const d = daemons.get(name);
   if (!d) return;
   const exited = new Promise((r) => d.once("exit", r));
   d.kill("SIGTERM");
   await exited;
-  daemons.delete(port);
+  daemons.delete(name);
 }
 
-const startOther = () => startDaemon(OTHER, "other", ["--allow-origin", homeUrl]);
+const startOther = () => startDaemon("other", ["--allow-origin", homeUrl]);
 
 test.beforeAll(async () => {
-  await startDaemon(HOME, "home");
-  await startOther();
+  homeUrl = await startDaemon("home");
+  otherUrl = await startOther();
   const res = await fetch(`${homeUrl}/api/hosts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -170,7 +174,7 @@ test("a tab and a split from another host, moved like local panes, through the h
 
   // The other host goes away: its panes say so, home's pane carries on.
   await page.locator(".tab").first().click();
-  await stopDaemon(OTHER);
+  await stopDaemon("other");
   await expect.poll(() => stateOf(page, splitBlock)).toBe("unreachable");
   await expect(paneEl(page, splitBlock).locator(".remote-note")).toContainText("other is unreachable");
   await expect.poll(() => stateOf(page2, splitBlock)).toBe("unreachable");
