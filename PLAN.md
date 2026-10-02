@@ -2345,6 +2345,57 @@ Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, 
 - **Off by default:** a self-hosted control has no billing unless configured.
 - **Done when:** a team upgrades, adds a seat, uses sandbox minutes and gets a correct invoice, and a free account over its relay cap sees the warning.
 
+### Swarm track (S16–S18, M23–M30, added 2026-10-02)
+
+One live view of every pane on every machine you (or your team) can see. Panes form clusters on their own, by project, machine, kind or person, and anything that needs you lifts out to a "needs you" rail. There, anyone on the team who may answer can answer, and send the agent its next instruction. The issues hold the detail: the MVP is #44.
+
+**Order:**
+
+1. **S16** (#36) and **S18** (#45): done, below.
+2. **M23** (#37: pane summaries) and **M24** (#38: attention reasons and actions), side by side with **M29** (#46: team answers).
+3. **M25** (#39: every host in one page), then **M30** (#47: the team's swarm).
+4. **M26** (#40: the swarm view).
+5. **After the MVP:** editors, with **S17** (#41), **M27** (#42: VS Code blocks) and **M28** (#43: your editor in the swarm).
+
+#### S16: swarm spike (summary cost, fleet connections, canvas)
+
+**Done 2026-10-02, apart from the phone runs** (see [spikes/s16-swarm](spikes/s16-swarm/README.md)).
+
+- **Delta summaries: go.** At 500 panes with 50 busy, today's whole-`State` broadcasts are 34 a second at 195 KB each: 6.6 MB/s to every client, and 15–20% of a core. Field-level deltas once a second carry the same changes plus activity in 4.6 KB/s (0.44 KB/s compressed).
+  - So M23's deltas become the normal path for every client, not only the swarm.
+- **Activity:** a cumulative byte counter and `last_output_ms` kept under the lock `State::output` already takes. The mux turns them into a rate, and nothing wakes parked panes. M9's PTY parking must keep the counter.
+- **Previews: go.** Capturing 50 panes a second costs 0.8% of a core and 2.2 KB/s.
+- **Canvas 2D: go up to about 2,000 panes.**
+  - Laptop: 2,000 panes at 60 fps, 5,000 at 51 fps.
+  - Phone proxy (4x CPU throttling): 500 at 60 fps, 2,000 at 36 fps.
+  - Physics is half of each frame, so it sleeps once clusters settle.
+- **Fleet:** 20 daemons (600 panes) add about 14 MB to a page. But Chrome spaces out WebSocket connections to one address past about 8, so 20 took 2–5 s to reconnect.
+  - Relayed daemons share one socket to control, and direct reconnects are staggered.
+- **Classification:** take `kind` from `/proc` argv before the typed text (52 of 54 right). Only 8 of 105 real commands ran inside a git repo, so "by project" needs a fallback group.
+- **Pending:** a real phone, daemons on different addresses, a local control relay, and classification on real work.
+
+#### S18: team answers spike (permission hooks, follow-ups, notification answers)
+
+**Done 2026-10-02, apart from the phone runs** (see [spikes/s18-team-answers](spikes/s18-team-answers/README.md)). Claude Code 2.1.287.
+
+- **Permission prompts: go, with the `PermissionRequest` hook.**
+  - **When it fires:** only when a dialog is about to show, including in `acceptEdits`, after `--continue` and from subagents. Never in `bypassPermissions`.
+  - **What it carries:** the tool, its input and Claude's own "always allow" suggestions (often the exact command).
+  - **Answers that work:** allow, allow always and deny with a message.
+  - **No `tool_use_id`:** a card is matched to the `PreToolUse` just before it. `AskUserQuestion` stays with M6c's hook.
+- **A "Yes" in the terminal never reaches the hook,** so its later answer is dropped silently; only "No" and Esc send it SIGTERM. Cards close on their own, on any of these:
+  - `PostToolUse` or `PostToolUseFailure`;
+  - the session's next `PreToolUse`, `Stop` or `UserPromptSubmit`;
+  - SIGTERM.
+- **Follow-ups: go, through a hook, never by typing.**
+  - **Typing fails:** typed text merged with the driver's half-typed draft and sent both.
+  - **What works:** a `Stop` hook (plus one on `SessionStart`) with `asyncRewake` that exits 2 with the text. It wakes an idle Claude Code, leaves the draft alone, and delivers mid-turn at the next step.
+  - **Rights:** who may send one is still the drive-rights rule (M13/M14).
+- **Answering from a notification: go on desktop.**
+  - **What worked:** a service worker loaded the non-extractable device key from IndexedDB, checked the chain, ran Noise and sent one approve in about 20 ms, against a local stand-in for the daemon.
+  - **What it needs:** the directory and pins in IndexedDB (a worker can't read `localStorage`), approve and ask data in pushes sent through control, and `sw.js` as a bundled entry.
+  - **Phones:** Android is likely fine, and iOS probably opens the card instead. Both are pending a real phone.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
