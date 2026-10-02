@@ -888,6 +888,10 @@ struct TailQuery {
     from: Option<String>,
     #[serde(default)]
     follow: Option<u8>,
+    /// Stop at this offset (not with `follow`): the TUI's copy mode reads
+    /// the history before what it has (M32).
+    #[serde(default)]
+    until: Option<u64>,
     /// Strip escape sequences.
     #[serde(default)]
     text: Option<u8>,
@@ -1011,6 +1015,7 @@ async fn tail(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<Tail
     let follow = q.follow == Some(1);
     let text = q.text == Some(1);
     let until = match (q.from.as_deref(), follow) {
+        (_, false) if q.until.is_some() => q.until,
         (Some("last-command"), false) => status.current.is_none().then(|| status.last.and_then(|l| l.end)).flatten(),
         _ => None,
     };

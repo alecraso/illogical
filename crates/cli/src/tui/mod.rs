@@ -7,6 +7,7 @@
 mod agent;
 mod app;
 mod conn;
+mod copy;
 mod draw;
 mod keys;
 mod pane;
@@ -145,6 +146,7 @@ pub fn run(target: &Target, session: Option<String>) -> anyhow::Result<i32> {
             app.event(ev);
         }
         app.take_errors();
+        app.take_fetched();
         if app.toast.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(6)) {
             // Redraw once it should be gone.
             app.dirty |= last_draw.elapsed() > Duration::from_secs(1);
@@ -168,6 +170,11 @@ pub fn run(target: &Target, session: Option<String>) -> anyhow::Result<i32> {
                 }
             }
             app.stats.draw.push(t0.elapsed());
+            if let Some(text) = app.clip.take() {
+                let mut out = std::io::stdout();
+                out.write_all(&copy::osc52(&text))?;
+                out.flush()?;
+            }
             last_draw = Instant::now();
             // A pane held mid-frame (synchronized output) draws when it ends.
             app.dirty = app.panes.values().any(|p| p.held);

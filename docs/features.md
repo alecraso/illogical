@@ -410,16 +410,33 @@ the daemon stopping, crashing, or the machine rebooting:
     TUI is attached to their pane. Pastes are bracketed when the program
     asked; focus changes are reported to programs that want them.
   - **Ctrl-]** then: `v`/`s` split right/down, `c` new tab, `x` close,
-    `o` or arrows to move focus, `z` zoom, `n`/`p` or `1`–`9` tabs, `r`
-    rename the tab, `m`/`t` the pane's and tab's menus, `w` the sidebar, `b`
-    hide it, `q` detach, `?` all of these, Ctrl-] again to type it.
+    `o` or arrows to move focus, `z` zoom, `[` copy mode, `n`/`p` or
+    `1`–`9` tabs, `r` rename the tab, `m`/`t` the pane's and tab's menus,
+    `w` the sidebar, `b` hide it, `q` detach, `?` all of these, Ctrl-]
+    again to type it.
   - **The mouse**: click to focus, drag dividers, Alt-drag a pane onto
     another's edge to move it (or its middle to swap), right-click a pane,
     tab, session or *needs you* entry for its menu (the browser's: split,
     zoom, move, restart policy, shell integration, forget history,
     dismiss, close). The wheel scrolls back through a pane's history
-    (Shift+PgUp/PgDn too), sends arrow keys to a pager or editor, or goes
-    to the program if it takes the mouse.
+    (Shift+PgUp/PgDn too) under a dim ↑ marker saying how far, until you
+    type; it sends arrow keys to a pager or editor, or goes to the program
+    if it takes the mouse.
+  - **Selecting and copying** (M32). Drag to select within a pane, double-
+    click a word, triple-click a line; letting go copies. When the program
+    takes the mouse, Shift-drag selects. Copies go to your terminal's
+    clipboard through OSC 52, so they work over ssh (in tmux, with
+    `set-clipboard on`). The text is what `illogical capture` would print:
+    soft-wrapped lines joined, no trailing blanks.
+  - **Copy mode** (`Ctrl-] [`): hjkl or arrows, Ctrl-U/D/B/F and PgUp/PgDn,
+    `0` `$` `g` `G` move; `v` selects, `V` selects lines, `y` or Enter
+    copies and leaves; `/` and `?` search down and up (lower-case ignores
+    case), `n`/`N` again; `[` and `]` jump between prompts and `o` selects
+    a command's output, both by the shell integration's marks, so `o` `y`
+    copies what `illogical capture --last-command` prints; `q` or Esc
+    leaves. A search that runs out of the 10k rows the TUI holds reads the
+    pane's saved output (up to 32 MB of it) and keeps looking; that deeper
+    history shows until you leave.
   - **The sidebar** (`Ctrl-] w`): arrows move, Enter goes there, and on a
     *needs you* entry `a` allows, `A` allows always, `d` denies and `x`
     dismisses, without opening the pane.

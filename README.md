@@ -42,6 +42,8 @@ tabs and splits you drive with the mouse.
 - **In any terminal, too.** `illogical tui` draws the same tabs and splits
   in the terminal you're in (over ssh as well), with a sidebar of what
   needs you: allow an agent's request from there without opening its pane.
+  Select, search a pane's whole history and copy, to your own clipboard
+  over ssh.
 
 ![The swarm: every pane, clustered, with what needs you on the rail](site/img/swarm.png)
 

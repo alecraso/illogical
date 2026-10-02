@@ -162,6 +162,12 @@ fn shell_integration_reports_commands_exit_codes_and_cwd() {
     assert_eq!(w["text"], r#"echo "a;b" 'c'"#);
     let out = d.raw("GET", "/api/panes/1/tail?from=last-command&text=1", None).1;
     assert_eq!(out.trim(), "a;b c");
+
+    // `until` bounds the bytes (the TUI's copy mode reads history up to
+    // what it has, M32).
+    let all = d.raw("GET", "/api/panes/1/tail?from=0", None).1;
+    let some = d.raw("GET", "/api/panes/1/tail?from=0&until=10", None).1;
+    assert_eq!(some, all[..10]);
 }
 
 #[test]
