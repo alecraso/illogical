@@ -1947,7 +1947,6 @@ dependencies = [
 [[package]]
 name = "libghostty-vt-sys"
 version = "0.2.1"
-source = "git+https://github.com/Uzaaft/libghostty-rs.git?rev=8953a74#8953a740bc378cec3e07e1f6ca949f0595eab19b"
 
 [[package]]
 name = "libsqlite3-sys"

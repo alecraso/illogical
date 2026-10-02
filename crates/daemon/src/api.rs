@@ -104,7 +104,7 @@ async fn pane(app: &App, id: PaneId) -> Res<PaneHandle> {
 struct Tap {
     pane: PaneHandle,
     client: u64,
-    rx: mpsc::Receiver<ToClient>,
+    rx: crate::pane::ClientRx,
     _ctrl: mpsc::UnboundedReceiver<ToClient>,
 }
 
@@ -118,7 +118,7 @@ static NEXT_TAP: AtomicU64 = AtomicU64::new(1 << 62);
 
 fn tap(pane: PaneHandle, from: u64) -> Tap {
     let client = NEXT_TAP.fetch_add(1, Ordering::Relaxed);
-    let (data, rx) = mpsc::channel(crate::pane::CLIENT_QUEUE);
+    let (data, rx) = crate::pane::client_queue();
     let (ctrl, _ctrl) = mpsc::unbounded_channel();
     pane.attach(Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner, name: None }, Some(from));
     Tap { pane, client, rx, _ctrl }
