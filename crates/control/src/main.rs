@@ -21,6 +21,7 @@ mod teams;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
+use anyhow::Context as _;
 use axum::{
     Json, Router,
     body::Body,
@@ -38,11 +39,12 @@ use tracing::info;
 #[command(version, about = "illogical control: accounts, devices, the directory and the relay")]
 struct Args {
     /// Address to listen on (put TLS in front: Caddy, Fly, `tailscale serve`).
+    /// Port 0 picks a free one, recorded in `listen` beside the database.
     #[arg(long, default_value = "127.0.0.1:7690", env = "ILLOGICAL_CONTROL_LISTEN")]
     listen: SocketAddr,
 
     /// The URL people and daemons reach this at, without a trailing slash
-    /// (`https://control.example.com`).
+    /// (`https://control.example.com`). Port 0 is the port --listen got.
     #[arg(long, default_value = "http://127.0.0.1:7690", env = "ILLOGICAL_CONTROL_URL")]
     public_url: String,
 
@@ -321,7 +323,25 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let a = Args::parse();
-    let public_url = a.public_url.trim_end_matches('/').to_owned();
+    // Bound first, so port 0 is known before the URL is (#67).
+    let l = tokio::net::TcpListener::bind(a.listen).await?;
+    let listen = l.local_addr()?;
+    let mut public_url = a.public_url.trim_end_matches('/').to_owned();
+    if a.listen.port() == 0 {
+        let at =
+            a.db.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new(".")).join("listen");
+        // Whole or not at all: a reader never sees half a port.
+        let tmp = at.with_extension("tmp");
+        std::fs::write(&tmp, listen.to_string())
+            .and_then(|_| std::fs::rename(&tmp, &at))
+            .with_context(|| format!("recording the listen address in {}", at.display()))?;
+    }
+    if let Ok(mut u) = url::Url::parse(&public_url)
+        && u.port() == Some(0)
+    {
+        let _ = u.set_port(Some(listen.port()));
+        public_url = u.as_str().trim_end_matches('/').to_owned();
+    }
     let set = |v: Option<String>| v.filter(|s| !s.is_empty());
     let github = match (set(a.github_client_id), set(a.github_client_secret)) {
         (Some(client_id), Some(client_secret)) => {
@@ -379,10 +399,10 @@ async fn main() -> anyhow::Result<()> {
         });
     }
     // Nagle off: the relay's mux writes frames back to back (S15).
-    let l = tokio::net::TcpListener::bind(a.listen).await?.tap_io(|t| {
+    let l = l.tap_io(|t| {
         let _ = t.set_nodelay(true);
     });
-    info!(listen = %a.listen, url = %app.cfg.public_url, "illogical control");
+    info!(%listen, url = %app.cfg.public_url, "illogical control");
     axum::serve(l, router(app).into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
 }

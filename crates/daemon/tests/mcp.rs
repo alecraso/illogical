@@ -364,8 +364,7 @@ fn tab_of(d: &Daemon, pane: u64) -> u64 {
 
 #[test]
 fn an_agent_block_works_in_its_own_tab() {
-    let site = free_port();
-    let d = Daemon::child_with(&["--wisp-token-file", "/nonexistent", "--block-listen", &format!("127.0.0.1:{site}")]);
+    let d = Daemon::child_with(&["--wisp-token-file", "/nonexistent", "--block-listen", "127.0.0.1:0"]);
     // Another tab, with work the agent mustn't touch.
     let other = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
     d.post(&format!("/api/panes/{other}/send"), json!({ "text": "echo other-tab-secret", "enter": true }));

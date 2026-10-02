@@ -12,7 +12,7 @@ mod listen;
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpListener},
+    net::SocketAddr,
     os::unix::{fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -23,10 +23,6 @@ use serde_json::{Value, json};
 
 const OWNER: &str = "me@example.com";
 const FRIEND: &str = "friend@example.com";
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
 
 struct Daemon {
     child: Option<Child>,
@@ -51,7 +47,7 @@ impl Daemon {
         let dir = std::env::temp_dir().join(format!("ilg-editors-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("state")).unwrap();
-        let mut d = Self { child: None, dir, port: 0, blocks: free_port(), idle };
+        let mut d = Self { child: None, dir, port: 0, blocks: 0, idle };
         d.start();
         d
     }
@@ -66,7 +62,8 @@ impl Daemon {
         let first = self.port == 0;
         let addr = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.port) };
         let mut c = Command::new(env!("CARGO_BIN_EXE_illogicald"));
-        c.args(["--listen", &addr, "--block-listen", &format!("127.0.0.1:{}", self.blocks)])
+        let blocks = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.blocks) };
+        c.args(["--listen", &addr, "--block-listen", &blocks])
             .args(["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"])
             .args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"])
             .arg("--state-dir")
@@ -84,6 +81,7 @@ impl Daemon {
         self.child = Some(c.spawn().unwrap());
         if first {
             self.port = listen::wait_port(&self.state());
+            self.blocks = listen::wait_block_port(&self.state());
         }
         let (sock, blocks) = (self.sock(), self.blocks);
         wait_for("daemon", || UnixStream::connect(&sock).is_ok());
