@@ -3219,6 +3219,8 @@ What #50 asked for:
 
 Every Claude Code conversation on a machine shows up in illogical, whether it ran in a terminal or in the desktop app's Code tab. Any of them can be opened as a block and continued. Both write `~/.claude/projects/<cwd-slug>/<sessionId>.jsonl`; geek has 386 of them. Claude Desktop chats are out of scope (decided 2026-10-02). They live on claude.ai's servers, with no local store or supported API to continue them in.
 
+**Done 2026-10-02:** S20, then M33 (#72). See *M33: as built* below.
+
 **Most of the work is already done.** An agent block whose config holds a `session_id` opens that session when it starts. It uses `session/resume` when it already has a transcript and `session/load` when it doesn't (`crates/daemon/src/agent/mod.rs`, around line 1346). `Status::Stopped` is a block that isn't running until you press *Resume*. So a past conversation is a stopped Claude agent block with that session id and a transcript read from the jsonl. What's missing: an index of the sessions, a jsonl-to-transcript converter, liveness, and the pickers.
 
 **What's on disk (checked 2026-10-02):**
@@ -3311,6 +3313,29 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
 - cloud sessions (claude.ai/code);
 - full-text search across transcripts that aren't open;
 - Codex and other agents' histories (the same shape would fit, behind the index's source).
+
+#### M33: as built
+
+**Done 2026-10-02.** `crates/daemon/src/conversations/` (the index, liveness and the converter), the agent block's `import` and `fork` (`crates/daemon/src/agent/mod.rs`), `/api/conversations` and `/api/conversations/open`, `illogical claude ls|open` and `agent --resume|--fork`, MCP `list_conversations` and `open_conversation`, `web/src/ui/conversations.tsx` and the block's Continue/Fork, and Ctrl-] `C` in the TUI. docs/features.md has how it's used.
+
+- **The index** is read when asked (the picker, `ls`, MCP), not watched: it stats every transcript and reads the two ends of the ones whose size or mtime changed, so a new or finished session is there on the next listing. A cold listing of geek's 387 took 0.6 s; later ones only reread what changed.
+- **Decisions (2026-10-02):**
+  - **In memory, not in the state directory.** A cold scan is under a second, and a cached index could go stale against files Claude Code rewrites. A restart rereads every transcript's ends once.
+  - **No message count.** It would mean reading whole transcripts (931 MiB on geek); the list shows size, last activity and the prompts instead.
+  - **Liveness ignores pane and block ids that aren't this daemon's.** A dev or test daemon's processes run in scopes named like ours; without the check, the e2e run saw a conversation "open in pane %76" of the daily daemon.
+  - **`kill(pid, 0)` failing with EPERM counts as alive.** Inside a sandbox it can't signal the user's own processes; only ESRCH means gone.
+  - **The imported entries go in `imported.json`** in the block's directory, named by a note in its log, not into the log itself: a long transcript would be one huge log line, and the jsonl can be deleted later (Claude Code's cleanup).
+  - **Continuing checks for a holder again first.** It reads `~/.claude/sessions` at that moment, not the 1-second follow, so a session opened elsewhere a moment ago is refused.
+- **Tests:**
+  - unit tests for the converter (S20's fixtures: Bash, Edit, AskUserQuestion, parallel calls, a subagent, a compaction, an image, an API error, a rewind, slash commands, the desktop app's reminder, unknown lines) and the index (titles by precedence, forks, sources, folders gone, archived, both ends of a long file, a reused pid, model names);
+  - `crates/daemon/tests/conversations.rs`, with a seeded `$CLAUDE_CONFIG_DIR` and the fake agent as Claude Code's adapter (`$ILLOGICAL_AGENTS_DIR`): listing and filters, opening by a prefix with no process, the same block twice, following a growing transcript, continuing (the fake reads the transcript as Claude Code would), the `_meta` and model it resumed with, a restart; and a held session refused, then forked, the original byte for byte;
+  - `web/e2e/conversations.spec.ts`: the pane menu's picker, search, a block beside the pane, Continue by sending, picking it again goes to the block; a held one with Continue disabled, forked and continued; the phone's sheet. The e2e run now has a Claude directory of its own and the fake agent as Claude Code's adapter for every spec;
+  - the TUI's drawing of an opened conversation.
+- **Against the real thing** (a dev daemon on geek, `claude-agent-acp` 0.85.0): S20's terminal session opened with its tool calls and output, continued with its context (it named the courier), and the new turn is in the session's jsonl for `claude --resume`; the desktop app's live "Hello" session was refused with "it's open in the Claude desktop app" and forked.
+- **Not covered:**
+  - jumping to a pane that runs the conversation, in an automated test: it needs a Claude Code in a scoped pane (systemd scopes), which neither test daemon has. The listing showed real sessions in the daily daemon's panes;
+  - the Mac (`~/Library/Application Support/Claude` for the desktop app's records);
+  - inotify: a listing finds new sessions, but an open picker doesn't update by itself.
 
 ## Acceptance tests (automated where possible)
 

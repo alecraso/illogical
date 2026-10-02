@@ -279,6 +279,34 @@ the daemon stopping, crashing, or the machine rebooting:
     disk, a URL, an argv, the log or the layout. A VM agent survives a
     daemon restart (its exec session lives on wisp).
 
+- **Claude Code conversations** (M33). Every Claude Code conversation on
+  the daemon's machine, from a terminal or the desktop app's Code tab, can
+  be opened as an agent block and carried on there. *Claude Code
+  conversations…* (a pane's menu; *Conversations* in the phone's sheet;
+  the agent dialog's link; Ctrl-] `C` in `illogical tui`) lists them by
+  folder, newest first, with a search box, *Open now* and *All*.
+  - **Opening one** shows its transcript (prompts, replies, tool calls and
+    their output, compactions and rewinds as notes) in a stopped agent
+    block. Nothing runs, and the block keeps reading the transcript as it
+    grows, so a terminal session can be followed from the phone. Picking
+    one a block already has goes to that block; one running in an
+    illogical pane goes to the pane.
+  - **Continue** (or just send a message) freezes what it had into the
+    block and resumes the session through `claude-agent-acp`, with your
+    settings, skills and `CLAUDE.md` as in the terminal, every hook off,
+    and the model it last used. `claude --resume` in a terminal afterwards
+    shows the new turns. From then on it's an ordinary agent block, and it
+    comes back after a restart or a reboot.
+  - **One that's open somewhere else** (a terminal, the desktop app, a
+    pane) can't be continued: two writers would each lose the other's
+    turns. *Fork* makes a new session with its history and goes on in
+    that, leaving the original alone.
+  - The list leaves out `claude -p` and SDK runs (agent blocks among them),
+    sessions archived in the desktop app, and ones whose folder is gone
+    (except the desktop app's, whose scratch folder goes with them, and
+    comes back empty if you continue). *All* shows everything.
+  - Claude Desktop's chats aren't here: they live on claude.ai.
+
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's

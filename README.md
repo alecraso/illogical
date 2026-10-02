@@ -146,12 +146,12 @@ loginctl enable-linger $USER
        "allow": [
          "mcp__illogical__read_output", "mcp__illogical__capture_screen", "mcp__illogical__wait",
          "mcp__illogical__list", "mcp__illogical__history", "mcp__illogical__search",
-         "mcp__illogical__read_file"
+         "mcp__illogical__read_file", "mcp__illogical__list_conversations"
        ],
        "ask": [
          "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__close",
          "mcp__illogical__open_port", "mcp__illogical__start_agent", "mcp__illogical__agent_respond",
-         "mcp__illogical__show_changes", "mcp__illogical__show_file"
+         "mcp__illogical__show_changes", "mcp__illogical__show_file", "mcp__illogical__open_conversation"
        ]
      }
    }

@@ -40,6 +40,10 @@ illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
                                               #   --acp CMD, --vm, --machine m3, --model haiku,
                                               #   --cwd d, --wait)
+illogical claude ls [--live] [--all] [words]  # Claude Code conversations here: terminal and desktop app
+illogical claude open 3fa9c1                  # one as a stopped agent block, following it; prints %N
+illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused while it's open elsewhere)
+illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
 illogical call %5 approve                     # …or '{"option":"always"}'; deny '{"reason":"…"}'; cancel
 illogical call %5 send '{"text":"and then?"}' # the next message (queued while it works)
@@ -119,6 +123,8 @@ The tools:
 | `open_port` | A browser block on a port of a pane's machine, beside it | no |
 | `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt | no |
 | `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
+| `list_conversations` | Claude Code conversations here (a terminal's, the desktop app's): `query`, `cwd`, `live`, `all` | yes |
+| `open_conversation` | One as an agent block beside a pane; `then`: `continue` or `fork` | no |
 | `read_file` | A text file on this host or a pane's machine, paged | yes |
 | `show_changes` | A diff block beside a pane: what changed in its repository (`rev_a`, `rev_b`); returns the files with +/− | no |
 | `show_file` | A file block beside a pane, at a `line`, followed live | no |
