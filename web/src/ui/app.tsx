@@ -10,6 +10,7 @@ import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
+import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
@@ -149,6 +150,9 @@ function TopBar({
   return (
     <header class="bar">
       <HostButton />
+      <button class="swarm-button" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
+        Swarm
+      </button>
       {renaming?.kind === "session" && renaming.id === session.id ? (
         <RenameInput
           value={session.name}

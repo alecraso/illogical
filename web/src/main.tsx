@@ -14,6 +14,10 @@ import { setFleet, setHostMenuExtras } from "./ui/hosts";
 import { setControlSession } from "./ui/people";
 import { unhex } from "./e2e/cert.ts";
 import { useSubscribe } from "./ui/hooks";
+import { useEffect, useState } from "preact/hooks";
+import { SwarmView } from "./swarm/view";
+import { fakeSwarm } from "./swarm/fake";
+import { closeSwarm, onSwarmRoute, swarmRoute } from "./swarm/route";
 
 // Served by illogical control (M17), not a daemon: sign in, enroll this
 // browser, and reach daemons through end-to-end channels. A read-only link
@@ -125,24 +129,6 @@ function ControlRoot({ s }: { s: ControlSession }) {
   );
 }
 
-const draw = () =>
-  render(session ? <ControlRoot key={client.base} s={session} /> : <App key={client.base} client={client} cell={cell} />, root);
-draw();
-connect();
-
-// A link's page shows its one daemon: no host list.
-if (!linkTarget) {
-  directory.subscribe(() => {
-    const base = directory.base();
-    if (base === client.base) return;
-    client.close();
-    client = makeClient(base);
-    draw();
-    connect();
-  });
-  void directory.refresh();
-}
-
 // Every host at once (M25): a summaries-only connection to each, for the
 // swarm. The tab view above still connects for real to the one it shows.
 const fleet = new Fleet((h) => {
@@ -190,6 +176,44 @@ if (!linkTarget) {
   fleet.start();
 }
 
+/** The swarm (M26) over the tab view, when `/#swarm` says so. */
+function Swarm() {
+  const [, set] = useState(0);
+  useEffect(() => onSwarmRoute(() => set((n) => n + 1)), []);
+  const route = swarmRoute();
+  if (!route || linkTarget) return null;
+  if (session && session.phase !== "ready") return null;
+  const f = route.focus;
+  // A notification through control names its daemon; else it's this page's.
+  const host = f ? (f.daemon ? directory.list?.hosts.find((h) => h.id === f.daemon)?.name : (directory.home ?? directory.names[0])) : undefined;
+  return <SwarmView fleet={fleet} back={closeSwarm} focus={f && host ? { host, pane: f.pane } : null} />;
+}
+
+const draw = () =>
+  render(
+    <>
+      {session ? <ControlRoot key={client.base} s={session} /> : <App key={client.base} client={client} cell={cell} />}
+      <Swarm />
+    </>,
+    root,
+  );
+draw();
+connect();
+
+// A link's page shows its one daemon: no host list.
+if (!linkTarget) {
+  directory.subscribe(() => {
+    const base = directory.base();
+    if (base === client.base) return;
+    client.close();
+    client = makeClient(base);
+    draw();
+    connect();
+  });
+  void directory.refresh();
+}
+
+
 // Opened from a notification (`#pane=N`), or told to by the service worker.
 // Notifications come from the home daemon, so show it first.
 const openPane = (pane: number, daemon?: string) => {
@@ -235,6 +259,12 @@ Object.assign(window, {
     hosts: directory,
     control: session,
     fleet,
+    /** M26: made-up panes in the swarm (frame-rate check, screenshots). */
+    swarmFake: (n: number) => fakeSwarm(fleet, n),
+    /** M26: the swarm's field, when it's shown. */
+    get swarm() {
+      return (window as unknown as { __swarm?: unknown }).__swarm ?? null;
+    },
     /** M23: a second connection to the same daemon that only takes
      * summaries (what the swarm and the fleet use). */
     summaries: () => {

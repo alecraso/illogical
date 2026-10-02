@@ -11,20 +11,11 @@
 import { useState } from "preact/hooks";
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
-import { AskCard, type Answered, type Ask, type Suggestion } from "../blocks/ask";
-import { askText } from "./menu";
+import { AskCard, type Answered, type Ask } from "../blocks/ask";
+import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE } from "./answer-card";
 import { Avatar } from "./people";
 
-/** "14:02". */
-export function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-/** "Allowed by Sam, 14:02". */
-export function answeredLine(a: Answered): string {
-  const how = a.how.charAt(0).toUpperCase() + a.how.slice(1);
-  return a.who === "terminal" ? `${how}, ${clock(a.at_ms)}` : `${how} by ${a.name}, ${clock(a.at_ms)}`;
-}
+export { answeredLine, clock } from "./answer-card";
 
 /** Whether this client's person may answer in a pane's session. */
 export function mayAnswer(client: Client, id: PaneId): boolean {
@@ -73,7 +64,7 @@ export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: 
       ) : !can ? (
         <div class="ask" data-ask={ask.id}>
           <p class="ask-message">{ask.questions?.[0]?.question ?? ask.message}</p>
-          <p class="ask-viewer">You're watching this session: an editor answers it.</p>
+          <p class="ask-viewer">{VIEWER_NOTE}</p>
         </div>
       ) : (
         <AskCard
@@ -90,66 +81,14 @@ export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: 
   );
 }
 
-/** What a suggestion would keep, in words. */
-function describe(s: Suggestion): string {
-  if (s.type === "addRules" && s.rules?.length) return s.rules.map((r) => (r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName)).join(", ");
-  if (s.type === "addDirectories" && s.directories?.length) return `files in ${s.directories.join(", ")}`;
-  if (s.type === "setMode" && s.mode) return `${s.mode} mode`;
-  return s.type;
-}
-
 function PermissionCard({ client, id, ask, can }: { client: Client; id: PaneId; ask: Ask; can: boolean }) {
-  const input = ask.input ?? {};
-  const str = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : undefined);
-  const main = str("command") ?? str("file_path") ?? str("path") ?? str("url") ?? str("pattern") ?? ask.message;
-  const diff = str("old_string") !== undefined || str("new_string") !== undefined;
-  const act = (action: "allow" | "deny", extra: Record<string, unknown> = {}) =>
-    void client.act({ action, pane: id, id: ask.id, ...extra });
   return (
     <div class="ask perm" role="alertdialog" aria-label={ask.message} data-ask={ask.id}>
-      <div class="agent-perm-q">{ask.tool} wants to run</div>
-      <pre class="agent-perm-cmd">{main}</pre>
-      {str("description") && <p class="ask-desc">{str("description")}</p>}
-      {diff && (
-        <pre class="perm-diff">
-          {(str("old_string") ?? "").split("\n").map((l, i) => (
-            <div key={`o${i}`} class="del">
-              - {l}
-            </div>
-          ))}
-          {(str("new_string") ?? "").split("\n").map((l, i) => (
-            <div key={`n${i}`} class="add">
-              + {l}
-            </div>
-          ))}
-        </pre>
-      )}
-      {str("content") !== undefined && <pre class="perm-diff">{str("content")!.slice(0, 2000)}</pre>}
+      <PermissionBody ask={ask} />
       {can ? (
-        <div class="agent-perm-buttons">
-          <button class="primary" onClick={() => act("allow")}>
-            Allow
-          </button>
-          {(ask.suggestions ?? []).slice(0, 2).map((s, i) => (
-            <button key={i} title={`Allow, and from now on: ${describe(s)}`} onClick={() => act("allow", { option: "always", suggestion: i })}>
-              Always: {describe(s)}
-            </button>
-          ))}
-          <button class="danger" onClick={() => act("deny")}>
-            Deny
-          </button>
-          <button
-            class="link"
-            onClick={async () => {
-              const message = await askText("Deny, and say why", "", "what Claude should do instead");
-              if (message !== null) act("deny", { message });
-            }}
-          >
-            Deny with a message…
-          </button>
-        </div>
+        <PermissionButtons ask={ask} act={(action, extra = {}) => void client.act({ action, pane: id, id: ask.id, ...extra })} />
       ) : (
-        <p class="ask-viewer">You're watching this session: an editor answers it.</p>
+        <p class="ask-viewer">{VIEWER_NOTE}</p>
       )}
     </div>
   );
@@ -159,33 +98,8 @@ function PermissionCard({ client, id, ask, can }: { client: Client; id: PaneId; 
  * agent's next instruction, for whoever may drive the pane. */
 export function TermAnswered({ client, id, answered }: { client: Client; id: PaneId; answered: Answered }) {
   const [closed, setClosed] = useState<string | null>(null);
-  const [text, setText] = useState("");
-  const [needTrust, setNeedTrust] = useState<string | null>(null);
-  const [sent, setSent] = useState<string | null>(null);
   if (closed === answered.id + answered.at_ms) return null;
   const can = mayAnswer(client, id);
-  const owner = needTrust ?? "the owner";
-  const send = async () => {
-    const t = text.trim();
-    if (!t) return;
-    try {
-      const res = await client.request("POST", `/api/panes/${id}/followup`, { text: t });
-      if (res.ok) {
-        const body = await res.json<{ delivered?: boolean }>();
-        setText("");
-        setNeedTrust(null);
-        setSent(body.delivered ? "Sent." : "Queued: it goes in when the agent is next ready.");
-        return;
-      }
-      const err = (await res.json<{ error?: string }>().catch(() => null))?.error ?? `couldn't send it (${res.status})`;
-      // Someone's own machine (M14): its owner trusts you first.
-      const mine = /runs on (.+)'s own machine/.exec(err);
-      if (res.status === 403 && mine) setNeedTrust(mine[1]);
-      else client.toast(err);
-    } catch {
-      client.toast("couldn't send it");
-    }
-  };
   return (
     <div class="pane-answered" onPointerDown={(e) => e.stopPropagation()} data-answered={answered.id}>
       <div class="pane-ask-bar">
@@ -196,40 +110,13 @@ export function TermAnswered({ client, id, answered }: { client: Client; id: Pan
       </div>
       <div class="answered-what">{answered.headline}</div>
       {can && (
-        <form
-          class="followup"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
-          <input
-            value={text}
-            placeholder="Send a follow-up"
-            aria-label="Send a follow-up"
-            onInput={(e) => setText((e.target as HTMLInputElement).value)}
-          />
-          <button class="primary" type="submit" disabled={!text.trim()}>
-            Send
-          </button>
-        </form>
+        <FollowUpBox
+          pane={id}
+          request={(m, p, b) => client.request(m, p, b)}
+          paneOp={(op) => client.paneOp(id, op)}
+          toast={(m) => client.toast(m)}
+        />
       )}
-      {needTrust && (
-        <div class="followup-trust">
-          This runs on {owner}'s own machine.{" "}
-          <button
-            class="link"
-            onClick={() => {
-              client.paneOp(id, { op: "request_trust" });
-              setNeedTrust(null);
-              setSent(`Asked ${owner}. Send it again once they let you.`);
-            }}
-          >
-            Ask {owner} for 30 minutes
-          </button>
-        </div>
-      )}
-      {sent && <div class="followup-sent">{sent}</div>}
     </div>
   );
 }

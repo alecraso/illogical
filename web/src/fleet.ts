@@ -402,6 +402,38 @@ export class Fleet {
     }));
   }
 
+  /** An API request to one host, over its summary connection (M26: the
+   * swarm acts on panes without opening them). */
+  async request(host: string, method: string, path: string, body?: unknown) {
+    const c = this.hosts.get(host)?.client;
+    if (!c) throw new Error(`${host} isn't connected`);
+    return c.request(method, path, body);
+  }
+
+  /** A pane operation on a host (asking its owner for trust, say). */
+  paneOp(host: string, pane: number, op: import("./proto").PaneOp) {
+    this.hosts.get(host)?.client?.paneOp(pane, op);
+  }
+
+  /** This person's role in a pane's session on its host (M12): `owner`
+   * unless the host said otherwise. */
+  role(p: FleetPane): "viewer" | "editor" | "owner" {
+    const roles = this.hosts.get(p.host)?.summary?.roles;
+    if (!roles) return "owner";
+    return roles.find(([s]) => s === p.session?.id)?.[1] ?? "viewer";
+  }
+
+  /** Who else is on a host, and where they look (M13). */
+  presence(host: string) {
+    return this.hosts.get(host)?.summary?.presence ?? [];
+  }
+
+  /** This client's principal id on a host. */
+  meOn(host: string): string {
+    const e = this.hosts.get(host);
+    return e?.summary?.presence?.find((p) => p.client === e.client?.clientId)?.who ?? "owner";
+  }
+
   host(name: string): FleetHost | undefined {
     return this.list.find((h) => h.name === name);
   }
@@ -409,6 +441,14 @@ export class Fleet {
   /** How many summary connections are open (or opening). */
   get connections(): number {
     return [...this.hosts.values()].filter((e) => e.client).length;
+  }
+
+  private injected: FleetPane[] = [];
+  /** Made-up panes drawn beside the real ones (M26's synthetic fleet, for
+   * the frame-rate check and screenshots). */
+  inject(panes: FleetPane[]) {
+    this.injected = panes;
+    this.emit();
   }
 
   /** M30: whose a host's panes are. */
@@ -460,6 +500,7 @@ export class Fleet {
         });
       }
     }
+    out.push(...this.injected);
     this.merged = out;
     return out;
   }

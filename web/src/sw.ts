@@ -192,13 +192,16 @@ sw.addEventListener("notificationclick", (event: ClickEvent) => {
   }
   // A tap: open the pane (its card shows over it). Through control (M21)
   // a notification names its daemon.
-  const url = pane ? (data.daemon ? `/#pane=${data.daemon}.${pane}` : `/#pane=${pane}`) : "/";
+  // Something that wants you (M24's reason) opens at its card on the swarm's
+  // rail (M26); anything else at the pane.
+  const where = data.reason ? "swarm" : "pane";
+  const url = pane ? (data.daemon ? `/#${where}=${data.daemon}.${pane}` : `/#${where}=${pane}`) : "/";
   event.waitUntil(
     (async () => {
       const wins = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const w of wins) {
         if (w.focus) {
-          w.postMessage({ type: "open-pane", pane, daemon: data.daemon });
+          w.postMessage({ type: data.reason ? "open-card" : "open-pane", pane, daemon: data.daemon });
           return w.focus();
         }
       }
