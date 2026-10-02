@@ -149,6 +149,7 @@ enum Command {
 #[derive(clap::Args, Debug)]
 struct RunArgs {
     /// Address to listen on. Keep it loopback; `tailscale serve` exposes it.
+    /// Port 0 picks a free one, recorded in `listen` in the state directory.
     #[arg(long, default_value = "127.0.0.1:7681", env = "ILLOGICAL_LISTEN")]
     listen: SocketAddr,
 
@@ -616,7 +617,16 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os::fd::OwnedFd>) -> anyhow::Result<()> {
+async fn run(
+    mut args: RunArgs,
+    mut kept: std::collections::HashMap<String, std::os::fd::OwnedFd>,
+) -> anyhow::Result<()> {
+    // Bound first: a port that's taken fails at once, and port 0 is known
+    // before anything uses it (#66).
+    let listener = tokio::net::TcpListener::bind(args.listen)
+        .await
+        .map_err(|e| anyhow::anyhow!("can't listen on {}: {e}", args.listen))?;
+    args.listen = listener.local_addr()?;
     let mut public_hosts = args.public_hosts.clone();
     let mut owner = args.owner.clone();
     let local_api = tailscale::LocalApi::find(args.tailscale_socket.as_deref());
@@ -685,6 +695,9 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     let state_dir = args.state_dir.clone().unwrap_or_else(default_state_dir);
     let store = store::StateDir::open(state_dir.clone())?;
     info!(state = %state_dir.display(), "state directory");
+    if let Err(e) = store::write_atomic(&state_dir.join("listen"), args.listen.to_string().as_bytes()) {
+        warn!(error = %e, "can't record the listen address");
+    }
     start_sites(&args.blocks, &access, owner, args.listen, &state_dir)?;
     let launch = pane::Launcher::detect(args.keep_panes);
     if launch.hold {
@@ -768,8 +781,10 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
             cli: cli.unwrap_or_else(|| "illogical".into()),
             socket: socket.clone(),
             tokens: mcp_tokens.clone(),
+            serve: Default::default(),
         }
     });
+    let mcp_serve = mcp_link.as_ref().map(|l| l.serve.clone());
     let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone(), args.no_relay);
     // Claude Code's IDE (M28): its relay keeps the connections.
     let ide = if args.no_claude_ide {
@@ -836,6 +851,9 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         mcp_tokens,
     );
     control.start(app.clone());
+    if let Some(serve) = mcp_serve {
+        let _ = serve.set(mcp::pipe_server(&app));
+    }
     // Read-only links end on time (M19).
     {
         let (acl, mux, control) = (acl.clone(), mux.clone(), control.clone());
@@ -854,7 +872,7 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     // Dial-out tunnels write a DATA frame and a GRANT back to back, and
     // with Nagle the second waits for the peer's delayed ACK: 40 ms on
     // every keystroke relayed through `/h/<name>/ws` (found in S15).
-    let listener = tokio::net::TcpListener::bind(args.listen).await?.tap_io(|tcp| {
+    let listener = listener.tap_io(|tcp| {
         let _ = tcp.set_nodelay(true);
     });
     info!(addr = %args.listen, "listening");

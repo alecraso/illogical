@@ -149,7 +149,14 @@ a token of their own that only reaches the block's tab. An agent can start
 panes and blocks there (on the tab's machine, in a VM tab), drive and
 close what it started, and read the rest of its tab; other tabs and new
 VMs are refused. The token ends with the block, and stays out of its log.
-Agents in a VM or in Fountain's sandboxes don't get it yet.
+
+An agent in a VM can't reach the host, so the daemon reaches in: it runs a
+small relay in the VM (python3, on a Unix socket in `/tmp`) over a non-TTY
+exec, and serves each connection to it as an MCP session with the same
+scope. The agent's server is a small client for that socket. What the
+agent runs lands on its own machine, which then becomes its tab's (as
+*Share machine with tab* does), so it stays while those panes do. Agents
+in Fountain's sandboxes don't get it.
 
 **Who did it.** Every call is logged with the client's name and token. A
 pane or block an MCP client started says "started by mcp:CLIENT" (the

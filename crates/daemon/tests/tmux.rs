@@ -1208,10 +1208,12 @@ fn a_browser_block_is_a_read_only_pane() {
     c.notes.clear();
     let body = format!(r#"{{"type":"browser","config":{{"url":"http://127.0.0.1:9/"}},"split":{pane}}}"#);
     let mut s = UnixStream::connect(daemon.sock()).unwrap();
-    write!(
-        s,
-        "POST /api/blocks HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
+    s.write_all(
+        format!(
+            "POST /api/blocks HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .as_bytes(),
     )
     .unwrap();
     let mut res = String::new();

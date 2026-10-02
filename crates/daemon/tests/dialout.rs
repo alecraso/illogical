@@ -6,11 +6,12 @@
 //! answers from after the sandbox is gone. Both daemons are real binaries on
 //! loopback; nothing ever connects to the sandbox's own port.
 
+mod listen;
 mod strays;
 
 use std::{
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     sync::atomic::{AtomicU32, Ordering},
@@ -55,9 +56,8 @@ fn temp(what: &str) -> PathBuf {
 
 fn start(name: &str, extra: &[&str]) -> Daemon {
     let state = temp(name);
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
         .args(["--name", name, "--tailscale-socket", "/nonexistent/tailscaled.sock"])
         .args(["--public-host", PUBLIC, "--owner", OWNER])
         .args(extra)
@@ -68,9 +68,11 @@ fn start(name: &str, extra: &[&str]) -> Daemon {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let d = Daemon { child, port, state };
+    let mut d = Daemon { child, port: 0, state };
+    d.port = listen::wait_port(&d.state);
     let deadline = Instant::now() + Duration::from_secs(10);
-    while std::os::unix::net::UnixStream::connect(d.sock()).is_err() || TcpStream::connect(("127.0.0.1", port)).is_err()
+    while std::os::unix::net::UnixStream::connect(d.sock()).is_err()
+        || TcpStream::connect(("127.0.0.1", d.port)).is_err()
     {
         assert!(Instant::now() < deadline, "daemon did not start");
         std::thread::sleep(Duration::from_millis(50));
@@ -322,9 +324,9 @@ fn a_sandbox_that_only_dials_out_is_used_through_home_and_its_history_outlives_i
 
 #[test]
 fn the_sandbox_works_alone_and_reconnects_when_home_comes_back() {
-    let home_port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     // The home daemon isn't up yet: the sandbox runs regardless.
     let mut home = start("home", &[]);
+    let home_port = home.port;
     let (token, _) = token_file(&home, "lone");
     let home_state = home.state.clone();
     let _ = home.child.kill();

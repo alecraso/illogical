@@ -449,6 +449,7 @@ the daemon stopping, crashing, or the machine rebooting:
   Every agent block gets it too, scoped to its own tab: it can start a dev
   server beside itself and show it in a browser block, start and answer
   other agents there, and read the rest of its tab, but not touch other
-  tabs. Over HTTP (`/mcp`), the owner gets in as for the web client;
+  tabs. An agent in a VM gets it through a relay the daemon opens into
+  its VM, and what it runs lands on its machine. Over HTTP (`/mcp`), the owner gets in as for the web client;
   anything else needs a token from `illogical mcp token`, revocable at any
   time.

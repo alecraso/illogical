@@ -696,7 +696,12 @@ impl Process {
             if let Some(p) = crate::shim::read_record(record).pid {
                 break p;
             }
-            if Instant::now() > deadline || child.try_wait().ok().flatten().is_some() {
+            let exited = child.try_wait().ok().flatten().is_some();
+            // It may have recorded the pid just before it ended.
+            if let Some(p) = crate::shim::read_record(record).pid {
+                break p;
+            }
+            if Instant::now() > deadline || exited {
                 let _ = child.kill();
                 return Err(std::io::Error::other("the pane shim did not start the program"));
             }
@@ -743,7 +748,11 @@ impl Process {
     ) -> std::io::Result<Self> {
         let mut reader = master.try_clone()?;
         let out = events.clone();
+        // Dropped when the reader is done: the terminal hung up, and
+        // everything the program wrote has gone out before it.
+        let (read_done, drained) = bounded::<()>(0);
         thread::Builder::new().name(format!("pane{pane}-read")).spawn(move || {
+            let _done = read_done;
             let mut buf = vec![0u8; 64 * 1024];
             loop {
                 match reader.read(&mut buf) {
@@ -771,6 +780,12 @@ impl Process {
         let waited = record.clone();
         thread::Builder::new().name(format!("pane{pane}-wait")).spawn(move || {
             let (code, signal) = wait_for_exit(pid, &waited);
+            // The program's last output can still be in the terminal, or
+            // read but not yet sent: the exit goes after it, or the command
+            // it ends would end before its output (#60). The terminal hangs
+            // up once the program and whatever it left holding it are gone;
+            // don't wait long for those.
+            let _ = drained.recv_timeout(DRAIN_AFTER_EXIT);
             let _ = events.send(Cmd::Exited { key: pid as u64, code, signal });
             // The shim ends right after its program (one thread fewer per
             // pane than a reaper of its own, M9).
@@ -844,6 +859,10 @@ impl Backend {
 
 /// Keys for machine execs, above any pid.
 static NEXT_EXEC: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 32);
+
+/// How long a program's exit waits for its terminal to hang up (to read the
+/// last of its output first).
+const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(1);
 
 /// Wait for a process that may not be our child (a restarted daemon is no
 /// longer its parent), then read how it ended from the shim's record.

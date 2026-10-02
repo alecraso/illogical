@@ -132,6 +132,7 @@ pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
     let record = record_path(s.dir);
     let _ = std::fs::remove_file(&record);
     let err = OpenOptions::new().create(true).append(true).mode(0o600).open(s.dir.join("agent.err"))?;
+    let err_from = err.metadata().map_or(0, |m| m.len());
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     let mut cmd = s.launch.command(&format!("illogical-agent-{}-{nanos}", s.id));
     let cwd = if s.cwd.is_dir() { s.cwd } else { Path::new("/") };
@@ -155,9 +156,20 @@ pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
         if let Some((pid, _)) = crate::shim::read_record(&record).pid {
             break pid;
         }
-        if Instant::now() > deadline || child.try_wait().ok().flatten().is_some() {
+        let exited = child.try_wait().ok().flatten();
+        // It may have recorded the pid just before it ended.
+        if let Some((pid, _)) = crate::shim::read_record(&record).pid {
+            break pid;
+        }
+        if Instant::now() > deadline || exited.is_some() {
             let _ = child.kill();
-            return Err(std::io::Error::other(format!("couldn't start {}", s.argv.join(" "))));
+            let why = match exited {
+                Some(status) => format!("{status}"),
+                None => "it took too long".into(),
+            };
+            let said = said_since(&s.dir.join("agent.err"), err_from);
+            let said = if said.is_empty() { String::new() } else { format!(": {said}") };
+            return Err(std::io::Error::other(format!("couldn't start {} ({why}){said}", s.argv.join(" "))));
         }
         std::thread::sleep(Duration::from_millis(5));
     };
@@ -512,7 +524,9 @@ async fn drive_vm(
                     Some(PipeEvent::Session(_)) => {}
                     None => break,
                 },
-                line = rx.recv() => match line {
+                // Not before the environment's preamble: the guest's boot
+                // script reads stdin up to a blank line first.
+                line = rx.recv(), if fresh.is_none() => match line {
                     Some(line) => {
                         let _ = pipe.stdin.send(line);
                     }
@@ -548,6 +562,15 @@ async fn drive_vm(
 
 /// The last thing an agent server wrote to stderr (`agent.err`), for the
 /// note when it exits with an error.
+/// What was written to `path` after its first `from` bytes: the last few
+/// lines, short.
+fn said_since(path: &Path, from: u64) -> String {
+    let Ok(bytes) = std::fs::read(path) else { return String::new() };
+    let text = String::from_utf8_lossy(bytes.get(from as usize..).unwrap_or_default());
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    lines[lines.len().saturating_sub(3)..].join(" / ").chars().take(400).collect()
+}
+
 fn last_words(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("agent.err")).ok()?;
     let tail = &text[text.len().saturating_sub(4096)..];

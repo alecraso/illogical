@@ -3,7 +3,9 @@
 //! HTTP with client tokens; and an agent block (`fake_acp.py`) using the
 //! server illogical hands it, scoped to its tab: a dev server and a browser
 //! block beside itself, other tabs refused, and a second agent started,
-//! waited on and answered.
+//! waited on and answered. With wisp on this host (skipped without its
+//! token), an agent block in a VM too, through the relay the daemon opens
+//! into it (#59).
 
 mod agentd;
 
@@ -342,10 +344,12 @@ fn post_mcp(port: u16, auth: &str) -> u16 {
     use std::io::{BufRead, BufReader, Write};
     let mut c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-    write!(
-        c,
-        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: {auth}\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
+    c.write_all(
+        format!(
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: {auth}\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .as_bytes(),
     )
     .unwrap();
     let mut line = String::new();
@@ -503,4 +507,65 @@ async fn what_failed_here_yesterday() {
     assert_eq!(cmds, ["cargo-test-m16 || false"], "{h}");
     assert!(h["summary"].as_str().unwrap().starts_with("1 failed command"), "{h}");
     s.cancel().await.unwrap();
+}
+
+/// #59: an agent block in a wisp VM gets illogical through the relay the
+/// daemon opens into its VM (a guest can't reach the host): scoped to its
+/// tab like a local one, its `run` on its own machine, across a daemon
+/// restart. Skips without a wisp token on this host.
+#[test]
+fn an_agent_block_in_a_vm_gets_mcp_through_the_relay() {
+    let token = std::env::var_os("ILLOGICAL_WISP_TOKEN_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/wisp/token"));
+    if !token.exists() {
+        eprintln!("skipping: no wisp token on this host");
+        return;
+    }
+    let mut d = Daemon::child_with(&["--wisp-token-file", token.to_str().unwrap()]);
+    let other = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+    // fake_acp.py itself, run in the guest.
+    let src = std::fs::read_to_string(fake()).unwrap();
+    let config = json!({ "agent": "acp", "command": ["python3", "-c", src], "prompt": "hello" });
+    let a = d.open_with(json!({ "type": "agent", "vm": true, "config": config }));
+    d.wait_secs(a, "idle", 300);
+
+    // Its tab, through the relay.
+    let l = agent_mcp(&d, a, "list", json!({})).unwrap();
+    let seen: Vec<u64> = l["panes"].as_array().unwrap().iter().map(|p| p["pane"].as_u64().unwrap()).collect();
+    assert!(seen.contains(&a) && !seen.contains(&other), "{l}");
+    // Its run lands on its own machine, beside it (which makes the machine
+    // its tab's).
+    let sock = format!("/tmp/illogical-mcp-{a}.sock");
+    let r = agent_mcp(&d, a, "run", json!({ "command": format!("test -S {sock} && echo IN-ITS-VM"), "wait": true }))
+        .unwrap();
+    assert_eq!(r["exit"], 0, "{r}");
+    assert!(r.to_string().contains("IN-ITS-VM"), "{r}");
+    let pane = r["pane"].as_u64().unwrap();
+    assert_eq!(tab_of(&d, pane), tab_of(&d, a));
+    let m = d.get("/api/machines");
+    assert_eq!(m.as_array().unwrap().len(), 1, "{m}");
+    assert_eq!(m[0]["owner"], json!({ "tab": tab_of(&d, a) }), "{m}");
+    let h = d.get("/api/history?limit=20");
+    assert!(h.as_array().unwrap().iter().any(|c| c["by"] == "mcp:fake-agent"), "{h}");
+    // Other tabs are refused, as for a local agent.
+    let e = agent_mcp(&d, a, "send_input", json!({ "pane": other, "text": "rm -rf ~" })).unwrap_err();
+    assert!(e.contains("own tab") || e.contains("another tab"), "{e}");
+
+    // A restarted daemon opens a new relay; the agent's next client gets
+    // through it.
+    d.stop();
+    d.start();
+    d.wait_secs(a, "idle", 120);
+    let l = agent_mcp(&d, a, "list", json!({})).unwrap();
+    assert!(l["panes"].as_array().unwrap().iter().any(|p| p["pane"] == pane), "{l}");
+
+    // Closed with its tab, the machine (and the relay with it) goes.
+    d.post(&format!("/api/panes/{a}/close"), json!({}));
+    d.post(&format!("/api/panes/{pane}/close"), json!({}));
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !d.get("/api/machines").as_array().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "its machine should go");
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
