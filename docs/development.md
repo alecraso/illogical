@@ -194,6 +194,10 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   program's pid, start time and exit status; the daemon watches through a
   `pidfd` (which works for non-children) and checks the start time before
   adopting, so a reused pid is never mistaken for the pane's program.
+- **A pane closed as it starts can't leave its program behind.** The shim
+  records the pid only after the exec, and it owns the SIGKILL that follows
+  a close's hangup, so it happens even if the daemon is gone. Test daemons
+  also kill whatever their state dir records as running before deleting it.
 - **DECSTR doesn't reset input modes.** A pane restored after its program
   died kept that program's mouse and focus reporting, so clicking sent stray
   `ESC [ O` to the new shell. The restore marker now turns them off.

@@ -1,6 +1,8 @@
 //! M3 end to end: shell integration, the HTTP API over the Unix socket, and
 //! attention, against the real binary running real bash.
 
+mod strays;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -23,6 +25,7 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }
@@ -200,6 +203,48 @@ fn run_wait_capture_history_search_export() {
     d.post(&format!("/api/panes/{long}/close"), json!({}));
     d.wait_for(|| d.pane(long).is_null());
     assert_eq!(d.raw("POST", &format!("/api/panes/{long}/close"), Some(json!({}))).0, 404);
+}
+
+/// Whether everything a daemon's panes ran (whose command lines name its
+/// state dir) is gone within `secs`.
+fn gone_within(state: &std::path::Path, secs: u64) -> bool {
+    let pattern = format!("{}/", state.display());
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        let found = Command::new("pgrep").args(["-f", &pattern]).stdout(Stdio::null()).status().unwrap();
+        if !found.success() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
+#[test]
+fn a_pane_closed_as_it_starts_takes_its_program_even_if_the_daemon_dies() {
+    // #35: closed at once, and the daemon killed before it could do more
+    // (perhaps before the program had even started).
+    let mut d = start();
+    let cmd = format!("sleep 600; : {}/", d.state.display());
+    let pane = d.post("/api/run", json!({ "command": cmd }))["pane"].as_u64().unwrap();
+    d.post(&format!("/api/panes/{pane}/close"), json!({}));
+    let _ = d.child.kill();
+    let _ = d.child.wait();
+    assert!(gone_within(&d.state, 6), "the program outlived its pane");
+
+    // A program that shrugs off the hangup: the shim kills it, with no
+    // daemon left to.
+    let mut d = start();
+    let hup = d.state.join("hup");
+    let cmd = format!("trap 'touch {}' HUP; while :; do sleep 0.1; done", hup.display());
+    let pane = d.post("/api/run", json!({ "command": cmd }))["pane"].as_u64().unwrap();
+    d.wait_for(|| d.pane(pane)["running"] == true);
+    std::thread::sleep(Duration::from_millis(300));
+    d.post(&format!("/api/panes/{pane}/close"), json!({}));
+    d.wait_for(|| hup.exists());
+    let _ = d.child.kill();
+    let _ = d.child.wait();
+    assert!(gone_within(&d.state, 6), "the shim didn't kill what ignored the hangup");
 }
 
 #[test]

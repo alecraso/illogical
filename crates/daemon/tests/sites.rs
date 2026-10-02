@@ -4,6 +4,8 @@
 //! reload's WebSocket passes, other origins are refused both by the site and
 //! by the app, and a server that dies and comes back is noticed both ways.
 
+mod strays;
+
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read, Write},
@@ -43,6 +45,7 @@ impl Drop for Daemon {
             let _ = c.kill();
             let _ = c.wait();
         }
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }

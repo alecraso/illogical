@@ -5,6 +5,8 @@
 //! without a wisp token or the static build (`just static`). Going cold is
 //! in `web/e2e/resident.spec.ts`.
 
+mod strays;
+
 use std::{
     net::TcpListener,
     path::{Path, PathBuf},
@@ -50,6 +52,7 @@ impl Drop for Home {
         let _ = self.child.kill();
         let _ = self.child.wait();
         wisp("DELETE", &format!("/{}", self.sprite), None);
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }

@@ -2,6 +2,8 @@
 //! daemon restart without losing or repeating output, and takes its sprite
 //! with it when it closes. Skips without a wisp token on this host.
 
+mod strays;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -50,6 +52,7 @@ impl Drop for Daemon {
                     .status();
             }
         }
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }
