@@ -9,7 +9,10 @@
 //! - It formats only the active screen. Under a full-screen app the primary
 //!   screen is formatted after flipping to it with mode 47, then the
 //!   snapshot enters the alternate screen the way the app did (47, 1047 or
-//!   1049). The primary's Kitty keyboard flags go with it.
+//!   1049). The primary's Kitty keyboard flags go with it. The live
+//!   terminal is flipped only while its parser is at ground: in the middle
+//!   of a sequence the flip would land inside it (#53), so a copy is
+//!   flipped instead.
 //! - Its tab stops move the cursor without restoring it: they go last.
 //! - It writes neither the title nor the cursor shape.
 //! - It drops textless rows at the bottom of the screen. They are padded
@@ -26,6 +29,9 @@
 //!   repainted.
 //! - A pending wrap (the cursor past the last column) is lost. The cell
 //!   under the cursor is printed again to recreate it.
+//! - A sequence the stream stopped in the middle of is lost, so the rest
+//!   of it, when it comes, would print as text. The snapshot ends with its
+//!   start (the continuation).
 
 use std::io;
 
@@ -82,6 +88,16 @@ struct SavedCursor {
     wrap: Option<(u16, Vec<u8>)>,
 }
 
+/// Where an alt-screen snapshot formats the primary screen from.
+enum Primary {
+    /// The live terminal, flipped to it and back: its parser is at ground.
+    Live,
+    /// A copy already showing it: the live parser is mid-sequence.
+    Copy(Box<Terminal<'static, 'static>>),
+    /// Nowhere: mid-sequence and no copy could be made, or no alt screen.
+    Skip,
+}
+
 #[derive(Clone, Default)]
 struct SavedCursors {
     /// The active screen's.
@@ -93,6 +109,16 @@ struct SavedCursors {
 impl GhosttyEngine {
     /// [`crate::VtEngine::snapshot_history`].
     pub(super) fn wire_snapshot(&mut self, history: Option<usize>) -> Vec<u8> {
+        let mut out = self.snapshot_at_ground(history);
+        // Too long to keep (over the continuation limit), it is lost.
+        if let Ok(Some(rest)) = self.term.continuation_alloc(None) {
+            out.extend_from_slice(&rest);
+        }
+        out
+    }
+
+    /// The snapshot, leaving the parser at ground.
+    fn snapshot_at_ground(&mut self, history: Option<usize>) -> Vec<u8> {
         // Check the active screen with as little history as gives the same
         // bytes for it: the formatter's state at the first screen row only
         // depends on the rows it continues (a soft wrap). The alternate
@@ -104,19 +130,20 @@ impl GhosttyEngine {
             let check = want.min(self.wrapped_into_screen());
             (check, check == want)
         };
+        let mut primary = if self.alt_screen() { self.primary_source() } else { Primary::Skip };
         let ready = ready_prefix(&mut self.term);
         // A continued first row looks the way history the prefix doesn't
         // cover makes it, so only checks without any are kept.
         if check == 0 && ready.is_some() && ready == self.wire.ready {
             let (saved, patch) = (self.wire.saved.clone(), std::mem::take(&mut self.wire.patch));
-            let out = self.build(history, &saved, &patch);
+            let out = self.build(history, &saved, &patch, &mut primary);
             self.wire.patch = patch;
             return out;
         }
         let (saved, copy) = ready.as_deref().map(saved_cursors).unwrap_or_default();
-        let first = self.build(Some(check), &saved, &[]);
+        let first = self.build(Some(check), &saved, &[], &mut primary);
         let patch = self.repaint(copy, &first);
-        let out = if patch.is_empty() && whole { first } else { self.build(history, &saved, &patch) };
+        let out = if patch.is_empty() && whole { first } else { self.build(history, &saved, &patch, &mut primary) };
         self.wire = Cache { ready: ready.filter(|_| check == 0), saved, patch };
         out
     }
@@ -128,29 +155,75 @@ impl GhosttyEngine {
         history.map_or(have, |h| h.min(have))
     }
 
+    /// Where an alt-screen snapshot formats the primary screen from.
+    fn primary_source(&self) -> Primary {
+        // Writing to the live terminal is safe only with nothing unfinished
+        // for the write to land in (an escape sequence or a UTF-8 character).
+        if matches!(self.term.continuation_buf(&mut []), Err(Error::OutOfSpace { required: 0 }) | Ok(Some(0))) {
+            return Primary::Live;
+        }
+        // A copy with the scrollback, through GHOSTSNP. That fails if the
+        // unfinished sequence is longer than continuations are kept for;
+        // the snapshot then has only the alternate screen.
+        let copy = self.term.encode_snapshot_alloc(None).ok().flatten().and_then(|snap| {
+            let copy: Terminal<'static, 'static> = Decoder::new_buf(&snap).ok()?.decode().ok()?;
+            Some(copy)
+        });
+        match copy {
+            Some(mut t) => {
+                // CAN ends the copy's unfinished sequence; 47 shows its primary.
+                t.vt_write(b"\x18\x1b[?47l");
+                Primary::Copy(Box::new(t))
+            }
+            None => Primary::Skip,
+        }
+    }
+
+    /// The primary screen with `history` rows of scrollback, its Kitty
+    /// keyboard flags and saved cursor, from the terminal as it is (showing
+    /// the primary screen).
+    fn primary(&self, history: Option<usize>, saved: &SavedCursors) -> Vec<u8> {
+        let mut out = self.format_history(Format::Vt, false, false, history);
+        out.extend(self.pad(self.history_rows(history)));
+        let kitty = self.term.kitty_keyboard_flags().map(|f| f.bits()).unwrap_or(0);
+        if kitty != 0 {
+            out.extend_from_slice(format!("\x1b[={kitty};1u").as_bytes());
+        }
+        if let Some(s) = &saved.primary {
+            // Left as the current state: 1049h saves it again.
+            out.extend(save(s, (0, 0)));
+        }
+        out
+    }
+
     /// Snapshot bytes; `patch` repaints cells right after the active
-    /// screen's content.
-    fn build(&mut self, history: Option<usize>, saved: &SavedCursors, patch: &[u8]) -> Vec<u8> {
+    /// screen's content, and under an alt screen `primary` says where the
+    /// primary screen comes from.
+    fn build(&mut self, history: Option<usize>, saved: &SavedCursors, patch: &[u8], primary: &mut Primary) -> Vec<u8> {
         let mut out = Vec::new();
         let alt = self.alt_screen();
         let (base, tail) = if alt {
             let modes = [47, 1047, 1049].map(|m| self.dec_mode(m));
             let enter = [1049, 1047, 47].into_iter().find(|m| self.dec_mode(*m)).unwrap_or(1049);
-            // Mode 47 switches screens without clearing or saving the cursor.
-            self.term.vt_write(b"\x1b[?47l");
-            out.extend(self.format_history(Format::Vt, false, false, history));
-            out.extend(self.pad(self.history_rows(history)));
-            let kitty = self.term.kitty_keyboard_flags().map(|f| f.bits()).unwrap_or(0);
-            if kitty != 0 {
-                out.extend_from_slice(format!("\x1b[={kitty};1u").as_bytes());
-            }
-            if let Some(s) = &saved.primary {
-                // Left as the current state: 1049h saves it again.
-                out.extend(save(s, (0, 0)));
-            }
-            self.term.vt_write(b"\x1b[?47h");
-            for (m, on) in [47, 1047, 1049].into_iter().zip(modes) {
-                let _ = self.term.set_mode(Mode::new(m, ModeKind::Dec), on);
+            match primary {
+                Primary::Live => {
+                    // Mode 47 switches screens without clearing or saving
+                    // the cursor.
+                    self.term.vt_write(b"\x1b[?47l");
+                    out.extend(self.primary(history, saved));
+                    self.term.vt_write(b"\x1b[?47h");
+                    for (m, on) in [47, 1047, 1049].into_iter().zip(modes) {
+                        let _ = self.term.set_mode(Mode::new(m, ModeKind::Dec), on);
+                    }
+                }
+                Primary::Copy(copy) => {
+                    // Read the copy through the same methods; nothing in
+                    // between writes to it or feeds the live terminal.
+                    std::mem::swap(&mut self.term, &mut **copy);
+                    out.extend(self.primary(history, saved));
+                    std::mem::swap(&mut self.term, &mut **copy);
+                }
+                Primary::Skip => {}
             }
             // The formatter assumes the content starts at 1;1 with no pen.
             out.extend_from_slice(format!("\x1b[?{enter}h\x1b[?6l\x1b[H").as_bytes());

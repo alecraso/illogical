@@ -79,3 +79,36 @@ test("two clients see the same output; the last to type sets the size", async ({
   await run(a, pane, "tput cols", `\n${sizeA[0]}`);
   await expect.poll(() => size(b, pane)).toEqual(sizeA);
 });
+
+test("a page opened while a full-screen app is mid escape sequence draws the rest right (#53)", async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await reset(page);
+  const pane = await active(page);
+  // The stream stops inside an SGR for four seconds, under an alt screen.
+  await run(
+    page,
+    pane,
+    "clear; printf '\\e[?1049h\\e[H\\e[2Jalt-%s \\e[38;2;1' $((6*7)); sleep 4; printf ';2;3mafter-%s' $((2+2)); sleep 600",
+    "alt-42",
+  );
+  // A page attaching now gets a snapshot taken mid-sequence.
+  const ctx2 = await browser.newContext();
+  const late = await ctx2.newPage();
+  await open(late);
+  await ready(late, pane);
+  expect(await screen(late, pane)).not.toContain("after-4");
+  for (const p of [page, late]) {
+    await expect.poll(() => screen(p, pane), { timeout: 10_000 }).toContain("alt-42 after-4");
+    expect(await screen(p, pane)).not.toContain(";2;3m");
+  }
+  // And the daemon's own terminal kept the sequence whole: a fresh snapshot.
+  const ctx3 = await browser.newContext();
+  const fresh = await ctx3.newPage();
+  await open(fresh);
+  await ready(fresh, pane);
+  await expect.poll(() => screen(fresh, pane)).toBe(await screen(late, pane));
+  expect(await screen(fresh, pane)).not.toContain(";2;3m");
+  await type(page, pane, "\x03");
+  await Promise.all([ctx.close(), ctx2.close(), ctx3.close()]);
+});
