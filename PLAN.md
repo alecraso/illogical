@@ -2275,6 +2275,17 @@ Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, 
 
 #### M21: push relay
 
+**Done 2026-10-02.**
+
+- **What landed:**
+  - Control holds one VAPID key pair.
+  - Devices subscribe once, with a subscription signed by their device key (`illogical_e2e::push`), so control can't substitute keys.
+  - Daemons verify each subscription against devices they trust and encrypt per subscription (RFC 8291), sending to the owner and to editors of the pane's session.
+  - Control adds VAPID and posts, only to the browsers' push services.
+- **Tested in `just control-smoke`:** a subscription with swapped keys is refused; a "needs you" reaches a fake push service, and only the phone's key decrypts it; control's logs show "push relayed", never the text.
+- **Not covered:** approve and answer actions on notifications through control, which need the daemon's own page. Those notifications open the pane instead.
+
+
 - **Today:** each home daemon holds VAPID keys, and each phone subscribes to each daemon.
 - **With control:**
   - control holds one VAPID key pair;

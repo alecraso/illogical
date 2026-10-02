@@ -176,6 +176,9 @@ impl MuxHandle {
 pub struct Config {
     /// Who else may reach which sessions (M12).
     pub acl: Arc<crate::acl::Acl>,
+    /// Illogical control: notifications through it go to people's
+    /// devices (M21).
+    pub control: Arc<crate::control::Control>,
     /// What to call the owner to others (M13): their login, else "owner".
     pub owner_name: String,
     /// The owner's picture, if the tailnet gave one.
@@ -699,6 +702,17 @@ impl Daemon {
                 Some(serde_json::json!({ "ask": choice }))
             });
             push.send(pane, title, why, extra);
+        }
+        if matches!(state, Attention::NeedsInput | Attention::Done) && !self.focused(pane) {
+            // Through control (M21): the owner, and whoever may edit the
+            // session. Approve and answer actions need the daemon's own
+            // page, so those notifications just open the pane.
+            let title = if state == Attention::NeedsInput { "Needs you" } else { "Done" };
+            let session = self.session_of(pane);
+            let acl = self.config.acl.clone();
+            self.config.control.push(pane, title, why, None, move |who| {
+                who.is_owner() || session.and_then(|s| acl.role(who, s)).is_some_and(|r| r >= Role::Editor)
+            });
         }
         self.broadcast();
     }
@@ -1853,6 +1867,8 @@ impl Daemon {
                         Some(serde_json::json!({ "trust": me.who })),
                     );
                 }
+                let body = format!("{} asks to drive %{pane}, which runs on this machine", me.name);
+                self.config.control.push(pane, "Someone asks to drive a pane", &body, None, |who| who.is_owner());
                 if let Some(c) = self.clients.get(&client) {
                     let message = "asked the owner to trust you with it".to_owned();
                     let _ = c.ctrl.send(ToClient::Msg(ServerMsg::Notice { message }));

@@ -18,6 +18,7 @@ const CONTROL = 7791;
 const GITHUB = 7792;
 const DAEMON = 7793;
 const SPY = 7794;
+const PUSH = 7795;
 const base = `http://127.0.0.1:${CONTROL}`;
 const target = process.env.TARGET_DIR ?? "../target/debug";
 const procs: ChildProcess[] = [];
@@ -105,6 +106,7 @@ try {
       ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", db],
       ...["--github-client-id", "id", "--github-client-secret", "secret"],
       ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
+      ...["--push-host", `127.0.0.1:${PUSH}`],
     ], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_LOG: "illogical_control=debug" } }),
   );
   procs.at(-1)!.stdout!.on("data", (d: Buffer) => controlLog.push(d));
@@ -235,6 +237,73 @@ try {
     () => true,
   );
   check("an untrusted device is refused", nope);
+  // 6b. Push through control (M21): the phone subscribes once (signed by
+  // its device key); a pane that needs you reaches it, encrypted for it
+  // alone by the daemon.
+  const pushed: { headers: Record<string, string | string[] | undefined>; body: Buffer }[] = [];
+  const fakePush = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      pushed.push({ headers: req.headers, body: Buffer.concat(chunks) });
+      res.writeHead(201).end();
+    });
+  }).listen(PUSH, "127.0.0.1");
+  const subKeys = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
+  const uaPublic = new Uint8Array(await crypto.subtle.exportKey("raw", subKeys.publicKey));
+  const authSecret = crypto.getRandomValues(new Uint8Array(16));
+  const b64u = (b: Uint8Array) => Buffer.from(b).toString("base64url");
+  const sub = { v: 1, account: me.account, device: phone.id, endpoint: `http://127.0.0.1:${PUSH}/push/phone`, p256dh: b64u(uaPublic), auth: b64u(authSecret), at: Date.now(), sig: "" };
+  sub.sig = await signText(phone, `illogical push v1\naccount ${sub.account}\ndevice ${sub.device}\nendpoint ${sub.endpoint}\np256dh ${sub.p256dh}\nauth ${sub.auth}\nat ${sub.at}\n`);
+  await api("/api/push/subscribe", { sub });
+  const swapped = { ...sub, p256dh: b64u(crypto.getRandomValues(new Uint8Array(65))) };
+  check("a subscription with swapped keys is refused", await api("/api/push/subscribe", { sub: swapped }).then(() => false, () => true));
+  await sleep(1500); // the daemon fetches it (control nudges it)
+  {
+    const orig = globalThis.WebSocket;
+    globalThis.WebSocket = class extends orig {
+      constructor(u: string | URL) {
+        super(u, { headers: { cookie, origin: base } } as unknown as string[]);
+      }
+    } as typeof WebSocket;
+    try {
+      const sock = await E2ESocket.connect([{ url: relayUrl, timeoutMs: 3000 }], { id: d.id, noise: dcert!.noise }, laptop);
+      const panes = (await (await sock.request("GET", "/api/panes")).json<{ id: number }[]>());
+      const r = await sock.request("POST", `/api/panes/${panes[0].id}/attention`, { state: "needs_input" });
+      check("set a pane to need you", r.ok);
+      sock.close();
+    } finally {
+      globalThis.WebSocket = orig;
+    }
+  }
+  for (let i = 0; i < 50 && !pushed.length; i++) await sleep(100);
+  check("the push service got one notification", pushed.length === 1, `${pushed.length}`);
+  if (pushed[0]) {
+    const p = pushed[0];
+    check("aes128gcm, with control's VAPID", p.headers["content-encoding"] === "aes128gcm" && String(p.headers.authorization).startsWith("vapid t="));
+    // Decrypt as the phone would (RFC 8291): only its key opens it.
+    const body = new Uint8Array(p.body);
+    const salt = body.subarray(0, 16);
+    const idlen = body[20];
+    const asPublic = body.subarray(21, 21 + idlen);
+    const ct = body.subarray(21 + idlen);
+    const asKey = await crypto.subtle.importKey("raw", asPublic, { name: "ECDH", namedCurve: "P-256" }, false, []);
+    const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: asKey }, subKeys.privateKey, 256));
+    const hkdf = async (salt_: Uint8Array, ikm: Uint8Array, info: Uint8Array, len: number) => {
+      const k = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+      return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: salt_, info }, k, len * 8));
+    };
+    const te = new TextEncoder();
+    const ikm = await hkdf(authSecret, shared, new Uint8Array([...te.encode("WebPush: info\0"), ...uaPublic, ...asPublic]), 32);
+    const cek = await hkdf(salt, ikm, te.encode("Content-Encoding: aes128gcm\0"), 16);
+    const nonce = await hkdf(salt, ikm, te.encode("Content-Encoding: nonce\0"), 12);
+    const aes = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["decrypt"]);
+    const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, aes, ct));
+    const msg = JSON.parse(new TextDecoder().decode(plain.subarray(0, plain.lastIndexOf(2))));
+    check("the phone reads it: Needs you, which pane, which daemon", msg.title === "Needs you" && msg.daemon === d.id, JSON.stringify(msg));
+  }
+  fakePush.close();
+
   // 7. Control never saw it: not on the wire, not in its database, not in
   // its logs.
   await sleep(500);
@@ -246,6 +315,7 @@ try {
   check("no terminal content in control's database", stored.length > 0 && !stored.includes("SECRET-MARKER"));
   const logs = Buffer.concat(controlLog).toString();
   check("no terminal content in control's logs", logs.length > 0 && !logs.includes("SECRET-MARKER"), `${logs.length} bytes of log`);
+  check("no notification text in control's logs", logs.includes("push relayed") && !logs.includes("Needs you"));
   spy.close();
 } catch (e) {
   console.log("FAIL", e);

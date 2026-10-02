@@ -47,13 +47,13 @@ pub struct Push {
     http: reqwest::Client,
 }
 
-fn random<const N: usize>() -> [u8; N] {
+pub(crate) fn random<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];
     std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).expect("/dev/urandom");
     b
 }
 
-fn new_secret() -> SecretKey {
+pub(crate) fn new_secret() -> SecretKey {
     loop {
         if let Ok(k) = SecretKey::from_slice(&random::<32>()) {
             return k;

@@ -20,6 +20,8 @@ export interface ControlInfo {
   github: boolean;
   /** WebAuthn works here (control has a domain name, not an IP). */
   passkeys: boolean;
+  /** Control's VAPID public key (M21). */
+  vapid: string;
 }
 
 export interface DirDaemon {
@@ -539,6 +541,18 @@ export class ControlSession {
    * device to pin for them (compare its fingerprint with them). */
   async person(login: string) {
     return api<{ account: string; name: string; root: string }>(`/api/people?login=${encodeURIComponent(login)}`);
+  }
+
+  /** Hand control a push subscription, signed by this device (M21). */
+  async subscribePush(sub: { endpoint: string; p256dh: string; auth: string }) {
+    const s = { v: 1, account: this.account, device: this.keys.id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, at: Date.now(), sig: "" };
+    const body = `illogical push v1\naccount ${s.account}\ndevice ${s.device}\nendpoint ${s.endpoint}\np256dh ${s.p256dh}\nauth ${s.auth}\nat ${s.at}\n`;
+    s.sig = await signText(this.keys, body);
+    await api("/api/push/subscribe", { sub: s });
+  }
+
+  async unsubscribePush(endpoint: string) {
+    await api("/api/push/unsubscribe", { endpoint });
   }
 
   /** How a Client reaches daemon `id`. */
