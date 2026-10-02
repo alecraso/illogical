@@ -1541,6 +1541,7 @@ sprite:
   - **One MCP session per connection, multiplexed over one exec,** rather than an exec per connection: the guest can't ask the host for a new exec, and one exec per block is what M3b's "an attached exec keeps the sprite awake" cost already pays for the agent.
   - **python3 on both ends in the guest,** not `nc -U` (not in every image) or `illogical mcp` (not in the image). S14's relay already relied on python3.
   - **No token in the VM.** The scope comes from which relay a connection arrives on, so there is no secret to keep out of the guest. Whatever runs in the VM as the agent's user can reach the socket (it's private to that user), the same reach a token in the agent's environment would give.
+  - **The relay waits for its machine.** It starts beside the agent, whose own start creates the machine; at first it took wisp's 404 as "the machine is gone" and gave up, which CI caught about one run in three. It now waits (up to 10 minutes) for the machine to exist.
   - **The relay doesn't survive a daemon restart.** Its sessions live in the daemon, so they'd be gone anyway; the client reconnects and replays `initialize` instead.
 - **Tests:**
   - `mcp::relay` unit test, both Python scripts run on this host: two clients get sessions of their own; replacing the relay errors the call in flight, and the client reconnects and replays `initialize` (its answer kept from the agent) onto a new session.

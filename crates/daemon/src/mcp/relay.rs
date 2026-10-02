@@ -89,6 +89,24 @@ async fn drive(
 ) {
     let argv: Vec<String> =
         ["python3", "-c", RELAY, "illogical-mcp-relay", &socket(id)].iter().map(|s| s.to_string()).collect();
+    // The agent's own start creates its machine; the relay starts beside
+    // it, so wait for the machine rather than taking "no such machine" as
+    // its end.
+    let deadline = std::time::Instant::now() + Duration::from_secs(600);
+    loop {
+        match crate::provider::exists(&*provider, &sprite).await {
+            Ok(true) => break,
+            _ if std::time::Instant::now() > deadline => {
+                warn!(block = id, sprite, "its machine never came up; no MCP relay");
+                return;
+            }
+            _ => {}
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+            _ = stop.recv() => return,
+        }
+    }
     let mut failures = 0u32;
     loop {
         let pipe = tokio::select! {
