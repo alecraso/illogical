@@ -1921,6 +1921,16 @@ the cap), and closed panes give their memory back.
   - **Panes with history** are about 18 MB each now, whatever their length:
     a 500-pane fleet with full scrollback would be about 9 GB. That's what
     step 2's terminal parking would save, if real fleets get there.
+- **Step 2 (parking, #10): not now. Decided 2026-10-02, #10 closed.**
+  - **Use, measured:** geek's daemon held 7 panes in 25 MB of RSS
+    (53 threads) after the 0.4.0 upgrade, far under "about 50 panes".
+    Agent fleets run in a handful of panes, not hundreds.
+  - **Idle cost** is under the 2 MB trigger (1.78 MB at 500 panes).
+  - **What's left** of the 1 MB done bar is libghostty's ReleaseSafe page
+    fill, which parking doesn't remove cheaply; the upstream fix (#63) does.
+  - **Reopen #10** when geek holds more than about 50 panes with real
+    history, or when a fleet's daemon passes about 2 GB. `memory.rs` guards
+    the idle cost in CI meanwhile.
 - **Tests:**
   - `crates/daemon/tests/memory.rs` (in `just check` on Linux, about 5 s):
     S9's idle scenario at 50 panes against the debug binary. An idle pane
