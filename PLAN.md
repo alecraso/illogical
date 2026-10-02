@@ -2057,6 +2057,27 @@ The launch issues (#19–#27: licence, releases, install, quickstart) come first
 
 **Output:** `docs/control-e2e.md` (the spec) and a go/no-go on PRF for browser keys.
 
+**Done 2026-10-01, apart from the phone runs** (see [spikes/s15-control](spikes/s15-control/README.md) and [docs/control-e2e.md](docs/control-e2e.md)):
+
+- **Channels:** `Noise_IK_25519_AESGCM_SHA256` everywhere.
+  - The browser side runs on WebCrypto alone and interoperates with `snow`.
+  - Costs: 96+48 handshake bytes, 0.1% overhead on bulk output.
+  - Message 1's payload is replayable, so it carries only `hello` and `attach`.
+- **Shared sessions:** per-viewer channels, not a session key.
+  - A session key only saves the daemon's uplink, and only with relay fan-out; that's deferred until a measured need.
+  - Revoking someone means closing their channel.
+- **Device keys:** non-extractable X25519 (Noise) and Ed25519 (approvals) in IndexedDB; certificates are signed by an approving device, and daemons verify the chain.
+  - **PRF is an improvement, not a requirement:** without it, a browser that lost its storage is approved again as a new device.
+- **Relay:** M4c's mux with control at the home end.
+  - It adds about one relay↔daemon round trip (18.7 ms geek→ewr→geek, 51.6 ms via ord), so the relay runs in the daemon's nearest region (multi-region on Fly with `fly-replay`).
+  - 1,000 channels in one process, at about $0.0001–0.001 per active user-hour.
+- **Found:**
+  - Nagle added 40 ms to every dial-out round trip; fixed in the daemon (41.7 ms → 2.0 ms).
+  - Chrome's Local Network Access blocks a public page (control's) from tailnet addresses until the user grants permission.
+- **Read-only links** carry a one-off device key in the fragment, and the daemon holds it as a link principal.
+- **Push:** the daemon encrypts (RFC 8291) to a subscription the device signed, and control only adds VAPID.
+- **Pending on a phone:** PRF on iOS Safari and Android Chrome, the cellular round trip, and Slack/iMessage previews.
+
 #### M17: illogical control (accounts, devices, enrollment, directory)
 
 - **`crates/control`, the `illogical-control` binary:** axum, SQLite (Postgres optional for the hosted one), and the same release builds as the daemon. `illogical-control --domain control.example.com` serves the API and the web client.
@@ -2100,6 +2121,8 @@ The launch issues (#19–#27: licence, releases, install, quickstart) come first
   - control forwards opaque frames, multiplexed as dial-out already is.
 - **Direct when possible:**
   - the client tries in order: tailnet or LAN URLs from the directory, then the relay;
+  - a page served by control asks for Chrome's local network access permission before trying a tailnet URL (S15), and uses the relay until it's granted;
+  - the relay runs in the region nearest each daemon (S15), multi-region on Fly with `fly-replay` to the machine holding the daemon's socket;
   - the host chip shows which path is in use ("direct" or "relayed").
   - Hole punching (WebRTC data channels, for example) is a later optimisation, not this milestone.
 - **E2E per S15:**
@@ -2126,8 +2149,8 @@ Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, 
   - who may drive it is a team policy, with M14's trust grants for anything but VMs.
 - **Sharing a session (M13's dialog):**
   - pick a person or the whole team, set a role, choose "with history" or "from now";
-  - the daemon wraps the session key for each member device (S15).
-  - **Revoking** removes the grant, rotates the key, and cuts the person off within a second.
+  - each member device gets its own channel (S15: per-viewer channels, no session key).
+  - **Revoking** removes the grant and closes that person's channels, cutting them off within a second.
 - **Presence** (avatars, focus outlines, follow) flows through control as metadata, so people on different networks see each other.
 - **Read-only links** (replacing M4c's share tokens and M15's links):
   - a link with the key in its fragment shows one session live, read-only, with no account, until it expires;
