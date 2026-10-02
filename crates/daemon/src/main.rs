@@ -159,6 +159,11 @@ struct RunArgs {
     #[arg(long, env = "ILLOGICAL_TAILSCALE_SOCKET")]
     tailscale_socket: Option<PathBuf>,
 
+    /// How many VMs each guest (someone a session is shared with) may have
+    /// at once; their panes run on VMs, never this machine.
+    #[arg(long, default_value_t = 3, env = "ILLOGICAL_GUEST_MACHINES")]
+    guest_machines: usize,
+
     /// Command line for panes, split on whitespace [default: $SHELL -l].
     #[arg(long)]
     shell: Option<String>,
@@ -637,6 +642,7 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         acl: acl.clone(),
         owner_name: owner_login.clone().unwrap_or_else(|| "owner".into()),
         owner_pic: None,
+        guest_machines: args.guest_machines,
         shell,
         shell_args,
         home: home(),

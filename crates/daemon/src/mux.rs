@@ -84,8 +84,10 @@ pub enum Api {
     Pane(PaneId, oneshot::Sender<Option<PaneHandle>>),
     Attention(PaneId, Attention, oneshot::Sender<bool>),
     Close(PaneId, oneshot::Sender<bool>),
-    /// Open a block of any type.
-    Open(OpenRequest, oneshot::Sender<Result<PaneId, String>>),
+    /// Open a block of any type; for a guest (M14), their principal: then
+    /// it must be an agent beside a pane they edit, and runs on a VM of
+    /// theirs.
+    Open(OpenRequest, Option<crate::acl::Principal>, oneshot::Sender<Result<PaneId, String>>),
     /// A non-terminal block, to describe or call.
     Block(PaneId, oneshot::Sender<Option<Arc<dyn Block>>>),
     Machines(oneshot::Sender<Vec<Machine>>),
@@ -108,6 +110,8 @@ pub enum Api {
     /// Someone's role on the session a pane or block is in (M12), and for
     /// a "from now" share where its output may start for them (M13).
     RoleOn(crate::acl::Principal, PaneId, oneshot::Sender<Option<(Role, Option<u64>)>>),
+    /// Whether a guest may type in a pane on this machine (M14).
+    MayDrive(crate::acl::Principal, PaneId, oneshot::Sender<Result<(), String>>),
     /// Where each pane of a session's output ends now (a "from now" share
     /// starts there).
     SessionEnds(SessionId, oneshot::Sender<Option<BTreeMap<PaneId, u64>>>),
@@ -176,6 +180,8 @@ pub struct Config {
     pub owner_name: String,
     /// The owner's picture, if the tailnet gave one.
     pub owner_pic: Option<String>,
+    /// How many VMs each guest may have at once (M14).
+    pub guest_machines: usize,
     pub shell: String,
     /// Arguments for an interactive shell, e.g. `["-l"]`.
     pub shell_args: Vec<String>,
@@ -355,6 +361,8 @@ struct Daemon {
     /// Who drives each pane (M13), and panes in pair mode.
     drivers: HashMap<PaneId, Driver>,
     pair: std::collections::HashSet<PaneId>,
+    /// Guests trusted to drive a pane on this machine (M14), until when.
+    trust: HashMap<(PaneId, String), u64>,
     /// Size each pane was last given.
     sizes: BTreeMap<PaneId, (u16, u16)>,
     config: Config,
@@ -405,6 +413,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         viewing: HashMap::new(),
         drivers: HashMap::new(),
         pair: Default::default(),
+        trust: HashMap::new(),
         sizes: BTreeMap::new(),
         config,
         store: store.clone(),
@@ -868,6 +877,9 @@ impl Daemon {
                     return self.tell_once(c, why);
                 }
                 let Some(who) = self.clients.get(&c).map(|x| x.principal.clone()) else { return };
+                if let Err(why) = self.may_drive_here(&who, pane) {
+                    return self.tell_once(c, why);
+                }
                 // One driver per pane, unless it's in pair mode: the first to
                 // type drives; anyone else is told how to take over.
                 if !self.pair.contains(&pane) {
@@ -919,12 +931,15 @@ impl Daemon {
                 let r = if who.is_owner() {
                     Some((Role::Owner, None))
                 } else {
-                    self.session_of(pane).and_then(|s| {
+                    self.session_of(pane).filter(|_| self.readable(&who, pane)).and_then(|s| {
                         let role = self.config.acl.role(&who, s)?;
                         Some((role, self.config.acl.floor(&who, s, pane)))
                     })
                 };
                 let _ = reply.send(r);
+            }
+            Api::MayDrive(who, pane, reply) => {
+                let _ = reply.send(self.may_drive_here(&who, pane));
             }
             Api::SessionEnds(session, reply) => {
                 let ends = self.mux.session(session).ok().map(|s| {
@@ -960,8 +975,12 @@ impl Daemon {
             Api::ResetMachine(id, reply) => {
                 let _ = reply.send(self.reset_machine(id));
             }
-            Api::Open(req, reply) => {
-                let _ = reply.send(self.open_block(req));
+            Api::Open(req, who, reply) => {
+                let r = match who.filter(|w| !w.is_owner()) {
+                    None => self.open_block(req),
+                    Some(who) => self.guest_block(req, &who),
+                };
+                let _ = reply.send(r);
             }
             Api::Block(id, reply) => {
                 let _ = reply.send(self.blocks.get(&id).cloned());
@@ -1153,6 +1172,30 @@ impl Daemon {
 
     /// `POST /api/blocks`: a new block of any type, in a tab of its own or
     /// split beside another. In a VM tab it runs on the tab's machine.
+    /// A guest's block (M14): an agent, beside a pane in a session they
+    /// edit, on a VM of their own (within their quota).
+    fn guest_block(&mut self, mut req: OpenRequest, who: &Principal) -> Result<PaneId, String> {
+        if req.kind != BlockType::Agent {
+            return Err("guests can start agents; other blocks are the owner's".into());
+        }
+        let pane = req.split.or(req.from_pane).ok_or("start it beside a pane")?;
+        let session = self.session_of(pane).ok_or("no such pane")?;
+        if self.config.acl.role(who, session).is_none_or(|r| r < Role::Editor) {
+            return Err("you can't start agents in this session".into());
+        }
+        let mine = self.machines.values().filter(|m| m.by.as_deref() == Some(who.id())).count();
+        if mine >= self.config.guest_machines {
+            return Err(format!("you have {mine} VMs here, the most a guest may have: close one first"));
+        }
+        (req.vm, req.local, req.host, req.session) = (true, false, None, None);
+        let before: Vec<MachineId> = self.machines.keys().copied().collect();
+        let block = self.open_block(req)?;
+        for m in self.machines.values_mut().filter(|m| !before.contains(&m.id)) {
+            m.by = Some(who.id().to_owned());
+        }
+        Ok(block)
+    }
+
     fn open_block(&mut self, req: OpenRequest) -> Result<PaneId, String> {
         if req.kind == BlockType::Terminal {
             return Err("terminals are opened with run".into());
@@ -1237,7 +1280,7 @@ impl Daemon {
             illogical_core::names::generate(seed(), taken)
         });
         let state = MachineState::Starting;
-        let m = Machine { id, provider, sprite, name, image, owner, state, borrowed };
+        let m = Machine { id, provider, sprite, name, image, owner, state, borrowed, by: None };
         self.machines.insert(id, m);
         id
     }
@@ -1390,7 +1433,7 @@ impl Daemon {
         match msg {
             ClientMsg::Attach { panes } => {
                 for a in panes {
-                    if !self.sees(&who, a.pane) {
+                    if !self.readable(&who, a.pane) {
                         continue;
                     }
                     let floor = self.session_of(a.pane).and_then(|s| self.config.acl.floor(&who, s, a.pane));
@@ -1439,7 +1482,12 @@ impl Daemon {
                         return;
                     }
                 }
-                if let Err(message) = self.intent(Some(client), intent) {
+                let done = if who.is_owner() {
+                    self.intent(Some(client), intent)
+                } else {
+                    self.guest_intent(client, &who, intent)
+                };
+                if let Err(message) = done {
                     let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id, message }));
                 }
             }
@@ -1509,7 +1557,11 @@ impl Daemon {
                     | PaneOp::RequestControl
                     | PaneOp::GiveControl { .. }
                     | PaneOp::ReleaseControl
-                    | PaneOp::SetPair { .. } => {}
+                    | PaneOp::SetPair { .. }
+                    | PaneOp::RequestTrust
+                    | PaneOp::GrantTrust { .. }
+                    | PaneOp::RevokeTrust { .. }
+                    | PaneOp::SetPrivate { .. } => {}
                 }
                 self.changed();
             }
@@ -1788,10 +1840,133 @@ impl Daemon {
                     self.pair.remove(&pane);
                 }
             }
+            PaneOp::RequestTrust => {
+                let msg = ServerMsg::TrustRequest { pane, who: me.who.clone(), name: me.name.clone() };
+                self.tell("owner", msg);
+                // The owner may only have a phone in their pocket.
+                if let Some(push) = &self.push {
+                    let body = format!("{} asks to drive %{pane}, which runs on this machine", me.name);
+                    push.send(
+                        pane,
+                        "Someone asks to drive a pane",
+                        &body,
+                        Some(serde_json::json!({ "trust": me.who })),
+                    );
+                }
+                if let Some(c) = self.clients.get(&client) {
+                    let message = "asked the owner to trust you with it".to_owned();
+                    let _ = c.ctrl.send(ToClient::Msg(ServerMsg::Notice { message }));
+                }
+                return true;
+            }
+            PaneOp::GrantTrust { .. } | PaneOp::RevokeTrust { .. } if !who.is_owner() => {
+                self.refuse_to(client, "only the owner trusts people with panes on this machine");
+                return true;
+            }
+            PaneOp::GrantTrust { to, minutes } => {
+                let minutes = (*minutes).clamp(1, 24 * 60);
+                let until = now_ms() + u64::from(minutes) * 60_000;
+                self.trust.insert((pane, to.clone()), until);
+                info!(pane, to, minutes, "trusted with a local pane");
+                let message = format!("you may drive %{pane} for {minutes} minutes");
+                self.tell(to, ServerMsg::Notice { message });
+                let expire = self.tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(u64::from(minutes) * 60_000 + 50)).await;
+                    // Show everyone it ended.
+                    let _ = expire.send(Cmd::AclChanged);
+                });
+            }
+            PaneOp::RevokeTrust { to } => {
+                self.trust.remove(&(pane, to.clone()));
+                if self.drivers.get(&pane).is_some_and(|d| &d.who == to) {
+                    self.drivers.remove(&pane);
+                }
+            }
+            PaneOp::SetPrivate { on } => {
+                if !who.is_owner() {
+                    self.refuse_to(client, "only the owner makes a pane private");
+                    return true;
+                }
+                self.meta.entry(pane).or_default().private = *on;
+                if *on {
+                    // Whoever else watches it stops getting it.
+                    let others: Vec<ClientId> =
+                        self.clients.values().filter(|c| !c.principal.is_owner()).map(|c| c.client).collect();
+                    if let Some(p) = self.panes.get(&pane) {
+                        for c in others {
+                            p.detach(c);
+                        }
+                    }
+                }
+                self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
+            }
             _ => return false,
         }
         self.broadcast();
         true
+    }
+
+    fn refuse_to(&self, client: ClientId, why: &str) {
+        if let Some(c) = self.clients.get(&client) {
+            let _ = c.ctrl.send(ToClient::Msg(ServerMsg::Error { id: None, message: why.to_owned() }));
+        }
+    }
+
+    /// A guest may drive a pane on a machine of its own; one on this
+    /// machine only while the owner trusts them with it (M14).
+    fn may_drive_here(&self, who: &Principal, pane: PaneId) -> Result<(), String> {
+        if who.is_owner() || self.machine_of(pane).is_some() || self.blocks.contains_key(&pane) {
+            return Ok(());
+        }
+        let until = self.trust.get(&(pane, who.id().to_owned())).copied().unwrap_or(0);
+        if until > now_ms() {
+            return Ok(());
+        }
+        Err(format!(
+            "%{pane} runs on {}'s own machine: ask them to trust you with it (pane menu), or work in a VM tab",
+            self.config.owner_name
+        ))
+    }
+
+    /// Someone other than the owner may read this pane (not private).
+    fn readable(&self, who: &Principal, pane: PaneId) -> bool {
+        who.is_owner() || (self.sees(who, pane) && !self.meta.get(&pane).is_some_and(|m| m.private))
+    }
+
+    /// A guest's intent that makes a pane: on a VM, never this machine
+    /// (M14). A new tab is a VM tab; a split joins its tab's machine, or
+    /// gets one of its own. Their VMs count against their quota.
+    fn guest_intent(&mut self, client: ClientId, who: &Principal, intent: Intent) -> Result<(), String> {
+        let vm = match &intent {
+            Intent::NewTab { .. } => Some(true),
+            Intent::Split { pane, .. } => {
+                let tab = self.mux.tab_of(*pane).map_err(|e| e.to_string())?;
+                if self.tab_machine(tab).is_some() { None } else { Some(false) }
+            }
+            _ => None,
+        };
+        let intent = match intent {
+            Intent::Split { pane, edge, cwd, .. } => Intent::Split { pane, edge, local: false, cwd },
+            i => i,
+        };
+        let Some(tab) = vm else { return self.intent(Some(client), intent) };
+        let mine = self.machines.values().filter(|m| m.by.as_deref() == Some(who.id())).count();
+        if mine >= self.config.guest_machines {
+            return Err(format!("you have {mine} VMs here, the most a guest may have: close one first",));
+        }
+        let m = self.new_machine(None)?;
+        if let Some(machine) = self.machines.get_mut(&m) {
+            machine.by = Some(who.id().to_owned());
+        }
+        self.next_host = Some(m);
+        self.next_owner_tab = tab;
+        let r = self.intent(Some(client), intent);
+        self.next_owner_tab = false;
+        if let Some(m) = self.next_host.take() {
+            self.machines.remove(&m);
+        }
+        r
     }
 
     /// Who is connected and where they look, within what `viewer` sees.
@@ -1982,6 +2157,18 @@ impl Daemon {
             ask: self.asks.get(&p.id).map(|a| a.ask.clone()),
             driver: self.drivers.get(&p.id).cloned(),
             pair: self.pair.contains(&p.id),
+            private: meta.private,
+            trusted: {
+                let now = now_ms();
+                let mut t: Vec<(String, u64)> = self
+                    .trust
+                    .iter()
+                    .filter(|((pane, _), until)| *pane == p.id && **until > now)
+                    .map(|((_, w), u)| (w.clone(), *u))
+                    .collect();
+                t.sort();
+                t
+            },
         }
     }
 
@@ -2004,6 +2191,8 @@ impl Daemon {
             ask: None,
             driver: None,
             pair: false,
+            private: meta.private,
+            trusted: Vec::new(),
         }
     }
 

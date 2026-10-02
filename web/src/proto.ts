@@ -111,6 +111,10 @@ export interface PaneInfo {
   driver?: Driver;
   /** Pair mode: every editor types at once. */
   pair?: boolean;
+  /** M14: never shown to anyone but the owner. */
+  private?: boolean;
+  /** M14: guests trusted to drive it on the owner's machine, until (ms). */
+  trusted?: [string, number][];
 }
 
 export type BlockType = "terminal" | "browser" | "agent";
@@ -142,7 +146,11 @@ export type PaneOp =
   | { op: "request_control" }
   | { op: "give_control"; to: string }
   | { op: "release_control" }
-  | { op: "set_pair"; on: boolean };
+  | { op: "set_pair"; on: boolean }
+  | { op: "request_trust" }
+  | { op: "grant_trust"; to: string; minutes: number }
+  | { op: "revoke_trust"; to: string }
+  | { op: "set_private"; on: boolean };
 
 /** Clients' named options (tmux `@` options), per scope. */
 export interface Options {
@@ -208,7 +216,8 @@ export type ServerMsg =
   | { type: "block"; block: PaneId; state: unknown }
   | { type: "pong"; id: number }
   | { type: "notice"; message: string }
-  | { type: "control_request"; pane: PaneId; who: string; name: string };
+  | { type: "control_request"; pane: PaneId; who: string; name: string }
+  | { type: "trust_request"; pane: PaneId; who: string; name: string };
 
 export const enum FrameKind {
   Output = 1,

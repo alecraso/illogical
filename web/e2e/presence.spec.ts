@@ -73,6 +73,11 @@ test("three people in one session see each other", async ({ browser }) => {
     return [c.state!.sessions[0].id, c.state!.panes[0].id];
   });
   await api("/api/acl", { session, principal: `tailnet:${FRIEND}`, role: "editor" });
+  // The pane runs on the owner's machine: they trust the friend with it (M14).
+  await owner.evaluate(
+    ([p, to]) => window.__illogical.client.paneOp(p, { op: "grant_trust", to, minutes: 30 }),
+    [pane, `tailnet:${FRIEND}`] as const,
+  );
   const headers = { "tailscale-user-login": FRIEND };
   friend = await (await browser.newContext({ extraHTTPHeaders: headers })).newPage();
   phone = await (await browser.newContext({ extraHTTPHeaders: headers, viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true })).newPage();

@@ -71,6 +71,9 @@ export function TabPeople({ client, tab }: { client: Client; tab: number }) {
 /** On a pane: an outline in the colour of each person focused on it, and
  * who drives it if that's someone else. */
 export function PaneMarks({ client, pane }: { client: Client; pane: PaneId }) {
+  if (client.info(pane)?.private && client.state?.roles) {
+    return <div class="pane-private">Private: only its owner sees it</div>;
+  }
   const focused = people(client.others().filter((p) => p.pane === pane));
   const driver = client.drivenBy(pane);
   const pair = client.info(pane)?.pair;
@@ -98,10 +101,24 @@ export function PaneMarks({ client, pane }: { client: Client; pane: PaneId }) {
   );
 }
 
-/** Pane menu: driving it. */
+/** Pane menu: driving it, trusting, privacy (M13, M14). */
 export function driveItems(client: Client, pane: PaneId): MenuItem[] {
   const info = client.info(pane);
   if (!info || info.type !== "terminal") return [];
+  const owner = !client.state?.roles;
+  const extra: MenuItem[] = [];
+  if (owner) {
+    extra.push({ label: "Private (only you see it)", checked: !!info.private, run: () => client.paneOp(pane, { op: "set_private", on: !info.private }) });
+    for (const [who] of info.trusted ?? []) {
+      extra.push({ label: `Stop trusting ${who.split(":").pop()?.split("@")[0]}`, run: () => client.paneOp(pane, { op: "revoke_trust", to: who }) });
+    }
+  } else if (client.role() !== "viewer" && !client.mayType(pane)) {
+    extra.push({ label: "Ask the owner to let me drive it", run: () => client.paneOp(pane, { op: "request_trust" }) });
+  }
+  return [...driveItemsInner(client, pane, info), ...(extra.length ? ["separator" as const, ...extra] : [])];
+}
+
+function driveItemsInner(client: Client, pane: PaneId, info: NonNullable<ReturnType<Client["info"]>>): MenuItem[] {
   const others = client.others().length > 0;
   const driver = client.drivenBy(pane);
   const mine = info.driver?.who === client.me();
@@ -118,8 +135,39 @@ export function driveItems(client: Client, pane: PaneId): MenuItem[] {
   return items.length ? ["separator", ...items] : [];
 }
 
+/** A guest asks the owner to trust them with a pane on this machine. */
+function TrustRequest({ client }: { client: Client }) {
+  const r = client.trustRequests[0];
+  const [minutes, setMinutes] = useState(30);
+  if (!r) return null;
+  return (
+    <div class="prompt-backdrop">
+      <div class="prompt" data-trust-request={r.pane}>
+        <p>
+          <b>{r.name}</b> asks to drive %{r.pane}. It runs on <b>this machine</b>, as you: they could do anything you can here.
+        </p>
+        <label class="share-history">
+          For
+          <select value={minutes} onChange={(e) => setMinutes(Number((e.target as HTMLSelectElement).value))}>
+            <option value={10}>10 minutes</option>
+            <option value={30}>30 minutes</option>
+            <option value={120}>2 hours</option>
+          </select>
+        </label>
+        <div class="prompt-buttons">
+          <button onClick={() => client.answerTrust(r.pane, r.who, null)}>Not now</button>
+          <button class="primary" data-trust onClick={() => client.answerTrust(r.pane, r.who, minutes)}>
+            Allow
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Someone asks to drive a pane you drive. */
 export function ControlRequests({ client }: { client: Client }) {
+  if (client.trustRequests.length) return <TrustRequest client={client} />;
   const r = client.requests[0];
   if (!r) return null;
   return (
@@ -161,15 +209,20 @@ export function ShareDialog({ client }: { client: Client }) {
   const [role, setRole] = useState<Role>("viewer");
   const [history, setHistory] = useState(false);
   const [err, setErr] = useState("");
-  const load = async () => {
+  const [secrets, setSecrets] = useState<{ pane: PaneId; kinds: string[] }[]>([]);
+  const load = async (s: SessionId | null = session) => {
     const r = await client.request("GET", "/api/acl");
     if (r.ok) setGrants((await r.json<{ grants: Grant[] }>()).grants);
+    if (s !== null) {
+      const x = await client.request("GET", `/api/sessions/${s}/secrets`);
+      if (x.ok) setSecrets(await x.json());
+    }
   };
   useEffect(() => {
     openShare = (s) => {
       setSession(s);
       setErr("");
-      void load();
+      void load(s);
     };
     return () => {
       openShare = null;
@@ -208,6 +261,23 @@ export function ShareDialog({ client }: { client: Client }) {
         ) : (
           <p class="dim">Only you can reach it.</p>
         )}
+        {secrets
+          .filter((x) => !client.info(x.pane)?.private)
+          .map((x) => (
+            <p key={x.pane} class="share-warning" data-secret={x.pane}>
+              ⚠ %{x.pane} shows what looks like {x.kinds.join(" and ")} (a guess).{" "}
+              <button
+                class="control-linkish"
+                onClick={() => {
+                  client.paneOp(x.pane, { op: "set_private", on: true });
+                  setSecrets(secrets.filter((y) => y.pane !== x.pane));
+                }}
+              >
+                Make it private
+              </button>
+            </p>
+          ))}
+        <p class="dim">People you share with work in throwaway VMs; they can't type on this machine unless you trust them with a pane.</p>
         <form
           class="share-add"
           onSubmit={(e) => {

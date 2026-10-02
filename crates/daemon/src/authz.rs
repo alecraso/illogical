@@ -28,6 +28,8 @@ enum Policy {
     Anyone,
     /// This role on the pane's (or block's) session.
     On(PaneId, Role),
+    /// The handler checks (it knows where the new thing goes).
+    Handler,
     Owner,
 }
 
@@ -48,6 +50,8 @@ fn policy(method: &Method, path: &str) -> Policy {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
         }
         ["api", "blocks", id, "call", _] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
+        // An editor's agent (M14): the handler puts it on a VM of theirs.
+        ["api", "blocks"] if !get => Policy::Handler,
         _ => Policy::Owner,
     }
 }
@@ -62,7 +66,7 @@ pub async fn check(State(app): State<Arc<App>>, req: Request, next: Next) -> Res
         return next.run(req).await;
     }
     match policy(req.method(), req.uri().path()) {
-        Policy::Anyone => next.run(req).await,
+        Policy::Anyone | Policy::Handler => next.run(req).await,
         Policy::Owner => refuse(StatusCode::FORBIDDEN, "only the owner can do that"),
         Policy::On(pane, need) => match app.mux.api(|r| Api::RoleOn(who, pane, r)).await.flatten() {
             Some((r, floor)) if r >= need => {
@@ -70,6 +74,15 @@ pub async fn check(State(app): State<Arc<App>>, req: Request, next: Next) -> Res
                     && let Err(why) = from_now(req.uri().path(), req.uri().query().unwrap_or(""), f)
                 {
                     return refuse(StatusCode::FORBIDDEN, why);
+                }
+                // Typing into a pane on the owner's machine needs their trust
+                // (M14).
+                let path = req.uri().path();
+                if ["/send", "/keys", "/mouse"].iter().any(|s| path.ends_with(s)) {
+                    let who = req.extensions().get::<Principal>().cloned().unwrap_or(Principal::Owner);
+                    if let Some(Err(why)) = app.mux.api(|r| Api::MayDrive(who, pane, r)).await {
+                        return refuse(StatusCode::FORBIDDEN, &why);
+                    }
                 }
                 next.run(req).await
             }
