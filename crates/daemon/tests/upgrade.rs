@@ -3,6 +3,8 @@
 //! systemd user service, so it needs a systemd user manager; it skips
 //! itself where there isn't one.
 
+mod strays;
+
 use std::{
     net::TcpListener,
     path::PathBuf,
@@ -31,6 +33,7 @@ impl Drop for Service {
     fn drop(&mut self) {
         systemctl(&["stop", &self.unit]);
         systemctl(&["reset-failed", &self.unit]);
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }
@@ -253,6 +256,7 @@ impl Drop for Plain {
         for pid in &self.shells {
             let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(*pid), nix::sys::signal::Signal::SIGKILL);
         }
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }

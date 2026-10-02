@@ -327,6 +327,13 @@ Each milestone ends with a demo against the acceptance list.
 - **FD store:** masters go into the FD store (`FDSTORE=1`, `FDNAME=pane-%N`, `FDPOLL=0`). On start, read `LISTEN_FDNAMES` and rebuild each VT from checkpoint + log tail.
 - **Done when:** `systemctl --user restart illogicald` leaves vim and a running build untouched, and clients reconnect on their own.
 
+#### #35: a pane closed as it starts (done 2026-10-02)
+
+- **What landed.** The shim records the program's pid only after the exec (a close-on-exec pipe), so the program already has its session, group and controlling terminal: a hangup sent to the group can't be lost. The record now names the shim too (`shim <pid> <start>`). A close signals the shim (`SIGUSR1`); the shim hangs the group up and kills it 3s later if anything is left, without the daemon. A shim whose terminal hung up before the program started, or that can't write its record, closes the program itself. The daemon keeps its own 3s timer for older shims, and only signals shims that wrote the `shim` line (an old shim would die of `SIGUSR1`).
+- **Tests.** api.rs closes a pane right after `run` and kills the daemon at once, then a program that ignores SIGHUP the same way; both must be gone within seconds. The test daemons' `Drop` kills the group of every program recorded under `blocks/*/process` and `closed/*/process` before deleting the state dir (`tests/strays/mod.rs`).
+- **Why it was seen.** Not only the record race: killing the daemon while `run` was still starting the program hung the terminal up before the program had made it its own, and the test then deleted the dir the shim records into.
+- **Not covered.** Shims started by an older daemon still depend on that daemon for the SIGKILL.
+
 ### M3: structure and CLI
 
 - **Shell integration:** auto-inject the way Ghostty does (bash `ENV`, zsh `ZDOTDIR`, fish `XDG_DATA_DIRS`), with a per-pane switch to turn it off. Parse OSC 133/7/633, and pass them through to clients.

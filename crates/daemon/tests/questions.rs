@@ -261,17 +261,32 @@ fn a_pending_question_survives_a_daemon_restart() {
 
 /// A client that doesn't declare elicitation gets no questions (the
 /// adapter's behaviour, which the fake copies): the block does declare it.
+/// The ACP line with this method in a block's log. It can land a little
+/// after the block reports idle, so look for a few seconds (#58).
+fn logged(d: &Daemon, id: u64, method: &str) -> Option<String> {
+    let needle = format!(r#""method":"{method}""#);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        for f in std::fs::read_dir(d.state.join("blocks").join(id.to_string())).unwrap().flatten() {
+            let text = String::from_utf8_lossy(&std::fs::read(f.path()).unwrap_or_default()).into_owned();
+            if let Some(line) = text.lines().find(|l| l.contains(&needle)) {
+                return Some(line.to_owned());
+            }
+        }
+        if Instant::now() > deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn the_block_declares_form_and_url_elicitation() {
     let d = Daemon::child();
     let id = d.open("hello");
     d.wait(id, "idle");
-    let mut init = None;
-    for f in std::fs::read_dir(d.state.join("blocks").join(id.to_string())).unwrap().flatten() {
-        let text = String::from_utf8_lossy(&std::fs::read(f.path()).unwrap_or_default()).into_owned();
-        init = init.or(text.lines().find(|l| l.contains(r#""method":"initialize""#)).map(str::to_owned));
-    }
-    let init: Value = serde_json::from_str(&init.expect("initialize in the log")).unwrap();
+    let init = logged(&d, id, "initialize").expect("initialize in the log");
+    let init: Value = serde_json::from_str(&init).unwrap();
     assert_eq!(init["m"]["params"]["clientCapabilities"]["elicitation"], json!({ "form": {}, "url": {} }));
 
     // MCP servers (`--mcp NAME=COMMAND`) go to the session.
@@ -279,12 +294,8 @@ fn the_block_declares_form_and_url_elicitation() {
         "mcp_servers": ["forms=python3 /srv/forms.py --log 'a b'"] });
     let id = d.open_with(json!({ "type": "agent", "config": config }));
     d.wait(id, "idle");
-    let mut new = None;
-    for f in std::fs::read_dir(d.state.join("blocks").join(id.to_string())).unwrap().flatten() {
-        let text = String::from_utf8_lossy(&std::fs::read(f.path()).unwrap_or_default()).into_owned();
-        new = new.or(text.lines().find(|l| l.contains(r#""method":"session/new""#)).map(str::to_owned));
-    }
-    let new: Value = serde_json::from_str(&new.expect("session/new in the log")).unwrap();
+    let new = logged(&d, id, "session/new").expect("session/new in the log");
+    let new: Value = serde_json::from_str(&new).unwrap();
     assert_eq!(
         new["m"]["params"]["mcpServers"][0],
         json!({ "name": "forms", "command": "python3", "args": ["/srv/forms.py", "--log", "a b"], "env": [] })

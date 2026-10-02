@@ -4,6 +4,8 @@
 //! generated names. Sprites this makes are named `illogical-m7-…` and
 //! deleted afterwards, whatever happens.
 
+mod strays;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -50,6 +52,7 @@ impl Drop for Daemon {
                 curl(&token, "DELETE", &format!("{WISP}/v1/sprites/{n}"), None);
             }
         }
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }

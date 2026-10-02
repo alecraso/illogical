@@ -551,6 +551,8 @@ struct Process {
     pid: u32,
     master: File,
     writer: Sender<Vec<u8>>,
+    /// The shim's record of it.
+    record: PathBuf,
 }
 
 impl Process {
@@ -686,12 +688,13 @@ impl Process {
             }
         })?;
 
+        let waited = record.clone();
         thread::Builder::new().name(format!("pane{pane}-wait")).spawn(move || {
-            let (code, signal) = wait_for_exit(pid, &record);
+            let (code, signal) = wait_for_exit(pid, &waited);
             let _ = events.send(Cmd::Exited { key: pid as u64, code, signal });
         })?;
 
-        Ok(Self { pid, master, writer })
+        Ok(Self { pid, master, writer, record })
     }
 
     fn resize(&self, cols: u16, rows: u16) {
@@ -704,11 +707,14 @@ impl Process {
     }
 
     /// Hang up the process group (the shell is a session leader), and kill
-    /// it if it is still around a few seconds later.
+    /// it if it is still around a few seconds later. The shim does the same,
+    /// so it happens even if this daemon doesn't live that long; the timer
+    /// here is for shims from before that.
     fn hang_up(&self) {
         let pgid = self.pid as libc::pid_t;
         // SAFETY: plain signal sends.
         unsafe { libc::killpg(pgid, libc::SIGHUP) };
+        crate::shim::close(&crate::shim::read_record(&self.record));
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(3));
             unsafe { libc::killpg(pgid, libc::SIGKILL) };
