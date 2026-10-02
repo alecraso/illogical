@@ -53,6 +53,24 @@ pub trait Block: Send + Sync {
     fn push_extra(&self) -> Option<Value> {
         None
     }
+    /// What it waits on you for (M24): its first open permission request
+    /// or question.
+    fn waiting(&self) -> Option<Waiting> {
+        None
+    }
+}
+
+/// An open permission request or question in a block (M24's `ask` reason).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waiting {
+    pub id: String,
+    pub what: illogical_proto::AskWhat,
+    pub headline: String,
+    /// Which agent asks.
+    pub agent: String,
+    /// Where it works, for the bundle key.
+    pub cwd: Option<String>,
+    pub at_ms: u64,
 }
 
 /// Files that hold credentials an agent in a VM needs. They're read when

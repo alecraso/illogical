@@ -50,6 +50,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/keys", post(keys_))
         .route("/api/panes/{id}/mouse", post(mouse))
         .route("/api/panes/{id}/attention", post(attention))
+        .route("/api/attention", get(attention_list))
+        .route("/api/attention/act", post(act))
         .route("/api/panes/{id}/ask", post(ask))
         .route("/api/panes/{id}/ask/withdraw", post(ask_withdraw))
         .route("/api/panes/{id}/close", post(close))
@@ -203,9 +205,101 @@ async fn attention(
     Path(id): Path<PaneId>,
     Json(req): Json<AttentionRequest>,
 ) -> Res<Json<serde_json::Value>> {
-    match app.mux.api(|r| Api::Attention(id, req.state, r)).await {
+    match app.mux.api(|r| Api::Attention(id, req.state, req.why, r)).await {
         Some(true) => Ok(Json(serde_json::json!({}))),
         _ => Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}"))),
+    }
+}
+
+/// Every pane that wants you, and why (M24): what `illogical attention`
+/// lists.
+async fn attention_list(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<Vec<illogical_proto::api::AttentionItem>>> {
+    let who = who.map(|axum::Extension(w)| w).filter(|w| !w.is_owner());
+    Ok(Json(app.mux.api(|r| Api::AttentionList(who, r)).await.unwrap_or_default()))
+}
+
+/// Do something about one pane's reason or several (M24): allow or deny an
+/// approval, answer or skip a question, or dismiss it. Each pane is checked
+/// on its own (editor on its session) and answered on its own.
+async fn act(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(req): Json<illogical_proto::api::ActRequest>,
+) -> Res<Response> {
+    use illogical_proto::api::{ActResponse, ActResult};
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    let panes = req.targets();
+    if panes.is_empty() {
+        return Err(bad("name a pane (pane) or several (panes)"));
+    }
+    // All or nothing on access: a list with one pane you can't change is
+    // refused whole, so a bundle never half-happens for that reason.
+    if !who.is_owner() {
+        for p in &panes {
+            match app.mux.api(|r| Api::RoleOn(who.clone(), *p, r)).await.flatten() {
+                Some((role, _)) if role >= illogical_core::Role::Editor => {}
+                Some(_) => {
+                    return Err(ApiError(
+                        StatusCode::FORBIDDEN,
+                        format!("you're watching %{p}'s session; you can't answer for it"),
+                    ));
+                }
+                None => return Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{p}"))),
+            }
+        }
+    }
+    let mut results = Vec::new();
+    for pane in panes {
+        let r = act_one(&app, pane, &req).await;
+        results.push(ActResult { pane, ok: r.is_ok(), error: r.err() });
+    }
+    let status = if results.iter().any(|r| r.ok) { StatusCode::OK } else { StatusCode::CONFLICT };
+    Ok((status, Json(ActResponse { results })).into_response())
+}
+
+async fn act_one(app: &App, pane: PaneId, req: &illogical_proto::api::ActRequest) -> Result<(), String> {
+    use illogical_proto::{Action, AskWhat, Attention};
+    if req.action == Action::Dismiss {
+        return match app.mux.api(|r| Api::Attention(pane, Attention::Idle, None, r)).await {
+            Some(true) => Ok(()),
+            _ => Err(format!("no pane %{pane}")),
+        };
+    }
+    let (reason, block) = app
+        .mux
+        .api(|r| Api::Reason(pane, r))
+        .await
+        .flatten()
+        .ok_or_else(|| format!("%{pane} doesn't want anything (it was answered, or dismissed)"))?;
+    let ask = reason.ask.ok_or_else(|| format!("%{pane} isn't asking anything: dismiss it"))?;
+    let id = req.id.clone().unwrap_or(ask.id.clone());
+    if id != ask.id {
+        return Err(format!("%{pane} now asks something else (it was answered)"));
+    }
+    let (method, args) = match (req.action, ask.what) {
+        (Action::Allow, AskWhat::Approve) => {
+            ("approve", serde_json::json!({ "id": id, "option": req.option.as_deref().unwrap_or("once") }))
+        }
+        (Action::Deny, AskWhat::Approve) => {
+            ("deny", serde_json::json!({ "id": id, "reason": req.message.as_deref().unwrap_or("") }))
+        }
+        (Action::Deny, AskWhat::Question) => ("decline", serde_json::json!({ "id": id })),
+        (Action::Answer, AskWhat::Question) => {
+            let content = req.content.clone().filter(|c| c.is_object()).ok_or("answer needs content")?;
+            ("answer", serde_json::json!({ "id": id, "content": content }))
+        }
+        (Action::Allow, AskWhat::Question) => return Err(format!("%{pane} asks a question: answer it")),
+        (Action::Answer, AskWhat::Approve) => return Err(format!("%{pane} asks for approval: allow or deny it")),
+        (Action::Dismiss, _) => unreachable!("handled above"),
+    };
+    if block {
+        let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+        b.call(method, args).await.map(|_| ())
+    } else {
+        answer_terminal(app, pane, method, args).await.map(|_| ()).map_err(|e| e.1)
     }
 }
 

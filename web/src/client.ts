@@ -10,6 +10,7 @@ import {
   decodeFrame,
   encodeFrame,
   FrameKind,
+  type ActRequest,
   type ClientId,
   type ClientMsg,
   type Driver,
@@ -434,6 +435,12 @@ export class Client {
     } catch {
       return "can't reach the daemon";
     }
+  }
+
+  /** M24: do something about one pane's reason, or several at once; true
+   * if any of them took. */
+  async act(req: ActRequest): Promise<boolean> {
+    return this.api("/api/attention/act", req, "couldn't do that");
   }
 
   paneOp(pane: PaneId, op: PaneOp) {

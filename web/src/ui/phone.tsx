@@ -55,8 +55,8 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             <h2>Needs you</h2>
             {wanting.map((p) => (
               <button key={p.id} class="sheet-item" onClick={act(() => client.setActive(p.id))}>
-                <AttentionBadge state={p.attention} />{" "}
-                {client.title(p.id) || p.current?.text || p.last?.text || p.cwd || `pane %${p.id}`}
+                <AttentionBadge state={p.attention} reason={p.reason} />{" "}
+                {p.reason?.headline || client.title(p.id) || p.current?.text || p.last?.text || p.cwd || `pane %${p.id}`}
               </button>
             ))}
           </section>

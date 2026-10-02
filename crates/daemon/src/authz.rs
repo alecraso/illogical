@@ -50,6 +50,10 @@ fn policy(method: &Method, path: &str) -> Policy {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
         }
         ["api", "blocks", id, "call", _] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
+        // M24: the handler shows each person what they may read, and checks
+        // each pane acted on.
+        ["api", "attention"] if get => Policy::Handler,
+        ["api", "attention", "act"] if !get => Policy::Handler,
         // An editor's agent (M14): the handler puts it on a VM of theirs.
         ["api", "blocks"] if !get => Policy::Handler,
         _ => Policy::Owner,

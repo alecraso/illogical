@@ -2396,6 +2396,21 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - **What it needs:** the directory and pins in IndexedDB (a worker can't read `localStorage`), approve and ask data in pushes sent through control, and `sw.js` as a bundled entry.
   - **Phones:** Android is likely fine, and iOS probably opens the card instead. Both are pending a real phone.
 
+#### M24: attention reasons and actions
+
+**Done 2026-10-02, cut to the MVP (#44).**
+
+- **What landed:**
+  - every `needs_input` and `done` pane has a `reason` (`PaneInfo.reason`, `illogical_proto::Reason`): its kind, `since_ms`, a one-line headline, the command, exit code and duration where there is one, a bundle key, and the actions it takes;
+  - kinds: `ask` (an open question or permission request: Claude Code's AskUserQuestion through its hook, or an agent block's), `failed` (a command that ran at least 3 s ended non-zero, not Ctrl-C), `done` (a command that ran at least 5 s finished unwatched), `exited` (the pane's program died non-zero, or its machine went) and `input` (a bell, a notification, an agent gone quiet; the Notification hook's message is the headline);
+  - bundle keys: `failed:<machine>`, `exited:<machine>`, `ask:<project>:<agent>` (the project is the cwd's git root until M23's `project` replaces it, in `mux::project_key`); `done` and `input` never bundle;
+  - an ask's reason is worked out live from the open question, so it changes as soon as the question does;
+  - `POST /api/attention/act` with one pane or a list: `allow` and `deny` (an agent block's approval), `answer` and `deny` (a question), `dismiss`. Each pane needs editor on its session, checked in the handler (all or nothing), and each is answered on its own (`{results: [{pane, ok, error?}]}`, 409 when none took);
+  - `GET /api/attention` and `illogical attention [--json]` list them, `illogical events` carries the reason on `attention` events, and push notifications are titled by kind ("Failed", "Done", "Needs you") with the headline as the body and the reason's actions in the payload (a failure's offers Dismiss);
+  - the web client: the tab and pane badges say failed or done with the headline as their title, the phone's "Needs you" list shows headlines, and Dismiss goes through the act route, so it clears on every client.
+- **Tests:** `crates/daemon/tests/attention.rs` (a failing `cargo test`, a long `make build`, a quick failure that isn't one, Claude Code's question through the hook answered by `act`, three agent approvals allowed and denied as a list, the push's actions, the event stream); `e2e/attention.spec.ts` (a failure's badge and headline, dismissed on one client and gone on the other; a pushed failure offers Dismiss).
+- **Not covered (after the MVP):** prompt detection for `input` (`[sudo] password`, `[y/N]`), and the `rerun`, `restart` and `send` actions. A 10-minute build is tested as a 5-second one. Approvals of Claude Code's tool permission prompts in terminals come with M29.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |

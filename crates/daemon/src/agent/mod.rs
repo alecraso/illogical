@@ -1639,6 +1639,34 @@ impl Block for Agent {
         let choice = g.open_ask()?.ask.push_choice()?;
         Some(json!({ "ask": choice }))
     }
+
+    fn waiting(&self) -> Option<crate::block::Waiting> {
+        use illogical_proto::AskWhat;
+        let g = self.inner.lock().unwrap();
+        let agent = serde_json::to_value(g.cfg.def.agent).ok().and_then(|v| v.as_str().map(str::to_owned));
+        let agent = agent.unwrap_or_else(|| "agent".into());
+        let cwd = g.cfg.cwd.clone();
+        if let Some(p) = g.pending.first() {
+            let headline = format!("wants to run {}", p.title);
+            return Some(crate::block::Waiting {
+                id: p.id.clone(),
+                what: AskWhat::Approve,
+                headline,
+                agent,
+                cwd,
+                at_ms: p.at_ms,
+            });
+        }
+        let e = g.open_ask()?;
+        Some(crate::block::Waiting {
+            id: e.ask.id.clone(),
+            what: AskWhat::Question,
+            headline: e.ask.headline(),
+            agent,
+            cwd,
+            at_ms: e.ask.at_ms,
+        })
+    }
 }
 
 /// An agent block's transcript from its directory alone (for search over
