@@ -120,3 +120,57 @@ Links: [ghostty](https://github.com/ghostty-org/ghostty),
   *(untested here)*.
 - Toolchains: Go 1.27, Node 22, pnpm. **No Rust, no Zig** (Ghostty 1.3.0-dev
   is installed as a binary).
+
+## Herdr (checked 2026-10-02)
+
+[herdr](https://herdr.dev/) is "the runtime your coding agents live on":
+Apache-2.0 Rust from Herdr, Inc., v0.1.0 in March 2026, about 41.9k stars
+(their own counts). Linux, macOS and Windows. The closest overlap with
+illogical so far, and the same engine bet (a `crates/ghostty-vt` crate).
+
+- **Shape.** A background server owns the PTYs; the client is a TUI inside
+  your existing terminal. Keyboard-first (`ctrl+b` prefix) with full mouse:
+  click, drag, right-click. Session > workspace > tab > pane.
+- **Durability.** Detach keeps everything running. A server restart restores
+  layout and cwd as fresh shells. Screen history replay is **off by default**
+  (secrets in output). Agents that reported a native session reference are
+  resumed. Keeps 48 layout snapshots and backs up a corrupt `session.json`.
+  `--handoff` (experimental) passes live panes to a new server on upgrade.
+- **Agent state.** `working`, `blocked`, `done`, `idle`, rolled up to tab and
+  workspace. 22 agent CLIs, mostly by screen-pattern manifests over the
+  bottom of the pane, fetched from herdr.dev; some agents report their own
+  state. `blocked` only when the screen matches a known approval, question
+  or permission UI.
+- **API.** Newline-delimited JSON over a Unix socket (named pipe on
+  Windows), wrapped by the CLI: workspace/tab/pane CRUD, `pane.read`, send,
+  `pane.wait_for_output`, `agent wait --until done`, agent start/prompt,
+  event subscriptions. An agent skill teaches agents to split, start and
+  prompt each other.
+- **Machines.** Saved SSH machines, each with its own herdr server, in one
+  window with a combined agent list; SSH compression, auto-reconnect. No
+  web or phone client, no push. "Herdr Cloud" (no SSH setup) is only teased
+  on the homepage.
+- **Plugins.** `herdr-plugin.toml` declares actions, event hooks
+  (`worktree.created`, …), panes and link handlers; any argv command. A
+  marketplace is coming (1,445 community plugins claimed).
+
+**Overlap:** M0–M3 almost entirely (daemon-owned PTYs, layout restore, agent
+resume, run/send/wait/read, multi-host list as in M25). **Theirs only:** runs
+in any terminal (ours: M5's `tmux -CC`), Windows, broad agent detection,
+plugins, agents driving the mux (our M16, not built). **Ours only:** web and
+phone client, push and answering from it, agent blocks (M6), multiplayer
+(M12–M15), control's E2E relay and hosted sandboxes (M17–M22), machines per
+pane or tab (M3b/M3c), OSC 133 command structure and history search, the
+swarm view.
+
+-> Compete on browser, phone, team and control, not the local mux. Take:
+screen manifests as the fallback for M24's `input` prompts (`[sudo]
+password`, `[y/N]`); an `illogical wait --until done|needs_input` verb;
+several layout snapshots plus a corrupt-file backup; revisit replaying
+scrollback by default. Watch Herdr Cloud: with a web client it lands on
+control's ground.
+[docs](https://herdr.dev/docs/), [compare](https://herdr.dev/compare/),
+[session state](https://herdr.dev/docs/session-state/),
+[socket API](https://herdr.dev/docs/socket-api/),
+[agents](https://herdr.dev/docs/agents/),
+[GitHub](https://github.com/herdrdev/herdr).

@@ -275,3 +275,56 @@ fn screen_snapshot_has_no_history() {
     c.feed(&a.snapshot());
     assert!(c.plain_text().contains("line 0"));
 }
+
+/// The newest lines of `e`'s plain text, without trailing blanks.
+fn plain_lines(e: &GhosttyEngine) -> Vec<String> {
+    let text = e.plain_text();
+    let mut lines: Vec<String> = text.lines().map(|l| l.trim_end().to_owned()).collect();
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines
+}
+
+/// A snapshot capped at `keep` rows of history: the screen, modes, cursor
+/// and colors are exactly as in a full one, and the history it keeps is the
+/// newest `keep` rows (or all, if there are fewer).
+fn capped_round_trip(name: &str, keep: usize) {
+    let mut a = load(name);
+    let have = a.terminal().scrollback_rows().unwrap();
+    let snap = a.snapshot_history(Some(keep));
+    let (cols, rows) = a.size();
+    let mut b = GhosttyEngine::new(cols, rows);
+    b.feed(&snap);
+
+    let diffs: Vec<String> = observe(&a)
+        .into_iter()
+        .zip(observe(&b))
+        .filter(|(x, y)| x.0 != "scrollback" && x.0 != "plain" && x.1 != y.1)
+        .map(|(x, y)| format!("  {}:\n    want {:.300}\n    got  {:.300}", x.0, x.1, y.1))
+        .collect();
+    assert!(diffs.is_empty(), "{name} keeping {keep}: {} differences\n{}", diffs.len(), diffs.join("\n"));
+
+    let kept = b.terminal().scrollback_rows().unwrap();
+    assert_eq!(kept, keep.min(have), "{name} keeping {keep}: history rows (of {have})");
+    if a.terminal().active_screen().unwrap() == Screen::Alternate {
+        a.feed(b"\x1b[?1049l");
+        b.feed(b"\x1b[?1049l");
+    }
+    let (want, got) = (plain_lines(&a), plain_lines(&b));
+    assert!(
+        want.ends_with(&got),
+        "{name} keeping {keep}: not the newest rows\n  want ..{:?}\n  got {:?}",
+        &want[want.len().saturating_sub(5)..],
+        &got[got.len().saturating_sub(5)..]
+    );
+}
+
+#[test]
+fn capped_snapshots_keep_the_screen_and_the_newest_history() {
+    for name in ["seq", "modes", "nvim", "nvim_resize", "less", "top", "resize"] {
+        for keep in [0, 1, 7, 100, 1_000_000] {
+            capped_round_trip(name, keep);
+        }
+    }
+}

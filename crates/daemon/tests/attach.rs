@@ -160,7 +160,7 @@ async fn until<T>(ws: &mut Ws, mut f: impl FnMut(&In) -> Option<T>) -> T {
 }
 
 async fn attach(ws: &mut Ws, offset: Option<u64>) {
-    let m = ClientMsg::Attach { panes: vec![AttachPane { pane: 1, offset }] };
+    let m = ClientMsg::Attach { panes: vec![AttachPane::new(1, offset)], zstd: false };
     ws.send(Message::Text(serde_json::to_string(&m).unwrap().into())).await.unwrap();
 }
 
@@ -264,6 +264,57 @@ async fn snapshot_shows_a_full_screen_app() {
     assert!(text.contains("FULLSCREEN-42"), "snapshot has the app's screen");
 }
 
+/// A fresh snapshot of pane 1 at 80x24, asked for with `history` and `zstd`.
+async fn snapshot_of(d: &Daemon, history: Option<u32>, zstd: bool) -> Frame {
+    let (mut ws, _) = connect(d).await;
+    let panes = vec![AttachPane { pane: 1, offset: None, history }];
+    send(&mut ws, ClientMsg::Attach { panes, zstd }).await;
+    let _size = recv_attach(&mut ws).await;
+    let In::Frame(f) = recv_attach(&mut ws).await else { panic!("expected a snapshot") };
+    f
+}
+
+/// What a snapshot draws, as lines of text with the scrollback first.
+fn lines_of(snapshot: &[u8]) -> Vec<String> {
+    use illogical_vt::{GhosttyEngine, VtEngine};
+    let mut e = GhosttyEngine::new(80, 24);
+    e.feed(snapshot);
+    e.plain_text().lines().map(|l| l.trim_end().to_owned()).filter(|l| !l.is_empty()).collect()
+}
+
+#[tokio::test]
+async fn snapshots_carry_only_the_history_asked_for() {
+    let d = start().await;
+    let (mut ws, _) = connect(&d).await;
+    attach(&mut ws, None).await;
+    let _ = (recv_attach(&mut ws).await, recv_attach(&mut ws).await);
+    type_line(&mut ws, "seq 1 3000; echo seq-$((1+1))-done").await;
+    read_until(&mut ws, None, "seq-2-done").await;
+    drop(ws);
+
+    let full = snapshot_of(&d, None, false).await;
+    assert_eq!(full.kind, FrameKind::Snapshot);
+    let all = lines_of(&full.data);
+    assert!(all.iter().any(|l| l == "1") && all.iter().any(|l| l == "3000"), "the full snapshot has it all");
+
+    // 100 rows of history and the screen: the newest of it.
+    let capped = snapshot_of(&d, Some(100), false).await;
+    let some = lines_of(&capped.data);
+    assert!(some.len() <= 100 + 24, "{} lines", some.len());
+    assert!(all.ends_with(&some), "the newest rows");
+    assert!(some.iter().any(|l| l == "3000") && !some.iter().any(|l| l == "2800"));
+
+    // Compressed, it's the same bytes.
+    let packed = snapshot_of(&d, Some(100), true).await;
+    assert_eq!(packed.kind, FrameKind::SnapshotZstd);
+    assert!(packed.data.len() < capped.data.len() / 2, "{} of {}", packed.data.len(), capped.data.len());
+    assert_eq!(zstd::decode_all(&packed.data[..]).unwrap(), capped.data);
+
+    // The screen only, after a resync.
+    let screen = lines_of(&snapshot_of(&d, Some(0), false).await.data);
+    assert!(screen.len() <= 24 && all.ends_with(&screen), "{screen:?}");
+}
+
 #[tokio::test]
 async fn rejects_foreign_host_and_origin() {
     let d = start().await;
@@ -342,7 +393,7 @@ async fn split_spawns_a_pane_and_exit_closes_it() {
     assert_eq!((tab.layout.panes[0].1.cols, tab.layout.panes[1].1.cols), (40, 39));
 
     // The new pane runs a shell of its own.
-    send(&mut ws, ClientMsg::Attach { panes: vec![AttachPane { pane: 2, offset: None }] }).await;
+    send(&mut ws, ClientMsg::Attach { panes: vec![AttachPane::new(2, None)], zstd: false }).await;
     type_in(&mut ws, 2, "echo in-pane-$((1+1)); exit").await;
     let state = until(&mut ws, |m| match m {
         In::Msg(ServerMsg::State { state }) if state.panes.len() == 1 => Some(state.clone()),
@@ -358,7 +409,7 @@ async fn the_tab_takes_the_claiming_clients_size() {
     let d = start().await;
     let (mut a, state) = connect_state(&d).await;
     let tab = state.tabs[0].id;
-    send(&mut a, ClientMsg::Attach { panes: vec![AttachPane { pane: 1, offset: None }] }).await;
+    send(&mut a, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false }).await;
     send(&mut a, ClientMsg::View { tab, cols: 101, rows: 30, zoom: None, claim: true }).await;
     until(&mut a, |m| matches!(m, In::Msg(ServerMsg::Size { pane: 1, cols: 101, rows: 30 })).then_some(())).await;
     type_line(&mut a, "stty size").await;
@@ -409,7 +460,7 @@ impl Daemon {
 use illogical_proto::{PaneOp, Policy};
 
 async fn attach_pane(ws: &mut Ws, pane: u32) -> String {
-    send(ws, ClientMsg::Attach { panes: vec![AttachPane { pane, offset: None }] }).await;
+    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(pane, None)], zstd: false }).await;
     until(ws, |m| match m {
         In::Frame(f) if f.kind == FrameKind::Snapshot && f.pane == pane => {
             Some(String::from_utf8_lossy(&f.data).into_owned())

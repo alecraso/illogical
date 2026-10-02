@@ -10,6 +10,9 @@ import { theme } from "./theme";
 
 export const FONT_FAMILY = '"JetBrains Mono", "Fira Code", ui-monospace, Menlo, monospace';
 export const FONT_SIZE = 14;
+/** Rows of scrollback a pane keeps; snapshots bring no more than this. */
+export const SCROLLBACK = 10000;
+const enc = new TextEncoder();
 
 /** Touch-first devices draw with the DOM renderer: xterm's WebGL renderer
  * drew nothing at all in Chrome's phone emulation (fractional pixel ratio),
@@ -51,7 +54,7 @@ export class TerminalView {
       fontFamily: FONT_FAMILY,
       fontSize: FONT_SIZE,
       cursorBlink: true,
-      scrollback: 10000,
+      scrollback: SCROLLBACK,
       allowProposedApi: true,
       macOptionIsMeta: true,
       overviewRuler: { width: 8 },
@@ -236,6 +239,25 @@ export class TerminalView {
     this.term.write(data, done);
   }
 
+  /** Before a snapshot of the screen alone, after falling behind: keep the
+   * scrollback, push the screen into it under a rule marking what was
+   * skipped, and start the screen and modes over. */
+  skipGap() {
+    const rows = this.term.rows;
+    this.write(
+      enc.encode(
+        // A full-screen app's screen isn't history; leave it.
+        "\x1b[?1049l\x1b[0m" +
+          `\x1b[${rows};1H\r\n\x1b[2m── output skipped here; illogical tail has it ──\x1b[0m` +
+          "\r\n".repeat(rows) +
+          // Soft reset, plus the input modes it leaves alone.
+          "\x1b[!p\x1b[?7h\x1b[?1l\x1b[?66l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l" +
+          "\x1b]104\x1b\\\x1b[H\x1b[2J",
+      ),
+    );
+    this.pending = null;
+  }
+
   /** Clear everything (screen, scrollback, modes) before a snapshot. */
   reset() {
     this.term.reset();
@@ -248,7 +270,6 @@ export class TerminalView {
   }
 
   onInput(cb: (data: Uint8Array) => void) {
-    const enc = new TextEncoder();
     this.term.onData((s) => cb(enc.encode(s)));
     // Mouse reports in X10 encoding arrive as raw bytes in a string.
     this.term.onBinary((s) => cb(Uint8Array.from(s, (c) => c.charCodeAt(0) & 0xff)));

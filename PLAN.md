@@ -67,7 +67,7 @@ terminal, OSC 133 command ranges are *command marks*, never "blocks".
     - CLI and API clients get only what they `subscribe` to.
   - `size`: pane, cols, rows, owner client.
 - **Client to server.**
-  - `attach{panes: {id: last_offset}}`.
+  - `attach{panes: [{pane, offset, history?}], zstd?}`: `history` caps the scrollback in a snapshot at what the client keeps; with `zstd`, snapshots may come compressed (`snapshot_zstd`, frame kind 4). (#49)
   - `input{pane, bytes}`.
   - `resize{pane, cols, rows}`, which also claims the size.
   - `ack{pane, offset}`.
@@ -80,13 +80,14 @@ terminal, OSC 133 command ranges are *command marks*, never "blocks".
     - `subscribe{events, panes?}`: opts in to event types, optionally for some panes only.
 - **Attach and resume.**
   - If the client's `last_offset` is within the log and the gap is ≤ 1MB, the server replays from the log.
-  - Otherwise it sends a full `snapshot`, then live output. The same path is used after a flow-control overrun.
+  - Otherwise it sends a `snapshot` with at most `history` rows of scrollback, compressed for a client that asked, then live output.
+  - **After a `resync`** (the client's queue filled), the client attaches again from its own offset with `history: 0`. A gap of up to 1MB replays; otherwise it gets the screen alone, keeps its own scrollback, and marks the gap with a dim `── output skipped here ──` rule. Asking for the whole history again is what kept a client behind a flood resyncing forever (S19). (#49, done 2026-10-02.)
   - After attach, the pane gets one SIGWINCH nudge.
   - **Visible-first attach is gated on measurement (decided 2026-10-01). Measured in S10: don't build it for xterm.js.**
     - **Where the time goes:** on an emulated Pixel 7 at 4x CPU throttling and 10 Mbps / 50 ms, attaching to a 64k-row pane took 3.7 s, of which 3.2 s was download. The snapshot goes out uncompressed (3.9 MB; 183 KB gzipped). The client keeps only 10k lines, so 54k of the 64k rows are downloaded and thrown away. Even a small screen takes about 150 ms to draw at 4x, which is the most visible-first could save. See [spikes/s10-ghostty-web](spikes/s10-ghostty-web/README.md).
-    - **Do instead (small, server-side, fix now; not built yet, #49, where S19 found a client behind a flood resyncing forever):**
-      - **compress snapshot frames** (permessage-deflate, or zstd frames);
-      - **cap the history in a snapshot at the client's scrollback** (sent in `attach`).
+    - **Do instead (small, server-side, fix now; done 2026-10-02 in #49):**
+      - **compress snapshot frames:** zstd frames, because the tungstenite under axum 0.8 has no permessage-deflate. The web client decodes them with `fzstd`.
+      - **cap the history in a snapshot at the client's scrollback** (sent in `attach`): through a formatter selection, so `screen_snapshot` no longer replays the whole snapshot into a scratch terminal.
 
       Together they took the 64k case on the throttled phone from about 3.7 s to about 0.35 s. Real terminal output compresses worse than S10's synthetic lines, so re-measure.
     - M8 gives visible-first natively later, through GHOSTSNP's screen-then-history split. The design below is kept only for reference.
@@ -102,6 +103,7 @@ terminal, OSC 133 command ranges are *command marks*, never "blocks".
 
       The pane is usable from `ready`. The buffer is bounded by the flow-control window; if it overflows, fall back to a full snapshot.
 - **Flow control.**
+  - **As built:** no ACKs. Each client's per-pane queue is bounded, and a full queue means `resync` (above). The window and ACKs below are still the design. #49 showed why they'd help: a browser's xterm buffers everything it has been sent, so a throttled page took about 10 s to even read its `resync`.
   - Each client has a per-pane unacked window of 512KB. The client ACKs about every 64KB once xterm's write callback fires.
   - A client that exceeds its window stops receiving. When it ACKs again, it gets a fresh snapshot rather than the backlog.
   - The PTY is never paused for a slow client; the log absorbs the output.
@@ -2520,7 +2522,7 @@ illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` d
 **Order:**
 
 1. **S19** (#48): done, below.
-2. **The resync fix** (#49): a daemon change both clients need. It can go before or beside M31.
+2. **The resync fix** (#49): done 2026-10-02. Snapshots are capped at the client's scrollback and zstd-compressed, and a resync brings back the screen alone. With S19's four-pane flood, snapshots went from 1.44 GB of 1.53 GB received to 9.8 KB of 612 MB, and the TUI drew 7x as much real output. A quiet pane beside a flood in a browser throttled 6x echoes in under 100 ms (`web/e2e/flood.spec.ts`).
 3. **M31** (#50: `illogical tui`), then **M32** (#51: copy mode).
 
 #### S19: TUI spike
