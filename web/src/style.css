@@ -358,6 +358,13 @@ button {
   box-shadow: 0 8px 28px #000a;
   display: flex;
   flex-direction: column;
+  /* A long menu in a short window scrolls rather than running off it. */
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
+}
+
+.menu > * {
+  flex: none;
 }
 
 .menu-item {
@@ -480,6 +487,31 @@ button {
   padding: 0 12px;
   text-align: left;
   border-radius: 8px;
+}
+
+.sheet-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sheet-row .sheet-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet-act {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--letterbox);
+  font-weight: 600;
+}
+
+.att.acts {
+  cursor: pointer;
 }
 
 .sheet-item.sheet-pane {
@@ -2696,4 +2728,247 @@ button {
 .swarm.phone .follow-file {
   order: 3;
   flex-basis: 100%;
+}
+
+/* M11: diff and file blocks. */
+.review {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.review-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  min-height: 34px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Room for the pane's grip. */
+.app:not(.phone) .review-bar {
+  padding-right: 28px;
+}
+
+.review-bar button {
+  min-width: 28px;
+  height: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.review-what,
+.review-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+}
+
+.review-path b {
+  color: var(--fg);
+}
+
+.review-live {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.review-live.on {
+  color: #a6e3a1;
+}
+
+.review-live.on::before {
+  content: "● ";
+}
+
+.review .dim {
+  color: var(--dim);
+}
+
+.review .adds {
+  color: #a6e3a1;
+}
+
+.review .dels {
+  color: #f38ba8;
+}
+
+.review-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.file-code {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-code .cm-editor {
+  height: 100%;
+}
+
+.diff-file {
+  border-bottom: 1px solid var(--divider);
+}
+
+.diff-file-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.diff-file-head:disabled {
+  opacity: 1;
+}
+
+.diff-file.open > .diff-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+
+.diff-st {
+  width: 1.4em;
+  text-align: center;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  color: #f9e2af;
+}
+
+.diff-st.st-added,
+.diff-st.st-untracked {
+  color: #a6e3a1;
+}
+
+.diff-st.st-deleted {
+  color: #f38ba8;
+}
+
+.diff-st.st-renamed {
+  color: #89b4fa;
+}
+
+.diff-path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.diff-note {
+  padding: 8px 12px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.diff-hunks {
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.diff-at {
+  padding: 2px 8px;
+  color: #89b4fa;
+  background: #89b4fa14;
+  overflow-wrap: anywhere;
+}
+
+.dl {
+  display: flex;
+}
+
+.dl.go {
+  cursor: pointer;
+}
+
+.dl.go:hover {
+  outline: 1px solid var(--raised);
+}
+
+.dl.add {
+  background: #a6e3a11c;
+}
+
+.dl.del {
+  background: #f38ba81c;
+}
+
+.dl.eol {
+  color: var(--dim);
+  font-style: italic;
+}
+
+.dl .ln {
+  flex: none;
+  width: 3.5em;
+  padding-right: 6px;
+  text-align: right;
+  color: var(--dim);
+  user-select: none;
+}
+
+.dl .mk {
+  flex: none;
+  width: 1.2em;
+  color: var(--dim);
+  user-select: none;
+}
+
+.dl .code {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .dl .ln {
+    width: 2.6em;
+  }
+}
+
+.hl-k {
+  color: #f5c2e7;
+}
+.hl-s {
+  color: #a6e3a1;
+}
+.hl-n {
+  color: #fab387;
+}
+.hl-c {
+  color: #585b70;
+  font-style: italic;
+}
+.hl-f {
+  color: #89b4fa;
+}
+.hl-t {
+  color: #f9e2af;
+}
+.hl-p {
+  color: #9399b2;
+}
+.hl-m {
+  color: #94e2d5;
 }

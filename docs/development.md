@@ -117,7 +117,8 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   --tailnet` and the `sandbox` supervisor). M4c: the dial-out transport
   (`dial.rs`, over `dialout_mux.rs`'s streams), share links (`share.rs`), and
   history sync (`sync.rs`, sealed by `seal.rs`). M7: files on a host
-  (`fs.rs`), names (`illogical_core::names`). M6c: questions and forms
+  (`fs.rs`), names (`illogical_core::names`). M11: diff and file blocks
+  (`review/`). M6c: questions and forms
   (`illogical_proto::ask`: the card's shape and how its answer becomes
   Claude Code's; agent blocks' elicitations in `agent/`; a terminal's
   questions in `mux.rs` and the `/ask` route). M16: MCP (`mcp/`: the server at `/mcp`, its

@@ -92,6 +92,17 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 };
                 note(buf, r, &format!("%{pid} VS Code {what}  (open it in the web client)"));
             }
+            Some(BlockType::Diff) => {
+                let s = app.blocks.get(&pid);
+                let n = s.and_then(|s| s["files"].as_array().map(Vec::len)).unwrap_or(0);
+                let name = s.and_then(|s| s["name"].as_str().map(str::to_owned)).unwrap_or_default();
+                note(buf, r, &format!("%{pid} changes in {name}: {n} files  (`illogical capture %{pid}`)"));
+            }
+            Some(BlockType::File) => {
+                let s = app.blocks.get(&pid);
+                let path = s.and_then(|s| s["path"].as_str().map(str::to_owned)).unwrap_or_default();
+                note(buf, r, &format!("%{pid} file {path}  (`illogical capture %{pid}`)"));
+            }
             _ => note(buf, r, &format!("%{pid}")),
         }
     }

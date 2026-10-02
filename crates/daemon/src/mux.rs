@@ -481,6 +481,12 @@ struct Daemon {
     refused: HashMap<ClientId, Instant>,
     /// The tab each client shows (M13 presence).
     viewing: HashMap<ClientId, TabId>,
+    /// ...and the one pane in it, on a phone.
+    zoomed: HashMap<ClientId, PaneId>,
+    /// Blocks some client draws now (M11), as they were last told.
+    drawn: std::collections::HashSet<PaneId>,
+    /// This host's files, as `/api/fs` serves them.
+    fs: Arc<crate::fs::Scope>,
     /// Who drives each pane (M13), and panes in pair mode.
     drivers: HashMap<PaneId, Driver>,
     pair: std::collections::HashSet<PaneId>,
@@ -590,6 +596,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
     let (tx, rx) = mpsc::unbounded_channel();
     let (notices, notices_rx) = mpsc::unbounded_channel();
     let (events, _) = broadcast::channel(1024);
+    let mut private = config.private.clone();
+    private.push(store.root().to_path_buf());
+    let fs = Arc::new(crate::fs::Scope::new(config.home.clone(), private));
     let mut d = Daemon {
         mux: Mux::new(),
         panes: HashMap::new(),
@@ -600,6 +609,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         focus: HashMap::new(),
         refused: HashMap::new(),
         viewing: HashMap::new(),
+        zoomed: HashMap::new(),
+        drawn: Default::default(),
+        fs: fs.clone(),
         drivers: HashMap::new(),
         pair: Default::default(),
         trust: HashMap::new(),
@@ -648,9 +660,6 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
     }
     d.sweep_machines();
     let (provider, daemon_id, ide) = (d.config.provider.clone(), d.config.daemon_id.clone(), d.config.ide.clone());
-    let mut private = d.config.private.clone();
-    private.push(store.root().to_path_buf());
-    let fs = Arc::new(crate::fs::Scope::new(d.config.home.clone(), private));
     tokio::spawn(d.run(rx, notices_rx));
     MuxHandle { tx, events, store, provider, daemon_id, fs, ide }
 }
@@ -953,6 +962,7 @@ impl Daemon {
             home: self.config.home.clone(),
             secrets: self.config.secrets.clone(),
             mcp: self.config.mcp.clone(),
+            fs: self.fs.clone(),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();
@@ -995,6 +1005,7 @@ impl Daemon {
                     self.flush();
                 }
             }
+            self.sync_drawn();
             // A new layout goes out at once, in order with what follows.
             if self.full
                 || self.clients.values().any(|c| self.sent.get(&c.client).is_none_or(|s| s.rev != self.mux.rev))
@@ -1516,11 +1527,18 @@ impl Daemon {
                             };
                             (ReasonKind::Done, h, None)
                         };
+                        // A failed command can be typed again (M11), if it
+                        // was typed (shell integration saw its line).
+                        let mut actions = vec![Action::Dismiss];
+                        if failed && text.as_deref().is_some_and(|t| crate::fs::rerun_line(t).is_some()) {
+                            actions.insert(0, Action::Rerun);
+                        }
                         let reason = Reason {
                             command: text.clone(),
                             exit,
                             duration_ms: Some(took_ms),
                             bundle,
+                            actions,
                             ..plain_reason(kind, &headline)
                         };
                         self.set_attention_with(pane, Attention::Done, &headline, Some(reason));
@@ -1571,6 +1589,7 @@ impl Daemon {
                 self.focus.remove(&client);
                 self.refused.remove(&client);
                 self.viewing.remove(&client);
+                self.zoomed.remove(&client);
                 // Their last client left: they no longer drive anything.
                 if let Some(who) = gone
                     && !self.clients.values().any(|c| c.principal.id() == who.id() && !self.summary.contains(&c.client))
@@ -2210,8 +2229,10 @@ impl Daemon {
             return Err("terminals are opened with run".into());
         }
         let from = req.from_pane.filter(|p| self.panes.contains_key(p) || self.blocks.contains_key(p));
-        if req.kind == BlockType::Editor {
-            self.editor_defaults(&mut req, from);
+        match req.kind {
+            BlockType::Editor => self.editor_defaults(&mut req, from),
+            BlockType::Diff | BlockType::File => self.view_defaults(&mut req, from),
+            _ => {}
         }
         let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();
@@ -2279,6 +2300,59 @@ impl Daemon {
             }
             req.config["path"] = path.into();
         }
+    }
+
+    /// A diff or file block (M11) is on the machine of the pane it's opened
+    /// from (a VM tab's, say), unless told otherwise; a diff's repository
+    /// is that pane's directory's, and a file's relative path is from it.
+    fn view_defaults(&self, req: &mut OpenRequest, from: Option<PaneId>) {
+        let beside = req.split.or(from);
+        if req.host.is_none() && !req.local && !req.vm {
+            req.host = beside.and_then(|p| self.meta.get(&p)).and_then(|m| m.host);
+        }
+        if !req.config.is_object() {
+            req.config = serde_json::json!({});
+        }
+        let cwd = beside.and_then(|p| self.info_of_any(p)).and_then(|i| i.cwd);
+        let key = if req.kind == BlockType::Diff { "repo" } else { "path" };
+        let given = req.config[key].as_str().filter(|p| !p.is_empty()).map(str::to_owned);
+        let here = req.host.is_none();
+        let home = || if here { self.config.home.display().to_string() } else { "~".into() };
+        let whole = match (given, cwd) {
+            (Some(p), _) if p.starts_with('/') || p.starts_with('~') => p,
+            (Some(p), Some(c)) => format!("{}/{p}", c.trim_end_matches('/')),
+            (Some(p), None) => p,
+            (None, Some(c)) => c,
+            (None, None) => home(),
+        };
+        req.config[key] = whole.into();
+    }
+
+    /// Tell blocks whether anyone draws them (M11): a client that isn't
+    /// summaries-only shows their tab, and on a phone, them.
+    fn sync_drawn(&mut self) {
+        if self.blocks.is_empty() && self.drawn.is_empty() {
+            return;
+        }
+        let mut now = std::collections::HashSet::new();
+        for (client, tab) in &self.viewing {
+            if self.summary.contains(client) || !self.clients.contains_key(client) {
+                continue;
+            }
+            let Ok(t) = self.mux.tab(*tab) else { continue };
+            let panes = t.root.panes();
+            let zoom = self.zoomed.get(client).filter(|z| panes.contains(z));
+            now.extend(panes.into_iter().filter(|p| self.blocks.contains_key(p) && zoom.is_none_or(|z| z == p)));
+        }
+        if now == self.drawn {
+            return;
+        }
+        for id in now.symmetric_difference(&self.drawn) {
+            if let Some(b) = self.blocks.get(id) {
+                b.drawn(now.contains(id));
+            }
+        }
+        self.drawn = now;
     }
 
     /// A new machine for the next pane; it's created when its first
@@ -2493,6 +2567,10 @@ impl Daemon {
                 }
             }
             ClientMsg::View { tab, cols, rows, zoom, claim } => {
+                match zoom {
+                    Some(z) => self.zoomed.insert(client, z),
+                    None => self.zoomed.remove(&client),
+                };
                 if self.viewing.insert(client, tab) != Some(tab) {
                     // Presence only: no pane changed.
                     self.soon();

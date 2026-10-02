@@ -83,7 +83,7 @@ test("a push for a failure offers Dismiss", async ({ browser }) => {
     body: "cargo test failed (exit 101) after 3s",
     pane: 7,
     tag: "pane-7",
-    reason: { kind: "failed", actions: ["dismiss"], bundle: "failed:here" },
+    reason: { kind: "failed", actions: ["rerun", "dismiss"], bundle: "failed:here" },
   };
   await cdp.send("ServiceWorker.deliverPushMessage", {
     origin: new URL(page.url()).origin,
@@ -96,6 +96,7 @@ test("a push for a failure offers Dismiss", async ({ browser }) => {
       const ns = (await reg?.getNotifications()) ?? [];
       return ns.map((n) => ({ title: n.title, body: n.body, actions: (n as unknown as { actions: { action: string }[] }).actions.map((x) => x.action) }));
     });
-  await expect.poll(shown).toEqual([{ title: "Failed", body: payload.body, actions: ["dismiss"] }]);
+  // M11: Rerun from the notification, as from the phone's Needs you.
+  await expect.poll(shown).toEqual([{ title: "Failed", body: payload.body, actions: ["rerun", "dismiss"] }]);
   await context.close();
 });

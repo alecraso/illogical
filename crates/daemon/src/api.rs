@@ -301,6 +301,21 @@ async fn act_one(
         }
         _ => {}
     }
+    // A failed command typed again (M11), once its shell is idle.
+    if req.action == Action::Rerun {
+        let (reason, _) = app
+            .mux
+            .api(|r| Api::Reason(pane, r))
+            .await
+            .flatten()
+            .ok_or_else(|| format!("%{pane} has nothing to run again (it was dismissed, or ran since)"))?;
+        let command = reason
+            .command
+            .filter(|_| reason.actions.contains(&Action::Rerun))
+            .ok_or_else(|| format!("%{pane} has no command to run again"))?;
+        let line = crate::fs::rerun_line(&command).ok_or_else(|| format!("can't type {command:?} again"))?;
+        return crate::fs::type_line(app, pane, line, "rerun").await.map_err(|e| e.to_string());
+    }
     if req.action == Action::Dismiss {
         return match app.mux.api(|r| Api::Attention(pane, Attention::Idle, None, r)).await {
             Some(true) => Ok(()),
@@ -334,7 +349,9 @@ async fn act_one(
         }
         (Action::Allow, AskWhat::Question) => return Err(format!("%{pane} asks a question: answer it")),
         (Action::Answer, AskWhat::Approve) => return Err(format!("%{pane} asks for approval: allow or deny it")),
-        (Action::Dismiss | Action::Continue | Action::Accept | Action::Reject, _) => unreachable!("handled above"),
+        (Action::Dismiss | Action::Continue | Action::Accept | Action::Reject | Action::Rerun, _) => {
+            unreachable!("handled above")
+        }
     };
     if block {
         let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
@@ -741,7 +758,8 @@ async fn call(
     };
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let by = match method.as_str() {
-        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" => who_is(&app, who).await,
+        // M11: a file block's `open` is the owner's only.
+        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" | "open" => who_is(&app, who).await,
         _ => None,
     };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {

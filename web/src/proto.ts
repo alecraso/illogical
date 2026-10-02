@@ -60,7 +60,7 @@ export type Attention = "idle" | "working" | "needs_input" | "done";
 
 /** M24: why a pane wants you. */
 export type ReasonKind = "ask" | "input" | "failed" | "exited" | "done" | "paused" | "errors" | "conflict" | "diff";
-export type Action = "allow" | "deny" | "answer" | "dismiss" | "continue" | "accept" | "reject";
+export type Action = "allow" | "deny" | "answer" | "dismiss" | "continue" | "accept" | "reject" | "rerun";
 
 export interface Reason {
   kind: ReasonKind;
@@ -240,7 +240,7 @@ export interface Delta {
   presence?: Presence[];
 }
 
-export type BlockType = "terminal" | "browser" | "agent" | "editor";
+export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file";
 export type MachineId = number;
 export type MachineState = "starting" | "running" | "gone";
 

@@ -106,9 +106,14 @@ sw.addEventListener("push", (event: PushEvent) => {
       ]
     : ask
       ? ask.options.slice(0, 2).map((o, i) => ({ action: `answer-${i}`, title: o }))
-      : reason && reason.actions.includes("dismiss")
-        ? [{ action: "dismiss", title: "Dismiss" }]
-        : [];
+      : reason && reason.actions.includes("rerun")
+        ? [
+            { action: "rerun", title: "Rerun" },
+            { action: "dismiss", title: "Dismiss" },
+          ]
+        : reason && reason.actions.includes("dismiss")
+          ? [{ action: "dismiss", title: "Dismiss" }]
+          : [];
   event.waitUntil(
     sw.registration.showNotification(msg.title || "illogical", {
       body: msg.body || "",
@@ -182,6 +187,15 @@ sw.addEventListener("notificationclick", (event: ClickEvent) => {
       (async () => {
         const body = { action: "answer", pane, id: ask.id, content: { [ask.field]: choice } };
         if (!(await act(data.daemon, body))) await failed(pane, data.daemon, choice);
+      })(),
+    );
+    return;
+  }
+  // A failed command, typed into its pane again (M11).
+  if (event.action === "rerun" && pane) {
+    event.waitUntil(
+      (async () => {
+        if (!(await act(data.daemon, { action: "rerun", pane }))) await failed(pane, data.daemon, "Rerun");
       })(),
     );
     return;

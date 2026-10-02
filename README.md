@@ -23,6 +23,11 @@ tabs and splits you drive with the mouse.
 - **VS Code beside your terminals.** *Open in editor* (or `illogical edit
   src/main.rs:42`) opens VS Code on the pane's machine, in its directory,
   as a block: on the phone too, and back with its file after a restart.
+- **What did the agent change?** *Changes* on a pane (or `illogical diff`)
+  lists the files changed in its repository, on its machine, with +/−; tap
+  a file for its hunks and a line to see the file there, both updating
+  while the agent works. Phone first, and a failed build is a *Rerun* tap
+  away.
 - **The swarm.** Every pane on every machine you and your team can see, in
   one live view, clustered by project, machine, kind or person. Whatever
   needs someone (an agent asking, a build failing) lifts out to a rail of
