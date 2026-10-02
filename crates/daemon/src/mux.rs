@@ -1257,13 +1257,13 @@ impl Daemon {
                         }
                         Some(_) => {}
                         None if self.panes.contains_key(&pane) => {
-                            self.drivers.insert(pane, self.driver_of(&who));
+                            self.drivers.insert(pane, self.driver_for(c));
                             self.broadcast();
                         }
                         None => {}
                     }
                 }
-                let name = self.name_of(&who);
+                let name = self.driver_for(c).name;
                 self.input(pane, data, Some(name))
             }
             Cmd::AclChanged => self.acl_changed(),
@@ -2617,6 +2617,18 @@ impl Daemon {
         Driver { who: who.id().to_owned(), name: self.name_of(who) }
     }
 
+    /// A connected client's person, by the name it came with if it has one
+    /// (an owner through control, M30).
+    fn driver_for(&self, client: ClientId) -> Driver {
+        match self.clients.get(&client) {
+            Some(c) => Driver {
+                who: c.principal.id().to_owned(),
+                name: c.name.clone().unwrap_or_else(|| self.name_of(&c.principal)),
+            },
+            None => self.driver_of(&Principal::Owner),
+        }
+    }
+
     fn tell(&self, who: &str, msg: ServerMsg) {
         for c in self.clients.values().filter(|c| c.principal.id() == who) {
             let _ = c.ctrl.send(ToClient::Msg(msg.clone()));
@@ -2625,7 +2637,7 @@ impl Daemon {
 
     /// Driving a pane (M13). True if `op` was one of these.
     fn control_op(&mut self, client: ClientId, who: &Principal, pane: PaneId, op: &PaneOp) -> bool {
-        let me = self.driver_of(who);
+        let me = self.driver_for(client);
         let title = format!("%{pane}");
         match op {
             PaneOp::TakeControl => {
@@ -2660,10 +2672,10 @@ impl Daemon {
                     }
                     return true;
                 }
-                let Some(to_who) = self.clients.values().map(|c| c.principal.clone()).find(|p| p.id() == to) else {
+                let Some(to_client) = self.clients.values().find(|c| c.principal.id() == to).map(|c| c.client) else {
                     return true;
                 };
-                let next = self.driver_of(&to_who);
+                let next = self.driver_for(to_client);
                 let message = format!("{} handed you control of {title}", me.name);
                 self.drivers.insert(pane, next);
                 self.tell(to, ServerMsg::Notice { message });
@@ -2826,7 +2838,7 @@ impl Daemon {
             .map(|c| Presence {
                 client: c.client,
                 who: c.principal.id().to_owned(),
-                name: self.name_of(&c.principal),
+                name: c.name.clone().unwrap_or_else(|| self.name_of(&c.principal)),
                 pic: match &c.principal {
                     Principal::User { pic, .. } => pic.clone(),
                     Principal::Owner => self.config.owner_pic.clone(),

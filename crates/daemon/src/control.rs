@@ -73,6 +73,29 @@ pub struct Saved {
     /// checked against the roots pinned in their grants.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub peers: BTreeMap<String, PeerCerts>,
+    /// Teams sessions were shared with (M30), by id: the latest roster that
+    /// chains back to the founder pinned in the grant, and its members'
+    /// certificates.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shared_teams: BTreeMap<String, SharedTeam>,
+    /// The account's login on control (M30), for what to call its owner.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub login: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedTeam {
+    pub roster: Roster,
+    #[serde(default)]
+    pub certs: AccountCerts,
+    #[serde(default)]
+    pub locked: bool,
+}
+
+/// A team grant's pin (`<founder device>.<founder's root>`).
+fn team_pin(team: &str, root: &str) -> Option<TeamPin> {
+    let (founder, founder_root) = root.split_once('.')?;
+    Some(TeamPin { team: team.to_owned(), founder: founder.to_owned(), founder_root: founder_root.to_owned() })
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +117,9 @@ pub struct Enrolled {
     pub others: Vec<(Cert, Principal)>,
     /// Team members' roles on every session (not owners: they're the owner).
     pub team_roles: HashMap<String, Role>,
+    /// Members of teams sessions were shared with, by team, and their role
+    /// in it (M30).
+    pub shared_roles: HashMap<String, HashMap<String, Role>>,
     /// Push subscriptions (M21) whose signatures checked out, and whose.
     pub push: Vec<(Principal, PushSub)>,
 }
@@ -133,7 +159,27 @@ impl Enrolled {
                 others.push((c, Principal::User { id: g.principal.clone(), name: name.clone(), pic: None }));
             }
         }
-        Self { saved, keys, trusted, others, team_roles, push: Vec::new() }
+        // Teams sessions were shared with (M30): their members, as people.
+        let mut shared_roles: HashMap<String, HashMap<String, Role>> = HashMap::new();
+        for (team, t) in &saved.shared_teams {
+            if !acl.list().iter().any(|g| g.principal == format!("team:{team}")) {
+                continue;
+            }
+            let roles = shared_roles.entry(team.clone()).or_default();
+            for m in &t.roster.members {
+                // This account's own devices are the owner already.
+                if m.account == saved.cert.account || (t.locked && m.role != TeamRole::Owner) {
+                    continue;
+                }
+                let id = format!("account:{}", m.account);
+                roles.insert(id.clone(), if m.role == TeamRole::Viewer { Role::Viewer } else { Role::Editor });
+                let who = Principal::User { id, name: m.name.clone(), pic: None };
+                for c in t.roster.devices(&m.account, &t.certs).devices.into_values().filter(|c| c.kind.connects()) {
+                    others.push((c, who.clone()));
+                }
+            }
+        }
+        Self { saved, keys, trusted, others, team_roles, shared_roles, push: Vec::new() }
     }
 
     /// Every account outside this one that gets in, for control to route.
@@ -219,6 +265,16 @@ impl Control {
         self.nudge.notify_one();
     }
 
+    /// What to call an account that's an owner here (M30): this daemon's
+    /// own account's login, or a team box's owner as the roster names them.
+    pub fn name_of_account(&self, account: &str) -> Option<String> {
+        let e = self.enrolled()?;
+        if account == e.saved.cert.account {
+            return Some(e.saved.login.clone()).filter(|l| !l.is_empty());
+        }
+        e.saved.roster.as_ref()?.member(account).map(|m| m.name.clone())
+    }
+
     /// Who a Noise key belongs to, if this daemon lets them in: a device of
     /// its own account (the owner), a team member's, or someone's a session
     /// was shared with.
@@ -250,6 +306,7 @@ impl Control {
 
     fn install(&self, e: Option<Enrolled>) {
         self.acl.set_team_roles(e.as_ref().map(|e| e.team_roles.clone()).unwrap_or_default());
+        self.acl.set_shared_teams(e.as_ref().map(|e| e.shared_roles.clone()).unwrap_or_default());
         *self.now.write().unwrap() = e.map(Arc::new);
         self.changed.send_modify(|v| *v += 1);
     }
@@ -341,22 +398,77 @@ impl Control {
 
         let accounts: Vec<String> =
             self.acl.list().iter().filter_map(|g| g.principal.strip_prefix("account:").map(str::to_owned)).collect();
-        saved.peers = if accounts.is_empty() {
-            BTreeMap::new()
-        } else {
-            self.get(&e, &format!("/api/daemon/peers?accounts={}", accounts.join(","))).await?
-        };
+        // The account's own login comes with them (M30): what to call it.
+        let own = saved.cert.account.clone();
+        let mut peers: BTreeMap<String, PeerCerts> = self
+            .get(
+                &e,
+                &format!(
+                    "/api/daemon/peers?accounts={}",
+                    [own.clone()].iter().chain(&accounts).cloned().collect::<Vec<_>>().join(",")
+                ),
+            )
+            .await?;
+        saved.login = peers.get(&own).map(|p| p.name.clone()).unwrap_or_default();
+        peers.retain(|a, _| accounts.contains(a));
+        saved.peers = peers;
 
-        let changed =
-            (saved.certs.clone(), saved.revocations.clone(), saved.roster.clone(), saved.locked, saved.peers.clone())
-                != (
-                    e.saved.certs.clone(),
-                    e.saved.revocations.clone(),
-                    e.saved.roster.clone(),
-                    e.saved.locked,
-                    e.saved.peers.clone(),
-                )
-                || saved.team_certs != e.saved.team_certs;
+        // Teams sessions were shared with (M30): each roster checked from
+        // the founder the grant pinned.
+        let pins: BTreeMap<String, TeamPin> = self
+            .acl
+            .list()
+            .iter()
+            .filter_map(|g| {
+                let team = g.principal.strip_prefix("team:")?;
+                Some((team.to_owned(), team_pin(team, g.root.as_deref()?)?))
+            })
+            .collect();
+        saved.shared_teams = BTreeMap::new();
+        if !pins.is_empty() {
+            #[derive(Deserialize)]
+            struct Got {
+                locked: bool,
+                rosters: Vec<Roster>,
+                certs: AccountCerts,
+            }
+            let ids: Vec<&str> = pins.keys().map(String::as_str).collect();
+            let got: BTreeMap<String, Got> = self.get(&e, &format!("/api/daemon/teams?ids={}", ids.join(","))).await?;
+            for (team, g) in got {
+                let Some(pin) = pins.get(&team) else { continue };
+                let mut cur: Option<Roster> = None;
+                for r in g.rosters {
+                    if r.follows(cur.as_ref(), pin, &g.certs) {
+                        cur = Some(r);
+                    } else {
+                        warn!(team, version = r.version, "a shared team's roster doesn't check out; stopping there");
+                        break;
+                    }
+                }
+                if let Some(roster) = cur {
+                    let mut certs = g.certs;
+                    certs.retain(|a, _| roster.member(a).is_some());
+                    saved.shared_teams.insert(team, SharedTeam { roster, certs, locked: g.locked });
+                }
+            }
+        }
+
+        let changed = saved.shared_teams != e.saved.shared_teams
+            || saved.login != e.saved.login
+            || (
+                saved.certs.clone(),
+                saved.revocations.clone(),
+                saved.roster.clone(),
+                saved.locked,
+                saved.peers.clone(),
+            ) != (
+                e.saved.certs.clone(),
+                e.saved.revocations.clone(),
+                e.saved.roster.clone(),
+                e.saved.locked,
+                e.saved.peers.clone(),
+            )
+            || saved.team_certs != e.saved.team_certs;
         if changed {
             write_saved(&self.state_dir, &saved)?;
         }
@@ -688,6 +800,8 @@ pub async fn join(
         team_certs: Default::default(),
         locked: false,
         peers: Default::default(),
+        shared_teams: Default::default(),
+        login: String::new(),
     };
     write_saved(state_dir, &saved)?;
     println!("  Joined. Approved by \"{approver}\"; the account's first device is {}.", fingerprint(&trust.root));

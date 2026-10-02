@@ -88,12 +88,18 @@ test: web
 # join a daemon, reach it through the relay and directly.
 control-smoke:
     {{cargo}} build -p illogical-control -p illogicald
-    cd web && node --experimental-strip-types --no-warnings control-smoke.ts
+    cd web && TARGET_DIR="{{target_dir}}/debug" node --experimental-strip-types --no-warnings control-smoke.ts
+
+# The swarm (M26) by hand: three throwaway daemons with scripted work on
+# 7730-7732 (t: make trouble, a: an agent asks, x: quit).
+fake-fleet:
+    {{cargo}} build -p illogicald -p illogical
+    cd web && pnpm run build && node --experimental-strip-types --no-warnings fake-fleet.ts
 
 # The browser's end-to-end crypto (web/src/e2e) against Rust's (crates/e2e).
 e2e-interop:
     {{cargo}} build -p illogical-e2e --example interop
-    cd web && node --experimental-strip-types --no-warnings e2e-interop.ts
+    cd web && INTEROP_BIN="{{target_dir}}/debug/examples/interop" node --experimental-strip-types --no-warnings e2e-interop.ts
 
 # Browser tests in system Chrome; pass a URL to test a running daemon.
 e2e url="":

@@ -7,6 +7,7 @@ import { paneIds, tabLabel, type Client } from "../client";
 import { useSubscribe } from "./hooks";
 import { AttentionBadge } from "./attention";
 import { HostCrumb, HostSection } from "./hosts";
+import { openSwarm } from "../swarm/route";
 import { openPort } from "../blocks";
 import { startAgent } from "./agent-dialog";
 import { openSandboxes } from "./sandboxes";
@@ -49,6 +50,9 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
   return (
     <div class="sheet-backdrop" onClick={close}>
       <nav class="sheet" onClick={(e) => e.stopPropagation()}>
+        <button class="sheet-item" data-open-swarm onClick={act(openSwarm)}>
+          Swarm: every pane at once
+        </button>
         <HostSection close={close} />
         {wanting.length > 0 && (
           <section class="needs-you">

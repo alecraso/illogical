@@ -65,6 +65,8 @@ export interface ApiResponse {
   ok: boolean;
   status: number;
   json<T = unknown>(): Promise<T>;
+  /** The body as text (a capture, M26's hover peek). */
+  text?(): Promise<string>;
 }
 
 /** A daemon reached through illogical control (M17/M18): an end-to-end
@@ -178,6 +180,8 @@ export class Client {
   /** How an end-to-end client is connected, for the host chip. */
   path: "direct" | "relayed" | null = null;
 
+  /** M30: the daemon said this person's access was removed. */
+  revoked = false;
   /** M25: tries that ended before the daemon said hello. */
   failures = 0;
   /** M25: when the daemon last sent anything (ms), so a link that died
@@ -213,13 +217,13 @@ export class Client {
       const sock = (this.link as E2ELink | undefined)?.sock;
       if (!sock?.open) throw new Error("not connected");
       const r = await sock.request(method, path, body);
-      return { ok: r.ok, status: r.status, json: async <T,>() => r.json<T>() };
+      return { ok: r.ok, status: r.status, json: async <T,>() => r.json<T>(), text: async () => r.text() };
     }
     const res = await fetch(this.base + path, {
       method,
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     });
-    return { ok: res.ok, status: res.status, json: <T,>() => res.json() as Promise<T> };
+    return { ok: res.ok, status: res.status, json: <T,>() => res.json() as Promise<T>, text: () => res.text() };
   }
 
   state: State | null = null;
@@ -678,6 +682,7 @@ export class Client {
   private onMessage(msg: ServerMsg) {
     switch (msg.type) {
       case "hello":
+        this.revoked = false;
         this.clientId = msg.client;
         this.connected = true;
         this.focused = undefined;
@@ -704,6 +709,8 @@ export class Client {
         break;
       }
       case "error":
+        // M30: the daemon hangs up next; what it showed is no longer ours.
+        if (msg.message === "your access was removed") this.revoked = true;
         this.showError(msg.message);
         break;
       case "notice":

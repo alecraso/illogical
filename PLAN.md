@@ -2470,6 +2470,93 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - an "unplugged" machine is a stopped process (its socket stays open), not a pulled cable.
 - **For M30 (#47):** `fleet.list` and `fleet.panes` are the merged model; each host carries `owner` and `team` from control's directory (a session's owner is its daemon's: absent means yours, `team` a team box). `fleet.touch(host)` keeps a host among the 24 live ones.
 
+#### M26: the swarm view
+
+**Done 2026-10-02, cut to the MVP (#44), apart from real phones.**
+
+- **What landed:**
+  - **Where:** `/#swarm`, from a *Swarm* button beside the tabs, the host menu and the phone's sheet. It draws every pane in the fleet (M25, M30), and works with one daemon too.
+  - **The field** (`web/src/swarm/field.ts`, ported from the prototype):
+    - every pane is a tile on one Canvas 2D, coloured by kind and lit by activity;
+    - tiles are pulled toward their cluster's centre by how busy they are, and pushed apart through a grid;
+    - it shows stubs when you zoom in, and a header with the command and machine at reading zoom (no live text: that's after the MVP);
+    - stale hosts' panes are greyed;
+    - physics sleeps once everything settles (S16: it's half the frame) and wakes on a regroup, a new pane, attention or a touch.
+  - **Cluster by** project, machine, kind, session or person (M30's `person`: "you", a teammate, "team …"):
+    - panes outside any git project group by their working directory's top directory under a home (`~/scratch`), else its first path component (`/tmp`), never one "none" pile;
+    - switching animates the panes to their new clusters, then fits them;
+    - the choice is remembered per device;
+    - clusters spread wide on a laptop and tall on a phone.
+  - **On the field:**
+    - hover peeks at a pane's last lines (`/api/panes/N/capture` through its host);
+    - clicking a pane opens it in its tab, connected for real (`fleet.open`);
+    - clicking a cluster's name zooms to it;
+    - Fit brings everything back;
+    - the view keeps fitting until you move it yourself.
+  - **The "needs you" rail:**
+    - **What lands there:** M24's reasons, one card per bundle key. Failures and exits bundle by machine (with "here" named), so "3 failed on build-02" bundles across the fleet. Asks bundle by project and agent ("2 agents ask"). The rest are one card each.
+    - **On the field:** a pane with a card flares in place, then flies to it, with a thread back to its cluster.
+    - **Actions:** each card has its reason's actions for all its panes (Allow all, Deny all, Dismiss all), one request per host. Then Open and Show.
+    - **Permission cards:** a single Claude Code permission prompt shows its command and Claude's suggestions (M29's card, now shared in `ui/answer-card.tsx` with the terminal's).
+    - **Questions:** AskUserQuestion is answered on the card itself.
+    - **Viewers** get the card without buttons.
+    - **After an answer:** acting sends the panes back to the swarm. An answered ask leaves a card saying who answered it ("Allowed by sam, 14:02"), with the follow-up box, for a minute.
+    - **When the rail is full,** the rest pulse in place and the rail says how many.
+    - **Done cards** clear themselves after 15 s.
+  - **Phone:** the rail is a strip of cards along the bottom, the field pinches and pans, and a tap opens a pane.
+  - **Notifications:** a notification with a reason deep-links to its card (`/#swarm=[daemon.]N`), and the service worker tells an open page to show it.
+  - **A fake fleet:**
+    - `e2e/fake-fleet.ts`: daemons with scripted panes. Stand-in `cargo`, `npm`, `journalctl` and `nvim`; projects in git repos and plain directories; a stand-in `claude` that asks through the real hooks and waits on its inbox. `trouble(machine)` fails a batch on one machine.
+    - `just fake-fleet` runs it by hand.
+    - `src/swarm/fake.ts` adds a few hundred synthetic panes for the frame-rate check and screenshots.
+    - `just screenshots` now makes `site/img/swarm.png` and `swarm-phone.png`.
+  - **The classifier** now looks through a shell running a script (`bash ./bin/cargo test` is a test), which is how /proc shows `#!/bin/bash` programs.
+- **Frame rate at 500 panes** (`e2e/swarm-fps.spec.ts`, physics kept awake, headless Chrome on geek, the S16 setup):
+
+  | profile | fps | work per frame (p50) |
+  |---|---|---|
+  | laptop (1400×860) | 60 | 1.1 ms |
+  | phone, Pixel 7 viewport, CPU 4x slower | 60 | 4.3 ms |
+
+  This is the same as S16 measured for the prototype (1.1 ms and 4.4 ms). Settled, the field draws nothing.
+- **Tests:**
+  - `e2e/swarm.spec.ts`, against the fake fleet:
+    - each grouping, with the fallback groups and person from M30, remembered across a reload;
+    - a failure bundle dismissed together;
+    - an approval allowed, and its follow-up reaching the agent's inbox;
+    - two agents denied as one card;
+    - a question answered on its card;
+    - a done card clearing itself;
+    - a full rail;
+    - hover peek, cluster zoom, opening a pane, a deep link;
+    - on the phone: allow and dismiss in the strip, pinch, tap to open.
+  - `e2e/swarm-real.spec.ts` (opt-in, `ILLOGICAL_REAL_AGENTS=swarm`): the real Claude Code's Bash permission allowed from the rail. The file appears only after Allow, and the agent carries on to its reply.
+- **Not covered (after the MVP):**
+  - live preview text;
+  - pulse clustering;
+  - the correlation toast;
+  - keyboard shortcuts;
+  - rerun on failure cards (M24's later actions);
+  - real phones. The phone numbers are S16's 4x-throttle stand-in.
+
+#### M30: the team's swarm
+
+**Done 2026-10-02, apart from real phones and different networks.**
+
+- **What landed:**
+  - **What the fleet holds:** your machines, the team's machines (M19), and machines of teammates that shared a session with you or with the team. Control's directory lists each with how to reach it (and now says which of your own machines are a team's); never what's on them. Each daemon still filters the summaries it sends by role (M23).
+  - **Sharing a session with the whole team** on a personal machine (the Share dialog's "Share with everyone in Acme"): a `team:<id>` grant pinned to the team's founder as the owner's browser pinned it. The machine fetches the team's rosters (`/api/daemon/teams`, only for teams its owner is in), checks them back to that founder, and lets members in by them: the grant's role, at most their role in the team. Members who come and go come and go with the roster, a locked team lets only its owners in, and control nudges members' machines when a roster changes or a team locks.
+  - **People:** each pane of the merged model (`fleet.panes`) carries `person` (you, a teammate by account, or a team for a team's machine: a session's owner is its machine's), `driver` (M13) and `watchers` (who has it open, from presence, which summary clients still receive). `fleet.byPerson()` groups them for "cluster by person"; the host menu groups machines the same way ("Yours", "bob's", "Team Acme").
+  - **Names:** someone who is an owner on a machine through control is called by their login, not "owner": the machine learns its account's login from control, and a team box's owners are named by the roster (`Subscriber.name`). Drivers and presence use it.
+  - **Leaving:** revoking a share, removing a member or locking the team takes those panes, and with them their cards, out of the other person's fleet: the machine says "your access was removed" before it hangs up (now on end-to-end channels too, when a device stops being trusted), and the fleet drops what that machine showed instead of keeping it greyed. Control's shared relay socket now sends a channel's close in order behind its last message, so those words aren't lost.
+  - Private panes (M14) aren't in another person's fleet at all, not even as tiles.
+  - **Scale:** 5 people with 4 machines each is 20 summary connections, under M25's cap of 24; past it, the least recently used drop to "capped" (shown from the last summary) and come back when opened (`fleet.touch`).
+- **Tests:** `e2e/team-swarm.spec.ts` (a local control; Alice and Bob on a team, two machines each and a team box, all relayed): Alice shares a session with Bob and one with the team, Bob one with Alice, and both pages hold the same team swarm; each sees their own private pane and not the other's; by person it's three groups for each; a pane's driver and watcher reach the other's fleet by name; revoking Bob's share takes its panes and its card out of his fleet within a second; locking the team takes the team box's and the team share's panes out in about 0.23 s (8 runs).
+- **Not covered:**
+  - real phones and different networks (loopback, as for S15, S16 and S18);
+  - two owners of one team box both act as its owner, so as drivers they are one principal (`owner`) with two names;
+  - a team share's members are found through control's rosters, so a member added while control is down waits for it (as a team box's do).
+
 #### M29: team answers
 
 **Done 2026-10-02, apart from real phones.**

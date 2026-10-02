@@ -86,6 +86,10 @@ pub struct Subscriber {
     pub ctrl: mpsc::UnboundedSender<ToClient>,
     /// Who this client is (M12): what it sees and may do.
     pub principal: crate::acl::Principal,
+    /// What to call them when the principal doesn't say (M30): someone who
+    /// is an owner here through control (the account's own login, or a
+    /// team box's owner by name).
+    pub name: Option<String>,
 }
 
 /// What a pane tells the multiplexer.
