@@ -611,6 +611,16 @@ impl<'a> Call<'a> {
         }
     }
 
+    /// An agent in a VM of its own (#59) works on that machine: the first
+    /// time it starts something there, its machine becomes its tab's (as
+    /// "Share machine with tab" does), so what it starts can join it and
+    /// the machine stays while they do. Nothing for other callers, or when
+    /// the machine isn't the agent's own.
+    async fn share_my_machine(&self) {
+        let Some(me) = self.me() else { return };
+        let _ = self.app.mux.api(|r| Api::ShareMachine(me, r)).await;
+    }
+
     /// An open pane or block, if this caller may see it.
     async fn readable(&self, pane: PaneId) -> Result<PaneSummary, String> {
         let panes = self.panes().await;
@@ -746,6 +756,9 @@ impl<'a> Call<'a> {
                 }
                 let split = a.split.as_ref().map(PaneArg::id).transpose()?.unwrap_or(me);
                 let p = self.readable(split).await?;
+                if p.info.host.is_some() {
+                    self.share_my_machine().await;
+                }
                 req.split = Some(split);
                 // On the tab's machine, in a VM tab.
                 req.join = p.info.host.is_some();
@@ -1282,6 +1295,9 @@ impl<'a> Call<'a> {
             Some(b) => self.readable(b).await?.info.host,
             None => None,
         };
+        if host.is_some() {
+            self.share_my_machine().await;
+        }
         let agent = match a.agent {
             AgentKind::Claude => "claude",
             AgentKind::Codex => "codex",

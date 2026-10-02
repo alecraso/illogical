@@ -693,8 +693,10 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
             cli: cli.unwrap_or_else(|| "illogical".into()),
             socket: socket.clone(),
             tokens: mcp_tokens.clone(),
+            serve: Default::default(),
         }
     });
+    let mcp_serve = mcp_link.as_ref().map(|l| l.serve.clone());
     let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone(), args.no_relay);
     let config = mux::Config {
         acl: acl.clone(),
@@ -744,6 +746,9 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         mcp_tokens,
     );
     control.start(app.clone());
+    if let Some(serve) = mcp_serve {
+        let _ = serve.set(mcp::pipe_server(&app));
+    }
     // Read-only links end on time (M19).
     {
         let (acl, mux, control) = (acl.clone(), mux.clone(), control.clone());

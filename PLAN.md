@@ -1478,7 +1478,7 @@ sprite:
 
 #### M16: as built
 
-**Done 2026-10-02, apart from agent blocks in a VM (#59) and a real phone.**
+**Done 2026-10-02, apart from a real phone.** Agent blocks in a VM came after, in #59 (below).
 
 - **What landed:**
   - **The server** (`crates/daemon/src/mcp/`): rmcp 3.5.0 (pinned) in the daemon, one `StreamableHttpService` at `/mcp` on every router the API is on (the socket, TCP, the dial-out tunnel, end-to-end channels), so both the stateless 2026-07-28 protocol and 2025-06-18 sessions work. It's a layer over the mux's own calls (`Api::Run`, `Api::Open`, the API's waits and `act`), not a client of the HTTP API.
@@ -1515,11 +1515,30 @@ sprite:
   - `agents_real.rs` `mcp-cc` (opt-in, `ILLOGICAL_REAL_AGENTS=mcp-cc`, with `mcp-vm` for a VM pane): the real Claude Code (`claude -p`, haiku) with `illogical mcp` runs a build that fails after 20s, waits through it, reads why, fixes it and reruns, all in history as `mcp:claude-code`. Passed on geek, on the host and in a wisp VM pane.
   - Unit tests: tokens (hash only, block tokens stable and per block, revoke), paging, durations, the annotations, the bridge's headers.
 - **Not covered:**
-  - agent blocks in a VM get no server yet: the host-side relay is #59. Fountain agents don't get one (by design);
+  - Fountain agents don't get a server (by design);
   - watching the build on a real phone (Needs Jake);
   - Codex as a client wasn't run against it (S14 ran it against rmcp; the bridge's session path is what it uses, and is tested);
   - resource subscriptions (dropped in S14: no client subscribes);
   - `run` with `host` (another daemon): use `illogical mcp --host` instead.
+
+#### M16 follow-up: agent blocks in a VM (#59)
+
+**Done 2026-10-02.**
+
+- **What landed:**
+  - **A host-opened relay** (`crates/daemon/src/mcp/relay.rs`), as S14 found works: for each VM agent block the daemon opens a non-TTY exec in its VM running `guest_relay.py` (python3), which listens on `/tmp/illogical-mcp-<block>.sock` and carries every connection over the exec's stdin and stdout as `N+`, `N:LINE` and `N-` lines. Each connection is its own rmcp session on stdio framing (`mcp::pipe_server`, the server's fallback caller), scoped as the block's token is over HTTP (`Scope::Block`). The relay lasts as long as the block, across agent restarts; it's killed in the guest when the block closes.
+  - **The agent's server** is `guest_client.py` on stdio (`python3 -c …`), in `session/new`, `load` and `resume`. It waits for the socket (up to 5 minutes), and when the connection drops (a restarted daemon starts a new relay, which replaces the old one by its pid file) it connects again and replays the client's `initialize`; requests in flight get an error saying to call again.
+  - **What a VM agent runs lands on its machine.** The first `run` or `start_agent` from an agent whose machine is its own makes the machine its tab's (`Api::ShareMachine`, as *Share machine with tab*), so what it starts joins the machine and keeps it while they run. Before, such a `run` was refused ("%N's machine is its own").
+  - **Fixed on the way:** a new VM agent could die at once (exit 1, `export: … not a valid identifier`): the daemon sent `initialize` before the blank line that ends the guest boot script's environment preamble. Lines now wait for the preamble.
+- **Decisions (2026-10-02):**
+  - **One MCP session per connection, multiplexed over one exec,** rather than an exec per connection: the guest can't ask the host for a new exec, and one exec per block is what M3b's "an attached exec keeps the sprite awake" cost already pays for the agent.
+  - **python3 on both ends in the guest,** not `nc -U` (not in every image) or `illogical mcp` (not in the image). S14's relay already relied on python3.
+  - **No token in the VM.** The scope comes from which relay a connection arrives on, so there is no secret to keep out of the guest. Whatever runs in the VM as the agent's user can reach the socket (it's private to that user), the same reach a token in the agent's environment would give.
+  - **The relay doesn't survive a daemon restart.** Its sessions live in the daemon, so they'd be gone anyway; the client reconnects and replays `initialize` instead.
+- **Tests:**
+  - `mcp::relay` unit test, both Python scripts run on this host: two clients get sessions of their own; replacing the relay errors the call in flight, and the client reconnects and replays `initialize` (its answer kept from the agent) onto a new session.
+  - `crates/daemon/tests/mcp.rs` `an_agent_block_in_a_vm_gets_mcp_through_the_relay` (needs wisp's token; skips without, like `machines.rs`): `fake_acp.py` (now also an MCP client over stdio) runs in a wisp VM; `list` shows its tab only; `run` lands in its VM (the relay's socket is there), in its tab, and the machine becomes the tab's; another tab is refused; after a daemon restart the agent gets through the new relay; closing the tab deletes the machine. Passed on geek.
+- **Not covered:** real Claude Code in a VM block calling the tools (`claude-agent-acp` takes stdio servers, S14; not run, it costs money); `open_port` from a VM agent is the existing path (a browser block on its machine's port) and wasn't exercised here.
 
 ### After M6: order and triggers
 

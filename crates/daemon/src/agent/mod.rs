@@ -252,6 +252,8 @@ struct Inner {
     interrupted: bool,
     log: Option<PaneLog>,
     link: Option<Link>,
+    /// A VM agent's MCP relay (#59); it lasts as long as the block.
+    relay: Option<crate::mcp::relay::Relay>,
     /// Bumped for each server started, so a dead one's last words are
     /// ignored.
     generation: u64,
@@ -310,6 +312,7 @@ impl Inner {
             interrupted: false,
             log,
             link: None,
+            relay: None,
             generation: 0,
             pid: None,
             reported: None,
@@ -343,15 +346,17 @@ impl Inner {
     /// The MCP servers a session gets: the block's own, and illogical's
     /// (M16), scoped to the block's tab. Over HTTP on loopback when the
     /// agent takes it, else `illogical mcp` on stdio with the token in its
-    /// environment. Not for a VM's agent (a guest reaches nothing on the
-    /// host) or a Fountain agent (it runs in Fountain's sandbox).
+    /// environment. A VM's agent can't reach the host, so it gets a client
+    /// for the relay the daemon opens into its VM (#59). Not for a Fountain
+    /// agent (it runs in Fountain's sandbox).
     fn servers(&self, ctx: &BlockCtx) -> Vec<Value> {
         let mut list = self.cfg.mcp_servers.clone();
         let Some(link) = &ctx.mcp else { return list };
-        if ctx.sprite.is_some()
-            || self.cfg.def.agent == Kind::Fountain
-            || list.iter().any(|s| s["name"] == crate::mcp::SERVER_NAME)
-        {
+        if self.cfg.def.agent == Kind::Fountain || list.iter().any(|s| s["name"] == crate::mcp::SERVER_NAME) {
+            return list;
+        }
+        if ctx.sprite.is_some() {
+            list.push(crate::mcp::relay::server_entry(ctx.id));
             return list;
         }
         let token = link.tokens.block_token(ctx.id);
@@ -1013,11 +1018,30 @@ impl Agent {
                 inner.generation += 1;
                 let sink = self.sink(inner.generation);
                 let begin = link::VmBegin::Resume(rec);
-                inner.link =
-                    Some(link::spawn_vm(&self.ctx.rt, provider, sprite.clone(), self.ctx.dir.clone(), begin, sink));
+                inner.link = Some(link::spawn_vm(
+                    &self.ctx.rt,
+                    provider.clone(),
+                    sprite.clone(),
+                    self.ctx.dir.clone(),
+                    begin,
+                    sink,
+                ));
+                self.relay(inner, provider, sprite);
                 true
             }
         }
+    }
+
+    /// A VM agent's way to illogical's MCP server (#59): a relay into its
+    /// VM, opened once and kept for the block's life (an agent that
+    /// restarts connects again).
+    fn relay(&self, inner: &mut Inner, provider: Arc<dyn crate::provider::Provider>, sprite: &str) {
+        let Some(mcp) = &self.ctx.mcp else { return };
+        if inner.cfg.def.agent == Kind::Fountain || inner.relay.as_ref().is_some_and(|r| !r.finished()) {
+            return;
+        }
+        let r = crate::mcp::relay::start(&self.ctx.rt, provider, sprite.to_owned(), self.ctx.id, mcp.serve.clone());
+        inner.relay = Some(r);
     }
 
     /// Start the agent server and initialize it.
@@ -1076,8 +1100,15 @@ impl Agent {
                     secret_env: secret,
                 };
                 link::ExecRecord::clear(&self.ctx.dir);
-                inner.link =
-                    Some(link::spawn_vm(&self.ctx.rt, provider, sprite.clone(), self.ctx.dir.clone(), begin, sink));
+                inner.link = Some(link::spawn_vm(
+                    &self.ctx.rt,
+                    provider.clone(),
+                    sprite.clone(),
+                    self.ctx.dir.clone(),
+                    begin,
+                    sink,
+                ));
+                self.relay(inner, provider, sprite);
             }
         }
         inner.request(
@@ -1692,6 +1723,9 @@ impl Block for Agent {
         g.closing = true;
         if let Some(l) = g.link.take() {
             l.stop();
+        }
+        if let Some(r) = g.relay.take() {
+            r.stop();
         }
         if self.ctx.sprite.is_none() {
             link::forget_fds(self.ctx.id);

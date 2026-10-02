@@ -474,7 +474,9 @@ async fn drive_vm(
                     Some(PipeEvent::Session(_)) => {}
                     None => break,
                 },
-                line = rx.recv() => match line {
+                // Not before the environment's preamble: the guest's boot
+                // script reads stdin up to a blank line first.
+                line = rx.recv(), if fresh.is_none() => match line {
                     Some(line) => {
                         let _ = pipe.stdin.send(line);
                     }
