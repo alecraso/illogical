@@ -30,8 +30,8 @@ export const isDir = (e: FsEntry) => e.type === "directory" || e.target === "dir
 async function get<T>(client: Client, path: string, q: Record<string, string | number | undefined>): Promise<T> {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
-  const res = await fetch(`${client.base}${path}?${params}`);
-  const body = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  const res = await client.request("GET", `${path}?${params}`);
+  const body = await res.json<T & { error?: string }>().catch(() => null);
   if (!res.ok || body === null) throw new Error(body?.error ?? `HTTP ${res.status}`);
   return body;
 }

@@ -41,6 +41,13 @@ fn trusted(app: &App, account: &str) -> anyhow::Result<(Option<Trust>, Vec<Cert>
     Ok((root.map(|root| Trust { account: account.to_owned(), root }), certs, revs))
 }
 
+/// The account's daemons should look at its certificates again now.
+fn nudge(app: &App, account: &str) {
+    if let Ok(ds) = app.db.daemons(account) {
+        app.relay.nudge(&ds.into_iter().map(|d| d.id).collect::<Vec<_>>());
+    }
+}
+
 /// `cert` checks out against the account's trusted devices.
 fn approval_ok(app: &App, account: &str, cert: &Cert) -> Result<(), ApiError> {
     let (trust, mut certs, revs) = trusted(app, account)?;
@@ -111,6 +118,7 @@ pub async fn approve(State(app): State<Arc<App>>, s: Session, Path(id): Path<Str
     }
     approval_ok(&app, &s.account, &b.cert)?;
     app.db.put_device(&b.cert, true, now_ms())?;
+    nudge(&app, &s.account);
     Ok(Json(json!({ "approved": true })))
 }
 
@@ -134,6 +142,7 @@ pub async fn revoke(State(app): State<Arc<App>>, s: Session, Json(b): Json<Revok
         return Err(err(StatusCode::FORBIDDEN, "that revocation doesn't check out"));
     }
     app.db.add_revocation(&r)?;
+    nudge(&app, &s.account);
     // A revoked daemon leaves the directory and the relay.
     if app.db.daemon_account(&r.device)?.as_deref() == Some(s.account.as_str()) {
         app.db.drop_daemon(&r.device)?;

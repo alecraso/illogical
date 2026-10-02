@@ -68,6 +68,8 @@ pub struct Control {
     pub changed: watch::Sender<u64>,
     /// Direct URLs to give the directory.
     pub direct_urls: Vec<String>,
+    /// Control said the account's devices changed: refresh now.
+    nudge: tokio::sync::Notify,
     http: reqwest::Client,
 }
 
@@ -100,6 +102,7 @@ impl Control {
             now: RwLock::new(None),
             changed: watch::channel(0).0,
             direct_urls,
+            nudge: tokio::sync::Notify::new(),
             http: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().expect("http client"),
         });
         me.reload();
@@ -212,7 +215,10 @@ impl Control {
                 } else if let Some(r) = relay.take() {
                     r.abort();
                 }
-                tokio::time::sleep(WATCH).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(WATCH) => {}
+                    _ = me.nudge.notified() => last_refresh = std::time::Instant::now() - REFRESH,
+                }
             }
         });
     }
@@ -260,7 +266,7 @@ async fn relay_once(
     url.set_scheme(scheme).map_err(|()| anyhow::anyhow!("bad control URL"))?;
     let ws = crate::dial::open_ws(&url, &[(AUTH, &auth_header(&e.keys, "GET", path))]).await?;
     info!(control = e.saved.url, "connected to control's relay");
-    crate::dial::serve_mux(ws, accept).await
+    crate::dial::serve_mux(ws, accept, Some(&control.nudge)).await
 }
 
 // ---------------------------------------------------------------- join

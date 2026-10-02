@@ -20,12 +20,14 @@ export interface ProviderRef {
 export interface Host {
   name: string;
   urls: string[];
+  /** A daemon in illogical control's directory: its device id. */
+  id?: string;
   /** How it's reached: `tailnet`, straight to its URLs; `dial_out` (M4c),
    * it dials the home daemon and is reached through it at `/h/<name>/…`;
    * `provider` (M4b), a resident daemon in a sandbox, through the home
    * daemon's provider tunnel at `/tunnel/<name>/…` (both on this page's
    * own origin). */
-  transport: "tailnet" | "dial_out" | "provider";
+  transport: "tailnet" | "dial_out" | "provider" | "control";
   provider?: ProviderRef;
   added_ms: number;
   last_seen_ms: number | null;
@@ -41,6 +43,7 @@ export interface HostList {
 
 const LIST_KEY = "illogical.hosts";
 const SHOWN_KEY = "illogical.host";
+const CONTROL_SHOWN_KEY = "illogical.control.host";
 
 function load<T>(key: string): T | null {
   try {
@@ -68,6 +71,9 @@ export class HostDirectory {
   shown: string | null = load<string>(SHOWN_KEY);
   /** Provider hosts whose tailnet URL answered: used instead of the tunnel. */
   private upgraded = new Set<string>();
+  /** The page is illogical control's (M17): the list comes from control,
+   * and there's no home daemon. */
+  control = false;
   private listeners = new Set<() => void>();
 
   constructor() {
@@ -86,12 +92,24 @@ export class HostDirectory {
 
   /** The home daemon's name, once known. */
   get home(): string | null {
-    return this.list?.this ?? null;
+    return this.control ? null : (this.list?.this ?? null);
   }
 
   /** Every host, the home daemon first. */
   get names(): string[] {
+    if (this.control) return this.list?.hosts.map((h) => h.name) ?? [];
     return this.list ? [this.list.this, ...this.list.hosts.map((h) => h.name)] : [];
+  }
+
+  /** Control mode: the daemons this browser checked, from control. */
+  setControl(hosts: Host[], stale: boolean) {
+    const first = !this.control;
+    this.control = true;
+    this.list = { this: "", hosts };
+    this.stale = stale;
+    if (first) this.shown = load<string>(CONTROL_SHOWN_KEY);
+    if (this.shown !== null && !this.find(this.shown)) this.shown = null;
+    this.emit();
   }
 
   find(name: string): Host | undefined {
@@ -100,6 +118,10 @@ export class HostDirectory {
 
   /** What the client prefixes its URLs with: "" for this page's daemon. */
   base(name: string | null = this.shown): string {
+    if (this.control) {
+      const h = this.find(name ?? this.names[0] ?? "");
+      return h?.id ? `e2e:${h.id}` : "";
+    }
     if (name === null || name === this.home) return "";
     const h = this.find(name);
     // The one place a host's URL is chosen.
@@ -136,20 +158,21 @@ export class HostDirectory {
 
   /** The shown host's name ("" until the home daemon's is known). */
   get current(): string {
-    return this.shown ?? this.home ?? "";
+    return this.shown ?? this.home ?? this.names[0] ?? "";
   }
 
   select(name: string) {
     const shown = name === this.home ? null : name;
     if (shown === this.shown) return;
     this.shown = shown;
-    save(SHOWN_KEY, shown);
+    save(this.control ? CONTROL_SHOWN_KEY : SHOWN_KEY, shown);
     this.emit();
     if (shown !== null) void this.upgrade(shown);
   }
 
   /** Fetch the list from the home daemon; on failure keep the cached one. */
   async refresh() {
+    if (this.control) return;
     try {
       const res = await fetch("/api/hosts");
       if (!res.ok) throw new Error(String(res.status));

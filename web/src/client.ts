@@ -22,6 +22,8 @@ import {
 } from "./proto";
 import { TerminalView } from "./terminal-view";
 import { makeBlockView, type BlockView } from "./blocks";
+import { E2ESocket, type DaemonRef } from "./e2e/channel.ts";
+import type { DeviceKeys } from "./e2e/keys.ts";
 
 export interface PaneEntry {
   view: TerminalView;
@@ -41,12 +43,129 @@ export interface Modifiers {
   alt: boolean;
 }
 
+/** An API answer, from fetch or through an end-to-end channel. */
+export interface ApiResponse {
+  ok: boolean;
+  status: number;
+  json<T = unknown>(): Promise<T>;
+}
+
+/** A daemon reached through illogical control (M17/M18): an end-to-end
+ * channel, directly when one of its URLs answers, else through the relay. */
+export interface E2ETarget {
+  daemon: DaemonRef;
+  /** Direct URLs from the directory (`https://box.….ts.net`). */
+  direct: string[];
+  /** Control's relay for it (`wss://control…/api/relay/c/<id>`). */
+  relay: string;
+  keys: DeviceKeys;
+}
+
+/** The connection a Client talks over. */
+interface Link {
+  onText: (t: string) => void;
+  onBinary: (b: ArrayBuffer) => void;
+  onClose: () => void;
+  readonly open: boolean;
+  sendText(t: string): void;
+  sendBinary(b: Uint8Array): void;
+  close(): void;
+}
+
+class SocketLink implements Link {
+  onText: (t: string) => void = () => {};
+  onBinary: (b: ArrayBuffer) => void = () => {};
+  onClose: () => void = () => {};
+  private sock: WebSocket;
+  constructor(url: string) {
+    this.sock = new WebSocket(url);
+    this.sock.binaryType = "arraybuffer";
+    this.sock.onmessage = (e) => (typeof e.data === "string" ? this.onText(e.data) : this.onBinary(e.data as ArrayBuffer));
+    this.sock.onclose = () => this.onClose();
+  }
+  get open() {
+    return this.sock.readyState === WebSocket.OPEN;
+  }
+  sendText(t: string) {
+    this.sock.send(t);
+  }
+  sendBinary(b: Uint8Array) {
+    this.sock.send(b as Uint8Array<ArrayBuffer>);
+  }
+  close() {
+    this.sock.close();
+  }
+}
+
+class E2ELink implements Link {
+  onText: (t: string) => void = () => {};
+  onBinary: (b: ArrayBuffer) => void = () => {};
+  onClose: () => void = () => {};
+  sock: E2ESocket | undefined;
+  private closed = false;
+  /** Connects in the background; the Client sees it as a socket that opens
+   * (or closes, and is retried). */
+  constructor(target: E2ETarget, onPath: (how: "direct" | "relayed") => void) {
+    const urls = [
+      ...target.direct.map((u) => ({ url: `${u.replace(/^http/, "ws").replace(/\/$/, "")}/e2e`, timeoutMs: 1500 })),
+      { url: target.relay, timeoutMs: 10_000 },
+    ];
+    E2ESocket.connect(urls, target.daemon, target.keys).then(
+      (sock) => {
+        if (this.closed) return sock.close();
+        this.sock = sock;
+        onPath(sock.url.startsWith(target.relay) ? "relayed" : "direct");
+        sock.onText = (t) => this.onText(t);
+        sock.onBinary = (b) => this.onBinary(b.slice().buffer as ArrayBuffer);
+        sock.onClose = () => this.onClose();
+        sock.start();
+      },
+      () => this.onClose(),
+    );
+  }
+  get open() {
+    return !!this.sock?.open;
+  }
+  sendText(t: string) {
+    this.sock?.sendText(t);
+  }
+  sendBinary(b: Uint8Array) {
+    this.sock?.sendBinary(b);
+  }
+  close() {
+    this.closed = true;
+    this.sock?.close();
+  }
+}
+
 export class Client {
   /** The daemon's origin (`https://box.….ts.net`), or "" for the one this
    * page came from. Another daemon must list this page's origin as
    * allowed (`--allow-origin`). A path (`/h/box`) is a dial-out host,
-   * reached through this page's own daemon. */
-  constructor(readonly base = "") {}
+   * reached through this page's own daemon. `e2e:<id>` with a target: a
+   * daemon reached through illogical control. */
+  constructor(
+    readonly base = "",
+    readonly e2e?: E2ETarget,
+  ) {}
+
+  /** How an end-to-end client is connected, for the host chip. */
+  path: "direct" | "relayed" | null = null;
+
+  /** A request to the daemon's API: fetch, or through the channel. */
+  async request(method: string, path: string, body?: unknown): Promise<ApiResponse> {
+    if (this.e2e) {
+      const sock = (this.link as E2ELink | undefined)?.sock;
+      if (!sock?.open) throw new Error("not connected");
+      const r = await sock.request(method, path, body);
+      return { ok: r.ok, status: r.status, json: async <T,>() => r.json<T>() };
+    }
+    const res = await fetch(this.base + path, {
+      method,
+      ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    });
+    return { ok: res.ok, status: res.status, json: <T,>() => res.json() as Promise<T> };
+  }
 
   state: State | null = null;
   clientId: number | null = null;
@@ -75,7 +194,7 @@ export class Client {
   /** Set by the UI: make this client's size the tab's size. */
   claim: (tab: TabId) => void = () => {};
 
-  private ws: WebSocket | undefined;
+  private link: Link | undefined;
   private retry = 0;
   private nextId = 1;
   private listeners = new Set<() => void>();
@@ -152,8 +271,8 @@ export class Client {
   /** POST to the API; a failure shows as a toast. */
   async api(path: string, body: unknown = {}, failure = "that didn't work") {
     try {
-      const res = await fetch(this.base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!res.ok) this.toast(((await res.json().catch(() => null))?.error as string) ?? `${failure} (${res.status})`);
+      const res = await this.request("POST", path, body);
+      if (!res.ok) this.toast((await res.json<{ error?: string }>().catch(() => null))?.error ?? `${failure} (${res.status})`);
       return res.ok;
     } catch {
       this.toast(failure);
@@ -165,12 +284,8 @@ export class Client {
    * to the clipboard when the browser lets us. */
   async share(pane: PaneId, ttlSecs = 3600): Promise<string | null> {
     try {
-      const res = await fetch(this.base + "/api/shares", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pane, ttl_secs: ttlSecs }),
-      });
-      const body = (await res.json().catch(() => null)) as { url?: string; path?: string; error?: string } | null;
+      const res = await this.request("POST", "/api/shares", { pane, ttl_secs: ttlSecs });
+      const body = await res.json<{ url?: string; path?: string; error?: string }>().catch(() => null);
       if (!res.ok || !body) {
         this.toast(body?.error ?? `couldn't share it (${res.status})`);
         return null;
@@ -230,9 +345,9 @@ export class Client {
   async make(path: string, body: unknown): Promise<string | null> {
     this.lastIntentAt = Date.now();
     try {
-      const res = await fetch(this.base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const res = await this.request("POST", path, body);
       if (res.ok) return null;
-      return ((await res.json().catch(() => null))?.error as string) ?? `that didn't work (${res.status})`;
+      return (await res.json<{ error?: string }>().catch(() => null))?.error ?? `that didn't work (${res.status})`;
     } catch {
       return "can't reach the daemon";
     }
@@ -270,18 +385,23 @@ export class Client {
 
   connect() {
     if (this.closed || this.asleep) return;
-    const here = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
-    const url = /^https?:/.test(this.base) ? `${this.base.replace(/^http/, "ws")}/ws` : `${here}${this.base}/ws`;
-    const sock = new WebSocket(url);
-    sock.binaryType = "arraybuffer";
-    this.ws = sock;
-    sock.onmessage = (e) => {
-      if (typeof e.data === "string") this.onMessage(JSON.parse(e.data) as ServerMsg);
-      else this.onFrame(e.data as ArrayBuffer);
-    };
-    sock.onclose = () => {
-      if (this.ws !== sock) return;
-      this.ws = undefined;
+    let link: Link;
+    if (this.e2e) {
+      link = new E2ELink(this.e2e, (how) => {
+        this.path = how;
+        this.emit();
+      });
+    } else {
+      const here = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+      const url = /^https?:/.test(this.base) ? `${this.base.replace(/^http/, "ws")}/ws` : `${here}${this.base}/ws`;
+      link = new SocketLink(url);
+    }
+    this.link = link;
+    link.onText = (t) => this.onMessage(JSON.parse(t) as ServerMsg);
+    link.onBinary = (b) => this.onFrame(b);
+    link.onClose = () => {
+      if (this.link !== link) return;
+      this.link = undefined;
       this.connected = false;
       this.clientId = null;
       const delay = Math.min(250 * 2 ** this.retry, 5000);
@@ -295,10 +415,10 @@ export class Client {
    * so a sandbox isn't kept awake, and let go of its terminals. */
   close() {
     this.closed = true;
-    const sock = this.ws;
-    this.ws = undefined;
+    const link = this.link;
+    this.link = undefined;
     this.connected = false;
-    sock?.close();
+    link?.close();
     for (const p of this.panes.values()) p.view.dispose();
     for (const b of this.blocks.values()) b.view.dispose();
     this.panes.clear();
@@ -312,26 +432,26 @@ export class Client {
   /** Let go of the connection while nobody is looking (a sandbox host:
    * an open connection keeps it awake); `wake` reconnects. */
   sleep() {
-    if (this.closed || !this.ws) return;
+    if (this.closed || !this.link) return;
     this.asleep = true;
-    const sock = this.ws;
-    this.ws = undefined;
+    const link = this.link;
+    this.link = undefined;
     this.connected = false;
-    sock.close();
+    link.close();
     this.emit();
   }
 
   /** Reconnect now if the socket is down (a phone coming back). */
   wake() {
     this.asleep = false;
-    if (!this.ws && !this.closed) {
+    if (!this.link && !this.closed) {
       this.retry = 0;
       this.connect();
     }
   }
 
   send(msg: ClientMsg) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    if (this.link?.open) this.link.sendText(JSON.stringify(msg));
   }
 
   intent(intent: Intent) {
@@ -348,7 +468,7 @@ export class Client {
     // Typing here makes this window the one whose size counts.
     if (tab && tab.owner !== this.clientId) this.claim(tab.id);
     data = this.applyModifiers(data);
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(encodeFrame(FrameKind.Input, pane, data));
+    if (this.link?.open) this.link.sendBinary(encodeFrame(FrameKind.Input, pane, data));
   }
 
   private applyModifiers(data: Uint8Array): Uint8Array {

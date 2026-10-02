@@ -38,6 +38,8 @@ use crate::{
 };
 
 const PING_EVERY: Duration = Duration::from_secs(15);
+/// A text message on a daemon's socket: "fetch your certificates now".
+pub const NUDGE: &str = "trust";
 const DEAD_AFTER: Duration = Duration::from_secs(45);
 
 #[derive(Default)]
@@ -50,6 +52,8 @@ struct Live {
     generation: u64,
     mux: Mux,
     stop: Arc<tokio::sync::Notify>,
+    /// Tells the daemon to fetch its account's certificates now.
+    nudge: Arc<tokio::sync::Notify>,
 }
 
 impl Relay {
@@ -59,6 +63,18 @@ impl Relay {
 
     fn mux(&self, id: &str) -> Option<Mux> {
         self.live.lock().unwrap().get(id).map(|l| l.mux.clone())
+    }
+
+    /// The account's devices changed (an approval, a revocation): its
+    /// daemons fetch certificates now rather than within the minute, so a
+    /// new device gets in and a removed one is cut off at once.
+    pub fn nudge(&self, daemons: &[String]) {
+        let live = self.live.lock().unwrap();
+        for id in daemons {
+            if let Some(l) = live.get(id) {
+                l.nudge.notify_one();
+            }
+        }
     }
 
     /// A daemon left or was revoked: hang up on it.
@@ -93,9 +109,14 @@ pub async fn dial(
 async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
     let (mux, mut out) = Mux::new(None);
     let stop = Arc::new(tokio::sync::Notify::new());
+    let nudge = Arc::new(tokio::sync::Notify::new());
     let generation = app.relay.next.fetch_add(1, Ordering::Relaxed);
-    if let Some(old) =
-        app.relay.live.lock().unwrap().insert(id.clone(), Live { generation, mux: mux.clone(), stop: stop.clone() })
+    if let Some(old) = app
+        .relay
+        .live
+        .lock()
+        .unwrap()
+        .insert(id.clone(), Live { generation, mux: mux.clone(), stop: stop.clone(), nudge: nudge.clone() })
     {
         // A daemon that reconnected: the old socket is dead or about to be.
         old.stop.notify_one();
@@ -129,6 +150,7 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
                 let _ = app.db.seen(&id, None, now_ms());
             }
             _ = stop.notified() => break,
+            _ = nudge.notified() => if tx.send(Message::Text(NUDGE.into())).await.is_err() { break },
         }
     }
     mux.close();

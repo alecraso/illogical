@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { Client } from "../src/client";
 import type { HostDirectory } from "../src/hosts";
+import type { ControlSession } from "../src/control";
 import type { PaneId, TabView } from "../src/proto";
 
 declare global {
@@ -8,6 +9,7 @@ declare global {
     __illogical: {
       client: Client;
       hosts: HostDirectory;
+      control: ControlSession | null;
       text(pane: PaneId): string;
       screen(pane: PaneId): string;
       size(pane: PaneId): [number, number] | null;

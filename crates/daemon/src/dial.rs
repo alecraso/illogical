@@ -441,12 +441,17 @@ fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
 async fn connect_once(opts: &PeerOpts, accept: &mpsc::UnboundedSender<DuplexStream>) -> anyhow::Result<()> {
     let ws = open_socket(opts).await?;
     info!(peer = opts.url, "tunnel to the home daemon up");
-    serve_mux(ws, accept).await
+    serve_mux(ws, accept, None).await
 }
 
 /// The host end of a mux over `ws`: streams the other end opens go to
 /// `accept`, until the socket closes or goes quiet.
-pub async fn serve_mux(ws: Ws, accept: &mpsc::UnboundedSender<DuplexStream>) -> anyhow::Result<()> {
+/// A text message `trust` (control's relay) wakes `nudge`.
+pub async fn serve_mux(
+    ws: Ws,
+    accept: &mpsc::UnboundedSender<DuplexStream>,
+    nudge: Option<&Notify>,
+) -> anyhow::Result<()> {
     let (mux, mut out) = Mux::new(Some(accept.clone()));
     let (mut tx, mut rx) = ws.split();
     let mut ping = tokio::time::interval(PING_EVERY);
@@ -462,6 +467,12 @@ pub async fn serve_mux(ws: Ws, accept: &mpsc::UnboundedSender<DuplexStream>) -> 
                 }
                 Some(Ok(tungstenite::Message::Close(_))) | None => break Ok(()),
                 Some(Err(e)) => break Err(e.into()),
+                Some(Ok(tungstenite::Message::Text(t))) => {
+                    heard = Instant::now();
+                    if t.as_str() == "trust" && let Some(n) = nudge {
+                        n.notify_one();
+                    }
+                }
                 Some(Ok(_)) => heard = Instant::now(),
             },
             Some(f) = out.recv() => {
