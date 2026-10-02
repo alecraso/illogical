@@ -53,8 +53,15 @@ fn hosted(app: &App) -> Result<&Hosted, ApiError> {
 
 pub async fn create(State(app): State<Arc<App>>, s: Session, body: Option<Json<Value>>) -> R {
     let h = hosted(&app)?;
-    if !h.allow.iter().any(|a| a == &s.account || a == "*") {
-        return Err(err(StatusCode::FORBIDDEN, "hosted sandboxes aren't open yet"));
+    // With billing, a paid plan pays for them; without, an allowlist.
+    let allowed = h.allow.iter().any(|a| a == &s.account || a == "*");
+    if !allowed {
+        if app.stripe.is_none() {
+            return Err(err(StatusCode::FORBIDDEN, "hosted sandboxes aren't open yet"));
+        }
+        if !crate::billing::paid(&app, &s.account)? {
+            return Err(err(StatusCode::PAYMENT_REQUIRED, "hosted VMs are on a paid plan: upgrade first"));
+        }
     }
     let live = app.db.sandboxes(&s.account)?.into_iter().filter(|x| x.deleted.is_none()).count();
     if live >= h.quota {
@@ -146,7 +153,8 @@ pub async fn list(State(app): State<Arc<App>>, s: Session) -> R {
             "join": join.map(|(code, cert)| json!({ "code": code, "cert": cert })),
         }));
     }
-    let open = app.hosted.as_ref().is_some_and(|h| h.allow.iter().any(|a| a == &s.account || a == "*"));
+    let open = app.hosted.as_ref().is_some_and(|h| h.allow.iter().any(|a| a == &s.account || a == "*"))
+        || (app.hosted.is_some() && app.stripe.is_some() && crate::billing::paid(&app, &s.account)?);
     Ok(Json(json!({ "sandboxes": out, "open": open })))
 }
 

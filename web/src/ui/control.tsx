@@ -193,10 +193,10 @@ function JoinCodeForm({ s }: { s: ControlSession }) {
 export function ControlOverlay({ s }: { s: ControlSession }) {
   useControl(s);
   const [hash, setHash] = useState(location.hash);
-  const [panel, setPanel] = useState<null | "devices" | "add" | "teams">(null);
+  const [panel, setPanel] = useState<null | "devices" | "add" | "teams" | "plan">(null);
   useEffect(() => {
     const on = () => setHash(location.hash);
-    const open = (e: Event) => setPanel((e as CustomEvent<"devices" | "add" | "teams">).detail);
+    const open = (e: Event) => setPanel((e as CustomEvent<"devices" | "add" | "teams" | "plan">).detail);
     addEventListener("hashchange", on);
     addEventListener("illogical:control-panel", open);
     return () => {
@@ -217,6 +217,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   if (asking) return <DevicePrompt s={s} c={asking} />;
   if (panel === "devices") return <Devices s={s} close={() => setPanel(null)} />;
   if (panel === "teams") return <Teams s={s} close={() => setPanel(null)} />;
+  if (panel === "plan") return <Plan s={s} close={() => setPanel(null)} />;
   if (panel === "add")
     return (
       <Modal close={() => setPanel(null)}>
@@ -374,7 +375,7 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
 
 /** For the host menu. */
 export function controlMenuItems(s: ControlSession) {
-  const panel = (p: "devices" | "add" | "teams") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+  const panel = (p: "devices" | "add" | "teams" | "plan") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
   const shown = s.daemons.find((d) => d.name === directory.current);
   return [
     "separator" as const,
@@ -383,8 +384,52 @@ export function controlMenuItems(s: ControlSession) {
     ...(shown?.sandbox ? [{ label: "Delete this VM", run: () => void s.deleteSandbox(shown.sandbox!) }] : []),
     { label: "Add a machine…", run: panel("add") },
     { label: "Teams…", run: panel("teams") },
+    ...(s.billing?.billing ? [{ label: s.billing.relay.warning ? "Plan and usage… (over the free relay)" : "Plan and usage…", run: panel("plan") }] : []),
     { label: "Devices and machines…", run: panel("devices") },
   ];
+}
+
+const mb = (b: number) => `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB`;
+
+function Plan({ s, close }: { s: ControlSession; close: () => void }) {
+  const b = s.billing;
+  const [err, setErr] = useState("");
+  if (!b) return null;
+  return (
+    <Modal close={close}>
+      <h2>Plan and usage</h2>
+      <p>
+        You're on <b>{b.plan === "paid" ? "a paid plan" : "the free plan"}</b>. This month: {mb(b.relay.bytes)} through the relay
+        {b.plan === "paid" ? "" : ` of ${mb(b.relay.allowance)} free`}, {b.sandbox_minutes} hosted VM minutes.
+      </p>
+      {b.relay.warning ? (
+        <p class="control-error" data-relay-warning>
+          You're over the free relay allowance{b.relay.slowed ? ", so relayed traffic is slowed down" : ""}. Direct connections (your tailnet, your LAN) don't count. A plan lifts it.
+        </p>
+      ) : null}
+      {b.teams.map((t) => (
+        <p key={t.team} data-team-plan={t.team}>
+          <b>{t.name}</b>: {t.plan === "team" ? `team plan, ${t.seats} seats` : "free"}; {t.sandbox_minutes} VM minutes this month.{" "}
+          {t.owner && t.plan !== "team" ? (
+            <button class="control-linkish" onClick={() => s.upgrade(t.team).catch((e: Error) => setErr(e.message))}>
+              Upgrade ({t.seats} seat{t.seats === 1 ? "" : "s"})
+            </button>
+          ) : null}
+        </p>
+      ))}
+      {b.plan !== "paid" ? (
+        <p>
+          <button class="control-linkish" onClick={() => s.upgrade().catch((e: Error) => setErr(e.message))}>
+            Add a payment method for hosted VMs (by the minute)
+          </button>
+        </p>
+      ) : null}
+      {err ? <p class="control-error">{err}</p> : null}
+      <div class="prompt-buttons">
+        <button onClick={close}>Done</button>
+      </div>
+    </Modal>
+  );
 }
 
 function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code: string }) {

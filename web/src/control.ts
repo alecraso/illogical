@@ -447,6 +447,7 @@ export class ControlSession {
       this.daemons = daemons;
       await this.loadTeams();
       await this.loadSandboxes();
+      await this.loadBilling();
       this.stale = false;
       try {
         localStorage.setItem(DIR_KEY, JSON.stringify(this.daemons));
@@ -467,6 +468,26 @@ export class ControlSession {
       }
     }
     this.emit();
+  }
+
+  // ---- billing (M22)
+
+  billing: {
+    billing: boolean;
+    plan: string;
+    relay: { bytes: number; allowance: number; warning: boolean; slowed: boolean };
+    sandbox_minutes: number;
+    teams: { team: string; name: string; owner: boolean; seats: number; plan: string; sandbox_minutes: number }[];
+  } | null = null;
+
+  async loadBilling() {
+    this.billing = await api<NonNullable<ControlSession["billing"]>>("/api/billing").catch(() => null);
+  }
+
+  /** Off to Stripe Checkout to upgrade (a team, or this account). */
+  async upgrade(team?: string) {
+    const r = await api<{ url: string }>("/api/billing/checkout", { team });
+    location.href = r.url;
   }
 
   // ---- hosted sandboxes (M20)

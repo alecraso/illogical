@@ -214,6 +214,10 @@ fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUp
             }
         });
     }
+    // Past twice the free allowance, a free account's relayed traffic
+    // slows down (M22); it's warned before that.
+    let slow =
+        account.as_deref().is_some_and(|a| crate::billing::relay_standing(&app, a).is_ok_and(|(_, _, slow)| slow));
     let Some(mux) = app.relay.mux(&id) else {
         return err(StatusCode::SERVICE_UNAVAILABLE, "that daemon isn't connected to the relay").into_response();
     };
@@ -221,7 +225,7 @@ fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUp
         return err(StatusCode::SERVICE_UNAVAILABLE, "that daemon just went away").into_response();
     };
     up.max_message_size(MAX_WIRE).on_upgrade(move |ws| async move {
-        let (up, down) = splice(ws, stream).await;
+        let (up, down) = splice(ws, stream, slow).await;
         let day = crate::day(now_ms());
         // Links count against the daemon's owner.
         let who = account.or_else(|| app.db.daemon_account(&id).ok().flatten());
@@ -235,7 +239,8 @@ fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUp
 
 /// Client WebSocket messages to length-prefixed frames on the stream, and
 /// back. Returns the bytes moved each way.
-async fn splice(ws: WebSocket, stream: DuplexStream) -> (u64, u64) {
+/// `slow`: at most about 64 KB/s down (over the free relay allowance).
+async fn splice(ws: WebSocket, stream: DuplexStream, slow: bool) -> (u64, u64) {
     let (mut wtx, mut wrx) = ws.split();
     let (mut rd, mut wr) = tokio::io::split(stream);
     let up = async {
@@ -284,6 +289,9 @@ async fn splice(ws: WebSocket, stream: DuplexStream) -> (u64, u64) {
                 f = frames.recv() => {
                     let Some(b) = f else { break };
                     n += b.len() as u64;
+                    if slow {
+                        tokio::time::sleep(Duration::from_micros(b.len() as u64 * 1_000_000 / 65_536)).await;
+                    }
                     if wtx.send(Message::Binary(b.into())).await.is_err() {
                         break;
                     }

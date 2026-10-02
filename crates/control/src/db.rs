@@ -128,6 +128,18 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     deleted INTEGER,
     daemon TEXT
 );
+CREATE TABLE IF NOT EXISTS billing (
+    owner TEXT PRIMARY KEY,
+    customer TEXT,
+    subscription TEXT,
+    status TEXT NOT NULL,
+    seat_item TEXT,
+    updated INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reported (
+    account TEXT PRIMARY KEY,
+    minutes INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS usage (
     account TEXT NOT NULL,
     day TEXT NOT NULL,
@@ -162,6 +174,20 @@ pub struct Team {
     pub founder: String,
     pub founder_root: String,
     pub locked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BillingRow {
+    pub customer: Option<String>,
+    pub subscription: Option<String>,
+    pub status: String,
+    pub seat_item: Option<String>,
+}
+
+impl BillingRow {
+    pub fn active(&self) -> bool {
+        matches!(self.status.as_str(), "active" | "trialing" | "past_due")
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -763,6 +789,79 @@ impl Db {
                 ))
             })
             .optional()?)
+    }
+
+    // ---- billing (M22)
+
+    pub fn billing(&self, owner: &str) -> anyhow::Result<Option<BillingRow>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT customer, subscription, status, seat_item FROM billing WHERE owner = ?1",
+                params![owner],
+                |r| {
+                    Ok(BillingRow {
+                        customer: r.get(0)?,
+                        subscription: r.get(1)?,
+                        status: r.get(2)?,
+                        seat_item: r.get(3)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn set_billing(
+        &self,
+        owner: &str,
+        customer: Option<&str>,
+        subscription: Option<&str>,
+        status: &str,
+        now: u64,
+    ) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO billing (owner, customer, subscription, status, updated) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (owner) DO UPDATE SET customer = COALESCE(excluded.customer, customer),
+               subscription = COALESCE(excluded.subscription, subscription), status = excluded.status, updated = excluded.updated",
+            params![owner, customer, subscription, status, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_seat_item(&self, owner: &str, item: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE billing SET seat_item = ?2 WHERE owner = ?1", params![owner, item])?;
+        Ok(())
+    }
+
+    /// Relay bytes this month (`YYYY-MM`).
+    pub fn relay_bytes_month(&self, account: &str, month: &str) -> anyhow::Result<u64> {
+        Ok(self.c().query_row(
+            "SELECT COALESCE(SUM(relay_bytes), 0) FROM usage WHERE account = ?1 AND day LIKE ?2",
+            params![account, format!("{month}-%")],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Accounts that ever had a sandbox.
+    pub fn sandbox_accounts(&self) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT DISTINCT account FROM sandboxes")?;
+        let rows = q.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn reported_minutes(&self, account: &str) -> anyhow::Result<u64> {
+        Ok(self
+            .c()
+            .query_row("SELECT minutes FROM reported WHERE account = ?1", params![account], |r| r.get(0))
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    pub fn set_reported_minutes(&self, account: &str, minutes: u64) -> anyhow::Result<()> {
+        self.c()
+            .execute("INSERT OR REPLACE INTO reported (account, minutes) VALUES (?1, ?2)", params![account, minutes])?;
+        Ok(())
     }
 
     // ---- hosted sandboxes (M20)
