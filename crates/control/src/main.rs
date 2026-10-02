@@ -256,14 +256,16 @@ async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>)
 }
 
 /// Nothing frames control's pages, and nothing on them comes from elsewhere
-/// except the daemons the page connects to (any WebSocket).
+/// except the daemons the page connects to (any WebSocket) and the blocks it
+/// shows: a block is a frame on its own site (a daemon's block domain, or a
+/// web page a browser block opened), so frames may come from any https site.
 async fn headers(mut res: Response) -> Response {
     let h = res.headers_mut();
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     h.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(
-        "default-src 'self'; connect-src 'self' wss: ws: https:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+        "default-src 'self'; connect-src 'self' wss: ws: https:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-src 'self' https:; frame-ancestors 'none'",
     ));
     res
 }
