@@ -30,6 +30,9 @@ use crate::store::{now_ms, write_atomic};
 pub struct Subscription {
     pub endpoint: String,
     pub keys: SubscriptionKeys,
+    /// Whose it is (M29): a principal id; none is the owner's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub who: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,8 +114,22 @@ impl Push {
     /// Notify every subscribed browser; in the background. `extra` fields
     /// go in the payload too (an agent's pending approval, which the
     /// service worker turns into Approve and Deny actions).
+    /// To the owner's subscriptions only.
     pub fn send(&self, pane: u32, title: &str, body: &str, extra: Option<serde_json::Value>) {
-        let subs = self.subs.lock().unwrap().clone();
+        self.send_to(pane, title, body, extra, |who| who == "owner");
+    }
+
+    /// To whoever's subscriptions `to` picks, by principal id (M29).
+    pub fn send_to(
+        &self,
+        pane: u32,
+        title: &str,
+        body: &str,
+        extra: Option<serde_json::Value>,
+        to: impl Fn(&str) -> bool,
+    ) {
+        let subs: Vec<Subscription> =
+            self.subs.lock().unwrap().iter().filter(|s| to(s.who.as_deref().unwrap_or("owner"))).cloned().collect();
         if subs.is_empty() {
             return;
         }

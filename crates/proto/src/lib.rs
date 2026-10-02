@@ -596,6 +596,14 @@ pub struct PaneInfo {
     /// its hook), drawn as a card beside it (M6c).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<ask::Ask>,
+    /// Who answered its last question or approval, and how (M29), until
+    /// it asks again. For agent blocks too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered: Option<ask::Answered>,
+    /// Claude Code in this terminal waits for a follow-up (its `illogical
+    /// inbox` hook, M29): one sent now goes straight in.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inbox: bool,
     /// Who is driving it (M13): only their typing reaches it, unless it's
     /// in pair mode. `None`: nobody yet (the next to type drives).
     #[serde(default, skip_serializing_if = "Option::is_none")]

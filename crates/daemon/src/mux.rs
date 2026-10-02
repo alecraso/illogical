@@ -17,7 +17,7 @@ use illogical_proto::{
     EventKind, Machine, MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, Reason, ReasonKind,
     ServerMsg, SessionId, State, TabId, TabView, WorkKind,
     api::{OpenRequest, PaneSummary, RunRequest},
-    ask::Ask,
+    ask::{Ask, AskKind},
 };
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
@@ -120,10 +120,30 @@ pub enum Api {
     /// A question asked in a terminal (`illogical ask`, from Claude Code's
     /// hook): shown beside it until answered. The reply carries a token
     /// (for withdrawing exactly this one) and where the answer will come.
-    Ask(PaneId, Ask, oneshot::Sender<Result<(u64, oneshot::Receiver<AskReply>), String>>),
+    Ask(PaneId, Box<Ask>, oneshot::Sender<Result<(u64, oneshot::Receiver<AskReply>), String>>),
     /// A client answered a terminal's question (`id`: which; `None`: the
     /// one open). Replies with the question, or why not.
-    AskReply(PaneId, Option<String>, AskReply, oneshot::Sender<Result<Ask, String>>),
+    AskReply(PaneId, Option<String>, AskReply, Option<Driver>, oneshot::Sender<Result<Ask, String>>),
+    /// Claude Code's hooks in a terminal (M29: `illogical hook`): a
+    /// `PreToolUse` names the tool call a permission card is for; it and
+    /// `PostToolUse`, `Stop` and `UserPromptSubmit` close a card the
+    /// terminal answered first.
+    Hook(PaneId, serde_json::Value),
+    /// `illogical inbox` (Claude Code's background `Stop` hook): wait for a
+    /// follow-up. One waiter per pane; a newer one replaces it. The reply
+    /// carries a token (to drop exactly this one) and where it will come.
+    Inbox(PaneId, serde_json::Value, oneshot::Sender<Result<(u64, oneshot::Receiver<InboxReply>), String>>),
+    /// The waiter went away (Claude Code exited).
+    InboxGone(PaneId, u64),
+    /// A follow-up for Claude Code in a terminal, from `by`: delivered at
+    /// once if it waits, else queued for when it does. `Ok(true)`: it
+    /// went straight in.
+    FollowUp(PaneId, String, Driver, oneshot::Sender<Result<bool, String>>),
+    /// Someone answered a block's approval or question (M29), for its
+    /// card, the pane's history and the audit log: `(id, how, headline)`.
+    Answered(PaneId, Driver, String, String, String),
+    /// What to call someone (M13), for attribution.
+    Who(crate::acl::Principal, oneshot::Sender<Driver>),
     /// The asker gave up (Claude Code interrupted it): close the card.
     /// With a token, only if it's still that registration's.
     AskWithdraw(PaneId, Option<String>, Option<u64>),
@@ -148,7 +168,32 @@ pub enum AskReply {
     Terminal,
     /// It went away (its pane closed, or a newer one replaced it).
     Withdrawn,
+    /// A permission card (M29) allowed it; with one of Claude Code's
+    /// suggestions to keep as a rule.
+    Allow { always: Option<serde_json::Value> },
+    /// ...or denied it, saying why.
+    Deny { message: String },
 }
+
+/// What a follow-up waiter (`illogical inbox`) gets.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InboxReply {
+    FollowUp {
+        text: String,
+        by: Driver,
+    },
+    /// A newer waiter took its place.
+    Replaced,
+}
+
+/// A follow-up waiter.
+struct Waiter {
+    token: u64,
+    reply: oneshot::Sender<InboxReply>,
+}
+
+/// How many follow-ups wait for an agent that isn't listening yet.
+const MAX_QUEUED: usize = 8;
 
 /// A question open in a terminal.
 struct TermAsk {
@@ -401,6 +446,14 @@ struct Daemon {
     blocks: HashMap<PaneId, Arc<dyn Block>>,
     /// Questions open in terminals, one per pane (M6c).
     asks: HashMap<PaneId, TermAsk>,
+    /// Who answered each pane's last card (M29).
+    answered: HashMap<PaneId, illogical_proto::ask::Answered>,
+    /// Claude Code's recent `PreToolUse` hook inputs per pane, to match a
+    /// permission card to its tool call.
+    pre: HashMap<PaneId, std::collections::VecDeque<serde_json::Value>>,
+    /// Follow-up waiters (`illogical inbox`), and follow-ups waiting for one.
+    inbox: HashMap<PaneId, Waiter>,
+    queued: HashMap<PaneId, std::collections::VecDeque<(String, Driver)>>,
     next_ask: u64,
     /// The next block an intent spawns is this type, with this config,
     /// instead of a terminal.
@@ -501,6 +554,10 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         push,
         blocks: HashMap::new(),
         asks: HashMap::new(),
+        answered: HashMap::new(),
+        pre: HashMap::new(),
+        inbox: HashMap::new(),
+        queued: HashMap::new(),
         next_ask: 1,
         next_block: None,
         last_block_error: None,
@@ -551,6 +608,19 @@ fn plain_reason(kind: ReasonKind, headline: &str) -> Reason {
         ask: None,
         actions: vec![Action::Dismiss],
     }
+}
+
+/// Claude Code's session and subagent, from a hook's input: `session/agent`.
+fn session_key(hook: &serde_json::Value) -> String {
+    format!("{}/{}", hook["session_id"].as_str().unwrap_or(""), hook["agent_id"].as_str().unwrap_or(""))
+}
+
+/// A hook input about the same tool call as a permission card: same
+/// session and subagent, tool and input.
+fn same_call(hook: &serde_json::Value, ask: &Ask) -> bool {
+    ask.session.as_deref() == Some(session_key(hook).as_str())
+        && ask.tool.as_deref() == hook["tool_name"].as_str()
+        && ask.input.as_ref() == Some(&hook["tool_input"])
 }
 
 /// What a notification about a reason is titled.
@@ -866,33 +936,34 @@ impl Daemon {
         };
         let reason = self.live_reason(pane);
         self.emit(Some(pane), EventKind::Attention { state, reason: reason.clone() });
-        if matches!(state, Attention::NeedsInput | Attention::Done)
-            && !self.focused(pane)
-            && let Some(push) = &self.push
-        {
+        if matches!(state, Attention::NeedsInput | Attention::Done) && !self.focused(pane) {
             let title = push_title(state, reason.as_ref());
-            let body = reason.as_ref().map_or(why, |r| r.headline.as_str());
+            let body = reason.as_ref().map_or(why, |r| r.headline.as_str()).to_owned();
+            // What lets a notification answer it from its buttons: an
+            // approval (an agent block's, or a terminal's permission card,
+            // M29), or a question with one or two answers.
             let mut extra = self.blocks.get(&pane).and_then(|b| b.push_extra()).or_else(|| {
-                let choice = self.asks.get(&pane)?.ask.push_choice()?;
-                Some(serde_json::json!({ "ask": choice }))
+                let a = &self.asks.get(&pane)?.ask;
+                if a.kind == AskKind::Permission {
+                    return Some(serde_json::json!({ "approve": { "id": a.id, "title": a.headline() } }));
+                }
+                Some(serde_json::json!({ "ask": a.push_choice()? }))
             });
             if let Some(r) = &reason {
                 let x = extra.get_or_insert_with(|| serde_json::json!({}));
                 x["reason"] = serde_json::json!({ "kind": r.kind, "actions": r.actions, "bundle": r.bundle });
             }
-            push.send(pane, title, body, extra);
-        }
-        if matches!(state, Attention::NeedsInput | Attention::Done) && !self.focused(pane) {
-            // Through control (M21): the owner, and whoever may edit the
-            // session. Approve and answer actions need the daemon's own
-            // page, so those notifications just open the pane.
-            let title = push_title(state, reason.as_ref());
-            let body = reason.as_ref().map_or(why, |r| r.headline.as_str()).to_owned();
+            // The owner, and whoever may edit the session and opted in
+            // (M29): on this daemon's own push, and through control (M21),
+            // where the payload is encrypted to each device, so it can carry
+            // what to approve too.
             let session = self.session_of(pane);
             let acl = self.config.acl.clone();
-            self.config.control.push(pane, title, &body, None, move |who| {
-                who.is_owner() || session.and_then(|s| acl.role(who, s)).is_some_and(|r| r >= Role::Editor)
-            });
+            if let Some(push) = &self.push {
+                let acl = acl.clone();
+                push.send_to(pane, title, &body, extra.clone(), move |who| acl.notifies(who, session));
+            }
+            self.config.control.push(pane, title, &body, extra, move |who| acl.notifies(who.id(), session));
         }
         self.touch(pane);
     }
@@ -919,7 +990,8 @@ impl Daemon {
             let agent = self.agent_name(pane).unwrap_or_else(|| "claude".into());
             let cwd =
                 self.panes.get(&pane).and_then(|h| h.status().cwd.or_else(|| h.cwd().map(|c| c.display().to_string())));
-            (a.ask.id.clone(), AskWhat::Question, a.ask.headline(), agent, cwd, a.ask.at_ms)
+            let what = if a.ask.kind == AskKind::Permission { AskWhat::Approve } else { AskWhat::Question };
+            (a.ask.id.clone(), what, a.ask.headline(), agent, cwd, a.ask.at_ms)
         } else {
             let w = self.blocks.get(&pane)?.waiting()?;
             (w.id, w.what, w.headline, w.agent, w.cwd, w.at_ms)
@@ -1307,10 +1379,28 @@ impl Daemon {
                 let _ = reply.send(self.run_command(req));
             }
             Api::Ask(pane, ask, reply) => {
-                let _ = reply.send(self.ask(pane, ask));
+                let _ = reply.send(self.ask(pane, *ask));
             }
-            Api::AskReply(pane, id, answer, reply) => {
-                let _ = reply.send(self.ask_reply(pane, id, answer));
+            Api::AskReply(pane, id, answer, by, reply) => {
+                let _ = reply.send(self.ask_reply(pane, id, answer, by));
+            }
+            Api::Hook(pane, hook) => self.hook(pane, &hook),
+            Api::Inbox(pane, hook, reply) => {
+                self.hook(pane, &hook);
+                let _ = reply.send(self.wait_inbox(pane));
+            }
+            Api::InboxGone(pane, token) => {
+                if self.inbox.get(&pane).is_some_and(|w| w.token == token) {
+                    self.inbox.remove(&pane);
+                    self.touch(pane);
+                }
+            }
+            Api::FollowUp(pane, text, by, reply) => {
+                let _ = reply.send(self.follow_up(pane, text, by));
+            }
+            Api::Answered(pane, by, id, how, headline) => self.record_answer(pane, &by, &id, &how, &headline),
+            Api::Who(who, reply) => {
+                let _ = reply.send(self.driver_of(&who));
             }
             Api::AskWithdraw(pane, id, token) => {
                 let open = self.asks.get(&pane).is_some_and(|a| {
@@ -1319,6 +1409,10 @@ impl Daemon {
                 if open && let Some(a) = self.asks.remove(&pane) {
                     info!(pane, id = a.ask.id, "question withdrawn");
                     let _ = a.reply.send(AskReply::Withdrawn);
+                    if a.ask.kind == AskKind::Permission && token.is_none() {
+                        // Its hook was stopped: "No" or Esc in the terminal.
+                        self.terminal_answered(pane, &a.ask, "denied in the terminal");
+                    }
                     self.after_ask(pane);
                 }
             }
@@ -1330,6 +1424,16 @@ impl Daemon {
         if !self.panes.contains_key(&pane) {
             return Err(format!("no terminal %{pane}"));
         }
+        let mut ask = ask;
+        if ask.kind == AskKind::Permission && ask.tool_call_id.is_none() {
+            // The tool call it's for: the `PreToolUse` just before it.
+            if let Some(id) = self.pre.get(&pane).and_then(|pre| pre.iter().rev().find(|p| same_call(p, &ask))) {
+                let id = id["tool_use_id"].as_str().map(str::to_owned);
+                ask.id = id.clone().unwrap_or(ask.id);
+                ask.tool_call_id = id;
+            }
+        }
+        self.answered.remove(&pane);
         let (tx, rx) = oneshot::channel();
         let token = self.next_ask;
         self.next_ask += 1;
@@ -1350,17 +1454,51 @@ impl Daemon {
         Ok((token, rx))
     }
 
-    fn ask_reply(&mut self, pane: PaneId, id: Option<String>, answer: AskReply) -> Result<Ask, String> {
+    fn ask_reply(
+        &mut self,
+        pane: PaneId,
+        id: Option<String>,
+        answer: AskReply,
+        by: Option<Driver>,
+    ) -> Result<Ask, String> {
         let a = self
             .asks
             .get(&pane)
             .filter(|a| id.as_ref().is_none_or(|id| *id == a.ask.id))
             .ok_or_else(|| format!("no open question in %{pane} (it was answered, or withdrawn)"))?;
         let ask = a.ask.clone();
+        let permission = ask.kind == AskKind::Permission;
+        let answer = match answer {
+            AskReply::Allow { .. } | AskReply::Deny { .. } if !permission => {
+                return Err(format!("%{pane} asks a question: answer it"));
+            }
+            AskReply::Answer(_) if permission => return Err(format!("%{pane} asks for approval: allow or deny it")),
+            // "Always": one of Claude Code's own suggestions, by index.
+            AskReply::Allow { always: Some(i) } => {
+                let pick = ask.suggestions.as_ref().and_then(|s| s.get(i.as_u64().unwrap_or(0) as usize)).cloned();
+                if pick.is_none() {
+                    return Err("Claude Code suggested no rule to keep: allow it once".into());
+                }
+                AskReply::Allow { always: pick }
+            }
+            a => a,
+        };
         let a = self.asks.remove(&pane).expect("just found");
         info!(pane, id = ask.id, ?answer, "question answered");
         let terminal = answer == AskReply::Terminal;
+        let how = match &answer {
+            AskReply::Answer(_) => Some("answered"),
+            AskReply::Decline => Some("skipped"),
+            AskReply::Allow { always: None } => Some("allowed"),
+            AskReply::Allow { always: Some(_) } => Some("allowed always"),
+            AskReply::Deny { .. } => Some("denied"),
+            AskReply::Terminal | AskReply::Withdrawn => None,
+        };
         let _ = a.reply.send(answer);
+        if let Some(how) = how {
+            let by = by.unwrap_or_else(|| self.driver_of(&Principal::Owner));
+            self.record_answer(pane, &by, &ask.id, how, &ask.headline());
+        }
         if terminal {
             // It asks again in the terminal: still wants you.
             self.touch(pane);
@@ -1378,6 +1516,153 @@ impl Daemon {
         } else {
             self.touch(pane);
         }
+    }
+
+    /// Someone answered a card (M29): every client's card closes saying who,
+    /// and the pane's history and the audit log say so too.
+    fn record_answer(&mut self, pane: PaneId, by: &Driver, id: &str, how: &str, headline: &str) {
+        info!(pane, who = by.who, how, "answered");
+        let at_ms = now_ms();
+        self.answered.insert(
+            pane,
+            illogical_proto::ask::Answered {
+                id: id.to_owned(),
+                how: how.to_owned(),
+                who: by.who.clone(),
+                name: by.name.clone(),
+                at_ms,
+                headline: headline.to_owned(),
+            },
+        );
+        if let Some(p) = self.panes.get(&pane) {
+            p.note(format!("{how}: {headline}"), by.name.clone());
+        }
+        self.config.acl.record(serde_json::json!({
+            "at": at_ms, "by": by.who, "name": by.name, "action": "answer", "pane": pane, "how": how,
+            "headline": headline,
+        }));
+        self.touch(pane);
+    }
+
+    /// The terminal answered a permission card first (M29): Claude Code
+    /// never tells its hook about a "Yes", so its next step closes the card.
+    fn terminal_answered(&mut self, pane: PaneId, ask: &Ask, how: &str) {
+        self.answered.insert(
+            pane,
+            illogical_proto::ask::Answered {
+                id: ask.id.clone(),
+                how: how.to_owned(),
+                who: "terminal".into(),
+                name: "the terminal".into(),
+                at_ms: now_ms(),
+                headline: ask.headline(),
+            },
+        );
+    }
+
+    /// One of Claude Code's hook events in a terminal (M29).
+    fn hook(&mut self, pane: PaneId, hook: &serde_json::Value) {
+        let event = hook["hook_event_name"].as_str().unwrap_or_default();
+        let session = session_key(hook);
+        let open = self
+            .asks
+            .get(&pane)
+            .filter(|a| a.ask.kind == AskKind::Permission)
+            .map(|a| a.ask.clone())
+            .filter(|a| a.session.as_deref().is_some_and(|s| s.split('/').next() == session.split('/').next()));
+        let close = match (event, &open) {
+            ("PreToolUse", Some(a)) if a.session.as_deref() == Some(session.as_str()) => {
+                if a.tool_call_id.is_none() && same_call(hook, a) {
+                    // The card came first: this is its tool call.
+                    if let Some(t) = self.asks.get_mut(&pane) {
+                        t.ask.tool_call_id = hook["tool_use_id"].as_str().map(str::to_owned);
+                    }
+                    None
+                } else if a.tool_call_id.as_deref() != hook["tool_use_id"].as_str() {
+                    Some("closed")
+                } else {
+                    None
+                }
+            }
+            ("PostToolUse" | "PostToolUseFailure", Some(a))
+                if a.tool_call_id.is_some() && a.tool_call_id.as_deref() == hook["tool_use_id"].as_str()
+                    || a.tool_call_id.is_none() && same_call(hook, a) =>
+            {
+                Some("allowed in the terminal")
+            }
+            ("Stop" | "UserPromptSubmit" | "SessionStart", Some(_)) => Some("closed"),
+            _ => None,
+        };
+        if event == "PreToolUse" {
+            let pre = self.pre.entry(pane).or_default();
+            pre.push_back(hook.clone());
+            while pre.len() > 16 {
+                pre.pop_front();
+            }
+        }
+        if let (Some(how), Some(a)) = (close, open)
+            && let Some(t) = self.asks.remove(&pane)
+        {
+            info!(pane, id = a.id, event, "permission card closed: the terminal answered");
+            let _ = t.reply.send(AskReply::Withdrawn);
+            self.terminal_answered(pane, &a, how);
+            self.after_ask(pane);
+        }
+    }
+
+    /// `illogical inbox` waits for a follow-up: one queued goes now.
+    fn wait_inbox(&mut self, pane: PaneId) -> Result<(u64, oneshot::Receiver<InboxReply>), String> {
+        if !self.panes.contains_key(&pane) {
+            return Err(format!("no terminal %{pane}"));
+        }
+        let (tx, rx) = oneshot::channel();
+        let token = self.next_ask;
+        self.next_ask += 1;
+        if let Some((text, by)) = self.queued.get_mut(&pane).and_then(|q| q.pop_front()) {
+            let _ = tx.send(InboxReply::FollowUp { text, by });
+            return Ok((token, rx));
+        }
+        if let Some(old) = self.inbox.insert(pane, Waiter { token, reply: tx }) {
+            let _ = old.reply.send(InboxReply::Replaced);
+        } else {
+            self.touch(pane);
+        }
+        Ok((token, rx))
+    }
+
+    /// A follow-up for Claude Code in a terminal (M29), recorded as input
+    /// from whoever sent it.
+    fn follow_up(&mut self, pane: PaneId, text: String, by: Driver) -> Result<bool, String> {
+        let Some(p) = self.panes.get(&pane) else { return Err(format!("no terminal %{pane}")) };
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            return Err("an empty follow-up".into());
+        }
+        info!(pane, who = by.who, "follow-up");
+        p.note(format!("follow-up: {text}"), by.name.clone());
+        self.config.acl.record(serde_json::json!({
+            "at": now_ms(), "by": by.who, "name": by.name, "action": "follow_up", "pane": pane, "text": text,
+        }));
+        let now = match self.inbox.remove(&pane) {
+            Some(w) => match w.reply.send(InboxReply::FollowUp { text: text.clone(), by: by.clone() }) {
+                Ok(()) => true,
+                Err(InboxReply::FollowUp { text, by }) => {
+                    self.queued.entry(pane).or_default().push_back((text, by));
+                    false
+                }
+                Err(_) => false,
+            },
+            None => {
+                let q = self.queued.entry(pane).or_default();
+                if q.len() >= MAX_QUEUED {
+                    return Err("too many follow-ups waiting: is Claude Code's inbox hook set up?".into());
+                }
+                q.push_back((text, by));
+                false
+            }
+        };
+        self.touch(pane);
+        Ok(now)
     }
 
     /// `illogical run`: a new tab (or a split) running a command.
@@ -2252,6 +2537,7 @@ impl Daemon {
                 last: None,
                 ask: None,
                 reason: None,
+                answered: None,
                 work: None,
                 project: None,
                 activity: None,
@@ -2753,6 +3039,8 @@ impl Daemon {
             kind: BlockType::Terminal,
             host: meta.host,
             ask: self.asks.get(&p.id).map(|a| a.ask.clone()),
+            answered: self.answered.get(&p.id).cloned(),
+            inbox: self.inbox.contains_key(&p.id),
             driver: self.drivers.get(&p.id).cloned(),
             pair: self.pair.contains(&p.id),
             private: meta.private,
@@ -2788,6 +3076,8 @@ impl Daemon {
             kind: b.kind(),
             host: meta.host,
             ask: None,
+            answered: self.answered.get(&id).cloned(),
+            inbox: false,
             driver: None,
             pair: false,
             private: meta.private,

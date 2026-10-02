@@ -2000,3 +2000,83 @@ button {
   padding-bottom: 12px;
   border-bottom: 1px solid var(--divider);
 }
+
+/* ---- team answers (M29): who answered, follow-ups, who's looking */
+
+.pane-answered {
+  position: absolute;
+  z-index: 6;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 6px 24px #0008;
+  padding-bottom: 8px;
+}
+
+.answered-by {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.answered-what {
+  padding: 2px 12px 6px;
+  color: var(--dim);
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.followup {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.followup input {
+  flex: 1;
+  min-width: 0;
+}
+
+.followup-trust,
+.followup-sent {
+  padding: 6px 12px 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ask-watching {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.ask-viewer {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.agent-answered {
+  padding: 4px 12px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.perm-diff {
+  max-height: 12em;
+  overflow: auto;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.perm-diff .del {
+  color: #f38ba8;
+}
+
+.perm-diff .add {
+  color: #a6e3a1;
+}

@@ -81,7 +81,7 @@ fn wait_for_answer(sock: &Target, pane: u32, questions: &Value, id: Option<Strin
 
 /// On SIGTERM (Claude Code interrupting the hook), SIGINT or SIGHUP:
 /// withdraw the card, then exit quietly.
-fn withdraw_on_signals(sock: Target, pane: u32, id: Option<String>) {
+pub fn withdraw_on_signals(sock: Target, pane: u32, id: Option<String>) {
     let mut set = SigSet::empty();
     for s in [Signal::SIGTERM, Signal::SIGINT, Signal::SIGHUP] {
         set.add(s);

@@ -44,6 +44,11 @@ pub trait Block: Send + Sync {
     fn text(&self) -> String;
     /// One of the type's methods.
     fn call(&self, method: &str, args: Value) -> BoxFuture<'static, Result<Value, String>>;
+    /// ...on behalf of someone (M29: their name, for its transcript and
+    /// history when they approve, answer or send it a follow-up).
+    fn call_by(&self, method: &str, args: Value, _by: Option<&str>) -> BoxFuture<'static, Result<Value, String>> {
+        self.call(method, args)
+    }
     /// Its cells changed size (a terminal-like renderer may care).
     fn resize(&self, _cols: u16, _rows: u16) {}
     /// It's closing: stop whatever it runs. Its directory is retired after.

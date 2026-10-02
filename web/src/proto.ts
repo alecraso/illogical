@@ -83,6 +83,8 @@ export interface ActRequest {
   id?: string;
   content?: Record<string, unknown>;
   option?: string;
+  /** `allow` `always` in a terminal: which of Claude Code's suggestions. */
+  suggestion?: number;
   message?: string;
 }
 
@@ -137,6 +139,10 @@ export interface PaneInfo {
   /** A question Claude Code asks in this terminal (through its hook), drawn
    * as a card beside it (M6c). */
   ask?: import("./blocks/ask").Ask | null;
+  /** M29: who answered its last card, and how, until it asks again. */
+  answered?: import("./blocks/ask").Answered | null;
+  /** M29: Claude Code here waits for a follow-up (its inbox hook). */
+  inbox?: boolean;
   /** M13: who drives it; absent when nobody does yet. */
   driver?: Driver;
   /** Pair mode: every editor types at once. */

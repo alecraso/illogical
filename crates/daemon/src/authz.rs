@@ -43,9 +43,12 @@ fn policy(method: &Method, path: &str) -> Policy {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Viewer))
         }
         ["api", "blocks", id] if get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Viewer)),
-        ["api", "panes", id, "send" | "keys" | "mouse" | "attention" | "close" | "ask" | "cd"] if !get => {
-            pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
-        }
+        [
+            "api",
+            "panes",
+            id,
+            "send" | "keys" | "mouse" | "attention" | "close" | "ask" | "cd" | "permit" | "hook" | "inbox" | "followup",
+        ] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         ["api", "panes", id, "ask", "withdraw"] if !get => {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
         }
@@ -53,6 +56,10 @@ fn policy(method: &Method, path: &str) -> Policy {
         // M24: the handler shows each person what they may read, and checks
         // each pane acted on.
         ["api", "attention"] if get => Policy::Handler,
+        // M29: anyone here may be notified about what they may answer.
+        ["api", "push", "key"] if get => Policy::Anyone,
+        ["api", "push", "subscribe" | "test"] if !get => Policy::Handler,
+        ["api", "notify"] => Policy::Handler,
         ["api", "attention", "act"] if !get => Policy::Handler,
         // An editor's agent (M14): the handler puts it on a VM of theirs.
         ["api", "blocks"] if !get => Policy::Handler,
@@ -82,7 +89,9 @@ pub async fn check(State(app): State<Arc<App>>, req: Request, next: Next) -> Res
                 // Typing into a pane on the owner's machine needs their trust
                 // (M14).
                 let path = req.uri().path();
-                if ["/send", "/keys", "/mouse"].iter().any(|s| path.ends_with(s)) {
+                // A follow-up (M29) is an instruction to an agent running
+                // there: the same rule.
+                if ["/send", "/keys", "/mouse", "/followup"].iter().any(|s| path.ends_with(s)) {
                     let who = req.extensions().get::<Principal>().cloned().unwrap_or(Principal::Owner);
                     if let Some(Err(why)) = app.mux.api(|r| Api::MayDrive(who, pane, r)).await {
                         return refuse(StatusCode::FORBIDDEN, &why);

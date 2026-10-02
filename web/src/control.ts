@@ -10,7 +10,7 @@
 // daemon can't be reached by a device it hasn't approved).
 
 import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
-import { forget, loadEnrollment, loadKeys, saveEnrollment, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
+import { forget, loadEnrollment, loadKeys, saveEnrollment, saveWorkerDirectory, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
 import { follows, signRoster, word, type AccountCerts, type Roster, type TeamPin, type TeamRole } from "./e2e/team.ts";
 
@@ -454,6 +454,12 @@ export class ControlSession {
       } catch {
         // not remembered
       }
+      // The service worker answers notifications over the same channels
+      // (M29), from what this page checked.
+      const ws = this.info.url.replace(/^http/, "ws");
+      void saveWorkerDirectory(
+        this.daemons.map((d) => ({ id: d.id, noise: d.cert.noise, direct: d.urls, relay: `${ws}/api/relay/c/${d.id}` })),
+      ).catch(() => {});
     } catch (err) {
       if (err instanceof HttpError && err.status === 401) {
         window.clearInterval(this.timer);

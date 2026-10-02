@@ -23,7 +23,7 @@ export interface Question {
 
 export interface Ask {
   id: string;
-  kind: "questions" | "form" | "url";
+  kind: "questions" | "form" | "url" | "permission";
   message: string;
   questions?: Question[];
   schema?: Schema;
@@ -32,6 +32,31 @@ export interface Ask {
   tool_call_id?: string;
   source: "agent" | "hook";
   at_ms: number;
+  /** `permission` (M29): the tool Claude Code asks to use, its input and
+   * its own "always allow" suggestions. */
+  tool?: string;
+  input?: Record<string, unknown>;
+  suggestions?: Suggestion[];
+  session?: string;
+}
+
+/** One of Claude Code's "always allow" suggestions, as its hook gives it. */
+export interface Suggestion {
+  type: string;
+  rules?: { toolName: string; ruleContent?: string }[];
+  directories?: string[];
+  mode?: string;
+  destination?: string;
+}
+
+/** Who answered a card, and how (M29). */
+export interface Answered {
+  id: string;
+  how: string;
+  who: string;
+  name: string;
+  at_ms: number;
+  headline: string;
 }
 
 /** The JSON Schema subset forms use (MCP's, Codex's, Claude's). */
