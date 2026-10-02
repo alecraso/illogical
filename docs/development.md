@@ -28,6 +28,28 @@ against throwaway daemons, or `just e2e https://home.<tailnet>.ts.net`
 against the running one. `just screenshots` regenerates the images in
 `site/img/` from a throwaway daemon with a scripted demo session.
 
+## Releasing
+
+1. Set the version in the workspace `Cargo.toml` and commit (`just
+   notices` if dependencies changed; CI fails if THIRD_PARTY.md is stale).
+2. `git tag -a vX.Y.Z -m "illogical X.Y.Z" && git push origin vX.Y.Z`.
+   `.forgejo/workflows/release.yml` builds the Linux tarballs on geek and
+   the macOS one on jake-mini, attaches them and `SHA256SUMS` to the
+   release, and bumps the formula in `jhgaylor/homebrew-tap`
+   (`scripts/release`; the tap's deploy key is the `HOMEBREW_TAP_KEY`
+   secret).
+3. `install.sh` picks up the latest release by itself. If the page
+   changed, `just site-deploy` publishes it (wrangler's login on geek).
+
+CI runs on two self-hosted Forgejo runners: geek (`linux-x86_64`, a
+systemd user service, `~/.config/systemd/user/forgejo-runner.service`) and
+jake-mini (`macos-arm64`, a launchd agent,
+`~/Library/LaunchAgents/fyi.inevitable.forgejo-runner.plist`, with
+`ProcessType` Interactive: launchd's throttling of background agents made
+daemon tests time out). Both use the host executor and keep their build in
+`~/.cache/illogical-ci/`. Workflows run on pushes and tags only, never on
+pull requests, since they run on those hosts.
+
 ## Testing iTerm2
 
 Nothing here has seen a real iTerm2 yet. From the Mac, against geek:

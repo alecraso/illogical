@@ -1,0 +1,13 @@
+// The project page: static assets on Cloudflare (Workers static assets, which
+// is what Pages now runs on), at illogical.widgets.wtf. `just site-deploy`.
+// *.illogical.widgets.wtf is the daemon's tailnet-only block sites and is
+// a separate DNS record this never touches.
+{
+  "name": "illogical",
+  "compatibility_date": "2026-10-01",
+  "account_id": "fc4c5df4e1392e524206c4d3fb91505b",
+  "assets": { "directory": "./target/site" },
+  "routes": [{ "pattern": "illogical.widgets.wtf", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false
+}

@@ -86,14 +86,14 @@ screenshots:
 
 # The project page (site/) with install.sh beside it, in target/site.
 site:
-    rm -rf {{target_dir}}/site && mkdir -p {{target_dir}}/site
-    cp -r site/. {{target_dir}}/site/
-    cp scripts/install.sh {{target_dir}}/site/install.sh
+    rm -rf target/site && mkdir -p target/site
+    cp -r site/. target/site/
+    cp scripts/install.sh target/site/install.sh
 
-# Publish the page to Cloudflare Pages (project "illogical", served at
+# Publish the page (wrangler.jsonc: static assets on Cloudflare, at
 # illogical.widgets.wtf). Uses wrangler's login, or CLOUDFLARE_API_TOKEN.
 site-deploy: site
-    pnpm dlx wrangler@4 pages deploy {{target_dir}}/site --project-name illogical --branch main --commit-dirty=true
+    pnpm dlx wrangler@4 deploy
 
 # M4a for real: a wisp sprite installs the static daemon on the tailnet and
 # joins a throwaway home daemon's list; the phone gets vim there. Needs

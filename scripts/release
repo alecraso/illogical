@@ -6,7 +6,9 @@
 #   release sums TAG               SHA256SUMS of the release's tarballs
 #   release homebrew TAG           bump the formula in the Homebrew tap
 #
-# FORGEJO_TOKEN (upload, sums, homebrew) reads and writes releases; HOMEBREW_TAP_KEY (homebrew)
+# FORGEJO_TOKEN (upload, sums) writes releases; assets are downloaded
+# anonymously (the job token can't download from a private repo, so the
+# repo must be public); HOMEBREW_TAP_KEY (homebrew)
 # is an SSH deploy key for the tap.
 set -euo pipefail
 
@@ -54,7 +56,7 @@ case "${1:-}" in
     id=$(release_id "$2")
     dir=$(mktemp -d)
     call "$api/releases/$id/assets" | json "'\n'.join(a['name'] + ' ' + a['browser_download_url'] for a in d if a['name'].endswith('.tar.gz'))" \
-      | while read -r name url; do call -L -o "$dir/$name" "$url"; done
+      | while read -r name url; do curl -fsSL -o "$dir/$name" "$url"; done
     n=$(find "$dir" -name "*.tar.gz" | wc -l | tr -d " ")
     [ "$n" = 3 ] || { echo "expected 3 tarballs, found $n" >&2; exit 1; }
     (cd "$dir" && sha256sum -- *.tar.gz > SHA256SUMS && cat SHA256SUMS)
@@ -62,7 +64,7 @@ case "${1:-}" in
     ;;
   homebrew)
     tag=$2; v=${tag#v}
-    sums=$(call -L "$server/$repo/releases/download/$tag/SHA256SUMS")
+    sums=$(curl -fsSL "$server/$repo/releases/download/$tag/SHA256SUMS")
     sha() { echo "$sums" | awk -v f="illogical-$v-$1.tar.gz" '$2 == f { print $1 }'; }
     key=$(mktemp); trap 'rm -f "$key"' EXIT
     printf '%s\n' "$HOMEBREW_TAP_KEY" > "$key"; chmod 600 "$key"
@@ -83,7 +85,7 @@ case "${1:-}" in
     echo "formula bumped to $v"
     ;;
   *)
-    sed -n '2,11p' "$0" >&2
+    sed -n '2,12p' "$0" >&2
     exit 2
     ;;
 esac
