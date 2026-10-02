@@ -262,7 +262,7 @@ export type Intent =
   | { op: "set_option"; scope: OptionScope; name: string; value: string | null };
 
 export type ClientMsg =
-  | { type: "attach"; panes: { pane: PaneId; offset: number | null }[] }
+  | { type: "attach"; panes: AttachPane[]; zstd?: boolean }
   | { type: "detach"; panes: PaneId[] }
   | { type: "view"; tab: TabId; cols: number; rows: number; zoom: PaneId | null; claim: boolean }
   | { type: "intent"; id: number | null; intent: Intent }
@@ -290,6 +290,16 @@ export const enum FrameKind {
   Output = 1,
   Snapshot = 2,
   Input = 3,
+  /** A snapshot compressed with zstd (for an attach with `zstd`). */
+  SnapshotZstd = 4,
+}
+
+export interface AttachPane {
+  pane: PaneId;
+  offset: number | null;
+  /** At most this many rows of scrollback in a snapshot (absent: all). `0`
+   * after a resync: we keep ours and need only the screen. */
+  history?: number;
 }
 
 export interface Frame {

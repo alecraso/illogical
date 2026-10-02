@@ -30,7 +30,8 @@ use crate::{
     block::{Block, BlockCtx},
     osc::Signal,
     pane::{
-        self, CommandRec, ExecRecord, Notice, NoticeSink, PaneHandle, Setup, Spawn, Start, Subscriber, ToClient, What,
+        self, CommandRec, ExecRecord, Notice, NoticeSink, PaneHandle, Setup, Spawn, Start, Subscriber, ToClient, Want,
+        What,
     },
     provider::Provider,
     push::Push,
@@ -1742,17 +1743,14 @@ impl Daemon {
         };
         let who = sub.principal.clone();
         match msg {
-            ClientMsg::Attach { panes } => {
+            ClientMsg::Attach { panes, zstd } => {
                 for a in panes {
                     if !self.readable(&who, a.pane) {
                         continue;
                     }
                     let floor = self.session_of(a.pane).and_then(|s| self.config.acl.floor(&who, s, a.pane));
                     if let Some(p) = self.panes.get(&a.pane) {
-                        match floor {
-                            Some(f) => p.attach_from(sub.clone(), a.offset, f),
-                            None => p.attach(sub.clone(), a.offset),
-                        }
+                        p.attach_with(sub.clone(), Want { offset: a.offset, history: a.history, zstd, floor });
                     }
                 }
             }

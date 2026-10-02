@@ -100,7 +100,7 @@ async fn type_in(ws: &mut Ws, text: &str) {
 /// Attach to pane 1 and collect its text (snapshot, then live output) until
 /// `done` says so.
 async fn watch(ws: &mut Ws, mut done: impl FnMut(&str) -> bool) -> String {
-    send(ws, ClientMsg::Attach { panes: vec![AttachPane { pane: 1, offset: None }] }).await;
+    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false }).await;
     let mut seen = String::new();
     loop {
         if let In::Frame(f) = recv(ws).await

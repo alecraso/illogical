@@ -11,6 +11,7 @@ import {
   encodeFrame,
   FrameKind,
   type ActRequest,
+  type AttachPane,
   type ClientId,
   type ClientMsg,
   type Delta,
@@ -26,7 +27,8 @@ import {
   type TabId,
   type TabView,
 } from "./proto";
-import { TerminalView } from "./terminal-view";
+import { decompress } from "fzstd";
+import { SCROLLBACK, TerminalView } from "./terminal-view";
 import { makeBlockView, type BlockView } from "./blocks";
 import { E2ESocket, type DaemonRef } from "./e2e/channel.ts";
 import type { DeviceKeys } from "./e2e/keys.ts";
@@ -36,6 +38,10 @@ export interface PaneEntry {
   epoch: number;
   offset: number | null;
   title: string;
+  /** Fell behind and asked for the screen alone: keep the scrollback if a
+   * snapshot comes (the daemon may replay the gap instead). Output already
+   * on its way can still arrive after the resync. */
+  resync?: boolean;
 }
 
 /** A block that isn't a terminal: its type's view and latest state. */
@@ -617,11 +623,11 @@ export class Client {
         this.panes.get(msg.pane)?.view.resize(msg.cols, msg.rows);
         break;
       case "resync": {
+        // Resume from what we have: the daemon replays a small gap, and
+        // otherwise sends the screen alone rather than the history again
+        // (which, behind a flood, puts us behind again).
         const p = this.panes.get(msg.pane);
-        if (p) {
-          p.offset = null;
-          this.send({ type: "attach", panes: [{ pane: msg.pane, offset: null }] });
-        }
+        if (p) this.attach([{ pane: msg.pane, offset: p.offset, history: p.offset === null ? undefined : 0 }]);
         break;
       }
       case "error":
@@ -691,7 +697,7 @@ export class Client {
       this.emit();
       return;
     }
-    const attach: { pane: PaneId; offset: number | null }[] = [];
+    const attach: AttachPane[] = [];
     const created: PaneId[] = [];
     const live = new Set(state.panes.map((p) => p.id));
     for (const [id, entry] of this.panes) {
@@ -747,7 +753,7 @@ export class Client {
         this.activePane.set(tab.id, created[0]);
       }
     }
-    if (attach.length) this.send({ type: "attach", panes: attach });
+    if (attach.length) this.attach(attach);
     this.emit();
   }
 
@@ -772,13 +778,28 @@ export class Client {
     if (this.tab === null || !tabs.includes(this.tab)) this.tab = tabs[0] ?? null;
   }
 
+  /** Attach panes, asking for no more history than a pane keeps and for
+   * compressed snapshots. Only an attach brings a snapshot, so the latest
+   * one says how to take it. */
+  private attach(panes: AttachPane[]) {
+    for (const p of panes) {
+      const entry = this.panes.get(p.pane);
+      if (entry) entry.resync = p.history === 0;
+    }
+    const capped = panes.map((p) => ({ ...p, history: p.history ?? SCROLLBACK }));
+    this.send({ type: "attach", panes: capped, zstd: true });
+  }
+
   private onFrame(buf: ArrayBuffer) {
     const f = decodeFrame(buf);
     const p = this.panes.get(f.pane);
     if (!p) return;
-    if (f.kind === FrameKind.Snapshot) {
-      p.view.reset();
-      p.view.write(f.data);
+    if (f.kind === FrameKind.Snapshot || f.kind === FrameKind.SnapshotZstd) {
+      const data = f.kind === FrameKind.SnapshotZstd ? decompress(f.data) : f.data;
+      if (p.resync) p.view.skipGap();
+      else p.view.reset();
+      p.resync = false;
+      p.view.write(data);
       p.offset = f.offset;
       return;
     }
@@ -787,7 +808,7 @@ export class Client {
     if (f.offset > p.offset) {
       // A gap we can't fill: start over from a snapshot.
       p.offset = null;
-      this.send({ type: "attach", panes: [{ pane: f.pane, offset: null }] });
+      this.attach([{ pane: f.pane, offset: null }]);
       return;
     }
     if (f.offset < p.offset) {

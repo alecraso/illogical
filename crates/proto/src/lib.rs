@@ -26,8 +26,13 @@ pub mod keys;
 pub enum ClientMsg {
     /// Start (or resume) receiving panes. The server replays from each
     /// pane's offset when it still has the bytes, otherwise it sends a
-    /// snapshot.
-    Attach { panes: Vec<AttachPane> },
+    /// snapshot. With `zstd`, snapshots may come compressed
+    /// ([`FrameKind::SnapshotZstd`]).
+    Attach {
+        panes: Vec<AttachPane>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        zstd: bool,
+    },
     /// Stop receiving panes.
     Detach { panes: Vec<PaneId> },
     /// The client is showing `tab` in a `cols`x`rows` cell area, optionally
@@ -556,6 +561,18 @@ pub struct AttachPane {
     /// Offset just past the last byte the client has, or `None` for a fresh
     /// view.
     pub offset: Option<u64>,
+    /// At most this many rows of scrollback in a snapshot: what the client
+    /// keeps (`None`: all of it). After a [`ServerMsg::Resync`], `0`: the
+    /// client keeps what it has and needs only the screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<u32>,
+}
+
+impl AttachPane {
+    /// From `offset`, with the whole history if a snapshot is needed.
+    pub fn new(pane: PaneId, offset: Option<u64>) -> Self {
+        Self { pane, offset, history: None }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -660,10 +677,15 @@ pub enum FrameKind {
     /// Server -> client: PTY output starting at `offset`.
     Output = 1,
     /// Server -> client: VT bytes that reproduce the pane as of `offset`.
-    /// The client resets its terminal before writing them.
+    /// The client resets its terminal before writing them, unless it asked
+    /// for the screen only after a resync ([`AttachPane::history`] `0`): then
+    /// it keeps its scrollback and clears the screen and modes.
     Snapshot = 2,
     /// Client -> server: input for the pane (`offset` is unused).
     Input = 3,
+    /// Server -> client: a [`FrameKind::Snapshot`] compressed with zstd, for
+    /// a client that attached with `zstd`.
+    SnapshotZstd = 4,
 }
 
 impl TryFrom<u8> for FrameKind {
@@ -673,6 +695,7 @@ impl TryFrom<u8> for FrameKind {
             1 => Ok(Self::Output),
             2 => Ok(Self::Snapshot),
             3 => Ok(Self::Input),
+            4 => Ok(Self::SnapshotZstd),
             k => Err(DecodeError::UnknownKind(k)),
         }
     }
@@ -750,8 +773,16 @@ mod tests {
         let m: ClientMsg =
             serde_json::from_str(r#"{"type":"attach","panes":[{"pane":1,"offset":null},{"pane":2,"offset":42}]}"#)
                 .unwrap();
-        let panes = vec![AttachPane { pane: 1, offset: None }, AttachPane { pane: 2, offset: Some(42) }];
-        assert_eq!(m, ClientMsg::Attach { panes });
+        let panes = vec![AttachPane::new(1, None), AttachPane::new(2, Some(42))];
+        assert_eq!(m, ClientMsg::Attach { panes, zstd: false });
+        // A client that keeps 10k rows and reads compressed snapshots.
+        let m: ClientMsg =
+            serde_json::from_str(r#"{"type":"attach","panes":[{"pane":1,"offset":7,"history":10000}],"zstd":true}"#)
+                .unwrap();
+        let panes = vec![AttachPane { pane: 1, offset: Some(7), history: Some(10_000) }];
+        assert_eq!(m, ClientMsg::Attach { panes, zstd: true });
+        let f = Frame { kind: FrameKind::SnapshotZstd, pane: 1, offset: 9, data: vec![1, 2] };
+        assert_eq!(Frame::decode(&f.encode()), Ok(f));
         let s = serde_json::to_string(&ServerMsg::Resync { pane: 3 }).unwrap();
         assert_eq!(s, r#"{"type":"resync","pane":3}"#);
         let m: ClientMsg =

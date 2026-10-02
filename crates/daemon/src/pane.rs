@@ -45,6 +45,8 @@ use crate::{
 /// many bytes of the end is replayed instead of snapshotted.
 const RING_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REPLAY_BYTES: u64 = 1024 * 1024;
+/// Smaller snapshots go uncompressed: not worth a client's decoder.
+const MIN_ZSTD_BYTES: usize = 4096;
 /// Frames queued per client before it counts as too slow and is resynced.
 pub const CLIENT_QUEUE: usize = 1024;
 /// Checkpoint after this much output, or after this long idle with output
@@ -195,8 +197,7 @@ enum Cmd {
     },
     Attach {
         sub: Subscriber,
-        offset: Option<u64>,
-        floor: Option<u64>,
+        want: Want,
     },
     Detach {
         client: ClientId,
@@ -227,14 +228,26 @@ pub struct PaneHandle {
     tx: Sender<Cmd>,
 }
 
+/// What a subscriber asks of an attach.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Want {
+    /// Just past the last byte it has: replay from there if the log can.
+    pub offset: Option<u64>,
+    /// At most this many rows of scrollback in a snapshot.
+    pub history: Option<u32>,
+    /// It reads [`FrameKind::SnapshotZstd`].
+    pub zstd: bool,
+    /// It may see output only from here on (M13: a "from now" share):
+    /// below it, the screen and no history.
+    pub floor: Option<u64>,
+}
+
 impl PaneHandle {
     pub fn attach(&self, sub: Subscriber, offset: Option<u64>) {
-        let _ = self.tx.send(Cmd::Attach { sub, offset, floor: None });
+        self.attach_with(sub, Want { offset, ..Want::default() });
     }
-    /// Attach someone who may see output only from `floor` on (M13: a
-    /// "from now" share): below it they get the screen, not history.
-    pub fn attach_from(&self, sub: Subscriber, offset: Option<u64>, floor: u64) {
-        let _ = self.tx.send(Cmd::Attach { sub, offset, floor: Some(floor) });
+    pub fn attach_with(&self, sub: Subscriber, want: Want) {
+        let _ = self.tx.send(Cmd::Attach { sub, want });
     }
     pub fn detach(&self, client: ClientId) {
         let _ = self.tx.send(Cmd::Detach { client });
@@ -916,7 +929,7 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
                 }
                 st.input(data)
             }
-            Cmd::Attach { sub, offset, floor } => st.attach(sub, offset, floor),
+            Cmd::Attach { sub, want } => st.attach(sub, want),
             Cmd::Detach { client } => {
                 st.subs.remove(&client);
             }
@@ -1502,10 +1515,11 @@ impl State {
         }
     }
 
-    fn attach(&mut self, sub: Subscriber, offset: Option<u64>, floor: Option<u64>) {
+    fn attach(&mut self, sub: Subscriber, want: Want) {
         if self.closing {
             return;
         }
+        let Want { offset, history, zstd, floor } = want;
         let end = self.ring.end();
         let (cols, rows) = self.engine.size();
         // Nothing from before the floor: no replay from below it, and the
@@ -1516,8 +1530,16 @@ impl State {
             Some(bytes) if bytes.is_empty() => None,
             Some(bytes) => Some(Frame { kind: FrameKind::Output, pane: self.id, offset: offset.unwrap(), data: bytes }),
             None => {
-                let data = if floor.is_some() { self.engine.screen_snapshot() } else { self.engine.snapshot() };
-                Some(Frame { kind: FrameKind::Snapshot, pane: self.id, offset: end, data })
+                let history = if floor.is_some() { Some(0) } else { history.map(|h| h as usize) };
+                let data = self.engine.snapshot_history(history);
+                // Snapshots are mostly runs of the same few escape sequences
+                // (S10: 3.9 MB to 183 KB gzipped).
+                let packed =
+                    (zstd && data.len() >= MIN_ZSTD_BYTES).then(|| zstd::encode_all(&data[..], 3).ok()).flatten();
+                Some(match packed {
+                    Some(data) => Frame { kind: FrameKind::SnapshotZstd, pane: self.id, offset: end, data },
+                    None => Frame { kind: FrameKind::Snapshot, pane: self.id, offset: end, data },
+                })
             }
         };
         debug!(pane = self.id, client = sub.client, ?offset, end, kind = ?frame.as_ref().map(|f| f.kind), "attach");

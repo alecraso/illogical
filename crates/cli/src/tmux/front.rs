@@ -470,7 +470,7 @@ impl Front {
                 pv.live = Live::Resync;
             }
         }
-        self.conn.send(&ClientMsg::Attach { panes: vec![AttachPane { pane, offset: None }] })
+        self.conn.send(&ClientMsg::Attach { panes: vec![mirror_attach(pane)], zstd: false })
     }
 
     /// Follow the attached session's panes: attach new terminals, forget
@@ -509,13 +509,13 @@ impl Front {
             }
             self.panes.insert(p, PaneView::new(kind, size));
             if kind == BlockType::Terminal {
-                attach.push(AttachPane { pane: p, offset: None });
+                attach.push(mirror_attach(p));
             } else {
                 self.blocks_dirty.insert(p);
             }
         }
         if !attach.is_empty() {
-            self.conn.send(&ClientMsg::Attach { panes: attach })?;
+            self.conn.send(&ClientMsg::Attach { panes: attach, zstd: false })?;
         }
         // Blocks follow their pane's size.
         let sizes: Vec<(PaneId, (u16, u16))> =
@@ -555,7 +555,8 @@ impl Front {
             Data::Frame(f) => f,
         };
         match f.kind {
-            FrameKind::Input => {}
+            // Never asked for compressed snapshots.
+            FrameKind::Input | FrameKind::SnapshotZstd => {}
             FrameKind::Snapshot => {
                 let mut m = GhosttyEngine::mirror(pv.size.0.max(1), pv.size.1.max(1), HISTORY);
                 m.feed(&f.data);
@@ -862,4 +863,9 @@ pub fn shell_name() -> String {
         .and_then(|s| s.rsplit('/').next().map(str::to_owned))
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "shell".into())
+}
+
+/// A fresh attach, with no more history than a mirror keeps.
+fn mirror_attach(pane: PaneId) -> AttachPane {
+    AttachPane { pane, offset: None, history: Some(HISTORY as u32) }
 }
