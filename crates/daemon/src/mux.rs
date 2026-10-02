@@ -2028,15 +2028,20 @@ impl Daemon {
         };
         let who = sub.principal.clone();
         match msg {
-            ClientMsg::Attach { panes, zstd } => {
+            ClientMsg::Attach { panes, zstd, acks } => {
                 for a in panes {
                     if !self.readable(&who, a.pane) {
                         continue;
                     }
                     let floor = self.session_of(a.pane).and_then(|s| self.config.acl.floor(&who, s, a.pane));
                     if let Some(p) = self.panes.get(&a.pane) {
-                        p.attach_with(sub.clone(), Want { offset: a.offset, history: a.history, zstd, floor });
+                        p.attach_with(sub.clone(), Want { offset: a.offset, history: a.history, zstd, floor, acks });
                     }
+                }
+            }
+            ClientMsg::Ack { pane, offset } => {
+                if let Some(p) = self.panes.get(&pane) {
+                    p.ack(client, offset);
                 }
             }
             ClientMsg::Detach { panes } => {

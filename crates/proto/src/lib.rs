@@ -27,12 +27,19 @@ pub enum ClientMsg {
     /// Start (or resume) receiving panes. The server replays from each
     /// pane's offset when it still has the bytes, otherwise it sends a
     /// snapshot. With `zstd`, snapshots may come compressed
-    /// ([`FrameKind::SnapshotZstd`]).
+    /// ([`FrameKind::SnapshotZstd`]). With `acks`, the client sends
+    /// [`ClientMsg::Ack`] as it draws, and the server holds back output more
+    /// than a window past the last one (#52).
     Attach {
         panes: Vec<AttachPane>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         zstd: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        acks: bool,
     },
+    /// Everything of `pane` before `offset` has been drawn (for an attach
+    /// with `acks`): from a snapshot's offset on, about every 64 KB.
+    Ack { pane: PaneId, offset: u64 },
     /// Stop receiving panes.
     Detach { panes: Vec<PaneId> },
     /// The client is showing `tab` in a `cols`x`rows` cell area, optionally
@@ -782,13 +789,15 @@ mod tests {
             serde_json::from_str(r#"{"type":"attach","panes":[{"pane":1,"offset":null},{"pane":2,"offset":42}]}"#)
                 .unwrap();
         let panes = vec![AttachPane::new(1, None), AttachPane::new(2, Some(42))];
-        assert_eq!(m, ClientMsg::Attach { panes, zstd: false });
+        assert_eq!(m, ClientMsg::Attach { panes, zstd: false, acks: false });
         // A client that keeps 10k rows and reads compressed snapshots.
         let m: ClientMsg =
             serde_json::from_str(r#"{"type":"attach","panes":[{"pane":1,"offset":7,"history":10000}],"zstd":true}"#)
                 .unwrap();
         let panes = vec![AttachPane { pane: 1, offset: Some(7), history: Some(10_000) }];
-        assert_eq!(m, ClientMsg::Attach { panes, zstd: true });
+        assert_eq!(m, ClientMsg::Attach { panes, zstd: true, acks: false });
+        let m: ClientMsg = serde_json::from_str(r#"{"type":"ack","pane":1,"offset":65536}"#).unwrap();
+        assert_eq!(m, ClientMsg::Ack { pane: 1, offset: 65536 });
         let f = Frame { kind: FrameKind::SnapshotZstd, pane: 1, offset: 9, data: vec![1, 2] };
         assert_eq!(Frame::decode(&f.encode()), Ok(f));
         let s = serde_json::to_string(&ServerMsg::Resync { pane: 3 }).unwrap();

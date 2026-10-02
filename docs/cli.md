@@ -71,82 +71,96 @@ after the send. The same calls are an HTTP API (`/api/...`, documented in
 `crates/proto/src/api.rs`) on the Unix socket and, behind the usual access
 checks, over the tailnet.
 
-**Claude Code** can tell you when it needs you. In `~/.claude/settings.json`:
+## Claude Code in a pane
+
+Claude Code in an ordinary pane can tell you when it needs you, put its
+questions and permission prompts on cards anyone on the team who may
+answer can answer (from the pane, the swarm's rail or a notification), and
+take its next instruction from them. All of it is hooks, in
+`~/.claude/settings.json`:
 
 ```json
 {
   "hooks": {
     "Notification": [{ "hooks": [{ "type": "command", "command": "illogical attention needs-input" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "illogical attention done" }] }]
-  }
-}
-```
-
-Outside an illogical pane the command does nothing, so the hooks are safe
-everywhere. The Notification hook's message ("Claude needs your permission
-to use Bash") becomes the headline `illogical attention` shows. Without
-them, an agent going quiet mid-command is the fallback.
-
-**Claude Code's questions** (AskUserQuestion) can be answered from a card
-beside its terminal, on any client and from the phone, instead of its
-keyboard picker. Add a `PreToolUse` hook beside the others:
-
-```json
-{
-  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "illogical attention done" }] },
+      { "hooks": [{ "type": "command", "command": "illogical inbox", "asyncRewake": true, "timeout": 86400 }] }
+    ],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "illogical inbox", "asyncRewake": true, "timeout": 86400 }] }],
     "PreToolUse": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [{ "type": "command", "command": "illogical ask", "timeout": 604800 }]
-      }
-    ]
-  }
-}
-```
-
-`illogical ask` shows the questions as a card over the pane (the pane needs
-you, with a push notification), waits, and hands your answers to Claude
-Code, which then never shows its picker. *Answer in terminal* on the card
-gives you the picker instead; Esc or Ctrl-C in Claude Code withdraws the
-card. The timeout (7 days, in seconds) is how long a question may wait;
-Claude Code's default would give up after 10 minutes and show its picker.
-If the daemon restarts while it waits, the card comes back. Outside an
-illogical pane it does nothing, and Claude Code shows its picker as usual.
-
-**Team answers.** Claude Code's tool permission prompts can be answered by
-anyone who may edit the pane's session, from a card beside the terminal,
-the "needs you" list, or a notification, and anyone who may drive the pane
-can send the agent its next instruction. Beside the `ask` hook:
-
-```json
-{
-  "hooks": {
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "illogical ask", "timeout": 604800 }] },
+      { "hooks": [{ "type": "command", "command": "illogical hook" }] }
+    ],
     "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "illogical hook", "timeout": 604800 }] }],
-    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
     "PostToolUse": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
     "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "illogical inbox", "asyncRewake": true, "timeout": 86400 }] }],
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "illogical inbox", "asyncRewake": true, "timeout": 86400 }] }]
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }]
   }
 }
 ```
 
-A permission prompt becomes a card with the tool, its input (the command,
-the file and its diff) and Claude Code's own "always allow" suggestions:
-*Allow*, *Always: …* (keeps that rule, as the terminal's option would), or
-*Deny* with a message Claude reads. Claude Code shows its own dialog too,
-and whichever answers first wins: a "Yes" in the terminal closes the card
-when the tool runs, "No" or Esc withdraws it. The card then says who
-answered ("Allowed by Sam, 14:02"), and so do the pane's history (`illogical
-history`, `illogical log %N --who`) and the audit log. Viewers see the card
-but can't answer it.
+Outside an illogical pane every one of these does nothing, so the hooks
+are safe everywhere. Take only the lines you want: each group below works
+on its own.
 
-After an answer, the card offers *Send a follow-up*. It reaches Claude Code
-through its `inbox` hook, which waits in the background after every turn
-and wakes it with the text as its next instruction, so it never mixes with
-whatever the driver has half typed. It's recorded as its sender's input.
-On someone's own machine a teammate needs their trust first (the card
-offers to ask for 30 minutes); on a team's machine or a VM, team editors
-send straight away. People other than the owner choose which agents
-notify them in the session menu ("Notify me about its agents").
+**Attention** (`Notification`, the first `Stop`). The Notification hook's
+message ("Claude needs your permission to use Bash") becomes the headline
+`illogical attention` shows. Without these, an agent going quiet
+mid-command is the fallback.
+
+**Questions** (`PreToolUse` on `AskUserQuestion`). `illogical ask` shows
+Claude Code's questions as a card over the pane (the pane needs you, with
+a push notification), waits, and hands your answers to Claude Code, which
+then never shows its picker. *Answer in terminal* on the card gives you the
+picker instead; Esc or Ctrl-C in Claude Code withdraws the card. The
+timeout (7 days, in seconds) is how long a question may wait; Claude
+Code's default would give up after 10 minutes and show its picker. If the
+daemon restarts while it waits, the card comes back.
+
+**Permission prompts** (`PermissionRequest`, with `PreToolUse`,
+`PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit` so the card can
+tell when the terminal answered first). A permission prompt becomes a card
+with the tool, its input (the command, the file and its diff) and Claude
+Code's own "always allow" suggestions: *Allow*, *Always: …* (keeps that
+rule, as the terminal's option would), or *Deny* with a message Claude
+reads. Claude Code shows its own dialog too, and whichever answers first
+wins: a "Yes" in the terminal closes the card when the tool runs, "No" or
+Esc withdraws it. AskUserQuestion is left to `illogical ask`.
+
+Anyone who may edit the pane's session may answer, from the card, the
+swarm's rail, `illogical`'s API or a notification. The card then says who
+answered ("Allowed by Sam, 14:02"), and so do the pane's history
+(`illogical history`, `illogical log %N --who`) and the audit log. Viewers
+see the card but can't answer it.
+
+**Follow-ups** (`illogical inbox` on `Stop` and `SessionStart`, in the
+background with `asyncRewake`). After an answer, the card offers *Send a
+follow-up*. It reaches Claude Code through the inbox hook, which waits
+after every turn and wakes it with the text as its next instruction, so it
+never mixes with whatever the driver has half typed. It's recorded as its
+sender's input. Who may send one is who may drive the pane: on someone's
+own machine a teammate needs their trust first (the card offers to ask for
+30 minutes); on a team's machine or a VM, team editors send straight away.
+
+**From a script:**
+
+```
+illogical attention --json                    # every pane that wants you: ask, failed, exited, input, done
+curl --unix-socket "$ILLOGICAL_SOCK" -X POST localhost/api/attention/act \
+  -H 'content-type: application/json' -d '{"action":"allow","panes":[3,7]}'
+curl --unix-socket "$ILLOGICAL_SOCK" -X POST localhost/api/panes/3/followup \
+  -H 'content-type: application/json' -d '{"text":"now run the tests"}'
+```
+
+`/api/attention/act` takes `action` (`allow`, `deny`, `answer`,
+`dismiss`) and a `pane` or a list of `panes`, plus `option: "always"` and
+`suggestion: N` (which of Claude Code's suggestions) for allow, `message`
+for deny and `content` (the card's fields) for answer. Each pane is checked
+on its own (editor on its session) and answered on its own.
+
+**Notifications.** The owner is always told. Anyone else who may answer
+chooses which agents notify them: *Notify me about its agents* in the
+session menu, or `POST /api/notify` with `{"session": N, "on": true}` (no
+session: everything they may edit there). This holds for the daemon's own
+push and for pushes through illogical control.
