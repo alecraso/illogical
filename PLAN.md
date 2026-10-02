@@ -711,6 +711,9 @@ is deferred.
   - (b) Superlogical's model, where daemons own terminals only and clients
     arrange tabs and splits. That gives up M1's "same layout live on every
     device".
+- **(a) is built (#17, 2026-10-02):** the home daemon's tabs and splits can
+  hold panes from other hosts; each host still owns its own layout too. See
+  *#17* below.
 
 **Identity.** A daemon authorizes the connecting tailnet identity (from
 `Tailscale-User-Login` behind serve, or by asking tailscaled who is connecting
@@ -815,6 +818,34 @@ instead.
     where an agent's secrets end up. The likely answer is to encrypt synced
     segments with a key held by the home daemon, and later fetch that key with
     the secrets-manager identity under Risks.
+
+#### #17: mixed-host tabs (M4 option (a))
+
+**Done 2026-10-02, apart from separate machines and networks.**
+
+- **What landed:**
+  - **A remote block** (`BlockType::Remote`, `crates/daemon/src/remote.rs`): a leaf of the home daemon's tree whose config is `{host, pane}`, a host in its list and the pane's id there. It's a block, so `layout.json`, restore, split, move, dock, break out and close all work as for any block; the daemon never talks to the other host about it. `/api/blocks` takes `type: remote` only for a host in the list, never the daemon itself.
+  - **The web client** (`web/src/blocks/remote.ts`) draws it: one connection per host serves every remote pane on it (a `Client` with `only`, which attaches just those panes), and the pane's xterm sits in the block's slot, so moving it never redraws it. The slot's badge names the host; the tab gets a host tag. While the host can't be reached the terminal greys out under "box is unreachable · reconnecting…", and the connection's usual retries bring it back by itself.
+  - **Making one:** *New tab on box* (the `+` button's right-click menu) and *Split right on box* (a pane's menu); the page asks the host for a shell (`/api/run`, in a session named after the home daemon), then records its place (`/api/blocks`). If recording fails it closes the pane there. `illogical --host box run --home [--split %N] [cmd]` does the same from the CLI.
+  - **Sizes:** the window that sizes the home tab sends the host the size of the pane's place (`view`, zoomed if the host's tab has other panes); typing in it claims the home tab first, so "last input wins" holds across both.
+  - **Closing:** closing it here (the pane, its tab or its session) closes it on the host too, from the web and from `illogical close`; a pane its host closed leaves the layout here, removed by the first client that sees it gone.
+  - `illogical run --session NAME` with a session that doesn't exist yet now starts that session with the pane itself, not a shell beside it.
+  - The fleet and the swarm skip remote blocks (the host lists the pane itself); `illogical tui` names the host and pane in their place.
+- **Decisions (2026-10-02, the issue's "To decide"):**
+  - **What the tree stores:** a block of type `remote` holding `{host, pane}` and nothing else. It isn't `PaneInfo.host`, which names a machine of this daemon's (M3b): another daemon is named by its place in the host list, and its pane by that daemon's id. A block, because the block machinery already persists, restores, moves and closes leaves that aren't PTYs; nothing in core changed. While the host is unreachable the slot keeps the last screen, greyed, with a note; a host no longer in the list says so; a pane the host won't show you (M12 roles) says it isn't shared with you.
+  - **Creating one:** the client asks the host, then records it on the home daemon, rather than the home daemon asking the host. The home daemon has no credential for another daemon (tailnet identity is the person's, M4's per-host tokens go the other way), the client already reaches each host directly, and it keeps the home daemon a directory that never talks to hosts on a client's behalf. A client that dies in between leaves a pane in the host's own layout, where it can be seen and closed.
+  - **Who owns size, restart policy and history:** the host, as for any of its panes. The remote block has no policy, log or PTY. Its pane sits in a session named after the home daemon on the host, so the host's own page shows where it came from.
+  - **Closing:** the daemon closes only the reference; clients close the pane on its host too (the web for the pane, its tab or its session; `illogical close`). If the host can't be reached the pane stays open there, and the client says so. When the host closes it first (it exited, or was closed on the host's page), the first client to see it gone closes the reference: at once if it was seen there before, after 5 s if never (the host's layout can arrive after the home daemon's), and never when the client isn't the host's owner (a guest can't see everything).
+  - **CLI:** `--home` rather than the issue's `--tab`: what changes is whose layout the pane lands in, and `--split %N` (a pane here) works with it as well as a tab.
+- **Tests:**
+  - `crates/daemon/tests/hosts.rs`: `run --home` makes a tab here and a pane there in a session named `home` (and nothing else in it); `--split` too; unknown hosts and the daemon itself are refused; the daemon closes only the reference, `illogical close` both. A unit test for the config.
+  - `web/e2e/remote.spec.ts` (two throwaway daemons on 7850–7851): one tab bar holds a home tab and a tab on the other host; a split of the home tab holds a shell there; the pane's size there is its place here; a second window shows the same layout; dragging the remote pane by its grip moves it in both windows without redrawing it, and breaks it out to a tab and back; stopping the other daemon shows both windows "unreachable" while home's pane works, and restarting it brings the pane back by itself with its scrollback; closing it here closes it there; `exit` in it removes it here.
+- **Not covered:**
+  - separate machines and networks (loopback daemons, as for M4a); a Mac's daemon in particular;
+  - control mode (M17): remote panes need the home daemon's page and its host list;
+  - the phone's key bar and the terminal-only menu items (restart policy, share link, search) for remote panes: they're on the host's own page;
+  - a host whose state was wiped reuses pane ids, so an old reference could show a new pane;
+  - a remote pane on a sandbox host keeps that sandbox awake while a page shows the home layout.
 
 ### M6: non-terminal blocks (after M4b; M5 is independent of it)
 

@@ -586,6 +586,18 @@ pub enum BlockType {
     Diff,
     /// A file on the block's machine, read-only, followed live (M11).
     File,
+    /// A pane that lives on another daemon in the host list (#17, M4's
+    /// option (a)): this layout holds its place, and clients reach its
+    /// terminal on that daemon directly. Its config is [`RemoteRef`].
+    Remote,
+}
+
+/// Where a remote block's pane lives (#17): a host in the home daemon's
+/// list, and the pane's id there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRef {
+    pub host: String,
+    pub pane: PaneId,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

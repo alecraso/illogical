@@ -99,10 +99,15 @@ enum Command {
         /// when the pane closes. Without a command: a shell.
         #[arg(long, conflicts_with_all = ["vm", "vm_tab", "image"])]
         sandbox: Option<String>,
+        /// With --host: run it on that host but put it in this daemon's
+        /// layout (a tab here, or beside --split, a pane here), as a remote
+        /// pane. On the host it's in a session named after this daemon.
+        #[arg(long, conflicts_with_all = ["join", "vm_tab"])]
+        home: bool,
         /// One argument is a shell command line (`'make && ./app'`);
         /// several are a program and its arguments, quoted as given. None
-        /// (with --cwd, --join or a VM): a shell.
-        #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab", "sandbox", "join", "cwd"])]
+        /// (with --cwd, --join, --home or a VM): a shell.
+        #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab", "sandbox", "join", "cwd", "home"])]
         command: Vec<String>,
     },
     /// Machines that panes run on (VM panes).
@@ -777,6 +782,8 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
     };
     REMOTE.store(!matches!(sock, http::Target::Socket(_)), std::sync::atomic::Ordering::Relaxed);
     let json_out = cli.json;
+    // `run --home`: the local daemon too, and the host's name in its list.
+    let (local_sock, host_name) = (socket(&cli), cli.host.clone());
     // `host=` for reading synced history.
     let synced_q = |flag: Option<String>| -> Option<String> {
         flag.or(gone.clone()).map(|h| format!("host={}", enc(if h == "all" { "*" } else { &h })))
@@ -1313,9 +1320,52 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Fs { cmd } => return fs::run(&sock, cmd, json_out, REMOTE.load(std::sync::atomic::Ordering::Relaxed)),
         Command::Cd { pane, dir } => return fs::cd(&sock, pane.0, &dir),
-        Command::Run { session, split, join, cwd, policy: pol, wait, vm, vm_tab, image, sandbox, command } => {
+        Command::Run { session, split, join, cwd, policy: pol, wait, vm, vm_tab, image, sandbox, home, command } => {
             if image.is_some() && !vm && !vm_tab {
                 anyhow::bail!("--image is for --vm or --vm-tab");
+            }
+            if home {
+                let Some(host) = host_name.as_deref().filter(|h| !h.contains("://")) else {
+                    anyhow::bail!("--home needs --host NAME, a host in this daemon's list");
+                };
+                let local = http::Target::Socket(local_sock);
+                let this = request(&local, "GET", "/api/hosts", None)?.json()?["this"]
+                    .as_str()
+                    .context("this daemon has no name")?
+                    .to_owned();
+                // On the host first, in a session named after us...
+                let body = json!({
+                    "command": (!command.is_empty()).then(|| shell_command(&command)),
+                    "vm": vm,
+                    "image": image,
+                    "sandbox": sandbox,
+                    "session": this,
+                    "cwd": cwd,
+                    "policy": pol.as_deref().map(policy).transpose()?,
+                });
+                let v = request(&sock, "POST", "/api/run", Some(&body))?.json()?;
+                let pane = v["pane"].as_u64().context("no pane in the answer")?;
+                // ...then its place in our layout.
+                let from = std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok());
+                let body = json!({
+                    "type": "remote",
+                    "config": {"host": host, "pane": pane},
+                    "session": session,
+                    "split": split.map(|p| p.0),
+                    "from_pane": from,
+                });
+                let b = request(&local, "POST", "/api/blocks", Some(&body))?.json()?;
+                let block = b["block"].as_u64().context("no block in the answer")?;
+                if json_out {
+                    print_json(&json!({"block": block, "host": host, "pane": pane}));
+                } else {
+                    println!("%{block} ({host} %{pane})");
+                }
+                if wait {
+                    let w = request(&sock, "GET", &format!("/api/panes/{pane}/wait?until=exit"), None)?.json()?;
+                    return Ok(w["code"].as_i64().unwrap_or(1) as i32);
+                }
+                return Ok(0);
             }
             // A VM (or another daemon's host) has none of this host's
             // directories.
@@ -1519,6 +1569,21 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Close { panes } => {
             for p in panes {
+                // A remote pane (#17): close it on its host too. If that
+                // can't be reached, it stays in the host's own layout.
+                let remote = match request(&sock, "GET", &format!("/api/blocks/{}", p.0), None).and_then(|r| r.json()) {
+                    Ok(d) if d["info"]["type"] == "remote" && !REMOTE.load(std::sync::atomic::Ordering::Relaxed) => {
+                        Some((d["state"]["host"].as_str().unwrap_or_default().to_owned(), d["state"]["pane"].clone()))
+                    }
+                    _ => None,
+                };
+                if let Some((host, pane)) = remote {
+                    let closed = hosts::target(local_sock.clone(), Some(&host))
+                        .and_then(|t| request(&t, "POST", &format!("/api/panes/{pane}/close"), None)?.json());
+                    if let Err(e) = closed {
+                        eprintln!("illogical: %{pane} on {host} stays open there: {e:#}");
+                    }
+                }
                 request(&sock, "POST", &format!("/api/panes/{}/close", p.0), None)?.json()?;
             }
         }

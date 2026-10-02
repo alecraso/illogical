@@ -14,7 +14,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
-import { openChanges, openEditor, openPort } from "../blocks";
+import { newRemote, openChanges, openEditor, openPort, remoteHosts } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
@@ -194,6 +194,8 @@ function TopBar({
               { label: "New tab", run: () => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null }) },
               { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
               { label: "In a directory…", disabled: client.active() === undefined, run: () => openPicker(client, client.active()) },
+              // #17: a tab here whose shell runs on another host.
+              ...remoteHosts().map((h): MenuItem => ({ label: `New tab on ${h}`, run: () => void newRemote(client, h, { session: session.id }) })),
             ])
           }
         >
@@ -283,6 +285,7 @@ function TabItem({
           </span>
         )
       )}
+      <RemoteTag client={client} tab={tab} />
       <span class="tab-label">{label}</span>
       <TabPeople client={client} tab={tab.id} />
       <AttentionBadge {...tabAttention(client, tab)} client={client} />
@@ -298,6 +301,23 @@ function TabItem({
         ×
       </button>
     </div>
+  );
+}
+
+/** The other hosts a tab's panes run on (#17). */
+function RemoteTag({ client, tab }: { client: Client; tab: TabView }) {
+  const hosts = [
+    ...new Set(
+      paneIds(tab)
+        .map((p) => client.blocks.get(p)?.state as { host?: string } | null | undefined)
+        .flatMap((s) => (s?.host ? [s.host] : [])),
+    ),
+  ];
+  if (!hosts.length) return null;
+  return (
+    <span class="host-tag remote" title={`Runs on ${hosts.join(", ")}`}>
+      {hosts.join(" ")}
+    </span>
   );
 }
 
@@ -486,9 +506,31 @@ function PaneSlot({
     });
   }, [entry, client, id]);
 
+  // #17: a shell on another host, beside this pane.
+  const elsewhere = (): MenuItem[] =>
+    remoteHosts().map((h) => ({ label: `Split right on ${h}`, run: () => void newRemote(client, h, { split: id }) }));
+
   const menu = (e: MouseEvent) => {
     // A program that tracks the mouse gets right-clicks; Shift reaches us.
     if (entry?.view.mouseTracking && !e.shiftKey) return;
+    if (info?.type === "remote") {
+      // Its terminal is its host's: here, only where it is.
+      const at = client.blocks.get(id)?.state as { host: string; pane: PaneId } | null;
+      openMenu(e, [
+        ...(at ? [{ header: `%${at.pane} on ${at.host}` } as MenuItem] : []),
+        { label: "Split right", run: () => client.intent({ op: "split", pane: id, edge: "right" }) },
+        { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
+        ...elsewhere(),
+        "separator",
+        {
+          label: "Move to new tab",
+          disabled: (client.tabOfPane(id) && paneIds(client.tabOfPane(id)!).length < 2) ?? true,
+          run: () => client.intent({ op: "break_pane", pane: id, session: client.session!, index: null }),
+        },
+        { label: "Close pane", danger: true, run: () => client.intent({ op: "close_pane", pane: id }) },
+      ]);
+      return;
+    }
     const cwd = client.cwd(id);
     const tabId = client.tabOfPane(id)?.id;
     const tabMachine = tabId === undefined ? undefined : client.tabMachine(tabId);
@@ -499,6 +541,7 @@ function PaneSlot({
       { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
       ...(tabMachine ? [{ label: "Split (local)", run: () => client.intent({ op: "split", pane: id, edge: "right", local: true }) } as MenuItem] : []),
       { label: "New VM pane on the right", run: () => void client.newVm({ split: id }) },
+      ...elsewhere(),
       {
         label: "Open a web page…",
         run: async () => {

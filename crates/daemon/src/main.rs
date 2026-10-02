@@ -31,6 +31,7 @@ mod procinfo;
 mod provider;
 mod provider_tunnel;
 mod push;
+mod remote;
 mod resident;
 mod review;
 mod sandbox;

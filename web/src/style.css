@@ -813,6 +813,61 @@ button {
   color: var(--fg);
 }
 
+/* A pane on another host (#17): its terminal, which host, and why it isn't
+   showing when it can't be. */
+.block-remote .term-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.block-remote[data-state="unreachable"] .term-host,
+.block-remote[data-state="gone"] .term-host {
+  opacity: 0.35;
+}
+
+.remote-badge {
+  position: absolute;
+  z-index: 5;
+  right: 6px;
+  bottom: 4px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: #94e2d522;
+  color: #94e2d5;
+  border: 1px solid #94e2d566;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.block-remote[data-state="unreachable"] .remote-badge,
+.block-remote[data-state="gone"] .remote-badge,
+.block-remote[data-state="unknown"] .remote-badge {
+  color: #f38ba8;
+  border-color: #f38ba866;
+  background: #f38ba822;
+}
+
+.remote-note {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  color: var(--fg);
+  pointer-events: none;
+}
+
+.host-tag.remote {
+  color: #94e2d5;
+  border-color: #94e2d566;
+}
+
 .browser {
   display: flex;
   flex-direction: column;

@@ -106,6 +106,12 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 };
                 note(buf, r, &format!("%{pid} VS Code {what}  (open it in the web client)"));
             }
+            Some(BlockType::Remote) => {
+                let s = app.blocks.get(&pid);
+                let host = s.and_then(|s| s["host"].as_str().map(str::to_owned)).unwrap_or_default();
+                let pane = s.and_then(|s| s["pane"].as_u64()).map(|p| format!(" %{p}")).unwrap_or_default();
+                note(buf, r, &format!("%{pid} on {host}{pane}  (open it in the web client, or `--host {host} tui`)"));
+            }
             Some(BlockType::Diff) => {
                 let s = app.blocks.get(&pid);
                 let n = s.and_then(|s| s["files"].as_array().map(Vec::len)).unwrap_or(0);

@@ -251,6 +251,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::Browser => crate::browser::Browser::create(ctx, config),
         BlockType::Agent => crate::agent::Agent::create(ctx, config),
         BlockType::Editor => crate::editor::Editor::create(ctx, config),
+        BlockType::Remote => crate::remote::Remote::create(ctx, config),
         BlockType::Diff => crate::review::diff::Diff::create(ctx, config),
         BlockType::File => crate::review::file::FileView::create(ctx, config),
     }
