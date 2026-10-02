@@ -312,3 +312,81 @@ async fn errors_after_a_save_and_conflicts_are_cards() {
     d.post("/api/attention/act", json!({ "action": "dismiss", "pane": id }));
     web.until("dismissed", id, |p| p.is_some_and(|p| p.reason.is_none())).await;
 }
+
+/// illogical.nvim, in a real headless nvim driven over its RPC socket.
+#[tokio::test(flavor = "multi_thread")]
+async fn nvim_joins_follows_and_leaves() {
+    if std::process::Command::new("nvim").arg("--version").output().is_err() {
+        eprintln!("no nvim here; skipping");
+        return;
+    }
+    let d = Daemon::child();
+    let root = repo(&d);
+    let file = format!("{root}/src/a.txt");
+    std::fs::write(&file, "one\ntwo\nthree\nfour\n").unwrap();
+    let data = d.sessions.join("nvim-data");
+    let rpc = d.sessions.join("nvim.sock");
+    let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../editors/nvim");
+    let mut nvim = std::process::Command::new("nvim")
+        .args(["--headless", "--clean", "--listen"])
+        .arg(&rpc)
+        .arg("--cmd")
+        .arg(format!("set rtp^={}", plugin.display()))
+        .args(["-c", "runtime plugin/illogical.lua", "-c", "IllogicalJoin", &file])
+        .current_dir(&root)
+        .env("ILLOGICAL_SOCK", d.sock())
+        .env("XDG_DATA_HOME", &data)
+        .env("XDG_STATE_HOME", d.sessions.join("nvim-state"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let keys = |k: &str| {
+        let ok = std::process::Command::new("nvim")
+            .arg("--server")
+            .arg(&rpc)
+            .args(["--remote-send", k])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "sending {k}");
+    };
+    let mut web = Client::connect(&d).await;
+    // It joins as nvim, in its project, with its file.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let id = loop {
+        web.pump(Duration::from_millis(100)).await;
+        let found = web.state.as_ref().and_then(|s| {
+            s.panes.iter().find(|p| p.editor.as_ref().is_some_and(|e| e.app == "nvim")).map(|p| p.id)
+        });
+        if let Some(id) = found {
+            break id;
+        }
+        assert!(Instant::now() < deadline, "nvim didn't join");
+    };
+    let p = web.until("its file", id, |p| p.is_some_and(|p| p.file.as_deref() == Some("src/a.txt"))).await.unwrap();
+    assert_eq!(p.project.as_ref().map(|p| p.name.as_str()), Some("proj"));
+    // Following: the file, then the cursor and each change.
+    web.send(ClientMsg::Follow { pane: id, on: true }).await;
+    let open = web.followed("the file", |v| v.get("open").is_some()).await;
+    assert_eq!(open["open"]["text"], "one\ntwo\nthree\nfour");
+    keys("jj");
+    web.followed("the cursor on line 3", |v| v["line"] == 3).await;
+    keys("x");
+    let edit = web.followed("an edit", |v| v.get("edit").is_some()).await;
+    assert_eq!(edit["edit"]["changes"][0], json!({ "range": [3, 0, 4, 0], "text": "hree\n" }));
+    // Deleting the last line: the newline before it goes too.
+    keys("Gdd");
+    let edit = web.followed("the last line deleted", |v| v["edit"]["changes"][0]["text"] == "" && v["edit"]["changes"][0]["range"][0] == 3).await;
+    assert_eq!(edit["edit"]["changes"][0]["range"], json!([3, 4, 5, 0]));
+    // A save that leaves it unsaved-free, and the summary says so.
+    keys(":w<CR>");
+    web.until("no unsaved buffers", id, |p| p.and_then(|p| p.editor.as_ref()).is_some_and(|e| e.dirty == 0)).await;
+    // Leaving: gone at once, and the folder's forgotten.
+    keys(":IllogicalLeave<CR>");
+    web.until("it to go", id, |p| p.is_none()).await;
+    let remembered = std::fs::read_to_string(data.join("nvim/illogical/folders.json")).unwrap();
+    assert_eq!(remembered.trim(), "[]");
+    let _ = nvim.kill();
+    let _ = nvim.wait();
+}

@@ -410,6 +410,16 @@ export class Fleet {
     return c.request(method, path, body);
   }
 
+  /** Follow an editor on a host (M28). */
+  follow(host: string, pane: number, fn: (m: import("./proto").FollowMsg) => void): () => void {
+    const c = this.hosts.get(host)?.client;
+    return c ? c.followEditor(pane, fn) : () => {};
+  }
+
+  refollow(host: string, pane: number) {
+    this.hosts.get(host)?.client?.refollowEditor(pane);
+  }
+
   /** A pane operation on a host (asking its owner for trust, say). */
   paneOp(host: string, pane: number, op: import("./proto").PaneOp) {
     this.hosts.get(host)?.client?.paneOp(pane, op);

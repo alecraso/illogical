@@ -1,4 +1,11 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
+
+// Daemons the tests start register as Claude Code's IDE (M28) here, not in
+// ~/.claude/ide: every spec's daemon inherits this (workers too).
+process.env.ILLOGICAL_CLAUDE_IDE_DIR ??= mkdtempSync(join(tmpdir(), "illogical-e2e-ide-"));
 
 // By default runs against a throwaway debug daemon on 7683 (which serves
 // web/dist from disk), driving the system Chrome. Set E2E_BASE_URL to test a

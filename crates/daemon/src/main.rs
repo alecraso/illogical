@@ -542,6 +542,13 @@ fn main() -> anyhow::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogicald=info".into()),
         )
         .init();
+    // `just vsix`: illogical's VS Code extension, for the marketplaces.
+    if argv.get(1).map(String::as_str) == Some("_vsix") && argv.len() >= 3 {
+        let out = std::path::Path::new(&argv[2]).join(editor::vsix::file_name());
+        std::fs::write(&out, editor::vsix::build())?;
+        println!("{}", out.display());
+        return Ok(());
+    }
     // Claude Code's IDE connections, kept across daemon restarts (M28).
     if argv.get(1).map(String::as_str) == Some("_ide_relay") && argv.len() >= 4 {
         let args = ide::relay::Args { dir: argv[2].clone().into(), lock_dir: argv[3].clone().into() };

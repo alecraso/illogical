@@ -65,9 +65,11 @@ const START: Duration = Duration::from_secs(60);
 
 /// The extension every editor block has (`ext/`): it reports the active
 /// file and carries the theme.
-pub const EXT_ID: &str = "illogical.illogical";
-pub const EXT_VERSION: &str = "0.1.0";
-const EXT_FILES: &[(&str, &str)] = &[
+pub const EXT_ID: &str = "illogical.illogical-editor";
+pub const EXT_VERSION: &str = "0.2.0";
+/// What it was called before (M27): taken out where it's found.
+const OLD_IDS: &[&str] = &["illogical.illogical"];
+pub const EXT_FILES: &[(&str, &str)] = &[
     ("package.json", include_str!("ext/package.json")),
     ("extension.js", include_str!("ext/extension.js")),
     ("theme.json", include_str!("ext/theme.json")),
@@ -456,7 +458,7 @@ fn install_ext(exts: &Path) -> io::Result<()> {
     let list = exts.join("extensions.json");
     let mut all: Vec<serde_json::Value> =
         std::fs::read(&list).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-    let ours = |v: &serde_json::Value| v["identifier"]["id"].as_str() == Some(EXT_ID);
+    let ours = |v: &serde_json::Value| v["identifier"]["id"].as_str().is_some_and(|id| id == EXT_ID || OLD_IDS.contains(&id));
     if all.iter().any(|v| ours(v) && v["relativeLocation"] == rel.as_str()) {
         return Ok(());
     }
@@ -611,8 +613,8 @@ mkdir -p "$d/user/User" "$d/extensions/$8"
 printf 'auth: none\ncert: false\n' >"$d/config.yaml"
 [ -f "$d/user/User/settings.json" ] || printf '%s' "$7" >"$d/user/User/settings.json"
 cp /tmp/illogical-editor-ext/* "$d/extensions/$8/" 2>/dev/null || true
-printf '[{"identifier":{"id":"illogical.illogical"},"version":"%s","location":{"$mid":1,"path":"%s","scheme":"file"},"relativeLocation":"%s","metadata":{"pinned":true,"source":"vsix"}}]' \
-  "${8##*-}" "$d/extensions/$8" "$8" >"$d/extensions/extensions.json"
+printf '[{"identifier":{"id":"%s"},"version":"%s","location":{"$mid":1,"path":"%s","scheme":"file"},"relativeLocation":"%s","metadata":{"pinned":true,"source":"vsix"}}]' \
+  "${8%-*}" "${8##*-}" "$d/extensions/$8" "$8" >"$d/extensions/extensions.json"
 exec "$root/bin/code-server" --config "$d/config.yaml" --user-data-dir "$d/user" --extensions-dir "$d/extensions" \
   --auth none --disable-telemetry --disable-update-check --disable-workspace-trust --ignore-last-opened \
   --idle-timeout-seconds "$5" --reconnection-grace-time "$6" --bind-addr "127.0.0.1:$port"
@@ -662,7 +664,8 @@ mod tests {
         list.retain(|v| v["identifier"]["id"] != EXT_ID);
         list.push(serde_json::json!({ "identifier": { "id": "rust-lang.rust-analyzer" }, "relativeLocation": "ra" }));
         list.push(
-            serde_json::json!({ "identifier": { "id": EXT_ID }, "relativeLocation": "illogical.illogical-0.0.1" }),
+            // M27's, under its old name.
+            serde_json::json!({ "identifier": { "id": "illogical.illogical" }, "relativeLocation": "illogical.illogical-0.0.1" }),
         );
         std::fs::write(exts.join("extensions.json"), serde_json::to_vec(&list).unwrap()).unwrap();
         prepare(&dir).unwrap();

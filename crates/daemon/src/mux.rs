@@ -1424,8 +1424,18 @@ impl Daemon {
             }
             What::Attention(state, why) => self.set_attention(pane, state, &why),
             What::Reason(state, reason) => {
-                let why = reason.headline.clone();
-                self.set_attention_with(pane, state, &why, Some(reason));
+                // The same reason again, saying more (the debugger's line,
+                // once it's known): the card says that now.
+                let same = self.attention.get(&pane) == Some(&state)
+                    && self.reasons.get(&pane).is_some_and(|r| r.kind == reason.kind);
+                if same {
+                    self.reasons.insert(pane, reason);
+                    self.emit(Some(pane), EventKind::Attention { state, reason: self.live_reason(pane) });
+                    self.touch(pane);
+                } else {
+                    let why = reason.headline.clone();
+                    self.set_attention_with(pane, state, &why, Some(reason));
+                }
             }
             What::Clear(kind) => {
                 if self.reasons.get(&pane).is_some_and(|r| r.kind == kind) {

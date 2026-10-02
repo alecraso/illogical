@@ -17,7 +17,7 @@ import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { openEditor, openPort } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
-import { TermAnswered, TermAsk } from "./term-ask";
+import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -569,8 +569,8 @@ function PaneSlot({
           {info.reason?.kind === "failed" ? "failed" : info.reason?.kind === "exited" ? "exited" : info.attention === "done" ? "done" : "needs you"}
         </div>
       )}
-      {info?.ask && <TermAsk client={client} id={id} ask={info.ask} />}
-      {!info?.ask && info?.answered && info.type === "terminal" && <TermAnswered client={client} id={id} answered={info.answered} />}
+      {info?.diff ? <TermDiff client={client} id={id} diff={info.diff} /> : info?.ask && <TermAsk client={client} id={id} ask={info.ask} />}
+      {!info?.ask && !info?.diff && info?.answered && info.type === "terminal" && <TermAnswered client={client} id={id} answered={info.answered} />}
       {waiting && (
         <button
           class="start-pane"

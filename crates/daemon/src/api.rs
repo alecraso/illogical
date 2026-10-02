@@ -68,6 +68,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/diff", get(diff_of))
         .route("/api/ide", get(ide_get).put(ide_set))
         .route("/api/editors", get(editors))
+        .route("/api/editors/vsix", get(vsix))
         .route("/api/ide/mention", post(ide_mention))
         .route("/api/sessions/{id}/secrets", get(secrets))
         .route("/api/blocks", post(open_block))
@@ -1551,4 +1552,17 @@ async fn ide_mention(
         ide.notify(Some(*c), "at_mentioned", params.clone());
     }
     Ok(Json(serde_json::json!({ "sent": conns.len() })))
+}
+
+/// `GET /api/editors/vsix` (M28): illogical's VS Code extension.
+async fn vsix() -> Response {
+    let name = crate::editor::vsix::file_name();
+    (
+        [
+            (header::CONTENT_TYPE, "application/vsix".to_owned()),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\"")),
+        ],
+        crate::editor::vsix::build(),
+    )
+        .into_response()
 }

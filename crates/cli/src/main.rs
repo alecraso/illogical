@@ -157,6 +157,20 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
+    /// Editors in the swarm (M28): VS Code, Cursor or nvim that joined, and
+    /// editor blocks. `editors install` adds illogical's extension to VS
+    /// Code or Cursor here (in a Remote-SSH window's terminal: there).
+    Editors {
+        #[command(subcommand)]
+        cmd: Option<EditorsCmd>,
+    },
+    /// illogicald as Claude Code's IDE (M28): its port, and which IDE gets
+    /// Claude Code's diffs (`--diffs illogical`, or another IDE's name as
+    /// it registered, e.g. "Visual Studio Code").
+    Ide {
+        #[arg(long)]
+        diffs: Option<String>,
+    },
     /// Start an agent block (Claude Code by default) and send it a prompt;
     /// prints its block. Then: `wait %N --idle`, `tail %N`, `call %N approve`.
     Agent {
@@ -459,6 +473,23 @@ enum McpCmd {
         list: bool,
         #[arg(long, value_name = "NAME")]
         revoke: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum EditorsCmd {
+    /// Write illogical's VS Code extension (a VSIX) to a file.
+    Vsix {
+        /// Where [default: illogical-editor-VERSION.vsix here].
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Install illogical's extension in VS Code or Cursor with their CLI
+    /// (`code --install-extension`).
+    Install {
+        /// The editor's command [default: `code`, else `cursor`].
+        #[arg(long)]
+        with: Option<String>,
     },
 }
 
@@ -1008,6 +1039,79 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 return Ok(if w["state"] == "needs_input" { 2 } else { 0 });
             }
         }
+        Command::Editors { cmd: None } => {
+            let v = request(&sock, "GET", "/api/editors", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            for e in v.as_array().into_iter().flatten() {
+                let s = |k: &str| e[k].as_str().unwrap_or("");
+                let app = e["editor"]["app"].as_str().unwrap_or("?");
+                let remote = e["editor"]["remote"].as_str().map(|r| format!(" ({r})")).unwrap_or_default();
+                let n = e["editor"]["followers"].as_u64().unwrap_or(0);
+                let following = if n > 0 { format!("  {n} following") } else { String::new() };
+                let why = e["reason"]["headline"].as_str().map(|h| format!("  [{h}]")).unwrap_or_default();
+                println!("%{:<4} {:<12} {:<40} {}{following}{why}", e["pane"], format!("{app}{remote}"), s("folder"), s("file"));
+            }
+        }
+        Command::Editors { cmd: Some(EditorsCmd::Vsix { out }) } => {
+            let (name, bytes) = vsix(&sock)?;
+            let out = out.unwrap_or_else(|| PathBuf::from(name));
+            std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
+            println!("{}", out.display());
+        }
+        Command::Editors { cmd: Some(EditorsCmd::Install { with }) } => {
+            let (name, bytes) = vsix(&sock)?;
+            let path = std::env::temp_dir().join(name);
+            std::fs::write(&path, bytes)?;
+            let which = |c: &str| {
+                std::process::Command::new(c)
+                    .arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success())
+            };
+            let editor = match with {
+                Some(w) => w,
+                None => ["code", "cursor", "code-server"]
+                    .into_iter()
+                    .find(|c| which(c))
+                    .context("no `code` or `cursor` here: pass --with, or install the VSIX (`illogical editors vsix`) by hand")?
+                    .to_owned(),
+            };
+            let st = std::process::Command::new(&editor).arg("--install-extension").arg(&path).status()?;
+            let _ = std::fs::remove_file(&path);
+            if !st.success() {
+                bail!("{editor} --install-extension failed");
+            }
+            println!("Installed. In the editor: \"illogical: Show this workspace in the swarm\".");
+        }
+        Command::Ide { diffs } => {
+            let v = match diffs {
+                Some(d) => {
+                    request(&sock, "PUT", "/api/ide", Some(&json!({ "diffs": d })))?.json()?;
+                    request(&sock, "GET", "/api/ide", None)?.json()?
+                }
+                None => request(&sock, "GET", "/api/ide", None)?.json()?,
+            };
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            if v["on"] != true {
+                println!("illogicald isn't Claude Code's IDE (--no-claude-ide)");
+                return Ok(0);
+            }
+            println!("Claude Code's IDE on port {} ({})", v["port"], v["lock_dir"].as_str().unwrap_or(""));
+            println!("diffs go to: {}", v["diffs"].as_str().unwrap_or(""));
+            for o in v["others"].as_array().into_iter().flatten() {
+                let alive = if o["alive"] == true { "" } else { "  (gone)" };
+                let folders: Vec<&str> = o["folders"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                println!("  also: {:<24} port {}  {}{alive}", o["name"].as_str().unwrap_or("?"), o["port"], folders.join(", "));
+            }
+        }
         Command::Machines => {
             let v = request(&sock, "GET", "/api/machines", None)?.json()?;
             if json_out {
@@ -1404,4 +1508,15 @@ mod tests {
         assert_eq!(super::shell_command(&v(&["bash", "-c", "echo hi; exit 3"])), "bash -c 'echo hi; exit 3'");
         assert_eq!(super::shell_command(&v(&["echo", "it's"])), r"echo 'it'\''s'");
     }
+}
+
+/// illogical's VS Code extension, from the daemon (M28).
+fn vsix(sock: &http::Target) -> anyhow::Result<(String, Vec<u8>)> {
+    let res = request(sock, "GET", "/api/editors/vsix", None)?;
+    let name = res
+        .header("content-disposition")
+        .and_then(|d| d.split("filename=").nth(1))
+        .map(|f| f.trim_matches('"').to_owned())
+        .unwrap_or_else(|| "illogical-editor.vsix".into());
+    Ok((name, res.bytes()?))
 }

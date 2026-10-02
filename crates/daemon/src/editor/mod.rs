@@ -23,6 +23,7 @@
 pub mod link;
 pub mod presence;
 pub mod server;
+pub mod vsix;
 
 use std::{
     path::{Path, PathBuf},

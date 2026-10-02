@@ -36,7 +36,7 @@ pub fn app_name(app: &str) -> &str {
     match app {
         "vscode" => "VS Code",
         "cursor" => "Cursor",
-        "code-server" => "code-server",
+        "code-server" => "VS Code",
         "nvim" => "nvim",
         other => other,
     }
