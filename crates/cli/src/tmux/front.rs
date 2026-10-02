@@ -470,7 +470,12 @@ impl Front {
                 pv.live = Live::Resync;
             }
         }
-        self.conn.send(&ClientMsg::Attach { panes: vec![mirror_attach(pane)], zstd: false, acks: false })
+        self.conn.send(&ClientMsg::Attach {
+            panes: vec![mirror_attach(pane)],
+            zstd: false,
+            acks: false,
+            kitty_keys: false,
+        })
     }
 
     /// Follow the attached session's panes: attach new terminals, forget
@@ -515,7 +520,7 @@ impl Front {
             }
         }
         if !attach.is_empty() {
-            self.conn.send(&ClientMsg::Attach { panes: attach, zstd: false, acks: false })?;
+            self.conn.send(&ClientMsg::Attach { panes: attach, zstd: false, acks: false, kitty_keys: false })?;
         }
         // Blocks follow their pane's size.
         let sizes: Vec<(PaneId, (u16, u16))> =

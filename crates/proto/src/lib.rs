@@ -36,6 +36,10 @@ pub enum ClientMsg {
         zstd: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         acks: bool,
+        /// The client encodes keys for the kitty keyboard protocol, so
+        /// programs asking may be told it's there (M31).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        kitty_keys: bool,
     },
     /// Everything of `pane` before `offset` has been drawn (for an attach
     /// with `acks`): from a snapshot's offset on, about every 64 KB.
@@ -789,13 +793,13 @@ mod tests {
             serde_json::from_str(r#"{"type":"attach","panes":[{"pane":1,"offset":null},{"pane":2,"offset":42}]}"#)
                 .unwrap();
         let panes = vec![AttachPane::new(1, None), AttachPane::new(2, Some(42))];
-        assert_eq!(m, ClientMsg::Attach { panes, zstd: false, acks: false });
+        assert_eq!(m, ClientMsg::Attach { panes, zstd: false, acks: false, kitty_keys: false });
         // A client that keeps 10k rows and reads compressed snapshots.
         let m: ClientMsg =
             serde_json::from_str(r#"{"type":"attach","panes":[{"pane":1,"offset":7,"history":10000}],"zstd":true}"#)
                 .unwrap();
         let panes = vec![AttachPane { pane: 1, offset: Some(7), history: Some(10_000) }];
-        assert_eq!(m, ClientMsg::Attach { panes, zstd: true, acks: false });
+        assert_eq!(m, ClientMsg::Attach { panes, zstd: true, acks: false, kitty_keys: false });
         let m: ClientMsg = serde_json::from_str(r#"{"type":"ack","pane":1,"offset":65536}"#).unwrap();
         assert_eq!(m, ClientMsg::Ack { pane: 1, offset: 65536 });
         let f = Frame { kind: FrameKind::SnapshotZstd, pane: 1, offset: 9, data: vec![1, 2] };

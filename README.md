@@ -27,6 +27,9 @@ tabs and splits you drive with the mouse.
   the agent its next instruction, and everyone sees who did.
 - **Scriptable.** `illogical`, a CLI for scripts and agents: run, send,
   wait for a command or a match, tail, search every pane's history.
+- **In any terminal, too.** `illogical tui` draws the same tabs and splits
+  in the terminal you're in (over ssh as well), with a sidebar of what
+  needs you: allow an agent's request from there without opening its pane.
 
 ![The swarm: every pane, clustered, with what needs you on the rail](site/img/swarm.png)
 
@@ -90,7 +93,9 @@ loginctl enable-linger $USER
    ```
 
    [docs/cli.md](docs/cli.md) has the rest.
-4. **Without a tailnet**, add the machine to an account on illogical
+4. **In a terminal**, or over ssh: `illogical tui`. The mouse works as in
+   the browser; Ctrl-] is the menu key (Ctrl-] ? lists the rest).
+5. **Without a tailnet**, add the machine to an account on illogical
    control and use it from any browser:
 
    ```
@@ -98,7 +103,7 @@ loginctl enable-linger $USER
    ```
 
    See [docs/control.md](docs/control.md), including running your own.
-5. **Agents.** Install an adapter (needs Node), then *Start an agent…* in a
+6. **Agents.** Install an adapter (needs Node), then *Start an agent…* in a
    pane's menu, or `illogical agent "fix the failing test"`:
 
    ```

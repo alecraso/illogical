@@ -160,7 +160,7 @@ async fn until<T>(ws: &mut Ws, mut f: impl FnMut(&In) -> Option<T>) -> T {
 }
 
 async fn attach(ws: &mut Ws, offset: Option<u64>) {
-    let m = ClientMsg::Attach { panes: vec![AttachPane::new(1, offset)], zstd: false, acks: false };
+    let m = ClientMsg::Attach { panes: vec![AttachPane::new(1, offset)], zstd: false, acks: false, kitty_keys: false };
     ws.send(Message::Text(serde_json::to_string(&m).unwrap().into())).await.unwrap();
 }
 
@@ -268,7 +268,7 @@ async fn snapshot_shows_a_full_screen_app() {
 async fn snapshot_of(d: &Daemon, history: Option<u32>, zstd: bool) -> Frame {
     let (mut ws, _) = connect(d).await;
     let panes = vec![AttachPane { pane: 1, offset: None, history }];
-    send(&mut ws, ClientMsg::Attach { panes, zstd, acks: false }).await;
+    send(&mut ws, ClientMsg::Attach { panes, zstd, acks: false, kitty_keys: false }).await;
     let _size = recv_attach(&mut ws).await;
     let In::Frame(f) = recv_attach(&mut ws).await else { panic!("expected a snapshot") };
     f
@@ -318,7 +318,8 @@ async fn snapshots_carry_only_the_history_asked_for() {
 /// Attach pane 1 as a client that acks, and take its size and snapshot;
 /// the offset it has drawn.
 async fn attach_acking(ws: &mut Ws) -> u64 {
-    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: true }).await;
+    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: true, kitty_keys: false })
+        .await;
     let _size = recv_attach(ws).await;
     let In::Frame(f) = recv_attach(ws).await else { panic!("expected a snapshot") };
     f.offset
@@ -425,11 +426,36 @@ async fn ctrl_c_stops_a_flood_at_once() {
             }
             In::Msg(ServerMsg::Resync { pane: 1 }) => {
                 let panes = vec![AttachPane { pane: 1, offset: Some(end), history: Some(0) }];
-                send(&mut ws, ClientMsg::Attach { panes, zstd: false, acks: true }).await;
+                send(&mut ws, ClientMsg::Attach { panes, zstd: false, acks: true, kitty_keys: false }).await;
             }
             In::Msg(_) => {}
         }
     }
+}
+
+#[tokio::test]
+async fn programs_hear_of_kitty_keys_while_a_client_that_speaks_them_is_attached() {
+    let d = start().await;
+    // Ask the terminal for its kitty keyboard flags, as Neovim does, and
+    // print what came back (nothing: the read times out).
+    let ask = r#"printf '\033[?u'; IFS= read -rs -d u -t 1 r; echo "kitty[${r#*\?}]""#;
+
+    let (mut ws, _) = connect(&d).await;
+    attach(&mut ws, None).await;
+    let _ = (recv_attach(&mut ws).await, recv_attach(&mut ws).await);
+    type_line(&mut ws, ask).await;
+    read_until(&mut ws, None, "kitty[]").await;
+    drop(ws);
+
+    let (mut ws, _) = connect(&d).await;
+    send(
+        &mut ws,
+        ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: false, kitty_keys: true },
+    )
+    .await;
+    let _ = (recv_attach(&mut ws).await, recv_attach(&mut ws).await);
+    type_line(&mut ws, ask).await;
+    read_until(&mut ws, None, "kitty[0]").await;
 }
 
 #[tokio::test]
@@ -510,7 +536,11 @@ async fn split_spawns_a_pane_and_exit_closes_it() {
     assert_eq!((tab.layout.panes[0].1.cols, tab.layout.panes[1].1.cols), (40, 39));
 
     // The new pane runs a shell of its own.
-    send(&mut ws, ClientMsg::Attach { panes: vec![AttachPane::new(2, None)], zstd: false, acks: false }).await;
+    send(
+        &mut ws,
+        ClientMsg::Attach { panes: vec![AttachPane::new(2, None)], zstd: false, acks: false, kitty_keys: false },
+    )
+    .await;
     type_in(&mut ws, 2, "echo in-pane-$((1+1)); exit").await;
     let state = until(&mut ws, |m| match m {
         In::Msg(ServerMsg::State { state }) if state.panes.len() == 1 => Some(state.clone()),
@@ -526,7 +556,11 @@ async fn the_tab_takes_the_claiming_clients_size() {
     let d = start().await;
     let (mut a, state) = connect_state(&d).await;
     let tab = state.tabs[0].id;
-    send(&mut a, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: false }).await;
+    send(
+        &mut a,
+        ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: false, kitty_keys: false },
+    )
+    .await;
     send(&mut a, ClientMsg::View { tab, cols: 101, rows: 30, zoom: None, claim: true }).await;
     until(&mut a, |m| matches!(m, In::Msg(ServerMsg::Size { pane: 1, cols: 101, rows: 30 })).then_some(())).await;
     type_line(&mut a, "stty size").await;
@@ -577,7 +611,11 @@ impl Daemon {
 use illogical_proto::{PaneOp, Policy};
 
 async fn attach_pane(ws: &mut Ws, pane: u32) -> String {
-    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(pane, None)], zstd: false, acks: false }).await;
+    send(
+        ws,
+        ClientMsg::Attach { panes: vec![AttachPane::new(pane, None)], zstd: false, acks: false, kitty_keys: false },
+    )
+    .await;
     until(ws, |m| match m {
         In::Frame(f) if f.kind == FrameKind::Snapshot && f.pane == pane => {
             Some(String::from_utf8_lossy(&f.data).into_owned())
