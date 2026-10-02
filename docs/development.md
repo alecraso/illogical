@@ -254,7 +254,10 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   `/share/<token>/../api/panes` through the viewer's door (the router then
   found nothing, but only by luck); the guard now accepts the exact shapes.
 - **clap gives a subcommand's positional the same id as a global flag of
-  the same name.** `illogical synced rm sbx` set `--host sbx`.
+  the same name.** `illogical synced rm sbx` set `--host sbx`. A
+  subcommand's own `--host` loses to the global one the same way, so
+  `open` and `agent` take `--machine mN`, like `edit` (#61); a `--host
+  mN` there that isn't in the host list says so.
 - **"Cold" can be had on demand.** wisp turns a suspended sprite cold
   after `--warm-ttl` (1h) by dropping its memory snapshot, which makes the
   next wake a real boot. Its web UI's operator endpoints do the same at
