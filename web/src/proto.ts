@@ -137,7 +137,12 @@ export interface State {
   panes: PaneInfo[];
   machines: Machine[];
   options?: Options;
+  /** M12: for someone who isn't the daemon's owner, their role in each
+   * session they see, as [session, role] pairs. Absent for the owner. */
+  roles?: [SessionId, Role][];
 }
+
+export type Role = "viewer" | "editor" | "owner";
 
 export type Intent =
   | { op: "new_session"; name: string | null; from_pane: PaneId | null }

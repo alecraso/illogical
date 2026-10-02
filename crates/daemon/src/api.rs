@@ -111,7 +111,7 @@ fn tap(pane: PaneHandle, from: u64) -> Tap {
     let client = NEXT_TAP.fetch_add(1, Ordering::Relaxed);
     let (data, rx) = mpsc::channel(crate::pane::CLIENT_QUEUE);
     let (ctrl, _ctrl) = mpsc::unbounded_channel();
-    pane.attach(Subscriber { client, data, ctrl }, Some(from));
+    pane.attach(Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner }, Some(from));
     Tap { pane, client, rx, _ctrl }
 }
 
@@ -128,6 +128,7 @@ impl Tap {
                     }
                 }
                 ToClient::Msg(_) => {}
+                ToClient::Close => return None,
             }
         }
     }
@@ -165,7 +166,7 @@ async fn send(
     if req.enter {
         data.push(b'\r');
     }
-    app.mux.send(Cmd::Input { pane: id, data });
+    app.mux.send(Cmd::Input { client: None, pane: id, data });
     Ok(Json(serde_json::json!({})))
 }
 
@@ -178,7 +179,7 @@ async fn keys_(
     let modes = p.status().modes;
     let data: Vec<u8> = req.keys.iter().flat_map(|k| keys::key(k, modes)).collect();
     p.mark_input();
-    app.mux.send(Cmd::Input { pane: id, data });
+    app.mux.send(Cmd::Input { client: None, pane: id, data });
     Ok(Json(serde_json::json!({})))
 }
 
@@ -191,7 +192,7 @@ async fn mouse(
     let data = keys::mouse(req.x, req.y, req.button, req.action, p.status().modes)
         .ok_or_else(|| bad("the program in that pane isn't listening to the mouse"))?;
     p.mark_input();
-    app.mux.send(Cmd::Input { pane: id, data });
+    app.mux.send(Cmd::Input { client: None, pane: id, data });
     Ok(Json(serde_json::json!({})))
 }
 
@@ -424,7 +425,7 @@ async fn call(
             if req.enter {
                 data.push(b'\r');
             }
-            app.mux.send(Cmd::Input { pane: id, data });
+            app.mux.send(Cmd::Input { client: None, pane: id, data });
             Ok(Json(serde_json::json!({})))
         }
         "keys" => {
@@ -432,7 +433,7 @@ async fn call(
             let modes = p.status().modes;
             let data: Vec<u8> = req.keys.iter().flat_map(|k| keys::key(k, modes)).collect();
             p.mark_input();
-            app.mux.send(Cmd::Input { pane: id, data });
+            app.mux.send(Cmd::Input { client: None, pane: id, data });
             Ok(Json(serde_json::json!({})))
         }
         "capture" => {

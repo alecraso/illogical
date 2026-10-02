@@ -39,6 +39,8 @@ use std::{collections::HashSet, net::SocketAddr};
 use axum::http::{HeaderMap, StatusCode, header};
 use sha2::{Digest, Sha256};
 
+use crate::acl::Principal;
+
 /// Who is on the other end of a TCP connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Peer {
@@ -155,7 +157,10 @@ impl Access {
     #[cfg(test)]
     pub fn check(&self, headers: &HeaderMap, peer: &Peer) -> Result<(), Refusal> {
         self.check_host(headers)?;
-        self.check_identity(headers, peer)
+        match self.check_identity(headers, peer)? {
+            Principal::Owner => Ok(()),
+            Principal::User { name, .. } => Err((StatusCode::FORBIDDEN, format!("{name} is not the owner"))),
+        }
     }
 
     pub fn check_host(&self, headers: &HeaderMap) -> Result<(), Refusal> {
@@ -166,21 +171,33 @@ impl Access {
         Ok(())
     }
 
-    pub fn check_identity(&self, headers: &HeaderMap, peer: &Peer) -> Result<(), Refusal> {
+    /// Who this is: the owner, or another tailnet user (M12: who gets in
+    /// only to what's been shared with them). Tagged nodes and strangers
+    /// are refused.
+    pub fn check_identity(&self, headers: &HeaderMap, peer: &Peer) -> Result<Principal, Refusal> {
         match peer {
-            Peer::Tailnet { login: Some(login) } => self.must_be_owner(login),
+            Peer::Tailnet { login: Some(login) } => self.who(login),
             Peer::Tailnet { login: None } => {
                 Err((StatusCode::FORBIDDEN, "tagged tailnet nodes have no user identity".into()))
             }
             Peer::Other => Err((StatusCode::FORBIDDEN, "not from this machine or the tailnet".into())),
-            Peer::Local if self.tunnel.is_some() => self.check_tunnel_token(headers),
+            Peer::Local if self.tunnel.is_some() => self.check_tunnel_token(headers).map(|()| Principal::Owner),
             Peer::Local => match header_str(headers, "tailscale-user-login") {
-                Some(login) => self.must_be_owner(login),
+                Some(login) => self.who(login),
                 None if self.public.contains(&host(headers)) => {
                     Err((StatusCode::FORBIDDEN, "tailnet request without a user identity (from a tagged node?)".into()))
                 }
-                None => Ok(()),
+                None => Ok(Principal::Owner),
             },
+        }
+    }
+
+    fn who(&self, login: &str) -> Result<Principal, Refusal> {
+        match self.must_be_owner(login) {
+            Ok(()) => Ok(Principal::Owner),
+            // With no owner configured, nobody from the tailnet gets in.
+            Err(e) if self.owner.is_none() => Err(e),
+            Err(_) => Ok(Principal::tailnet(&login.to_ascii_lowercase())),
         }
     }
 
@@ -370,9 +387,11 @@ mod tests {
         let a = access();
         let public = headers(&[("host", "geek.example.ts.net")]);
         let friend = headers(&[("host", "geek.example.ts.net"), ("tailscale-user-login", "friend@x.com")]);
-        // A tailnet user who isn't the owner: may view, may not use the app.
+        // A tailnet user who isn't the owner: may view; is named, not the
+        // owner, for the app (which lets them in only to what's shared, M12).
         assert!(a.check_viewer(&friend, &Peer::Local).is_ok());
-        assert!(a.check_identity(&friend, &Peer::Local).is_err());
+        assert_eq!(a.check_identity(&friend, &Peer::Local).unwrap(), Principal::tailnet("friend@x.com"));
+        assert!(a.check(&friend, &Peer::Local).is_err());
         let direct = Peer::Tailnet { login: Some("friend@x.com".into()) };
         assert!(a.check_viewer(&public, &direct).is_ok());
         // Tagged nodes, Funnel and the internet: never.

@@ -653,7 +653,7 @@ async fn cd(
     }
     let line = cd_line(&req.path).ok_or_else(|| FsError::Bad(format!("can't cd to {:?}", req.path)))?;
     p.mark_input();
-    app.mux.send(Cmd::Input { pane: id, data: line.into_bytes() });
+    app.mux.send(Cmd::Input { client: None, pane: id, data: line.into_bytes() });
     Ok(Json(serde_json::json!({})))
 }
 

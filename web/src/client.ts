@@ -244,6 +244,13 @@ export class Client {
     return this.panes.get(id)?.title || this.blocks.get(id)?.view.title() || "";
   }
 
+  /** This client's role in a session (M12): `owner` unless the daemon
+   * said otherwise. */
+  role(session: SessionId | null = this.session): "viewer" | "editor" | "owner" {
+    const r = session === null ? undefined : this.state?.roles?.find(([s]) => s === session)?.[1];
+    return this.state?.roles ? (r ?? "viewer") : "owner";
+  }
+
   cwd(pane: PaneId): string | null {
     return this.info(pane)?.cwd ?? null;
   }

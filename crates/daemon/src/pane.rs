@@ -59,6 +59,8 @@ const RESTORE_REPLAY_BYTES: u64 = 8 * 1024 * 1024;
 pub enum ToClient {
     Frame(Vec<u8>),
     Msg(ServerMsg),
+    /// Hang up (access revoked).
+    Close,
 }
 
 /// A client's subscription. Everything the client must apply in order with
@@ -70,6 +72,8 @@ pub struct Subscriber {
     pub client: ClientId,
     pub data: mpsc::Sender<ToClient>,
     pub ctrl: mpsc::UnboundedSender<ToClient>,
+    /// Who this client is (M12): what it sees and may do.
+    pub principal: crate::acl::Principal,
 }
 
 /// What a pane tells the multiplexer.
