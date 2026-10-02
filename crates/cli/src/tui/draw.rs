@@ -82,6 +82,16 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 let url = app.blocks.get(&pid).and_then(|s| s["url"].as_str().map(str::to_owned)).unwrap_or_default();
                 note(buf, r, &format!("%{pid} web page {url}  (open it in the web client)"));
             }
+            Some(BlockType::Editor) => {
+                let s = app.blocks.get(&pid);
+                let at = |k: &str| s.and_then(|s| s[k].as_str().map(str::to_owned));
+                let what = match (at("file"), s.and_then(|s| s["line"].as_u64())) {
+                    (Some(f), Some(l)) => format!("{f}:{l}"),
+                    (Some(f), None) => f,
+                    _ => at("folder").unwrap_or_default(),
+                };
+                note(buf, r, &format!("%{pid} VS Code {what}  (open it in the web client)"));
+            }
             _ => note(buf, r, &format!("%{pid}")),
         }
     }

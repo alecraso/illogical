@@ -468,7 +468,7 @@ fn usable(page: &Page, on_machine: bool) -> Result<(), String> {
 }
 
 /// A random name part: 20 letters and digits (about 103 bits).
-fn new_key() -> String {
+pub(crate) fn new_key() -> String {
     let mut b = [0u8; 20];
     let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b));
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";

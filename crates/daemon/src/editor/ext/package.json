@@ -1,0 +1,26 @@
+{
+  "name": "illogical",
+  "displayName": "illogical",
+  "description": "Tells illogical which file an editor block shows, and gives it illogical's colours.",
+  "publisher": "illogical",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "extensionKind": ["workspace"],
+  "capabilities": { "untrustedWorkspaces": { "supported": true }, "virtualWorkspaces": false },
+  "contributes": {
+    "configuration": {
+      "title": "illogical",
+      "properties": {
+        "illogical.block": {
+          "type": "number",
+          "default": 0,
+          "description": "The editor block this window is (illogical sets it in the block's workspace)."
+        }
+      }
+    },
+    "themes": [{ "label": "illogical", "uiTheme": "vs-dark", "path": "./theme.json" }]
+  }
+}

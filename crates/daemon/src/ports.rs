@@ -1,5 +1,6 @@
 //! Reaching a TCP port on a machine: one of this host's, directly, or one
-//! of a sprite's, through the Sprites proxy.
+//! of a sprite's, through the Sprites proxy. Or a server illogical runs
+//! itself (an editor block's code-server, M27), which it starts if needed.
 //!
 //! A machine's port is dialed through its provider (`Provider::dial`; for
 //! sprites, one Sprites proxy WebSocket per TCP connection, which wakes the
@@ -11,6 +12,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
+use futures_util::future::BoxFuture;
 
 pub use crate::provider::Conn;
 use crate::provider::Provider;
@@ -25,6 +28,16 @@ pub enum Target {
     Local(u16),
     /// A machine's, through its provider.
     Sprite { provider: Arc<dyn Provider>, sprite: String, port: u16 },
+    /// A server of illogical's own, reached however it says.
+    Service(Arc<dyn Service>),
+}
+
+/// A server illogical runs itself: dialing it starts it if it isn't
+/// running (it stops itself when idle).
+pub trait Service: Send + Sync {
+    fn dial(&self) -> BoxFuture<'static, io::Result<Conn>>;
+    /// What to call it in errors.
+    fn name(&self) -> String;
 }
 
 impl std::fmt::Debug for Target {
@@ -32,6 +45,7 @@ impl std::fmt::Debug for Target {
         match self {
             Self::Local(p) => write!(f, "localhost:{p}"),
             Self::Sprite { sprite, port, .. } => write!(f, "{sprite}:{port}"),
+            Self::Service(s) => write!(f, "{}", s.name()),
         }
     }
 }
@@ -41,15 +55,27 @@ impl PartialEq for Target {
         match (self, other) {
             (Self::Local(a), Self::Local(b)) => a == b,
             (Self::Sprite { sprite: a, port: p, .. }, Self::Sprite { sprite: b, port: q, .. }) => a == b && p == q,
+            (Self::Service(a), Self::Service(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
     }
 }
 
 impl Target {
-    pub fn port(&self) -> u16 {
+    /// The `Host` its server is asked for: `localhost:<port>`, or
+    /// `localhost` for a service.
+    pub fn authority(&self) -> String {
         match self {
-            Self::Local(p) | Self::Sprite { port: p, .. } => *p,
+            Self::Local(p) | Self::Sprite { port: p, .. } => format!("localhost:{p}"),
+            Self::Service(_) => "localhost".into(),
+        }
+    }
+
+    /// What to call it in errors: `port 5173`, or the service's name.
+    pub fn what(&self) -> String {
+        match self {
+            Self::Local(p) | Self::Sprite { port: p, .. } => format!("port {p}"),
+            Self::Service(s) => s.name(),
         }
     }
 
@@ -73,6 +99,7 @@ impl Target {
                 Ok(Box::new(s))
             }
             Self::Sprite { provider, sprite, port } => provider.dial(sprite, *port).await,
+            Self::Service(s) => s.dial().await,
         }
     }
 }

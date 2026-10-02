@@ -20,6 +20,9 @@ tabs and splits you drive with the mouse.
   [ACP](https://agentclientprotocol.com) agent as a UI beside your
   terminals: tool calls with their output, approvals and questions as
   cards big enough for a thumb.
+- **VS Code beside your terminals.** *Open in editor* (or `illogical edit
+  src/main.rs:42`) opens VS Code on the pane's machine, in its directory,
+  as a block: on the phone too, and back with its file after a restart.
 - **The swarm.** Every pane on every machine you and your team can see, in
   one live view, clustered by project, machine, kind or person. Whatever
   needs someone (an agent asking, a build failing) lifts out to a rail of

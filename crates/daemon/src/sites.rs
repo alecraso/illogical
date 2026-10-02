@@ -419,9 +419,8 @@ fn is_upgrade(h: &HeaderMap) -> bool {
 
 /// The request as the port sees it: from `localhost:<port>`, with nothing
 /// that says who you are.
-fn rewrite_request(h: &mut HeaderMap, site: &Site, port: u16) {
+fn rewrite_request(h: &mut HeaderMap, site: &Site, local: &str) {
     let upgrade = is_upgrade(h);
-    let local = format!("localhost:{port}");
     let local_origin = format!("http://{local}");
     for name in HOP {
         if !(upgrade && (*name == "connection" || *name == "upgrade")) {
@@ -442,7 +441,7 @@ fn rewrite_request(h: &mut HeaderMap, site: &Site, port: u16) {
     if upgrade {
         h.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
     }
-    h.insert(header::HOST, HeaderValue::from_str(&local).expect("host"));
+    h.insert(header::HOST, HeaderValue::from_str(local).expect("host"));
     // `check` let through only our own origin.
     if h.contains_key(header::ORIGIN) {
         h.insert(header::ORIGIN, HeaderValue::from_str(&local_origin).expect("origin"));
@@ -456,14 +455,15 @@ fn rewrite_request(h: &mut HeaderMap, site: &Site, port: u16) {
 
 /// The answer as the browser sees it: from the block's origin, framed only
 /// by the app.
-fn rewrite_response(h: &mut HeaderMap, site: &Site, port: u16, frame_ancestors: &HeaderValue, upgraded: bool) {
+fn rewrite_response(h: &mut HeaderMap, site: &Site, local: &str, frame_ancestors: &HeaderValue, upgraded: bool) {
     for name in HOP {
         if !(upgraded && (*name == "connection" || *name == "upgrade")) {
             h.remove(*name);
         }
     }
     if let Some(loc) = text(h, header::LOCATION.as_str()) {
-        let local = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
+        let ip = local.replacen("localhost", "127.0.0.1", 1);
+        let local = [format!("http://{local}"), format!("http://{ip}")];
         if let Some(rest) = local.iter().find_map(|l| loc.strip_prefix(l.as_str()))
             && let Ok(v) = HeaderValue::from_str(&format!("{}{rest}", site.origin))
         {
@@ -491,7 +491,8 @@ async fn handle(
     if let Err(why) = sites.allowed(&target) {
         return full(StatusCode::FORBIDDEN, why);
     }
-    let port = target.port();
+    let local = target.authority();
+    let what = target.what();
     let h = req.headers();
     if req.method() == Method::GET
         && text(h, "sec-fetch-mode") == Some("navigate")
@@ -503,7 +504,7 @@ async fn handle(
     let upgrade = is_upgrade(req.headers());
     let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut req));
     let (mut parts, body) = req.into_parts();
-    rewrite_request(&mut parts.headers, &site, port);
+    rewrite_request(&mut parts.headers, &site, &local);
     // Origin-form only: the port's server sees a request to itself.
     parts.uri = parts.uri.path_and_query().map(|p| p.as_str()).unwrap_or("/").parse().unwrap_or_default();
     let out = Request::from_parts(parts, body.boxed());
@@ -522,15 +523,15 @@ async fn handle(
             r
         }
         Err(Failed::Dial(e)) => {
-            let why = format!("nothing is answering on port {port}: {e}");
+            let why = format!("nothing is answering on {what}: {e}");
             site.reached(Err(&why));
             return full(StatusCode::BAD_GATEWAY, why);
         }
-        Err(Failed::Http(e)) => return full(StatusCode::BAD_GATEWAY, format!("port {port}: {e}")),
+        Err(Failed::Http(e)) => return full(StatusCode::BAD_GATEWAY, format!("{what}: {e}")),
     };
     let upgraded = res.status() == StatusCode::SWITCHING_PROTOCOLS;
     let ancestors = frame_ancestors(&sites.settings.app_origins);
-    rewrite_response(res.headers_mut(), &site, port, &ancestors, upgraded);
+    rewrite_response(res.headers_mut(), &site, &local, &ancestors, upgraded);
     if upgraded && let Some(client) = client_upgrade {
         let server = hyper::upgrade::on(&mut res);
         tokio::spawn(async move {
@@ -551,17 +552,17 @@ fn frame_ancestors(app: &[String]) -> HeaderValue {
 /// `GET path` on a port, as the proxy would send it: (status, up to
 /// `PROBE_LIMIT` of the body). For a block's title and whether it answers.
 pub async fn probe(target: &Target, path: &str) -> Result<(u16, String), String> {
-    let mut sender =
-        connect(target).await.map_err(|e| format!("nothing is answering on port {}: {e}", target.port()))?;
+    let what = target.what();
+    let mut sender = connect(target).await.map_err(|e| format!("nothing is answering on {what}: {e}"))?;
     let req = Request::get(path)
-        .header(header::HOST, format!("localhost:{}", target.port()))
+        .header(header::HOST, target.authority())
         .header(header::ACCEPT, "text/html,*/*")
         .body(Full::new(Bytes::new()).map_err(|e| match e {}).boxed())
         .map_err(|e| e.to_string())?;
     let res = tokio::time::timeout(Duration::from_secs(15), sender.send_request(req))
         .await
-        .map_err(|_| format!("port {} didn't answer in time", target.port()))?
-        .map_err(|e| format!("port {}: {e}", target.port()))?;
+        .map_err(|_| format!("{what} didn't answer in time"))?
+        .map_err(|e| format!("{what}: {e}"))?;
     let status = res.status().as_u16();
     let body = match tokio::time::timeout(Duration::from_secs(10), Limited::new(res.into_body(), PROBE_LIMIT).collect())
         .await
@@ -674,7 +675,7 @@ mod tests {
             ("keep-alive", "timeout=5"),
             ("cookie", "a=b"),
         ]);
-        rewrite_request(&mut h, &site, 5173);
+        rewrite_request(&mut h, &site, "localhost:5173");
         assert_eq!(h["host"], "localhost:5173");
         assert_eq!(h["origin"], "http://localhost:5173");
         assert_eq!(h["referer"], "http://localhost:5173/page?x=1");
@@ -686,7 +687,7 @@ mod tests {
         }
         // WebSocket upgrades keep what makes them upgrades.
         let mut h = headers(&[("connection", "keep-alive, Upgrade"), ("upgrade", "websocket"), ("host", "x")]);
-        rewrite_request(&mut h, &site, 5173);
+        rewrite_request(&mut h, &site, "localhost:5173");
         assert_eq!(h["connection"], "upgrade");
         assert_eq!(h["upgrade"], "websocket");
     }
@@ -701,13 +702,13 @@ mod tests {
             ("location", "http://localhost:5173/next"),
             ("content-security-policy", "default-src 'self'"),
         ]);
-        rewrite_response(&mut h, &site, 5173, &fa, false);
+        rewrite_response(&mut h, &site, "localhost:5173", &fa, false);
         assert!(!h.contains_key("x-frame-options"));
         assert_eq!(h["location"], "http://b-3-k.localhost:7690/next");
         let csp: Vec<_> = h.get_all("content-security-policy").iter().map(|v| v.to_str().unwrap()).collect();
         assert_eq!(csp, ["default-src 'self'", "frame-ancestors http://127.0.0.1:7681 https://geek.example.ts.net"]);
         let mut h = headers(&[("location", "https://elsewhere.example/")]);
-        rewrite_response(&mut h, &site, 5173, &fa, false);
+        rewrite_response(&mut h, &site, "localhost:5173", &fa, false);
         assert_eq!(h["location"], "https://elsewhere.example/");
     }
 
