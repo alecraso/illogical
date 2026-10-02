@@ -12,6 +12,7 @@
 import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
 import { forget, loadEnrollment, loadKeys, saveEnrollment, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
+import { follows, signRoster, word, type AccountCerts, type Roster, type TeamPin, type TeamRole } from "./e2e/team.ts";
 
 export interface ControlInfo {
   control: true;
@@ -28,6 +29,55 @@ export interface DirDaemon {
   online: boolean;
   last_seen: number | null;
   cert: Cert;
+  /** Someone else's (M19): its owner account and their login, and the
+   * team it belongs to, if any. */
+  account?: string;
+  owner_name?: string;
+  team?: string | null;
+}
+
+/** Another account's machine as the directory lists it, with that account's
+ * certificates to check it by. */
+interface ForeignEntry extends Omit<DirDaemon, "cert"> {
+  chain?: { trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[] };
+}
+
+export interface Team {
+  team: string;
+  pin: TeamPin;
+  locked: boolean;
+  roster: Roster;
+  role: TeamRole | null;
+  requests: { account: string; root: string; name: string; role: TeamRole; created: number }[];
+  certs: AccountCerts;
+  /** The founder is the one this browser pinned on first sight. */
+  verified: boolean;
+}
+
+const PINS_KEY = "illogical.control.pins";
+
+/** First sight of another account's root (trust on first use): pinned
+ * here, and a different one later is refused, not believed. */
+function pins(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(PINS_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function pin(account: string, root: string): boolean {
+  const p = pins();
+  if (p[account] && p[account] !== root) return false;
+  if (!p[account]) {
+    p[account] = root;
+    try {
+      localStorage.setItem(PINS_KEY, JSON.stringify(p));
+    } catch {
+      // not remembered
+    }
+  }
+  return true;
 }
 
 /** Served by control? (A daemon answers 404.) */
@@ -373,16 +423,25 @@ export class ControlSession {
     try {
       const [devs, dir] = await Promise.all([
         api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[]; pending: Cert[] }>("/api/devices"),
-        api<{ daemons: Omit<DirDaemon, "cert">[] }>("/api/directory"),
+        api<{ daemons: ForeignEntry[] }>("/api/directory"),
       ]);
       this.rootMismatch = !!devs.trust && devs.trust.root !== e.root;
       this.trusted = await evaluate({ account: e.account, root: e.root }, devs.certs, devs.revocations);
       this.revocations = devs.revocations;
       this.pending = devs.pending;
-      this.daemons = dir.daemons.flatMap((d) => {
-        const cert = this.trusted.get(d.id);
-        return cert?.kind === "daemon" ? [{ ...d, cert }] : [];
-      });
+      const daemons: DirDaemon[] = [];
+      for (const d of dir.daemons) {
+        const { chain, ...entry } = d;
+        let cert = this.trusted.get(d.id);
+        // Someone else's machine: by their account's certificates, from
+        // the root this browser pinned for them on first sight.
+        if (!cert && d.account && chain?.trust && pin(d.account, chain.trust.root)) {
+          cert = (await evaluate(chain.trust, chain.certs, chain.revocations)).get(d.id);
+        }
+        if (cert?.kind === "daemon") daemons.push({ ...entry, cert });
+      }
+      this.daemons = daemons;
+      await this.loadTeams();
       this.stale = false;
       try {
         localStorage.setItem(DIR_KEY, JSON.stringify(this.daemons));
@@ -405,12 +464,102 @@ export class ControlSession {
     this.emit();
   }
 
+  // ---- teams and people (M19)
+
+  teams: Team[] = [];
+
+  async loadTeams() {
+    const r = await api<{ teams: Omit<Team, "verified">[] }>("/api/teams").catch(() => ({ teams: [] as Omit<Team, "verified">[] }));
+    const out: Team[] = [];
+    for (const t of r.teams) {
+      // The founder pinned on first sight. The team's daemons check each
+      // roster version against it; this browser checks the ones it signs.
+      const ok = pin(`team:${t.team}`, `${t.pin.founder}.${t.pin.founder_root}`);
+      out.push({ ...t, verified: ok });
+    }
+    this.teams = out;
+  }
+
+  private myMember(): { account: string; root: string; name: string } {
+    return { account: this.account, root: this.enrollment!.root, name: word(this.login) };
+  }
+
+  async createTeam(name: string) {
+    const team = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+    const roster = await signRoster(
+      { v: 1, team, name: name.trim().slice(0, 80) || "team", version: 1, at: Date.now(), members: [{ ...this.myMember(), role: "owner" }] },
+      this.keys,
+    );
+    await api("/api/teams", { roster });
+    await this.refresh();
+  }
+
+  /** Sign and send the team's next roster, as `change` makes it. */
+  async changeTeam(team: string, change: (members: Roster["members"]) => Roster["members"], name?: string) {
+    const t = this.teams.find((x) => x.team === team);
+    if (!t) throw new Error("no such team");
+    const prev = t.roster;
+    const next = await signRoster(
+      { v: 1, team, name: name ?? prev.name, version: prev.version + 1, at: Date.now(), members: change(prev.members.map((m) => ({ ...m }))) },
+      this.keys,
+    );
+    if (!(await follows(next, prev, t.pin, t.certs))) throw new Error("that change doesn't check out (are you an owner here?)");
+    await api(`/api/teams/${team}/roster`, { roster: next });
+    await this.refresh();
+  }
+
+  async admit(team: string, req: Team["requests"][number]) {
+    await this.changeTeam(team, (ms) => [...ms.filter((m) => m.account !== req.account), { account: req.account, root: req.root, role: req.role, name: word(req.name) }]);
+  }
+
+  async invite(team: string, role: TeamRole): Promise<string> {
+    const r = await api<{ link: string }>(`/api/teams/${team}/invites`, { role });
+    return r.link;
+  }
+
+  async showInvite(team: string, code: string) {
+    return api<{ team: string; name: string; role: TeamRole }>(`/api/invites/${team}/${code}`);
+  }
+
+  async acceptInvite(team: string, code: string) {
+    await api(`/api/invites/${team}/${code}/accept`, {});
+  }
+
+  async rejectRequest(team: string, account: string) {
+    await api(`/api/teams/${team}/requests/${account}/reject`, {});
+    await this.refresh();
+  }
+
+  async lockTeam(team: string, locked: boolean) {
+    await api(`/api/teams/${team}/lock`, { locked });
+    await this.refresh();
+  }
+
+  /** Someone on control, by their login: whom to share with, and the root
+   * device to pin for them (compare its fingerprint with them). */
+  async person(login: string) {
+    return api<{ account: string; name: string; root: string }>(`/api/people?login=${encodeURIComponent(login)}`);
+  }
+
   /** How a Client reaches daemon `id`. */
   target(id: string): E2ETarget | undefined {
     const d = this.daemons.find((x) => x.id === id);
     if (!d) return undefined;
     const ws = this.info.url.replace(/^http/, "ws");
     return { daemon: { id: d.id, noise: d.cert.noise }, direct: d.urls, relay: `${ws}/api/relay/c/${d.id}`, keys: this.keys };
+  }
+
+  /** A read-only link to a session on daemon `id` (M19): a one-off key, its
+   * private half only in the link's fragment. */
+  async makeLink(request: (m: string, p: string, b?: unknown) => Promise<{ ok: boolean; json<T>(): Promise<T> }>, id: string, session: number, ttlSecs: number, history: boolean): Promise<string> {
+    const d = this.daemons.find((x) => x.id === id);
+    if (!d) throw new Error("no such machine");
+    const kp = (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"])) as CryptoKeyPair;
+    const seed = new Uint8Array(await crypto.subtle.exportKey("pkcs8", kp.privateKey)).slice(16);
+    const pub = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+    const res = await request("POST", "/api/links", { session, key: hex(pub), ttl_secs: ttlSecs, history });
+    if (!res.ok) throw new Error((await res.json<{ error?: string }>().catch(() => null))?.error ?? "couldn't make a link");
+    return `${this.info.url}/#link=${d.id}.${d.cert.noise}.${hex(seed)}.${hex(pub)}`;
   }
 
   /** Approve another device's request: sign its certificate. */

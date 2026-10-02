@@ -70,6 +70,16 @@ pub struct Grant {
     /// granted. Output before it is never sent: no history, no scrollback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<BTreeMap<PaneId, u64>>,
+    /// For an `account:` principal (M19): the root device the owner saw
+    /// for them when sharing; their devices must chain back to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// A read-only link (M19): its X25519 public key (hex), and when it
+    /// stops working (ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<u64>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -82,6 +92,9 @@ pub struct Acl {
     path: PathBuf,
     audit: PathBuf,
     grants: RwLock<Vec<Grant>>,
+    /// A team daemon's members' roles on every session (M19), from the
+    /// team's signed roster.
+    team: RwLock<std::collections::HashMap<String, Role>>,
 }
 
 impl Acl {
@@ -94,17 +107,93 @@ impl Acl {
             }),
             Err(_) => Vec::new(),
         };
-        Self { path, audit: state_dir.join("audit.jsonl"), grants: RwLock::new(grants) }
+        Self { path, audit: state_dir.join("audit.jsonl"), grants: RwLock::new(grants), team: Default::default() }
     }
 
-    /// Someone's role on a session.
+    /// Someone's role on a session: a grant, else their team role.
     pub fn role(&self, p: &Principal, session: SessionId) -> Option<Role> {
         match p {
             Principal::Owner => Some(Role::Owner),
             Principal::User { id, .. } => {
-                self.grants.read().unwrap().iter().find(|g| g.session == session && &g.principal == id).map(|g| g.role)
+                let granted = self
+                    .grants
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .find(|g| g.session == session && &g.principal == id)
+                    .map(|g| g.role);
+                let team = self.team.read().unwrap().get(id).copied();
+                granted.max(team)
             }
         }
+    }
+
+    /// A team daemon's members' roles (from its verified roster).
+    pub fn set_team_roles(&self, roles: std::collections::HashMap<String, Role>) {
+        *self.team.write().unwrap() = roles;
+    }
+
+    pub fn team_role(&self, p: &Principal) -> Option<Role> {
+        self.team.read().unwrap().get(p.id()).copied()
+    }
+
+    /// Until when read-only links may reach this daemon (M19).
+    pub fn links_until(&self) -> Option<u64> {
+        let now = now_ms();
+        self.grants.read().unwrap().iter().filter_map(|g| g.key.as_ref().and(g.expires)).filter(|e| *e > now).max()
+    }
+
+    /// The read-only link whose key this is, while it works.
+    pub fn link_by_key(&self, key_hex: &str) -> Option<Grant> {
+        let now = now_ms();
+        self.grants
+            .read()
+            .unwrap()
+            .iter()
+            .find(|g| g.key.as_deref() == Some(key_hex) && g.expires.is_some_and(|e| e > now))
+            .cloned()
+    }
+
+    /// A read-only link to `session` for `key` until `expires`, from now on
+    /// unless `from` says otherwise.
+    pub fn add_link(
+        &self,
+        session: SessionId,
+        key: &str,
+        expires: u64,
+        from: Option<BTreeMap<PaneId, u64>>,
+    ) -> std::io::Result<String> {
+        let id = format!("link:{}", &hex_sha(key)[..12]);
+        let mut g = self.grants.write().unwrap();
+        g.retain(|x| x.principal != id);
+        g.push(Grant {
+            session,
+            principal: id.clone(),
+            name: "someone with a link".into(),
+            role: Role::Viewer,
+            by: "owner".into(),
+            at: now_ms(),
+            from,
+            root: None,
+            key: Some(key.to_owned()),
+            expires: Some(expires),
+        });
+        let file = File { grants: g.clone() };
+        drop(g);
+        write_atomic(&self.path, &serde_json::to_vec_pretty(&file).unwrap())?;
+        self.log(serde_json::json!({ "at": now_ms(), "by": "owner", "action": "link", "session": session, "principal": id, "expires": expires }));
+        Ok(id)
+    }
+
+    /// Links that ran out go (true if any did).
+    pub fn prune_links(&self) -> bool {
+        let now = now_ms();
+        let gone: Vec<Grant> =
+            self.grants.read().unwrap().iter().filter(|g| g.expires.is_some_and(|e| e <= now)).cloned().collect();
+        for g in &gone {
+            let _ = self.set(g.session, &g.principal, &g.name, None, "expired");
+        }
+        !gone.is_empty()
     }
 
     /// For a "from now" share: where `pane`'s output may start for them.
@@ -116,15 +205,9 @@ impl Acl {
         Some(from.get(&pane).copied().unwrap_or(0))
     }
 
-    /// A user's sessions and roles (empty: none).
-    pub fn roles(&self, p: &Principal) -> BTreeMap<SessionId, Role> {
-        let id = p.id();
-        self.grants.read().unwrap().iter().filter(|g| g.principal == id).map(|g| (g.session, g.role)).collect()
-    }
-
     /// Whether this principal may connect at all.
     pub fn knows(&self, p: &Principal) -> bool {
-        p.is_owner() || self.grants.read().unwrap().iter().any(|g| g.principal == p.id())
+        p.is_owner() || self.grants.read().unwrap().iter().any(|g| g.principal == p.id()) || self.team_role(p).is_some()
     }
 
     pub fn list(&self) -> Vec<Grant> {
@@ -154,9 +237,26 @@ impl Acl {
         by: &str,
         from: Option<BTreeMap<PaneId, u64>>,
     ) -> std::io::Result<()> {
+        self.set_full(session, principal, name, role, by, from, None)
+    }
+
+    /// With the root an `account:` principal's devices chain back to.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_full(
+        &self,
+        session: SessionId,
+        principal: &str,
+        name: &str,
+        role: Option<Role>,
+        by: &str,
+        from: Option<BTreeMap<PaneId, u64>>,
+        root: Option<String>,
+    ) -> std::io::Result<()> {
         let mut g = self.grants.write().unwrap();
         let before = g.clone();
-        let kept = g.iter().find(|x| x.session == session && x.principal == principal).and_then(|x| x.from.clone());
+        let old = g.iter().find(|x| x.session == session && x.principal == principal).cloned();
+        let kept = old.as_ref().and_then(|x| x.from.clone());
+        let root = root.or_else(|| old.and_then(|x| x.root));
         g.retain(|x| !(x.session == session && x.principal == principal));
         if let Some(role) = role {
             g.push(Grant {
@@ -167,6 +267,9 @@ impl Acl {
                 by: by.into(),
                 at: now_ms(),
                 from: from.or(kept),
+                root,
+                key: None,
+                expires: None,
             });
         }
         if let Err(e) = write_atomic(&self.path, &serde_json::to_vec_pretty(&File { grants: g.clone() }).unwrap()) {
@@ -238,6 +341,11 @@ mod tests {
     }
 }
 
+fn hex_sha(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(s.as_bytes()))
+}
+
 // ---------------------------------------------------------------- API
 
 pub mod api {
@@ -257,7 +365,49 @@ pub mod api {
     use crate::{mux::Cmd, server::App};
 
     pub fn routes() -> Router<Arc<App>> {
-        Router::new().route("/api/acl", get(list).post(set))
+        Router::new().route("/api/acl", get(list).post(set)).route("/api/links", axum::routing::post(link))
+    }
+
+    #[derive(Deserialize)]
+    struct NewLink {
+        session: SessionId,
+        /// The link's X25519 public key, hex (its private half travels in
+        /// the link's fragment and never reaches us).
+        key: String,
+        #[serde(default = "hour")]
+        ttl_secs: u64,
+        /// With history (default: from now on).
+        #[serde(default)]
+        history: bool,
+    }
+
+    fn hour() -> u64 {
+        3600
+    }
+
+    /// A read-only link (M19): one session, live, until it expires.
+    async fn link(State(app): State<Arc<App>>, Json(b): Json<NewLink>) -> Response {
+        if b.key.len() != 64 || !b.key.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": "key: 32 bytes of hex" }))).into_response();
+        }
+        let from = if b.history {
+            None
+        } else {
+            match app.mux.api(|r| crate::mux::Api::SessionEnds(b.session, r)).await.flatten() {
+                Some(ends) => Some(ends),
+                None => return (StatusCode::NOT_FOUND, Json(json!({ "error": "no such session" }))).into_response(),
+            }
+        };
+        let expires = crate::store::now_ms() + b.ttl_secs.clamp(10, 7 * 86_400) * 1000;
+        match app.acl.add_link(b.session, &b.key.to_ascii_lowercase(), expires, from) {
+            Ok(id) => {
+                app.mux.send(Cmd::AclChanged);
+                // Control lets its viewers through the relay once it knows.
+                app.control.poke();
+                Json(json!({ "link": id, "expires": expires })).into_response()
+            }
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
+        }
     }
 
     async fn list(State(app): State<Arc<App>>) -> Response {
@@ -278,6 +428,10 @@ pub mod api {
         /// False: "from now", no history from before this (M13).
         #[serde(default = "yes")]
         history: bool,
+        /// For `account:<id>` (M19): their root device, as the owner saw it
+        /// (they compare its fingerprint with the person).
+        #[serde(default)]
+        root: Option<String>,
     }
 
     fn yes() -> bool {
@@ -292,7 +446,20 @@ pub mod api {
             return (StatusCode::BAD_REQUEST, Json(json!({ "error": "principal is tailnet:<login> or account:<id>" })))
                 .into_response();
         }
-        let principal = b.principal.to_ascii_lowercase();
+        // Account ids are as control made them; logins aren't case-sensitive.
+        let principal =
+            if b.principal.starts_with("tailnet:") { b.principal.to_ascii_lowercase() } else { b.principal.clone() };
+        if principal.starts_with("account:")
+            && b.role.is_some()
+            && b.root.is_none()
+            && app.acl.list().iter().all(|g| g.principal != principal)
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "sharing with an account needs its root device" })),
+            )
+                .into_response();
+        }
         let name = b.name.unwrap_or_else(|| principal.split_once(':').map(|(_, n)| n.to_owned()).unwrap_or_default());
         let from = if b.history || b.role.is_none() {
             None
@@ -302,12 +469,14 @@ pub mod api {
                 None => return (StatusCode::NOT_FOUND, Json(json!({ "error": "no such session" }))).into_response(),
             }
         };
-        if let Err(e) = app.acl.set_from(b.session, &principal, &name, b.role, "owner", from) {
+        if let Err(e) = app.acl.set_full(b.session, &principal, &name, b.role, "owner", from, b.root) {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response();
         }
         // Takes effect at once: new state for everyone, and a hang-up for
-        // whoever has nothing left.
+        // whoever has nothing left; someone new from control needs their
+        // certificates fetched.
         app.mux.send(Cmd::AclChanged);
+        app.control.poke();
         Json(json!({ "grants": app.acl.list() })).into_response()
     }
 }

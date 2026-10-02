@@ -6,6 +6,14 @@ import { useEffect, useState } from "preact/hooks";
 import type { Client } from "../client";
 import type { PaneId, Presence, Role, SessionId } from "../proto";
 import type { MenuItem } from "./menu";
+import type { ControlSession } from "../control";
+import { fingerprint } from "../e2e/cert.ts";
+
+/** Control mode (M19): people are accounts there, and links go through it. */
+let control: ControlSession | null = null;
+export function setControlSession(s: ControlSession | null) {
+  control = s;
+}
 
 /** A steady colour per person. */
 export function colorOf(who: string): string {
@@ -210,6 +218,9 @@ export function ShareDialog({ client }: { client: Client }) {
   const [history, setHistory] = useState(false);
   const [err, setErr] = useState("");
   const [secrets, setSecrets] = useState<{ pane: PaneId; kinds: string[] }[]>([]);
+  // Control mode: the person found, to confirm by fingerprint.
+  const [found, setFound] = useState<{ account: string; name: string; root: string } | null>(null);
+  const [link, setLink] = useState<string | null>(null);
   const load = async (s: SessionId | null = session) => {
     const r = await client.request("GET", "/api/acl");
     if (r.ok) setGrants((await r.json<{ grants: Grant[] }>()).grants);
@@ -231,8 +242,8 @@ export function ShareDialog({ client }: { client: Client }) {
   if (session === null) return null;
   const name = client.state?.sessions.find((s) => s.id === session)?.name ?? `$${session}`;
   const mine = grants.filter((g) => g.session === session);
-  const set = async (principal: string, r: Role | null, withHistory = true) => {
-    const res = await client.request("POST", "/api/acl", { session, principal, role: r, history: withHistory });
+  const set = async (principal: string, r: Role | null, withHistory = true, extra: Record<string, string> = {}) => {
+    const res = await client.request("POST", "/api/acl", { session, principal, role: r, history: withHistory, ...extra });
     if (!res.ok) setErr((await res.json<{ error?: string }>().catch(() => null))?.error ?? `HTTP ${res.status}`);
     await load();
   };
@@ -278,16 +289,47 @@ export function ShareDialog({ client }: { client: Client }) {
             </p>
           ))}
         <p class="dim">People you share with work in throwaway VMs; they can't type on this machine unless you trust them with a pane.</p>
+        {found ? (
+          <div class="share-confirm" data-found={found.account}>
+            <p>
+              <b>{found.name}</b>'s first device is <span class="fingerprint">{fingerprint(found.root)}</span>. If you can, check it with them.
+            </p>
+            <div class="prompt-buttons">
+              <button onClick={() => setFound(null)}>Cancel</button>
+              <button
+                class="primary"
+                data-share-confirm
+                onClick={() =>
+                  void set(`account:${found.account}`, role, history, { root: found.root, name: found.name }).then(() => {
+                    setFound(null);
+                    setWho("");
+                  })
+                }
+              >
+                Share with {found.name}
+              </button>
+            </div>
+          </div>
+        ) : null}
         <form
           class="share-add"
           onSubmit={(e) => {
             e.preventDefault();
             const p = who.trim();
             if (!p) return;
+            if (control && client.e2e) {
+              control.person(p).then(setFound, (x: Error) => setErr(x.message));
+              return;
+            }
             void set(p.includes(":") ? p : `tailnet:${p}`, role, history).then(() => setWho(""));
           }}
         >
-          <input placeholder="their tailnet login" value={who} onInput={(e) => setWho((e.target as HTMLInputElement).value)} aria-label="Who" />
+          <input
+            placeholder={control && client.e2e ? "their login on illogical" : "their tailnet login"}
+            value={who}
+            onInput={(e) => setWho((e.target as HTMLInputElement).value)}
+            aria-label="Who"
+          />
           <select value={role} onChange={(e) => setRole((e.target as HTMLSelectElement).value as Role)} aria-label="Role">
             <option value="viewer">can watch</option>
             <option value="editor">can drive</option>
@@ -299,6 +341,27 @@ export function ShareDialog({ client }: { client: Client }) {
             Share
           </button>
         </form>
+        {control && client.e2e ? (
+          <p>
+            <button
+              class="control-linkish"
+              data-make-link
+              onClick={() =>
+                control!
+                  .makeLink((m, p, b) => client.request(m, p, b), client.e2e!.daemon.id, session, 3600, false)
+                  .then(setLink, (x: Error) => setErr(x.message))
+              }
+            >
+              Make a read-only link
+            </button>{" "}
+            <span class="dim">(anyone with it watches, from now on, for an hour; no account needed)</span>
+          </p>
+        ) : null}
+        {link ? (
+          <span class="control-cmd" data-link>
+            {link}
+          </span>
+        ) : null}
         {err ? <p class="control-error">{err}</p> : null}
         <div class="prompt-buttons">
           <button onClick={() => setSession(null)}>Done</button>

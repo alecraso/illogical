@@ -165,11 +165,36 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
 }
 
 pub async fn client(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>, up: WebSocketUpgrade) -> Response {
-    match app.db.daemon_account(&id) {
-        Ok(Some(a)) if a == s.account => {}
-        Ok(_) => return err(StatusCode::NOT_FOUND, "no such daemon").into_response(),
+    // Its owner's, a team's member, or someone it was shared with (the
+    // daemon checks for itself; this only routes).
+    match crate::teams::may_reach(&app, &s.account, &id) {
+        Ok(true) => {}
+        Ok(false) => return err(StatusCode::NOT_FOUND, "no such daemon").into_response(),
         Err(e) => return crate::ApiError::from(e).into_response(),
     }
+    splice_to(app, id, Some(s.account), up)
+}
+
+/// A read-only link's viewer (M19): no account. Only to a daemon that has
+/// live links, and rate-limited; the daemon checks the link's key.
+pub async fn link(
+    State(app): State<Arc<App>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    up: WebSocketUpgrade,
+) -> Response {
+    if let Err(e) = app.limits.check(crate::limit::LINKS, app.limits.client_ip(peer, &headers)) {
+        return e.into_response();
+    }
+    match app.db.daemon_has_links(&id, now_ms()) {
+        Ok(true) => splice_to(app, id, None, up),
+        Ok(false) => err(StatusCode::NOT_FOUND, "that link has expired").into_response(),
+        Err(e) => crate::ApiError::from(e).into_response(),
+    }
+}
+
+fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUpgrade) -> Response {
     let Some(mux) = app.relay.mux(&id) else {
         return err(StatusCode::SERVICE_UNAVAILABLE, "that daemon isn't connected to the relay").into_response();
     };
@@ -179,7 +204,11 @@ pub async fn client(State(app): State<Arc<App>>, s: Session, Path(id): Path<Stri
     up.max_message_size(MAX_WIRE).on_upgrade(move |ws| async move {
         let (up, down) = splice(ws, stream).await;
         let day = crate::day(now_ms());
-        if let Err(e) = app.db.add_relay_bytes(&s.account, &day, up + down) {
+        // Links count against the daemon's owner.
+        let who = account.or_else(|| app.db.daemon_account(&id).ok().flatten());
+        if let Some(a) = who
+            && let Err(e) = app.db.add_relay_bytes(&a, &day, up + down)
+        {
             warn!(error = %e, "metering");
         }
     })
