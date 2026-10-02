@@ -242,8 +242,15 @@ mod launchd {
             let plist = plist.display().to_string();
             // bootout returns before the old one is gone; retry briefly.
             let mut ok = false;
-            for _ in 0..20 {
-                if launchctl(&["bootstrap", &domain, &plist])? {
+            // Quietly until the last try: the early ones fail while the old
+            // one is still going, and launchctl says so on stderr.
+            for attempt in 0..20 {
+                let mut c = Command::new("launchctl");
+                c.args(["bootstrap", &domain, &plist]);
+                if attempt < 19 {
+                    c.stderr(std::process::Stdio::null());
+                }
+                if c.status().context("running launchctl")?.success() {
                     ok = true;
                     break;
                 }
