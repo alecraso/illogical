@@ -50,7 +50,7 @@ control-deploy: static
     set -euo pipefail
     ctx=$(mktemp -d)
     trap 'rm -rf "$ctx"' EXIT
-    cp {{target_dir}}/x86_64-unknown-linux-musl/release/illogical-control packaging/control/Dockerfile packaging/control/fly.toml "$ctx"/
+    cp {{target_dir}}/x86_64-unknown-linux-musl/release/illogical-control {{target_dir}}/x86_64-unknown-linux-musl/release/illogicald packaging/control/Dockerfile packaging/control/fly.toml "$ctx"/
     cd "$ctx" && fly deploy --local-only --ha=false
 
 # Release tarballs in dist/: illogical-VERSION-TARGET.tar.gz with both

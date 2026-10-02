@@ -4,5 +4,7 @@
 # builds the context and deploys to Fly.
 FROM gcr.io/distroless/static-debian12
 COPY illogical-control /illogical-control
+# The daemon hosted sandboxes run (M20).
+COPY illogicald /illogicald
 EXPOSE 7690
 ENTRYPOINT ["/illogical-control"]

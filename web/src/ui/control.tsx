@@ -348,6 +348,9 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
         ))}
       </ul>
       {err ? <p class="control-error">{err}</p> : null}
+      <p class="dim">
+        Account <span class="control-cmd-inline" data-account>{s.account}</span>
+      </p>
       {s.info.passkeys ? (
         <p class="dim">
           {s.passkeys ? `${s.passkeys} passkey${s.passkeys === 1 ? "" : "s"} can sign in to this account. ` : "No passkey signs in to this account yet. "}
