@@ -90,6 +90,12 @@ control-smoke:
     {{cargo}} build -p illogical-control -p illogicald
     cd web && node --experimental-strip-types --no-warnings control-smoke.ts
 
+# The swarm (M26) by hand: three throwaway daemons with scripted work on
+# 7730-7732 (t: make trouble, a: an agent asks, x: quit).
+fake-fleet:
+    {{cargo}} build -p illogicald -p illogical
+    cd web && pnpm run build && node --experimental-strip-types --no-warnings fake-fleet.ts
+
 # The browser's end-to-end crypto (web/src/e2e) against Rust's (crates/e2e).
 e2e-interop:
     {{cargo}} build -p illogical-e2e --example interop

@@ -54,6 +54,8 @@ export interface ApiResponse {
   ok: boolean;
   status: number;
   json<T = unknown>(): Promise<T>;
+  /** The body as text (a capture, M26's hover peek). */
+  text?(): Promise<string>;
 }
 
 /** A daemon reached through illogical control (M17/M18): an end-to-end
@@ -202,13 +204,13 @@ export class Client {
       const sock = (this.link as E2ELink | undefined)?.sock;
       if (!sock?.open) throw new Error("not connected");
       const r = await sock.request(method, path, body);
-      return { ok: r.ok, status: r.status, json: async <T,>() => r.json<T>() };
+      return { ok: r.ok, status: r.status, json: async <T,>() => r.json<T>(), text: async () => r.text() };
     }
     const res = await fetch(this.base + path, {
       method,
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     });
-    return { ok: res.ok, status: res.status, json: <T,>() => res.json() as Promise<T> };
+    return { ok: res.ok, status: res.status, json: <T,>() => res.json() as Promise<T>, text: () => res.text() };
   }
 
   state: State | null = null;

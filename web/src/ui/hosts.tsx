@@ -6,6 +6,7 @@ import { directory } from "../hosts";
 import type { Fleet } from "../fleet";
 import { useSubscribe } from "./hooks";
 import { openMenu, type MenuItem } from "./menu";
+import { openSwarm } from "../swarm/route";
 
 function seen(name: string): string {
   const h = directory.find(name);
@@ -74,6 +75,7 @@ export function HostButton() {
       label: `${name === directory.current ? "✓ " : "    "}${name}${name === directory.home ? " (home)" : ""}  · ${fleetLabel(name) ?? seen(name)}`,
       run: () => directory.select(name),
     }));
+    items.push("separator", { label: "Swarm: every pane at once", run: openSwarm });
     if (fleet?.notice) items.push("separator", { label: fleet.notice, disabled: true, run: () => {} });
     if (directory.stale) {
       const what = directory.control ? "Control unreachable: saved list" : "Home daemon unreachable: saved list";

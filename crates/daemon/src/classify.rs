@@ -23,9 +23,11 @@ const LOGS_FOLLOW: &[&str] = &["tail", "less"];
 const LOGS: &[&str] = &["journalctl", "stern", "lnav"];
 const LOGS_TWO: &[&str] = &["kubectl logs", "docker logs", "fly logs", "flyctl logs"];
 /// Commands that run another: look past them (`uv run pytest`, `sudo vim`).
+/// A shell with a script is the script (`bash ./bin/deploy test`, which is
+/// what /proc shows for a script with a `#!/bin/bash` line).
 const WRAPPERS: &[&str] = &[
     "sudo", "time", "nice", "env", "nohup", "uv", "npx", "pnpm", "npm", "yarn", "bunx", "exec", "node", "python",
-    "python3", "bun", "deno",
+    "python3", "bun", "deno", "bash", "sh", "zsh",
 ];
 
 static SERVERS: LazyLock<Regex> = LazyLock::new(|| {
@@ -182,6 +184,13 @@ mod tests {
             ("sudo apt upgrade", Shell),
             ("python3", Shell),
             ("tail -n 20 app.log", Shell),
+            // Scripts, as /proc shows them: their interpreter, then them.
+            ("/bin/bash /home/user/bin/cargo test", Test),
+            ("bash /opt/tools/journalctl -f", Logs),
+            ("/bin/bash /home/user/.local/bin/claude perm", Agent),
+            ("bash", Shell),
+            ("bash -l", Shell),
+            ("bash --norc --noprofile", Shell),
         ];
         let wrong: Vec<_> =
             fixture.iter().filter(|(c, want)| kind(c) != *want).map(|(c, want)| (c, want, kind(c))).collect();
