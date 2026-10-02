@@ -189,6 +189,18 @@
 
   <section class="feature">
     <div class="text">
+      <h2>Every pane, everywhere, at once.</h2>
+      <p>The swarm is one live view of every pane on every machine you and your team can see: your laptop, your servers, the team's build box, the sessions teammates shared with you. Panes cluster by project, machine, kind or person, and the busy ones drift to the middle.</p>
+      <p>Whatever needs someone lifts out to a rail of cards, bundled by cause: "3 failed on build-02", "2 agents ask". Anyone on the team who may answer can allow, deny or answer from there, or from their phone, and send the agent its next instruction. Everyone sees who did.</p>
+    </div>
+    <picture>
+      <source srcset="img/swarm.webp" type="image/webp">
+      <img class="shot" src="img/swarm.png" width="1440" height="900" loading="lazy" alt="The swarm: hundreds of panes clustered by project, with two agents asking and four failed tests bundled on the rail">
+    </picture>
+  </section>
+
+  <section class="feature flip">
+    <div class="text">
       <h2>A CLI for scripts and agents.</h2>
       <p><code>illogical</code> works from any shell and inside every pane. Run things, type into panes, wait for a command or a line of output, tail, and search every pane's history.</p>
       <p>The same calls are an HTTP API on a Unix socket.</p>
@@ -231,7 +243,7 @@ just bootstrap && just install</pre>
   </section>
 
   <footer>
-    <p>illogical is a personal project by <a href="https://jakegaylor.com">Jake Gaylor</a>, single-user and meant for your own tailnet, not the open internet.</p>
+    <p>illogical is a personal project by <a href="https://jakegaylor.com">Jake Gaylor</a>, for your own machines and the people you share them with.</p>
     <p>Terminal emulation by <a href="https://ghostty.org">libghostty</a> and <a href="https://xtermjs.org">xterm.js</a>. <a href="https://git.inevitable.fyi/jhgaylor/illogical">Source</a> · <a href="https://git.inevitable.fyi/jhgaylor/illogical/releases">Releases</a> · MIT or Apache-2.0.</p>
   </footer>
 </div>

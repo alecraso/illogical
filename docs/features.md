@@ -48,6 +48,22 @@ the daemon stopping, crashing, or the machine rebooting:
   command finishing while you're elsewhere shows "done". With *Notify this
   device* on (session menu), the phone gets a push notification; tapping it
   opens the pane.
+  - **Why it wants you** (M24). Every pane that wants you says why: *ask*
+    (an agent's question or permission request), *failed* (a command that
+    ran a few seconds ended non-zero), *exited*, *input* (a bell or a
+    notification) or *done*, with a one-line headline, the command and its
+    exit code. Reasons bundle by cause (failures by machine, agents asking
+    by project), and one call acts on a whole bundle: allow, deny, answer
+    or dismiss (`/api/attention/act`). `illogical attention --json` lists
+    them, `illogical events` streams them, and notifications are titled by
+    them. Dismissing on one screen clears it on every other.
+  - **What each pane is** (M23). Every pane carries what it's running
+    (shell, build, test, agent, server, logs or editor, from the program
+    itself, so an alias for `claude` still reads as an agent), its git
+    project, how busy it is and its title; `illogical ls --json` shows
+    them. Clients get changes as small deltas rather than the whole layout,
+    so a daemon with hundreds of busy panes costs each client a few KB a
+    second.
 - **History.** Closed panes' output is kept for 7 days, and `illogical
   history` / `search` look across all panes.
 - **VM tabs and panes** (M3b, M3c). *New VM tab* (the `+` button's
@@ -274,6 +290,27 @@ the daemon stopping, crashing, or the machine rebooting:
   illogical's sessions, tabs and splits as native windows, tabs and splits,
   live alongside the browser; see *Use it*.
 
+- **Every host at once** (M25, M30). The page keeps a light connection
+  (summaries only) to every machine in its list, not just the one it
+  shows: yours, your team's, and teammates' machines that shared a session
+  with you or with the team. Through illogical control they share one
+  connection to the relay. A machine that goes away greys out with when it
+  was last seen and comes back on its own; a sandbox that's asleep isn't
+  woken to be counted; reconnects after a laptop wakes are spread out.
+  Private panes never leave their owner's view, and revoking a share or
+  locking a team takes those panes off everyone else's screen within a
+  second.
+- **Team answers** (M29). When an agent on any of the team's machines asks
+  something (an agent block, or Claude Code in a terminal through its
+  hooks: see [*Claude Code in a pane*](cli.md#claude-code-in-a-pane)),
+  anyone who may edit that session can answer: from the card beside the
+  pane, the swarm's rail, or a notification (on a desktop the
+  notification's buttons answer it directly). The first answer wins, and
+  every card, the pane's history (`illogical log %N --who`) and the audit
+  log say who answered. A *Send a follow-up* box gives the agent its next
+  instruction, as its sender's input; on someone's own machine a teammate
+  needs their trust first. Cards show who else is looking. Who gets
+  notified is opt-in per person (*Notify me about its agents*).
 - **The swarm** (M26, `/#swarm`, *Swarm* beside the tabs). Every pane on
   every machine you and your team can see, as one field of tiles coloured
   by kind and lit by activity, clustered by project (or directory, outside

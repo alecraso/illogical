@@ -20,10 +20,18 @@ tabs and splits you drive with the mouse.
   [ACP](https://agentclientprotocol.com) agent as a UI beside your
   terminals: tool calls with their output, approvals and questions as
   cards big enough for a thumb.
+- **The swarm.** Every pane on every machine you and your team can see, in
+  one live view, clustered by project, machine, kind or person. Whatever
+  needs someone (an agent asking, a build failing) lifts out to a rail of
+  cards, where anyone on the team who may answer allows, answers or sends
+  the agent its next instruction, and everyone sees who did.
 - **Scriptable.** `illogical`, a CLI for scripts and agents: run, send,
   wait for a command or a match, tail, search every pane's history.
 
-Single user, Linux (x86_64, arm64) and macOS (Apple silicon). Remote
+![The swarm: every pane, clustered, with what needs you on the rail](site/img/swarm.png)
+
+Linux (x86_64, arm64) and macOS (Apple silicon). Share a session with
+someone, or a whole machine with a team, with roles and presence. Remote
 access is over your tailnet, or through
 [illogical control](docs/control.md) for devices without one: end to end
 encrypted, so the service relays for your devices but can't read your
@@ -98,9 +106,9 @@ loginctl enable-linger $USER
    npm install --omit=optional --prefix ~/.local/share/illogical/agents/codex @agentclientprotocol/codex-acp@2.1.0
    ```
 
-   Claude Code in an ordinary pane can raise the same notifications and
-   question cards with three hooks: see
-   [Claude Code hooks](docs/advanced.md#claude-code-hooks).
+   Claude Code in an ordinary pane can raise the same notifications,
+   question cards and permission cards, and take follow-ups, through its
+   hooks: see [Claude Code in a pane](docs/cli.md#claude-code-in-a-pane).
 
 ## On macOS
 

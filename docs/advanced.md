@@ -64,28 +64,12 @@ so your profile runs too.
 
 ## Claude Code hooks
 
-Claude Code in a pane can tell you when it needs you. In
-`~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Notification": [{ "hooks": [{ "type": "command", "command": "illogical attention needs-input" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "illogical attention done" }] }],
-    "PreToolUse": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [{ "type": "command", "command": "illogical ask", "timeout": 604800 }]
-      }
-    ]
-  }
-}
-```
-
-Outside an illogical pane these commands do nothing, so the hooks are safe
-everywhere. The `PreToolUse` one answers Claude Code's questions from a
-card beside its terminal, on any client and from the phone; see
-[the CLI](cli.md) for details.
+Claude Code in a pane can tell you when it needs you, put its questions and
+permission prompts on cards anyone on the team who may answer can answer,
+and take follow-ups from them, all through hooks in
+`~/.claude/settings.json`. The whole block, and what each part does, is in
+[the CLI's *Claude Code in a pane*](cli.md#claude-code-in-a-pane). Outside
+an illogical pane the hooks do nothing, so they're safe everywhere.
 
 ## VM tabs and panes (wisp)
 

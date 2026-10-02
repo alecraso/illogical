@@ -17,6 +17,7 @@
 //! | POST | `/api/panes/N/hook` | any other Claude Code hook input | `{}`: closes a permission card the terminal answered |
 //! | POST | `/api/panes/N/inbox` | `Stop`/`SessionStart` hook input (`illogical inbox`) | a follow-up: `{action: follow_up\|replaced, text?, by?}` |
 //! | POST | `/api/panes/N/followup` | `{text}` | `{delivered}`: the agent's next instruction, from whoever may drive it |
+//! | GET, POST | `/api/notify` | POST `{session?, on}` | `NotifyPref`: which agents' "needs you" notifications reach you (M29) |
 //! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
 //! | POST | `/api/blocks` | `OpenRequest` | `{"block": N}` |
 //! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |
