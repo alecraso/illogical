@@ -44,6 +44,20 @@ pub struct Ask {
     /// `agent` (an agent block) or `hook` (Claude Code in a terminal).
     pub source: String,
     pub at_ms: u64,
+    /// `permission` (M29): the tool Claude Code asks to use, its input
+    /// (`command`, `file_path`, `old_string`/`new_string`, …) and Claude's
+    /// own "always allow" suggestions, as its `PermissionRequest` hook has
+    /// them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestions: Option<Value>,
+    /// `permission`: Claude Code's session (and subagent), whose next step
+    /// closes the card if the terminal answered it first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,11 +69,63 @@ pub enum AskKind {
     Form,
     /// A link to open (an MCP server's sign-in).
     Url,
+    /// A tool Claude Code in a terminal asks to use (M29): allow once,
+    /// allow always (one of its suggestions), or deny with a message.
+    Permission,
+}
+
+/// Who answered a card, and how (M29): the first answer wins, and every
+/// other client's card closes saying so ("Allowed by Sam, 14:02").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answered {
+    /// The ask it answered.
+    pub id: String,
+    /// `allowed`, `allowed always`, `denied`, `answered`, `skipped`, or
+    /// what the terminal did (`allowed in the terminal`, `closed`).
+    pub how: String,
+    /// Principal id (`owner`, `account:…`), or `terminal`.
+    pub who: String,
+    pub name: String,
+    pub at_ms: u64,
+    /// What was asked, in a line.
+    pub headline: String,
+}
+
+/// What a permission card says: `Bash: cargo test`, `Edit: src/main.rs`.
+pub fn permission_message(tool: &str, input: &Value) -> String {
+    let what = ["command", "file_path", "path", "url", "pattern", "description"]
+        .iter()
+        .find_map(|k| input[*k].as_str())
+        .map(|s| s.lines().next().unwrap_or("").to_owned());
+    match what {
+        Some(w) if !w.is_empty() => format!("{tool}: {w}"),
+        _ => tool.to_owned(),
+    }
+}
+
+/// What `illogical hook` prints for Claude Code's `PermissionRequest`
+/// when the card allows it; `always`: one of its suggestions, as a rule
+/// to keep.
+pub fn permit_allow(always: Option<&Value>) -> Value {
+    let mut decision = json!({ "behavior": "allow" });
+    if let Some(s) = always {
+        decision["updatedPermissions"] = json!([s]);
+    }
+    json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } })
+}
+
+/// ...and when it denies it, with what the agent reads.
+pub fn permit_deny(message: &str) -> Value {
+    json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest",
+        "decision": { "behavior": "deny", "message": message } } })
 }
 
 impl Ask {
     /// What a notification or a "needs you" list says about it.
     pub fn headline(&self) -> String {
+        if self.kind == AskKind::Permission {
+            return self.message.clone();
+        }
         match self.questions.as_ref().and_then(|q| q.as_array()).and_then(|q| q.first()) {
             Some(q) => q["question"].as_str().unwrap_or(&self.message).to_owned(),
             None => self.message.clone(),
@@ -273,6 +339,10 @@ mod tests {
             tool_call_id: None,
             source: "agent".into(),
             at_ms: 0,
+            tool: None,
+            input: None,
+            suggestions: None,
+            session: None,
         };
         assert_eq!(ask.headline(), "Which colour do you prefer?");
         assert_eq!(ask.push_choice(), None, "three questions open the block");
@@ -284,6 +354,31 @@ mod tests {
         assert_eq!(multi.push_choice(), None);
         let form = Ask { kind: AskKind::Form, questions: None, ..ask };
         assert_eq!(summary(&form, &json!({ "size": "M", "qty": 2 })), "qty: 2, size: M");
+    }
+
+    /// S18's recorded `PermissionRequest` inputs, and the replies Claude
+    /// Code took.
+    #[test]
+    fn permission_cards_and_replies() {
+        let fixture = |n: &str| -> Value {
+            let p = format!("{}/../daemon/tests/fixtures/{n}", env!("CARGO_MANIFEST_DIR"));
+            serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+        };
+        let p = fixture("s18-hook-permission.json");
+        assert_eq!(permission_message(p["tool_name"].as_str().unwrap(), &p["tool_input"]), "Bash: touch a.txt");
+        let e = fixture("s18-hook-permission-accept-edits.json");
+        let always = &e["permission_suggestions"][0];
+        let out = permit_allow(Some(always));
+        assert_eq!(out["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        assert_eq!(out["hookSpecificOutput"]["decision"]["updatedPermissions"][0]["rules"][0]["toolName"], "Bash");
+        assert!(permit_allow(None)["hookSpecificOutput"]["decision"].get("updatedPermissions").is_none());
+        let no = permit_deny("Sam said no");
+        assert_eq!(no["hookSpecificOutput"]["decision"], json!({ "behavior": "deny", "message": "Sam said no" }));
+        assert_eq!(
+            permission_message("Edit", &json!({ "file_path": "src/a.rs", "old_string": "x" })),
+            "Edit: src/a.rs"
+        );
+        assert_eq!(permission_message("WebSearch", &json!({})), "WebSearch");
     }
 
     #[test]

@@ -11,6 +11,7 @@ import type { Client } from "../client";
 import type { PaneId } from "../proto";
 import { theme } from "../theme";
 import { askText } from "../ui/menu";
+import { answeredLine, mayAnswer } from "../ui/term-ask";
 import { registerBlock, type BlockView } from "./view";
 import { AskCard, headline, type Ask, type Question } from "./ask";
 
@@ -265,6 +266,9 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
   const stopped = s.status === "stopped" || s.status === "exited";
   const open = s.asks.filter((a) => !a.accepted);
   const call = (method: string, args: unknown) => void client.api(`/api/blocks/${id}/call/${method}`, args, `couldn't ${method}`);
+  // M29: who answered last, and whether this person may answer at all.
+  const answered = client.info(id)?.answered ?? null;
+  const can = mayAnswer(client, id);
   return (
     <div class="agent">
       <div class="agent-bar">
@@ -331,10 +335,19 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
         {s.queued.length > 0 && <div class="agent-note">Queued: {s.queued.join(" · ")}</div>}
       </div>
       {s.error && <div class="agent-error">{s.error}</div>}
-      {s.pending.map((p) => (
-        <PermCard key={p.id} client={client} id={id} p={p} />
-      ))}
-      {s.asks.length > 0 && (
+      {answered && !s.pending.length && !open.length && <div class="agent-answered">{answeredLine(answered)}</div>}
+      {s.pending.map((p) =>
+        can ? (
+          <PermCard key={p.id} client={client} id={id} p={p} />
+        ) : (
+          <div key={p.id} class="agent-perm" role="alertdialog" aria-label={`Allow ${p.title}?`}>
+            <div class="agent-perm-q">{p.tool} wants to run</div>
+            <pre class="agent-perm-cmd">{p.command ?? p.title}</pre>
+            <p class="ask-viewer">You're watching this session: an editor answers it.</p>
+          </div>
+        ),
+      )}
+      {s.asks.length > 0 && can && (
         <div class="agent-asks">
           {s.asks.map((a) => (
             <AskCard

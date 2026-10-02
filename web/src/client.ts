@@ -437,6 +437,30 @@ export class Client {
     }
   }
 
+  /** M29: which agents this person is told about here (not the owner). */
+  notifyPref: { all: boolean; sessions: SessionId[] } | null = null;
+
+  async loadNotify() {
+    try {
+      const res = await this.request("GET", "/api/notify");
+      if (res.ok) this.notifyPref = await res.json();
+      this.emit();
+    } catch {
+      // not connected yet
+    }
+  }
+
+  async setNotify(body: { session?: SessionId; on: boolean }) {
+    try {
+      const res = await this.request("POST", "/api/notify", body);
+      if (res.ok) this.notifyPref = await res.json();
+      else this.toast((await res.json<{ error?: string }>().catch(() => null))?.error ?? "couldn't change that");
+      this.emit();
+    } catch {
+      this.toast("couldn't change that");
+    }
+  }
+
   /** M24: do something about one pane's reason, or several at once; true
    * if any of them took. */
   async act(req: ActRequest): Promise<boolean> {
@@ -600,6 +624,7 @@ export class Client {
         this.focused = undefined;
         this.retry = 0;
         this.applyState(msg.state, true);
+        if (msg.state.roles) void this.loadNotify();
         break;
       case "state":
         this.applyState(msg.state, false);

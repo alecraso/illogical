@@ -10,6 +10,10 @@
 //! - `tui` (M6c): Claude Code's TUI in a terminal pane with the
 //!   AskUserQuestion hook (`illogical ask`): answered from the card, left to
 //!   the terminal, and withdrawn by Esc. Runs in `target/m6c-tui`.
+//! - `team` (M29): Claude Code's TUI in a terminal pane with the team
+//!   answers hooks (`illogical hook`, `illogical inbox`): a tool permission
+//!   allowed from its card, then a follow-up through the inbox wakes it.
+//!   Runs in `target/m29-tui`.
 //! - `mcp` (M6c): an MCP server's form and sign-in link (`fake_mcp.py`)
 //!   through Claude Code in an agent block.
 //! - `claude`: Claude Code through the pinned `claude-agent-acp`, on your
@@ -291,6 +295,59 @@ fn claude_code_in_a_terminal_asks_through_the_hook() {
     d.wait_for("the third card", || pane_ask(&d, pane).is_object());
     d.post(&format!("/api/panes/{pane}/keys"), json!({ "keys": ["Escape"] }));
     d.wait_for("the card withdrawn", || pane_ask(&d, pane).is_null());
+    d.post(&format!("/api/panes/{pane}/keys"), json!({ "keys": ["C-c", "C-c"] }));
+}
+
+/// M29: Claude Code's TUI in a terminal pane with the team answers hooks,
+/// from a settings file of its own (your settings aren't read). Two haiku
+/// turns: a Bash permission allowed from the card (and recorded as
+/// allowed), then a follow-up delivered by the background Stop hook, which
+/// wakes the idle agent without typing into its prompt.
+#[test]
+fn claude_code_permission_and_follow_up_through_the_hooks() {
+    if !wanted("team") {
+        return;
+    }
+    let d = Daemon::child();
+    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    assert!(
+        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap().success()
+    );
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/m29-tui");
+    std::fs::create_dir_all(&dir).unwrap();
+    let settings = d.sessions.join("team-settings.json");
+    let hook = |cmd: &str| json!([{ "hooks": [{ "type": "command", "command": format!("{} {cmd}", cli.display()), "timeout": 604800 }] }]);
+    let inbox = json!([{ "hooks": [{ "type": "command", "command": format!("{} inbox", cli.display()), "asyncRewake": true,
+        "timeout": 86400 }] }]);
+    let hooks = json!({ "hooks": {
+        "PermissionRequest": hook("hook"), "PreToolUse": hook("hook"), "PostToolUse": hook("hook"),
+        "PostToolUseFailure": hook("hook"), "UserPromptSubmit": hook("hook"), "Stop": inbox, "SessionStart": inbox,
+    } });
+    std::fs::write(&settings, hooks.to_string()).unwrap();
+    let unset: String = CLAUDE_ENV.iter().map(|v| format!("-u {v} ")).collect();
+    // A command that writes, so Claude Code asks (S18).
+    let prompt = "Use the Bash tool to run exactly this command: touch m29-marker.txt   Then reply with just DONE.";
+    let cmd = format!(
+        "cd {} && env {unset}claude --model haiku --setting-sources local --settings {} '{prompt}'",
+        dir.canonicalize().unwrap().display(),
+        settings.display(),
+    );
+    let pane = d.post("/api/run", json!({ "command": cmd }))["pane"].as_u64().unwrap();
+    until(&d, pane, "the card", 90, |_| pane_ask(&d, pane)["kind"] == "permission");
+    let a = pane_ask(&d, pane);
+    assert_eq!(a["tool"], "Bash", "{a}");
+    assert!(a["tool_call_id"].as_str().is_some_and(|t| t.starts_with("toolu_")), "matched to its PreToolUse: {a}");
+    let r = d.post("/api/attention/act", json!({ "action": "allow", "pane": pane }));
+    assert_eq!(r["results"][0]["ok"], true, "{r}");
+    until(&d, pane, "DONE", 120, |s| s.contains("DONE"));
+    let info = d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == pane).cloned().unwrap();
+    assert_eq!(info["answered"]["how"], "allowed", "{info}");
+    d.wait_for("the inbox", || {
+        d.get("/api/panes").as_array().unwrap().iter().any(|p| p["id"] == pane && p["inbox"] == true)
+    });
+    let r = d.post(&format!("/api/panes/{pane}/followup"), json!({ "text": "Reply with just the word PINEAPPLE." }));
+    assert_eq!(r["delivered"], true, "{r}");
+    until(&d, pane, "the follow-up's reply", 120, |s| s.contains("PINEAPPLE"));
     d.post(&format!("/api/panes/{pane}/keys"), json!({ "keys": ["C-c", "C-c"] }));
 }
 

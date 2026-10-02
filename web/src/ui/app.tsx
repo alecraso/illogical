@@ -16,7 +16,7 @@ import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { openPort } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
-import { TermAsk } from "./term-ask";
+import { TermAnswered, TermAsk } from "./term-ask";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -139,6 +139,7 @@ function TopBar({
       ...(state.roles ? [] : [{ label: "Share session…", run: () => shareSession(session.id) } as MenuItem]),
       "separator",
       ...notificationItems(client),
+      ...agentNotifyItems(client, session.id),
       "separator",
       { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session: session.id }) },
     ];
@@ -557,6 +558,7 @@ function PaneSlot({
         </div>
       )}
       {info?.ask && <TermAsk client={client} id={id} ask={info.ask} />}
+      {!info?.ask && info?.answered && info.type === "terminal" && <TermAnswered client={client} id={id} answered={info.answered} />}
       {waiting && (
         <button
           class="start-pane"
@@ -869,6 +871,27 @@ function useReportFocus(client: Client, phone: boolean) {
 
 let push: PushState = "unsupported";
 void pushState().then((s) => (push = s));
+
+/** M29: someone other than the owner chooses which agents they're told
+ * about: this session's, or everything they may answer here ("this team's
+ * agents" on a team daemon). The owner always is. */
+function agentNotifyItems(client: Client, session: number): MenuItem[] {
+  if (!client.state?.roles || client.role(session) === "viewer") return [];
+  const pref = client.notifyPref;
+  const set = (body: { session?: number; on: boolean }) => void client.setNotify(body);
+  return [
+    {
+      label: "Notify me about its agents",
+      checked: !!pref && (pref.all || pref.sessions.includes(session)),
+      run: () => set({ session, on: !(pref?.sessions.includes(session) ?? false) }),
+    },
+    {
+      label: "Notify me about every agent here",
+      checked: !!pref?.all,
+      run: () => set({ on: !pref?.all }),
+    },
+  ];
+}
 
 function notificationItems(client: Client): MenuItem[] {
   if (push === "unsupported") return [{ label: "Notifications need HTTPS", disabled: true, run: () => {} }];

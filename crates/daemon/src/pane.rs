@@ -198,6 +198,9 @@ enum Cmd {
     },
     /// Bytes, and who typed them if someone in particular did.
     Input(Vec<u8>, Option<String>),
+    /// Something someone did here that isn't typing (M29: an approval, a
+    /// follow-up), for the pane's history.
+    Note(String, String),
     Purge,
     Checkpoint(Sender<()>),
     Capture {
@@ -240,6 +243,12 @@ impl PaneHandle {
     /// notes it, and commands carry who started them.
     pub fn input_by(&self, data: Vec<u8>, by: String) {
         let _ = self.tx.send(Cmd::Input(data, Some(by)));
+    }
+    /// Record what `by` did here that isn't typing (an approval, a
+    /// follow-up to its agent): in its history as theirs, and in `log
+    /// --who` as them taking a turn.
+    pub fn note(&self, text: String, by: String) {
+        let _ = self.tx.send(Cmd::Note(text, by));
     }
     /// Let go of the session on the pane's machine without a word, before
     /// the machine is deleted (and `restart` follows).
@@ -896,6 +905,7 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
                 }
                 st.input(data)
             }
+            Cmd::Note(text, by) => st.note(text, by),
             Cmd::Attach { sub, offset, floor } => st.attach(sub, offset, floor),
             Cmd::Detach { client } => {
                 st.subs.remove(&client);
@@ -1210,6 +1220,15 @@ impl State {
         let at = self.ring.end();
         self.index(at, Event::Driver { at_ms: now_ms(), who: by.clone() });
         self.typed_by = Some(by);
+    }
+
+    /// What someone did here, as a finished entry in its history.
+    fn note(&mut self, text: String, by: String) {
+        self.typed_by(by.clone());
+        let at = self.ring.end();
+        let cwd = self.status.lock().unwrap().cwd.clone();
+        self.index(at, Event::Command { at_ms: now_ms(), text: Some(text), cwd, by: Some(by) });
+        self.index(at, Event::End { at_ms: now_ms(), exit: Some(0) });
     }
 
     fn input(&mut self, data: Vec<u8>) {
