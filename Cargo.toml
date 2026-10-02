@@ -5,8 +5,8 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
-repository = "ssh://git@git.tailb2e8f2.ts.net/jhgaylor/illogical.git"
+license = "MIT OR Apache-2.0"
+repository = "https://git.inevitable.fyi/jhgaylor/illogical"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

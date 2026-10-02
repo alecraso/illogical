@@ -53,20 +53,41 @@ fn systemctl(args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The daemon arguments to install: those given, or with none, the ones an
+/// earlier install wrote (read back by `earlier`), so an upgrade keeps them.
+fn args_to_install(given: &[String], reset: bool, earlier: impl FnOnce() -> Option<Vec<String>>) -> Vec<String> {
+    if !given.is_empty() || reset {
+        return given.to_vec();
+    }
+    let kept = earlier().unwrap_or_default();
+    if !kept.is_empty() {
+        println!("keeping the daemon arguments from the last install: {} (--reset-args drops them)", kept.join(" "));
+    }
+    kept
+}
+
+/// Arguments in a unit `unit_text` wrote.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn unit_args(unit: &str) -> Option<Vec<String>> {
+    let line = unit.lines().find_map(|l| l.strip_prefix("ExecStart=%h/.local/bin/illogicald"))?;
+    Some(line.split_whitespace().map(String::from).collect())
+}
+
 #[cfg(target_os = "macos")]
-pub fn install(start: bool, daemon_args: &[String]) -> anyhow::Result<()> {
-    launchd::install(start, daemon_args)
+pub fn install(start: bool, daemon_args: &[String], reset: bool) -> anyhow::Result<()> {
+    launchd::install(start, daemon_args, reset)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn install(start: bool, daemon_args: &[String]) -> anyhow::Result<()> {
+pub fn install(start: bool, daemon_args: &[String], reset: bool) -> anyhow::Result<()> {
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
     copy_binaries(&home)?;
 
     let unit_dir = home.join(".config/systemd/user");
     fs::create_dir_all(&unit_dir)?;
     let unit = unit_dir.join(UNIT);
-    fs::write(&unit, unit_text(daemon_args))?;
+    let args = args_to_install(daemon_args, reset, || unit_args(&fs::read_to_string(&unit).ok()?));
+    fs::write(&unit, unit_text(&args))?;
     println!("wrote {}", unit.display());
 
     systemctl(&["daemon-reload"])?;
@@ -132,6 +153,16 @@ mod launchd {
         s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
     }
 
+    /// The daemon arguments in a plist `plist_text` wrote (after the
+    /// program itself).
+    pub fn plist_args(plist: &str) -> Option<Vec<String>> {
+        let rest = &plist[plist.find("<key>ProgramArguments</key>")?..];
+        let array = &rest[rest.find("<array>")? + "<array>".len()..rest.find("</array>")?];
+        let strings = array.split("<string>").skip(1).filter_map(|s| s.split_once("</string>").map(|(v, _)| v));
+        let unxml = |s: &str| s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+        Some(strings.skip(1).map(unxml).collect())
+    }
+
     pub fn plist_text(exe: &str, args: &[String], log: &str) -> String {
         let args: String = std::iter::once(exe)
             .chain(args.iter().map(String::as_str))
@@ -177,7 +208,7 @@ mod launchd {
         Ok(status.success())
     }
 
-    pub fn install(start: bool, daemon_args: &[String]) -> anyhow::Result<()> {
+    pub fn install(start: bool, daemon_args: &[String], reset: bool) -> anyhow::Result<()> {
         let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
         let exe = super::copy_binaries(&home)?;
         let agents = home.join("Library/LaunchAgents");
@@ -186,7 +217,8 @@ mod launchd {
         fs::create_dir_all(&logs)?;
         let log = logs.join("illogicald.log");
         let plist = agents.join(format!("{LABEL}.plist"));
-        fs::write(&plist, plist_text(&exe.display().to_string(), daemon_args, &log.display().to_string()))?;
+        let args = super::args_to_install(daemon_args, reset, || plist_args(&fs::read_to_string(&plist).ok()?));
+        fs::write(&plist, plist_text(&exe.display().to_string(), &args, &log.display().to_string()))?;
         println!("wrote {}", plist.display());
 
         let domain = format!("gui/{}", nix::unistd::getuid());
@@ -231,6 +263,9 @@ mod tests {
             "<string>/Users/me/.local/bin/illogicald</string>\n    <string>--listen</string>\n    <string>127.0.0.1:9000</string>\n    <string>a&lt;b</string>\n  </array>"
         ));
         assert!(t.contains("<key>RunAtLoad</key>"));
+        assert_eq!(super::launchd::plist_args(&t).unwrap(), ["--listen", "127.0.0.1:9000", "a<b"]);
+        let bare = super::launchd::plist_text("/x/illogicald", &[], "/x/log");
+        assert_eq!(super::launchd::plist_args(&bare).unwrap(), Vec::<String>::new());
     }
 
     #[test]
@@ -240,5 +275,16 @@ mod tests {
         assert!(t.contains("KillMode=mixed"));
         assert!(t.contains("Type=notify"));
         assert!(t.contains("FileDescriptorStoreMax="));
+        assert_eq!(super::unit_args(&t).unwrap(), ["--listen", "127.0.0.1:9000"]);
+        assert_eq!(super::unit_args(&super::unit_text(&[])).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn install_keeps_earlier_args_unless_given_or_reset() {
+        let earlier = || Some(vec!["--block-listen".to_string(), "1.2.3.4:7443".to_string()]);
+        assert_eq!(super::args_to_install(&[], false, earlier), ["--block-listen", "1.2.3.4:7443"]);
+        assert_eq!(super::args_to_install(&[], true, earlier), Vec::<String>::new());
+        assert_eq!(super::args_to_install(&["--owner".into(), "a@b".into()], false, earlier), ["--owner", "a@b"]);
+        assert_eq!(super::args_to_install(&[], false, || None), Vec::<String>::new());
     }
 }
