@@ -273,3 +273,14 @@ the daemon stopping, crashing, or the machine rebooting:
   mode, so iTerm2 (and Ghostty's and WezTerm's tmux support) shows
   illogical's sessions, tabs and splits as native windows, tabs and splits,
   live alongside the browser; see *Use it*.
+
+- **The swarm** (M26, `/#swarm`, *Swarm* beside the tabs). Every pane on
+  every machine you and your team can see, as one field of tiles coloured
+  by kind and lit by activity, clustered by project (or directory, outside
+  a repository), machine, kind, session or person. What needs you lifts out
+  to a rail of cards bundled by cause ("3 failed on build-02", "2 agents
+  ask"), where you allow, deny, answer or dismiss them all at once, and
+  send an agent its next instruction. Hover a tile to peek at its last
+  lines, click it to open it. On a phone the cards are a strip along the
+  bottom. `just fake-fleet` runs three throwaway machines to try it on.
+

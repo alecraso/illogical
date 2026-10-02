@@ -2470,6 +2470,75 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - an "unplugged" machine is a stopped process (its socket stays open), not a pulled cable.
 - **For M30 (#47):** `fleet.list` and `fleet.panes` are the merged model; each host carries `owner` and `team` from control's directory (a session's owner is its daemon's: absent means yours, `team` a team box). `fleet.touch(host)` keeps a host among the 24 live ones.
 
+#### M26: the swarm view
+
+**Done 2026-10-02, cut to the MVP (#44), apart from real phones.**
+
+- **What landed:**
+  - **Where:** `/#swarm`, from a *Swarm* button beside the tabs, the host menu and the phone's sheet. It draws every pane in the fleet (M25, M30), and works with one daemon too.
+  - **The field** (`web/src/swarm/field.ts`, ported from the prototype):
+    - every pane is a tile on one Canvas 2D, coloured by kind and lit by activity;
+    - tiles are pulled toward their cluster's centre by how busy they are, and pushed apart through a grid;
+    - it shows stubs when you zoom in, and a header with the command and machine at reading zoom (no live text: that's after the MVP);
+    - stale hosts' panes are greyed;
+    - physics sleeps once everything settles (S16: it's half the frame) and wakes on a regroup, a new pane, attention or a touch.
+  - **Cluster by** project, machine, kind, session or person (M30's `person`: "you", a teammate, "team …"):
+    - panes outside any git project group by their working directory's top directory under a home (`~/scratch`), else its first path component (`/tmp`), never one "none" pile;
+    - switching animates the panes to their new clusters, then fits them;
+    - the choice is remembered per device;
+    - clusters spread wide on a laptop and tall on a phone.
+  - **On the field:**
+    - hover peeks at a pane's last lines (`/api/panes/N/capture` through its host);
+    - clicking a pane opens it in its tab, connected for real (`fleet.open`);
+    - clicking a cluster's name zooms to it;
+    - Fit brings everything back;
+    - the view keeps fitting until you move it yourself.
+  - **The "needs you" rail:**
+    - **What lands there:** M24's reasons, one card per bundle key. Failures and exits bundle by machine (with "here" named), so "3 failed on build-02" bundles across the fleet. Asks bundle by project and agent ("2 agents ask"). The rest are one card each.
+    - **On the field:** a pane with a card flares in place, then flies to it, with a thread back to its cluster.
+    - **Actions:** each card has its reason's actions for all its panes (Allow all, Deny all, Dismiss all), one request per host. Then Open and Show.
+    - **Permission cards:** a single Claude Code permission prompt shows its command and Claude's suggestions (M29's card, now shared in `ui/answer-card.tsx` with the terminal's).
+    - **Questions:** AskUserQuestion is answered on the card itself.
+    - **Viewers** get the card without buttons.
+    - **After an answer:** acting sends the panes back to the swarm. An answered ask leaves a card saying who answered it ("Allowed by sam, 14:02"), with the follow-up box, for a minute.
+    - **When the rail is full,** the rest pulse in place and the rail says how many.
+    - **Done cards** clear themselves after 15 s.
+  - **Phone:** the rail is a strip of cards along the bottom, the field pinches and pans, and a tap opens a pane.
+  - **Notifications:** a notification with a reason deep-links to its card (`/#swarm=[daemon.]N`), and the service worker tells an open page to show it.
+  - **A fake fleet:**
+    - `e2e/fake-fleet.ts`: daemons with scripted panes. Stand-in `cargo`, `npm`, `journalctl` and `nvim`; projects in git repos and plain directories; a stand-in `claude` that asks through the real hooks and waits on its inbox. `trouble(machine)` fails a batch on one machine.
+    - `just fake-fleet` runs it by hand.
+    - `src/swarm/fake.ts` adds a few hundred synthetic panes for the frame-rate check and screenshots.
+    - `just screenshots` now makes `site/img/swarm.png` and `swarm-phone.png`.
+  - **The classifier** now looks through a shell running a script (`bash ./bin/cargo test` is a test), which is how /proc shows `#!/bin/bash` programs.
+- **Frame rate at 500 panes** (`e2e/swarm-fps.spec.ts`, physics kept awake, headless Chrome on geek, the S16 setup):
+
+  | profile | fps | work per frame (p50) |
+  |---|---|---|
+  | laptop (1400×860) | 60 | 1.1 ms |
+  | phone, Pixel 7 viewport, CPU 4x slower | 60 | 4.3 ms |
+
+  This is the same as S16 measured for the prototype (1.1 ms and 4.4 ms). Settled, the field draws nothing.
+- **Tests:**
+  - `e2e/swarm.spec.ts`, against the fake fleet:
+    - each grouping, with the fallback groups and person from M30, remembered across a reload;
+    - a failure bundle dismissed together;
+    - an approval allowed, and its follow-up reaching the agent's inbox;
+    - two agents denied as one card;
+    - a question answered on its card;
+    - a done card clearing itself;
+    - a full rail;
+    - hover peek, cluster zoom, opening a pane, a deep link;
+    - on the phone: allow and dismiss in the strip, pinch, tap to open.
+  - `e2e/swarm-real.spec.ts` (opt-in, `ILLOGICAL_REAL_AGENTS=swarm`): the real Claude Code's Bash permission allowed from the rail. The file appears only after Allow, and the agent carries on to its reply.
+- **Not covered (after the MVP):**
+  - live preview text;
+  - pulse clustering;
+  - the correlation toast;
+  - keyboard shortcuts;
+  - rerun on failure cards (M24's later actions);
+  - real phones. The phone numbers are S16's 4x-throttle stand-in.
+
 #### M30: the team's swarm
 
 **Done 2026-10-02, apart from real phones and different networks.**
