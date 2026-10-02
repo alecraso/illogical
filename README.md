@@ -1,749 +1,114 @@
 # illogical
 
-A personal multiplexer built around durable sessions: a daemon owns the
-terminals, and mouse-first clients attach to them.
+A terminal multiplexer whose sessions outlive the window, the daemon and the
+reboot. A daemon owns your terminals; the browser (desktop or phone) draws
+tabs and splits you drive with the mouse.
 
-Start with [BRIEF.md](BRIEF.md), then [PLAN.md](PLAN.md) (decisions and
-milestones) and [docs/research.md](docs/research.md).
+![Tabs and splits in the browser](site/img/desktop.png)
 
-## Status: M7 (files and navigation) and M5 (tmux -CC) work, on top of M4c (sandboxes, resident daemons, dial-out, synced history)
+- **Mouse first.** Click, drag and right-click for tabs and splits. No
+  chords to learn, no prefix key.
+- **Durable.** Close the window, lose the connection, restart the daemon or
+  reboot: the layout, working directories and scrollback come back, and
+  each pane does what you told it to (a shell where it was, re-run its
+  command, `claude --continue`). On Linux a daemon restart doesn't even
+  touch running programs.
+- **Anywhere on your tailnet.** The same live layout on every window and
+  your phone, over [Tailscale](https://tailscale.com). Push notifications
+  when a pane rings, a long command finishes, or an agent needs you.
+- **Agents as blocks.** Claude Code, Codex or any
+  [ACP](https://agentclientprotocol.com) agent as a UI beside your
+  terminals: tool calls with their output, approvals and questions as
+  cards big enough for a thumb.
+- **Scriptable.** `illogical`, a CLI for scripts and agents: run, send,
+  wait for a command or a match, tail, search every pane's history.
 
-Everything from M1 (sessions, tabs and splits held by the daemon, driven by
-the mouse, the same live on every window and a phone), and now it survives
-the daemon stopping, crashing, or the machine rebooting:
+Single user, Linux (x86_64, arm64) and macOS (Apple silicon). Not meant
+for the open internet: remote access is your tailnet only.
 
-- Every pane's output goes to an append-only log as it happens, and its
-  terminal is checkpointed (Ghostty's snapshot format, zstd) after 5s idle
-  or every 2 MB. The layout is saved on every change.
-- On start, each pane is rebuilt from its checkpoint plus the log after it,
-  marked `── restored <time> ──`, and then does what its restart policy says
-  (right-click a pane → *After a restart*): start a shell in its last
-  directory (default), re-run its last command (asking first, or not), run a
-  command you choose (e.g. `claude --continue`), or wait for Enter.
-- A shell killed by a signal (OOM, `kill -9`) leaves its pane and scrollback
-  in place and offers a new shell. Only an ordinary `exit` closes a pane.
-- *Forget history* deletes a pane's saved output and clears its screen.
-  History is kept to 256 MB per pane, in `~/.local/state/illogical`, which
-  is private to you (0700/0600).
-
-- **Restarting the daemon doesn't touch running programs** (M2b). Each pane's
-  program runs in its own systemd scope behind a small shim, and its terminal
-  is kept in systemd's FD store while the daemon is gone. A restarted (or
-  crashed and auto-restarted) daemon adopts every live pane: vim keeps its
-  screen, a build keeps building, output from the gap is read from the
-  terminal, and open windows reconnect on their own. `just install` upgrades
-  in place. `systemctl --user stop` is still the end of the panes, like a
-  reboot.
-
-- **Panes know about commands** (M3). bash gets shell integration
-  automatically (the way Ghostty does it: no dotfile changes), so each pane
-  knows where every command starts and ends, its exit code and its directory.
-  In the browser each finished command gets a mark in the gutter (green or
-  red); click it to select the output, right-click to copy it or run it
-  again. zsh and fish scripts are included but untested.
-- **`illogical`, a CLI for scripts and agents**, works from any shell and
-  from inside every pane (`ILLOGICAL_PANE` and `ILLOGICAL_SOCK` are set and
-  it's on `PATH`). See below.
-- **Attention.** A pane that rings the bell, sends a notification (OSC 9,
-  777, 99), has an agent go quiet mid-command, or is told by a hook, shows a
-  badge on its tab and pane (and in a "Needs you" list on the phone). A long
-  command finishing while you're elsewhere shows "done". With *Notify this
-  device* on (session menu), the phone gets a push notification; tapping it
-  opens the pane.
-- **History.** Closed panes' output is kept for 7 days, and `illogical
-  history` / `search` look across all panes.
-- **VM tabs and panes** (M3b, M3c). *New VM tab* (the `+` button's
-  right-click, the tab and session menus, the phone's sheet) or `illogical
-  run --vm-tab` opens a tab with its own throwaway Firecracker microVM, a
-  wisp sprite on this host. Splits in it join the VM, so a shell and
-  `claude` side by side see the same files; *Split (local)* adds a shell on
-  this host instead (badged `local`). Panes on the tab's VM can't be
-  dragged out of it (local ones can). The tab's menu can start a new pane
-  on the VM or reset it (delete and recreate it; the panes restart by
-  policy), and closing the tab deletes it. *New VM pane on the right* or
-  `illogical run --vm` gives one pane a VM of its own, deleted with the
-  pane; *Share machine with tab* hands it to the tab. It's for agents and
-  untrusted builds.
-  Its shell gets the same integration (marks, `wait`, history), `process`
-  asks the VM, and the output is logged here, so `illogical tail` still has
-  the session after the VM is gone. Restarting the daemon reattaches to the
-  VM's shell without losing or repeating output. If the VM is deleted from
-  under a pane, Enter starts a new one; after a reboot, each VM comes back
-  as one fresh VM (one per tab, not per pane) and its panes restore by
-  policy. Needs wispd's token at `~/.local/share/wisp/token`
-  (`--wisp-url`, `--wisp-token-file`); without it VM panes are off. The
-  base image is plain Ubuntu 24.04: install what you need, e.g. Claude Code
-  with `curl -fsSL https://claude.ai/install.sh | bash`.
-
-- **Blocks** (M6, in progress). A pane is one kind of block; every kind
-  shares the layout, ids, attention, `describe` and `call`. The first other
-  kind is a browser block for ordinary pages: *Open a web page…* in the pane
-  menu, or `illogical open example.com`. Sites that refuse to be framed get
-  a card with "open in new tab". Block directories are `blocks/<id>/` in
-  the state directory (`panes/` before; it's moved, and left as a link).
-
-- **Browser blocks on ports** (M6a). Run `npm run dev` in a VM tab, then
-  *Open a port on this machine…* (pane menu), *Open a port on machine…*
-  (tab menu), *Open port* (phone sheet) or `illogical open --split right
-  :5173` puts the app beside it, hot reload and all. A block opened from a
-  pane shows that pane's machine's port (or this host's). Each block is
-  served on an origin of its own, `https://b-<id>.illogical.widgets.wtf:7443`
-  on geek, by the daemon, which proxies it to the port (through the Sprites
-  proxy for a VM). The dev server needs no config: the proxy rewrites
-  `Host` and `Origin` to `localhost:<port>`, and since that switches off the
-  server's own guards, the proxy enforces its own: only you (asked of
-  tailscaled), only the block's own origin, nothing cross-site but page
-  loads, framed only by the app. It strips `Tailscale-*` headers, so agent
-  code never learns who you are, and a script in the page can't reach
-  illogical: the app refuses every origin but its own. The block follows
-  the frame's navigations; when the server dies it asks for you and shows
-  the page again when the server is back. Events: `navigated`,
-  `load_error`.
-- **Agent blocks** (M6b). An agent run as UI instead of a TUI: messages,
-  thoughts, tool-call cards with each command's output in a read-only
-  terminal, permission requests as Approve / Always / Deny cards (big
-  enough for a thumb, and actions on the push notification), a composer,
-  Stop, and cost per turn. The block is an
-  [ACP](https://agentclientprotocol.com) client, so one block type drives
-  Claude Code (`claude-agent-acp`), Codex (`codex-acp`), a Fountain agent
-  (`fountain acp`, in Fountain's sandbox) or any ACP agent server. Start
-  one from *Start an agent…* in the pane menu, *New agent* in the phone's
-  sheet, or `illogical agent`.
-  - *Always* is remembered by the block (in its config) and answered by
-    it; it never picks the agent's own "always", which would write
-    `.claude/settings.local.json` into your repo. Claude Code runs with no
-    settings sources, so your own hooks don't fire inside it.
-  - The block's log is the JSON-RPC stream; `capture` is the transcript as
-    Markdown, `history` lists the agent's commands and turns, `search`
-    covers what agents said and ran.
-  - A local agent server runs in its own scope with its pipes in systemd's
-    FD store, so restarting the daemon mid-turn (even with an approval
-    open) doesn't touch it. After a reboot the session reopens with
-    `session/resume` (or `session/load`), unless the policy is `none` or
-    `rerun-ask` (then *Resume*). A Fountain turn that ran on while nothing
-    followed it shows "running on Fountain" and appears when it ends.
-  - The adapters, pinned, go in `~/.local/share/illogical/agents/`:
-    `npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0`
-    and `npm install --omit=optional --prefix ~/.local/share/illogical/agents/codex @agentclientprotocol/codex-acp@2.1.0`
-    (Codex uses `~/.local/bin/codex`). They need Node on PATH (mise's
-    shims are added if present).
-  - **Questions and forms** (M6c). Claude Code's AskUserQuestion is a
-    question card: buttons for one answer, checkboxes for several, each
-    option's description, an "Other" box (on its own it's the answer; next
-    to a pick it's a note), and an option's preview (mockups, code) in
-    monospace when it's picked. *Submit*, *Skip* (the agent hears you
-    didn't answer and goes on) or *Stop* (ends the turn). Any other form (an
-    MCP server's, Codex's plan-mode question) is drawn from its schema, and
-    an MCP server's sign-in link is a card with *Open link* that closes when
-    the server says you're done. A question waits as long as it takes: the
-    block needs you, the push notification says the first question (one
-    question with two options is answered from the notification's
-    buttons), and it survives a daemon restart and a reload; the first
-    answer from any client wins. From a script: `wait %N --needs-input`
-    prints it as JSON, `call %N answer '{"question_0":"Red"}'` answers
-    (`question_<n>_custom` is "Other"; a multi-select takes a list), and
-    `call %N decline` skips. The question and the answer are in the
-    transcript, `history` and `search`. `illogical agent --mcp
-    'NAME=COMMAND'` gives the session an MCP server. Fountain agents can't
-    ask (Fountain doesn't pass questions on, so they ask in plain text),
-    and Codex only asks this way in its plan mode.
-  - **In a VM** (`--vm`, or the dialog's checkbox) the agent server runs
-    over a non-TTY exec on the block's own machine; its first start
-    installs Node and the adapter there (about 15s). Claude Code there
-    needs credentials: a token from `claude setup-token` in
-    `~/.config/illogical/claude-oauth-token` (given to it as
-    `CLAUDE_CODE_OAUTH_TOKEN`), or an API key in
-    `~/.config/illogical/anthropic-key` (`ANTHROPIC_API_KEY`, used first);
-    `--claude-token-file` and `--anthropic-key-file` move them. They reach
-    the agent on its stdin, into its environment only: never the VM's
-    disk, a URL, an argv, the log or the layout. A VM agent survives a
-    daemon restart (its exec session lives on wisp).
-
-- **Other hosts** (M4a). Every daemon is a peer; the one the page comes
-  from (geek's, the "home daemon") keeps a list of the others and checks on
-  each every minute. The page shows a host switcher (desktop: the bar's
-  left end; phone: the sheet), and each host has its own sessions and tabs.
-  Switching connects straight to that daemon; nothing is relayed, and the
-  host you left gets no connection (so a sandbox can sleep). The list is
-  remembered in the browser, and the page itself by its service worker, so
-  the other hosts stay reachable while the home daemon is down.
-  `illogical --host NAME …` runs any command on another host. A sandbox
-  (a sprite, a container: no systemd needed) gets a static daemon on the
-  tailnet with one command and adds itself to the list; see *Use it*.
-- **Hosts that can only dial out** (M4c). A sandbox that allows nothing
-  in but outbound HTTPS runs `illogicald --peer wss://geek.… --token FILE`:
-  it keeps one WebSocket open to the home daemon and serves its own
-  WebSocket and API over it, many streams at once. The home daemon lists it
-  (`dial_out`) and answers for it at `/h/NAME/…`, behind its own access
-  checks, so the page's host switcher and `illogical --host NAME` work as
-  for any host. It's not a hub: only the home daemon opens streams, the
-  host serves nothing that leads elsewhere, and what it answers is served
-  defanged (no cookies or CORS, `nosniff`, a sandboxing CSP), since it
-  lands on the home daemon's origin. It redials with backoff and works on
-  its own meanwhile. The token is per host, minted by the home daemon
-  (`illogical hosts token NAME`, or joining with an invite), stored only
-  as a hash, good for that host alone, and revocable (`hosts revoke`,
-  `hosts rm`).
-- **Read-only share links** (M4c). `illogical share %N --ttl 1h`, or *Share
-  read-only link…* on a pane, gives a `/share/…` link that shows that pane
-  live (its screen and scrollback, then its output) and nothing else: no
-  typing, sizes, other panes or API, and a viewer that sends anything is
-  hung up on. Any tailnet user may open one (someone the node is shared
-  with, say), never a tagged node, Funnel or the internet. Links expire (a
-  week at most), are listed (`illogical shares`) and revocable (`shares
-  revoke ID`), which cuts off anyone watching.
-- **History that outlives a sandbox** (M4c). With `--sync` (closed panes)
-  or `--sync-live` (open ones too), a host pushes its panes' log segments
-  and indexes to the home daemon with its token, resuming from what is
-  already there. The home daemon keeps them encrypted at rest and answers
-  `illogical history|search|tail --synced NAME` (or `--host NAME`, once the
-  host is gone) from them. Kept 256 MB per pane, 30 days after the last
-  push. Encryption: each file is AES-256-GCM records under its own key
-  (HKDF from a key ring only the home daemon holds, `<state>/synced/key`,
-  0600, or `--sync-key-file`; salted per file, bound to the file's place),
-  with counter nonces and the header and record number as associated data.
-  `illogical synced rotate-key` re-encrypts everything under a new key and
-  drops the old one. File names and sizes aren't secret; contents are.
-
-- **Sandboxes** (M4b). *Sandboxes…* (session menu; *Sandboxes* in the
-  phone's sheet) or `illogical sandboxes` lists the home daemon's provider's
-  sandboxes (wisp sprites here; Fly's Sprites API fits the same adapter)
-  with their state, asked of the provider, which doesn't wake them.
-  - *Shell* (`illogical run --sandbox NAME`) opens a pane here whose
-    terminal is a plain exec on that sandbox: nothing is installed there.
-    It's disposable, and badged so: the output is logged here while it's
-    attached, but the provider keeps only its replay buffer while nothing
-    follows it (1 MB on wisp, about 6.5 KB on Fly), and closing the pane
-    hangs the shell up and leaves the sandbox alone.
-  - *Make resident* (`illogical sandboxes promote NAME [--as HOST]`) copies
-    the static daemon in (`just static`; the home daemon finds it in
-    `--static-dir`, default `~/.local/share/illogical/static`) and registers
-    it as a sprite *service*, so it starts on every boot and restarts if it
-    exits. It becomes a host in the list, a *provider* host: the client and
-    `--host` reach it through the home daemon's **provider tunnel**
-    (`/tunnel/HOST/…`, through the Sprites proxy to its port, never a
-    public URL). Connecting wakes it; the page lets go of it 10s after it's
-    hidden, so it can sleep. After it goes cold (on wisp, a real reboot)
-    its daemon restores its layout and scrollback from its own disk, the
-    way a reboot does here. A provider host with a tailnet URL too is
-    switched to the tailnet if that answers within 5s of the wake.
-    `illogical sandboxes demote NAME` stops it.
-  - **Identity.** The tunnel is for callers the home daemon already let in
-    (the owner, or its Unix socket). It strips their identity headers and
-    presents a token it minted for that host when it made it resident; the
-    resident daemon keeps only the token's SHA-256 (in its arguments) and
-    refuses every loopback connection without it, so other programs in the
-    sandbox can't use the provider's proxy path to it. These provider
-    tunnel tokens (`ilp_…`, home → host) stay in the home daemon's
-    `provider-tokens.json`, never in the host list clients get; dial-out
-    host tokens (`ilh_…`, host → home, M4c) are the other direction.
-    `hosts revoke` and `hosts rm` drop whatever a host has of both.
-  - Like a dial-out host's (`/h/NAME`), only the WebSocket and the API go
-    through `/tunnel/NAME`, and the answers are defanged: they're served on
-    the home daemon's origin and the sandbox runs untrusted code.
-
-- **Files and navigation** (M7). *Go to directory…* (a pane's menu; *In a
-  directory…* on the `+` button's right-click; *Go to directory* in the
-  phone's sheet, where it's a full-screen sheet; Ctrl+Shift+G) browses
-  directories on the host the pane runs on: this daemon's, another host's
-  (it answers for itself), or its VM's (through the provider). It starts
-  where the pane is (OSC 7), lists directories used lately there first,
-  and filters fuzzily as you type (`/…` or `~…` goes to a path; Backspace
-  goes up). Then *New pane here* (on the same host: a VM tab's machine, a
-  sandbox's shell), *New tab here* (not for a VM's own directories: they
-  exist only in its tab), or *cd there*, which types `cd` into the shell
-  only while it waits at its prompt (shell integration says so) and says
-  why not otherwise.
-  - The `fs` methods behind it (`/api/fs/list|stat|read|watch|recent`,
-    `illogical fs`) are read-only and part of the owner's API: share-link
-    viewers and host tokens never reach them. On a daemon's host they read
-    as the daemon's user, so the OS's permissions are the limit, and they
-    also refuse `/proc`, `/sys`, `/dev`, the daemon's state directory and
-    the secrets it knows of (the wisp token, agent credentials); paths are
-    resolved first and an opened file is checked again through
-    `/proc/self/fd`, so no symlink (or one swapped in mid-open) gets
-    around that. On a machine the provider's agent reads as the sandbox's
-    root, in the user's own sandbox; the same places are refused by path,
-    and a read through any symlink is refused. A listing holds at most
-    5000 entries and a read at most 1 MiB (read in ranges); `watch`
-    polls (1s here, 3s on a machine) until you hang up.
-  - New sessions, and the machines of VM tabs and VM panes, get generated
-    names ("drifting cedar", unique per daemon). Ids don't change, rename
-    is still a double-click, and older sessions keep their names.
-
-- **iTerm2 as a client** (M5). `illogical tmux -CC` speaks tmux's control
-  mode, so iTerm2 (and Ghostty's and WezTerm's tmux support) shows
-  illogical's sessions, tabs and splits as native windows, tabs and splits,
-  live alongside the browser; see *Use it*.
-
-### The CLI
+## Install
 
 ```
-illogical ls                                  # panes, what they're running, who needs you
-illogical run -- make test                    # in a new tab; prints its pane (%N)
-illogical run --wait -- cargo build           # and exits with its exit code
-illogical send %3 'git status' -e             # type a line and press Enter
-illogical keys %3 C-c Up Enter                # named keys
-illogical wait %3 --command-end               # exit code of what that started
-illogical wait %3 --match 'listening on' --timeout 30
-illogical tail %3 -f --text                   # follow output, escapes stripped
-illogical tail %3 --last-command              # just the last command's output
-illogical capture %3 --scrollback [--ansi|--html]
-illogical process %3                          # the foreground process
-illogical events -f [--pane %3] [--type command_end,attention]
-illogical history --failed --since 2h
-illogical search 'panic|Traceback' --since 1d
-illogical export %3 -o session.cast           # asciinema play session.cast
-illogical run --vm -- 'git clone … && make'   # on a throwaway VM (no command: a shell)
-illogical run --vm-tab                        # a tab whose panes share a new VM
-illogical machines                            # VMs, their owner (@tab or %pane) and state
-illogical open example.com                    # a browser block (--split %3 beside a pane)
-illogical open --split right :5173/about      # a port, beside this pane, on its VM tab's machine
-illogical open --host m2 :3000                # a port on machine m2 (--host local: this host)
-illogical describe %4                         # any block: type, place, state
-illogical call %4 navigate '{"url":"…"}'      # a block's own methods
-illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
-                                              #   --acp CMD, --vm, --model haiku, --cwd d, --wait)
-illogical wait %5 --needs-input               # it asks to run something…
-illogical call %5 approve                     # …or '{"option":"always"}'; deny '{"reason":"…"}'; cancel
-illogical call %5 send '{"text":"and then?"}' # the next message (queued while it works)
-illogical wait %5 --needs-input               # a question: printed as JSON…
-illogical call %5 answer '{"question_0":"Red","question_1":["A","B"]}'  # …answered (decline: skip it)
-illogical wait %5 --idle                      # the turn ended: prints idle, done or needs-input
-illogical tail %5 -f                          # any block's text as it grows
-illogical attach %3                           # from a real terminal; Ctrl-] detaches
-illogical close %3                            # its output stays in history
-illogical attention needs-input               # from a hook, in the current pane
-illogical ask                                 # Claude Code's AskUserQuestion hook (below)
-illogical hosts                               # the home daemon's other hosts, last seen
-illogical hosts add box https://box.tailb2e8f2.ts.net
-illogical hosts invite                        # a one-time token a sandbox joins with
-illogical --host box run --wait -- make       # any command, on another host
-illogical hosts token sbx                     # a dial-out host's token (prints it once)
-illogical hosts revoke sbx                    # …revoked, and its connection dropped
-illogical share %3 --ttl 2h                   # a read-only link to a pane
-illogical shares                              # links that still work; shares revoke ID
-illogical search 'panic' --synced sbx         # a host's synced history (all: every host)
-illogical tail %4 --synced sbx --text         # one of its panes, after it's gone
-illogical synced                              # hosts whose history is kept here
-illogical sandboxes                           # the provider's sandboxes and their state
-illogical run --sandbox s1                    # a disposable shell on one, nothing installed there
-illogical sandboxes promote s1 --as s1        # a resident daemon there, a host reached through the tunnel
-illogical --host s1 ls                        # through the tunnel (wakes it)
-illogical fs ls -l ~/src                      # files on this host (read-only)
-illogical fs cat %4:~/app/log.txt             # on the host %4 runs on (its VM); mN:PATH for machine N
-illogical fs watch ~/src                      # changes, as NDJSON (also stat, recent)
-illogical run --cwd ~/src                     # a shell in a directory, in a new tab
-illogical run --split %4 --join --cwd ~/app   # beside %4, where it runs (its VM tab's machine)
-illogical cd %4 ~/src                         # typed into %4's shell, only if it's at its prompt
-illogical tmux -CC attach [-t SESSION]        # be tmux for iTerm2 (see *Use it*)
+curl -fsSL https://illogical.widgets.wtf/install.sh | sh
 ```
 
-`--json` prints the API's JSON. `send` then `wait` only sees what happened
-after the send. The same calls are an HTTP API (`/api/...`, documented in
-`crates/proto/src/api.rs`) on the Unix socket and, behind the usual access
-checks, over the tailnet.
+This puts `illogicald` and `illogical` in `~/.local/bin` and starts the
+daemon as a service (systemd user unit on Linux, launchd agent on macOS).
+Run it again to upgrade. `ILLOGICAL_VERSION=v0.1.0` picks a version.
 
-**Claude Code** can tell you when it needs you. In `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Notification": [{ "hooks": [{ "type": "command", "command": "illogical attention needs-input" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "illogical attention done" }] }]
-  }
-}
-```
-
-Outside an illogical pane the command does nothing, so the hooks are safe
-everywhere. Without them, an agent going quiet mid-command is the fallback.
-
-**Claude Code's questions** (AskUserQuestion) can be answered from a card
-beside its terminal, on any client and from the phone, instead of its
-keyboard picker. Add a `PreToolUse` hook beside the others:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [{ "type": "command", "command": "illogical ask", "timeout": 604800 }]
-      }
-    ]
-  }
-}
-```
-
-`illogical ask` shows the questions as a card over the pane (the pane needs
-you, with a push notification), waits, and hands your answers to Claude
-Code, which then never shows its picker. *Answer in terminal* on the card
-gives you the picker instead; Esc or Ctrl-C in Claude Code withdraws the
-card. The timeout (7 days, in seconds) is how long a question may wait;
-Claude Code's default would give up after 10 minutes and show its picker.
-If the daemon restarts while it waits, the card comes back. Outside an
-illogical pane it does nothing, and Claude Code shows its picker as usual.
-
-## Use it
+**Homebrew** (macOS, Linux):
 
 ```
-just bootstrap      # Zig 0.16 via mise, web dependencies
-just install        # release build, installed as a systemd user service
+brew tap jhgaylor/tap https://git.inevitable.fyi/jhgaylor/homebrew-tap
+brew install illogical
+illogicald install
 ```
 
-`illogicald install` copies the binary to `~/.local/bin`, writes
-`~/.config/systemd/user/illogicald.service` and enables it; with lingering on
-(`loginctl enable-linger $USER`) it starts at boot. Logs:
-`journalctl --user -u illogicald`.
+**From source:** see [docs/development.md](docs/development.md#build-from-source).
 
-Open <http://127.0.0.1:7681>, or <https://geek.tailb2e8f2.ts.net> from
-anywhere on the tailnet (`tailscale serve --bg --https=443
-http://127.0.0.1:7681` is already configured on geek). The daemon accepts
-tailnet requests from the login that owns the node; `--owner` overrides.
-
-**Browser blocks on ports** need a listener for block sites; without one
-they're off. On geek:
+On Linux, let it start at boot, before you log in:
 
 ```
-illogicald install -- --block-listen 100.71.195.119:7443 \
-  --block-domain illogical.widgets.wtf \
-  --block-acme-cloudflare-token-file ~/.local/share/wisp/cloudflare-token
+loginctl enable-linger $USER
 ```
 
-- `*.illogical.widgets.wtf` is a Cloudflare DNS record (DNS only) pointing
-  at geek's tailnet address, so only the tailnet reaches it. Port 443 there
-  is `tailscale serve`'s and 8443 is wispd's, hence 7443.
-- The daemon gets the wildcard certificate from Let's Encrypt itself, with a
-  DNS-01 challenge through Cloudflare (the token wisp already uses), and
-  renews it two thirds of the way through its life. It lives in
-  `<state>/acme/<CA>/`. `--block-acme-directory staging` uses the test CA;
-  `--block-cert`/`--block-key` serve files you renew yourself.
-- Callers are checked with `tailscale whois`: only the owner gets in.
-- **Dev mode:** `--block-listen 127.0.0.1:7701` without `--block-domain`
-  serves `http://b-<id>-<key>.localhost:7701` on loopback, where browsers
-  resolve `*.localhost` themselves. There's no identity there, so each
-  block's name carries a random key (kept in its config): only the app and
-  the CLI know it. The tests use this.
+## Quickstart
 
-**Pane environment.** At boot the daemon starts before you log in, so its own
-environment has no `WAYLAND_DISPLAY`, `DISPLAY` or desktop `SSH_AUTH_SOCK`.
-Each new pane takes the systemd user manager's environment as it is at that
-moment, which your desktop session fills in at login. For variables every
-pane should have from boot (`PATH` additions, `EDITOR`), put `KEY=value`
-lines in `~/.config/environment.d/50-illogical.conf`. Panes run `$SHELL -l`,
-so your profile runs too.
+1. Open <http://127.0.0.1:7681>. Right-click a pane or a tab for
+   everything. Drag a tab or a pane onto another pane's edge to split it
+   there; drag dividers to resize.
+2. **From your phone and other machines**, put it behind Tailscale on this
+   machine:
 
-**A Mac.** The daemon and CLI build and run on macOS (Apple silicon), so a
-Mac can be one of the hosts. With the Xcode command line tools, Rust
-(rustup) and mise:
+   ```
+   tailscale serve --bg --https=443 http://127.0.0.1:7681
+   ```
 
-```
-just bootstrap && just install      # builds, installs a launchd agent, starts it
-```
+   and open `https://<this machine>.<tailnet>.ts.net`. Only the Tailscale
+   login that owns the machine gets in (`illogicald install -- --owner
+   you@example.com` for someone else). On the phone, add it to the home
+   screen, then *Notify this device* in the session menu.
+3. **From a script or another pane:**
 
-- `illogicald install` writes `~/Library/LaunchAgents/illogicald.plist`,
-  which starts it at login and after a crash; logs go to
-  `~/Library/Logs/illogicald.log`. `launchctl bootout gui/$UID/illogicald`
-  stops it.
-- Panes run your login shell (from the user database, since launchd sets no
-  `$SHELL`); zsh gets shell integration like bash.
-- **Restarting doesn't touch running programs here either.** There's no
-  systemd FD store, so each pane's shim keeps its terminal while the daemon
-  is gone (`--keep-panes`, which the plist sets). A restart
-  (`launchctl kickstart -k gui/$UID/illogicald`), an upgrade (`illogicald
-  install`) or a crash leaves vim and builds running, and the new daemon
-  adopts them. Stopping it for good (`launchctl bootout`, logging out)
-  ends them a minute later, if no daemon has come back. The same flag works
-  on any host without systemd.
-- VM tabs and panes (wisp) are Linux-only.
-- To reach it from geek's page, put it behind the Tailscale app's serve
-  (`/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg
-  --https=443 http://127.0.0.1:7681`), run the daemon with `--allow-origin
-  https://geek.tailb2e8f2.ts.net` (pass it to `illogicald install --`),
-  and on geek `illogical hosts add mac https://<mac>.tailb2e8f2.ts.net`.
-  The host switcher then shows it. The daemon learns its tailnet name and
-  owner from the app's CLI, since the app has no tailscaled socket.
-- `just check-macos` checks the Mac build from Linux (CI runs it); linking
-  and the tests need a Mac.
+   ```
+   illogical run --wait -- cargo build        # a new tab; exits with its exit code
+   illogical send %3 'git status' -e          # type a line and press Enter
+   illogical wait %3 --match 'listening on'
+   illogical tail %3 -f --text
+   illogical search 'panic|Traceback' --since 1d
+   ```
 
-**A sandbox on the tailnet** (M4a). `just static` builds static x86_64 musl
-binaries in `target/x86_64-unknown-linux-musl/release/`. Copy
-`illogicald` and `illogical` into the sandbox, then:
+   [docs/cli.md](docs/cli.md) has the rest.
+4. **Agents.** Install an adapter (needs Node), then *Start an agent…* in a
+   pane's menu, or `illogical agent "fix the failing test"`:
 
-```
-illogical hosts invite                                  # on geek: prints a token
-illogical install --tailnet file:KEYFILE \
-  --home https://geek.tailb2e8f2.ts.net --join TOKEN    # in the sandbox
-```
+   ```
+   npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0
+   npm install --omit=optional --prefix ~/.local/share/illogical/agents/codex @agentclientprotocol/codex-acp@2.1.0
+   ```
 
-The key is an ephemeral, `tag:sandbox` Tailscale auth key, in a file (or
-`-` for stdin; it is never put on a command line). This downloads
-tailscaled if it isn't there, runs it in userspace mode with its own state
-in `~/.local/state/illogical-sandbox`, joins, puts the daemon behind
-`tailscale serve`, and adds it to geek's list (learning whom to let in;
-`--owner` otherwise). `illogicald sandbox` keeps tailscaled and the daemon
-running and restarts them; install starts it detached. After a reboot, run
-`illogicald sandbox &` again. Without `--join` it prints the `illogical
-hosts add` line to run on geek. Another daemon accepts the home page only
-by exact origin: `--allow-origin https://geek.tailb2e8f2.ts.net` (install
-sets it from `--home`). Sprites pause when idle and tailnet traffic doesn't
-wake them, so wake one through the provider first (M4b does that).
+   Claude Code in an ordinary pane can raise the same notifications and
+   question cards with three hooks: see
+   [Claude Code hooks](docs/advanced.md#claude-code-hooks).
 
-**A sandbox that can only dial out** (M4c). On geek, `illogical hosts
-token sbx` (or `hosts invite`); in the sandbox:
+## On macOS
 
-```
-illogicald --peer wss://geek.tailb2e8f2.ts.net --token ~/.config/illogical/host-token \
-  [--join INVITE] [--sync [--sync-live]] &
-```
+Everything above works, except that restarting or upgrading the daemon
+ends the panes' programs (there's no systemd to hold them); scrollback and
+layout still come back. VM tabs are Linux only.
 
-The token file is read (or, with `--join`, made from the invite) and kept
-0600. The home daemon must be reachable at that URL from the sandbox and
-accept its name as a Host (`--public-host`); the dial and the pushes carry
-the token, not an identity. Its page and CLI reach the sandbox at
-`/h/sbx/…`, and a share link to one of its panes would be on the
-sandbox's own daemon, so the menu doesn't offer one there.
+## More
 
-**iTerm2, as a tmux client** (M5). iTerm2's tmux integration works with
-illogical in place of tmux: sessions are sessions, tabs are native windows,
-splits are native splits, and the same layout stays live in the browser.
-From iTerm2 on the Mac:
+- [docs/features.md](docs/features.md): everything it does, in detail.
+- [docs/advanced.md](docs/advanced.md): VM tabs (wisp), web apps beside
+  their terminals, more machines and sandboxes, iTerm2 as a tmux client.
+- [docs/cli.md](docs/cli.md): the CLI and the HTTP API.
+- [docs/development.md](docs/development.md): building, testing, the code's
+  layout, and what building it taught us.
+- [BRIEF.md](BRIEF.md) and [PLAN.md](PLAN.md): why it exists, the
+  decisions and the milestones.
 
-```
-ssh -t geek '~/.local/bin/illogical tmux -CC attach'          # the first session
-ssh -t geek '~/.local/bin/illogical tmux -CC attach -t work'
-ssh -t geek '~/.local/bin/illogical tmux -CC new -s ipad'
-```
+## License
 
-iTerm2 sees the control-mode greeting and takes over the window. `-t` is a
-session name or `$N`; plain `illogical tmux -CC` is `attach`. To detach,
-use iTerm2's *Shell › tmux › Detach* (or press Esc in the gateway
-window). Add `--host NAME` before `tmux` to reach another daemon. Anything
-that runs `tmux -CC` by name can run illogical instead: the CLI behaves as
-`illogical tmux` when it is called `tmux`, so put a link where only that
-command looks (`mkdir -p ~/.local/share/illogical/tmux && ln -s
-~/.local/bin/illogical ~/.local/share/illogical/tmux/tmux`, then `ssh -t geek
-'PATH=~/.local/share/illogical/tmux:$PATH tmux -CC attach'`), not on your
-`PATH`, where it would hide the real tmux.
-
-What to expect:
-- It reports tmux 3.5a. Typing, splits (*Shell › Split*), divider drags,
-  window resizes, new tabs and closing panes all change the daemon's
-  layout, which the browser shows at once, and the other way round.
-- The window's size follows whoever claimed it last: iTerm2 claims it when
-  it resizes a window or you type in it, the browser when you click or
-  type there. The other side draws the tab at that size.
-- iTerm2 keeps its tab grouping and its attach guard in the session's
-  options; they're saved with the layout, so they survive a reattach and a
-  reboot.
-- Agent and browser blocks show as read-only panes with their text and a
-  note to open them in the web app.
-- If iTerm2 falls behind a fast pane it shows "paused"; unpausing
-  re-captures the pane and carries on.
-
-**Testing it from the Mac** (nothing here has seen a real iTerm2 yet):
-
-1. On geek, install the build (`just install`) and check `illogical ls`
-   works. Open <https://geek.tailb2e8f2.ts.net> in a browser beside iTerm2.
-2. In iTerm2: `ssh -t geek '~/.local/bin/illogical tmux -CC attach'`. A new
-   iTerm2 window opens with a tab per illogical tab (the gateway window
-   says "tmux mode"). The tab's shell prompt is there, with its history.
-3. Type `ls` and Enter in it: the output appears in iTerm2 and in the
-   browser's same pane.
-4. *Shell › Split Vertically*, then *Split Horizontally*: three native
-   splits; the browser shows the same three panes within a second.
-5. Drag an iTerm2 divider: the browser's divider moves to match. Drag one
-   in the browser: iTerm2's moves. Resize the iTerm2 window: the panes
-   reflow and the browser letterboxes the tab at iTerm2's size; click in
-   the browser's pane and type, and the browser takes the size back.
-6. ⌘T for a new tab: a new tab appears in the browser too. Close it in
-   iTerm2 (⌘W, *Kill*): it goes from the browser. Close a split with
-   `exit`: its pane goes from both.
-7. Run `vim` (or `htop`) in a pane, type a little, and leave it running.
-8. Detach (*Shell › tmux › Detach*). The iTerm2 windows close; vim keeps
-   running in the browser.
-9. Reattach with the same `ssh` command: the tabs and splits come back as
-   they were, with vim on screen; quit it with `:q` and the shell prompt is
-   on the line after the `vim` command.
-10. In the browser, split a pane and open a new tab: iTerm2 shows both.
-
-Watch for: an alert from iTerm2 about an unexpected reply (it disconnects
-on any error it doesn't expect; note the command it names), panes that
-stay blank after attach, output in the wrong pane, a window that keeps
-resizing itself when both iTerm2 and the browser are open, and garbled
-screens after a reattach. To record the conversation, start it with
-`ILLOGICAL_TMUX_LOG`: `ssh -t geek 'ILLOGICAL_TMUX_LOG=/tmp/cc.log
-~/.local/bin/illogical tmux -CC attach'` writes every line both ways (`>`
-from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
-
-Development: `just dev` runs a separate daemon on 7682 (state in
-`~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
-alone. `just check` is what CI runs; `just e2e` drives the system Chrome
-against throwaway daemons, or `just e2e https://geek.tailb2e8f2.ts.net`
-against the running one.
-
-## Layout
-
-- `crates/core`: sessions, tabs and split trees, the intents that change
-  them, and the cell layout. Pure state, property-tested.
-- `crates/proto`: wire protocol (JSON control messages + binary frames with a
-  per-pane stream offset). Mirrored by hand in `web/src/proto.ts`.
-- `crates/vt`: server-side terminal state on libghostty-vt (libghostty-rs
-  `master`, Zig 0.16). VT snapshots for xterm.js (spike S1's fix-ups),
-  checkpoints for disk (GHOSTSNP + zstd, spike S5), answers to terminal
-  queries limited to what xterm.js can draw, recorded fixtures.
-- `crates/daemon`: `illogicald`. A multiplexer task owning the layout and
-  attention (`mux.rs`), a PTY + VT thread per pane with its log, checkpoints
-  and OSC scanner (`pane.rs`, `store.rs`, `osc.rs`), restore and restart
-  policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
-  integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
-  search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
-  (`machine.rs`), sandbox providers (`provider/`: the `Provider` trait
-  and its capabilities, and the Sprites API adapter: exec TTY and piped
-  sessions, the proxy, files and services), sandboxes and resident daemons
-  (`resident.rs`), the provider tunnel (`provider_tunnel.rs`), blocks
-  (`block.rs`, `browser.rs`; agents in `agent/`: the ACP client, the
-  transcript, agent definitions, the local and VM pipes), block sites
-  (`sites.rs`: per-block origins and their HTTP proxy; `ports.rs`: reaching
-  a port here or in a VM; `tls.rs`: the wildcard certificate and ACME), the
-  WebSocket server, embedded web client, access checks, `install`.
-  Federation: the host list and invites (`hosts.rs`), tailscaled's local
-  API and WhoIs (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install
-  --tailnet` and the `sandbox` supervisor). M4c: the dial-out transport
-  (`dial.rs`, over `dialout_mux.rs`'s streams), share links (`share.rs`), and
-  history sync (`sync.rs`, sealed by `seal.rs`). M7: files on a host
-  (`fs.rs`), names (`illogical_core::names`). M6c: questions and forms
-  (`illogical_proto::ask`: the card's shape and how its answer becomes
-  Claude Code's; agent blocks' elicitations in `agent/`; a terminal's
-  questions in `mux.rs` and the `/ask` route).
-- `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
-  another daemon with `--host` (`hosts.rs`); `ask.rs` is Claude Code's
-  AskUserQuestion hook. `tmux/` is the tmux
-  control-mode front end (M5): the command parser and `-F` format expander,
-  layout strings derived from the daemon's ratios (spike S11's converter),
-  and a mirror terminal per pane so captures line up with the output
-  stream. `crates/daemon/tests/tmux.rs` replays iTerm2's command sequence
-  and compares every reply with what tmux 3.6 answered (S11's transcript).
-- `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
-  are moved between slots rather than recreated, Playwright tests (desktop
-  and phone).
-- `spikes`: S1–S3 write-ups and code.
-
-## Things M0–M4c taught us
-
-- **Don't promise what the client can't draw.** libghostty answered Neovim's
-  "do you support left/right margins?" with yes, Neovim used them for
-  vertical splits, and xterm.js drew garbage. The engine now rewrites its
-  replies to xterm.js's measured capabilities (`crates/vt/src/compat.rs`), and
-  the client stops xterm.js from answering queries itself, so programs get
-  exactly one answer whether or not anyone is attached.
-- **libghostty in a debug build is ~3000x slower** (0.2 MB/s). `.cargo/config.toml`
-  builds it as Zig ReleaseSafe in every profile: 175–580 MB/s, with safety
-  checks kept, since it parses untrusted program output.
-- **Offsets need an epoch.** A reconnecting client's offset is only valid for
-  the stream it came from; the pane's epoch changes when the daemon restarts.
-- **Size travels in order with output.** A client must resize before drawing
-  a snapshot, so size changes share the bounded output queue. Only the
-  "you fell behind, resync" notice uses a separate channel.
-- **Cells, not pixels.** The plan said react-mosaic; it lays panes out in
-  its own pixels, which drift from the PTY sizes. The daemon computes cell
-  rectangles instead (and M5's tmux layout strings come for free), and the
-  client draws them.
-- **Size is per tab.** With splits, one window's size decides every pane in a
-  tab; per-pane ownership would mix a phone's and a desktop's sizes in one
-  tab. A phone claims its tab with one pane zoomed; the others keep their
-  sizes until a desktop takes the tab back.
-- **WebGL drew nothing in phone emulation** (fractional pixel ratio), so
-  touch devices use xterm's DOM renderer; desktops use WebGL for visible panes
-  only and release contexts for hidden ones (Chrome allows ~16).
-- **Preact 11 no longer appends `px`** to numeric styles. Zeros still worked,
-  so the bug looked like a layout one.
-- **Subscribe, then catch up.** A store subscription made in an effect misses
-  anything that happens before the first paint; the daemon's hello sometimes
-  won that race and left a window blank.
-- **Upstream fixes move bugs.** The newer libghostty formatter fixed the
-  cursor S1 had to re-place, but now writes tab stops before the content and
-  leaves the cursor on the last stop, so the first line wrapped. The fixture
-  tests caught it on the upgrade; the block is moved to the end.
-- **Leaving the alternate screen restores the cursor** even when nothing is
-  on it, so the restore marker only sends `?1049l` if a full-screen program
-  was showing; otherwise it overwrote the last lines of scrollback.
-- **A reboot kills shells and the daemon together.** `KillMode=mixed` stops
-  the daemon first (it saves, then exits) and kills the shells after; and a
-  shell killed by a signal never closes its pane, so even a race can't lose
-  one.
-- **"Re-run" reads /proc**, so `bash -c 'a; b'` that exec'd into `b` re-runs
-  `b`. The typed command line needs shell integration (M3).
-- **A restarted daemon isn't anyone's parent.** The shim records each
-  program's pid, start time and exit status; the daemon watches through a
-  `pidfd` (which works for non-children) and checks the start time before
-  adopting, so a reused pid is never mistaken for the pane's program.
-- **DECSTR doesn't reset input modes.** A pane restored after its program
-  died kept that program's mouse and focus reporting, so clicking sent stray
-  `ESC [ O` to the new shell. The restore marker now turns them off.
-- **"What happened after I typed" needs the offset at send time.** `send`
-  then `wait` raced: the pane recorded the input when it processed it, so a
-  quick `wait` could return the previous command. The API now records it
-  before queueing the input.
-- **A notification outlives its command.** Attention set by OSC 9 was
-  cleared a moment later when the `printf` that sent it finished.
-- **Unix socket paths max out at ~108 bytes.** Long state directories get a
-  socket in `$XDG_RUNTIME_DIR` instead, recorded in `state/sock.path`.
-- **wisp already had the fix for its replay.** The M3b spike found that
-  reattaching resends the whole session and planned to ask for a `since=`
-  parameter, but wisp's `output_offset` (not one of the names the spike
-  tried) does exactly that. Each VM pane keeps its session id and how many
-  bytes it has logged in `exec.json`, and reattaches from there.
-- **bash expands `ENV`, command substitution included,** so a VM's shell
-  gets the integration with nothing installed: the script travels in an
-  environment variable and `ENV='$(…)'` writes it to a temporary file.
-- **`kill?signal=HUP` ends a VM shell at once;** wisp's default TERM waits
-  10s, because an interactive bash ignores it.
-- **A tab's title follows its active pane,** so grabbing a pane to drag it
-  can resize its tab under the pointer. The tests aim after the pane is
-  active, and anything that measures the tab bar mid-drag should too.
-- **In userspace mode, the tailnet arrives on loopback.** tailscaled's
-  netstack forwards a tailnet connection to the daemon's port as one from
-  127.0.0.1, with any Host header the sender likes, so "loopback means
-  local" would let in anyone the ACL lets reach the sandbox. The daemon asks
-  tailscaled's WhoIs about every peer there (it knows forwarded
-  connections); a second daemon in a sprite with another owner refused geek
-  even with a forged loopback Host and serve header.
-- **serve sends no identity for tagged nodes** (or Funnel). A request for
-  the tailnet name without `Tailscale-User-Login` used to pass as local;
-  with sandboxes on the tailnet that would have handed geek's terminals to
-  any tagged node the ACL let through. It is refused now, except joining
-  the host list with an invite.
-- **Zig as a musl C compiler:** cc-rs passes a Rust-style `--target=` that
-  Zig rejects, and Zig turns on UBSan for unoptimized C (aws-lc's
-  jitterentropy), whose runtime nothing links. `scripts/zig-cc-musl` drops
-  the one and turns off the other.
-- **Children inherit a blocked signal mask.** The sandbox supervisor
-  blocks SIGTERM to wait for it, and std's `Command` passed that on: the
-  daemon never heard SIGTERM and was killed instead of saving its panes.
-- **A restarted tailscaled says `Starting` for a moment.** A daemon that
-  asked then got no tailnet name (and refused its own URL), and an install
-  that asked then logged in again. Both wait for it to settle now.
-- **Through the home daemon, a host's answer is the home daemon's.** A
-  dial-out host's responses are served on geek's origin, so a hostile
-  sandbox could have put a page there with the run of geek's API. Only its
-  WebSocket and `/api` are forwarded, and every answer is defanged (a
-  `sandbox` CSP, `nosniff`, no cookies or CORS).
-- **Match paths exactly where identity is relaxed.** A prefix check let
-  `/share/<token>/../api/panes` through the viewer's door (the router then
-  found nothing, but only by luck); the guard now accepts the exact shapes.
-- **clap gives a subcommand's positional the same id as a global flag of
-  the same name.** `illogical synced rm sbx` set `--host sbx`.
-- **"Cold" can be had on demand.** wisp turns a suspended sprite cold
-  after `--warm-ttl` (1h) by dropping its memory snapshot, which makes the
-  next wake a real boot. Its web UI's operator endpoints do the same at
-  once (`POST /ui/api/sprites/NAME/suspend`, then `/cool`, with a session
-  from `/ui/login`), which is how `resident.spec.ts` tests a cold wake.
-  Suspending syncs the guest's disks first, so the resident daemon's log
-  and checkpoints are there after the reboot.
-- **A TUI on the main screen leaves the cursor mid-screen.** Claude Code
-  draws in place and doesn't use the alternate screen, so after a restore
-  the marker landed on top of it; it now goes below the last row with
-  text.
-- **Sprites lists are paged** (50 at a time); wisp here holds more than
-  that.
+MIT OR Apache-2.0, at your option. Terminal emulation by
+[libghostty](https://ghostty.org); see [THIRD_PARTY.md](THIRD_PARTY.md).

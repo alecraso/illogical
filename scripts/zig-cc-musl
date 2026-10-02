@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# C compiler for x86_64-unknown-linux-musl builds (`just static`): Zig ships
-# musl, so no cross toolchain is needed. cc-rs adds a Rust-style
+# C compiler for the static musl builds (`just static [ARCH]`): Zig ships
+# musl, so no cross toolchain is needed. ZIG_MUSL_ARCH picks the architecture
+# (x86_64 unless set). cc-rs adds a Rust-style
 # `--target=x86_64-unknown-linux-musl`, which Zig can't parse; drop it.
+# As the linker for aarch64, rustc asks for a Cortex-A53 erratum fix that
+# Zig's linker doesn't know; drop it.
 # Zig turns on UBSan for unoptimized C (aws-lc builds jitterentropy at -O0),
 # whose runtime the Rust linker doesn't bring: turn it off.
 args=()
 for a in "$@"; do
   case "$a" in
-    --target=*) ;;
+    --target=* | -Wl,--fix-cortex-a53-843419) ;;
     *) args+=("$a") ;;
   esac
 done
-exec zig cc -target x86_64-linux-musl -fno-sanitize=undefined "${args[@]}"
+exec zig cc -target "${ZIG_MUSL_ARCH:-x86_64}-linux-musl" -fno-sanitize=undefined "${args[@]}"

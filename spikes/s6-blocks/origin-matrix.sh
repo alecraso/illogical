@@ -8,7 +8,7 @@ ts=geek.tailb2e8f2.ts.net
 try() { # label host origin login
   local args=(-s -o /dev/null -w '%{http_code}' --max-time 2 --http1.1
     -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13'
-    -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H "Host: $2")
+    -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H "Host: $2") # RFC 6455's sample key, gitleaks:allow
   [ -n "$3" ] && args+=(-H "Origin: $3")
   [ -n "$4" ] && args+=(-H "Tailscale-User-Login: $4")
   code=$(curl "${args[@]}" "http://127.0.0.1:$port/ws")
