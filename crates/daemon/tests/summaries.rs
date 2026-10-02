@@ -84,7 +84,10 @@ fn ls_shows_kind_project_and_activity_for_real_commands() {
         let p = pane_in(&d, pane);
         assert_eq!(p["project"]["name"].as_str(), project, "%{pane}: {p}");
         if project.is_some() {
-            assert_eq!(p["project"]["root"], repo.display().to_string());
+            // The real path: on macOS the temp dir is under /var, a link
+            // to /private/var, and a process's cwd is the resolved one.
+            let root = std::fs::canonicalize(&repo).unwrap();
+            assert_eq!(p["project"]["root"], root.display().to_string());
         }
     }
 
