@@ -72,6 +72,22 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Stub lengths for a tile's lines, steady per pane (no live text yet). */
+const META_FONT = `500 11px "JetBrains Mono", ui-monospace, monospace`;
+
+/** A cluster's name as drawn, and the box it takes on the screen. */
+interface Label {
+  name: string;
+  title: string;
+  meta: string;
+  needText: string;
+  need: number;
+  big: number;
+  metaW: number;
+  x: number;
+  y: number;
+  box: { x0: number; x1: number; y0: number; y1: number };
+}
+
 function stubs(key: string): number[] {
   let h = 2166136261;
   for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
@@ -82,6 +98,8 @@ export class Field {
   private cx: CanvasRenderingContext2D;
   private tiles = new Map<string, Tile>();
   private groups = new Map<string, Group>();
+  /** Cluster names as last drawn. */
+  private labels: Label[] = [];
   private W = 0;
   private H = 0;
   private dpr = 1;
@@ -203,7 +221,9 @@ export class Field {
           const a = i * 2.39996 + d * 0.004;
           tx = Math.cos(a) * d * sx;
           ty = Math.sin(a) * d * sy;
-          if (placed.every((q) => Math.hypot(q.tx - tx, q.ty - ty) > q.r + r + 70)) break;
+          // Upright, names sit between clusters stacked above each other:
+          // leave room for them.
+          if (placed.every((q) => Math.hypot(q.tx - tx, q.ty - ty) > q.r + r + (tall ? 150 : 70))) break;
         }
       }
       let g = this.groups.get(name);
@@ -233,11 +253,22 @@ export class Field {
     return { x: s.x + r.left, y: s.y + r.top };
   }
 
+  /** Each cluster name's box on the page as last drawn (tests check none
+   * overlap), and what of it was shown. */
+  get labelBoxes(): { name: string; x0: number; y0: number; x1: number; y1: number; meta: string; need: string }[] {
+    const r = this.cv.getBoundingClientRect();
+    return this.labels.map((l) => ({
+      name: l.name, meta: l.meta, need: l.needText,
+      x0: l.box.x0 + r.left, x1: l.box.x1 + r.left, y0: l.box.y0 + r.top, y1: l.box.y1 + r.top,
+    }));
+  }
+
   /** Where a cluster's name is on the screen now. */
   labelOf(name: string): { x: number; y: number } | null {
     const g = this.groups.get(name);
     if (!g) return null;
-    const s = this.toScreen(g.x, g.y - g.r);
+    const l = this.labels.find((l) => l.name === name);
+    const s = l ? { x: l.x, y: l.y } : this.toScreen(g.x, g.y - g.r);
     const r = this.cv.getBoundingClientRect();
     return { x: s.x + r.left, y: s.y + r.top - 14 };
   }
@@ -410,11 +441,8 @@ export class Field {
   }
 
   private labelAt(sx: number, sy: number): string | null {
-    for (const [name, g] of this.groups) {
-      const s = this.toScreen(g.x, g.y - g.r);
-      if (Math.abs(sx - s.x) < 90 && sy > s.y - 40 && sy < s.y + 4) return name;
-    }
-    return null;
+    const l = this.labels.find((l) => sx >= l.box.x0 && sx <= l.box.x1 && sy >= l.box.y0 && sy <= l.box.y1);
+    return l?.name ?? null;
   }
 
   private hover(e: PointerEvent) {
@@ -712,28 +740,93 @@ export class Field {
       cx.shadowBlur = 0;
     }
 
-    // Cluster names.
-    for (const [name, g] of this.groups) {
-      const s = this.toScreen(g.x, g.y - g.r);
-      const big = clamp(14 + z * 10, 14, 30);
+    // Cluster names, placed so no two overlap (a phone held upright puts
+    // clusters close together): each tries its full line, then without
+    // "· N busy", then its name alone, then nudged up or down.
+    this.labels = this.placeLabels(z);
+    for (const l of this.labels) {
       cx.textAlign = "center";
-      cx.font = `800 ${big}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
-      cx.fillStyle = g.need ? "#ffd5da" : "rgba(230,235,244,.92)";
-      cx.fillText(name.toUpperCase(), s.x, s.y - 12);
-      // Far out on a small screen, the counts would only collide.
-      if (z < 0.45 && W < 760 && !g.need) {
+      cx.font = `800 ${l.big}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
+      cx.fillStyle = l.need ? "#ffd5da" : "rgba(230,235,244,.92)";
+      cx.fillText(l.title, l.x, l.y - 12);
+      if (l.meta || l.needText) {
+        cx.font = META_FONT;
         cx.textAlign = "start";
-        continue;
-      }
-      cx.font = `500 11px "JetBrains Mono", ui-monospace, monospace`;
-      cx.fillStyle = "rgba(124,134,152,.95)";
-      const meta = `${g.n} pane${g.n === 1 ? "" : "s"} · ${g.busy} busy` + (g.need ? " · " : "");
-      cx.fillText(meta + (g.need ? "   " : ""), s.x - (g.need ? 22 : 0), s.y + 2);
-      if (g.need) {
-        cx.fillStyle = "#ff5468";
-        cx.fillText(`${g.need} need you`, s.x + cx.measureText(meta).width / 2 + 16, s.y + 2);
+        let x = l.x - l.metaW / 2;
+        if (l.meta) {
+          cx.fillStyle = "rgba(124,134,152,.95)";
+          cx.fillText(l.meta, x, l.y + 2);
+          x += cx.measureText(l.meta).width;
+        }
+        if (l.needText) {
+          cx.fillStyle = "#ff5468";
+          cx.fillText(l.needText, x, l.y + 2);
+        }
       }
       cx.textAlign = "start";
     }
+  }
+
+  /** Where each cluster's name goes this frame, and what of it fits. */
+  private placeLabels(z: number): Label[] {
+    const { cx, W } = this;
+    const big = clamp(14 + z * 10, 14, 30);
+    const placed: Label[] = [];
+    const hits = (l: Label) =>
+      placed.some((q) => l.box.x0 < q.box.x1 && q.box.x0 < l.box.x1 && l.box.y0 < q.box.y1 && q.box.y0 < l.box.y1);
+    // Clusters that need you first, then the biggest: they keep the most.
+    const order = [...this.groups].sort(([, a], [, b]) => b.need - a.need || b.n - a.n);
+    for (const [name, g] of order) {
+      const s = this.toScreen(g.x, g.y - g.r);
+      const title = name.toUpperCase();
+      cx.font = `800 ${big}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
+      const titleW = cx.measureText(title).width;
+      cx.font = META_FONT;
+      const panes = `${g.n} pane${g.n === 1 ? "" : "s"}`;
+      const needText = g.need ? `${g.need} need you` : "";
+      // Far out on a small screen, the counts would only crowd it.
+      const terse = z < 0.45 && W < 760;
+      const variants: [string, string][] = [
+        ...(terse ? [] : [[`${panes} · ${g.busy} busy${needText ? " · " : ""}`, needText] as [string, string]]),
+        ...(needText ? [[terse ? "" : `${panes} · `, needText] as [string, string], ["", needText] as [string, string]] : []),
+        ...(!terse && !needText ? [[panes, ""] as [string, string]] : []),
+        ["", ""],
+      ];
+      const make = (meta: string, need: string, dy: number): Label => {
+        cx.font = META_FONT;
+        const metaW = cx.measureText(meta + need).width;
+        const lines = meta || need;
+        const w = Math.max(titleW, metaW) + 8;
+        const y = s.y + dy;
+        return {
+          name, title, meta, needText: need, need: g.need, big, metaW, x: s.x, y,
+          box: { x0: s.x - w / 2, x1: s.x + w / 2, y0: y - 12 - big * 0.85, y1: lines ? y + 6 : y - 8 },
+        };
+      };
+      let chosen: Label | null = null;
+      for (const [meta, need] of variants) {
+        const l = make(meta, need, 0);
+        if (!hits(l)) {
+          chosen = l;
+          break;
+        }
+      }
+      // Still in the way: the shortest form, nudged up or down a little.
+      if (!chosen) {
+        const [meta, need] = variants[variants.length - (needText ? 2 : 1)];
+        for (let k = 1; k <= 8 && !chosen; k++) {
+          for (const dy of [-k * 9, k * 9]) {
+            const l = make(meta, need, dy);
+            if (!hits(l)) {
+              chosen = l;
+              break;
+            }
+          }
+        }
+        chosen ??= make("", "", 0);
+      }
+      placed.push(chosen);
+    }
+    return placed;
   }
 }

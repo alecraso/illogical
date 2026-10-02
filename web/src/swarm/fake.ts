@@ -17,8 +17,8 @@ function wpick(o: Record<string, number>): string {
   return Object.keys(o)[0];
 }
 
-const PROJECTS = { illogical: 9, hal0: 6, "skipto.tv": 4, ravix: 5, "home-cloud": 4, dotfiles: 2, "": 8 };
-const MACHINES = { geek: 8, "jake-mini": 5, "build-01": 3, "build-02": 3, "build-03": 3, "build-04": 2, "sandbox-a": 2, "hal0-box": 3 };
+const PROJECTS = { api: 9, web: 6, mobile: 4, infra: 5, docs: 4, dotfiles: 2, "": 8 };
+const MACHINES = { workstation: 8, laptop: 5, "build-01": 3, "build-02": 3, "build-03": 3, "build-04": 2, "sandbox-a": 2, "team-box": 3 };
 const KINDW = { shell: 5, build: 3, test: 3, agent: 3, server: 2, logs: 2, editor: 2 };
 const CMDS: Record<WorkKind, string[]> = {
   shell: [""],
@@ -36,7 +36,7 @@ export function fakeSwarm(fleet: Fleet, n: number): () => void {
   for (let i = 0; i < n; i++) {
     const project = wpick(PROJECTS);
     const kind = wpick(KINDW) as WorkKind;
-    const host = project === "hal0" && Math.random() < 0.5 ? "hal0-box" : wpick(MACHINES);
+    const host = project === "infra" && Math.random() < 0.5 ? "team-box" : wpick(MACHINES);
     const cmd = pick(CMDS[kind]);
     const info = {
       id: i + 1,

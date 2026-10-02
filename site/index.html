@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>illogical</title>
-<meta name="description" content="A terminal multiplexer whose sessions outlive the window, the daemon and the reboot. Mouse-first tabs and splits in the browser, on your desktop and your phone.">
+<meta name="description" content="Every terminal on every machine you and your team can see, in one live view, and any agent that asks can be answered by anyone on the team. Mouse-first tabs and splits that outlive the window, the daemon and the reboot.">
 <meta property="og:title" content="illogical">
-<meta property="og:description" content="Terminals that outlive the window, the daemon and the reboot. Mouse-first, on every screen you own.">
-<meta property="og:image" content="https://illogical.widgets.wtf/img/desktop.png">
+<meta property="og:description" content="Every pane on every machine your team can see, in one live view. Anyone on the team can answer an agent, from any screen.">
+<meta property="og:image" content="https://illogical.widgets.wtf/img/swarm.png">
 <meta property="og:url" content="https://illogical.widgets.wtf/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="dark">
@@ -73,6 +73,11 @@
   section.feature ul { color: var(--dim); padding-left: 20px; margin: 0; }
   section.feature li { margin: 6px 0; }
   .phones { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  section.feature.wide { grid-template-columns: 1fr; gap: 20px; }
+  section.feature.wide .text { max-width: 760px; }
+  section.feature.wide ul { columns: 2; column-gap: 40px; }
+  section.feature.wide li { break-inside: avoid; margin: 0 0 12px; }
+  section.feature li strong { color: var(--fg); }
 
   .cli { background: var(--deep); border: 1px solid var(--raised); border-radius: 12px; padding: 18px 20px; overflow-x: auto; font-size: 14px; line-height: 1.7; margin: 0; }
   .cli .c { color: var(--faint); }
@@ -99,6 +104,7 @@
     .hero { padding-top: 32px; }
     section.feature, section.feature.flip { grid-template-columns: 1fr; gap: 24px; padding: 44px 0; }
     section.feature.flip .text { order: 0; }
+    section.feature.wide ul { columns: 1; }
     .ways { grid-template-columns: 1fr; }
     .install code { font-size: 13px; }
   }
@@ -116,18 +122,34 @@
   </header>
 
   <div class="hero">
-    <h1>Terminals that outlive<br><span>the window, the daemon and the reboot.</span></h1>
-    <p class="lede">illogical is a multiplexer you drive with the mouse. A daemon owns your terminals; the browser on your desktop or your phone draws the tabs and splits. Close it, crash it, reboot: your work is where you left it.</p>
+    <h1>Every pane on every machine,<br><span>and anyone on the team can answer.</span></h1>
+    <p class="lede">illogical is a terminal multiplexer for you and your team. Daemons own the terminals, on your laptop, your servers and the team's build box, and they outlive the window, the daemon and the reboot. The browser draws them as tabs and splits you drive with the mouse, or all at once in the swarm, where a failed build or an agent's question lifts out to a card that anyone who may answer can answer, from any screen.</p>
     <div class="install">
       <code id="oneliner">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</code>
       <button class="copy" type="button" data-copy="oneliner">Copy</button>
     </div>
     <p class="small">Linux (x86_64, arm64) and macOS (Apple silicon). Free and open source, MIT or Apache-2.0.</p>
     <picture>
-      <source srcset="img/desktop.webp" type="image/webp">
-      <img class="shot hero-shot" src="img/desktop.png" width="2880" height="1800" alt="illogical in a browser: an editor, a test run and a git log in three panes, with tabs along the top">
+      <source srcset="img/swarm.webp" type="image/webp">
+      <img class="shot hero-shot" src="img/swarm.png" width="2880" height="1800" alt="The swarm: 374 panes on six machines clustered by project, with two agents asking, a third asking to run terraform plan, four failed test runs on build-02 and a finished build on the needs-you rail">
     </picture>
   </div>
+
+  <section class="feature wide">
+    <div class="text">
+      <h2>Whoever is free answers it.</h2>
+      <p>The swarm is one live view of every pane on every machine you and your team can see. Panes cluster by project, machine, kind or person, and the busy ones drift to the middle. Whatever needs someone lifts out to a rail of cards, bundled by cause: "4 failed on build-02", "2 agents ask".</p>
+      <p>When an agent on any of the team's machines wants to run something or has a question, its card reaches everyone who may answer: on the rail, beside the pane, or as a push notification. The first answer wins, and every card says who gave it ("Allowed by Sam, 14:02"). Then send the agent its next instruction from the same card.</p>
+    </div>
+    <ul>
+      <li><strong>Share a session</strong> with a person or the whole team, as a viewer or an editor. Revoke it and they're out within a second.</li>
+      <li><strong>Team machines</strong> belong to the team: members drive them by their role. A pane on your own machine needs your OK first, for a set time.</li>
+      <li><strong>Claude Code in a plain terminal</strong> works too, through its hooks: tool approvals, questions and follow-ups, without typing over whoever is driving.</li>
+      <li><strong>Who did what</strong> is kept: every approval, answer and follow-up is in the pane's history under the name of the person who sent it.</li>
+      <li><strong>Private panes</strong> never leave your screen, not even as a tile.</li>
+      <li><strong>End to end:</strong> illogical control lists your machines and relays them, but never sees what's in them.</li>
+    </ul>
+  </section>
 
   <section class="feature">
     <div class="text">
@@ -171,9 +193,9 @@
 
   <section class="feature flip">
     <div class="text">
-      <h2>On your phone, over your tailnet.</h2>
-      <p>The same live layout on every window you open and on your phone, reached over <a href="https://tailscale.com">Tailscale</a>. Only you get in: the daemon asks Tailscale who's calling.</p>
-      <p>A pane that rings, a long command that finishes, an agent that needs you: you get a push notification, and tapping it opens the pane. Approve a command or answer a question with your thumb.</p>
+      <h2>On your phone, from anywhere.</h2>
+      <p>The same live layout on every window you open and on your phone: over your <a href="https://tailscale.com">tailnet</a>, or from anywhere through illogical control's relay, encrypted end to end. You get in, and so do the teammates you gave a role. Nobody else does.</p>
+      <p>A failed build, a long command that finishes, an agent that needs you: you get a push notification. Answer from its buttons where your phone shows them, or tap it to open the card. On a phone the swarm's rail is a strip of cards along the bottom.</p>
     </div>
     <div class="phones">
       <picture>
@@ -181,22 +203,10 @@
         <img class="shot" src="img/phone.png" width="1082" height="2202" loading="lazy" alt="The phone view of an agent asking which approach to take, with three answers as buttons">
       </picture>
       <picture>
-        <source srcset="img/phone-sheet.webp" type="image/webp">
-        <img class="shot" src="img/phone-sheet.png" width="1082" height="2202" loading="lazy" alt="The phone's sheet: what needs you, then every tab and pane">
+        <source srcset="img/swarm-phone.webp" type="image/webp">
+        <img class="shot" src="img/swarm-phone.png" width="1082" height="2202" loading="lazy" alt="The swarm on a phone: panes clustered by project, and what needs you as a strip of cards along the bottom">
       </picture>
     </div>
-  </section>
-
-  <section class="feature">
-    <div class="text">
-      <h2>Every pane, everywhere, at once.</h2>
-      <p>The swarm is one live view of every pane on every machine you and your team can see: your laptop, your servers, the team's build box, the sessions teammates shared with you. Panes cluster by project, machine, kind or person, and the busy ones drift to the middle.</p>
-      <p>Whatever needs someone lifts out to a rail of cards, bundled by cause: "3 failed on build-02", "2 agents ask". Anyone on the team who may answer can allow, deny or answer from there, or from their phone, and send the agent its next instruction. Everyone sees who did.</p>
-    </div>
-    <picture>
-      <source srcset="img/swarm.webp" type="image/webp">
-      <img class="shot" src="img/swarm.png" width="1440" height="900" loading="lazy" alt="The swarm: hundreds of panes clustered by project, with two agents asking and four failed tests bundled on the rail">
-    </picture>
   </section>
 
   <section class="feature flip">
@@ -239,7 +249,7 @@ just bootstrap && just install</pre>
         <p>Needs Rust, mise, just and pnpm. <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/development.md#build-from-source">Details</a>.</p>
       </div>
     </div>
-    <p class="needs">Then open <code>http://127.0.0.1:7681</code>. <strong>From your phone and other machines</strong>, put it behind Tailscale: <code>tailscale serve --bg --https=443 http://127.0.0.1:7681</code>. The <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
+    <p class="needs">Then open <code>http://127.0.0.1:7681</code>. <strong>From your phone and other machines</strong>, put it behind Tailscale (<code>tailscale serve --bg --https=443 http://127.0.0.1:7681</code>), or join it to illogical control to reach it from anywhere and share it with your team (<code>illogicald join https://control.illogical.widgets.wtf</code>). The <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
   </section>
 
   <footer>
