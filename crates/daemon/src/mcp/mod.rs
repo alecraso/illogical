@@ -139,7 +139,9 @@ async fn authenticate(State(app): State<Arc<App>>, mut req: Request, next: Next)
                 Caller { scope, token: Some(name) }
             }
             Some(Bearer::Block(id)) => match app.mux.api(|r| Api::Block(id, r)).await.flatten() {
-                Some(b) if b.kind() == BlockType::Agent => Caller { scope: Scope::Block(id), token: Some(format!("%{id}")) },
+                Some(b) if b.kind() == BlockType::Agent => {
+                    Caller { scope: Scope::Block(id), token: Some(format!("%{id}")) }
+                }
                 _ => return refuse(StatusCode::UNAUTHORIZED, &format!("agent block %{id} is gone; its token with it")),
             },
             None => return refuse(StatusCode::UNAUTHORIZED, "unknown or revoked MCP token"),

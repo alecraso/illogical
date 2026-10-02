@@ -74,12 +74,14 @@ async fn bridge(d: &Daemon, client: Client) -> Session {
 
 /// `/mcp` over TCP, with a bearer token.
 async fn http(d: &Daemon, token: &str, client: Client) -> Result<Session, String> {
-    let config = StreamableHttpClientTransportConfig::with_uri(format!("http://127.0.0.1:{}/mcp", d.port)).auth_header(token);
+    let config =
+        StreamableHttpClientTransportConfig::with_uri(format!("http://127.0.0.1:{}/mcp", d.port)).auth_header(token);
     client.serve(StreamableHttpClientTransport::from_config(config)).await.map_err(|e| e.to_string())
 }
 
 async fn call_raw(s: &Session, tool: &str, args: Value) -> CallToolResult {
-    let params = CallToolRequestParams::new(tool.to_owned()).with_arguments(args.as_object().cloned().unwrap_or_default());
+    let params =
+        CallToolRequestParams::new(tool.to_owned()).with_arguments(args.as_object().cloned().unwrap_or_default());
     let mut params = params;
     params.meta = Some(RequestMetaObject::with_progress_token(ProgressToken(NumberOrString::String("t".into()))));
     s.call_tool(params).await.unwrap_or_else(|e| panic!("{tool}: {e}"))
@@ -116,7 +118,10 @@ async fn tools_through_the_stdio_bridge() {
     let tools = s.list_all_tools().await.unwrap();
     assert_eq!(tools.len(), 13);
     let ro = |n: &str| tools.iter().find(|t| t.name == n).unwrap().annotations.as_ref().unwrap().read_only_hint;
-    assert_eq!((ro("read_output"), ro("wait"), ro("run"), ro("close")), (Some(true), Some(true), Some(false), Some(false)));
+    assert_eq!(
+        (ro("read_output"), ro("wait"), ro("run"), ro("close")),
+        (Some(true), Some(true), Some(false), Some(false))
+    );
 
     // Run and wait: the exit code and the last lines.
     let dir = d.sessions.join("repo");
@@ -134,7 +139,10 @@ async fn tools_through_the_stdio_bridge() {
     let h = call(&s, "history", json!({ "failed": true, "cwd": dir })).await;
     let cmds = h["commands"].as_array().unwrap();
     assert_eq!(cmds.len(), 1, "{h}");
-    assert_eq!((cmds[0]["command"].as_str(), cmds[0]["by"].as_str()), (Some("ls /nonexistent-m16"), Some("mcp:claude-code")));
+    assert_eq!(
+        (cmds[0]["command"].as_str(), cmds[0]["by"].as_str()),
+        (Some("ls /nonexistent-m16"), Some("mcp:claude-code"))
+    );
 
     // Paged output: a long command's, a page at a time, all of it.
     let r = call(&s, "run", json!({ "command": "seq 1 4000", "wait": true })).await;
@@ -145,7 +153,12 @@ async fn tools_through_the_stdio_bridge() {
     while page["more"] == true {
         text.push_str(page["text"].as_str().unwrap());
         assert!(page["text"].as_str().unwrap().len() <= 1000);
-        page = call(&s, "read_output", json!({ "pane": p, "last_command": true, "offset": page["next_offset"], "max_chars": 1000 })).await;
+        page = call(
+            &s,
+            "read_output",
+            json!({ "pane": p, "last_command": true, "offset": page["next_offset"], "max_chars": 1000 }),
+        )
+        .await;
         pages += 1;
     }
     text.push_str(page["text"].as_str().unwrap());
@@ -175,7 +188,10 @@ async fn tools_through_the_stdio_bridge() {
 
     // list, search, and the resources.
     let l = call(&s, "list", json!({})).await;
-    assert!(l["panes"].as_array().unwrap().iter().any(|e| e["pane"] == p && e["started_by"] == "mcp:claude-code"), "{l}");
+    assert!(
+        l["panes"].as_array().unwrap().iter().any(|e| e["pane"] == p && e["started_by"] == "mcp:claude-code"),
+        "{l}"
+    );
     let hits = call(&s, "search", json!({ "pattern": "built-42" })).await;
     assert!(hits["hits"].as_array().unwrap().iter().any(|h| h["pane"] == pane), "{hits}");
     let templates = s.list_all_resource_templates().await.unwrap();
@@ -205,12 +221,18 @@ async fn tools_through_the_stdio_bridge() {
 /// the daemon's socket.
 #[tokio::test(flavor = "multi_thread")]
 async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
-    use rmcp::{ClientLifecycleMode, ClientServiceExt, model::{CacheScope, ProtocolVersion}};
+    use rmcp::{
+        ClientLifecycleMode, ClientServiceExt,
+        model::{CacheScope, ProtocolVersion},
+    };
     let d = Daemon::child();
     let sock = d.sock().display().to_string();
     let transport = StreamableHttpClientTransport::from_unix_socket(sock.as_str(), "http://localhost/mcp");
     let s = Client::named("claude-code")
-        .serve_with_lifecycle(transport, ClientLifecycleMode::Discover { preferred_versions: vec![ProtocolVersion::V_2026_07_28] })
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Discover { preferred_versions: vec![ProtocolVersion::V_2026_07_28] },
+        )
         .await
         .unwrap();
     // Without ttlMs and cacheScope, Claude Code 2.1.287 refuses the list
@@ -254,7 +276,8 @@ async fn http_with_a_token_until_it_is_revoked() {
     assert!(used[0]["used_ms"].is_u64(), "{used}");
 
     // Read-only tokens see and call the read-only tools only.
-    let ro = d.post("/api/mcp/tokens", json!({ "name": "watcher", "scope": "read" }))["token"].as_str().unwrap().to_owned();
+    let ro =
+        d.post("/api/mcp/tokens", json!({ "name": "watcher", "scope": "read" }))["token"].as_str().unwrap().to_owned();
     let w = http(&d, &ro, Client::named("watcher")).await.unwrap();
     assert_eq!(w.list_all_tools().await.unwrap().len(), 7);
     assert!(refused(&w, "run", json!({ "command": "true" })).await.contains("may only read"));
@@ -364,11 +387,18 @@ fn an_agent_block_works_in_its_own_tab() {
 
     // Its project's dev server, in a pane beside it...
     let port = free_port();
-    let r = agent_mcp(&d, a, "run", json!({ "command": format!("python3 -m http.server {port} --bind 127.0.0.1"), "cwd": d.sessions }))
-        .unwrap();
+    let r = agent_mcp(
+        &d,
+        a,
+        "run",
+        json!({ "command": format!("python3 -m http.server {port} --bind 127.0.0.1"), "cwd": d.sessions }),
+    )
+    .unwrap();
     let server = r["pane"].as_u64().unwrap();
     assert_eq!(tab_of(&d, server), tab_of(&d, a), "in its own tab");
-    let m = agent_mcp(&d, a, "wait", json!({ "pane": server, "until": "match", "pattern": "Serving HTTP", "timeout": 30 })).unwrap();
+    let m =
+        agent_mcp(&d, a, "wait", json!({ "pane": server, "until": "match", "pattern": "Serving HTTP", "timeout": 30 }))
+            .unwrap();
     assert_eq!(m["state"], "matched", "{m}");
     // ...and the page in a browser block beside itself.
     let b = agent_mcp(&d, a, "open_port", json!({ "port": port })).unwrap()["block"].as_u64().unwrap();
@@ -446,14 +476,17 @@ async fn what_failed_here_yesterday() {
     }
     let mut yesterday = vec![];
     for (cmd, dir) in [("cargo-test-m16 || false", &repo), ("true", &repo), ("false", &elsewhere)] {
-        yesterday.push(call(&s, "run", json!({ "command": cmd, "cwd": dir, "wait": true })).await["pane"].as_u64().unwrap());
+        yesterday
+            .push(call(&s, "run", json!({ "command": cmd, "cwd": dir, "wait": true })).await["pane"].as_u64().unwrap());
     }
     // ...made yesterday's: their history, a day and a bit back.
     let re = regex::Regex::new(r#""at_ms":(\d+)"#).unwrap();
     for p in &yesterday {
         let index = d.state.join(format!("blocks/{p}/index"));
         let text = std::fs::read_to_string(&index).unwrap();
-        let shifted = re.replace_all(&text, |c: &regex::Captures| format!("\"at_ms\":{}", c[1].parse::<u64>().unwrap() - 30 * 3600 * 1000));
+        let shifted = re.replace_all(&text, |c: &regex::Captures| {
+            format!("\"at_ms\":{}", c[1].parse::<u64>().unwrap() - 30 * 3600 * 1000)
+        });
         std::fs::write(&index, shifted.as_bytes()).unwrap();
     }
     // And one today.

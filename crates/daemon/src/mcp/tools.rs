@@ -68,9 +68,11 @@ impl PaneArg {
     fn id(&self) -> Result<PaneId, String> {
         match self {
             PaneArg::Id(n) => Ok(*n),
-            PaneArg::Name(s) => {
-                s.trim().trim_start_matches('%').parse().map_err(|_| format!("{s:?} isn't a pane: give its number, like 7 or \"%7\""))
-            }
+            PaneArg::Name(s) => s
+                .trim()
+                .trim_start_matches('%')
+                .parse()
+                .map_err(|_| format!("{s:?} isn't a pane: give its number, like 7 or \"%7\"")),
         }
     }
 }
@@ -517,14 +519,7 @@ pub struct Call<'a> {
 
 impl<'a> Call<'a> {
     pub fn new(app: &'a Arc<App>, caller: Caller, client: String, ctx: &RequestContext<RoleServer>) -> Self {
-        Self {
-            app,
-            caller,
-            client,
-            peer: ctx.peer.clone(),
-            progress: ctx.meta.get_progress_token(),
-            ctx: ctx.clone(),
-        }
+        Self { app, caller, client, peer: ctx.peer.clone(), progress: ctx.meta.get_progress_token(), ctx: ctx.clone() }
     }
 
     fn by(&self) -> String {
@@ -545,19 +540,55 @@ impl<'a> Call<'a> {
             ))]);
         }
         let out = match name {
-            "run" => match parse(args) { Ok(a) => self.run(a).await, Err(e) => Err(e) },
-            "send_input" => match parse(args) { Ok(a) => self.send_input(a).await, Err(e) => Err(e) },
-            "read_output" => match parse(args) { Ok(a) => self.read_output(a).await, Err(e) => Err(e) },
-            "capture_screen" => match parse(args) { Ok(a) => self.capture(a).await, Err(e) => Err(e) },
-            "wait" => match parse(args) { Ok(a) => self.wait(a).await, Err(e) => Err(e) },
+            "run" => match parse(args) {
+                Ok(a) => self.run(a).await,
+                Err(e) => Err(e),
+            },
+            "send_input" => match parse(args) {
+                Ok(a) => self.send_input(a).await,
+                Err(e) => Err(e),
+            },
+            "read_output" => match parse(args) {
+                Ok(a) => self.read_output(a).await,
+                Err(e) => Err(e),
+            },
+            "capture_screen" => match parse(args) {
+                Ok(a) => self.capture(a).await,
+                Err(e) => Err(e),
+            },
+            "wait" => match parse(args) {
+                Ok(a) => self.wait(a).await,
+                Err(e) => Err(e),
+            },
             "list" => self.list().await,
-            "close" => match parse(args) { Ok(a) => self.close(a).await, Err(e) => Err(e) },
-            "history" => match parse(args) { Ok(a) => self.history(a).await, Err(e) => Err(e) },
-            "search" => match parse(args) { Ok(a) => self.search(a).await, Err(e) => Err(e) },
-            "open_port" => match parse(args) { Ok(a) => self.open_port(a).await, Err(e) => Err(e) },
-            "start_agent" => match parse(args) { Ok(a) => self.start_agent(a).await, Err(e) => Err(e) },
-            "agent_respond" => match parse(args) { Ok(a) => self.respond(a).await, Err(e) => Err(e) },
-            "read_file" => match parse(args) { Ok(a) => self.read_file(a).await, Err(e) => Err(e) },
+            "close" => match parse(args) {
+                Ok(a) => self.close(a).await,
+                Err(e) => Err(e),
+            },
+            "history" => match parse(args) {
+                Ok(a) => self.history(a).await,
+                Err(e) => Err(e),
+            },
+            "search" => match parse(args) {
+                Ok(a) => self.search(a).await,
+                Err(e) => Err(e),
+            },
+            "open_port" => match parse(args) {
+                Ok(a) => self.open_port(a).await,
+                Err(e) => Err(e),
+            },
+            "start_agent" => match parse(args) {
+                Ok(a) => self.start_agent(a).await,
+                Err(e) => Err(e),
+            },
+            "agent_respond" => match parse(args) {
+                Ok(a) => self.respond(a).await,
+                Err(e) => Err(e),
+            },
+            "read_file" => match parse(args) {
+                Ok(a) => self.read_file(a).await,
+                Err(e) => Err(e),
+            },
             _ => Err(format!("no tool {name}")),
         };
         match out {
@@ -747,17 +778,21 @@ impl<'a> Call<'a> {
         // The shell's first prompt (a VM takes a while), then the command.
         let mux = self.app.mux.clone();
         let ready = self
-            .waiting(if on_vm { "starting the machine" } else { "starting the shell" }, if on_vm { Duration::from_secs(300) } else { Duration::from_secs(20) }, async move {
-                loop {
-                    if let Some(p) = mux.api(|r| Api::Pane(pane, r)).await.flatten() {
-                        let st = p.status();
-                        if st.at_prompt || st.exited.is_some() {
-                            return st.exited;
+            .waiting(
+                if on_vm { "starting the machine" } else { "starting the shell" },
+                if on_vm { Duration::from_secs(300) } else { Duration::from_secs(20) },
+                async move {
+                    loop {
+                        if let Some(p) = mux.api(|r| Api::Pane(pane, r)).await.flatten() {
+                            let st = p.status();
+                            if st.at_prompt || st.exited.is_some() {
+                                return st.exited;
+                            }
                         }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            })
+                },
+            )
             .await;
         if let Some(Some(code)) = ready {
             return Err(format!("%{pane}'s shell ended (exit {code:?}) before the command could be typed"));
@@ -824,7 +859,11 @@ impl<'a> Call<'a> {
         let current = status.as_ref().and_then(|s| s.current.clone());
         let end = self.end_of(pane).await;
         let from = current.as_ref().map(|c| c.start).unwrap_or(end.saturating_sub(4096));
-        let what = current.as_ref().and_then(|c| c.text.clone()).map(|t| format!(" `{}`", one_line(&t, 60))).unwrap_or_default();
+        let what = current
+            .as_ref()
+            .and_then(|c| c.text.clone())
+            .map(|t| format!(" `{}`", one_line(&t, 60)))
+            .unwrap_or_default();
         let secs = waited.as_secs();
         let then = format!("call wait again (or read_output with offset {end} for what's new)");
         let summary = match (until, current.is_some()) {
@@ -846,7 +885,8 @@ impl<'a> Call<'a> {
     async fn waited(&self, pane: PaneId, r: WaitResult) -> Out {
         match r {
             WaitResult::CommandEnd { text, exit, start, end } => {
-                let what = text.as_deref().map(|t| format!("`{}`", one_line(t, 60))).unwrap_or_else(|| "the command".into());
+                let what =
+                    text.as_deref().map(|t| format!("`{}`", one_line(t, 60))).unwrap_or_else(|| "the command".into());
                 let how = match exit {
                     Some(0) => "succeeded".to_owned(),
                     Some(c) => format!("failed (exit {c})"),
@@ -899,12 +939,14 @@ impl<'a> Call<'a> {
             return Err("give text, keys, or both".into());
         }
         if p.info.kind != BlockType::Terminal {
-            let b = self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            let b =
+                self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
             let text = a.text.ok_or("an agent block takes text (its next prompt), not keys")?;
             b.call_by("send", json!({ "text": text }), Some(&self.by())).await?;
             return done(format!("Sent %{pane} a prompt"), json!({ "pane": pane }));
         }
-        let handle = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().ok_or_else(|| format!("no pane %{pane}"))?;
+        let handle =
+            self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().ok_or_else(|| format!("no pane %{pane}"))?;
         let mut data = a.text.clone().unwrap_or_default().into_bytes();
         if a.text.is_some() && a.enter.unwrap_or(true) {
             data.push(b'\r');
@@ -939,7 +981,8 @@ impl<'a> Call<'a> {
         if let Some(p) = &info
             && p.info.kind != BlockType::Terminal
         {
-            let b = self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            let b =
+                self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
             return page_text(pane, &b.text(), a.offset, max);
         }
         let dir = match info {
@@ -958,7 +1001,8 @@ impl<'a> Call<'a> {
         let log = PaneLog::open(dir).map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
         let mut command = None;
         let (from, until) = if a.last_command {
-            let st = status.as_ref().ok_or("a closed pane's commands: use history, then read_output with its offset")?;
+            let st =
+                status.as_ref().ok_or("a closed pane's commands: use history, then read_output with its offset")?;
             let c = st.current.clone().or(st.last.clone()).ok_or("no command recorded in that pane yet")?;
             command = Some(json!({ "text": c.text, "exit": c.exit, "running": st.current.is_some() }));
             (Some(a.offset.unwrap_or(c.start)), if st.current.is_some() { None } else { c.end })
@@ -977,8 +1021,9 @@ impl<'a> Call<'a> {
             }
             None => {
                 let from = end.saturating_sub((max * 4).min(256 * 1024) as u64).max(log.start());
-                let (_, raw) =
-                    log.read_range(from, (end - from) as usize).map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
+                let (_, raw) = log
+                    .read_range(from, (end - from) as usize)
+                    .map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
                 let (text, skipped) = tail_page(&raw, max);
                 (from + skipped as u64, text, end)
             }
@@ -1008,14 +1053,16 @@ impl<'a> Call<'a> {
         let pane = a.pane.id()?;
         let p = self.readable(pane).await?;
         let text = if p.info.kind == BlockType::Terminal {
-            let h = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().ok_or_else(|| format!("no pane %{pane}"))?;
+            let h =
+                self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().ok_or_else(|| format!("no pane %{pane}"))?;
             tokio::task::spawn_blocking(move || h.capture(CaptureFormat::Text, CaptureScope::Screen))
                 .await
                 .ok()
                 .flatten()
                 .ok_or("the pane didn't answer")?
         } else {
-            let b = self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            let b =
+                self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
             b.text()
         };
         let text = cap_tail(text.trim_end(), PAGE_MAX);
@@ -1046,7 +1093,8 @@ impl<'a> Call<'a> {
             "idle" => format!("waiting for %{pane} to finish"),
             _ => format!("waiting for %{pane}"),
         };
-        let r = self.waiting(&what, limit, async move { crate::api::wait_until(&app, pane, until, pattern).await }).await;
+        let r =
+            self.waiting(&what, limit, async move { crate::api::wait_until(&app, pane, until, pattern).await }).await;
         match r {
             Some(Ok(r)) => self.waited(pane, r).await,
             Some(Err(e)) if e.contains("closed") => Err(self.gone(pane).await),
@@ -1116,7 +1164,8 @@ impl<'a> Call<'a> {
             matching,
         };
         let store = self.app.mux.store.clone();
-        let all = tokio::task::spawn_blocking(move || history::history(&store, &filter, 100_000)).await.unwrap_or_default();
+        let all =
+            tokio::task::spawn_blocking(move || history::history(&store, &filter, 100_000)).await.unwrap_or_default();
         let cut = before.map(|b| now_ms().saturating_sub(b * 1000));
         let mut hits: Vec<HistoryEntry> = all
             .into_iter()
@@ -1163,7 +1212,8 @@ impl<'a> Call<'a> {
         let only = self.tab_panes().await;
         let store = self.app.mux.store.clone();
         let want = if only.is_some() { 2000 } else { limit };
-        let hits = tokio::task::spawn_blocking(move || history::search(&store, &re, since, want)).await.unwrap_or_default();
+        let hits =
+            tokio::task::spawn_blocking(move || history::search(&store, &re, since, want)).await.unwrap_or_default();
         let hits: Vec<Value> = hits
             .into_iter()
             .filter(|h| only.as_ref().is_none_or(|o| o.contains(&h.pane)))
@@ -1224,7 +1274,9 @@ impl<'a> Call<'a> {
             (None, me) => me,
         };
         if self.me().is_some() && (a.vm || a.session.is_some()) {
-            return Err("this agent's token reaches its own tab only: start_agent opens beside it (no vm or session)".into());
+            return Err(
+                "this agent's token reaches its own tab only: start_agent opens beside it (no vm or session)".into()
+            );
         }
         let host = match beside {
             Some(b) => self.readable(b).await?.info.host,
@@ -1262,7 +1314,9 @@ impl<'a> Call<'a> {
         };
         let block = self.open(req).await?;
         done(
-            format!("Started an agent in %{block}; wait on it (until needs_input or idle), then read_output for its transcript"),
+            format!(
+                "Started an agent in %{block}; wait on it (until needs_input or idle), then read_output for its transcript"
+            ),
             json!({ "block": block }),
         )
     }
@@ -1340,7 +1394,10 @@ impl<'a> Call<'a> {
         } else {
             format!("{path}: {size} bytes, to the end")
         };
-        done(summary, json!({ "path": path, "size": size, "offset": offset, "next_offset": next, "more": more, "text": text }))
+        done(
+            summary,
+            json!({ "path": path, "size": size, "offset": offset, "next_offset": next, "more": more, "text": text }),
+        )
     }
 
     // ------------------------------------------------------------ resources
@@ -1352,18 +1409,27 @@ impl<'a> Call<'a> {
         let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
         let pane_of = |s: &str| PaneArg::Name(s.to_owned()).id();
         let out = match parts.as_slice() {
-            ["history"] => self.history(HistoryArgs {
-                failed: false,
-                since: None,
-                before: None,
-                cwd: None,
-                matching: None,
-                pane: None,
-                limit: Some(50),
-            })
-            .await?,
+            ["history"] => {
+                self.history(HistoryArgs {
+                    failed: false,
+                    since: None,
+                    before: None,
+                    cwd: None,
+                    matching: None,
+                    pane: None,
+                    limit: Some(50),
+                })
+                .await?
+            }
             ["pane", id, "output"] => {
-                let v = self.read_output(ReadArgs { pane: PaneArg::Id(pane_of(id)?), offset: None, last_command: false, max_chars: None }).await?;
+                let v = self
+                    .read_output(ReadArgs {
+                        pane: PaneArg::Id(pane_of(id)?),
+                        offset: None,
+                        last_command: false,
+                        max_chars: None,
+                    })
+                    .await?;
                 return Ok(v["text"].as_str().unwrap_or_default().to_owned());
             }
             ["pane", id, "screen"] => {

@@ -1315,12 +1315,12 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             match &g.cfg.session_id {
                 Some(sid) if resume && !g.t.entries.is_empty() => {
                     let sid = sid.clone();
-                    let mcp = g.servers(&ctx);
+                    let mcp = g.servers(ctx);
                     g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 Some(sid) if load => {
                     let sid = sid.clone();
-                    let mcp = g.servers(&ctx);
+                    let mcp = g.servers(ctx);
                     g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 _ => new_session(ctx, g, &cwd),
@@ -1411,7 +1411,7 @@ fn redacted(frame: &Value) -> std::borrow::Cow<'_, Value> {
 
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
     let meta = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default();
-    let mcp = g.servers(&ctx);
+    let mcp = g.servers(ctx);
     g.request("session/new", json!({ "cwd": cwd, "mcpServers": mcp, "_meta": meta }));
 }
 

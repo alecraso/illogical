@@ -355,4 +355,23 @@ the daemon stopping, crashing, or the machine rebooting:
   send an agent its next instruction. Hover a tile to peek at its last
   lines, click it to open it. On a phone the cards are a strip along the
   bottom. `just fake-fleet` runs three throwaway machines to try it on.
-
+- **Tools for any agent** (M16, MCP). Claude Code, Codex or any MCP client
+  gets illogical as tools: `run` a command in a pane you can watch and
+  take over (here, on a throwaway VM, or a sandbox; it outlives the
+  agent's turn), `wait` for it and `read_output`, `send_input`, `list`,
+  `close`, `history` and `search`, `open_port` (a dev server in a browser
+  block beside its terminal), `start_agent` and `agent_respond` (one agent
+  supervising another), `read_file`. `claude mcp add illogical --
+  illogical mcp` sets it up; see the README. Output comes in pages, a long
+  wait sends progress and answers "still running" by 100s with where to
+  pick up, and errors say what happened ("pane %7 is gone; its last
+  command `make` exited 2 3m ago"). A pane an MCP client started says
+  "started by mcp:claude-code", and what it typed is in history as theirs.
+  The tools' annotations are honest (read-only, destructive), so a
+  client's permissions can allow the readers and ask before the rest.
+  Every agent block gets it too, scoped to its own tab: it can start a dev
+  server beside itself and show it in a browser block, start and answer
+  other agents there, and read the rest of its tab, but not touch other
+  tabs. Over HTTP (`/mcp`), the owner gets in as for the web client;
+  anything else needs a token from `illogical mcp token`, revocable at any
+  time.

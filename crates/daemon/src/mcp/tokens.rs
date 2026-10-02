@@ -78,7 +78,10 @@ pub struct TokenInfo {
 /// What a bearer token turned out to be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Bearer {
-    Client { name: String, scope: TokenScope },
+    Client {
+        name: String,
+        scope: TokenScope,
+    },
     /// An agent block's (still to check: is the block there).
     Block(PaneId),
 }
@@ -148,7 +151,13 @@ impl Tokens {
             .lock()
             .unwrap()
             .iter()
-            .map(|t| TokenInfo { name: t.name.clone(), scope: t.scope, created_ms: t.created_ms, used_ms: t.used_ms, token: None })
+            .map(|t| TokenInfo {
+                name: t.name.clone(),
+                scope: t.scope,
+                created_ms: t.created_ms,
+                used_ms: t.used_ms,
+                token: None,
+            })
             .collect()
     }
 
@@ -255,7 +264,10 @@ mod tests {
         assert!(token.starts_with(CLIENT_PREFIX));
         assert_eq!(t.check(&token), Some(Bearer::Client { name: "laptop".into(), scope: TokenScope::Read }));
         assert_eq!(t.list()[0].token, None, "a list never shows tokens");
-        assert!(!std::fs::read_to_string(dir.join("mcp/tokens.json")).unwrap().contains(&token), "only its hash is kept");
+        assert!(
+            !std::fs::read_to_string(dir.join("mcp/tokens.json")).unwrap().contains(&token),
+            "only its hash is kept"
+        );
         assert!(t.mint("bad name", TokenScope::Full).is_err());
 
         // Block tokens: the same after a restart, and only for that block.

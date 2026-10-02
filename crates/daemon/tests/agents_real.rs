@@ -432,8 +432,11 @@ fn claude_code_outside_runs_a_build_through_mcp() {
     std::fs::write(&config, server.to_string()).unwrap();
     // A build that takes a while and fails until a file exists.
     let marker = if on_vm { "/tmp/ready".to_owned() } else { format!("{repo}/ready") };
-    let build = format!("sleep 20; test -f {marker} && echo BUILD-OK || {{ echo 'error: {marker} is missing (touch it)'; false; }}");
-    let place = if on_vm { "with vm: true (a throwaway VM pane; run the fix in that same pane with send_input)" } else { "" };
+    let build = format!(
+        "sleep 20; test -f {marker} && echo BUILD-OK || {{ echo 'error: {marker} is missing (touch it)'; false; }}"
+    );
+    let place =
+        if on_vm { "with vm: true (a throwaway VM pane; run the fix in that same pane with send_input)" } else { "" };
     let prompt = format!(
         "Use the illogical MCP tools. Run this build with the run tool {place}, with wait true: `{build}`. \
          If it fails, read why, fix it, and run the build again until it succeeds (wait again if it's still running). \

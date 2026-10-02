@@ -753,7 +753,8 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             if !matches!(scope.as_str(), "full" | "read") {
                 bail!("--scope: full or read");
             }
-            let v = request(&sock, "POST", "/api/mcp/tokens", Some(&json!({ "name": name, "scope": scope })))?.json()?;
+            let v =
+                request(&sock, "POST", "/api/mcp/tokens", Some(&json!({ "name": name, "scope": scope })))?.json()?;
             if json_out {
                 print_json(&v);
                 return Ok(0);

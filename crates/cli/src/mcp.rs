@@ -46,7 +46,8 @@ struct Bridge {
 }
 
 pub fn run(target: Target, token: Option<String>) -> anyhow::Result<i32> {
-    let bridge = Arc::new(Bridge { target, token, session: Mutex::new(Session::default()), out: Mutex::new(std::io::stdout()) });
+    let bridge =
+        Arc::new(Bridge { target, token, session: Mutex::new(Session::default()), out: Mutex::new(std::io::stdout()) });
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let line = line.context("reading stdin")?;
