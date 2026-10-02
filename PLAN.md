@@ -3063,7 +3063,7 @@ illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` d
 1. **S19** (#48): done, below.
 2. **The resync fix** (#49): done 2026-10-02. Snapshots are capped at the client's scrollback and zstd-compressed, and a resync brings back the screen alone. With S19's four-pane flood, snapshots went from 1.44 GB of 1.53 GB received to 9.8 KB of 612 MB, and the TUI drew 7x as much real output. A quiet pane beside a flood in a browser throttled 6x echoes in under 100 ms (`web/e2e/flood.spec.ts`).
 3. **Flow control** (#52): done 2026-10-02. Clients ack what they have drawn, the daemon holds them to a 512 KB window, and a pane's program waits when the pane can't keep up. In a browser throttled 6x, a flooded pane catches up 0.2–0.4 s after the flood ends, against 15–25 s before. With four floods, the TUI never resyncs and uses about 36% of a core.
-4. **M31** (#50: `illogical tui`): done 2026-10-02. Then **M32** (#51: copy mode).
+4. **M31** (#50: `illogical tui`): done 2026-10-02. Then **M32** (#51: copy mode): done 2026-10-02.
 
 #### S19: TUI spike
 
@@ -3123,12 +3123,36 @@ What #50 asked for:
 
 #### M32: copy mode in the TUI
 
-Detail is in #51:
+**Done 2026-10-02, apart from OSC 52 on real terminals over ssh.** `crates/vt/src/ghostty/copy.rs` and `crates/cli/src/tui/copy.rs`; docs/features.md has the keys.
 
-- the wheel and keys scroll the pane's local engine;
-- drag selects within a pane (libghostty selection) and copies through OSC 52, which works over ssh;
-- a keyboard copy mode searches history;
-- command marks select one command's output.
+- **What landed:**
+  - **The engine** (`crates/vt`) selects and finds with libghostty's own selection. A selection starts at a tracked point, so it stays on its text as output scrolls it, and grows by cell, word or line (`select_word`, `select_line`). `select_output` takes a command's output between its OSC 133 marks, as Ghostty does. `prompt_rows` lists prompts. `find` searches up or down from a point and wraps; a lower-case needle ignores case, and columns count wide characters as two. `selection_text` formats the selection as plain text, unwrapped and trimmed, as `illogical capture` does. `cells()` marks selected cells, drawn reversed.
+  - **The mouse:** drag selects, a double-click selects a word and a triple-click a line; letting go copies. A drag past the pane's edge scrolls it. When the program takes the mouse the drag goes to it, and Shift-drag selects instead.
+  - **Copying** writes OSC 52 to the outer terminal after the next frame, and says "Copied N lines".
+  - **Copy mode** (`Ctrl-] [`, or the pane's menu): a cursor through the pane's history, starting where the program's is. It has hjkl and arrows, half and whole pages, `0 $ g G`, `v`/`V`, `y`/Enter, `/` `?` `n` `N`, `[` `]` between prompts and `o` for a command's output. The status line turns yellow and lists them.
+  - **Scrollback:** the wheel and Shift+PgUp/PgDn (M31) now show a dim `↑N` marker. Typing goes back to the bottom and clears a selection.
+  - **Deep search.** A search that misses in the 10k rows the TUI holds reads the pane's output log (`GET /api/panes/N/tail?from=…&until=OFFSET`, up to 32 MiB before what the TUI has). It replays the log into an *archive* terminal (`GhosttyEngine::archive`, 64 MiB of scrollback) with the output that arrived meanwhile, and searches again there. The pane shows the archive, still fed live output, until copy mode ends; then it's dropped. A snapshot (a resync) drops it too, since its offsets no longer follow.
+  - `tail` takes `until=OFFSET`.
+- **Decisions (2026-10-02):**
+  - **The log, not a bigger snapshot,** for deep search. The daemon's own terminal keeps 16 MiB since M9 step 1, which is about 20k rows at 92 columns. A line 30k rows up isn't in any snapshot it can send, but it is in the 256 MiB log. The first draft re-attached with 200k rows of history and couldn't pass the done-when.
+  - **An archive beside the live engine, not in place of it.** A log replayed from the middle of a stream, at today's width, can differ from the real screen (modes set before it starts, earlier widths). So the live engine is never replaced. The archive is only read, and only while copy mode is on.
+  - **Shift-drag selects when the program takes the mouse.** This is what xterm, Ghostty and iTerm2 do, and #51's wording was ambiguous.
+  - **Search runs over plain text, one row at a time.** A match doesn't cross a soft wrap. libghostty's C API has no text search at the pinned commit, and this is fast enough.
+- **Measured** (release, 92 columns): 32 MiB of log replays into an archive in 53 ms and keeps 84k rows; a search through all of them that finds nothing takes 38 ms.
+- **Tests:**
+  - `crates/vt` unit tests: drag, word and line selections (backwards too, soft wraps joined); a selection staying on its text as output scrolls; command output by its marks; find both ways, wrapping, case and wide characters; an archive holding a line 40k rows up that the daemon's engine has lost.
+  - `crates/cli` unit tests: OSC 52 and its base64; a pane's archive replaying the log and then what came meanwhile, keeping up, and dropped by a snapshot.
+  - `crates/daemon/tests/api.rs`: `tail` with `until`.
+  - `web/e2e/tui-copy.spec.ts`: the TUI in tmux with `set-clipboard on`, so OSC 52 lands in tmux's paste buffer. It drives the mouse with SGR reports and checks:
+    - a drag across a line break, a double-click and a triple-click copy what they should;
+    - a program with mouse reporting gets the click, and Shift-drag still selects;
+    - `V` `y` and `v` `l` `y` from the keyboard; the wheel's ↑ marker, gone when you type;
+    - `?needle-42` finds a line 40k rows up through the log, the view lands on it, and `y` copies it;
+    - `[` `o` `y` on the last command copies exactly what `illogical capture --last-command` prints (spaces inside a line and a blank line kept).
+- **Not covered:**
+  - OSC 52 into a real clipboard: iTerm2, a phone's terminal, and `ssh geek illogical tui` on the laptop (tmux's buffer stands in). Some terminals cap OSC 52's size or ask first.
+  - Output that `capture --last-command` and the screen don't agree on: tabs (the log has a tab, the screen has spaces), trailing spaces a program printed, and output redrawn in place (progress bars). There, `o` copies what the screen shows.
+  - The archive replays at the pane's current width, so output from when it was another width is wrapped as it would be now.
 
 ## Acceptance tests (automated where possible)
 

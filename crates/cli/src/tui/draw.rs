@@ -58,15 +58,29 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
     }
 
     let mut cursor = None;
+    let in_copy = app.in_copy();
     for (pid, r) in app.rects() {
         let focused = app.focus == Some(pid);
         if let Some(t) = app.panes.get_mut(&pid) {
-            let c = t.draw(buf, r);
-            let back = t.engine.scrolled_back();
+            let mut c = t.draw(buf, r);
+            let back = t.view().scrolled_back();
             if back > 0 {
+                // How far up, dimly, out of the way of the text.
                 let tag = format!(" ↑{back} ");
                 let x = r.right().saturating_sub(tag.chars().count() as u16);
-                buf.set_string(x, r.y, tag, Style::default().fg(Color::Black).bg(Color::Yellow));
+                buf.set_string(x, r.y, tag, Style::default().fg(Color::Gray).bg(Color::DarkGray));
+            }
+            if in_copy && let Some(cp) = app.copy.as_ref().filter(|cp| cp.pane == pid) {
+                // Copy mode's cursor, where it is in the history.
+                let top = t.view().top_row();
+                c = None;
+                if cp.row >= top && cp.row - top < r.height as u32 && cp.x < r.width {
+                    let (x, y) = (r.x + cp.x, r.y + (cp.row - top) as u16);
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_style(Style::default().fg(Color::Black).bg(Color::Yellow));
+                    }
+                    c = Some(Cursor { x, y, shape: illogical_vt::CursorShape::Block, blink: false, color: None });
+                }
             }
             if focused {
                 cursor = c;
@@ -286,8 +300,19 @@ fn status(app: &App, buf: &mut Buffer, full: Rect) {
     let dim = Style::default().fg(Color::DarkGray);
     let (left, style) = match &app.mode {
         Mode::Prefix => (
-            " v split │ s down │ c tab │ x close │ o next │ z zoom │ w sidebar │ m menu │ ? all │ q detach".to_owned(),
+            " v split │ s down │ c tab │ x close │ o next │ z zoom │ [ copy │ w sidebar │ m menu │ ? all │ q detach"
+                .to_owned(),
             Style::default().bg(Color::Cyan).fg(Color::Black),
+        ),
+        Mode::Copy => (
+            match &app.toast {
+                Some((t, at)) if at.elapsed() < TOAST => format!(" COPY  {t}"),
+                _ => {
+                    " COPY  hjkl move │ v V select │ y copy │ / ? search │ n N again │ [ ] prompts │ o output │ q leave"
+                        .to_owned()
+                }
+            },
+            Style::default().bg(Color::Yellow).fg(Color::Black),
         ),
         Mode::Sidebar { .. } => (
             " ↑↓ choose · Enter go there · a allow · A always · d deny · x dismiss · Esc back".to_owned(),

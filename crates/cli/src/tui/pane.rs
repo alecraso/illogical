@@ -22,6 +22,8 @@ const MID_FRAME_MAX: Duration = Duration::from_millis(250);
 /// What a frame from the daemon means for the connection.
 pub enum Took {
     Nothing,
+    /// A snapshot: the engine is new.
+    Fresh,
     /// Tell the daemon we've taken in everything before this.
     Ack(u64),
     /// Output after a gap we can't fill: attach again for a snapshot.
@@ -36,6 +38,13 @@ pub struct TermPane {
     /// We asked for the screen alone after a resync: keep the scrollback
     /// when it comes (#49).
     pub resync: bool,
+    /// Copy mode's deeper history (M32): the pane's output log replayed,
+    /// shown instead of `engine` while copy mode reads it, and fed what
+    /// arrives meanwhile. Dropped when copy mode ends.
+    pub archive: Option<GhosttyEngine>,
+    /// The offset the log is being read up to, and the output taken in
+    /// since, for the archive.
+    pub pending: Option<(u64, Vec<u8>)>,
     /// What was last drawn, for while the program is mid-frame.
     cache: Buffer,
     cursor: Option<Cursor>,
@@ -51,6 +60,8 @@ impl TermPane {
             offset: None,
             acked: 0,
             resync: false,
+            archive: None,
+            pending: None,
             cache: Buffer::empty(Rect::new(0, 0, cols, rows)),
             cursor: None,
             mid_since: None,
@@ -60,6 +71,35 @@ impl TermPane {
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.engine.resize(cols.max(1), rows.max(1));
+        if let Some(a) = &mut self.archive {
+            a.resize(cols.max(1), rows.max(1));
+        }
+    }
+
+    /// What the pane shows: the archive while copy mode reads it.
+    pub fn view(&self) -> &GhosttyEngine {
+        self.archive.as_ref().unwrap_or(&self.engine)
+    }
+
+    pub fn view_mut(&mut self) -> &mut GhosttyEngine {
+        self.archive.as_mut().unwrap_or(&mut self.engine)
+    }
+
+    /// The log up to `until`, where `engine` was when it was asked for, has
+    /// come: replay it, then what arrived since.
+    pub fn open_archive(&mut self, until: u64, log: &[u8], bytes: usize) {
+        let Some((_, pending)) = self.pending.take_if(|(u, _)| *u == until) else { return };
+        let (cols, rows) = self.engine.size();
+        let mut a = GhosttyEngine::archive(cols, rows, bytes);
+        a.feed(log);
+        a.feed(&pending);
+        let _ = a.take_replies();
+        self.archive = Some(a);
+    }
+
+    pub fn close_archive(&mut self) {
+        self.archive = None;
+        self.pending = None;
     }
 
     pub fn take(&mut self, f: Frame) -> Took {
@@ -77,12 +117,14 @@ impl TermPane {
                     let (cols, rows) = self.engine.size();
                     self.engine = GhosttyEngine::mirror(cols, rows, SCROLLBACK as usize);
                 }
+                // The log offsets an archive was read up to no longer follow.
+                self.close_archive();
                 self.resync = false;
                 self.engine.feed(&data);
                 let _ = self.engine.take_replies();
                 self.offset = Some(f.offset);
                 self.acked = f.offset;
-                Took::Nothing
+                Took::Fresh
             }
             FrameKind::Output => {
                 let Some(have) = self.offset else { return Took::Nothing };
@@ -95,16 +137,14 @@ impl TermPane {
                     return Took::Nothing;
                 }
                 let at = (have - f.offset) as usize;
-                if self.engine.scrolled_back() == 0 {
-                    self.engine.feed(&f.data[at..]);
-                } else {
-                    // Keep the reader's place while new output arrives.
-                    let back = self.engine.scrolled_back();
-                    self.engine.feed(&f.data[at..]);
-                    self.engine.scroll_to_bottom();
-                    self.engine.scroll(-(back as isize));
+                let data = &f.data[at..];
+                feed(&mut self.engine, data);
+                if let Some(a) = &mut self.archive {
+                    feed(a, data);
                 }
-                let _ = self.engine.take_replies();
+                if let Some((_, p)) = &mut self.pending {
+                    p.extend_from_slice(data);
+                }
                 self.offset = Some(end);
                 if end - self.acked >= ACK_EVERY {
                     self.acked = end;
@@ -122,11 +162,12 @@ impl TermPane {
     pub fn draw(&mut self, buf: &mut Buffer, area: Rect) -> Option<Cursor> {
         let (cols, rows) = self.engine.size();
         let size = Rect::new(0, 0, cols, rows);
-        let held = self.engine.mid_frame() && {
+        let mid = self.view().mid_frame();
+        let held = mid && {
             let since = *self.mid_since.get_or_insert_with(Instant::now);
             since.elapsed() < MID_FRAME_MAX && self.cache.area == size
         };
-        if !self.engine.mid_frame() {
+        if !mid {
             self.mid_since = None;
         }
         self.held = held;
@@ -135,7 +176,8 @@ impl TermPane {
                 self.cache = Buffer::empty(size);
             }
             let cache = &mut self.cache;
-            self.cursor = self.engine.cells(|x, y, text, st| {
+            let view = self.archive.as_mut().unwrap_or(&mut self.engine);
+            self.cursor = view.cells(|x, y, text, st| {
                 if let Some(c) = cache.cell_mut((x, y)) {
                     c.set_symbol(if text.is_empty() { " " } else { text }).set_style(style_of(st));
                 }
@@ -152,6 +194,17 @@ impl TermPane {
         }
         self.cursor.filter(|c| c.x < w && c.y < h).map(|c| Cursor { x: area.x + c.x, y: area.y + c.y, ..c })
     }
+}
+
+/// Output into an engine, keeping the reader's place if it's scrolled back.
+fn feed(e: &mut GhosttyEngine, data: &[u8]) {
+    let back = e.scrolled_back();
+    e.feed(data);
+    if back > 0 {
+        e.scroll_to_bottom();
+        e.scroll(-(back as isize));
+    }
+    let _ = e.take_replies();
 }
 
 /// Before a snapshot of the screen alone (#49): keep the scrollback, push
@@ -179,14 +232,50 @@ fn style_of(st: &CellStyle) -> Style {
         (st.italic, Modifier::ITALIC),
         (st.faint, Modifier::DIM),
         (st.blink, Modifier::SLOW_BLINK),
-        (st.inverse, Modifier::REVERSED),
         (st.invisible, Modifier::HIDDEN),
         (st.strikethrough, Modifier::CROSSED_OUT),
         (st.underline, Modifier::UNDERLINED),
+        // Selected: the other way round from how it's drawn otherwise.
+        (st.inverse != st.selected, Modifier::REVERSED),
     ] {
         if on {
             m |= f;
         }
     }
     Style::default().fg(color(st.fg)).bg(color(st.bg)).add_modifier(m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(kind: FrameKind, offset: u64, data: &[u8]) -> Frame {
+        Frame { kind, pane: 1, offset, data: data.to_vec() }
+    }
+
+    fn text(e: &GhosttyEngine) -> String {
+        e.plain_text().trim_end().to_owned()
+    }
+
+    #[test]
+    fn an_archive_replays_the_log_then_what_came_meanwhile() {
+        let mut p = TermPane::new(20, 3);
+        p.take(frame(FrameKind::Snapshot, 100, b"recent\r\n"));
+        // A search asks for the log up to 100; output goes on arriving.
+        p.pending = Some((100, Vec::new()));
+        p.take(frame(FrameKind::Output, 100, b"later\r\n"));
+        assert!(p.archive.is_none());
+        p.open_archive(99, b"stale", 1 << 20);
+        assert!(p.archive.is_none(), "a reply to another search");
+        p.open_archive(100, b"old\r\nrecent\r\n", 1 << 20);
+        assert_eq!(text(p.view()), "old\nrecent\nlater");
+        assert_eq!(text(&p.engine), "recent\nlater", "the live engine is left alone");
+        // It keeps up while it's shown.
+        p.take(frame(FrameKind::Output, 107, b"more\r\n"));
+        assert_eq!(text(p.view()), "old\nrecent\nlater\nmore");
+        // A snapshot means the offsets it was read to no longer follow.
+        p.take(frame(FrameKind::Snapshot, 500, b"fresh"));
+        assert!(p.archive.is_none() && p.pending.is_none());
+        assert_eq!(text(p.view()), "fresh");
+    }
 }
