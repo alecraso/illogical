@@ -305,6 +305,10 @@ impl Control {
     }
 
     fn install(&self, e: Option<Enrolled>) {
+        // Control's page shows this daemon's blocks too: let it frame them.
+        crate::sites::set_control_origin(
+            e.as_ref().and_then(|e| reqwest::Url::parse(&e.saved.url).ok().map(|u| u.origin().ascii_serialization())),
+        );
         self.acl.set_team_roles(e.as_ref().map(|e| e.team_roles.clone()).unwrap_or_default());
         self.acl.set_shared_teams(e.as_ref().map(|e| e.shared_roles.clone()).unwrap_or_default());
         *self.now.write().unwrap() = e.map(Arc::new);

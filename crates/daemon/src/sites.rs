@@ -161,6 +161,16 @@ pub struct Sites {
 
 static SITES: OnceLock<Arc<Sites>> = OnceLock::new();
 
+/// The origin of illogical control's page, while this daemon is enrolled:
+/// a page that may frame blocks too, as the app's own may. Control sets it
+/// whenever its enrollment changes, before or after sites are installed.
+static CONTROL_ORIGIN: Mutex<Option<String>> = Mutex::new(None);
+
+/// Let control's page (`origin`, or none) frame this daemon's blocks.
+pub fn set_control_origin(origin: Option<String>) {
+    *CONTROL_ORIGIN.lock().unwrap() = origin;
+}
+
 /// Block sites, if this daemon serves them (`--block-listen`).
 pub fn get() -> Option<Arc<Sites>> {
     SITES.get().cloned()
@@ -575,7 +585,7 @@ async fn handle(
         Err(Failed::Http(e)) => return full(StatusCode::BAD_GATEWAY, format!("{what}: {e}")),
     };
     let upgraded = res.status() == StatusCode::SWITCHING_PROTOCOLS;
-    let ancestors = frame_ancestors(&sites.settings.app_origins);
+    let ancestors = frame_ancestors(&pages(&sites.settings.app_origins));
     rewrite_response(res.headers_mut(), &site, &local, &ancestors, upgraded);
     let html = text(res.headers(), header::CONTENT_TYPE.as_str()).is_some_and(|t| t.starts_with("text/html"));
     if edit_page && html && !res.headers().contains_key(header::CONTENT_ENCODING) {
@@ -602,6 +612,14 @@ async fn handle(
 /// puts its web worker extension host in a frame of its own origin).
 /// Every ancestor must match, so a block inside a block is still only ever
 /// inside the app. IPv6 literals are left out: CSP has no syntax for them.
+/// The pages that may frame a block: the app's own, and control's while
+/// this daemon is enrolled (it shows the same blocks, #69).
+fn pages(app: &[String]) -> Vec<String> {
+    let mut pages = app.to_vec();
+    pages.extend(CONTROL_ORIGIN.lock().unwrap().clone());
+    pages
+}
+
 fn frame_ancestors(app: &[String]) -> HeaderValue {
     let mut list = vec!["'self'"];
     list.extend(app.iter().map(String::as_str).filter(|o| !o.contains("://[")));
@@ -791,6 +809,18 @@ mod tests {
         let mut h = headers(&[("location", "https://elsewhere.example/")]);
         rewrite_response(&mut h, &site, "localhost:5173", &fa, false);
         assert_eq!(h["location"], "https://elsewhere.example/");
+    }
+
+    #[test]
+    fn control_page_may_frame_blocks_while_enrolled() {
+        let app = vec!["https://geek.example.ts.net".to_string()];
+        set_control_origin(Some("https://control.example.com".into()));
+        assert_eq!(
+            frame_ancestors(&pages(&app)),
+            "frame-ancestors 'self' https://geek.example.ts.net https://control.example.com"
+        );
+        set_control_origin(None);
+        assert_eq!(frame_ancestors(&pages(&app)), "frame-ancestors 'self' https://geek.example.ts.net");
     }
 
     #[test]
