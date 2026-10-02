@@ -195,6 +195,21 @@ async fn read_until(ws: &mut Ws, mut from: Option<u64>, needle: &str) -> u64 {
     }
 }
 
+/// Read output until `then` has come after `first`.
+async fn read_until_after(ws: &mut Ws, first: &str, then: &str) {
+    let mut seen = String::new();
+    loop {
+        if let In::Frame(f) = recv(ws).await
+            && f.kind == FrameKind::Output
+        {
+            seen.push_str(&String::from_utf8_lossy(&f.data));
+            if seen.split_once(first).is_some_and(|(_, after)| after.contains(then)) {
+                return;
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn fresh_attach_gets_size_then_snapshot() {
     let d = start().await;
@@ -289,7 +304,8 @@ async fn snapshots_carry_only_the_history_asked_for() {
     attach(&mut ws, None).await;
     let _ = (recv_attach(&mut ws).await, recv_attach(&mut ws).await);
     type_line(&mut ws, "seq 1 3000; echo seq-$((1+1))-done").await;
-    read_until(&mut ws, None, "seq-2-done").await;
+    // Its prompt too: the snapshots below must all see the same screen.
+    read_until_after(&mut ws, "seq-2-done", "$ ").await;
     drop(ws);
 
     let full = snapshot_of(&d, None, false).await;
