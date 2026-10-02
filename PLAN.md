@@ -3251,7 +3251,7 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
 - **Two writers (5):** each sees only its own turns, and a later resume follows the newest `last-prompt` leaf, so the other writer's turns silently drop out. Forking a live session is required.
 - **Desktop (6):** the Code tab runs its bundled Claude Code (2.1.275) and writes the same jsonl with `entrypoint: claude-desktop`; `~/.claude/sessions` lists it while open, and it forks like any other. The app also keeps `claude-code-sessions/<account>/<org>/local_<uuid>.json` (`cliSessionId`, title, model, effort, `isArchived`). A session with no folder runs in a scratch workspace the app deletes when the session goes.
 
-#### M33: Claude Code conversations as blocks
+#### M33: Claude Code conversations as blocks (#72)
 
 1. **The index (daemon).**
    - Watch `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`) with inotify. Index each session's id, cwd (from its lines; the directory slug is lossy), git branch, entrypoint, title, first prompt, last activity, message count and size.
