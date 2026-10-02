@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Licenses of the npm packages bundled into the web client (production
+dependencies only), as Markdown for THIRD_PARTY.md."""
+import json, os, subprocess
+
+web = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
+out = subprocess.run(["pnpm", "licenses", "list", "--prod", "--json"], cwd=web, check=True, capture_output=True, text=True).stdout
+print("## npm packages in the web client\n")
+for lic, pkgs in sorted(json.loads(out).items()):
+    for p in sorted(pkgs, key=lambda p: p["name"]):
+        d = p["paths"][0]
+        names = sorted(n for n in os.listdir(d) if n.upper().startswith(("LICENSE", "LICENCE", "COPYING")))
+        text = open(os.path.join(d, names[0])).read().strip() if names else lic
+        print(f"### {p['name']} {', '.join(p['versions'])} ({lic})\n")
+        print(f"```\n{text}\n```\n")

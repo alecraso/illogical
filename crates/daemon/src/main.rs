@@ -86,7 +86,12 @@ enum Command {
         /// Don't put it behind `tailscale serve` (plain http only).
         #[arg(long, requires = "tailnet")]
         no_serve: bool,
-        /// Arguments for the daemon in the unit, after `--`.
+        /// Drop the daemon arguments an earlier install wrote, instead of
+        /// keeping them when none are given.
+        #[arg(long)]
+        reset_args: bool,
+        /// Arguments for the daemon in the unit, after `--`. With none, an
+        /// earlier install's are kept, so upgrading doesn't drop them.
         #[arg(last = true)]
         daemon_args: Vec<String>,
     },
@@ -442,7 +447,9 @@ fn main() -> anyhow::Result<()> {
         }) => {
             sandbox::install(sandbox::TailnetOpts { authkey, hostname, home, join, owner, port, no_serve, daemon_args })
         }
-        Some(Command::Install { no_start, daemon_args, .. }) => install::install(!no_start, &daemon_args),
+        Some(Command::Install { no_start, reset_args, daemon_args, .. }) => {
+            install::install(!no_start, &daemon_args, reset_args)
+        }
         Some(Command::Sandbox) => sandbox::supervise(),
         None => {
             // Pane terminals kept for us across a restart; taken before any
