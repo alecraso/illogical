@@ -2396,6 +2396,31 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - **What it needs:** the directory and pins in IndexedDB (a worker can't read `localStorage`), approve and ask data in pushes sent through control, and `sw.js` as a bundled entry.
   - **Phones:** Android is likely fine, and iOS probably opens the card instead. Both are pending a real phone.
 
+#### M23: pane summaries
+
+**Done 2026-10-02, cut to the MVP (#44).**
+
+- **What landed:**
+  - every pane says what it's busy with (`PaneInfo.kind`: shell, build, test, agent, server, logs or editor), from the foreground process's argv first, then the typed command, then the pane's own process (what `illogical run` started); agent blocks are `agent` (`classify.rs`, S16's heuristic, which sees `c` as the `claude` it runs);
+  - `project`: the git root of the cwd and its name, found by walking up for `.git` (no git process) and cached per directory;
+  - `activity`: `{bps, last_ms}`, from the pane's running byte count and last output time, kept under the lock `State::output` already takes; the mux works out the rate once a second, so idle panes need no timer and parked panes aren't woken;
+  - `title`: the OSC 0/2 title, read only when a chunk carries one;
+  - **deltas for every client:** the hello is a whole `State`; layout changes (anything that moves the layout's `rev`) and grant changes still go as a whole `State` at once; everything else is a `delta` (`ServerMsg::Delta`): each changed pane as `{id, field: value…}` (`null` for a field gone back to absent), panes that left the client's view, and `machines` or `presence` when they change. Attention, questions and drivers go within 40 ms (`touch`); directories, commands and activity at the next once-a-second tick. Only the panes that changed are rebuilt, and what the OS says a pane runs is read at most once a second. A `ping` answers after whatever came before it was sent;
+  - `subscribe {summary: true}`: summaries only, for the swarm and the fleet: answered with a fresh `State` whose panes leave out `epoch`, `policy` and `integration`, and it attaches to nothing (`new Client(base, e2e, true)` in the web client makes no terminals);
+  - role filtering: a person sees summaries only for sessions they have a role on, and someone else's private pane is only `{id, private: true, …}`, with no directory, command, kind, project, activity, title, question or reason;
+  - `State::apply` (proto) for Rust clients: the tmux front end and the tests follow deltas; `illogical ls --json` shows kind, project and activity.
+- **Measured** (`spikes/s16-swarm/m23.py`, S16's load: 500 panes, 50 busy, a build-like command every ~5 s each, release build on geek):
+
+  | | daemon CPU | to each client | deflate | messages |
+  |---|---|---|---|---|
+  | S16 (whole `State`s), 1 client | 14.7% | 6.6 MB/s | 390 KB/s | 34 `State`/s |
+  | M23, 1 client | **2.5%** | **5.3 KB/s** | 0.48 KB/s | 9.3 `delta`/s |
+  | M23, 5 clients | 3.1% | 5.3 KB/s each | 0.48 KB/s | 9.5 `delta`/s |
+
+  Idle (500 panes, no load) is 1.1–1.4%, as before. The hello is 243 KB at 500 panes (S16: 209 KB; the new fields).
+- **Tests:** `crates/daemon/src/classify.rs` (S16's labelled fixture plus this repo's commands, and projects from git roots and worktrees); `crates/daemon/tests/summaries.rs` (`illogical ls --json` shows kind, project and activity for real processes, `cargo test`, `npm run dev`, `claude` behind an alias, `nvim`, `tail -f`, `journalctl -f`, and an `illogical run` pane; 40 panes with 4 busy send only deltas, under 20 KB/s; a summaries-only `State`); `e2e/summaries.spec.ts` (a summaries-only client gets kind, project and activity as deltas and makes no terminals while the tab view beside it draws the pane; a viewer gets only the shared session, a private pane blanked, and nothing after revoking).
+- **Not covered (after the MVP):** on-demand previews (the client naming panes it draws big enough to read); hover uses `/api/panes/{id}/capture`. A layout change still sends a whole `State` (243 KB at 500 panes): fine while layouts change at human speed, but a script opening hundreds of panes sends one each. A title set by an OSC split across two reads is picked up at the next one. M9's PTY parking (not built) must keep calling the byte count update.
+
 #### M24: attention reasons and actions
 
 **Done 2026-10-02, cut to the MVP (#44).**
@@ -2403,7 +2428,7 @@ One live view of every pane on every machine you (or your team) can see. Panes f
 - **What landed:**
   - every `needs_input` and `done` pane has a `reason` (`PaneInfo.reason`, `illogical_proto::Reason`): its kind, `since_ms`, a one-line headline, the command, exit code and duration where there is one, a bundle key, and the actions it takes;
   - kinds: `ask` (an open question or permission request: Claude Code's AskUserQuestion through its hook, or an agent block's), `failed` (a command that ran at least 3 s ended non-zero, not Ctrl-C), `done` (a command that ran at least 5 s finished unwatched), `exited` (the pane's program died non-zero, or its machine went) and `input` (a bell, a notification, an agent gone quiet; the Notification hook's message is the headline);
-  - bundle keys: `failed:<machine>`, `exited:<machine>`, `ask:<project>:<agent>` (the project is the cwd's git root until M23's `project` replaces it, in `mux::project_key`); `done` and `input` never bundle;
+  - bundle keys: `failed:<machine>`, `exited:<machine>`, `ask:<project>:<agent>` (the project is M23's: the cwd's git root, else the cwd, in `mux::project_key`); `done` and `input` never bundle;
   - an ask's reason is worked out live from the open question, so it changes as soon as the question does;
   - `POST /api/attention/act` with one pane or a list: `allow` and `deny` (an agent block's approval), `answer` and `deny` (a question), `dismiss`. Each pane needs editor on its session, checked in the handler (all or nothing), and each is answered on its own (`{results: [{pane, ok, error?}]}`, 409 when none took);
   - `GET /api/attention` and `illogical attention [--json]` list them, `illogical events` carries the reason on `attention` events, and push notifications are titled by kind ("Failed", "Done", "Needs you") with the headline as the body and the reason's actions in the payload (a failure's offers Dismiss);

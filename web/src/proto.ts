@@ -145,6 +145,39 @@ export interface PaneInfo {
   private?: boolean;
   /** M14: guests trusted to drive it on the owner's machine, until (ms). */
   trusted?: [string, number][];
+  /** M23: what it's busy with; absent for browser blocks. */
+  kind?: WorkKind | null;
+  /** M23: the git repository it works in. */
+  project?: Project | null;
+  /** M23: how much it prints. */
+  activity?: Activity | null;
+  /** M23: the title its program set (OSC 0/2). */
+  title?: string | null;
+}
+
+export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor";
+
+export interface Project {
+  root: string;
+  name: string;
+}
+
+export interface Activity {
+  /** Bytes of output a second, lately. */
+  bps: number;
+  /** When it last printed (ms since the epoch). */
+  last_ms: number;
+}
+
+/** M23: what changed since the last State. Each pane is `{id, ...}` with
+ * only the fields that changed (`null`: back to absent); `gone` panes left
+ * this client's view; `machines` and `presence` are whole when present.
+ * Sessions, tabs, options and roles change with a new State. */
+export interface Delta {
+  panes?: ({ id: PaneId } & Partial<PaneInfo>)[];
+  gone?: PaneId[];
+  machines?: Machine[];
+  presence?: Presence[];
 }
 
 export type BlockType = "terminal" | "browser" | "agent";
@@ -235,7 +268,10 @@ export type ClientMsg =
   | { type: "intent"; id: number | null; intent: Intent }
   | { type: "pane"; pane: PaneId; op: PaneOp }
   | { type: "focus"; pane: PaneId | null }
-  | { type: "ping"; id: number };
+  | { type: "ping"; id: number }
+  /** M23: summaries only (no pane output; panes leave out epoch, policy
+   * and integration). Answered with a fresh State. */
+  | { type: "subscribe"; summary: boolean };
 
 export type ServerMsg =
   | { type: "hello"; version: string; client: ClientId; state: State }
@@ -247,7 +283,8 @@ export type ServerMsg =
   | { type: "pong"; id: number }
   | { type: "notice"; message: string }
   | { type: "control_request"; pane: PaneId; who: string; name: string }
-  | { type: "trust_request"; pane: PaneId; who: string; name: string };
+  | { type: "trust_request"; pane: PaneId; who: string; name: string }
+  | { type: "delta"; delta: Delta };
 
 export const enum FrameKind {
   Output = 1,

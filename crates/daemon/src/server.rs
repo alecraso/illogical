@@ -372,6 +372,7 @@ async fn send(socket: &mut WebSocket, out: ToClient) -> Result<(), axum::Error> 
     let msg = match out {
         ToClient::Frame(bytes) => Message::Binary(bytes.into()),
         ToClient::Msg(m) => Message::Text(serde_json::to_string(&m).expect("serialize").into()),
+        ToClient::Json(t) => Message::Text(t.into()),
         ToClient::Close => return Ok(()),
     };
     socket.send(msg).await

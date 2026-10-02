@@ -95,7 +95,7 @@ enum In {
 async fn recv_attach(ws: &mut Ws) -> In {
     loop {
         match recv(ws).await {
-            In::Msg(ServerMsg::State { .. }) => {}
+            In::Msg(ServerMsg::State { .. } | ServerMsg::Delta { .. }) => {}
             m => return m,
         }
     }
@@ -128,12 +128,23 @@ async fn send(ws: &mut Ws, msg: ClientMsg) {
     ws.send(Message::Text(serde_json::to_string(&msg).unwrap().into())).await.unwrap();
 }
 
-/// Skip messages until a layout state satisfies `f` (other state, such as a
-/// new prompt or directory, may arrive first).
+/// Skip messages until the state satisfies `f` (other state, such as a
+/// new prompt or directory, may arrive first). Starts from a fresh `State`
+/// (`subscribe` answers with one) and follows the deltas after it (M23).
 async fn state_where(ws: &mut Ws, f: impl Fn(&State) -> bool) -> State {
-    until(ws, |m| match m {
-        In::Msg(ServerMsg::State { state }) if f(state) => Some(state.clone()),
-        _ => None,
+    send(ws, ClientMsg::Subscribe { summary: false }).await;
+    let mut cur: Option<State> = None;
+    until(ws, |m| {
+        match m {
+            In::Msg(ServerMsg::State { state }) => cur = Some(state.clone()),
+            In::Msg(ServerMsg::Delta { delta }) => {
+                if let Some(c) = &mut cur {
+                    c.apply(delta);
+                }
+            }
+            _ => return None,
+        }
+        cur.as_ref().filter(|s| f(s)).cloned()
     })
     .await
 }

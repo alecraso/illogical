@@ -48,6 +48,11 @@ pub enum ClientMsg {
     /// own intents to land: an intent that failed answers with an `Error`
     /// before the `Pong`.
     Ping { id: u64 },
+    /// What this client wants from now on (M23). `summary`: pane summaries
+    /// only (the swarm, the fleet): it attaches to nothing, and pane
+    /// objects leave out `epoch`, `policy` and `integration`. Answered
+    /// with a fresh `State` in that shape.
+    Subscribe { summary: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -320,6 +325,103 @@ pub enum ServerMsg {
     /// A guest asks the owner to trust them with a pane on the owner's
     /// machine (M14).
     TrustRequest { pane: PaneId, who: String, name: String },
+    /// What changed since the last `State` or `Delta` (M23), field by
+    /// field. Layout changes (sessions, tabs, splits, panes opening and
+    /// closing) still come as a whole `State`, in order with these.
+    Delta { delta: Delta },
+}
+
+/// Changes to the last [`State`]: each pane in `panes` is `{id, ...}` with
+/// only the fields that changed (a field set to `null` went back to its
+/// default, absent); `gone` panes left this client's view. `machines` and
+/// `presence` are whole when present. Anything else (sessions, tabs,
+/// options, roles) changes with a new `State`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Delta {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panes: Vec<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gone: Vec<PaneId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machines: Option<Vec<Machine>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<Vec<Presence>>,
+}
+
+impl Delta {
+    pub fn is_empty(&self) -> bool {
+        self.panes.is_empty() && self.gone.is_empty() && self.machines.is_none() && self.presence.is_none()
+    }
+}
+
+impl State {
+    /// Bring this up to date with a [`ServerMsg::Delta`].
+    pub fn apply(&mut self, delta: &Delta) {
+        for patch in &delta.panes {
+            let Some(id) = patch.get("id").and_then(|v| v.as_u64()).map(|v| v as PaneId) else { continue };
+            let at = self.panes.iter().position(|p| p.id == id);
+            let mut v = match at.map(|i| serde_json::to_value(&self.panes[i])) {
+                Some(Ok(serde_json::Value::Object(m))) => m,
+                _ => serde_json::Map::new(),
+            };
+            for (k, val) in patch {
+                if val.is_null() {
+                    v.remove(k);
+                } else {
+                    v.insert(k.clone(), val.clone());
+                }
+            }
+            let Ok(info) = serde_json::from_value::<PaneInfo>(serde_json::Value::Object(v)) else { continue };
+            match at {
+                Some(i) => self.panes[i] = info,
+                None => {
+                    self.panes.push(info);
+                    self.panes.sort_by_key(|p| p.id);
+                }
+            }
+        }
+        self.panes.retain(|p| !delta.gone.contains(&p.id));
+        if let Some(m) = &delta.machines {
+            self.machines = m.clone();
+        }
+        if let Some(p) = &delta.presence {
+            self.presence = p.clone();
+        }
+    }
+}
+
+/// What a pane is busy with (M23), for drawing and grouping it without
+/// attaching: from the foreground process's command line, else the
+/// command the shell integration reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkKind {
+    Shell,
+    Build,
+    Test,
+    Agent,
+    Server,
+    Logs,
+    Editor,
+}
+
+/// The git repository a pane's working directory is in (M23).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Project {
+    /// The repository's top directory.
+    pub root: String,
+    /// Its last path component.
+    pub name: String,
+}
+
+/// How much a pane prints (M23).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Activity {
+    /// Bytes of output a second, over the last second or so.
+    pub bps: u32,
+    /// When it last printed anything (ms since the epoch); 0: not since
+    /// the daemon started.
+    pub last_ms: u64,
 }
 
 /// Everything a client needs to draw: sessions in order, each tab's tree
@@ -508,6 +610,19 @@ pub struct PaneInfo {
     /// machine (M14): principal id and until when (ms).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<(String, u64)>,
+    /// What it's busy with (M23); `None` for blocks other than terminals
+    /// and agents.
+    #[serde(default, rename = "kind", skip_serializing_if = "Option::is_none")]
+    pub work: Option<WorkKind>,
+    /// The git repository it works in, if any (M23).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<Project>,
+    /// Output rate (M23).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<Activity>,
+    /// The title its program set (OSC 0/2), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// A pane's driver (M13).
