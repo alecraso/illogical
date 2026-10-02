@@ -10,6 +10,7 @@ mod hook;
 mod hosts;
 mod http;
 mod tmux;
+mod tui;
 
 use std::{
     io::{Read, Write},
@@ -248,6 +249,13 @@ enum Command {
     },
     /// Use a pane from this terminal (Ctrl-] to detach).
     Attach { pane: Option<Pane> },
+    /// The daemon's tabs and splits in this terminal, with a sidebar of
+    /// sessions, tabs and what needs you. Ctrl-] is the menu key.
+    Tui {
+        /// Start in this session (name or id); made if there's none.
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Export a pane's history as an asciicast (`asciinema play`).
     Export {
         pane: Option<Pane>,
@@ -999,6 +1007,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             });
         }
         Command::Attach { pane } => return attach::run(&sock, here(pane)?),
+        Command::Tui { session } => return tui::run(&sock, session),
         Command::Export { pane, cast: _, output } => {
             let pane = here(pane)?;
             let text = request(&sock, "GET", &format!("/api/panes/{pane}/export.cast"), None)?.ok()?.text()?;

@@ -30,8 +30,13 @@ first=$("$cli" run -- "$work/flood.sh"); ids=("$first")
 # Close the daemon's first shell, so the TUI opens on the flood tab.
 "$cli" close %1 >/dev/null
 
-$T -f /dev/null new-session -d -s t -x 200 -y 50 \
-  "exec env ${S19_LEGACY:+S19_LEGACY=1} ${S19_NO_ACKS:+S19_NO_ACKS=1} S19_STATS=$work/stats.txt TERM=xterm-256color $tui $ILLOGICAL_SOCK"
+# TUI_BIN=path/to/illogical: measure `illogical tui` (M31) instead of the spike.
+if [ -n "${TUI_BIN:-}" ]; then
+  cmd="exec env ILLOGICAL_SOCK=$ILLOGICAL_SOCK ILLOGICAL_TUI_STATS=$work/stats.txt TERM=xterm-256color $TUI_BIN tui"
+else
+  cmd="exec env ${S19_LEGACY:+S19_LEGACY=1} ${S19_NO_ACKS:+S19_NO_ACKS=1} S19_STATS=$work/stats.txt TERM=xterm-256color $tui $ILLOGICAL_SOCK"
+fi
+$T -f /dev/null new-session -d -s t -x 200 -y 50 "$cmd"
 sleep 1
 pid=$($T list-panes -t t -F '#{pane_pid}')
 touch "$work/go"

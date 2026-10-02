@@ -2656,7 +2656,7 @@ illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` d
 1. **S19** (#48): done, below.
 2. **The resync fix** (#49): done 2026-10-02. Snapshots are capped at the client's scrollback and zstd-compressed, and a resync brings back the screen alone. With S19's four-pane flood, snapshots went from 1.44 GB of 1.53 GB received to 9.8 KB of 612 MB, and the TUI drew 7x as much real output. A quiet pane beside a flood in a browser throttled 6x echoes in under 100 ms (`web/e2e/flood.spec.ts`).
 3. **Flow control** (#52): done 2026-10-02. Clients ack what they have drawn, the daemon holds them to a 512 KB window, and a pane's program waits when the pane can't keep up. In a browser throttled 6x, a flooded pane catches up 0.2–0.4 s after the flood ends, against 15–25 s before. With four floods, the TUI never resyncs and uses about 36% of a core.
-4. **M31** (#50: `illogical tui`), then **M32** (#51: copy mode).
+4. **M31** (#50: `illogical tui`): done 2026-10-02. Then **M32** (#51: copy mode).
 
 #### S19: TUI spike
 
@@ -2685,7 +2685,20 @@ illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` d
 
 #### M31: `illogical tui`
 
-In `crates/cli/src/tui/` (ratatui, crossterm), starting from the spike. Everything is in #50:
+**Done 2026-10-02.** `crates/cli/src/tui/` (about 2,500 lines with tests); docs/features.md has the keys and the mouse.
+
+- **Engine:** `crates/vt` gained a client side (`ghostty/view.rs`): `cells()` over the render state (palette colors kept as indexes), the cursor's shape and color, scrollback, and key, mouse, paste and focus encoding through libghostty's encoders for each pane's own modes.
+- **Kitty keys:** the daemon used to drop the kitty keyboard reply for everyone (xterm.js can't send those keys). Now `attach` takes `kitty_keys`, and a pane answers while a client that speaks them is attached. With that, Claude Code's Shift+Enter (CSI 13;2u) works in a TUI pane.
+- **Protocol:** it attaches as #49 and #52 left things (history 10k, zstd, acks), and holds a pane's drawing while its program is mid-frame (mode 2026, at most 250 ms).
+- **Moving a pane** is Alt-drag (or *Move pane…*, then a click): the panes have no title bars to drag by.
+- **Measured** (`spikes/s19-tui/bench.sh` with `TUI_BIN`, release, four flooding panes at 200x50): a frame builds in p99 0.86 ms and builds and writes in p99 1.5 ms, using 42% of a core.
+- **Tests:**
+  - `web/e2e/tui.spec.ts` runs the TUI in tmux beside the browser: splits, typing, renames and closes go both ways;
+  - unit tests for key encoding (kitty and legacy), the engine's view, and the agent transcript;
+  - a daemon test for the kitty keyboard answer.
+- **Not checked as written:** `ssh geek` itself (geek runs no ssh server). The TUI ran in a PTY at 80x24 and 300x80, and against a daemon by URL (`--host`).
+
+What #50 asked for:
 
 - a `cells()` walk in `crates/vt`, shared with the daemon;
 - the sidebar with M24's actions;

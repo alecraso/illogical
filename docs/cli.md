@@ -36,6 +36,7 @@ illogical call %5 answer '{"question_0":"Red","question_1":["A","B"]}'  # …ans
 illogical wait %5 --idle                      # the turn ended: prints idle, done or needs-input
 illogical tail %5 -f                          # any block's text as it grows
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
+illogical tui [--session S]                   # every tab and split in this terminal; Ctrl-] is the menu key
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
 illogical attention [--json]                  # what wants you and why: ask, failed, exited, done (bundle keys)

@@ -344,7 +344,7 @@ impl App {
             });
         }
         if !attach.is_empty() {
-            self.send(&ClientMsg::Attach { panes: attach, zstd: !legacy(), acks: acks() });
+            self.send(&ClientMsg::Attach { panes: attach, zstd: !legacy(), acks: acks(), kitty_keys: false });
         }
         if self.follow_new
             && let Some(&p) = fresh.first()
@@ -388,7 +388,7 @@ impl App {
                     // too big to replay. S19_LEGACY: as before #49.
                     let (offset, history) = if legacy() { (None, None) } else { (p.offset, Some(0)) };
                     p.resync = history == Some(0) && offset.is_some();
-                    self.send(&ClientMsg::Attach { panes: vec![AttachPane { pane, offset, history }], zstd: !legacy(), acks: acks() });
+                    self.send(&ClientMsg::Attach { panes: vec![AttachPane { pane, offset, history }], zstd: !legacy(), acks: acks(), kitty_keys: false });
                 }
             }
             ServerMsg::Error { message, .. } => self.status = message,

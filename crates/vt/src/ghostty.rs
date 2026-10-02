@@ -106,6 +106,8 @@ pub struct GhosttyEngine {
     replies: Rc<RefCell<Vec<u8>>>,
     caps: Capabilities,
     wire: wire::Cache,
+    /// What a client drawing it reuses (M31), made on first use.
+    view: Option<Box<view::View>>,
 }
 
 impl GhosttyEngine {
@@ -140,6 +142,12 @@ impl GhosttyEngine {
     /// zstd-compressed, behind a header naming the engine that wrote it.
     /// For checkpoints on disk, not for clients (xterm.js needs
     /// [`VtEngine::snapshot`]).
+    /// Whether the program may be told the client speaks the kitty keyboard
+    /// protocol (M31: while a client that does, the TUI, is attached).
+    pub fn set_kitty_keyboard(&mut self, on: bool) {
+        self.caps.kitty_keyboard = on;
+    }
+
     pub fn checkpoint(&self) -> Vec<u8> {
         let snap = self.term.encode_snapshot_alloc(None).ok().flatten().map(|b| b.to_vec()).unwrap_or_default();
         let mut out = Vec::with_capacity(snap.len() / 20 + 64);
@@ -179,7 +187,7 @@ impl GhosttyEngine {
             .and_then(|t| t.set_default_bg_color(Some(DEFAULT_BG)))
             .and_then(|t| t.set_default_cursor_color(Some(DEFAULT_CURSOR)))
             .expect("default colors");
-        Self { term, replies, caps, wire: wire::Cache::default() }
+        Self { term, replies, caps, wire: wire::Cache::default(), view: None }
     }
 
     fn format(&self, format: Format, extras: bool, modes: bool) -> Vec<u8> {
@@ -363,8 +371,10 @@ impl VtEngine for GhosttyEngine {
 }
 
 mod inspect;
+mod view;
 mod wire;
 pub use inspect::{CaptureOpts, Line};
+pub use view::{CellStyle, Color, Cursor, CursorShape};
 
 #[cfg(test)]
 mod tests;

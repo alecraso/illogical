@@ -290,6 +290,41 @@ the daemon stopping, crashing, or the machine rebooting:
   illogical's sessions, tabs and splits as native windows, tabs and splits,
   live alongside the browser; see *Use it*.
 
+- **In any terminal** (M31). `illogical tui` (with `--host`, any host;
+  `--session S` to start in one) draws the shown tab's panes in the
+  terminal you're in, beside a sidebar of sessions and tabs, each tab
+  marked with its panes' worst attention (● needs you, ✓ done, ◌ working),
+  and a *needs you* list with each pane's reason. It's a client like the
+  browser, so both edit one live layout.
+  - **Keys** reach each program encoded for the modes it set, by Ghostty's
+    own encoder: application cursor keys, modifyOtherKeys and the kitty
+    keyboard protocol, so Shift+Enter in Claude Code and Neovim's kitty
+    keys work when the outer terminal reports them (Ghostty, kitty,
+    WezTerm, iTerm2, foot). Programs are told kitty keys are there while a
+    TUI is attached to their pane. Pastes are bracketed when the program
+    asked; focus changes are reported to programs that want them.
+  - **Ctrl-]** then: `v`/`s` split right/down, `c` new tab, `x` close,
+    `o` or arrows to move focus, `z` zoom, `n`/`p` or `1`–`9` tabs, `r`
+    rename the tab, `m`/`t` the pane's and tab's menus, `w` the sidebar, `b`
+    hide it, `q` detach, `?` all of these, Ctrl-] again to type it.
+  - **The mouse**: click to focus, drag dividers, Alt-drag a pane onto
+    another's edge to move it (or its middle to swap), right-click a pane,
+    tab, session or *needs you* entry for its menu (the browser's: split,
+    zoom, move, restart policy, shell integration, forget history,
+    dismiss, close). The wheel scrolls back through a pane's history
+    (Shift+PgUp/PgDn too), sends arrow keys to a pager or editor, or goes
+    to the program if it takes the mouse.
+  - **The sidebar** (`Ctrl-] w`): arrows move, Enter goes there, and on a
+    *needs you* entry `a` allows, `A` allows always, `d` denies and `x`
+    dismisses, without opening the pane.
+  - **Agent blocks** show as a transcript (messages, thoughts, tool calls
+    with their output); `a`/`A`/`d` answer the permission request at the
+    bottom, `i` sends a message. Questions and forms are answered in the
+    browser. Web pages show their address.
+  - Each pane's cursor shape and color, its title in the status line, and
+    synchronized output (a program's frame is drawn whole) are kept. A
+    frame takes about 1 ms to draw with four busy panes at 200x50.
+
 - **Every host at once** (M25, M30). The page keeps a light connection
   (summaries only) to every machine in its list, not just the one it
   shows: yours, your team's, and teammates' machines that shared a session
