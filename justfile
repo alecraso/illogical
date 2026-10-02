@@ -71,6 +71,12 @@ notices:
 test: web
     {{cargo}} test --workspace
     cd web && pnpm run typecheck
+    just e2e-interop
+
+# The browser's end-to-end crypto (web/src/e2e) against Rust's (crates/e2e).
+e2e-interop:
+    {{cargo}} build -p illogical-e2e --example interop
+    cd web && node --experimental-strip-types --no-warnings e2e-interop.ts
 
 # Browser tests in system Chrome; pass a URL to test a running daemon.
 e2e url="":

@@ -1,0 +1,64 @@
+// The browser's e2e code against Rust's (`crates/e2e/examples/interop.rs`):
+// the same verdicts on the same certificates, signatures each side
+// accepts from the other, and a channel carrying every message kind.
+//   just e2e-interop    (or: node --experimental-strip-types e2e-interop.ts)
+
+import { execFileSync, spawn } from "node:child_process";
+import { evaluate, certBody, joinCode, type Cert } from "./src/e2e/cert.ts";
+import { generateKeys, signText } from "./src/e2e/keys.ts";
+import { E2ESocket } from "./src/e2e/channel.ts";
+
+const bin = process.env.INTEROP_BIN ?? "../target/debug/examples/interop";
+let failed = 0;
+const check = (what: string, ok: boolean, detail = "") => {
+  console.log(`${ok ? "ok  " : "FAIL"} ${what}${detail ? `: ${detail}` : ""}`);
+  if (!ok) failed++;
+};
+
+// 1. Rust's certificates, evaluated here.
+const fx = JSON.parse(execFileSync(bin, ["fixtures"]).toString());
+const trusted = [...(await evaluate(fx.trust, fx.certs, fx.revocations)).keys()].sort();
+check("same trusted set as Rust", JSON.stringify(trusted) === JSON.stringify(fx.trusted), trusted.join(","));
+check("same join code", (await joinCode(fx.daemon)) === fx.joinCode, fx.joinCode);
+
+// 2. Certificates signed here, evaluated by Rust.
+const root = await generateKeys();
+const phone = await generateKeys();
+const mk = async (k: typeof root, by: typeof root, name: string, created: number): Promise<Cert> => {
+  const c: Cert = { v: 1, account: "acct2", device: k.id, kind: "browser", name, noise: k.noisePub, sign: k.signPub, created, approver: by.id, sig: "" };
+  c.sig = await signText(by, certBody(c));
+  return c;
+};
+const certs = [await mk(root, root, "laptop ✓", 1), await mk(phone, root, "phone", 2)];
+const rust = JSON.parse(execFileSync(bin, ["check"], { input: JSON.stringify({ trust: { account: "acct2", root: root.id }, certs }) }).toString());
+check("Rust trusts what we signed", JSON.stringify(rust) === JSON.stringify([root.id, phone.id].sort()));
+
+// 3. A channel to a Rust responder.
+const child = spawn(bin, ["responder", "127.0.0.1:0"]);
+const [addr, id, noise] = await new Promise<string[]>((r) => child.stdout.once("data", (d) => r(d.toString().trim().split(" "))));
+try {
+  const sock = await E2ESocket.connect([{ url: `ws://${addr}/`, timeoutMs: 2000 }], { id, noise }, phone);
+  const texts: string[] = [];
+  const bins: Uint8Array[] = [];
+  sock.onText = (t) => texts.push(t);
+  sock.onBinary = (b) => bins.push(b);
+  sock.sendText('{"type":"attach"}');
+  const big = Uint8Array.from({ length: 100_000 }, (_, i) => i % 251);
+  sock.sendBinary(big);
+  const res = await sock.request("POST", "/api/run?x=1", { cmd: "ls" });
+  await new Promise((r) => setTimeout(r, 200));
+  check("text echoed", texts[0] === '{"type":"attach"}');
+  check("100 KB binary echoed in chunks", bins[0]?.length === big.length && bins[0].every((b, i) => b === big[i]));
+  const j = res.json<{ method: string; path: string; len: number }>();
+  check("request answered", res.status === 201 && j.method === "POST" && j.path === "/api/run?x=1" && j.len === 12, JSON.stringify(j));
+  sock.close();
+  // A wrong daemon id (the relay splicing us elsewhere) fails the handshake.
+  const wrong = await E2ESocket.connect([{ url: `ws://${addr}/`, timeoutMs: 2000 }], { id: "0000000000000000", noise }, phone).then(
+    () => false,
+    () => true,
+  );
+  check("wrong daemon refused", wrong);
+} finally {
+  child.kill();
+}
+process.exit(failed ? 1 : 0);

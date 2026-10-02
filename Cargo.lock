@@ -1338,12 +1338,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
+ "futures-util",
  "getrandom 0.4.3",
  "hex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "snow",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
 ]
 
 [[package]]
