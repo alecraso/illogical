@@ -8,14 +8,15 @@
 #
 # FORGEJO_TOKEN (upload, sums) writes releases; assets are downloaded
 # anonymously (the job token can't download from a private repo, so the
-# repo must be public); HOMEBREW_TAP_KEY (homebrew)
-# is an SSH deploy key for the tap.
+# repo must be public); HOMEBREW_TAP_KEY (homebrew) is an SSH deploy key
+# for the tap (without it, your own key is used).
 set -euo pipefail
 
 server=${GITHUB_SERVER_URL:-https://git.inevitable.fyi}
 repo=${GITHUB_REPOSITORY:-jhgaylor/illogical}
 api="$server/api/v1/repos/$repo"
-tap=git@git.inevitable.fyi:jhgaylor/homebrew-tap.git
+# Over the tailnet: the public name doesn't serve SSH.
+tap=ssh://git@git.tailb2e8f2.ts.net/jhgaylor/homebrew-tap.git
 
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 call() { curl -fsS -H "Authorization: token $FORGEJO_TOKEN" "$@"; }
@@ -66,9 +67,12 @@ case "${1:-}" in
     tag=$2; v=${tag#v}
     sums=$(curl -fsSL "$server/$repo/releases/download/$tag/SHA256SUMS")
     sha() { echo "$sums" | awk -v f="illogical-$v-$1.tar.gz" '$2 == f { print $1 }'; }
-    key=$(mktemp); trap 'rm -f "$key"' EXIT
-    printf '%s\n' "$HOMEBREW_TAP_KEY" > "$key"; chmod 600 "$key"
-    export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    # The deploy key in CI; by hand, your own SSH key.
+    if [ -n "${HOMEBREW_TAP_KEY:-}" ]; then
+      key=$(mktemp); trap 'rm -f "$key"' EXIT
+      printf '%s\n' "$HOMEBREW_TAP_KEY" > "$key"; chmod 600 "$key"
+      export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    fi
     dir=$(mktemp -d)
     git clone -q "$tap" "$dir"
     mkdir -p "$dir/Formula"

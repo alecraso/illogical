@@ -53,7 +53,16 @@ fi
 [ "$want" = "$got" ] || die "checksum mismatch for $name.tar.gz"
 
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
-if [ -n "${ILLOGICAL_NO_START:-}" ]; then
+if [ "$(uname -s)" = Linux ] && ! command -v systemctl >/dev/null 2>&1; then
+  # No systemd (a container, a sandbox): the binaries, but no service.
+  mkdir -p "$HOME/.local/bin"
+  for b in illogicald illogical; do
+    cp "$tmp/$name/$b" "$HOME/.local/bin/.$b.new" && mv "$HOME/.local/bin/.$b.new" "$HOME/.local/bin/$b"
+  done
+  say "installed ~/.local/bin/illogicald and ~/.local/bin/illogical"
+  say "No systemd here, so no service: start the daemon with  ~/.local/bin/illogicald &"
+  nosystemd=1
+elif [ -n "${ILLOGICAL_NO_START:-}" ]; then
   "$tmp/$name/illogicald" install --no-start
 else
   "$tmp/$name/illogicald" install
@@ -69,7 +78,7 @@ say "Open http://127.0.0.1:7681"
 say ""
 say "From your phone and other machines on your tailnet:"
 say "  tailscale serve --bg --https=443 http://127.0.0.1:7681"
-if [ "$(uname -s)" = Linux ]; then
+if [ "$(uname -s)" = Linux ] && [ -z "${nosystemd:-}" ]; then
   say "To start it at boot, before you log in:"
   say "  loginctl enable-linger \$USER"
 fi

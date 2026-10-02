@@ -46,7 +46,11 @@ WantedBy=default.target
 
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 fn systemctl(args: &[&str]) -> anyhow::Result<()> {
-    let status = Command::new("systemctl").arg("--user").args(args).status().context("running systemctl")?;
+    let status = Command::new("systemctl")
+        .arg("--user")
+        .args(args)
+        .status()
+        .context("running systemctl (no systemd here? run `illogicald` directly, or `illogicald install --tailnet` in a sandbox)")?;
     if !status.success() {
         bail!("systemctl --user {} failed", args.join(" "));
     }
