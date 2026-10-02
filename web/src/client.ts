@@ -70,6 +70,10 @@ export interface E2ETarget {
   direct: string[];
   /** Control's relay for it (`wss://control…/api/relay/c/<id>`). */
   relay: string;
+  /** M25: control's shared relay socket (`wss://control…/api/relay/m`):
+   * when set, the relayed way is a channel inside the page's one socket to
+   * control, not a socket of its own. */
+  mux?: string;
   keys: DeviceKeys;
 }
 
@@ -120,13 +124,15 @@ class E2ELink implements Link {
   constructor(target: E2ETarget, onPath: (how: "direct" | "relayed") => void) {
     const urls = [
       ...target.direct.map((u) => ({ url: `${u.replace(/^http/, "ws").replace(/\/$/, "")}/e2e`, timeoutMs: 1500 })),
-      { url: target.relay, timeoutMs: 10_000 },
+      { url: target.relay, timeoutMs: 10_000, mux: target.mux },
+      // A control without the shared socket: one of its own.
+      ...(target.mux ? [{ url: target.relay, timeoutMs: 10_000, ifNoMux: true }] : []),
     ];
     E2ESocket.connect(urls, target.daemon, target.keys).then(
       (sock) => {
         if (this.closed) return sock.close();
         this.sock = sock;
-        onPath(sock.url.startsWith(target.relay) ? "relayed" : "direct");
+        onPath(target.direct.some((u) => sock.url.startsWith(u.replace(/^http/, "ws").replace(/\/$/, ""))) ? "direct" : "relayed");
         sock.onText = (t) => this.onText(t);
         sock.onBinary = (b) => this.onBinary(b.slice().buffer as ArrayBuffer);
         sock.onClose = () => this.onClose();
@@ -166,6 +172,35 @@ export class Client {
 
   /** How an end-to-end client is connected, for the host chip. */
   path: "direct" | "relayed" | null = null;
+
+  /** M25: tries that ended before the daemon said hello. */
+  failures = 0;
+  /** M25: when the daemon last sent anything (ms), so a link that died
+   * without closing (a laptop unplugged) can be noticed. */
+  lastHeard = 0;
+  /** M25: how a reconnect is started after `delay` ms. The fleet replaces
+   * it, to spread many hosts' reconnects out. */
+  schedule: (connect: () => void, delay: number) => void = (connect, delay) => void setTimeout(connect, delay);
+
+  /** M25: ask the daemon to answer (it pongs), which keeps `lastHeard`
+   * fresh on a quiet daemon. */
+  heartbeat() {
+    this.send({ type: "ping", id: this.nextId++ });
+  }
+
+  /** M25: a connection is up or being made. */
+  get linked(): boolean {
+    return !!this.link;
+  }
+
+  /** M25: give up on the link now (it went quiet) and reconnect as after
+   * any drop. */
+  drop() {
+    const link = this.link;
+    if (!link) return;
+    link.close();
+    link.onClose();
+  }
 
   /** A request to the daemon's API: fetch, or through the channel. */
   async request(method: string, path: string, body?: unknown): Promise<ApiResponse> {
@@ -509,7 +544,8 @@ export class Client {
   // ---- talking to the daemon
 
   connect() {
-    if (this.closed || this.asleep) return;
+    // Already connecting or connected (a retry and a wake can both ask).
+    if (this.closed || this.asleep || this.link) return;
     let link: Link;
     if (this.e2e) {
       link = new E2ELink(this.e2e, (how) => {
@@ -522,17 +558,24 @@ export class Client {
       link = new SocketLink(url);
     }
     this.link = link;
-    link.onText = (t) => this.onMessage(JSON.parse(t) as ServerMsg);
-    link.onBinary = (b) => this.onFrame(b);
+    link.onText = (t) => {
+      this.lastHeard = Date.now();
+      this.onMessage(JSON.parse(t) as ServerMsg);
+    };
+    link.onBinary = (b) => {
+      this.lastHeard = Date.now();
+      this.onFrame(b);
+    };
     link.onClose = () => {
       if (this.link !== link) return;
+      if (!this.connected) this.failures++;
       this.link = undefined;
       this.connected = false;
       this.clientId = null;
       const delay = Math.min(250 * 2 ** this.retry, 5000);
       this.retry++;
       this.emit();
-      setTimeout(() => this.connect(), delay);
+      this.schedule(() => this.connect(), delay);
     };
   }
 

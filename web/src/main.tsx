@@ -3,13 +3,14 @@
 import { render } from "preact";
 import "./style.css";
 import { Client } from "./client";
+import { Fleet, type HostRef } from "./fleet";
 import { directory } from "./hosts";
 import { App } from "./ui/app";
 import { measureCell } from "./ui/cells";
 import { enableControlPush, registerWorker, setPushBackend } from "./push";
 import { ControlSession, detectControl } from "./control";
 import { ControlGate, ControlOverlay, controlMenuItems, NoMachines, useControl } from "./ui/control";
-import { setHostMenuExtras } from "./ui/hosts";
+import { setFleet, setHostMenuExtras } from "./ui/hosts";
 import { setControlSession } from "./ui/people";
 import { unhex } from "./e2e/cert.ts";
 import { useSubscribe } from "./ui/hooks";
@@ -142,6 +143,46 @@ if (!linkTarget) {
   void directory.refresh();
 }
 
+// Every host at once (M25): a summaries-only connection to each, for the
+// swarm. The tab view above still connects for real to the one it shows.
+const fleet = new Fleet((h) => {
+  if (session) {
+    const t = h.id ? session.target(h.id) : undefined;
+    return t ? new Client(`e2e:${h.id}`, t, true) : null;
+  }
+  return new Client(directory.base(h.name), undefined, true);
+});
+const fleetHosts = (): HostRef[] =>
+  directory.names.map((name) => {
+    const h = directory.find(name);
+    const d = session?.daemons.find((x) => x.id === h?.id);
+    return {
+      name,
+      id: h?.id,
+      transport: name === directory.home ? "home" : (h?.transport ?? "tailnet"),
+      status: h?.status,
+      owner: d?.account ? (d.owner_name ?? d.account) : undefined,
+      team: d?.team ?? null,
+    };
+  });
+fleet.onOpen = (host, pane) => {
+  directory.select(host);
+  // The host's client is made when the directory switches, then connects:
+  // show the pane once it knows it.
+  const until = Date.now() + 15_000;
+  const go = () => {
+    if (client.base === directory.base(host) && client.info(pane)) return client.setActive(pane);
+    if (Date.now() < until) setTimeout(go, 100);
+  };
+  go();
+};
+setFleet(fleet);
+if (!linkTarget) {
+  directory.subscribe(() => fleet.setHosts(fleetHosts()));
+  fleet.setHosts(fleetHosts());
+  fleet.start();
+}
+
 // Opened from a notification (`#pane=N`), or told to by the service worker.
 // Notifications come from the home daemon, so show it first.
 const openPane = (pane: number, daemon?: string) => {
@@ -186,6 +227,7 @@ Object.assign(window, {
     },
     hosts: directory,
     control: session,
+    fleet,
     /** M23: a second connection to the same daemon that only takes
      * summaries (what the swarm and the fleet use). */
     summaries: () => {

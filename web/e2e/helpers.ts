@@ -10,6 +10,7 @@ declare global {
       client: Client;
       hosts: HostDirectory;
       control: ControlSession | null;
+      fleet: import("../src/fleet").Fleet;
       summaries(): Client;
       text(pane: PaneId): string;
       screen(pane: PaneId): string;

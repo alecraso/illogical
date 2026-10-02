@@ -1224,7 +1224,7 @@ impl Daemon {
                 self.viewing.remove(&client);
                 // Their last client left: they no longer drive anything.
                 if let Some(who) = gone
-                    && !self.clients.values().any(|c| c.principal.id() == who.id())
+                    && !self.clients.values().any(|c| c.principal.id() == who.id() && !self.summary.contains(&c.client))
                 {
                     self.drivers.retain(|_, d| d.who != who.id());
                 }
@@ -2102,6 +2102,8 @@ impl Daemon {
                 }
                 let state = self.state_for(&who);
                 self.send_state(client, state, summary, false);
+                // It leaves (or joins) everyone's presence.
+                self.soon();
             }
             ClientMsg::Focus { pane } => {
                 let before = self.focus.get(&client).copied();
@@ -2814,6 +2816,8 @@ impl Daemon {
         let mut out: Vec<Presence> = self
             .clients
             .values()
+            // A summaries-only connection (the fleet, M25) looks at nothing.
+            .filter(|c| !self.summary.contains(&c.client))
             .map(|c| Presence {
                 client: c.client,
                 who: c.principal.id().to_owned(),

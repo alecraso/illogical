@@ -639,7 +639,10 @@ export class ControlSession {
     const d = this.daemons.find((x) => x.id === id);
     if (!d) return undefined;
     const ws = this.info.url.replace(/^http/, "ws");
-    return { daemon: { id: d.id, noise: d.cert.noise }, direct: d.urls, relay: `${ws}/api/relay/c/${d.id}`, keys: this.keys };
+    // Hosted sandboxes go through their provider, a socket each; the rest
+    // share the page's one socket to the relay (M25).
+    const mux = d.sandbox ? undefined : `${ws}/api/relay/m`;
+    return { daemon: { id: d.id, noise: d.cert.noise }, direct: d.urls, relay: `${ws}/api/relay/c/${d.id}`, mux, keys: this.keys };
   }
 
   /** A read-only link to a session on daemon `id` (M19): a one-off key, its
