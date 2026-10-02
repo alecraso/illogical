@@ -60,7 +60,7 @@ if [ "$(uname -s)" = Linux ] && ! command -v systemctl >/dev/null 2>&1; then
     cp "$tmp/$name/$b" "$HOME/.local/bin/.$b.new" && mv "$HOME/.local/bin/.$b.new" "$HOME/.local/bin/$b"
   done
   say "installed ~/.local/bin/illogicald and ~/.local/bin/illogical"
-  say "No systemd here, so no service: start the daemon with  ~/.local/bin/illogicald &"
+  say "No systemd here, so no service: start the daemon with  ~/.local/bin/illogicald --keep-panes &  (panes then outlive its restarts)"
   nosystemd=1
 elif [ -n "${ILLOGICAL_NO_START:-}" ]; then
   "$tmp/$name/illogicald" install --no-start

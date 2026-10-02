@@ -23,8 +23,8 @@ setup as a worked example.
 ## Service and logs
 
 `illogicald install` copies the binary to `~/.local/bin` and installs a
-service. Run it again to upgrade; on Linux the panes' programs keep running
-through it. Flags after `--` are passed to the daemon on every start
+service. Run it again to upgrade; the panes' programs keep running through
+it. Flags after `--` are passed to the daemon on every start
 (`illogicald install -- --owner you@example.com`).
 
 - **Linux:** `~/.config/systemd/user/illogicald.service`, enabled. With
@@ -34,10 +34,14 @@ through it. Flags after `--` are passed to the daemon on every start
   login and after a crash. Logs: `~/Library/Logs/illogicald.log`.
   `launchctl bootout gui/$UID/illogicald` stops it. Panes run your login
   shell from the user database (launchd sets no `$SHELL`); zsh and bash get
-  shell integration. There's no systemd, so there are no per-pane scopes or
-  FD store: restarting or upgrading the daemon on a Mac ends its panes'
-  programs. Scrollback and layout come back, and panes follow their restart
-  policy.
+  shell integration. There's no systemd FD store, so each pane's shim keeps
+  its terminal while the daemon is gone (`--keep-panes`, which the plist
+  sets): a restart (`launchctl kickstart -k gui/$UID/illogicald`), an
+  upgrade or a crash leaves the programs running, and the new daemon adopts
+  them. Stopping it for good (`launchctl bootout`, logging out) ends them a
+  minute later, if no daemon has come back.
+- **Without systemd on Linux** (a container, a box with another init): pass
+  `--keep-panes` for the same behaviour.
 
 State (layout, logs, checkpoints) is in `~/.local/state/illogical`, private
 to you (0700/0600). `--state-dir` moves it.

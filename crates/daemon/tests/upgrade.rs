@@ -170,3 +170,123 @@ async fn panes_keep_running_through_restart_and_crash() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
+
+/// The daemon as a plain process with `--keep-panes`: no systemd, as on
+/// macOS. Each pane's shim keeps its terminal while the daemon is gone.
+struct Plain {
+    child: Option<std::process::Child>,
+    port: u16,
+    state: PathBuf,
+    /// Shells to make sure of at the end, whatever happened.
+    shells: Vec<i32>,
+}
+
+/// How long shims wait for a daemon in this test.
+const GRACE_MS: u64 = 3000;
+
+impl Plain {
+    fn new() -> Self {
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let state = std::env::temp_dir().join(format!("illogical-keep-{}-{port}", std::process::id()));
+        let mut d = Self { child: None, port, state, shells: vec![] };
+        d.start();
+        d
+    }
+
+    fn start(&mut self) {
+        let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
+            .args(["--listen", &format!("127.0.0.1:{}", self.port), "--shell", "bash --norc --noprofile"])
+            .args(["--no-manager-env", "--keep-panes", "--state-dir"])
+            .arg(&self.state)
+            .env("PS1", "$ ")
+            .env("ILLOGICAL_KEEP_GRACE_MS", GRACE_MS.to_string())
+            .env_remove("NOTIFY_SOCKET")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        self.child = Some(child);
+    }
+
+    fn signal(&mut self, sig: nix::sys::signal::Signal) {
+        let mut child = self.child.take().expect("running");
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(child.id() as i32), sig).unwrap();
+        child.wait().unwrap();
+    }
+
+    async fn connect(&self) -> (Ws, State) {
+        let svc = Service { unit: String::new(), port: self.port, state: PathBuf::new() };
+        let r = svc.connect().await;
+        std::mem::forget(svc);
+        r
+    }
+}
+
+impl Drop for Plain {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        for pid in &self.shells {
+            let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(*pid), nix::sys::signal::Signal::SIGKILL);
+        }
+        let _ = std::fs::remove_dir_all(&self.state);
+    }
+}
+
+fn alive(pid: i32) -> bool {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+}
+
+#[tokio::test]
+async fn shims_keep_panes_without_systemd() {
+    use nix::sys::signal::Signal;
+    let mut d = Plain::new();
+    let (mut ws, _) = d.connect().await;
+    type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
+    let pid = shell_pid(&watch(&mut ws, |s| shell_pid(s).is_some()).await).unwrap();
+    d.shells.push(pid);
+    type_in(&mut ws, "for i in $(seq 1 100000); do echo tick-$i; sleep 0.05; done\r").await;
+    watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 10)).await;
+    drop(ws);
+
+    // A clean stop and a start (an upgrade): the loop carries on, and
+    // nothing it printed in between is missing.
+    d.signal(Signal::SIGTERM);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(alive(pid), "the shell outlived the daemon");
+    d.start();
+    let (mut ws, state) = d.connect().await;
+    assert!(state.panes[0].running, "adopted, still running");
+    let seen = watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 60)).await;
+    let t = ticks(&seen);
+    let expected: Vec<u32> = (t[0]..=*t.last().unwrap()).collect();
+    let mut got = t.clone();
+    got.dedup();
+    assert_eq!(got, expected, "ticks across the restart are contiguous");
+    drop(ws);
+
+    // A crash: the same shell is adopted again.
+    d.signal(Signal::SIGKILL);
+    d.start();
+    let (mut ws, _) = d.connect().await;
+    watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 80)).await;
+    type_in(&mut ws, "\x03").await;
+    type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
+    let again = watch(&mut ws, |s| s.rsplit("tick-").next().is_some_and(|tail| shell_pid(tail).is_some())).await;
+    let again = shell_pid(again.rsplit("tick-").next().unwrap()).unwrap();
+    assert_eq!(again, pid, "the same shell, through a restart and a crash");
+    drop(ws);
+
+    // Stopped for good: once no daemon has come back within the grace
+    // period, the shim hangs the pane up.
+    d.signal(Signal::SIGTERM);
+    tokio::time::sleep(Duration::from_millis(GRACE_MS / 2)).await;
+    assert!(alive(pid), "kept during the grace period");
+    let deadline = Instant::now() + Duration::from_millis(GRACE_MS + 6000);
+    while alive(pid) {
+        assert!(Instant::now() < deadline, "shell {pid} outlived the grace period");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}

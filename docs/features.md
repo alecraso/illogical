@@ -29,7 +29,9 @@ the daemon stopping, crashing, or the machine rebooting:
   screen, a build keeps building, output from the gap is read from the
   terminal, and open windows reconnect on their own. `just install` upgrades
   in place. `systemctl --user stop` is still the end of the panes, like a
-  reboot.
+  reboot. On macOS (and without systemd) each pane's shim keeps its
+  terminal instead (`--keep-panes`), with the same result; a stop ends the
+  panes a minute later.
 
 - **Panes know about commands** (M3). bash gets shell integration
   automatically (the way Ghostty does it: no dotfile changes), so each pane
