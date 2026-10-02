@@ -1,5 +1,7 @@
 //! End to end against the real binary: attach, input, detach, resume.
 
+mod strays;
+
 use std::{
     net::TcpListener,
     path::{Path, PathBuf},
@@ -21,6 +23,8 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 struct Daemon {
     child: Child,
     port: u16,
+    /// Its own state dir, when it has one to itself.
+    state: Option<TempState>,
 }
 
 impl Drop for Daemon {
@@ -31,11 +35,31 @@ impl Drop for Daemon {
 }
 
 async fn start() -> Daemon {
-    start_in(&temp_state()).await
+    let state = temp_state();
+    let mut d = start_in(&state).await;
+    d.state = Some(state);
+    d
 }
 
-/// A fresh state directory, so tests never touch the real one.
-fn temp_state() -> PathBuf {
+/// A fresh state directory, so tests never touch the real one. Dropping it
+/// kills what its panes left running and deletes it.
+struct TempState(PathBuf);
+
+impl std::ops::Deref for TempState {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempState {
+    fn drop(&mut self) {
+        strays::kill_programs(&self.0);
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn temp_state() -> TempState {
     static N: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
         "illogical-test-{}-{}",
@@ -43,7 +67,7 @@ fn temp_state() -> PathBuf {
         N.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_dir_all(&dir);
-    dir
+    TempState(dir)
 }
 
 /// Start a daemon on a free port. Tests run in parallel, so another test's
@@ -74,7 +98,7 @@ async fn start_in(state: &Path) -> Daemon {
             if std::os::unix::net::UnixStream::connect(sock()).is_ok()
                 && TcpStream::connect(("127.0.0.1", port)).await.is_ok()
             {
-                return Daemon { child, port };
+                return Daemon { child, port, state: None };
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -706,7 +730,6 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     type_in(&mut ws, 2, "").await;
     read_pane_until(&mut ws, 2, "rerun-ok-2").await;
     d.stop(nix::sys::signal::Signal::SIGTERM);
-    let _ = std::fs::remove_dir_all(state);
 }
 
 #[tokio::test]
@@ -727,7 +750,6 @@ async fn a_crash_loses_nothing_that_was_printed() {
     assert_eq!(s.panes.iter().map(|p| p.id).collect::<Vec<_>>(), vec![1]);
     assert!(attach_pane(&mut ws, 1).await.contains("crash-10"));
     d.stop(nix::sys::signal::Signal::SIGKILL);
-    let _ = std::fs::remove_dir_all(state);
 }
 
 #[tokio::test]
@@ -749,7 +771,6 @@ async fn idle_panes_are_checkpointed() {
     let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&ckpt).unwrap().permissions());
     assert_eq!(mode & 0o777, 0o600);
     d.stop(nix::sys::signal::Signal::SIGTERM);
-    let _ = std::fs::remove_dir_all(state);
 }
 
 #[tokio::test]
@@ -831,7 +852,6 @@ async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
         .any(|e| e.file_name().to_string_lossy().starts_with("2-"));
     assert!(retired, "its history is kept a while under closed/");
     d.stop(nix::sys::signal::Signal::SIGTERM);
-    let _ = std::fs::remove_dir_all(state);
 }
 
 #[tokio::test]
@@ -858,7 +878,6 @@ async fn a_restored_pane_drops_the_dead_programs_input_modes() {
         assert!(!snap.contains(m), "mode {m:?} survived the restore");
     }
     d.stop(nix::sys::signal::Signal::SIGTERM);
-    let _ = std::fs::remove_dir_all(state);
 }
 
 #[tokio::test]
@@ -882,5 +901,4 @@ async fn the_restore_marker_goes_below_what_a_program_drew_in_place() {
     assert!(drawn.is_some() && last.is_some(), "what it drew is still there: {snap:?}");
     assert!(marker > last, "the marker is below it: {snap:?}");
     d.stop(nix::sys::signal::Signal::SIGTERM);
-    let _ = std::fs::remove_dir_all(state);
 }

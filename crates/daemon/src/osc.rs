@@ -264,8 +264,9 @@ pub fn strip(data: &[u8]) -> String {
             b'\n' | b'\t' => out.push(b),
             b'\r' => {
                 // CR LF is a newline; a bare CR rewrites the line, which for
-                // reading purposes we treat as a newline too.
-                if data.get(i + 1) != Some(&b'\n') {
+                // reading purposes we treat as a newline too. CRs in a row
+                // are one: a macOS pty sometimes writes CR CR LF for a LF.
+                if !matches!(data.get(i + 1), Some(b'\n' | b'\r')) {
                     out.push(b'\n');
                 }
             }
@@ -344,5 +345,6 @@ mod tests {
     fn strip_leaves_what_a_reader_sees() {
         let raw = b"\x1b[1;31mred\x1b[0m plain\r\nnext\x1b]133;A\x07 line\rover\x08x\n";
         assert_eq!(strip(raw), "red plain\nnext line\novex\n");
+        assert_eq!(strip(b"491\r\r\n492\r\r493\r\n"), "491\n492\n493\n");
     }
 }

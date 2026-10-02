@@ -3,6 +3,8 @@
 //! refuses everything else: input, any message at all, other panes, the
 //! API, tagged nodes, after it expires, after it's revoked.
 
+mod strays;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -34,6 +36,7 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }
