@@ -4,6 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
+import { pickConversation } from "./conversations";
 
 type Kind = "claude" | "codex" | "fountain" | "acp";
 
@@ -97,6 +98,20 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
         onKeyDown={(e) => e.key === "Escape" && close()}
       >
         <h2>Start an agent</h2>
+        <p class="hint">
+          Or{" "}
+          <button
+            type="button"
+            class="link"
+            onClick={() => {
+              close();
+              pickConversation(client, { split: where.split, session: where.session, cwd: cwd || undefined });
+            }}
+          >
+            pick up a Claude Code conversation
+          </button>{" "}
+          from a terminal or the desktop app.
+        </p>
         <label>
           Agent
           <select name="agent" value={kind} onChange={(e) => setKind((e.currentTarget as HTMLSelectElement).value as Kind)}>

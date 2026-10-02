@@ -4,14 +4,14 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Output kept per tool call in the state clients get (all of it is in the
 /// log and in `capture --text`).
 pub const OUTPUT_IN_STATE: usize = 64 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 // Tool calls are most of a transcript anyway; boxing them buys nothing.
 #[allow(clippy::large_enum_variant)]
@@ -41,7 +41,8 @@ pub enum Entry {
     },
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Tool {
     pub id: String,
     /// The agent's name for the tool (`AskUserQuestion`), when it says.
@@ -116,6 +117,19 @@ fn text_of(content: &Value) -> Option<&str> {
 }
 
 impl Transcript {
+    /// A transcript made elsewhere (an imported conversation, M33).
+    pub fn from_entries(entries: Vec<Entry>) -> Self {
+        let tools = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                Entry::Tool(t) => Some((t.id.clone(), i)),
+                _ => None,
+            })
+            .collect();
+        Self { entries, tools }
+    }
+
     pub fn user(&mut self, text: &str, at_ms: u64) {
         self.entries.push(Entry::User { text: text.to_owned(), at_ms });
     }

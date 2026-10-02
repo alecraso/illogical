@@ -16,6 +16,7 @@ import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { newRemote, openChanges, openEditor, openPort, remoteHosts } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
+import { ConversationsLayer, pickConversation } from "./conversations";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
 
@@ -97,6 +98,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <MenuLayer />
       <PromptLayer />
       <AgentDialogLayer />
+      <ConversationsLayer />
       <SandboxesLayer />
       <PickerLayer />
       <DragGhost />
@@ -552,6 +554,10 @@ function PaneSlot({
       // A port where this pane runs: its machine, or this host.
       { label: mine ? "Open a port on this machine…" : "Open a port…", run: () => void openPort(client, { split: id, host: mine?.id, local: !mine }) },
       { label: "Start an agent…", run: () => startAgent(client, { split: id, from: id }) },
+      // M33: Claude Code conversations from terminals and the desktop app.
+      ...(!client.state?.roles
+        ? [{ label: "Claude Code conversations…", run: () => pickConversation(client, { split: id, cwd: cwd ?? undefined }) } as MenuItem]
+        : []),
       // M27: VS Code where this pane runs, in its directory. The owner's,
       // like ports.
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),

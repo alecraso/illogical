@@ -279,6 +279,44 @@ pub struct StartAgentArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct ListConversationsArgs {
+    /// Words in the title, prompts or folder.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Only ones under this folder.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Only ones open somewhere now.
+    #[serde(default)]
+    pub live: bool,
+    /// Everything: `claude -p` and SDK runs, archived ones, ones whose folder is gone.
+    #[serde(default)]
+    pub all: bool,
+    /// How many [default 30].
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OpenConversationArgs {
+    /// The conversation's id, or the start of it (list_conversations).
+    pub id: String,
+    /// Then continue it, or fork it (for one open somewhere else) and go on in the fork.
+    #[serde(default)]
+    pub then: Option<ConversationThen>,
+    /// Open it beside this pane (an agent block's token: beside itself).
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationThen {
+    Continue,
+    Fork,
+}
+
+#[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Response {
     /// Approve the pending permission request.
@@ -483,6 +521,26 @@ fn defs() -> Vec<Def> {
             open_world: true,
         },
         Def {
+            name: "list_conversations",
+            title: "Claude Code conversations",
+            description: "Claude Code conversations on this machine, from a terminal or the desktop app's Code tab, newest first: id, title, folder, first and last prompt, where it's open now, and the agent block that has it.",
+            schema: schema_for_type::<ListConversationsArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "open_conversation",
+            title: "Open a Claude Code conversation",
+            description: "Show a Claude Code conversation (list_conversations) as an agent block beside a pane, stopped, with its transcript; then: continue (refused while it's open somewhere else) or fork (a new session with its history; the original is left alone). Send to the block (send_input) to go on.",
+            schema: schema_for_type::<OpenConversationArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
             name: "agent_respond",
             title: "Answer an agent",
             description: "Allow or deny an agent's pending permission request, or answer or skip its pending question (as wait until needs_input showed it).",
@@ -629,6 +687,14 @@ impl<'a> Call<'a> {
             },
             "start_agent" => match parse(args) {
                 Ok(a) => self.start_agent(a).await,
+                Err(e) => Err(e),
+            },
+            "list_conversations" => match parse(args) {
+                Ok(a) => self.list_conversations(a).await,
+                Err(e) => Err(e),
+            },
+            "open_conversation" => match parse(args) {
+                Ok(a) => self.open_conversation(a).await,
                 Err(e) => Err(e),
             },
             "agent_respond" => match parse(args) {
@@ -1475,6 +1541,52 @@ impl<'a> Call<'a> {
         )
     }
 
+    async fn list_conversations(&self, a: ListConversationsArgs) -> Out {
+        let q = crate::api::ConversationsQuery {
+            all: a.all,
+            q: a.query,
+            cwd: a.cwd,
+            live: a.live,
+            limit: Some(a.limit.unwrap_or(30)),
+        };
+        let mut v = crate::api::list_conversations(self.app, q).await?;
+        // The transcript's path is the daemon's business.
+        for c in v["conversations"].as_array_mut().into_iter().flatten() {
+            if let Some(o) = c.as_object_mut() {
+                o.remove("path");
+            }
+        }
+        let n = v["conversations"].as_array().map_or(0, Vec::len);
+        done(format!("{n} conversations; open_conversation shows one as a block"), v)
+    }
+
+    async fn open_conversation(&self, a: OpenConversationArgs) -> Out {
+        let beside = match (a.beside.as_ref().map(PaneArg::id).transpose()?, self.me()) {
+            (Some(b), _) => Some(b),
+            (None, me) => me,
+        };
+        if let Some(b) = beside {
+            self.readable(b).await?;
+        }
+        let req = crate::api::OpenConversation {
+            id: a.id,
+            then: a.then.map(|t| match t {
+                ConversationThen::Continue => "continue".into(),
+                ConversationThen::Fork => "fork".into(),
+            }),
+            session: None,
+            split: beside,
+            from_pane: beside,
+        };
+        let v = crate::api::open_conversation_as(self.app, None, req).await.map_err(|e| e.1)?;
+        let block = v["block"].as_u64().unwrap_or(0);
+        let summary = match v["error"].as_str() {
+            Some(e) => format!("Opened it in %{block}, but: {e}"),
+            None => format!("It's in %{block}; send_input to it to go on, then wait and read_output"),
+        };
+        done(summary, v)
+    }
+
     async fn respond(&self, a: RespondArgs) -> Out {
         use illogical_proto::Action;
         let pane = a.pane.id()?;
@@ -1766,13 +1878,16 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 15);
+        assert_eq!(all.len(), 17);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
             .map(|t| t.name.as_ref())
             .collect();
-        assert_eq!(ro, ["read_output", "capture_screen", "wait", "list", "history", "search", "read_file"]);
+        assert_eq!(
+            ro,
+            ["read_output", "capture_screen", "wait", "list", "history", "search", "list_conversations", "read_file"]
+        );
         assert_eq!(list(Scope::Read).len(), ro.len(), "a read token sees the read-only tools only");
         let close = all.iter().find(|t| t.name == "close").unwrap();
         assert_eq!(close.annotations.as_ref().unwrap().destructive_hint, Some(true));

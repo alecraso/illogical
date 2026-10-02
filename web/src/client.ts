@@ -528,6 +528,33 @@ export class Client {
     );
   }
 
+  /** A Claude Code conversation as an agent block (M33), or the block that
+   * has it already, shown; `then` continues or forks it. Its id, or null
+   * (and the error as a toast). */
+  async openConversation(o: { id: string; then?: "continue" | "fork"; split?: PaneId; session?: number }): Promise<PaneId | null> {
+    this.lastIntentAt = Date.now();
+    try {
+      const res = await this.request("POST", "/api/conversations/open", {
+        id: o.id,
+        then: o.then ?? null,
+        split: o.split ?? null,
+        from_pane: o.split ?? null,
+        session: o.split === undefined ? (o.session?.toString() ?? null) : null,
+      });
+      const v = await res.json<{ block?: PaneId; opened?: boolean; error?: string }>().catch(() => null);
+      if (!res.ok || typeof v?.block !== "number") {
+        this.toast(v?.error ?? `couldn't open it (${res.status})`);
+        return null;
+      }
+      if (!v.opened) this.focusPane(v.block);
+      if (v.error) this.toast(v.error);
+      return v.block;
+    } catch {
+      this.toast("couldn't open it");
+      return null;
+    }
+  }
+
   /** Open a block (`POST /api/blocks`) and show it: its id, or null (and
    * the error as a toast). */
   async openBlock(body: Record<string, unknown>, failure = "couldn't open that"): Promise<PaneId | null> {

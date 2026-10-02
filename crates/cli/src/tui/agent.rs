@@ -129,7 +129,16 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &Value, scroll: usize, focused:
     let w = area.width as usize;
     let label = state["label"].as_str().or(state["agent"].as_str()).unwrap_or("agent");
     let status = state["status"].as_str().unwrap_or("");
-    let head = format!(" {label} · {status}");
+    // M33: a conversation opened here and not continued yet.
+    let imported = &state["import"];
+    let opened = imported.is_object() && imported["continued"] != true;
+    let held = imported["held"]["place"].as_str();
+    let head = match (opened, held) {
+        // Its title says which conversation.
+        (true, Some(_)) => format!(" {} · open elsewhere", state["title"].as_str().unwrap_or(label)),
+        (true, None) => format!(" {} · conversation", state["title"].as_str().unwrap_or(label)),
+        _ => format!(" {label} · {status}"),
+    };
     buf.set_stringn(area.x, area.y, &head, w, Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED));
     let fill = w.saturating_sub(head.chars().count());
     buf.set_stringn(
@@ -151,6 +160,20 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &Value, scroll: usize, focused:
     for a in state["asks"].as_array().into_iter().flatten() {
         let q = a["questions"][0]["question"].as_str().or(a["message"].as_str()).unwrap_or("a question");
         foot.push((format!("? {q}  (answer in the web client)"), warn));
+    }
+    if opened {
+        let from = match imported["source"].as_str() {
+            Some("desktop") => "the desktop app",
+            Some("terminal") => "a terminal",
+            _ => "elsewhere",
+        };
+        foot.push((
+            match held {
+                Some(place) => format!("From {from}, {place}: F fork it to go on here"),
+                None => format!("From {from}: C continue it here · F fork it"),
+            },
+            Style::default().fg(Color::Cyan),
+        ));
     }
     if focused {
         let hint = if state["status"] == "working" {
@@ -205,6 +228,30 @@ mod tests {
         draw(&mut buf, Rect::new(0, 0, 40, 10), &state, 0, true);
         let row = |y: u16| (0..40).map(|x| buf[(x, y)].symbol().to_owned()).collect::<String>();
         assert!(row(8).starts_with("⚠ allow rm -rf target?"), "{}", row(8));
+    }
+
+    #[test]
+    fn an_opened_conversation_says_how_to_go_on() {
+        let mut state = json!({
+            "label": "Claude Code", "title": "Fix the build", "status": "stopped",
+            "entries": [{"type": "user", "text": "fix the build", "at_ms": 1}],
+            "pending": [], "asks": [],
+            "import": {"source": "terminal", "continued": false, "held": null},
+        });
+        let rows = |state: &Value| {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 60, 6));
+            draw(&mut buf, Rect::new(0, 0, 60, 6), state, 0, true);
+            (0..6).map(|y| (0..60).map(|x| buf[(x, y)].symbol().to_owned()).collect::<String>()).collect::<Vec<_>>()
+        };
+        let r = rows(&state);
+        assert!(r[0].starts_with(" Fix the build · conversation"), "{r:?}");
+        assert!(r[4].starts_with("From a terminal: C continue it here · F fork it"), "{r:?}");
+        state["import"]["held"] = json!({"place": "open in pane %4"});
+        let r = rows(&state);
+        assert!(r[0].starts_with(" Fix the build · open elsewhere"), "{r:?}");
+        assert!(r[4].starts_with("From a terminal, open in pane %4: F fork it"), "{r:?}");
+        state["import"]["continued"] = json!(true);
+        assert!(rows(&state)[0].starts_with(" Claude Code · stopped"));
     }
 
     #[test]

@@ -147,6 +147,7 @@ pub fn run(target: &Target, session: Option<String>) -> anyhow::Result<i32> {
         }
         app.take_errors();
         app.take_fetched();
+        app.take_conversations();
         if app.toast.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(6)) {
             // Redraw once it should be gone.
             app.dirty |= last_draw.elapsed() > Duration::from_secs(1);

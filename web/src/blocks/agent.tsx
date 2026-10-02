@@ -73,6 +73,16 @@ export interface AgentState {
   tokens: { total: number; last_turn: Record<string, number> | null };
   turns: number;
   allow: { tool: string; title?: string }[];
+  /** A Claude Code conversation this block opened (M33). */
+  import: {
+    source: "terminal" | "desktop" | "other";
+    path: string;
+    title: string | null;
+    /** Continued here: from now on it's this block's. */
+    continued: boolean;
+    /** Another process has it open now. */
+    held: { pid: number; pane: PaneId | null; block: PaneId | null; status: string; place: string } | null;
+  } | null;
   entries_from: number;
   entries: Entry[];
 }
@@ -232,6 +242,7 @@ function Composer({ client, id, s }: { client: Client; id: PaneId; s: AgentState
     if (await client.api(`/api/blocks/${id}/call/send`, { text: t }, "couldn't send")) setText("");
   };
   const busy = s.status === "working" || s.status === "remote" || (s.status === "starting" && s.queued.length > 0);
+  const opened = s.import && !s.import.continued;
   return (
     <form
       class="agent-composer"
@@ -244,7 +255,7 @@ function Composer({ client, id, s }: { client: Client; id: PaneId; s: AgentState
         ref={area}
         rows={1}
         value={text}
-        placeholder={busy ? "Queue a message…" : "Message the agent…"}
+        placeholder={busy ? "Queue a message…" : opened ? (s.import?.held ? "Fork it to go on here" : "Continue the conversation…") : "Message the agent…"}
         onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
         onKeyDown={(e) => {
           // Enter sends on a keyboard; on a phone, the Send button does.
@@ -278,6 +289,8 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
   const liveFrom = tools.length > LIVE_TERMINALS ? (tools[tools.length - LIVE_TERMINALS] as Tool).id : null;
   let live = liveFrom === null;
   const stopped = s.status === "stopped" || s.status === "exited";
+  // M33: a conversation opened here, not continued yet.
+  const opened = !!s.import && !s.import.continued;
   const open = s.asks.filter((a) => !a.accepted);
   const call = (method: string, args: unknown) => void client.api(`/api/blocks/${id}/call/${method}`, args, `couldn't ${method}`);
   // M29: who answered last, and whether this person may answer at all.
@@ -286,7 +299,9 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
   return (
     <div class="agent">
       <div class="agent-bar">
-        <span class={`agent-status ${s.status}`}>{s.pending.length || open.length ? "Needs you" : STATUS[s.status]}</span>
+        <span class={`agent-status ${s.status}`}>
+          {s.pending.length || open.length ? "Needs you" : s.import && !s.import.continued ? (s.import.held ? "Open elsewhere" : "Conversation") : STATUS[s.status]}
+        </span>
         <span class="agent-name" title={s.server?.name ? `${s.server.name} ${s.server.version ?? ""}` : undefined}>
           {s.title ?? s.label}
         </span>
@@ -298,10 +313,34 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
             {s.cost.last_turn != null && s.turns > 1 ? ` (last ${money(s.cost.last_turn, s.cost.currency)})` : ""}
           </span>
         )}
-        {stopped && (
+        {stopped && !opened && (
           <button onClick={() => void client.api(`/api/blocks/${id}/call/start`, {}, "couldn't start it")}>Resume</button>
         )}
+        {opened && s.import?.held?.pane != null && client.info(s.import.held.pane) && (
+          <button onClick={() => client.focusPane(s.import!.held!.pane!)}>Go to pane %{s.import.held.pane}</button>
+        )}
+        {opened && (
+          <button
+            data-continue
+            disabled={!!s.import?.held}
+            title={s.import?.held ? `It's ${s.import.held.place}: fork it, or continue once that's closed` : "Go on with it here"}
+            onClick={() => void client.api(`/api/blocks/${id}/call/continue`, {}, "couldn't continue it")}
+          >
+            Continue
+          </button>
+        )}
+        {(opened || (s.import && stopped)) && (
+          <button data-fork title="A new session with its history; the original is left alone" onClick={() => void client.api(`/api/blocks/${id}/call/fork`, {}, "couldn't fork it")}>
+            Fork
+          </button>
+        )}
       </div>
+      {opened && (
+        <div class="agent-import">
+          A Claude Code conversation from {s.import!.source === "desktop" ? "the desktop app" : s.import!.source === "terminal" ? "a terminal" : "elsewhere"}
+          {s.import!.held ? `, ${s.import!.held.place}: this follows it as it goes. Fork it to go on here.` : ". Continue it to go on here."}
+        </div>
+      )}
       <div
         class="agent-log"
         ref={scroller}

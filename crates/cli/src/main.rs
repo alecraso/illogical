@@ -204,6 +204,13 @@ enum Command {
     /// Type a pane's failed command again (M24's `failed`), once its shell
     /// is waiting at its prompt.
     Rerun { pane: Option<Pane> },
+    /// Claude Code conversations on this machine, from a terminal or the
+    /// desktop app's Code tab (M33). `open` shows one as an agent block;
+    /// `illogical agent --resume ID` continues one.
+    Claude {
+        #[command(subcommand)]
+        cmd: ClaudeCmd,
+    },
     /// Editors in the swarm (M28): VS Code, Cursor or nvim that joined, and
     /// editor blocks. `editors install` adds illogical's extension to VS
     /// Code or Cursor here (in a Remote-SSH window's terminal: there).
@@ -250,6 +257,14 @@ enum Command {
         /// Where it works [default: here, or the VM's home].
         #[arg(long)]
         cwd: Option<String>,
+        /// Continue a Claude Code conversation from a terminal or the
+        /// desktop app (its id, or the start of it; `illogical claude ls`).
+        #[arg(long, value_name = "ID", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine", "fork"])]
+        resume: Option<String>,
+        /// Fork a Claude Code conversation and go on in the fork (for one
+        /// that's still open somewhere else).
+        #[arg(long, value_name = "ID", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine"])]
+        fork: Option<String>,
         #[arg(long)]
         session: Option<String>,
         /// Split this block instead of opening a tab.
@@ -521,6 +536,39 @@ enum McpCmd {
         list: bool,
         #[arg(long, value_name = "NAME")]
         revoke: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClaudeCmd {
+    /// List them, newest first.
+    Ls {
+        /// Everything: `claude -p` and SDK runs, archived ones, ones whose
+        /// folder is gone.
+        #[arg(long)]
+        all: bool,
+        /// Only ones open in a terminal, the desktop app or a pane now.
+        #[arg(long)]
+        live: bool,
+        /// Only ones under this folder.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// How many [default: 30].
+        #[arg(short = 'n', long, default_value_t = 30)]
+        limit: usize,
+        /// Words in the title, prompts or folder.
+        words: Vec<String>,
+    },
+    /// Show one as an agent block (stopped, its transcript as it grows);
+    /// prints the block. The block that has it already, if one does.
+    Open {
+        /// Its id, or the start of it.
+        id: String,
+        #[arg(long)]
+        session: Option<String>,
+        /// Split this block instead of opening a tab.
+        #[arg(long)]
+        split: Option<Pane>,
     },
 }
 
@@ -1168,7 +1216,126 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 bail!("{e}");
             }
         }
-        Command::Agent { acp, fountain, codex, vault, model, mcp, vm, machine, cwd, session, split, wait, prompt } => {
+        Command::Agent { resume, fork, session, split, wait, prompt, .. } if resume.is_some() || fork.is_some() => {
+            let (id, then) = match (resume, fork) {
+                (Some(id), _) => (id, "continue"),
+                (_, Some(id)) => (id, "fork"),
+                _ => unreachable!(),
+            };
+            let prompt = prompt.join(" ");
+            // With a prompt, sending it is what continues it.
+            let then = if prompt.is_empty() || then == "fork" { Some(then) } else { None };
+            let body = json!({
+                "id": id,
+                "then": then,
+                "session": session,
+                "split": split.map(|p| p.0),
+                "from_pane": env_pane(),
+            });
+            let v = request(&sock, "POST", "/api/conversations/open", Some(&body))?.json()?;
+            let block = v["block"].as_u64().context("no block in the answer")?;
+            if let Some(e) = v["error"].as_str() {
+                eprintln!("%{block}: {e}");
+                return Ok(1);
+            }
+            if !prompt.is_empty() {
+                let r = request(
+                    &sock,
+                    "POST",
+                    &format!("/api/blocks/{block}/call/send"),
+                    Some(&json!({ "text": prompt })),
+                )?;
+                if let Err(e) = r.json() {
+                    eprintln!("%{block}: {e}");
+                    return Ok(1);
+                }
+            }
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("%{block}");
+            }
+            if wait && !prompt.is_empty() {
+                let w = request(&sock, "GET", &format!("/api/panes/{block}/wait?until=idle"), None)?.json()?;
+                let text = request(&sock, "GET", &format!("/api/panes/{block}/capture"), None)?.ok()?.text()?;
+                print!("{text}");
+                return Ok(if w["state"] == "needs_input" { 2 } else { 0 });
+            }
+        }
+        Command::Claude { cmd: ClaudeCmd::Ls { all, live, cwd, limit, words } } => {
+            let mut q = vec![format!("limit={limit}")];
+            if all {
+                q.push("all=1".into());
+            }
+            if live {
+                q.push("live=1".into());
+            }
+            if let Some(d) = cwd {
+                let d = std::fs::canonicalize(&d)
+                    .or_else(|_| std::env::current_dir().map(|h| h.join(&d)))
+                    .map(|p| p.display().to_string())
+                    .unwrap_or(d);
+                q.push(format!("cwd={}", enc(&d)));
+            }
+            if !words.is_empty() {
+                q.push(format!("q={}", enc(&words.join(" "))));
+            }
+            let v = request(&sock, "GET", &format!("/api/conversations?{}", q.join("&")), None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let home = std::env::var("HOME").unwrap_or_default();
+            for c in v["conversations"].as_array().into_iter().flatten() {
+                let s = |k: &str| c[k].as_str().unwrap_or("");
+                let mut cwd = s("cwd").to_owned();
+                if !home.is_empty() && cwd.starts_with(&home) {
+                    cwd = format!("~{}", &cwd[home.len()..]);
+                }
+                let src = match s("source") {
+                    "terminal" => "term",
+                    "desktop" => "desk",
+                    _ => "other",
+                };
+                let mut tags = vec![];
+                if let Some(p) = c["live"]["place"].as_str() {
+                    tags.push(p.to_owned());
+                }
+                if let Some(b) = c["block"].as_u64() {
+                    tags.push(format!("block %{b}"));
+                }
+                let tags = if tags.is_empty() { String::new() } else { format!("  [{}]", tags.join(", ")) };
+                let id: String = s("id").chars().take(8).collect();
+                let title: String = s("title").chars().take(60).collect();
+                let when = time(c["updated_ms"].as_u64().unwrap_or(0));
+                println!("{id}  {src:<5} {when:>8}  {title}  {cwd}{tags}");
+            }
+        }
+        Command::Claude { cmd: ClaudeCmd::Open { id, session, split } } => {
+            let body = json!({ "id": id, "session": session, "split": split.map(|p| p.0), "from_pane": env_pane() });
+            let v = request(&sock, "POST", "/api/conversations/open", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("%{}", v["block"].as_u64().context("no block in the answer")?);
+            }
+        }
+        Command::Agent {
+            acp,
+            fountain,
+            codex,
+            vault,
+            model,
+            mcp,
+            vm,
+            machine,
+            cwd,
+            session,
+            split,
+            wait,
+            prompt,
+            ..
+        } => {
             let mut config = match (&acp, &fountain) {
                 (Some(cmd), _) => json!({ "agent": "acp", "command": cmd }),
                 (_, Some(name)) => json!({ "agent": "fountain", "fountain_agent": name, "vault": vault }),

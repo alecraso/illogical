@@ -86,6 +86,9 @@ const REMOTE_POLL: Duration = Duration::from_secs(15);
 /// When an agent says "retry shortly" (Fountain provisioning a sandbox).
 const RETRY_AFTER: Duration = Duration::from_secs(5);
 const MAX_RETRIES: u32 = 12;
+/// How often an opened conversation's transcript and holder are checked
+/// (M33).
+const FOLLOW_EVERY: Duration = Duration::from_secs(1);
 
 /// What makes the block again (`layout.json`). Nothing secret.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -109,6 +112,31 @@ pub struct Config {
     /// The first prompt, sent once the session is open (not kept).
     #[serde(default, skip_serializing)]
     pub prompt: Option<String>,
+    /// A Claude Code conversation this block opened (M33).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<Import>,
+    /// Fork the session before reopening it (M33): set by `fork`, cleared
+    /// when the fork is made.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fork: bool,
+}
+
+/// Where an opened conversation came from (M33). Until it's continued the
+/// block shows its transcript, read again as it grows; continuing freezes
+/// what it had into the block (`imported.json`) and resumes the session.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Import {
+    /// Its transcript.
+    pub path: String,
+    /// `terminal`, `desktop` or `other`.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The model of its last reply, set again after resuming (a resume
+    /// resets it, S20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// A request this block approves without asking: a tool (by name, else
@@ -198,6 +226,8 @@ enum Purpose {
         merge: bool,
     },
     Resume,
+    /// `session/fork` (M33): reopen the new session when it answers.
+    Fork,
     SetModel,
     Prompt,
     Other,
@@ -262,6 +292,14 @@ struct Inner {
     closing: bool,
     /// While rebuilding from the log, effects aren't acted on.
     live: bool,
+    /// An imported conversation was frozen into the block (M33).
+    frozen: bool,
+    /// Who else holds an imported conversation now (M33).
+    held: Option<crate::conversations::Live>,
+    /// The transcript's size and mtime when last read.
+    import_stamp: Option<(u64, std::time::SystemTime)>,
+    /// The session's `configOptions` (for choosing a model).
+    config_options: Value,
 }
 
 enum Msg {
@@ -318,6 +356,10 @@ impl Inner {
             reported: None,
             closing: false,
             live: false,
+            frozen: false,
+            held: None,
+            import_stamp: None,
+            config_options: Value::Null,
         }
     }
 
@@ -425,7 +467,9 @@ impl Inner {
                 self.replay = None;
                 self.status = Status::Starting;
                 self.error = None;
-                if e["resume"].as_bool() == Some(true) {
+                let just_continued =
+                    matches!(self.t.entries.last(), Some(Entry::Note { text, .. }) if text == "Continued in illogical");
+                if e["resume"].as_bool() == Some(true) && !just_continued {
                     self.t.note("Started the agent again", at);
                 }
             }
@@ -496,6 +540,20 @@ impl Inner {
                 let key = e["id"].as_str().unwrap_or_default();
                 self.asks.retain(|a| a.ask.id != key);
             }
+            "imported" => {
+                // What the conversation had before it was continued here.
+                let entries = e["file"]
+                    .as_str()
+                    .and_then(|f| std::fs::read(f).ok())
+                    .and_then(|b| serde_json::from_slice::<Vec<Entry>>(&b).ok())
+                    .unwrap_or_default();
+                self.t = Transcript::from_entries(entries);
+                self.frozen = true;
+                // No longer following whoever else has it.
+                self.held = None;
+                self.status = Status::Stopped;
+                self.t.note("Continued in illogical", at);
+            }
             "error" => {
                 let msg = e["message"].as_str().unwrap_or("error").to_owned();
                 self.t.note(msg.clone(), at);
@@ -520,6 +578,7 @@ impl Inner {
                         Purpose::Load { merge }
                     }
                     "session/resume" => Purpose::Resume,
+                    "session/fork" => Purpose::Fork,
                     "session/set_config_option" => Purpose::SetModel,
                     "session/prompt" => {
                         let text: String = m["params"]["prompt"]
@@ -587,10 +646,12 @@ impl Inner {
                         fx.push(Effect::OpenSession);
                     }
                     (Purpose::New, None) => {
+                        self.config_options = r["configOptions"].clone();
                         self.cfg.session_id = r["sessionId"].as_str().map(str::to_owned);
                         fx.push(Effect::SessionOpen { fresh: true });
                     }
                     (Purpose::Load { merge }, None) => {
+                        self.config_options = r["configOptions"].clone();
                         if let Some(replay) = self.replay.take() {
                             if merge {
                                 self.t.merge(replay);
@@ -600,7 +661,23 @@ impl Inner {
                         }
                         fx.push(Effect::SessionOpen { fresh: false });
                     }
-                    (Purpose::Resume, None) => fx.push(Effect::SessionOpen { fresh: false }),
+                    (Purpose::Resume, None) => {
+                        self.config_options = r["configOptions"].clone();
+                        fx.push(Effect::SessionOpen { fresh: false });
+                    }
+                    (Purpose::Fork, None) => {
+                        // The fork isn't open yet (S20): reopen it as ours.
+                        self.cfg.session_id = r["sessionId"].as_str().map(str::to_owned);
+                        self.cfg.fork = false;
+                        let sid = self.cfg.session_id.clone().unwrap_or_default();
+                        self.t.note(format!("Forked into a new session ({sid}); the original is left as it was"), at);
+                        fx.push(Effect::OpenSession);
+                    }
+                    (Purpose::Fork, Some(e)) => {
+                        self.cfg.fork = false;
+                        self.t.note(format!("Couldn't fork the session: {e}"), at);
+                        self.error = Some(format!("couldn't fork: {e}"));
+                    }
                     (Purpose::Load { .. } | Purpose::Resume, Some(e)) => {
                         self.replay = None;
                         fx.push(Effect::SessionLost(e));
@@ -885,6 +962,13 @@ impl Inner {
             "turns": self.turns.len(),
             "recent_turns": self.turns.iter().rev().take(20).collect::<Vec<_>>(),
             "allow": self.cfg.allow,
+            "import": self.cfg.import.as_ref().map(|i| json!({
+                "source": i.source,
+                "path": i.path,
+                "title": i.title,
+                "continued": self.frozen,
+                "held": self.held.as_ref().map(|l| json!({ "pid": l.pid, "pane": l.pane, "block": l.block, "entrypoint": l.entrypoint, "status": l.status, "place": l.place() })),
+            })),
             "entries_from": from,
             "entries": entries,
         })
@@ -949,6 +1033,18 @@ impl Agent {
         let mut inner = self.inner.lock().unwrap();
         if let Some(p) = inner.cfg.prompt.take() {
             inner.enqueue(&p, false);
+        }
+        if inner.cfg.import.is_some() {
+            if let Some(t) = inner.cfg.import.as_ref().and_then(|i| i.title.clone()) {
+                inner.title.get_or_insert(t);
+            }
+            // Opened, not continued: its transcript, read as it grows, and
+            // nothing running (M33).
+            if !inner.frozen {
+                inner.status = Status::Stopped;
+                refresh_import(self.ctx.id, &mut inner);
+                return;
+            }
         }
         if self.ctx.restoring {
             // Still running from before the restart: carry on with it.
@@ -1207,6 +1303,7 @@ async fn run(
     let mut remote_check: Option<tokio::time::Instant> = None;
     let mut machine_up = false;
     let (mut retry_at, mut retries): (Option<tokio::time::Instant>, u32) = (None, 0);
+    let mut follow_at = tokio::time::Instant::now() + FOLLOW_EVERY;
     // What it was before a restart, for the "needs you" list.
     publish(&ctx, &inner, true);
     loop {
@@ -1275,6 +1372,13 @@ async fn run(
                     dirty = false;
                     publish(&ctx, &inner, false);
                 }
+                if tokio::time::Instant::now() >= follow_at {
+                    follow_at = tokio::time::Instant::now() + FOLLOW_EVERY;
+                    let mut g = inner.lock().unwrap();
+                    if g.cfg.import.is_some() && !g.frozen && refresh_import(ctx.id, &mut g) {
+                        dirty = true;
+                    }
+                }
                 if retry_at.is_some_and(|t| tokio::time::Instant::now() >= t) {
                     retry_at = None;
                     send_next(&ctx, &mut inner.lock().unwrap());
@@ -1320,6 +1424,34 @@ async fn fountain_busy(def: &Def, session: &str) -> Option<bool> {
     Some(matches!(status.as_str(), "running" | "pending" | "busy" | "active"))
 }
 
+/// An opened conversation, read again if its transcript changed; and who
+/// holds it now. True if anything changed.
+fn refresh_import(block: illogical_proto::PaneId, g: &mut Inner) -> bool {
+    let Some(imp) = g.cfg.import.clone() else { return false };
+    let held = g.cfg.session_id.as_deref().and_then(|sid| {
+        crate::conversations::Index::global().lock().unwrap().live_for(sid).filter(|l| l.block != Some(block))
+    });
+    let mut changed = held != g.held;
+    if changed {
+        // Whether a tool call without a result was cut off depends on it.
+        g.import_stamp = None;
+    }
+    g.held = held;
+    let stamp = std::fs::metadata(&imp.path).ok().and_then(|m| Some((m.len(), m.modified().ok()?)));
+    if stamp.is_some() && stamp != g.import_stamp {
+        if let Ok(bytes) = std::fs::read(&imp.path) {
+            let entries = crate::conversations::convert::entries(&bytes, g.held.is_none());
+            g.t = Transcript::from_entries(entries);
+            g.import_stamp = stamp;
+            changed = true;
+        }
+    } else if stamp.is_none() && g.t.entries.is_empty() {
+        g.t.note(format!("Its transcript ({}) is gone", imp.path), now_ms());
+        changed = true;
+    }
+    changed
+}
+
 fn publish(ctx: &BlockCtx, inner: &Arc<Mutex<Inner>>, first: bool) {
     let mut g = inner.lock().unwrap();
     let (a, why) = g.attention();
@@ -1343,16 +1475,35 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             });
             let resume = g.caps["sessionCapabilities"]["resume"].is_object();
             let load = g.caps["loadSession"].as_bool() == Some(true);
+            let fork = g.caps["sessionCapabilities"]["fork"].is_object();
+            let with_meta = |mut p: Value, g: &Inner| {
+                if let Some(m) = imported_meta(g) {
+                    p["_meta"] = m;
+                }
+                p
+            };
             match &g.cfg.session_id {
+                Some(sid) if g.cfg.fork && fork => {
+                    let sid = sid.clone();
+                    let mcp = g.servers(ctx);
+                    let p = with_meta(json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }), g);
+                    g.request("session/fork", p);
+                }
+                Some(_) if g.cfg.fork => {
+                    g.cfg.fork = false;
+                    g.note(json!({ "e": "error", "message": "This agent can't fork sessions" }));
+                }
                 Some(sid) if resume && !g.t.entries.is_empty() => {
                     let sid = sid.clone();
                     let mcp = g.servers(ctx);
-                    g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
+                    let p = with_meta(json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }), g);
+                    g.request("session/resume", p);
                 }
                 Some(sid) if load => {
                     let sid = sid.clone();
                     let mcp = g.servers(ctx);
-                    g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
+                    let p = with_meta(json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }), g);
+                    g.request("session/load", p);
                 }
                 _ => new_session(ctx, g, &cwd),
             }
@@ -1364,7 +1515,13 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             new_session(ctx, g, &cwd);
         }
         Effect::SessionOpen { fresh: _ } => {
-            if let Some(model) = g.cfg.def.model.clone() {
+            // An imported conversation goes on with the model it had (a
+            // resume resets it to the adapter's default, S20).
+            let model = g.cfg.def.model.clone().or_else(|| {
+                let want = g.cfg.import.as_ref()?.model.clone()?;
+                crate::conversations::model_option(&g.config_options, &want)
+            });
+            if let Some(model) = model {
                 let session = g.session();
                 g.request(
                     "session/set_config_option",
@@ -1440,8 +1597,21 @@ fn redacted(frame: &Value) -> std::borrow::Cow<'_, Value> {
     Cow::Owned(f)
 }
 
+/// An imported conversation's `_meta` (M33): your settings, skills and
+/// `CLAUDE.md`, as it had where it started, with every hook off (S20 Q3:
+/// `project` is what loads `CLAUDE.md`, and it brings the project's hooks).
+fn imported_meta(g: &Inner) -> Option<Value> {
+    (g.cfg.import.is_some() && g.cfg.def.agent == Kind::Claude).then(|| {
+        json!({ "claudeCode": { "options": {
+            "settingSources": ["user", "project", "local"],
+            "settings": { "disableAllHooks": true },
+        } } })
+    })
+}
+
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
-    let meta = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default();
+    let meta = imported_meta(g)
+        .unwrap_or_else(|| g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default());
     let mcp = g.servers(ctx);
     g.request("session/new", json!({ "cwd": cwd, "mcpServers": mcp, "_meta": meta }));
 }
@@ -1632,6 +1802,9 @@ impl Agent {
             // A follow-up from someone (M29): the transcript says whose.
             g.note(json!({ "e": "from", "by": by }));
         }
+        if matches!(g.status, Status::Exited | Status::Stopped) {
+            self.continue_import(&mut g)?;
+        }
         g.enqueue(text, false);
         g.error = None;
         match g.status {
@@ -1644,11 +1817,64 @@ impl Agent {
         Ok(answer)
     }
 
+    /// An opened conversation, about to run here (M33): refused while
+    /// another process holds it (two writers lose one side's turns, S20
+    /// Q5), else what it had is frozen into the block.
+    fn continue_import(&self, g: &mut Inner) -> Result<(), String> {
+        if g.cfg.import.is_none() || g.frozen {
+            return Ok(());
+        }
+        refresh_import(self.ctx.id, g);
+        if let Some(l) = &g.held {
+            return Err(format!("it's {}: fork it instead, or continue once that's closed", l.place()));
+        }
+        self.freeze(g)
+    }
+
+    fn freeze(&self, g: &mut Inner) -> Result<(), String> {
+        if g.cfg.import.is_none() || g.frozen {
+            return Ok(());
+        }
+        // A desktop session's scratch folder goes with it: make it again.
+        if let Some(cwd) = &g.cfg.cwd
+            && !Path::new(cwd).is_dir()
+        {
+            std::fs::create_dir_all(cwd).map_err(|e| format!("can't make {cwd}: {e}"))?;
+        }
+        let file = self.ctx.dir.join("imported.json");
+        let bytes = serde_json::to_vec(&g.t.entries).map_err(|e| e.to_string())?;
+        crate::store::write_atomic(&file, &bytes).map_err(|e| format!("can't keep the transcript: {e}"))?;
+        g.note(json!({ "e": "imported", "file": file.display().to_string() }));
+        Ok(())
+    }
+
+    /// `fork`: a new session with this one's history, then on in that
+    /// (M33). The original is left as it was, whoever holds it.
+    fn fork(&self) -> Result<Value, String> {
+        let mut g = self.inner.lock().unwrap();
+        if g.link.is_some() && !matches!(g.status, Status::Exited | Status::Stopped) {
+            return Err("it's running: fork it once it's stopped".into());
+        }
+        if g.cfg.session_id.is_none() {
+            return Err("there's no session to fork yet".into());
+        }
+        if g.cfg.import.is_some() && !g.frozen {
+            refresh_import(self.ctx.id, &mut g);
+            self.freeze(&mut g)?;
+        }
+        g.cfg.fork = true;
+        self.spawn(&mut g);
+        drop(g);
+        self.changed();
+        Ok(json!({}))
+    }
+
     fn start(&self) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
         if g.link.is_some() && !matches!(g.status, Status::Exited | Status::Stopped) {
             return Err("it's already running".into());
         }
+        self.continue_import(&mut g)?;
         self.spawn(&mut g);
         drop(g);
         self.changed();
@@ -1697,7 +1923,8 @@ impl Block for Agent {
             "answer" => self.answer(&args, by),
             "decline" => self.decline(&args, by),
             "cancel" => self.cancel(),
-            "start" | "resume" => self.start(),
+            "start" | "resume" | "continue" => self.start(),
+            "fork" => self.fork(),
             "forget" => {
                 let mut g = self.inner.lock().unwrap();
                 let before = g.cfg.allow.len();

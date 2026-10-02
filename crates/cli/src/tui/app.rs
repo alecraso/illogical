@@ -26,6 +26,9 @@ use super::{
     pane::{SCROLLBACK, TermPane, Took},
 };
 
+/// `GET /api/conversations`, as it came back (M33).
+type Listed = anyhow::Result<Vec<u8>>;
+
 /// What keys go to right now.
 pub enum Mode {
     Normal,
@@ -70,6 +73,10 @@ pub enum Act {
     Sidebar,
     /// Copy mode in the focused pane.
     Copy,
+    /// The Claude Code conversations menu (M33).
+    Conversations,
+    /// Show a conversation as an agent block beside the focused pane.
+    OpenConversation(String),
     ToggleSidebar,
     Quit,
     /// A heading, not an item.
@@ -173,6 +180,8 @@ pub struct App {
     pub fetched: (mpsc::Sender<Fetched>, mpsc::Receiver<Fetched>),
     /// `--session`: where to start.
     start: Option<String>,
+    /// The conversations list, as it comes back (M33).
+    pub conversations: (mpsc::Sender<Listed>, mpsc::Receiver<Listed>),
 }
 
 impl App {
@@ -211,6 +220,7 @@ impl App {
             clip: None,
             fetched: mpsc::channel(),
             start,
+            conversations: mpsc::channel(),
         };
         app.seen_tabs = state.tabs.iter().map(|t| t.id).collect();
         app.seen_panes = state.panes.iter().map(|p| p.id).collect();
@@ -272,6 +282,12 @@ impl App {
                 self.mode = Mode::Sidebar { sel: 0 };
             }
             Act::Copy => self.enter_copy(),
+            Act::Conversations => self.list_conversations(),
+            Act::OpenConversation(id) => {
+                self.follow_new = true;
+                let body = json!({ "id": id, "split": self.focus, "from_pane": self.focus });
+                self.conn.api("/api/conversations/open".into(), body, "open that conversation");
+            }
             Act::ToggleSidebar => self.sidebar = !self.sidebar,
             Act::Quit => self.quit = true,
             Act::None => {}
@@ -705,6 +721,11 @@ impl App {
                 self.conn.api(call("deny"), json!({ "id": p.id }), "deny that");
             }
             KeyCode::Char('i') | KeyCode::Enter => self.prompt(Ask::AgentSend(id)),
+            // M33: an opened conversation.
+            KeyCode::Char('C') if state["import"].is_object() => {
+                self.conn.api(call("continue"), json!({}), "continue it")
+            }
+            KeyCode::Char('F') if state["import"].is_object() => self.conn.api(call("fork"), json!({}), "fork it"),
             KeyCode::PageUp => *scroll += 10,
             KeyCode::Up => *scroll += 1,
             KeyCode::PageDown => *scroll = scroll.saturating_sub(10),
@@ -748,6 +769,7 @@ impl App {
             }
             KeyCode::Char('o') => self.cycle_focus(),
             KeyCode::Char('[') => self.enter_copy(),
+            KeyCode::Char('C') => self.list_conversations(),
             KeyCode::Left => self.focus_toward(Edge::Left),
             KeyCode::Right => self.focus_toward(Edge::Right),
             KeyCode::Up => self.focus_toward(Edge::Top),
@@ -865,6 +887,64 @@ impl App {
             _ => {}
         }
         self.mode = Mode::Sidebar { sel };
+    }
+
+    // ---- Claude Code conversations (M33) ----
+
+    fn list_conversations(&mut self) {
+        let tx = self.conversations.0.clone();
+        self.conn.get("/api/conversations?limit=40".into(), move |r| {
+            let _ = tx.send(r);
+        });
+        self.say("Reading Claude Code conversations…");
+    }
+
+    /// The list came back: a menu of them. One a block has (or a pane runs)
+    /// goes there; another opens beside the focused pane.
+    pub fn take_conversations(&mut self) {
+        while let Ok(r) = self.conversations.1.try_recv() {
+            let v: Value = match r.and_then(|b| Ok(serde_json::from_slice(&b)?)) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.say(format!("Couldn't list the conversations: {e:#}"));
+                    continue;
+                }
+            };
+            self.toast = None;
+            let home = std::env::var("HOME").unwrap_or_default();
+            let mut m = vec![heading("Claude Code conversations")];
+            for c in v["conversations"].as_array().into_iter().flatten() {
+                let s = |k: &str| c[k].as_str().unwrap_or("");
+                let title: String = s("title").chars().take(48).collect();
+                let cwd = s("cwd");
+                let cwd = match cwd.strip_prefix(home.as_str()) {
+                    Some(rest) if !home.is_empty() => format!("~{rest}"),
+                    _ => cwd.to_owned(),
+                };
+                let tag = match (c["block"].as_u64(), c["live"]["pane"].as_u64(), c["live"].is_object()) {
+                    (Some(b), _, _) => format!(" [%{b}]"),
+                    (_, Some(p), _) => format!(" [● %{p}]"),
+                    (_, _, true) => " [● open]".into(),
+                    _ => String::new(),
+                };
+                let src = if s("source") == "desktop" { "desk" } else { "term" };
+                let label = format!("{src}  {title}{tag}  {cwd}");
+                let go = |p: u64| {
+                    let p = p as PaneId;
+                    self.tab_of(p).map(|t| Act::Go(t, Some(p)))
+                };
+                let act = c["block"]
+                    .as_u64()
+                    .and_then(go)
+                    .or_else(|| c["live"]["pane"].as_u64().and_then(go))
+                    .unwrap_or_else(|| Act::OpenConversation(s("id").to_owned()));
+                m.push(item(&label, act));
+            }
+            if m.len() == 1 {
+                m.push(heading("None here"));
+            }
+            self.open_menu(self.area.x + 1, self.area.y, m);
+        }
     }
 
     // ---- menus ----
@@ -997,6 +1077,7 @@ impl App {
         if let Some(t) = self.tab {
             m.push(item("r  Rename tab", Act::Ask(Ask::RenameTab(t))));
         }
+        m.push(item("C  Claude Code conversations", Act::Conversations));
         m.push(item("w  Sidebar: tabs and what needs you", Act::Sidebar));
         m.push(item("b  Show or hide the sidebar", Act::ToggleSidebar));
         m.push(heading("o next pane · ←→↑↓ focus · n/p tab · 1-9 tab · m pane menu · t tab menu"));

@@ -71,6 +71,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/editors/vsix", get(vsix))
         .route("/api/ide/mention", post(ide_mention))
         .route("/api/sessions/{id}/secrets", get(secrets))
+        .route("/api/conversations", get(conversations))
+        .route("/api/conversations/open", post(open_conversation))
         .route("/api/blocks", post(open_block))
         .route("/api/blocks/{id}", get(describe))
         .route("/api/blocks/{id}/call/{method}", post(call))
@@ -86,7 +88,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/notify", get(notify_get).post(notify_set))
 }
 
-struct ApiError(StatusCode, String);
+pub struct ApiError(pub StatusCode, pub String);
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -726,6 +728,181 @@ async fn open_block(
         Some(Err(e)) => Err(bad(e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ConversationsQuery {
+    /// Everything: other sources, archived ones, ones whose folder is gone.
+    #[serde(default, deserialize_with = "flag")]
+    pub all: bool,
+    /// Words in the title, prompts or folder.
+    pub q: Option<String>,
+    /// Under this folder.
+    pub cwd: Option<String>,
+    /// Only ones a process holds now.
+    #[serde(default, deserialize_with = "flag")]
+    pub live: bool,
+    pub limit: Option<usize>,
+}
+
+/// A query flag: `1`, `true`, `yes` or empty (`?all`) are on.
+fn flag<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    let s = String::deserialize(d)?;
+    Ok(matches!(s.as_str(), "" | "1" | "true" | "yes" | "on"))
+}
+
+/// Agent blocks by the Claude Code session they have.
+async fn blocks_by_session(app: &App) -> HashMap<String, PaneId> {
+    let mut out = HashMap::new();
+    for p in app.mux.api(Api::Panes).await.unwrap_or_default() {
+        if p.info.kind != illogical_proto::BlockType::Agent {
+            continue;
+        }
+        if let Some(b) = app.mux.api(|r| Api::Block(p.info.id, r)).await.flatten()
+            && let Some(sid) = b.config()["session_id"].as_str()
+        {
+            out.insert(sid.to_owned(), p.info.id);
+        }
+    }
+    out
+}
+
+/// `GET /api/conversations` (M33): Claude Code conversations on this
+/// machine, newest first, with the block that has each one open.
+async fn conversations(State(app): AppState, Query(q): Query<ConversationsQuery>) -> Res<Json<serde_json::Value>> {
+    list_conversations(&app, q).await.map(Json).map_err(bad)
+}
+
+pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<serde_json::Value, String> {
+    let blocks = blocks_by_session(app).await;
+    let ours: std::collections::HashSet<PaneId> =
+        app.mux.api(Api::Panes).await.unwrap_or_default().into_iter().map(|p| p.info.id).collect();
+    let list = tokio::task::spawn_blocking(|| crate::conversations::Index::global().lock().unwrap().scan())
+        .await
+        .map_err(|e| e.to_string())?;
+    let words: Vec<String> = q.q.as_deref().unwrap_or("").split_whitespace().map(str::to_lowercase).collect();
+    let total = list.len();
+    let out: Vec<serde_json::Value> = list
+        .into_iter()
+        .filter(|c| crate::conversations::shown(c, q.all))
+        .filter(|c| !q.live || c.live.is_some())
+        .filter(|c| q.cwd.as_deref().is_none_or(|d| crate::paths::is_under(&c.cwd, d)))
+        .filter(|c| {
+            let hay = format!(
+                "{} {} {} {}",
+                c.title,
+                c.first_prompt.as_deref().unwrap_or(""),
+                c.last_prompt.as_deref().unwrap_or(""),
+                c.cwd
+            )
+            .to_lowercase();
+            words.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .take(q.limit.unwrap_or(500))
+        .map(|mut c| {
+            let block = blocks.get(&c.id).copied();
+            if let Some(l) = c.live.as_mut() {
+                // A scope named for a pane of another daemon on this
+                // machine (a dev or test one) isn't one of ours.
+                l.pane = l.pane.filter(|p| ours.contains(p));
+                l.block = l.block.filter(|p| ours.contains(p));
+                l.place = l.place();
+            }
+            // The adapter of the block that has it, when its scope didn't
+            // say (no systemd scopes).
+            if let (Some(b), Some(l)) = (block, c.live.as_mut())
+                && l.block.is_none()
+                && l.entrypoint == "sdk-ts"
+            {
+                l.block = Some(b);
+                l.pane = None;
+                l.place = l.place();
+            }
+            let mut v = serde_json::to_value(&c).unwrap_or_default();
+            v["block"] = serde_json::json!(block);
+            v
+        })
+        .collect();
+    Ok(serde_json::json!({ "conversations": out, "total": total }))
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct OpenConversation {
+    /// Its id, or a unique prefix.
+    pub id: String,
+    /// Then `continue` or `fork` it.
+    #[serde(default)]
+    pub then: Option<String>,
+    #[serde(default)]
+    pub session: Option<String>,
+    #[serde(default)]
+    pub split: Option<PaneId>,
+    #[serde(default)]
+    pub from_pane: Option<PaneId>,
+}
+
+/// `POST /api/conversations/open` (M33): a conversation as an agent block,
+/// stopped, showing its transcript; the block that already has it, if one
+/// does. `then` continues or forks it.
+async fn open_conversation(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(req): Json<OpenConversation>,
+) -> Res<Json<serde_json::Value>> {
+    open_conversation_as(&app, who.map(|axum::Extension(w)| w), req).await.map(Json)
+}
+
+pub async fn open_conversation_as(
+    app: &App,
+    who: Option<crate::acl::Principal>,
+    req: OpenConversation,
+) -> Result<serde_json::Value, ApiError> {
+    let id = req.id.clone();
+    let c = tokio::task::spawn_blocking(move || crate::conversations::Index::global().lock().unwrap().find(&id))
+        .await
+        .map_err(|e| bad(e.to_string()))?
+        .map_err(|e| ApiError(StatusCode::NOT_FOUND, e))?;
+    let existing = blocks_by_session(app).await.get(&c.id).copied();
+    let (block, opened) = match existing {
+        Some(b) => (b, false),
+        None => {
+            let source = serde_json::to_value(c.source).unwrap_or_default();
+            let config = serde_json::json!({
+                "agent": "claude",
+                "cwd": c.cwd,
+                "session_id": c.id,
+                "import": { "path": c.path, "source": source, "title": c.title, "model": c.model },
+            });
+            let open = illogical_proto::api::OpenRequest {
+                kind: illogical_proto::BlockType::Agent,
+                config,
+                session: req.session,
+                split: req.split,
+                from_pane: req.from_pane,
+                vm: false,
+                image: None,
+                host: None,
+                local: true,
+            };
+            match app.mux.api(|r| Api::Open(open, who, r)).await {
+                Some(Ok(b)) => (b, true),
+                Some(Err(e)) => return Err(bad(e)),
+                None => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+            }
+        }
+    };
+    let mut out = serde_json::json!({ "block": block, "opened": opened, "conversation": c.id });
+    if let Some(then) = req.then.as_deref() {
+        let method = match then {
+            "continue" | "fork" => then,
+            t => return Err(bad(format!("then: {t}? (continue or fork)"))),
+        };
+        let b = app.mux.api(|r| Api::Block(block, r)).await.flatten().ok_or_else(|| bad("the block went away"))?;
+        if let Err(e) = b.call(method, serde_json::json!({})).await {
+            out["error"] = serde_json::json!(e);
+        }
+    }
+    Ok(out)
 }
 
 /// `describe %N`: where a block is and what it's doing, for any type.

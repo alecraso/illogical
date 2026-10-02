@@ -21,10 +21,18 @@ Prompts:
   signin         an MCP server's sign-in link; elicitation/complete follows
                  the accept
   codex ask      Codex's plan-mode question form
+  meta           says the _meta its session was last opened or forked with
+  model          says the model set_config_option chose
   mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
                  one, as illogical passes local agents, M16; or a stdio one,
                  as it passes agents in a VM, #59) with JSON as its
                  arguments, and says "MCP " and the result as JSON
+
+Claude Code conversations (M33): a session/resume or session/load of a
+session it doesn't have finds $CLAUDE_CONFIG_DIR/projects/*/<id>.jsonl, as
+Claude Code would, and remembers the last "remember WORD" prompt in it.
+session/fork copies a session to a new id (it isn't opened, as with
+claude-agent-acp).
 
 Only clients that declare elicitation {form: {}, url: {}} get questions; the
 others get "I don't have access to an AskUserQuestion tool" (S13).
@@ -49,6 +57,12 @@ cancelled = set()  # session ids with a cancel pending
 asking = {}  # session id -> the elicitation request id it waits on
 caps = {}  # the client's capabilities
 WITHDRAWN = {"withdrawn": True}
+# As claude-agent-acp names its models.
+CONFIG_OPTIONS = [{"id": "model", "name": "Model", "type": "select", "currentValue": "default", "options": [
+    {"value": "default", "name": "Default (recommended)"},
+    {"value": "opus", "name": "Opus 5.5"},
+    {"value": "haiku", "name": "Haiku 4.5"},
+]}]
 
 
 def log(*a):
@@ -71,7 +85,29 @@ def load(sid):
         with open(path(sid)) as f:
             return json.load(f)
     except OSError:
+        return from_transcript(sid)
+
+
+def from_transcript(sid):
+    """A Claude Code transcript of this session, if there is one."""
+    root = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")), "projects")
+    if not sid or not os.path.isdir(root):
         return None
+    for d in os.listdir(root):
+        p = os.path.join(root, d, f"{sid}.jsonl")
+        if not os.path.isfile(p):
+            continue
+        s = {"updates": [], "imported": p}
+        for line in open(p):
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            c = (o.get("message") or {}).get("content")
+            if o.get("type") == "user" and isinstance(c, str) and c.startswith("remember "):
+                s["memory"] = c[9:]
+        return s
+    return None
 
 
 def save(sid, s):
@@ -391,6 +427,10 @@ def prompt(mid, p):
         _, tool, *rest = text.split(" ", 2)
         args = json.loads(rest[0]) if rest else {}
         msg("MCP " + json.dumps(mcp_call(s.get("mcp"), tool, args)))
+    elif text == "meta":
+        msg("META " + json.dumps(s.get("meta"), sort_keys=True))
+    elif text == "model":
+        msg(f"Model: {s.get('model', 'default')}")
     elif text == "crash":
         msg("bye")
         os._exit(3)
@@ -414,7 +454,7 @@ def handle(m):
     if method == "initialize":
         caps.update(p.get("clientCapabilities") or {})
         send({"id": mid, "result": {"protocolVersion": 1, "agentCapabilities": {
-            "loadSession": True, "sessionCapabilities": {"resume": {}},
+            "loadSession": True, "sessionCapabilities": {"resume": {}, "fork": {}},
             "mcpCapabilities": {"http": True}},
             "agentInfo": {"name": "fake-acp", "version": "1"}, "authMethods": []}})
     elif method == "session/new":
@@ -429,13 +469,28 @@ def handle(m):
             send({"id": mid, "error": {"code": -32002, "message": "no such session"}})
             return
         s["mcp"] = p.get("mcpServers")
+        if "_meta" in p:
+            s["meta"] = p["_meta"]
         save(p["sessionId"], s)
         if method == "session/load":
             for u in s["updates"]:
                 send({"method": "session/update", "params": {"sessionId": p["sessionId"], "update": u}})
-        send({"id": mid, "result": {}})
+        send({"id": mid, "result": {"configOptions": CONFIG_OPTIONS}})
+    elif method == "session/fork":
+        s = load(p.get("sessionId", ""))
+        if s is None:
+            send({"id": mid, "error": {"code": -32002, "message": "no such session"}})
+            return
+        sid = f"fork-{os.getpid()}-{int(time.time() * 1000)}"
+        s = dict(s, forked_from=p["sessionId"], meta=p.get("_meta"))
+        save(sid, s)
+        send({"id": mid, "result": {"sessionId": sid}})
     elif method == "session/set_config_option":
-        send({"id": mid, "result": {"configOptions": []}})
+        s = load(p.get("sessionId", ""))
+        if s is not None and p.get("configId") == "model":
+            s["model"] = p.get("value")
+            save(p["sessionId"], s)
+        send({"id": mid, "result": {"configOptions": CONFIG_OPTIONS}})
     elif method == "session/prompt":
         threading.Thread(target=prompt, args=(mid, p), daemon=True).start()
     elif method == "session/cancel":

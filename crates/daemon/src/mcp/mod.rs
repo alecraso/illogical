@@ -236,8 +236,9 @@ const INSTRUCTIONS: &str = "illogical runs commands in durable terminal panes th
 (on the web and the phone) and take over. Use run to start a build or a dev server in a pane (wait: true \
 to wait for it), wait and read_output to follow it (they return \"still running\" with an offset: call \
 again), list to see what's there, open_port to show a dev server in a browser block beside its terminal, \
-start_agent and agent_respond to supervise another agent, and history and search for what happened \
-before. Output is paged: pass next_offset back as offset.";
+start_agent and agent_respond to supervise another agent, list_conversations and open_conversation to \
+pick up a Claude Code conversation from a terminal or the desktop app, and history and search for what \
+happened before. Output is paged: pass next_offset back as offset.";
 
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {

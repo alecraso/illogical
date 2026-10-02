@@ -10,6 +10,7 @@ import { HostCrumb, HostSection } from "./hosts";
 import { openSwarm } from "../swarm/route";
 import { openChanges, openPort } from "../blocks";
 import { startAgent } from "./agent-dialog";
+import { pickConversation } from "./conversations";
 import { openSandboxes } from "./sandboxes";
 import { openPicker } from "./picker";
 
@@ -111,6 +112,14 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           </button>
           <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
           <button onClick={act(() => client.session !== null && startAgent(client, { session: client.session, from: active }))}>New agent</button>
+          {!state.roles && (
+            <button
+              data-conversations
+              onClick={act(() => client.session !== null && pickConversation(client, { session: client.session, cwd: (active !== undefined && client.cwd(active)) || undefined }, true))}
+            >
+              Conversations
+            </button>
+          )}
           {active !== undefined && <button onClick={act(() => openPicker(client, active, true))}>Go to directory</button>}
           {active !== undefined && !state.roles && (
             <button data-changes onClick={act(() => openChanges(client, active))}>

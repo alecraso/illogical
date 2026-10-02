@@ -9,6 +9,7 @@ mod block;
 mod browser;
 mod classify;
 mod control;
+mod conversations;
 mod dial;
 mod e2e;
 mod editor;

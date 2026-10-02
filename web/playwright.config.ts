@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
 
 // Directories for the run, made once (workers load this config too, and
@@ -17,6 +18,19 @@ process.on("exit", () => {
 // Daemons the tests start register as Claude Code's IDE (M28) here, not in
 // ~/.claude/ide: every spec's daemon inherits this (workers too).
 runDir("ILLOGICAL_CLAUDE_IDE_DIR", "illogical-e2e-ide-");
+
+// M33: the daemon lists Claude Code conversations from a Claude directory
+// of the run's own (conversations.spec.ts seeds it), and Claude Code's
+// adapter is the fake ACP agent, so no test reaches a real Claude.
+mkdirSync(join(runDir("CLAUDE_CONFIG_DIR", "illogical-e2e-claude-"), "sessions"), { recursive: true });
+runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
+{
+  const bin = join(runDir("ILLOGICAL_AGENTS_DIR", "illogical-e2e-agents-"), "claude/node_modules/.bin");
+  mkdirSync(bin, { recursive: true });
+  const fake = fileURLToPath(new URL("../crates/daemon/tests/fake_acp.py", import.meta.url));
+  writeFileSync(join(bin, "claude-agent-acp"), `#!/bin/sh\nexec python3 ${fake} "$@"\n`);
+  chmodSync(join(bin, "claude-agent-acp"), 0o755);
+}
 
 // By default runs against a throwaway debug daemon on 7683 (which serves
 // web/dist from disk), driving the system Chrome. Set E2E_BASE_URL to test a
