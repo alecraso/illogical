@@ -83,8 +83,8 @@ impl Msg {
             v
         }
         match self {
-            Msg::Text(t) => [&[b'T'], t.as_bytes()].concat(),
-            Msg::Binary(b) => [&[b'B'], b.as_slice()].concat(),
+            Msg::Text(t) => [b"T", t.as_bytes()].concat(),
+            Msg::Binary(b) => [b"B", b.as_slice()].concat(),
             Msg::Request { id, head, body } => with_head(b'Q', *id, head, body),
             Msg::Response { id, head, body } => with_head(b'R', *id, head, body),
         }
