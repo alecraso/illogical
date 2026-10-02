@@ -71,7 +71,13 @@ notices:
 test: web
     {{cargo}} test --workspace
     cd web && pnpm run typecheck
-    just e2e-interop
+    just e2e-interop control-smoke
+
+# Control end to end without a browser: sign in (fake GitHub), enroll,
+# join a daemon, reach it through the relay and directly.
+control-smoke:
+    {{cargo}} build -p illogical-control -p illogicald
+    cd web && node --experimental-strip-types --no-warnings control-smoke.ts
 
 # The browser's end-to-end crypto (web/src/e2e) against Rust's (crates/e2e).
 e2e-interop:

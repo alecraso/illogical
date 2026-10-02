@@ -383,16 +383,24 @@ pub async fn keep_dialing(opts: PeerOpts, accept: mpsc::UnboundedSender<DuplexSt
     }
 }
 
-type Ws = tokio_tungstenite::WebSocketStream<Box<dyn Io>>;
-trait Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+pub type Ws = tokio_tungstenite::WebSocketStream<Box<dyn Io>>;
+pub trait Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Io for T {}
 
 async fn open_socket(opts: &PeerOpts) -> anyhow::Result<Ws> {
     let token = token(opts).await?;
     let url = dial_url(&opts.url)?;
+    open_ws(&url, &[(header::AUTHORIZATION.as_str(), &format!("Bearer {token}"))]).await
+}
+
+/// A WebSocket to `url` (ws or wss) with extra request headers: the tunnel
+/// to a home daemon, or (M18) to control's relay.
+pub async fn open_ws(url: &reqwest::Url, headers: &[(&str, &str)]) -> anyhow::Result<Ws> {
     let mut req = url.as_str().into_client_request()?;
-    req.headers_mut().insert(header::AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {token}"))?);
-    let host = url.host_str().ok_or_else(|| anyhow::anyhow!("--peer has no host"))?.to_owned();
+    for (k, v) in headers {
+        req.headers_mut().insert(axum::http::HeaderName::from_bytes(k.as_bytes())?, HeaderValue::from_str(v)?);
+    }
+    let host = url.host_str().ok_or_else(|| anyhow::anyhow!("{url} has no host"))?.to_owned();
     let port = url.port_or_known_default().unwrap_or(443);
     let tcp = tokio::time::timeout(Duration::from_secs(15), tokio::net::TcpStream::connect((host.as_str(), port)))
         .await
@@ -408,7 +416,8 @@ async fn open_socket(opts: &PeerOpts) -> anyhow::Result<Ws> {
     config.max_message_size = Some(1 << 20);
     let (ws, _) = tokio_tungstenite::client_async_with_config(req, io, Some(config)).await.map_err(|e| match e {
         tungstenite::Error::Http(r) => anyhow::anyhow!(
-            "the home daemon said {}: {}",
+            "{} said {}: {}",
+            url.host_str().unwrap_or("it"),
             r.status(),
             r.body().as_deref().map(String::from_utf8_lossy).unwrap_or_default()
         ),
@@ -432,6 +441,12 @@ fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
 async fn connect_once(opts: &PeerOpts, accept: &mpsc::UnboundedSender<DuplexStream>) -> anyhow::Result<()> {
     let ws = open_socket(opts).await?;
     info!(peer = opts.url, "tunnel to the home daemon up");
+    serve_mux(ws, accept).await
+}
+
+/// The host end of a mux over `ws`: streams the other end opens go to
+/// `accept`, until the socket closes or goes quiet.
+pub async fn serve_mux(ws: Ws, accept: &mpsc::UnboundedSender<DuplexStream>) -> anyhow::Result<()> {
     let (mux, mut out) = Mux::new(Some(accept.clone()));
     let (mut tx, mut rx) = ws.split();
     let mut ping = tokio::time::interval(PING_EVERY);
@@ -442,7 +457,7 @@ async fn connect_once(opts: &PeerOpts, accept: &mpsc::UnboundedSender<DuplexStre
                 Some(Ok(tungstenite::Message::Binary(b))) => {
                     heard = Instant::now();
                     if let Err(e) = mux.handle(&b) {
-                        break Err(anyhow::anyhow!("the home daemon broke the protocol: {e}"));
+                        break Err(anyhow::anyhow!("the other end broke the protocol: {e}"));
                     }
                 }
                 Some(Ok(tungstenite::Message::Close(_))) | None => break Ok(()),
@@ -454,7 +469,7 @@ async fn connect_once(opts: &PeerOpts, accept: &mpsc::UnboundedSender<DuplexStre
             }
             _ = ping.tick() => {
                 if heard.elapsed() > DEAD_AFTER {
-                    break Err(anyhow::anyhow!("the home daemon went quiet"));
+                    break Err(anyhow::anyhow!("the other end went quiet"));
                 }
                 if let Err(e) = tx.send(tungstenite::Message::Ping(Default::default())).await { break Err(e.into()) }
             }

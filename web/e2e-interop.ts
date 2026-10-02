@@ -42,6 +42,7 @@ try {
   const bins: Uint8Array[] = [];
   sock.onText = (t) => texts.push(t);
   sock.onBinary = (b) => bins.push(b);
+  sock.start();
   sock.sendText('{"type":"attach"}');
   const big = Uint8Array.from({ length: 100_000 }, (_, i) => i % 251);
   sock.sendBinary(big);

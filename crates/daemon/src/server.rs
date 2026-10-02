@@ -53,6 +53,8 @@ pub struct App {
     pub shares: Arc<crate::share::Shares>,
     /// History other hosts synced to us.
     pub synced: Arc<crate::sync::Synced>,
+    /// Enrollment in illogical control: trusted devices, the relay.
+    pub control: Arc<crate::control::Control>,
     next_client: AtomicU64,
 }
 
@@ -67,6 +69,7 @@ impl App {
         shares: Arc<crate::share::Shares>,
         synced: Arc<crate::sync::Synced>,
         binaries: Option<crate::resident::Binaries>,
+        control: Arc<crate::control::Control>,
     ) -> Arc<Self> {
         Arc::new(Self {
             access,
@@ -78,8 +81,13 @@ impl App {
             shares,
             synced,
             binaries,
+            control,
             next_client: AtomicU64::new(1),
         })
+    }
+
+    pub fn new_client_id(&self) -> ClientId {
+        self.next_client.fetch_add(1, Ordering::Relaxed)
     }
 }
 
@@ -106,6 +114,7 @@ fn api_routes() -> Router<Arc<App>> {
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws))
+        .route(crate::e2e::PATH, get(crate::e2e::ws))
         .merge(api_routes().layer(middleware::from_fn_with_state(app.clone(), api_origin)))
         .merge(crate::share::viewer_routes())
         .fallback(asset)
@@ -125,6 +134,12 @@ pub fn local_router(app: Arc<App>) -> Router {
 /// would make this host a way to anywhere else (no `/h/`, no dialing in).
 pub fn tunnel_router(app: Arc<App>) -> Router {
     Router::new().route("/ws", get(local_ws)).merge(own_routes()).with_state(app)
+}
+
+/// Inside an end-to-end channel (`e2e.rs`): the device was checked by the
+/// handshake. The daemon's own API only, as over the tunnel.
+pub fn channel_router(app: Arc<App>) -> Router {
+    own_routes().with_state(app)
 }
 
 /// An embedded web client file.
@@ -209,6 +224,7 @@ enum Class {
     Viewer,
     /// A host's, without a user identity: the token it carries (an invite,
     /// or its per-host token) is the credential, checked by the handler.
+    /// Or an end-to-end channel, whose handshake is the credential.
     /// Joining is how a tagged sandbox node adds itself; dialing in and
     /// pushing history are how a dial-out host reaches us.
     Token,
@@ -231,6 +247,7 @@ fn class(req: &Request) -> Class {
     let (m, path) = (req.method(), req.uri().path());
     if (m == Method::POST && path == crate::hosts::JOIN_PATH)
         || (m == Method::GET && path == crate::dial::DIAL_PATH)
+        || (m == Method::GET && path == crate::e2e::PATH)
         || path.starts_with(crate::sync::PUSH_PREFIX)
     {
         Class::Token
@@ -272,7 +289,7 @@ async fn local_ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Res
 }
 
 async fn connection(app: Arc<App>, mut socket: WebSocket) {
-    let client: ClientId = app.next_client.fetch_add(1, Ordering::Relaxed);
+    let client: ClientId = app.new_client_id();
     info!(client, "client connected");
     let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
@@ -300,7 +317,7 @@ async fn connection(app: Arc<App>, mut socket: WebSocket) {
     info!(client, "client disconnected");
 }
 
-fn handle(app: &App, client: ClientId, msg: Message) -> anyhow::Result<()> {
+pub(crate) fn handle(app: &App, client: ClientId, msg: Message) -> anyhow::Result<()> {
     match msg {
         Message::Text(text) => {
             let msg = serde_json::from_str::<ClientMsg>(&text)?;

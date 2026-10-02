@@ -123,15 +123,18 @@ export class E2ESocket {
   private send_: Cipher;
   private recv: Cipher;
 
-  private constructor(ws: WebSocket, send: Cipher, recv: Cipher) {
+  private constructor(ws: WebSocket, send: Cipher, recv: Cipher, early: Uint8Array[]) {
     this.ws = ws;
     this.send_ = send;
     this.recv = recv;
     this.url = ws.url;
-    ws.onmessage = (e) => {
-      const wire = new Uint8Array(e.data as ArrayBuffer);
+    const take = (wire: Uint8Array) => {
       this.recvQ = this.recvQ.then(() => this.take(wire)).catch(() => this.close());
     };
+    // What the daemon sent right after its handshake message (its hello)
+    // arrived while we were still finishing ours.
+    for (const w of early) take(w);
+    ws.onmessage = (e) => take(new Uint8Array(e.data as ArrayBuffer));
     ws.onclose = () => this.close();
   }
 
@@ -158,12 +161,19 @@ export class E2ESocket {
     return new Promise((res, rej) => {
       const ik = new Initiator(keys.noise, unhex(daemon.noise));
       const t = setTimeout(() => rej(new Error("handshake timed out")), Math.max(timeoutMs, 5000));
+      // Every message from the first on is kept: the daemon's first
+      // transport message can arrive before we've finished reading its
+      // handshake reply, and dropping it would skip a nonce.
+      const early: Uint8Array[] = [];
+      let first = true;
       ws.onmessage = async (e) => {
-        ws.onmessage = null;
+        const wire = new Uint8Array(e.data as ArrayBuffer);
+        if (!first) return void early.push(wire);
+        first = false;
         try {
-          const { channel } = await ik.read(new Uint8Array(e.data as ArrayBuffer));
+          const { channel } = await ik.read(wire);
           clearTimeout(t);
-          res(new E2ESocket(ws, channel.send, channel.recv));
+          res(new E2ESocket(ws, channel.send, channel.recv, early));
         } catch (err) {
           clearTimeout(t);
           rej(err);
@@ -195,9 +205,10 @@ export class E2ESocket {
     this.partial = [];
     this.partialLen = 0;
     const m = decodeMsg(whole);
-    if (m.kind === "text") this.onText(m.text);
-    else if (m.kind === "binary") this.onBinary(m.data);
-    else if (m.kind === "response") {
+    if (m.kind === "text" || m.kind === "binary") {
+      if (this.held) this.held.push(m);
+      else this.deliver(m);
+    } else if (m.kind === "response") {
       const done = this.pending.get(m.id);
       this.pending.delete(m.id);
       const body = m.body;
@@ -210,6 +221,23 @@ export class E2ESocket {
         text: () => dec.decode(body),
       });
     }
+  }
+
+  /** Protocol messages that came before `start`. */
+  private held: Msg[] | null = [];
+
+  private deliver(m: Msg) {
+    if (m.kind === "text") this.onText(m.text);
+    else if (m.kind === "binary") this.onBinary(m.data);
+  }
+
+  /** Set `onText` and `onBinary`, then call this: messages that arrived
+   * before (the daemon's hello) are delivered now, in order. Requests work
+   * without it. */
+  start() {
+    const held = this.held ?? [];
+    this.held = null;
+    for (const m of held) this.deliver(m);
   }
 
   private put(m: Msg) {

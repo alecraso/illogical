@@ -132,6 +132,22 @@ impl Cert {
         Ok(())
     }
 
+    /// A request to be approved: well formed apart from the account and
+    /// approver, which the approver fills in.
+    pub fn check_request(&self) -> anyhow::Result<()> {
+        ensure!(self.v == 1, "unknown certificate version {}", self.v);
+        ensure!(plain(&self.name, 64), "a device name is 1 to 64 characters, none of them control characters");
+        let (noise, sign) = (hex32(&self.noise)?, hex32(&self.sign)?);
+        ensure!(device_id(&noise, &sign) == self.device, "device id doesn't match its keys");
+        Ok(())
+    }
+
+    /// The same device, kind and name: what an approval may not change.
+    pub fn same_request(&self, other: &Cert) -> bool {
+        (&self.device, &self.noise, &self.sign, self.kind, &self.name)
+            == (&other.device, &other.noise, &other.sign, other.kind, &other.name)
+    }
+
     pub fn noise_key(&self) -> [u8; 32] {
         hex32(&self.noise).unwrap_or_default()
     }
@@ -150,6 +166,12 @@ impl Cert {
     pub fn signed_by(&self, approver: &Cert) -> bool {
         approver.device == self.approver && verify(&approver.verifying_key(), self.body().as_bytes(), &self.sig)
     }
+}
+
+/// `sig_hex` is `sign_hex`'s Ed25519 signature of `msg`.
+pub fn verify_hex(sign_hex: &str, msg: &[u8], sig_hex: &str) -> bool {
+    let key = hex32(sign_hex).and_then(|k| Ok(VerifyingKey::from_bytes(&k)?));
+    verify(&key, msg, sig_hex)
 }
 
 fn verify(key: &anyhow::Result<VerifyingKey>, msg: &[u8], sig_hex: &str) -> bool {
@@ -182,6 +204,10 @@ impl Revocation {
         };
         r.sig = hex::encode(by.signature(r.body().as_bytes()));
         r
+    }
+
+    pub fn signed_by(&self, signer: &Cert) -> bool {
+        signer.device == self.by && verify(&signer.verifying_key(), self.body().as_bytes(), &self.sig)
     }
 
     pub fn body(&self) -> String {
