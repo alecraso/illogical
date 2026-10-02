@@ -1,5 +1,5 @@
 {"ms":1790975054752,"event":"start","box":"https://s21-app.widgets.wtf","pane":3,"tabs":["18716dfb-454a-48c1-ab9f-87825d46a929"],"startMs":157}
-{"ms":1790975054778,"event":"following","chatKey":"18716dfb-454a-48c1-ab9f-87825d46a929","status":200}
+{"ms":1790975054778,"event":"following","chatKey":"<redacted>","status":200}
 {"ms":1790975054779,"event":"asked","requestId":"9faf77bf-40f0-4045-933d-9d4e65337d9c","hudAskedAt":1790974980523,"lagMs":74256}
 {"ms":1790975064415,"event":"answered-in-illogical","requestId":"9faf77bf-40f0-4045-933d-9d4e65337d9c","optionId":"o1","hud":200,"hudMs":74,"body":"{\"answered\":true,\"requestId\":\"9faf77bf-40f0-4045-933d-9d4e65337d9c\",\"optionId\":\"o1\"}"}
 {"ms":1790975087788,"event":"asked","requestId":"fc9610ef-8b1a-4adc-bc82-6574a5df14a9","hudAskedAt":1790975087777,"lagMs":11}
