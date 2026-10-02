@@ -344,10 +344,12 @@ fn post_mcp(port: u16, auth: &str) -> u16 {
     use std::io::{BufRead, BufReader, Write};
     let mut c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-    write!(
-        c,
-        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: {auth}\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
+    c.write_all(
+        format!(
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: {auth}\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .as_bytes(),
     )
     .unwrap();
     let mut line = String::new();

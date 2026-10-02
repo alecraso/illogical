@@ -8,6 +8,8 @@
 //! has stopped. Guests can't open one. Playwright runs the real code-server
 //! (`web/e2e/editors.spec.ts`).
 
+mod listen;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener},
@@ -49,7 +51,7 @@ impl Daemon {
         let dir = std::env::temp_dir().join(format!("ilg-editors-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("state")).unwrap();
-        let mut d = Self { child: None, dir, port: free_port(), blocks: free_port(), idle };
+        let mut d = Self { child: None, dir, port: 0, blocks: free_port(), idle };
         d.start();
         d
     }
@@ -58,30 +60,31 @@ impl Daemon {
         self.dir.join("state")
     }
 
+    /// Start it: on a port of its choosing, then on the same one again.
     fn start(&mut self) {
         let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_code_server.py");
+        let first = self.port == 0;
+        let addr = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.port) };
         let mut c = Command::new(env!("CARGO_BIN_EXE_illogicald"));
-        c.args([
-            "--listen",
-            &format!("127.0.0.1:{}", self.port),
-            "--block-listen",
-            &format!("127.0.0.1:{}", self.blocks),
-        ])
-        .args(["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"])
-        .args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"])
-        .arg("--state-dir")
-        .arg(self.state())
-        .arg("--code-server")
-        .arg(fake)
-        .env("FAKE_CS_LOG", self.dir.join("servers.log"))
-        // A daemon started in a VS Code terminal doesn't hand that on.
-        .env("VSCODE_IPC_HOOK_CLI", "/tmp/not-for-code-server.sock")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        c.args(["--listen", &addr, "--block-listen", &format!("127.0.0.1:{}", self.blocks)])
+            .args(["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"])
+            .args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"])
+            .arg("--state-dir")
+            .arg(self.state())
+            .arg("--code-server")
+            .arg(fake)
+            .env("FAKE_CS_LOG", self.dir.join("servers.log"))
+            // A daemon started in a VS Code terminal doesn't hand that on.
+            .env("VSCODE_IPC_HOOK_CLI", "/tmp/not-for-code-server.sock")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         if let Some(i) = self.idle {
             c.env("FAKE_CS_IDLE", i);
         }
         self.child = Some(c.spawn().unwrap());
+        if first {
+            self.port = listen::wait_port(&self.state());
+        }
         let (sock, blocks) = (self.sock(), self.blocks);
         wait_for("daemon", || UnixStream::connect(&sock).is_ok());
         wait_for("block listener", || std::net::TcpStream::connect(("127.0.0.1", blocks)).is_ok());
@@ -108,10 +111,12 @@ impl Daemon {
     fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
         let mut s = UnixStream::connect(self.sock()).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .unwrap();
         let mut r = BufReader::new(s);

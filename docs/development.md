@@ -268,3 +268,23 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
 - **Sprites lists are paged** (50 at a time); wisp here holds more than
   that.
 
+- **A program's exit can overtake its last output.** A pane's reader and
+  its wait for the exit are separate threads, so a quick `illogical run`
+  could end its command before its output arrived, and `capture
+  --scope last-command` came back empty (#60). The exit now waits for the
+  terminal to hang up (at most a second) before it's handled.
+- **Check the record once more after the shim exits.** A program that ends
+  at once (`run true`) can record its pid and be gone between two looks,
+  and its start was reported as a failure. A failed agent start now says
+  how the shim ended and the last of what it wrote to `agent.err` (#64).
+- **A free port isn't free for long.** Tests picked one by binding port 0
+  and letting go; under load something else took it first, the daemon
+  exited with "address in use", and the test waited out its deadline as
+  "daemon did not start" (#66). `--listen 127.0.0.1:0` now has the daemon
+  pick its own port, bound before anything else, and record it in
+  `state/listen`; test daemons use that. Only `--block-listen` still takes
+  a picked port.
+- **Send a test's HTTP request in one write.** `write!` on a socket writes
+  each piece of the format string separately; a handler that answers
+  without reading the body (a 404) closed the connection before the body
+  went, and the test's next write failed with a broken pipe.

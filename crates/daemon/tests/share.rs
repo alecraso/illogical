@@ -3,11 +3,12 @@
 //! refuses everything else: input, any message at all, other panes, the
 //! API, tagged nodes, after it expires, after it's revoked.
 
+mod listen;
 mod strays;
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
     os::unix::net::UnixStream,
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -44,9 +45,8 @@ impl Drop for Daemon {
 fn start() -> Daemon {
     let state = std::env::temp_dir().join(format!("ilg-share-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&state);
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
         .args(["--tailscale-socket", "/nonexistent/tailscaled.sock", "--public-host", PUBLIC, "--owner", OWNER])
         .arg("--state-dir")
         .arg(&state)
@@ -55,7 +55,8 @@ fn start() -> Daemon {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let d = Daemon { child, port, state };
+    let mut d = Daemon { child, port: 0, state };
+    d.port = listen::wait_port(&d.state);
     let deadline = Instant::now() + Duration::from_secs(10);
     while UnixStream::connect(d.sock()).is_err() {
         assert!(Instant::now() < deadline, "daemon did not start");
@@ -76,10 +77,12 @@ impl Daemon {
     fn api(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
         let mut s = UnixStream::connect(self.sock()).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .unwrap();
         let mut r = BufReader::new(s);

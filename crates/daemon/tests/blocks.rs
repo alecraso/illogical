@@ -2,6 +2,7 @@
 //! block on ordinary pages): open, describe, call, capture, restore after a
 //! restart, close.
 
+mod listen;
 mod strays;
 
 use std::{
@@ -36,15 +37,17 @@ impl Daemon {
     fn new() -> Self {
         let state = std::env::temp_dir().join(format!("ilg-blk-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&state);
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let mut d = Self { child: None, state, port };
+        let mut d = Self { child: None, state, port: 0 };
         d.start();
         d
     }
 
+    /// Start it: on a port of its choosing, then on the same one again.
     fn start(&mut self) {
+        let first = self.port == 0;
+        let addr = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.port) };
         let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{}", self.port), "--shell", "bash --norc --noprofile"])
+            .args(["--listen", &addr, "--shell", "bash --norc --noprofile"])
             .args(["--no-manager-env", "--wisp-token-file", "/nonexistent"])
             .arg("--state-dir")
             .arg(&self.state)
@@ -53,6 +56,9 @@ impl Daemon {
             .spawn()
             .unwrap();
         self.child = Some(child);
+        if first {
+            self.port = listen::wait_port(&self.state);
+        }
         let deadline = Instant::now() + Duration::from_secs(10);
         while UnixStream::connect(self.sock()).is_err() {
             assert!(Instant::now() < deadline, "daemon did not start");
@@ -73,10 +79,12 @@ impl Daemon {
     fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
         let mut s = UnixStream::connect(self.sock()).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .unwrap();
         let mut r = BufReader::new(s);
@@ -123,10 +131,12 @@ fn serve_page() -> u16 {
             let mut buf = [0u8; 2048];
             let _ = s.read(&mut buf);
             let body = "<html><head><title>Plain page</title></head><body>hi</body></html>";
-            let _ = write!(
-                s,
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
+            let _ = s.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
             );
         }
     });

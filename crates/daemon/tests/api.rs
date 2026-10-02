@@ -1,6 +1,7 @@
 //! M3 end to end: shell integration, the HTTP API over the Unix socket, and
 //! attention, against the real binary running real bash.
 
+mod listen;
 mod strays;
 
 use std::{
@@ -36,9 +37,8 @@ fn start() -> Daemon {
     let state =
         std::env::temp_dir().join(format!("ilg-api-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
     let _ = std::fs::remove_dir_all(&state);
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
         .arg("--state-dir")
         .arg(&state)
         .env("PS1", "$ ")
@@ -46,7 +46,8 @@ fn start() -> Daemon {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let d = Daemon { child, port, state };
+    let mut d = Daemon { child, port: 0, state };
+    d.port = listen::wait_port(&d.state);
     let deadline = Instant::now() + Duration::from_secs(10);
     while UnixStream::connect(d.sock()).is_err() {
         assert!(Instant::now() < deadline, "daemon did not start");
@@ -69,10 +70,12 @@ impl Daemon {
     fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
         let mut s = UnixStream::connect(self.sock()).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .unwrap();
         let mut r = BufReader::new(s);
@@ -195,8 +198,9 @@ fn run_wait_capture_history_search_export() {
     d.post(&format!("/api/panes/{pane}/send"), msg);
     d.send(pane, "exit");
     d.wait_for(|| d.pane(pane).is_null());
-    let h = d.get(&format!("/api/history?pane={pane}"));
-    assert_eq!(h[0]["open"], false);
+    // The pane leaves the list at once; its history moves to the closed
+    // ones once its program has gone.
+    d.wait_for(|| d.get(&format!("/api/history?pane={pane}"))[0]["open"] == false);
 
     // A script can close what it opened, even while it's running.
     let long = d.post("/api/run", json!({"command": "sleep 600"}))["pane"].as_u64().unwrap();
@@ -309,11 +313,13 @@ fn the_api_over_tcp_refuses_other_sites() {
     let d = start();
     let mut s = std::net::TcpStream::connect(("127.0.0.1", d.port)).unwrap();
     let body = r#"{"command":"touch /tmp/pwned"}"#;
-    write!(
-        s,
-        "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: https://evil.example\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        d.port,
-        body.len()
+    s.write_all(
+        format!(
+            "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: https://evil.example\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            d.port,
+            body.len()
+        )
+        .as_bytes(),
     )
     .unwrap();
     let mut resp = String::new();

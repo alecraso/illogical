@@ -7,9 +7,10 @@
 //! what closed panes freed. Linux only: it reads /proc.
 #![cfg(target_os = "linux")]
 
+mod listen;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    net::TcpListener,
     os::unix::net::UnixStream,
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -45,9 +46,8 @@ impl Daemon {
         // Short: Unix socket paths are limited to ~100 bytes.
         let state = std::env::temp_dir().join(format!("ilg-mem-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&state);
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+            .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
             .arg("--state-dir")
             .arg(&state)
             .env("PS1", "$ ")
@@ -78,10 +78,12 @@ impl Daemon {
     fn request(&self, method: &str, path: &str, body: Option<Value>) -> Value {
         let mut s = UnixStream::connect(self.sock()).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .unwrap();
         let mut r = BufReader::new(s);

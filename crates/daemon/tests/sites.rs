@@ -4,6 +4,7 @@
 //! reload's WebSocket passes, other origins are refused both by the site and
 //! by the app, and a server that dies and comes back is noticed both ways.
 
+mod listen;
 mod strays;
 
 use std::{
@@ -54,9 +55,9 @@ impl Daemon {
     fn new() -> Self {
         let state = std::env::temp_dir().join(format!("ilg-sites-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&state);
-        let (port, blocks) = (free_port(), free_port());
+        let blocks = free_port();
         let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{port}"), "--block-listen", &format!("127.0.0.1:{blocks}")])
+            .args(["--listen", listen::ANY, "--block-listen", &format!("127.0.0.1:{blocks}")])
             .args(["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"])
             .arg("--state-dir")
             .arg(&state)
@@ -64,7 +65,8 @@ impl Daemon {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let d = Self { child: Some(child), state, port, blocks };
+        let mut d = Self { child: Some(child), state, port: 0, blocks };
+        d.port = listen::wait_port(&d.state);
         d.wait_for("daemon", || UnixStream::connect(d.sock()).is_ok());
         d.wait_for("block listener", || std::net::TcpStream::connect(("127.0.0.1", blocks)).is_ok());
         d
@@ -77,10 +79,12 @@ impl Daemon {
     fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
         let mut s = UnixStream::connect(self.sock()).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .unwrap();
         let mut r = BufReader::new(s);

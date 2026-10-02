@@ -1,9 +1,9 @@
 //! End to end against the real binary: attach, input, detach, resume.
 
+mod listen;
 mod strays;
 
 use std::{
-    net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::atomic::{AtomicU32, Ordering},
@@ -70,41 +70,36 @@ fn temp_state() -> TempState {
     TempState(dir)
 }
 
-/// Start a daemon on a free port. Tests run in parallel, so another test's
-/// daemon can take the port between our picking it and binding it: then a
-/// TCP connect succeeds (to theirs) while ours fails to bind and exits. So
-/// it's up when its own Unix socket (made after it binds) answers; if it
-/// exited instead, try another port.
+/// Start a daemon on a port of its choosing. It's up when its own Unix
+/// socket answers.
 async fn start_in(state: &Path) -> Daemon {
-    for _ in 0..5 {
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
-            .arg("--state-dir")
-            .arg(state)
-            .env("PS1", "$ ")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let sock = || match std::fs::read_to_string(state.join("sock.path")) {
-            Ok(p) => PathBuf::from(p.trim()),
-            Err(_) => state.join("sock"),
-        };
-        for _ in 0..100 {
-            if child.try_wait().unwrap().is_some() {
-                break;
-            }
-            if std::os::unix::net::UnixStream::connect(sock()).is_ok()
-                && TcpStream::connect(("127.0.0.1", port)).await.is_ok()
-            {
-                return Daemon { child, port, state: None };
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+    let _ = std::fs::remove_file(state.join("listen"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
+        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
+        .arg("--state-dir")
+        .arg(state)
+        .env("PS1", "$ ")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let sock = || match std::fs::read_to_string(state.join("sock.path")) {
+        Ok(p) => PathBuf::from(p.trim()),
+        Err(_) => state.join("sock"),
+    };
+    for _ in 0..300 {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("daemon exited: {status}");
         }
-        let _ = child.kill();
-        let _ = child.wait();
+        if let Some(port) = listen::port(state)
+            && std::os::unix::net::UnixStream::connect(sock()).is_ok()
+        {
+            return Daemon { child, port, state: None };
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    let _ = child.kill();
+    let _ = child.wait();
     panic!("daemon did not start");
 }
 
