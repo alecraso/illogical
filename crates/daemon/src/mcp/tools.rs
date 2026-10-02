@@ -1,0 +1,1559 @@
+//! The tools (M16): about a dozen, shaped for agents rather than mirroring
+//! every endpoint. Each answers with a JSON object that has a `summary`
+//! sentence in it (the text block is the same JSON), or fails with a
+//! sentence an agent can act on (`isError`), never a protocol error.
+
+use std::{future::Future, sync::Arc, time::Duration};
+
+use illogical_proto::{
+    Attention, BlockType, Driver, PaneId, Policy, StartedBy,
+    api::{ActRequest, HistoryEntry, OpenRequest, PaneSummary, RunRequest, WaitResult},
+};
+use rmcp::{
+    Peer, RoleServer,
+    handler::server::common::schema_for_type,
+    model::{CallToolResult, ContentBlock, ProgressNotificationParam, ProgressToken, Tool, ToolAnnotations},
+    service::RequestContext,
+};
+use schemars::JsonSchema;
+use serde::{Deserialize, de::DeserializeOwned};
+use serde_json::{Value, json};
+use tokio::time::Instant;
+
+use super::{Caller, Scope};
+use crate::{
+    history::{self, Filter},
+    mux::Api,
+    osc::strip,
+    pane::{CaptureFormat, CaptureScope},
+    server::App,
+    store::{PaneLog, now_ms},
+};
+
+/// A page of output, by default (characters).
+const PAGE: usize = 16_000;
+/// The most any one result carries: Claude Code swaps anything over about
+/// 50,000 for a preview and a file (S14).
+const PAGE_MAX: usize = 40_000;
+/// How long a wait (or `run` with `wait`) waits before answering "still
+/// running": under interactive Claude Code's 120s auto-background.
+const WAIT_DEFAULT: Duration = Duration::from_secs(100);
+const WAIT_MAX: Duration = Duration::from_secs(3600);
+/// Progress while waiting: over HTTP, Claude Code drops a call that's
+/// silent for 60s.
+const PROGRESS_EVERY: Duration = Duration::from_secs(15);
+/// The last lines a finished command's result carries.
+const TAIL_LINES: usize = 40;
+
+fn progress_every() -> Duration {
+    // Tests make it short.
+    std::env::var("ILLOGICAL_MCP_PROGRESS_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(PROGRESS_EVERY)
+}
+
+// ---------------------------------------------------------------- arguments
+
+/// A pane or block: `7` or `"%7"`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PaneArg {
+    Id(PaneId),
+    Name(String),
+}
+
+impl PaneArg {
+    fn id(&self) -> Result<PaneId, String> {
+        match self {
+            PaneArg::Id(n) => Ok(*n),
+            PaneArg::Name(s) => {
+                s.trim().trim_start_matches('%').parse().map_err(|_| format!("{s:?} isn't a pane: give its number, like 7 or \"%7\""))
+            }
+        }
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct RunArgs {
+    /// The command line, typed into a new shell (so it's in history, and the
+    /// shell stays for you to take over). None: just a shell.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Where it starts: a directory (on its machine, for a VM).
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Split this pane instead of opening a new tab. An agent block's token
+    /// always splits (beside the agent, by default).
+    #[serde(default)]
+    pub split: Option<PaneArg>,
+    /// With split: run where that pane runs (its tab's VM) instead of on
+    /// this host.
+    #[serde(default)]
+    pub join: bool,
+    /// On a new throwaway VM of its own, deleted when the pane closes.
+    #[serde(default)]
+    pub vm: bool,
+    /// In a new tab whose panes share a new throwaway VM.
+    #[serde(default)]
+    pub vm_tab: bool,
+    /// The VM's image (the provider's default if none).
+    #[serde(default)]
+    pub image: Option<String>,
+    /// On an existing sandbox, by the provider's name for it.
+    #[serde(default)]
+    pub machine: Option<String>,
+    /// The session (by name or id) for a new tab; made if it doesn't exist.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// After a reboot: `shell` (default), `none`, `rerun` or `rerun-ask`.
+    #[serde(default)]
+    pub policy: Option<String>,
+    /// Wait for the command to finish (up to timeout); else return at once.
+    #[serde(default)]
+    pub wait: bool,
+    /// Seconds to wait before answering "still running" (default 100).
+    #[serde(default)]
+    pub timeout: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SendArgs {
+    pub pane: PaneArg,
+    /// Text to type (to an agent block: its next prompt).
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Press Enter after the text (default true).
+    #[serde(default)]
+    pub enter: Option<bool>,
+    /// Named keys, after the text: C-c, C-d, Up, Down, Enter, Escape, Tab,
+    /// F5, M-x, or single characters.
+    #[serde(default)]
+    pub keys: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadArgs {
+    pub pane: PaneArg,
+    /// Where to start (a stream offset: a previous result's next_offset).
+    /// Without it: the latest output, or with last_command, its output.
+    #[serde(default)]
+    pub offset: Option<u64>,
+    /// The output of the pane's last (or current) command.
+    #[serde(default)]
+    pub last_command: bool,
+    /// At most this many characters (default 16000, at most 40000).
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PaneOnly {
+    pub pane: PaneArg,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Until {
+    /// The command running (or the next one to start) finished.
+    CommandEnd,
+    /// The pane's process exited.
+    Exit,
+    /// The output matched `pattern` (a regex).
+    Match,
+    /// It's not working any more (an agent finished its turn, say).
+    Idle,
+    /// It asks for you: an agent's approval or question.
+    NeedsInput,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WaitArgs {
+    pub pane: PaneArg,
+    pub until: Until,
+    /// For until: match, a regular expression.
+    #[serde(default)]
+    pub pattern: Option<String>,
+    /// Seconds before answering "still running" (default 100).
+    #[serde(default)]
+    pub timeout: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct ListArgs {}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct HistoryArgs {
+    /// Only commands that failed (exit code not 0).
+    #[serde(default)]
+    pub failed: bool,
+    /// Started at most this long ago: `90m`, `36h`, `2d`, or seconds.
+    #[serde(default)]
+    pub since: Option<String>,
+    /// Started at least this long ago (with since: a window, like since
+    /// 2d before 1d for yesterday).
+    #[serde(default)]
+    pub before: Option<String>,
+    /// Ran in this directory or below it.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// The command line matches this regex.
+    #[serde(rename = "match", default)]
+    pub matching: Option<String>,
+    /// One pane's.
+    #[serde(default)]
+    pub pane: Option<PaneArg>,
+    /// At most this many, newest first (default 30, at most 200).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SearchArgs {
+    /// A regular expression, matched against each line of output.
+    pub pattern: String,
+    /// Output from at most this long ago: `90m`, `36h`, `2d`, or seconds.
+    #[serde(default)]
+    pub since: Option<String>,
+    /// At most this many lines (default 30, at most 200).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OpenPortArgs {
+    /// The port, on the machine the pane runs on.
+    pub port: u16,
+    /// The page's path (default /).
+    #[serde(default)]
+    pub path: Option<String>,
+    /// The pane (a terminal running the server, say) to open it beside.
+    /// An agent block's token: default the agent itself.
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
+#[derive(Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    /// Claude Code.
+    #[default]
+    Claude,
+    Codex,
+    /// An agent in a Fountain sandbox (fountain_agent names it).
+    Fountain,
+    /// Any ACP agent server, by command.
+    Acp,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct StartAgentArgs {
+    #[serde(default)]
+    pub agent: AgentKind,
+    /// What to ask it.
+    pub prompt: String,
+    /// For acp: the agent server's command line.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// For fountain: the agent's name or id.
+    #[serde(default)]
+    pub fountain_agent: Option<String>,
+    /// A model to switch to (`haiku`, ...).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Where it works.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Open it beside this pane (an agent block's token: beside itself).
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+    /// The session for a new tab, when not beside a pane.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// On a new throwaway VM of its own.
+    #[serde(default)]
+    pub vm: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Response {
+    /// Approve the pending permission request.
+    Allow,
+    /// Refuse it (message: why).
+    Deny,
+    /// Answer the pending question (answers: its fields).
+    Answer,
+    /// Skip the pending question.
+    Skip,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct RespondArgs {
+    /// The agent block, or a terminal running Claude Code.
+    pub pane: PaneArg,
+    pub action: Response,
+    /// allow: `once` (default) or `always`.
+    #[serde(default)]
+    pub option: Option<String>,
+    /// deny: why, for the agent.
+    #[serde(default)]
+    pub message: Option<String>,
+    /// answer: the question's fields, by name, as wait (until needs_input)
+    /// showed them, e.g. {"question_0": "Blue"}.
+    #[serde(default)]
+    pub answers: Option<serde_json::Map<String, Value>>,
+    /// Which request it answers (from wait); default whatever it asks now.
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadFileArgs {
+    /// The file. Relative paths are from the pane's directory, or home.
+    pub path: String,
+    /// On the machine this pane runs on (default this host; an agent
+    /// block's token: its own).
+    #[serde(default)]
+    pub pane: Option<PaneArg>,
+    /// A byte offset to start at (a previous result's next_offset).
+    #[serde(default)]
+    pub offset: Option<u64>,
+    /// At most this many characters (default 16000, at most 40000).
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+}
+
+// ---------------------------------------------------------------- the list
+
+struct Def {
+    name: &'static str,
+    title: &'static str,
+    description: &'static str,
+    schema: fn() -> Arc<serde_json::Map<String, Value>>,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+}
+
+fn defs() -> Vec<Def> {
+    vec![
+        Def {
+            name: "run",
+            title: "Run a command in a pane",
+            description: "Run a command in a new terminal pane (a new tab, or a split), on this host, a new throwaway VM, or a sandbox. The command is typed into a shell, so the user can watch it, scroll it and take over, and it outlives this conversation. With wait, waits for it to finish (up to timeout) and returns its exit code and last lines; past the timeout it answers \"still running\": call wait.",
+            schema: schema_for_type::<RunArgs>,
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "send_input",
+            title: "Type into a pane",
+            description: "Type text (Enter after it unless enter is false) and/or press named keys (C-c, Up, Escape, ...) in a pane. To an agent block, text is its next prompt.",
+            schema: schema_for_type::<SendArgs>,
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
+            name: "read_output",
+            title: "Read a pane's output",
+            description: "A pane's output as text (escape sequences stripped): the latest, from an offset, or its last command's. Paged: pass next_offset back as offset for more.",
+            schema: schema_for_type::<ReadArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "capture_screen",
+            title: "Capture a pane's screen",
+            description: "What a pane shows right now, as text (for full-screen programs).",
+            schema: schema_for_type::<PaneOnly>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "wait",
+            title: "Wait for a pane",
+            description: "Wait until a pane's command ends, its process exits, its output matches a pattern, or it's idle or asks for input (an agent's approval or question). Answers \"still running\" with the offset after timeout seconds (default 100): call it again.",
+            schema: schema_for_type::<WaitArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "list",
+            title: "List panes and blocks",
+            description: "Every pane and block (terminals, browsers, agents): where it is, what it runs, whether it needs attention, who started it.",
+            schema: schema_for_type::<ListArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "close",
+            title: "Close a pane",
+            description: "Close a pane or block, ending what runs in it (and deleting a VM the pane owns).",
+            schema: schema_for_type::<PaneOnly>,
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
+            name: "history",
+            title: "Command history",
+            description: "Commands run across panes (open and recently closed), newest first: exit codes, directories, when, and who ran them. Filter by failed, since/before (\"2d\", \"36h\"), cwd, a regex.",
+            schema: schema_for_type::<HistoryArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "search",
+            title: "Search output",
+            description: "Lines of output across panes (and agents' transcripts) matching a regex, with the pane and command each came from.",
+            schema: schema_for_type::<SearchArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "open_port",
+            title: "Show a port in a browser block",
+            description: "Open a browser block on a port of the machine a pane runs on (a dev server), beside that pane, so the user sees it next to its terminal.",
+            schema: schema_for_type::<OpenPortArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
+            name: "start_agent",
+            title: "Start an agent",
+            description: "Start an agent (Claude Code, Codex, a Fountain agent, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user.",
+            schema: schema_for_type::<StartAgentArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "agent_respond",
+            title: "Answer an agent",
+            description: "Allow or deny an agent's pending permission request, or answer or skip its pending question (as wait until needs_input showed it).",
+            schema: schema_for_type::<RespondArgs>,
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
+            name: "read_file",
+            title: "Read a file",
+            description: "A text file on this host or the machine a pane runs on, paged by byte offset.",
+            schema: schema_for_type::<ReadFileArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+    ]
+}
+
+/// The tools `scope` may call.
+pub fn list(scope: Scope) -> Vec<Tool> {
+    defs()
+        .into_iter()
+        .filter(|d| scope != Scope::Read || d.read_only)
+        .map(|d| {
+            Tool::new(d.name, d.description, (d.schema)()).with_title(d.title).with_annotations(
+                ToolAnnotations::with_title(d.title)
+                    .read_only(d.read_only)
+                    .destructive(d.destructive)
+                    .idempotent(d.idempotent)
+                    .open_world(d.open_world),
+            )
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------- calls
+
+type Out = Result<Value, String>;
+
+fn done(summary: impl Into<String>, mut v: Value) -> Out {
+    v["summary"] = Value::String(summary.into());
+    Ok(v)
+}
+
+fn parse<T: DeserializeOwned>(args: Value) -> Result<T, String> {
+    serde_json::from_value(args).map_err(|e| format!("bad arguments: {e}"))
+}
+
+/// One tool call (or resource read): who, and how to tell them it's still
+/// going.
+pub struct Call<'a> {
+    app: &'a Arc<App>,
+    caller: Caller,
+    /// The client's name (`claude-code`), for "started by mcp:<client>".
+    client: String,
+    peer: Peer<RoleServer>,
+    progress: Option<ProgressToken>,
+    ctx: RequestContext<RoleServer>,
+}
+
+impl<'a> Call<'a> {
+    pub fn new(app: &'a Arc<App>, caller: Caller, client: String, ctx: &RequestContext<RoleServer>) -> Self {
+        Self {
+            app,
+            caller,
+            client,
+            peer: ctx.peer.clone(),
+            progress: ctx.meta.get_progress_token(),
+            ctx: ctx.clone(),
+        }
+    }
+
+    fn by(&self) -> String {
+        format!("mcp:{}", self.client)
+    }
+
+    fn driver(&self) -> Driver {
+        Driver { who: self.by(), name: self.by() }
+    }
+
+    pub async fn dispatch(&self, name: &str, args: Value) -> CallToolResult {
+        let Some(def) = defs().into_iter().find(|d| d.name == name) else {
+            return CallToolResult::error(vec![ContentBlock::text(format!("no tool {name}"))]);
+        };
+        if self.caller.scope == Scope::Read && !def.read_only {
+            return CallToolResult::error(vec![ContentBlock::text(format!(
+                "this token may only read; {name} changes things (ask for a full token)"
+            ))]);
+        }
+        let out = match name {
+            "run" => match parse(args) { Ok(a) => self.run(a).await, Err(e) => Err(e) },
+            "send_input" => match parse(args) { Ok(a) => self.send_input(a).await, Err(e) => Err(e) },
+            "read_output" => match parse(args) { Ok(a) => self.read_output(a).await, Err(e) => Err(e) },
+            "capture_screen" => match parse(args) { Ok(a) => self.capture(a).await, Err(e) => Err(e) },
+            "wait" => match parse(args) { Ok(a) => self.wait(a).await, Err(e) => Err(e) },
+            "list" => self.list().await,
+            "close" => match parse(args) { Ok(a) => self.close(a).await, Err(e) => Err(e) },
+            "history" => match parse(args) { Ok(a) => self.history(a).await, Err(e) => Err(e) },
+            "search" => match parse(args) { Ok(a) => self.search(a).await, Err(e) => Err(e) },
+            "open_port" => match parse(args) { Ok(a) => self.open_port(a).await, Err(e) => Err(e) },
+            "start_agent" => match parse(args) { Ok(a) => self.start_agent(a).await, Err(e) => Err(e) },
+            "agent_respond" => match parse(args) { Ok(a) => self.respond(a).await, Err(e) => Err(e) },
+            "read_file" => match parse(args) { Ok(a) => self.read_file(a).await, Err(e) => Err(e) },
+            _ => Err(format!("no tool {name}")),
+        };
+        match out {
+            Ok(v) => CallToolResult::structured(v),
+            Err(e) => CallToolResult::error(vec![ContentBlock::text(e)]),
+        }
+    }
+
+    // ------------------------------------------------------------ helpers
+
+    async fn panes(&self) -> Vec<PaneSummary> {
+        self.app.mux.api(Api::Panes).await.unwrap_or_default()
+    }
+
+    /// The block whose token this is.
+    fn me(&self) -> Option<PaneId> {
+        match self.caller.scope {
+            Scope::Block(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    /// An open pane or block, if this caller may see it.
+    async fn readable(&self, pane: PaneId) -> Result<PaneSummary, String> {
+        let panes = self.panes().await;
+        let Some(p) = panes.iter().find(|p| p.info.id == pane).cloned() else {
+            return Err(self.gone(pane).await);
+        };
+        if let Some(me) = self.me() {
+            let tab = panes.iter().find(|p| p.info.id == me).map(|p| p.tab);
+            if tab != Some(p.tab) {
+                return Err(format!("%{pane} is in another tab: this agent's token reaches its own tab only"));
+            }
+        }
+        Ok(p)
+    }
+
+    /// An open pane or block this caller may type in, answer for or close:
+    /// anything, or for an agent block's token, what it started.
+    async fn drivable(&self, pane: PaneId) -> Result<PaneSummary, String> {
+        let p = self.readable(pane).await?;
+        if let Some(me) = self.me()
+            && p.info.started_by.as_ref().and_then(|s| s.block) != Some(me)
+        {
+            return Err(format!("%{pane} wasn't started by this agent: it may read it, not drive or close it"));
+        }
+        Ok(p)
+    }
+
+    /// Why a pane isn't there, as specifically as history can say.
+    async fn gone(&self, pane: PaneId) -> String {
+        let store = self.app.mux.store.clone();
+        let last = tokio::task::spawn_blocking(move || {
+            history::history(&store, &Filter { pane: Some(pane), ..Default::default() }, 1)
+        })
+        .await
+        .ok()
+        .and_then(|h| h.into_iter().next());
+        match last {
+            Some(h) => {
+                let what = h.text.as_deref().map(|t| format!(" `{}`", one_line(t, 80))).unwrap_or_default();
+                let how = match h.exit {
+                    Some(code) => format!("exited {code}"),
+                    None => "was still running".into(),
+                };
+                let when = ago(h.ended_ms.unwrap_or(h.started_ms));
+                format!("pane %{pane} is gone; its last command{what} {how} {when} (read_output still reads it)")
+            }
+            None => format!("no pane %{pane} (list shows what's open)"),
+        }
+    }
+
+    async fn started(&self, pane: PaneId) {
+        let by = StartedBy { by: self.by(), block: self.me() };
+        self.app.mux.send(crate::mux::Cmd::Api(Api::StartedBy(pane, by)));
+    }
+
+    async fn notify(&self, done: f64, total: Option<f64>, message: String) {
+        let Some(token) = &self.progress else { return };
+        let mut p = ProgressNotificationParam::new(token.clone(), done).with_message(message);
+        if let Some(t) = total {
+            p = p.with_total(t);
+        }
+        let _ = self.peer.notify_progress(p).await;
+    }
+
+    /// `fut`, with progress every 15s, for at most `limit`: `None` if it
+    /// took longer (or the client gave up).
+    async fn waiting<T>(&self, what: &str, limit: Duration, fut: impl Future<Output = T>) -> Option<T> {
+        let start = Instant::now();
+        let every = progress_every();
+        let mut tick = tokio::time::interval_at(start + every, every);
+        let deadline = tokio::time::sleep(limit);
+        tokio::pin!(fut, deadline);
+        loop {
+            tokio::select! {
+                r = &mut fut => return Some(r),
+                _ = &mut deadline => return None,
+                _ = self.ctx.ct.cancelled() => return None,
+                _ = tick.tick() => {
+                    let secs = start.elapsed().as_secs_f64();
+                    self.notify(secs, Some(limit.as_secs_f64()), format!("{what}: {}s", secs.round())).await;
+                }
+            }
+        }
+    }
+
+    fn limit(timeout: Option<f64>) -> Duration {
+        timeout
+            .filter(|t| t.is_finite() && *t >= 0.0)
+            .map(Duration::from_secs_f64)
+            .unwrap_or(WAIT_DEFAULT)
+            .min(WAIT_MAX)
+    }
+
+    /// The end of a pane's output stream now.
+    async fn end_of(&self, pane: PaneId) -> u64 {
+        match self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten() {
+            Some(p) => p.status().end,
+            None => PaneLog::open(self.app.mux.store.pane_dir(pane)).map(|l| l.end()).unwrap_or(0),
+        }
+    }
+
+    /// The last lines of a pane's output between two offsets.
+    fn last_lines(&self, pane: PaneId, from: u64, to: Option<u64>) -> String {
+        let Ok(log) = PaneLog::open(self.app.mux.store.pane_dir(pane)) else { return String::new() };
+        let to = to.unwrap_or(log.end());
+        let from = from.max(to.saturating_sub(64 * 1024));
+        let Ok((start, bytes)) = log.read_range(from, (to.saturating_sub(from)) as usize) else { return String::new() };
+        let _ = start;
+        let text = strip(&bytes);
+        let lines: Vec<&str> = text.lines().collect();
+        let tail = lines[lines.len().saturating_sub(TAIL_LINES)..].join("\n");
+        cap_tail(&tail, 4_000)
+    }
+
+    // ------------------------------------------------------------ tools
+
+    async fn run(&self, a: RunArgs) -> Out {
+        if a.command.as_deref().is_some_and(|c| c.trim().is_empty()) {
+            return Err("the command is empty".into());
+        }
+        let policy = match a.policy.as_deref() {
+            None | Some("shell") => None,
+            Some("none") => Some(Policy::None),
+            Some("rerun") => Some(Policy::Rerun { confirm: false }),
+            Some("rerun-ask") => Some(Policy::Rerun { confirm: true }),
+            Some(p) => return Err(format!("policy {p}: shell, none, rerun or rerun-ask")),
+        };
+        let mut req = RunRequest { cwd: a.cwd.clone(), policy, ..Default::default() };
+        match self.me() {
+            Some(me) => {
+                if a.vm || a.vm_tab || a.machine.is_some() || a.session.is_some() {
+                    return Err("this agent's token reaches its own tab only: run splits a pane there (no vm, vm_tab, machine or session)".into());
+                }
+                let split = a.split.as_ref().map(PaneArg::id).transpose()?.unwrap_or(me);
+                let p = self.readable(split).await?;
+                req.split = Some(split);
+                // On the tab's machine, in a VM tab.
+                req.join = p.info.host.is_some();
+                req.from_pane = Some(split);
+            }
+            None => {
+                req.split = a.split.as_ref().map(PaneArg::id).transpose()?;
+                req.join = a.join;
+                req.vm = a.vm;
+                req.vm_tab = a.vm_tab;
+                req.image = a.image.clone();
+                req.sandbox = a.machine.clone();
+                req.session = a.session.clone();
+                req.from_pane = req.split;
+            }
+        }
+        let on_vm = a.vm || a.vm_tab || a.machine.is_some() || req.join;
+        let pane = match self.app.mux.api(|r| Api::Run(req, r)).await {
+            Some(Ok(p)) => p,
+            Some(Err(e)) => return Err(e),
+            None => return Err("the daemon is shutting down".into()),
+        };
+        self.started(pane).await;
+        let limit = Self::limit(a.timeout);
+        let start = Instant::now();
+        let place = self.place(pane).await;
+        let Some(command) = a.command else {
+            return done(format!("Opened a shell in %{pane} ({place})"), json!({ "pane": pane, "state": "started" }));
+        };
+        // The shell's first prompt (a VM takes a while), then the command.
+        let mux = self.app.mux.clone();
+        let ready = self
+            .waiting(if on_vm { "starting the machine" } else { "starting the shell" }, if on_vm { Duration::from_secs(300) } else { Duration::from_secs(20) }, async move {
+                loop {
+                    if let Some(p) = mux.api(|r| Api::Pane(pane, r)).await.flatten() {
+                        let st = p.status();
+                        if st.at_prompt || st.exited.is_some() {
+                            return st.exited;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await;
+        if let Some(Some(code)) = ready {
+            return Err(format!("%{pane}'s shell ended (exit {code:?}) before the command could be typed"));
+        }
+        let Some(p) = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten() else {
+            return Err(self.gone(pane).await);
+        };
+        // Whatever ends after this is the command's.
+        p.mark_input();
+        let mut line = command.clone().into_bytes();
+        line.push(b'\r');
+        self.app.mux.send(crate::mux::Cmd::Api(Api::InputBy(pane, line, self.by())));
+        if !a.wait {
+            return done(
+                format!(
+                    "Started `{}` in %{pane} ({place}). Follow it with wait (until command_end) or read_output.",
+                    one_line(&command, 80)
+                ),
+                json!({ "pane": pane, "state": "started" }),
+            );
+        }
+        let left = limit.saturating_sub(start.elapsed());
+        self.wait_command(pane, left, &command).await
+    }
+
+    /// Where a pane is, in words.
+    async fn place(&self, pane: PaneId) -> String {
+        let panes = self.panes().await;
+        match panes.iter().find(|p| p.info.id == pane) {
+            Some(p) => {
+                let tab = p.tab_name.clone().unwrap_or_else(|| format!("tab {}", p.tab));
+                match p.info.host {
+                    Some(m) => format!("{tab} in {}, on machine m{m}", p.session_name),
+                    None => format!("{tab} in {}", p.session_name),
+                }
+            }
+            None => "closing".into(),
+        }
+    }
+
+    async fn wait_command(&self, pane: PaneId, limit: Duration, what: &str) -> Out {
+        let app = self.app.clone();
+        let r = self
+            .waiting(&format!("`{}` running", one_line(what, 40)), limit, async move {
+                crate::api::wait_until(&app, pane, "command-end", None).await
+            })
+            .await;
+        match r {
+            Some(Ok(r)) => self.waited(pane, r).await,
+            Some(Err(e)) => Err(e),
+            None => self.still_running(pane, limit).await,
+        }
+    }
+
+    /// Nothing yet: what it's doing, and where to pick up. `until`: what
+    /// was waited for, when it isn't a command ending.
+    async fn still_running(&self, pane: PaneId, waited: Duration) -> Out {
+        self.not_yet(pane, waited, None).await
+    }
+
+    async fn not_yet(&self, pane: PaneId, waited: Duration, until: Option<&str>) -> Out {
+        let p = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten();
+        let status = p.map(|p| p.status());
+        let current = status.as_ref().and_then(|s| s.current.clone());
+        let end = self.end_of(pane).await;
+        let from = current.as_ref().map(|c| c.start).unwrap_or(end.saturating_sub(4096));
+        let what = current.as_ref().and_then(|c| c.text.clone()).map(|t| format!(" `{}`", one_line(&t, 60))).unwrap_or_default();
+        let secs = waited.as_secs();
+        let then = format!("call wait again (or read_output with offset {end} for what's new)");
+        let summary = match (until, current.is_some()) {
+            (None, true) => format!("%{pane} is still running{what} after {secs}s: {then}"),
+            (u, _) => format!("%{pane}: no {} yet after {secs}s: {then}", u.unwrap_or("command end")),
+        };
+        done(
+            summary,
+            json!({
+                "pane": pane,
+                "state": "still running",
+                "command": current.and_then(|c| c.text),
+                "next_offset": end,
+                "last_lines": self.last_lines(pane, from, None),
+            }),
+        )
+    }
+
+    async fn waited(&self, pane: PaneId, r: WaitResult) -> Out {
+        match r {
+            WaitResult::CommandEnd { text, exit, start, end } => {
+                let what = text.as_deref().map(|t| format!("`{}`", one_line(t, 60))).unwrap_or_else(|| "the command".into());
+                let how = match exit {
+                    Some(0) => "succeeded".to_owned(),
+                    Some(c) => format!("failed (exit {c})"),
+                    None => "ended".to_owned(),
+                };
+                let next = match end {
+                    Some(e) => e,
+                    None => self.end_of(pane).await,
+                };
+                done(
+                    format!("{what} in %{pane} {how}; read_output with last_command for all of its output"),
+                    json!({
+                        "pane": pane,
+                        "state": "done",
+                        "command": text,
+                        "exit": exit,
+                        "output_offset": start,
+                        "next_offset": next,
+                        "last_lines": self.last_lines(pane, start, end),
+                    }),
+                )
+            }
+            WaitResult::Exit { code } => done(
+                format!("%{pane}'s process exited{}", code.map(|c| format!(" {c}")).unwrap_or_default()),
+                json!({ "pane": pane, "state": "exited", "exit": code, "last_lines": self.last_lines(pane, 0, None) }),
+            ),
+            WaitResult::Match { text, offset } => done(
+                format!("%{pane}'s output matched: {}", one_line(&text, 80)),
+                json!({ "pane": pane, "state": "matched", "match": text, "offset": offset, "next_offset": self.end_of(pane).await }),
+            ),
+            WaitResult::Attention { state, ask } => {
+                let summary = match (&state, &ask) {
+                    (Attention::NeedsInput, Some(a)) => {
+                        format!("%{pane} asks: {}. Answer with agent_respond (or leave it for the user)", a.headline())
+                    }
+                    (Attention::NeedsInput, None) => format!("%{pane} needs input"),
+                    (Attention::Done, _) => format!("%{pane} finished"),
+                    _ => format!("%{pane} is idle"),
+                };
+                done(summary, json!({ "pane": pane, "state": state, "ask": ask }))
+            }
+            WaitResult::Timeout => self.still_running(pane, Duration::ZERO).await,
+        }
+    }
+
+    async fn send_input(&self, a: SendArgs) -> Out {
+        let pane = a.pane.id()?;
+        let p = self.drivable(pane).await?;
+        if a.text.is_none() && a.keys.is_empty() {
+            return Err("give text, keys, or both".into());
+        }
+        if p.info.kind != BlockType::Terminal {
+            let b = self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            let text = a.text.ok_or("an agent block takes text (its next prompt), not keys")?;
+            b.call_by("send", json!({ "text": text }), Some(&self.by())).await?;
+            return done(format!("Sent %{pane} a prompt"), json!({ "pane": pane }));
+        }
+        let handle = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().ok_or_else(|| format!("no pane %{pane}"))?;
+        let mut data = a.text.clone().unwrap_or_default().into_bytes();
+        if a.text.is_some() && a.enter.unwrap_or(true) {
+            data.push(b'\r');
+        }
+        let modes = handle.status().modes;
+        for k in &a.keys {
+            let bytes = crate::keys::key(k, modes);
+            if bytes.is_empty() {
+                return Err(format!("unknown key {k:?}: try C-c, Up, Enter, Escape, Tab, F5, M-x"));
+            }
+            data.extend(bytes);
+        }
+        handle.mark_input();
+        let offset = handle.status().end;
+        self.app.mux.send(crate::mux::Cmd::Api(Api::InputBy(pane, data, self.by())));
+        done(
+            format!("Typed into %{pane}; its output from here starts at offset {offset}"),
+            json!({ "pane": pane, "next_offset": offset }),
+        )
+    }
+
+    async fn read_output(&self, a: ReadArgs) -> Out {
+        let pane = a.pane.id()?;
+        let max = a.max_chars.unwrap_or(PAGE).clamp(200, PAGE_MAX);
+        // Open, or closed and still on disk (a full token only: a closed
+        // pane's tab is unknown).
+        let info = match self.readable(pane).await {
+            Ok(p) => Some(p),
+            Err(e) if self.me().is_some() => return Err(e),
+            Err(_) => None,
+        };
+        if let Some(p) = &info
+            && p.info.kind != BlockType::Terminal
+        {
+            let b = self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            return page_text(pane, &b.text(), a.offset, max);
+        }
+        let dir = match info {
+            Some(_) => self.app.mux.store.pane_dir(pane),
+            None => self
+                .app
+                .mux
+                .store
+                .pane_dirs()
+                .into_iter()
+                .find(|(p, _, _)| *p == pane)
+                .map(|(_, _, d)| d)
+                .ok_or_else(|| format!("no pane %{pane}, open or closed"))?,
+        };
+        let status = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().map(|p| p.status());
+        let log = PaneLog::open(dir).map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
+        let mut command = None;
+        let (from, until) = if a.last_command {
+            let st = status.as_ref().ok_or("a closed pane's commands: use history, then read_output with its offset")?;
+            let c = st.current.clone().or(st.last.clone()).ok_or("no command recorded in that pane yet")?;
+            command = Some(json!({ "text": c.text, "exit": c.exit, "running": st.current.is_some() }));
+            (Some(a.offset.unwrap_or(c.start)), if st.current.is_some() { None } else { c.end })
+        } else {
+            (a.offset, None)
+        };
+        let end = until.unwrap_or(log.end()).min(log.end());
+        let (start, text, next) = match from {
+            Some(from) => {
+                let from = from.clamp(log.start(), end);
+                let (_, raw) = log
+                    .read_range(from, ((end - from) as usize).min(max * 4).min(256 * 1024))
+                    .map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
+                let (text, used) = head_page(&raw, max);
+                (from, text, from + used as u64)
+            }
+            None => {
+                let from = end.saturating_sub((max * 4).min(256 * 1024) as u64).max(log.start());
+                let (_, raw) =
+                    log.read_range(from, (end - from) as usize).map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
+                let (text, skipped) = tail_page(&raw, max);
+                (from + skipped as u64, text, end)
+            }
+        };
+        let more = next < end;
+        let summary = if more {
+            format!("%{pane}: {} characters from offset {start}; more: call again with offset {next}", text.len())
+        } else if until.is_some() {
+            format!("%{pane}: {} characters, to the end of its last command", text.len())
+        } else {
+            format!("%{pane}: {} characters, up to now (offset {next}); later output starts there", text.len())
+        };
+        done(
+            summary,
+            json!({
+                "pane": pane,
+                "offset": start,
+                "next_offset": next,
+                "more": more,
+                "command": command,
+                "text": text,
+            }),
+        )
+    }
+
+    async fn capture(&self, a: PaneOnly) -> Out {
+        let pane = a.pane.id()?;
+        let p = self.readable(pane).await?;
+        let text = if p.info.kind == BlockType::Terminal {
+            let h = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().ok_or_else(|| format!("no pane %{pane}"))?;
+            tokio::task::spawn_blocking(move || h.capture(CaptureFormat::Text, CaptureScope::Screen))
+                .await
+                .ok()
+                .flatten()
+                .ok_or("the pane didn't answer")?
+        } else {
+            let b = self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            b.text()
+        };
+        let text = cap_tail(text.trim_end(), PAGE_MAX);
+        done(format!("%{pane}'s screen ({} lines)", text.lines().count()), json!({ "pane": pane, "text": text }))
+    }
+
+    async fn wait(&self, a: WaitArgs) -> Out {
+        let pane = a.pane.id()?;
+        let p = self.readable(pane).await?;
+        let until = match a.until {
+            Until::CommandEnd => "command-end",
+            Until::Exit => "exit",
+            Until::Match => "match",
+            Until::Idle => "idle",
+            Until::NeedsInput => "needs-input",
+        };
+        if p.info.kind != BlockType::Terminal && !matches!(until, "idle" | "needs-input") {
+            return Err(format!("%{pane} is an agent or browser block: wait until idle or needs_input"));
+        }
+        if until == "match" && a.pattern.is_none() {
+            return Err("until match needs a pattern".into());
+        }
+        let limit = Self::limit(a.timeout);
+        let app = self.app.clone();
+        let pattern = a.pattern.clone();
+        let what = match until {
+            "needs-input" => format!("waiting for %{pane} to ask"),
+            "idle" => format!("waiting for %{pane} to finish"),
+            _ => format!("waiting for %{pane}"),
+        };
+        let r = self.waiting(&what, limit, async move { crate::api::wait_until(&app, pane, until, pattern).await }).await;
+        match r {
+            Some(Ok(r)) => self.waited(pane, r).await,
+            Some(Err(e)) if e.contains("closed") => Err(self.gone(pane).await),
+            Some(Err(e)) => Err(e),
+            None => {
+                let label = match until {
+                    "command-end" => None,
+                    "exit" => Some("exit"),
+                    "match" => Some("match"),
+                    "idle" => Some("end of its turn"),
+                    _ => Some("question"),
+                };
+                self.not_yet(pane, limit, label).await
+            }
+        }
+    }
+
+    async fn list(&self) -> Out {
+        let panes = self.panes().await;
+        let tab = self.me().and_then(|me| panes.iter().find(|p| p.info.id == me).map(|p| p.tab));
+        let entries: Vec<Value> =
+            panes.iter().filter(|p| tab.is_none_or(|t| p.tab == t)).take(300).map(entry).collect();
+        let needs: Vec<String> = panes
+            .iter()
+            .filter(|p| tab.is_none_or(|t| p.tab == t) && p.info.attention == Attention::NeedsInput)
+            .map(|p| format!("%{}", p.info.id))
+            .collect();
+        let mut summary = match tab {
+            Some(_) => format!("{} panes and blocks in this agent's tab", entries.len()),
+            None => format!("{} panes and blocks", entries.len()),
+        };
+        if !needs.is_empty() {
+            summary.push_str(&format!("; {} need input", needs.join(", ")));
+        }
+        done(summary, json!({ "panes": entries }))
+    }
+
+    async fn close(&self, a: PaneOnly) -> Out {
+        let pane = a.pane.id()?;
+        self.drivable(pane).await?;
+        match self.app.mux.api(|r| Api::Close(pane, r)).await {
+            Some(true) => done(format!("Closed %{pane}"), json!({ "pane": pane })),
+            _ => Err(self.gone(pane).await),
+        }
+    }
+
+    /// Panes this caller may read the history of: all, or its tab's.
+    async fn tab_panes(&self) -> Option<Vec<PaneId>> {
+        let me = self.me()?;
+        let panes = self.panes().await;
+        let tab = panes.iter().find(|p| p.info.id == me).map(|p| p.tab);
+        Some(panes.iter().filter(|p| Some(p.tab) == tab).map(|p| p.info.id).collect())
+    }
+
+    async fn history(&self, a: HistoryArgs) -> Out {
+        let limit = a.limit.unwrap_or(30).clamp(1, 200);
+        let since = a.since.as_deref().map(seconds).transpose()?;
+        let before = a.before.as_deref().map(seconds).transpose()?;
+        let matching = a.matching.as_deref().map(regex::Regex::new).transpose().map_err(|e| format!("match: {e}"))?;
+        let pane = a.pane.as_ref().map(PaneArg::id).transpose()?;
+        let only = self.tab_panes().await;
+        let filter = Filter {
+            pane,
+            failed: a.failed,
+            since_ms: since.map(|s| now_ms().saturating_sub(s * 1000)),
+            cwd: a.cwd.clone(),
+            matching,
+        };
+        let store = self.app.mux.store.clone();
+        let all = tokio::task::spawn_blocking(move || history::history(&store, &filter, 100_000)).await.unwrap_or_default();
+        let cut = before.map(|b| now_ms().saturating_sub(b * 1000));
+        let mut hits: Vec<HistoryEntry> = all
+            .into_iter()
+            .filter(|h| cut.is_none_or(|c| h.started_ms <= c))
+            .filter(|h| only.as_ref().is_none_or(|o| o.contains(&h.pane)))
+            .collect();
+        let total = hits.len();
+        hits.reverse();
+        hits.truncate(limit);
+        let entries: Vec<Value> = hits
+            .iter()
+            .map(|h| {
+                json!({
+                    "pane": h.pane,
+                    "open": h.open,
+                    "command": h.text,
+                    "cwd": h.cwd,
+                    "exit": h.exit,
+                    "started_ms": h.started_ms,
+                    "started": ago(h.started_ms),
+                    "seconds": h.ended_ms.map(|e| e.saturating_sub(h.started_ms) / 1000),
+                    "by": h.by,
+                    "output_offset": h.start,
+                })
+            })
+            .collect();
+        let summary = match (total, a.failed) {
+            (0, true) => "No failed commands match".to_owned(),
+            (0, false) => "No commands match".to_owned(),
+            (n, f) => format!(
+                "{n} {}command{} match; the newest {} here (read_output with pane and output_offset for one's output)",
+                if f { "failed " } else { "" },
+                if n == 1 { "" } else { "s" },
+                entries.len()
+            ),
+        };
+        done(summary, json!({ "commands": entries, "total": total }))
+    }
+
+    async fn search(&self, a: SearchArgs) -> Out {
+        let re = regex::Regex::new(&a.pattern).map_err(|e| format!("pattern: {e}"))?;
+        let limit = a.limit.unwrap_or(30).clamp(1, 200);
+        let since = a.since.as_deref().map(seconds).transpose()?.map(|s| now_ms().saturating_sub(s * 1000));
+        let only = self.tab_panes().await;
+        let store = self.app.mux.store.clone();
+        let want = if only.is_some() { 2000 } else { limit };
+        let hits = tokio::task::spawn_blocking(move || history::search(&store, &re, since, want)).await.unwrap_or_default();
+        let hits: Vec<Value> = hits
+            .into_iter()
+            .filter(|h| only.as_ref().is_none_or(|o| o.contains(&h.pane)))
+            .take(limit)
+            .map(|h| json!({ "pane": h.pane, "open": h.open, "offset": h.offset, "command": h.command, "line": one_line(&h.line, 300) }))
+            .collect();
+        done(format!("{} matching lines", hits.len()), json!({ "hits": hits }))
+    }
+
+    async fn open_port(&self, a: OpenPortArgs) -> Out {
+        let beside = match (a.beside.as_ref().map(PaneArg::id).transpose()?, self.me()) {
+            (Some(b), _) => Some(b),
+            (None, me) => me,
+        };
+        let host = match beside {
+            Some(b) => self.readable(b).await?.info.host,
+            None => None,
+        };
+        let req = OpenRequest {
+            kind: BlockType::Browser,
+            config: json!({ "port": a.port, "path": a.path }),
+            session: None,
+            split: beside,
+            from_pane: beside,
+            vm: false,
+            image: None,
+            host,
+            local: host.is_none(),
+        };
+        let block = self.open(req).await?;
+        let place = match beside {
+            Some(b) => format!("beside %{b}"),
+            None => "in a new tab".into(),
+        };
+        done(
+            format!("Opened port {} in browser block %{block} {place}", a.port),
+            json!({ "block": block, "port": a.port }),
+        )
+    }
+
+    async fn open(&self, req: OpenRequest) -> Result<PaneId, String> {
+        match self.app.mux.api(|r| Api::Open(req, None, r)).await {
+            Some(Ok(b)) => {
+                self.started(b).await;
+                Ok(b)
+            }
+            Some(Err(e)) => Err(e),
+            None => Err("the daemon is shutting down".into()),
+        }
+    }
+
+    async fn start_agent(&self, a: StartAgentArgs) -> Out {
+        if a.prompt.trim().is_empty() {
+            return Err("give the agent a prompt".into());
+        }
+        let beside = match (a.beside.as_ref().map(PaneArg::id).transpose()?, self.me()) {
+            (Some(b), _) => Some(b),
+            (None, me) => me,
+        };
+        if self.me().is_some() && (a.vm || a.session.is_some()) {
+            return Err("this agent's token reaches its own tab only: start_agent opens beside it (no vm or session)".into());
+        }
+        let host = match beside {
+            Some(b) => self.readable(b).await?.info.host,
+            None => None,
+        };
+        let agent = match a.agent {
+            AgentKind::Claude => "claude",
+            AgentKind::Codex => "codex",
+            AgentKind::Fountain => "fountain",
+            AgentKind::Acp => "acp",
+        };
+        let mut config = json!({ "agent": agent, "prompt": a.prompt });
+        if let Some(c) = &a.command {
+            config["command"] = json!(c);
+        }
+        if let Some(f) = &a.fountain_agent {
+            config["fountain_agent"] = json!(f);
+        }
+        if let Some(m) = &a.model {
+            config["model"] = json!(m);
+        }
+        if let Some(c) = &a.cwd {
+            config["cwd"] = json!(c);
+        }
+        let req = OpenRequest {
+            kind: BlockType::Agent,
+            config,
+            session: if beside.is_none() { a.session.clone() } else { None },
+            split: beside,
+            from_pane: beside,
+            vm: a.vm,
+            image: None,
+            host: if a.vm { None } else { host },
+            local: false,
+        };
+        let block = self.open(req).await?;
+        done(
+            format!("Started an agent in %{block}; wait on it (until needs_input or idle), then read_output for its transcript"),
+            json!({ "block": block }),
+        )
+    }
+
+    async fn respond(&self, a: RespondArgs) -> Out {
+        use illogical_proto::Action;
+        let pane = a.pane.id()?;
+        self.drivable(pane).await?;
+        let (action, content) = match a.action {
+            Response::Allow => (Action::Allow, None),
+            Response::Deny | Response::Skip => (Action::Deny, None),
+            Response::Answer => {
+                let answers = a.answers.clone().ok_or("answer needs answers: the question's fields, by name")?;
+                (Action::Answer, Some(Value::Object(answers)))
+            }
+        };
+        if let Some(o) = a.option.as_deref()
+            && !matches!(o, "once" | "always")
+        {
+            return Err(format!("option {o}: once or always"));
+        }
+        let req = ActRequest {
+            action,
+            pane: Some(pane),
+            panes: vec![],
+            id: a.id.clone(),
+            content,
+            option: a.option.clone(),
+            suggestion: None,
+            message: a.message.clone(),
+        };
+        crate::api::act_as(self.app, pane, &req, self.driver()).await?;
+        let did = match a.action {
+            Response::Allow => "Allowed",
+            Response::Deny => "Denied",
+            Response::Answer => "Answered",
+            Response::Skip => "Skipped",
+        };
+        done(format!("{did} what %{pane} asked"), json!({ "pane": pane }))
+    }
+
+    async fn read_file(&self, a: ReadFileArgs) -> Out {
+        let max = a.max_chars.unwrap_or(PAGE).clamp(200, PAGE_MAX);
+        let pane = match (a.pane.as_ref().map(PaneArg::id).transpose()?, self.me()) {
+            (Some(p), _) => Some(p),
+            (None, me) => me,
+        };
+        let mut path = a.path.clone();
+        if let Some(p) = pane {
+            let info = self.readable(p).await?;
+            if !path.starts_with('/')
+                && !path.starts_with('~')
+                && let Some(cwd) = info.info.cwd.as_deref()
+            {
+                path = format!("{}/{path}", cwd.trim_end_matches('/'));
+            }
+        }
+        let offset = a.offset.unwrap_or(0);
+        let (bytes, size) = crate::fs::read_on(self.app, pane, &path, offset, max as u64).await?;
+        if bytes.iter().take(8000).any(|b| *b == 0) {
+            return Err(format!("{path} looks binary ({size} bytes); read_file reads text"));
+        }
+        // Whole characters only: a page may end mid-character.
+        let mut text = String::from_utf8_lossy(&bytes).into_owned();
+        let mut used = bytes.len();
+        if text.ends_with('\u{fffd}') && (offset + bytes.len() as u64) < size {
+            let cut = text.char_indices().last().map(|(i, _)| i).unwrap_or(0);
+            text.truncate(cut);
+            used = text.len().min(used);
+        }
+        let next = offset + used as u64;
+        let more = next < size;
+        let summary = if more {
+            format!("{path}: bytes {offset}–{next} of {size}; more: call again with offset {next}")
+        } else {
+            format!("{path}: {size} bytes, to the end")
+        };
+        done(summary, json!({ "path": path, "size": size, "offset": offset, "next_offset": next, "more": more, "text": text }))
+    }
+
+    // ------------------------------------------------------------ resources
+
+    /// A resource's text: `illogical://history`, `illogical://pane/N/output`,
+    /// `illogical://pane/N/screen` or `illogical://block/N`.
+    pub async fn resource(&self, uri: &str) -> Result<String, String> {
+        let rest = uri.strip_prefix("illogical://").ok_or_else(|| format!("not an illogical resource: {uri}"))?;
+        let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+        let pane_of = |s: &str| PaneArg::Name(s.to_owned()).id();
+        let out = match parts.as_slice() {
+            ["history"] => self.history(HistoryArgs {
+                failed: false,
+                since: None,
+                before: None,
+                cwd: None,
+                matching: None,
+                pane: None,
+                limit: Some(50),
+            })
+            .await?,
+            ["pane", id, "output"] => {
+                let v = self.read_output(ReadArgs { pane: PaneArg::Id(pane_of(id)?), offset: None, last_command: false, max_chars: None }).await?;
+                return Ok(v["text"].as_str().unwrap_or_default().to_owned());
+            }
+            ["pane", id, "screen"] => {
+                let v = self.capture(PaneOnly { pane: PaneArg::Id(pane_of(id)?) }).await?;
+                return Ok(v["text"].as_str().unwrap_or_default().to_owned());
+            }
+            ["block", id] => {
+                let id = pane_of(id)?;
+                let p = self.readable(id).await?;
+                let state = match self.app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+                    Some(b) => b.state(),
+                    None => Value::Null,
+                };
+                json!({ "pane": entry(&p), "state": state })
+            }
+            _ => return Err(format!("no such resource: {uri}")),
+        };
+        Ok(serde_json::to_string_pretty(&out).unwrap_or_default())
+    }
+}
+
+/// A pane in `list`.
+fn entry(p: &PaneSummary) -> Value {
+    let i = &p.info;
+    json!({
+        "pane": i.id,
+        "type": i.kind,
+        "session": p.session_name,
+        "tab": p.tab,
+        "tab_name": p.tab_name,
+        "machine": i.host.map(|m| format!("m{m}")),
+        "cwd": i.cwd,
+        "command": i.command,
+        "title": i.title,
+        "running": i.running,
+        "attention": i.attention,
+        "why": i.reason.as_ref().map(|r| r.headline.clone()),
+        "current": i.current.as_ref().and_then(|c| c.text.clone()),
+        "last": i.last.as_ref().map(|c| json!({ "command": c.text, "exit": c.exit })),
+        "started_by": i.started_by.as_ref().map(|s| s.by.clone()),
+    })
+}
+
+/// A block's text (an agent's transcript), paged by character.
+fn page_text(pane: PaneId, text: &str, offset: Option<u64>, max: usize) -> Out {
+    let chars: Vec<char> = text.chars().collect();
+    let total = chars.len();
+    let from = match offset {
+        Some(o) => (o as usize).min(total),
+        None => total.saturating_sub(max),
+    };
+    let to = (from + max).min(total);
+    let page: String = chars[from..to].iter().collect();
+    let more = to < total;
+    let summary = if more {
+        format!("%{pane}: characters {from}–{to} of {total}; more: call again with offset {to}")
+    } else {
+        format!("%{pane}: characters {from}–{to}, to the end")
+    };
+    done(summary, json!({ "pane": pane, "offset": from, "next_offset": to, "more": more, "text": page }))
+}
+
+/// The longest start of `raw` whose text fits in `max` characters, cut at a
+/// line's end where one is near: (text, raw bytes used).
+fn head_page(raw: &[u8], max: usize) -> (String, usize) {
+    let all = strip(raw);
+    if all.len() <= max {
+        return (all, raw.len());
+    }
+    let (mut lo, mut hi) = (0usize, raw.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if strip(&raw[..mid]).len() <= max { lo = mid } else { hi = mid - 1 }
+    }
+    let cut = match raw[..lo].iter().rposition(|b| *b == b'\n') {
+        Some(nl) if nl + 1 > lo / 2 => nl + 1,
+        _ => lo,
+    };
+    (strip(&raw[..cut]), cut)
+}
+
+/// The shortest end of `raw` whose text fits in `max` characters, from a
+/// line's start where one is near: (text, raw bytes skipped).
+fn tail_page(raw: &[u8], max: usize) -> (String, usize) {
+    let all = strip(raw);
+    if all.len() <= max {
+        return (all, 0);
+    }
+    let (mut lo, mut hi) = (0usize, raw.len());
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if strip(&raw[mid..]).len() <= max { hi = mid } else { lo = mid + 1 }
+    }
+    let skip = match raw[lo..].iter().position(|b| *b == b'\n') {
+        Some(nl) if nl < (raw.len() - lo) / 2 => lo + nl + 1,
+        _ => lo,
+    };
+    (strip(&raw[skip..]), skip)
+}
+
+/// The end of `s`, at most `max` bytes, on a character boundary.
+fn cap_tail(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_owned();
+    }
+    let mut cut = s.len() - max;
+    while !s.is_char_boundary(cut) {
+        cut += 1;
+    }
+    s[cut..].to_owned()
+}
+
+fn one_line(s: &str, max: usize) -> String {
+    let line = s.lines().next().unwrap_or("").trim();
+    if line.chars().count() <= max {
+        return line.to_owned();
+    }
+    let mut out: String = line.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// `90m`, `36h`, `2d`, `45s` or plain seconds.
+fn seconds(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    let (n, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
+    let n: u64 = n.parse().map_err(|_| format!("{s:?}: a duration like 90m, 36h, 2d or seconds"))?;
+    let mult = match unit.trim() {
+        "" | "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        u => return Err(format!("{s:?}: unit {u} (use s, m, h or d)")),
+    };
+    Ok(n * mult)
+}
+
+fn ago(ms: u64) -> String {
+    let secs = now_ms().saturating_sub(ms) / 1000;
+    match secs {
+        0..60 => format!("{secs}s ago"),
+        60..3600 => format!("{}m ago", secs / 60),
+        3600..86400 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86400),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pages_cut_at_lines_and_fit() {
+        let raw: Vec<u8> = (0..2000).flat_map(|i| format!("\x1b[32mline {i:04}\x1b[0m\r\n").into_bytes()).collect();
+        let (text, used) = head_page(&raw, 1000);
+        assert!(text.len() <= 1000 && text.len() > 900, "{}", text.len());
+        assert!(text.starts_with("line 0000\n") && text.ends_with('\n'), "{text:?}");
+        let (next, _) = head_page(&raw[used..], 1000);
+        assert!(next.starts_with("line "), "the next page starts on a line: {next:?}");
+        let (tail, skipped) = tail_page(&raw, 1000);
+        assert!(tail.len() <= 1000 && tail.ends_with("line 1999\n"), "{tail:?}");
+        assert!(tail.starts_with("line "), "{tail:?}");
+        assert_eq!(strip(&raw[skipped..]), tail);
+        let (small, used) = head_page(b"hi\r\n", 1000);
+        assert_eq!((small.as_str(), used), ("hi\n", 4));
+    }
+
+    #[test]
+    fn durations_and_panes() {
+        assert_eq!(seconds("2d"), Ok(172800));
+        assert_eq!(seconds("90m"), Ok(5400));
+        assert_eq!(seconds("45"), Ok(45));
+        assert!(seconds("2w").is_err());
+        assert_eq!(PaneArg::Name("%7".into()).id(), Ok(7));
+        assert_eq!(PaneArg::Id(3).id(), Ok(3));
+        assert!(PaneArg::Name("x".into()).id().is_err());
+    }
+
+    #[test]
+    fn annotations_are_honest() {
+        let all = list(Scope::Full);
+        assert_eq!(all.len(), 13);
+        let ro: Vec<&str> = all
+            .iter()
+            .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
+            .map(|t| t.name.as_ref())
+            .collect();
+        assert_eq!(ro, ["read_output", "capture_screen", "wait", "list", "history", "search", "read_file"]);
+        assert_eq!(list(Scope::Read).len(), ro.len(), "a read token sees the read-only tools only");
+        let close = all.iter().find(|t| t.name == "close").unwrap();
+        assert_eq!(close.annotations.as_ref().unwrap().destructive_hint, Some(true));
+    }
+}

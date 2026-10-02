@@ -156,6 +156,11 @@ pub enum Api {
     /// Where each pane of a session's output ends now (a "from now" share
     /// starts there).
     SessionEnds(SessionId, oneshot::Sender<Option<BTreeMap<PaneId, u64>>>),
+    /// An MCP client started this pane or block (M16): shown on it, and
+    /// what lets an agent block's token drive it.
+    StartedBy(PaneId, illogical_proto::StartedBy),
+    /// Typing by an MCP client (M16): as theirs, in the pane's history.
+    InputBy(PaneId, Vec<u8>, String),
 }
 
 /// What a terminal's question got.
@@ -272,6 +277,8 @@ pub struct Config {
     /// Secrets the `fs` methods never serve (the provider's token, agents'
     /// credentials); the state directory is added to these.
     pub private: Vec<PathBuf>,
+    /// Where agent blocks reach MCP (M16); `None`: they don't.
+    pub mcp: Option<crate::mcp::Link>,
 }
 
 impl Config {
@@ -840,6 +847,7 @@ impl Daemon {
             env: self.config.env(id),
             home: self.config.home.clone(),
             secrets: self.config.secrets.clone(),
+            mcp: self.config.mcp.clone(),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();
@@ -1378,6 +1386,13 @@ impl Daemon {
             }
             Api::Run(req, reply) => {
                 let _ = reply.send(self.run_command(req));
+            }
+            Api::InputBy(pane, data, by) => self.input(pane, data, Some(by)),
+            Api::StartedBy(pane, by) => {
+                if self.panes.contains_key(&pane) || self.blocks.contains_key(&pane) {
+                    self.meta.entry(pane).or_default().started_by = Some(by);
+                    self.touch(pane);
+                }
             }
             Api::Ask(pane, ask, reply) => {
                 let _ = reply.send(self.ask(pane, *ask));
@@ -3051,6 +3066,7 @@ impl Daemon {
             work: Some(work),
             activity: self.activity.get(&p.id).map(|(_, a)| *a).filter(|a| a.last_ms > 0),
             title: status.title.clone(),
+            started_by: meta.started_by.clone(),
             running,
             policy: meta.policy,
             current: status.current.map(info_of),
@@ -3108,6 +3124,7 @@ impl Daemon {
             project: None,
             activity: None,
             title: None,
+            started_by: meta.started_by.clone(),
         }
     }
 

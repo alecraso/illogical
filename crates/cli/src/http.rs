@@ -190,15 +190,31 @@ pub fn request(
     path: &str,
     body: Option<&serde_json::Value>,
 ) -> anyhow::Result<Response> {
-    let mut stream = target.connect()?;
     let body = body.map(|b| b.to_string()).unwrap_or_default();
-    write!(
-        stream,
-        "{method} {}{path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+    send(target, method, path, &[("Content-Type", "application/json")], body.as_bytes())
+}
+
+/// A request with headers of the caller's own (MCP's bridge).
+pub fn send(
+    target: &Target,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> anyhow::Result<Response> {
+    let mut stream = target.connect()?;
+    let mut head = format!(
+        "{method} {}{path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: {}\r\n",
         target.prefix(),
         target.authority(),
         body.len()
-    )?;
+    );
+    for (k, v) in headers {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("\r\n");
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body)?;
     stream.flush()?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();

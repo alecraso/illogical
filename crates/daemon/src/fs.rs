@@ -523,6 +523,19 @@ async fn read(State(app): AppState, Query(q): Query<FsQuery>) -> Res<Response> {
     Ok(res)
 }
 
+/// A file's bytes from `offset` (at most `len`, capped at [`READ_MAX`]) and
+/// its size, on the host `pane` runs on (this host without one): MCP's
+/// `read_file` (M16).
+pub async fn read_on(app: &App, pane: Option<PaneId>, path: &str, offset: u64, len: u64) -> Result<(Vec<u8>, u64), String> {
+    let q = FsQuery { path: Some(path.to_owned()), pane, ..Default::default() };
+    let (path, len) = (path_of(&q), len.min(READ_MAX));
+    let read = match target(app, &q).await.map_err(|e| e.to_string())? {
+        Target::Local(s) => blocking(move || s.read(&path, offset, len)).await,
+        Target::Machine(m) => m.read(&path, offset, len).await,
+    };
+    read.map_err(|e| e.to_string())
+}
+
 /// Polls and reports differences; ends when the caller hangs up or the
 /// thing can't be read any more.
 async fn watch(State(app): AppState, Query(q): Query<FsQuery>) -> Res<Response> {

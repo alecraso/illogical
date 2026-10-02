@@ -28,6 +28,9 @@ regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "json"] }
 rustls-platform-verifier = "0.7.1"
 rust-embed = { version = "8.12.0", features = ["mime-guess"] }
+# MCP (M16), pinned: 3.x moves fast (S14).
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "schemars", "transport-io", "transport-streamable-http-server"] }
+schemars = "1.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
@@ -47,4 +50,5 @@ workspace = true
 
 [dev-dependencies]
 futures-util = "0.3.34"
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-streamable-http-client-unix-socket", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 rcgen = "0.14.10"
