@@ -82,9 +82,14 @@ terminal, OSC 133 command ranges are *command marks*, never "blocks".
   - If the client's `last_offset` is within the log and the gap is ≤ 1MB, the server replays from the log.
   - Otherwise it sends a full `snapshot`, then live output. The same path is used after a flow-control overrun.
   - After attach, the pane gets one SIGWINCH nudge.
-  - **Visible-first attach is gated on measurement (decided 2026-10-01).**
-    - Measure time-to-first-draw on the phone over serve, with deep scrollback.
-    - Build visible-first only if that is slow. ghostty-web plus GHOSTSNP makes it native later anyway.
+  - **Visible-first attach is gated on measurement (decided 2026-10-01). Measured in S10: don't build it for xterm.js.**
+    - **Where the time goes:** on an emulated Pixel 7 at 4x CPU throttling and 10 Mbps / 50 ms, attaching to a 64k-row pane took 3.7 s, of which 3.2 s was download. The snapshot goes out uncompressed (3.9 MB; 183 KB gzipped). The client keeps only 10k lines, so 54k of the 64k rows are downloaded and thrown away. Even a small screen takes about 150 ms to draw at 4x, which is the most visible-first could save. See [spikes/s10-ghostty-web](spikes/s10-ghostty-web/README.md).
+    - **Do instead (small, server-side, fix now):**
+      - **compress snapshot frames** (permessage-deflate, or zstd frames);
+      - **cap the history in a snapshot at the client's scrollback** (sent in `attach`).
+
+      Together they took the 64k case on the throttled phone from about 3.7 s to about 0.35 s. Real terminal output compresses worse than S10's synthetic lines, so re-measure.
+    - M8 gives visible-first natively later, through GHOSTSNP's screen-then-history split. The design below is kept only for reference.
     - If it is built, it follows Superlogical's order:
       1. a `snapshot` with `part: screen` (the visible screen, modes and cursor), then `ready`;
       2. live output;
@@ -191,6 +196,64 @@ Each milestone ends with a demo against the acceptance list.
     - A mismatched or undecodable checkpoint is discarded, and the log tail is replayed. The log is the truth; checkpoints are a cache.
     - Wire snapshots stay formatter VT bytes until a ghostty-web client exists.
     - Moving the daemon to libghostty-rs `master` (and Zig 0.16) happens at the start of M2.
+
+- **S1/S5 follow-ups: done 2026-10-01.** See [spikes/s1s5-followup](spikes/s1s5-followup/README.md).
+  - **New fixtures:** Claude Code (it draws in the alt screen), origin mode,
+    DECSLRM, the saved cursor in primary and alt screens (1049 and 47),
+    Kitty graphics and sixel.
+  - **Checkpoints (GHOSTSNP)** round-trip all of them exactly, except Kitty
+    images, which GHOSTSNP v1 leaves out by design. libghostty doesn't parse
+    sixel, so there's nothing to carry.
+  - **The wire path is wrong today on 13 of 18 fixtures,** in Ghostty and in
+    xterm.js. This is the formatter snapshot plus fix-ups that the browser
+    gets on attach. The visible failures:
+    - the screen shifts up a row whenever the cursor sits below the last
+      text (after a program exits, after `clear`);
+    - the saved cursor is lost;
+    - origin-mode cursors are off;
+    - blank cells take the previous text's colours (black boxes beside
+      Claude Code's logo);
+    - hyperlinks and protected cells are lost;
+    - the primary screen's Kitty keyboard flags are lost while an alt screen
+      shows.
+
+    S1's fixtures all left the cursor on their last line of text, so they
+    missed this.
+  - **Fix now, in `crates/vt` (not tied to a milestone).** All seven fixes
+    are prototyped in the spike's `src/patched.rs`, and with them all 17
+    non-image fixtures are exact in both engines:
+    1. pad dropped rows straight after the content, not after the cursor
+       move;
+    2. place the cursor relative to the scroll region under DECOM;
+    3. carry each screen's saved cursor, by cloning through GHOSTSNP and
+       restoring on the clone to read it;
+    4. replay into a scratch terminal and repaint cells that differ
+       (colours, hyperlinks, protection);
+    5. emit the primary screen's Kitty keyboard flags;
+    6. turn off Kitty image storage for xterm.js clients
+       (`set_kitty_image_storage_limit(0)`): today the engine tells programs
+       images work, and each pane holds up to 10 MB of images nobody sees;
+    7. add the new fixtures, plus probes of cursor, saved cursor and cells,
+       to the crate's tests.
+
+    Snapshots then take 1–3.3 ms instead of 0.03–0.5 ms, mostly from the
+    prototype's slow cell compare.
+  - **Cross-build:** the pinned Ghostty (`22d13172`) and `main` (`0081d453`)
+    can't read each other's GHOSTSNP. Both directions fail cleanly with
+    `INVALID_VALUE` on every fixture (the 64-byte BLAKE3 removal). So M2's
+    "discard and replay" is safe.
+    - But the tag doesn't tell builds apart: `build_info` says `0.1.0-dev`
+      in both, and `engine_tag()` is identical.
+    - Derive a real tag at build time, or hash a fixed canary terminal's
+      GHOSTSNP.
+  - **Upstream issues to file:**
+    - GHOSTSNP: bump the version on wire changes, and carry Kitty images;
+    - `build_info`: include the git hash;
+    - the formatter: blank-cell colours, hyperlinks and protection not
+      emitted, cursor move before the scroll region, only the active
+      screen's Kitty keyboard flags.
+  - **Still open:** a pending wrap on the live cursor (no fixture ends with
+    one); a longer Claude Code session with tool output.
 
 ### M0: the loop
 
@@ -416,13 +479,66 @@ and `tail`. So the VM is modelled as *placement*, not as a kind of pane:
 - **Two execs on one sprite are independent:** separate PTYs, sizes and
   sessions, with separate detach and reattach. They share one process space
   and one user, which is what tab-owned machines want.
+- **Follow-ups: done 2026-10-01.** See [spikes/m3b-followup](spikes/m3b-followup/README.md). It also read wisp's source (`~/dev/jhgaylor/mini-sprites`).
+  - **An open exec connection keeps a sprite awake, pings or not.**
+    - wisp sends no pings. wispd keeps the sprite awake while any `/exec`
+      request is open, and the idle check also counts attached sessions.
+    - So **pausing means detaching**, and VM tabs can't stay attached and
+      still pause.
+    - wisp counts only exec I/O and API calls as activity. A *detached*
+      session doing silent work (a `sleep`, a CPU-bound loop) was paused 33s
+      into it.
+    - `is_active` in `GET /exec` means "I/O in the last 5s", not "a client is
+      attached".
+  - **Slow reader:** backpressure reaches the guest, so `seq` blocked with
+    about 8 MB in flight and lost nothing over a 20s stall.
+    - At about 30s the guest agent drops the client (close 1006). Output
+      after that goes only to the 1 MiB ring, so about 3.1M lines were lost
+      with no marker.
+    - wispd's memory didn't grow.
+  - **Kill with a signal:** `POST …/kill?signal=HUP&timeout=3s` (also `9`,
+    `SIGKILL`; a JSON body is ignored), or a `{"type":"signal","signal":"HUP"}`
+    frame on the open connection.
+    - HUP exits an interactive bash in 1–6ms (129). `nohup` processes
+      survive.
+    - `machine.rs` already uses `?signal=HUP&timeout=3s`.
+  - **The cold reboot:** `warm` at 32s after detach, `cold` 60–62.5 min later.
+    - The next request boots it in about 100ms, but reattaching the old
+      session gets a plain **404 "exec session not found"** after 334ms.
+    - Everything in the old session is gone: the shell, every process
+      including `nohup` ones, `/tmp` and the session list. Only `~` is
+      kept. A 6h `max_run_after_disconnect` doesn't help.
+  - **Replay:** attaching with `output_offset=N` (as the daemon does) replays
+    exactly what's after N, with no duplicates.
+    - If N is older than the ring, wisp silently sends the whole ring.
+    - Matching the tail of what the client has against the replay is unique
+      for varied output at 64–256 bytes, and never wrong. It never matches
+      for repetitive output (`yes`, watch loops).
+  - **Fix now, in `machine.rs`:**
+    - **Recognise "machine restarted."** A 404 "exec session not found"
+      while the sprite still exists means wisp rebooted the VM. Stop
+      retrying (today: three retries, then `Lost { machine_gone: false }`).
+      Restart the panes per their restart policy **on the same sprite**,
+      because the disk is kept.
+    - **Detect replay gaps.** Attach at `received − 256` and compare the
+      first 256 replayed bytes with the end of the log. If they match, the
+      stream is contiguous; otherwise write the "output may be missing"
+      rule. Today it attaches at exactly `received` and would miss a gap.
+    - **Never stop reading an exec WebSocket for 30s or more.** Slow
+      viewers are absorbed on the daemon's side (the log, the per-client
+      queue), never by pausing the read from wisp.
+  - **For detaching idle panes later:** only detach a pane whose shell is at
+    its prompt with no foreground job (from M3's command marks). Otherwise
+    silent work gets frozen 30s after its last output. Reattach on input or
+    when a viewer arrives. wisp's in-guest keep-awake ("task") API might
+    cover silent work, but that was only read in the source, not tested.
+  - **Ask upstream:** `session_info` should say where the ring starts, so a
+    gap is explicit.
 - **Still open:**
-  - whether pings or the open connection keep a sprite awake;
-  - what wisp does with a slow reader;
-  - a kill with a chosen signal;
   - a wispd restart;
-  - behaviour after the 1h warm period, when wisp reboots the VM;
-  - how Fly handles a resize from a non-owner, and Fly's exec throughput.
+  - a slow-but-steady reader;
+  - wisp's keep-awake task API;
+  - Fly (resize from a non-owner, exec throughput).
 
 **Done when:**
 
@@ -988,18 +1104,326 @@ blocks.
 
 **More block types** are explored in S8 and built in M10 and M11, below.
 
+### M6c: questions and forms from agents (after M6b)
+
+When an agent asks you something (Claude Code's AskUserQuestion: a few
+questions, each with options and an "Other" box), you answer it from a card,
+on the desktop or the phone. It works the same in an agent block and for
+Claude Code running in a terminal block.
+
+**What happens today.** `claude-agent-acp` turns AskUserQuestion into an ACP
+**form elicitation** (`elicitation/create`, an unstable part of ACP), but only
+if the client declares it can show forms. illogical doesn't
+(`crates/daemon/src/agent/mod.rs`: `clientCapabilities`). S13 found that
+without the capability, both adapter versions **disable the AskUserQuestion
+tool entirely**, so the model just asks in plain text and nothing is pending.
+In the Claude TUI, the question is a keyboard picker that's awkward on a
+phone.
+
+**Decisions (2026-10-01):**
+
+- It covers **agent blocks and Claude Code in terminal blocks**.
+- **An unanswered question waits indefinitely,** like a pending approval: the
+  block stays `needs-input`, with a push notification, until you answer.
+- **Generic MCP forms and sign-in links are included,** because they use the
+  same mechanism.
+
+#### Agent blocks
+
+- **Declare `clientCapabilities.elicitation: { form: {}, url: {} }`** in
+  `initialize`, and handle `elicitation/create` from the agent. Booleans
+  (`form: true`) don't work: the ACP SDK's parser silently drops them, and
+  the adapter treats that as "not supported".
+- **AskUserQuestion forms are recognised and drawn as a question card:**
+  - **Recognise one by its tool call, not by `_meta`.** The request's
+    `toolCallId` matches a tool call named AskUserQuestion. The update just
+    before it carries `rawInput.questions`, with headers, options and
+    previews. 0.85.0 sends the `_meta._askUserQuestionCustomAnswer` marker
+    only to JetBrains clients.
+  - **Field layout:**
+    - fields are named `question_<n>`, each with a companion
+      `question_<n>_custom` field titled "Other";
+    - single-select questions are a `oneOf` enum, multi-select ones an
+      `anyOf` array;
+    - with one question, `message` is the question; with several, each
+      field's `description` holds its question.
+  - **Answers are option labels.** "Other" text on its own becomes the answer.
+    Next to a single-select pick, it becomes a note; in a multi-select, it's
+    added as one more item.
+  - Each question shows its options as buttons (single) or checkboxes (multi),
+    with descriptions, and an "Other" text box.
+  - An option's preview (mockups, code, under
+    `_meta["_claude/askUserQuestionOption"].preview`) shows in monospace when
+    the option is focused or tapped.
+  - **Submit** answers with `{action:"accept", content}`.
+  - **Skip** answers `decline`. The tool records "The user did not answer the
+    questions.", and the turn continues.
+  - **Stop is `session/cancel` alone.** The adapter withdraws its own open
+    request with a `$/cancel_request {requestId}` notification, and the turn
+    ends `cancelled` in about 10ms. No answer is needed, and a late one is
+    ignored. Answering `{action:"cancel"}` instead stops nothing: the tool
+    fails, and the model carries on confused.
+    - The block treats `$/cancel_request` as "withdraw this card".
+- **Any other form** is drawn generically from its JSON Schema: strings,
+  numbers, booleans, enums and multi-select arrays, with titles and
+  descriptions.
+  - **MCP server forms** come without a `toolCallId`, and their schema passes
+    through as written, including the old-style `enum` + `enumNames`.
+  - **Codex** asks through `elicitation/create` only in its plan mode, with a
+    different layout:
+    - fields are named by its question ids;
+    - "Other" is a "None of the above" option plus a `<id>_note` field;
+    - `required` is set.
+
+    The generic renderer covers it.
+- **URL elicitations** (an MCP server's sign-in, for example) show a card with
+  the message and an "Open link" button. The card closes when the agent sends
+  `elicitation/complete` with its `elicitationId`. Dismissing it answers
+  `decline`.
+- **It behaves like a pending approval, and reuses that machinery** (S13
+  confirmed a pending question survives a held-pipes restart and is answered
+  by its old id):
+  - the block is `needs-input`, with a push notification whose text is the
+    first question;
+  - a single single-select question with up to two options can be answered
+    from the notification itself; anything else opens the block;
+  - the open request is in the block's log, so it survives a daemon restart
+    (M6b's held pipes) and a reload, and any client can answer it. The first
+    answer wins, and the other clients' cards close.
+- **Methods and CLI:**
+  - `answer{id, content}` and `decline{id}`;
+  - `illogical call %N answer '{"question_0":"…"}'`;
+  - `wait %N --needs-input` prints the pending question as JSON, so a script,
+    or another agent, can answer it.
+- **History:** the question and the answer appear in the transcript,
+  `capture --text`, `history` and `search`.
+- **Fountain doesn't forward questions (S13).** Inside its sandbox the
+  adapter never gets the capability, so the tool is disabled and the agent
+  asks in plain text. The block needs nothing special. Ask Fountain to
+  forward the elicitation capability.
+- **Codex in its default mode hangs (S13).** It uses an async variant of its
+  question tool that `codex-acp` doesn't pass on, and the model loops on
+  `sleep`. Report it upstream to `codex-acp`. Meanwhile, the block's existing
+  attention heuristics should surface a Codex turn that's busy for minutes
+  with no output.
+
+#### Claude Code in a terminal block
+
+- **The hook.** illogical's Claude Code hooks (the same set M3's attention
+  hooks come from) gain a `PreToolUse` hook matching `AskUserQuestion`. It
+  runs `illogical ask`, which only acts when `ILLOGICAL_PANE` is set:
+  1. it reads the hook input on stdin (`tool_input.questions`, `tool_use_id`,
+     `session_id`);
+  2. it posts the questions to the daemon, which puts the pane in
+     `needs-input` and shows the same question card next to the terminal, on
+     every client, with a push notification;
+  3. it blocks until you answer, then prints
+     `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{…questions, "answers":{…}, "annotations":{…}}}}`.
+     `answers` is keyed by question text and holds option labels;
+     `annotations` carries "Other" notes. S13 showed Claude Code then runs
+     the tool with those answers and never shows its picker.
+- **Answering in the terminal instead.** The card has an "Answer in terminal"
+  button. It makes the hook exit with no output, so Claude Code shows its
+  normal picker.
+- **Waiting.** Hooks have no maximum timeout: the settings schema only
+  requires a positive number, and the default is 10 minutes. S13 waited 660s
+  with `timeout: 900`. So the hook is installed with a very large timeout,
+  for example 7 days, which honours "wait indefinitely".
+  - When a timeout expires, Claude Code sends the hook SIGTERM and shows its
+    picker.
+  - The TUI stays responsive while the hook waits. Esc or Ctrl-C interrupts
+    the turn and sends the hook SIGTERM.
+  - **`illogical ask` must catch SIGTERM and withdraw the card,** so it
+    never outlives the question.
+- **Outside illogical,** the hook exits silently and changes nothing.
+
+#### S13: done 2026-10-01
+
+See [spikes/s13-questions](spikes/s13-questions/README.md). The findings are
+folded in above.
+
+**Still open:**
+
+- hook waits of hours;
+- a real OAuth sign-in;
+- Codex's own answer deadline;
+- two clients answering the same question;
+- questions from a subagent;
+- the "retry with another model" form.
+
+#### Done when
+
+- From the phone, an agent block's AskUserQuestion with two questions (one
+  multi-select, one answered with "Other") is answered from its card. The
+  agent continues with those answers, and the transcript shows them.
+- A single question with two options is answered straight from the push
+  notification.
+- A pending question survives a daemon restart and is answered afterwards.
+- Claude Code in a terminal block asks a question, it's answered from the
+  phone, and the TUI never shows its picker. "Answer in terminal" brings the
+  picker back, and pressing Esc in the TUI withdraws the card.
+- Stop on an agent block with a question open ends the turn at once.
+- An MCP server's form is filled in, and its sign-in link opens and completes.
+
+### M16: an MCP server (illogical as tools for any agent)
+
+Any MCP client (Claude Code, Codex, Claude Desktop, an agent block) gets
+illogical as typed tools: run commands in durable panes you can watch and
+take over, spin up throwaway VMs, open a dev server next to its terminal,
+start and supervise other agents, and search what happened yesterday. M3
+already built the CLI and HTTP API, so M16 is a curated layer over them, not
+new machinery.
+
+**Why it beats an agent's own Bash tool:**
+
+- **Work outlives the agent's turn.** A build started through MCP runs in a
+  real pane. You see it on the phone, scroll it, take it over. It survives
+  the agent's session and daemon restarts, and the agent picks it up again
+  with `wait` or `read_output`.
+- **Sandboxes on demand:** `run` with `vm: true` is an isolated machine that
+  disappears afterwards.
+- **Agents supervising agents:** `start_agent`, `wait` until it's idle or
+  asking, read its transcript, and answer its approvals and questions (M6c),
+  or leave them for you.
+- **Showing you things:** `open_port` puts its dev server in a browser block
+  beside its terminal.
+- **Memory across sessions:** `history` and `search`.
+- **Permissions per tool** in the MCP client, for example always allowing
+  `read_output` and `wait` while asking before `run`.
+
+**Decisions (2026-10-01):**
+
+- **Both transports now:** stdio and HTTP.
+- **Scope: everything, like the CLI.** An external MCP client can touch any
+  pane on any host. The MCP client's own tool permissions are the guard,
+  which makes tool annotations matter (below).
+- **Injected into agent blocks automatically, scoped to the block's tab.**
+
+**Transports (one implementation):**
+
+- **The daemon serves MCP over Streamable HTTP at `/mcp`,** with the same
+  auth as the API:
+  - the owner over the tailnet (serve headers, or `WhoIs` on direct
+    listeners);
+  - per-client bearer tokens from `illogical mcp token [--name n]
+    [--scope …]`, revocable, for clients without tailnet identity;
+  - the exact-`Origin` rule for browsers (the MCP spec requires this
+    check). Non-browser clients send no `Origin`.
+- **`illogical mcp` is a stdio bridge** to that endpoint over the daemon's
+  Unix socket, or to another daemon with `--host`. Claude Code and Codex
+  configure it as a plain command:
+  ```
+  claude mcp add illogical -- illogical mcp
+  ```
+- **Implementation:** the official Rust SDK (`rmcp`) in the daemon. S14
+  checks it covers Streamable HTTP, resource subscriptions and progress
+  notifications.
+
+**Tools.** About a dozen, shaped for agents rather than mirroring every
+endpoint. Each returns a short text summary plus `structuredContent`, with
+output capped and pageable by offset, so a chatty pane can't flood the
+agent's context.
+
+| Tool | What it does | Annotations |
+|---|---|---|
+| `run` | Run a command in a new tab or split; `cwd`, `vm`/`vm_tab`/`machine`, `host`, `policy`, `wait` (with a timeout). Returns the pane, and with `wait`, its exit code and the last lines. | not read-only, not idempotent |
+| `send_input` | Text (with optional Enter) or named keys (`C-c`, `Up`) to a pane | not read-only |
+| `read_output` | A pane's output from an offset, or its last command (escape sequences stripped). Returns text and the next offset. | read-only |
+| `capture_screen` | The visible screen as text | read-only |
+| `wait` | Until command end, exit, a regex match, idle or needs-input, with a timeout. On timeout it returns "still running" and the offset, so the agent calls again. | read-only |
+| `list` | Panes and blocks: type, host, cwd, command, attention state | read-only |
+| `close` | Close a pane or block (and a pane-owned VM) | destructive |
+| `history` / `search` | Commands across panes (failed, since, cwd), and full-text search of logs | read-only |
+| `open_port` | A browser block on a port of the pane's machine, beside it | not read-only |
+| `start_agent` | An agent block (Claude Code, Codex, a Fountain agent) with a prompt; returns the block | not read-only |
+| `agent_respond` | Approve or deny a pending permission, or answer a pending question (M6c) | not read-only |
+| `read_file` | A file on a pane's host or VM (M7's `fs`), capped | read-only |
+
+- **Long calls:** `run --wait` and `wait` send progress notifications. They
+  also return before the client's MCP tool timeout (S14 measures Claude
+  Code's) with a resumable "still running", so a long build never fails a
+  tool call.
+- **Errors** are tool results (`isError`) with a sentence an agent can act
+  on, for example "pane %7 is gone; it exited 2 at 14:03", not protocol
+  errors.
+
+**Resources:**
+
+- `illogical://pane/%N/output` (subscribable, so a client can follow a pane
+  live), `illogical://pane/%N/screen`, `illogical://block/%N` (state), and
+  `illogical://history`.
+- Resource templates, so clients can list them.
+
+**Agent blocks get it automatically, scoped to their tab:**
+
+- `session/new` passes `mcpServers` with an `illogical` server. S13 showed
+  `claude-agent-acp` uses MCP servers passed that way.
+- The scope is a token minted per block. The agent can create panes and
+  blocks in its own tab (on the tab's machine, in a VM tab), read and drive
+  what it created, and read the rest of its tab. It can't touch other tabs
+  or hosts.
+- **Local agents** get the stdio bridge with that token.
+- **VM agents** need to reach the daemon from inside the VM. That means an
+  HTTP endpoint on wisp's bridge address, or the bridge running host-side.
+  S14 checks what the guest network allows.
+- **Fountain agents** can't reach the tailnet, so they don't get it.
+
+**Safety.** External clients get full scope, so:
+
+- every tool carries honest annotations (`readOnlyHint`, `destructiveHint`,
+  `idempotentHint`), which clients use to decide what to ask about;
+- the README recommends a Claude Code permission set: allow the read-only
+  tools, ask for the rest;
+- every MCP call is logged with the client's name and token. The pane shows
+  "started by mcp:<client>", and `history` records it.
+
+**S14: spike before M16 (about half a day):**
+
+- `rmcp` maturity: Streamable HTTP server, resource subscriptions, progress
+  notifications, structured content, and tool annotations.
+- Claude Code as a client:
+  - its MCP tool-call timeout, and whether progress notifications extend it;
+  - its output-size limit (`MAX_MCP_OUTPUT_TOKENS`) and what truncation
+    looks like;
+  - whether it uses resource subscriptions at all.
+- Codex as a client: stdio and HTTP.
+- From inside a wisp VM: can a process reach an HTTP endpoint on the host
+  (the bridge address, given `wisp-netd`'s restricted set), or does the
+  bridge need to run host-side?
+- Does `claude-agent-acp` pass `mcpServers` of type `http` as well as
+  `stdio`?
+
+**Done when:**
+
+- Claude Code outside illogical, with `illogical mcp`, runs a long build in a
+  VM pane. You watch it on the phone, Claude waits through it, reads the
+  failure, fixes it and reruns, and the pane shows "started by
+  mcp:claude-code".
+- An agent block starts its project's dev server in a pane in its own tab
+  and opens it in a browser block beside itself. A try to touch another tab
+  is refused.
+- One agent starts a second in an agent block, waits until it asks a
+  question, and answers it.
+- "What failed in this repo yesterday?" is answered through `history`.
+- A client on another tailnet machine uses `/mcp` over HTTP with a token,
+  and revoking the token cuts it off.
+
 ### After M6: order and triggers
 
 Everything below is planned, but each item starts when its trigger holds, not
 on a date. The suggested order:
 
-1. **M7**, because M11 needs its filesystem method, and the picker and session
+1. **M6c** (S13 is done), because agent questions are a daily papercut now that
+   agent blocks exist.
+2. **S14 then M16 (MCP server)**, because it turns everything built so far
+   into tools any agent can use, and it is mostly a layer over M3's API.
+3. **M7**, because M11 needs its filesystem method, and the picker and session
    names are cheap.
-2. **S8**, to choose block types from real use of M6.
-3. **M10 / M11.**
-4. **M5** when a tmux client is wanted.
-5. **M8** when ghostty-web is ready.
-6. **M9** when the scale numbers say so.
+4. **S8**, to choose block types from real use of M6.
+5. **M10 / M11.**
+6. **M5** when a tmux client is wanted.
+7. **M8** when ghostty-web is ready.
+8. **M9** when the scale numbers say so.
 
 ### M5: tmux control mode (`-CC`) front end
 
@@ -1016,20 +1440,114 @@ under Protocol).
   Ghostty's sequences, formats against real tmux, `%pause` and blocks;
   `web/e2e/tmux.spec.ts` edits one layout from both sides. The manual iTerm2
   script is in README (*Use it*).
-- **First:**
-  - capture iTerm2's attach sequence through a logging proxy against real
-    tmux;
-  - read HTM's tests;
-  - list the `%` notifications and commands iTerm2 actually uses.
+- **S11: done 2026-10-01.** See [spikes/s11-tmux-cc](spikes/s11-tmux-cc/README.md).
+  - **Method:** iTerm2's command sequence taken from its source, replayed
+    verbatim against tmux 3.6. HTM's code and tests read.
+  - **Layouts:** `tmux_layout.py` converts an illogical split tree to and
+    from a tmux layout string with its checksum. It round-trips the
+    transcript's layouts byte for byte, and 3,000 random trees exactly.
+  - **No redesign needed.** M5 fits the current protocol with the daemon
+    changes below; everything else lives in the front end.
 - **Entry point:** `illogical tmux -CC [attach -t $s]`, which runs over ssh or
-  locally. It pretends to be a tmux client on stdio and talks to the daemon
-  over its socket.
+  locally. It pretends to be tmux on stdio (`\033P1000p`, then an empty
+  `%begin`/`%end`, then `%session-changed`) and talks to the daemon over its
+  socket.
+  - It reports tmux version `3.5a`, as HTM does and as the Ghostty and WezTerm
+    branches were tested against.
+  - It accepts `\r` line endings and a leading `^C`.
 - **Mapping:**
   - session to session, tab to window, leaf block to `%pane`;
   - layout changes become `%layout-change`, with cells derived from stored
-    ratios;
-  - output becomes `%output`, which needs octal escaping and flow control
-    (`%pause` / `refresh-client -A`).
+    ratios through the S11 converter. A drag in iTerm2 becomes weights that
+    reproduce tmux's cells exactly.
+  - output becomes `%output` (octal-escaped) or `%extended-output`.
+- **The minimum command set** (S11 has the exact formats):
+  - a real `-F` format expander (variables, `#{?c,a,b}`, `#{@opt}`);
+  - `list-sessions`, `list-windows`, `list-panes` (including iTerm2's
+    21-field state format), `display -p`;
+  - `capture-pane -peqJN`, `-a` and `-P -C`;
+  - `refresh-client -C W,H`, `-C @W:WxH`, `-f` and `-A`;
+  - `split-window`, `new-window -PF`, `kill-pane`, `kill-window`;
+  - `resize-pane -L/-R/-U/-D n` and `-x/-y`;
+  - `send` in its `-lt`, `0xNN` and `-H` forms;
+  - `select-pane`, `select-window`, `rename-window`, `detach`;
+  - `show`/`set` for `@` options;
+  - canned success for built-in options (`aggressive-resize off`,
+    `status off`, …), `list-keys` and `copy-mode -q`.
+  - **Never `%error` a command iTerm2 doesn't expect to fail** (`list-keys`,
+    `show @iterm2_id`, `resize-pane`, `select-layout`). iTerm2 disconnects
+    with an alert. A `select-layout` that can't be expressed replies success
+    and re-sends the unchanged layout.
+- **Notifications:** `%output`, `%extended-output`, `%layout-change`,
+  `%window-add`, `%window-close`, `%window-renamed`, `%window-pane-changed`,
+  `%session-window-changed`, `%sessions-changed`, `%pause`, `%continue` and
+  `%exit`. They are held until after the current `%end`.
+- **Daemon changes M5 needs (from S11):**
+  1. **A minimum tab size** (one cell per pane plus dividers), clamped in
+     `core` as tmux does. tmux refuses a layout whose tab is smaller than its
+     tree, and Ghostty checks sizes.
+  2. **An option store:** an opaque string map per session, per pane and
+     global, saved with the layout. iTerm2 keeps tab grouping, hidden tabs
+     and its duplicate-attach guard in `@` options, and Ghostty and WezTerm
+     use `@affinities`.
+  3. **libghostty-vt accessors** for the cursor, the alt screen's saved
+     cursor, the scroll region and tab stops. The front end keeps a mirror
+     terminal per pane, fed from an attach snapshot, and answers
+     `capture-pane` and pane state from it. Output then streams from the
+     snapshot's offset, so it lines up with what tmux would have sent.
+  4. **A `cwd` option on split and new-tab** intents, for iTerm2's
+     custom-directory profiles.
+- **Front-end-only rules:**
+  - **Size claims.** `refresh-client -C @W` and typing in a pane count as a
+    size claim, which fits the existing per-tab owner.
+  - **The active pane and tab** are tracked per front-end connection. WezTerm
+    hangs after a split without `%window-pane-changed`.
+  - **Flow control.** A daemon `Resync` becomes `%pause`. iTerm2 then
+    re-captures and sends `continue`, which re-attaches. Never turn on
+    `pause-after` unless the client asks, because WezTerm can't parse
+    `%extended-output`.
+  - **`send -H`** means bytes to tmux and WezTerm, but Unicode code points
+    to Ghostty's branch.
+  - Don't copy HTM's argument parser: it drops values starting with `-`, so
+    `capture-pane -S -1000` returns only the visible screen.
+  - **Client quirks, from reading WezTerm's and Ghostty's source (S11):**
+    - **WezTerm:**
+      - `list-commands` must list `resize-window`, or WezTerm never
+        resizes;
+      - it needs exactly 8 fields from `list-windows` and 11 from
+        `list-panes`, and a window name with a space breaks it, so names go
+        out without spaces;
+      - it hangs after a split until `%window-pane-changed @W %new`
+        arrives;
+      - any unknown or blank `%` line ends control mode.
+    - **Ghostty:**
+      - it needs 5 or 6 tab-separated fields from `list-windows` and 25 or
+        26 `;`-separated fields from `list-panes`;
+      - `#{version}` must be a single token;
+      - an `%error` on `list-windows`, `list-panes` or the version ends the
+        session.
+    - **`%layout-change`** uses the four-field form, keeping the trailing
+      space when flags are empty, with a lowercase checksum that changes
+      whenever the layout does.
+    - **Window close:** send `%window-close` for windows in the attached
+      session, as real tmux does, not HTM's `%unlinked-window-close`.
+    - **An empty input line means detach.** No line or block may exceed
+      1 MiB.
+    - **Real traffic:** HTM has no recorded transcripts. The quickest source
+      is htmd's `control command:` log while a GUI client is attached.
+- **Still needs a real iTerm2:**
+  - a logging-proxy capture, to check pipelining and what it sends after
+    windows open;
+  - what it does when another client owns the size (resize, letterbox or
+    loop);
+  - whether `3.5a` is the best version to report;
+  - silent resync for clients without `pause-after`;
+  - whether tab grouping comes back across reattach once the option store
+    exists.
+
+  Ghostty's and WezTerm's upstream `main` aren't usable yet. MisterTea's
+  unmerged branches work, and Ghostty can be built here (see
+  `~/ghostty-tmux-control-mode-brief.md`).
 - **Non-terminal blocks** show as read-only panes drawn from
   `capture --text`, with a one-line hint to open them in the web app.
 - **Done when:**
@@ -1080,6 +1598,32 @@ file and diff blocks also need.
 Swaps xterm.js for ghostty-web behind the `BlockView` terminal renderer, so
 client and server run the same engine. This is Superlogical's replica model.
 
+- **S10 (2026-10-01): the trigger is not met.** See [spikes/s10-ghostty-web](spikes/s10-ghostty-web/README.md).
+  - **ghostty-web (coder/ghostty-web 0.4.0) looks stalled.** It embeds a
+    Ghostty from December 2025, has no snapshot API, and its upgrade PR is a
+    work in progress.
+  - **Fidelity:** it matched the daemon on 6 of 7 fixtures in Chromium and
+    WebKit, including emulated phones. On the seventh, it turns grapheme
+    clustering (mode 2027) on by default and the daemon has it off, so emoji
+    with modifiers take a different width. It also ignores OSC 4 palette
+    changes. Its `scrollback` option is in bytes.
+  - **Blockers:**
+    - a new terminal shows stale cells from a disposed one;
+    - `write('')` throws, and any render error stops rendering for good;
+    - it answers terminal queries itself, which would double the daemon's
+      replies;
+    - no parser hooks (needed for OSC 133/633 marks and to swallow queries),
+      no markers or decorations, no `modes`/`onBinary`, no WebGL, and no
+      buffer API that keeps blanks and graphemes;
+    - IME is broken for CJK and Korean, and there's no screen-reader support.
+  - **Upstream's own wasm** (the VT core only, no renderer) builds at the
+    daemon's Ghostty commit (262 KB gzipped). It decodes every fixture's
+    GHOSTSNP to text identical to the daemon's. For 64k rows it's ready in
+    5–20 ms, with the history in a further 70–300 ms. **That is the more
+    promising route:** our own renderer, or a maintained ghostty-web, over
+    upstream's wasm.
+  - Re-check when ghostty-web ships a current Ghostty, or when a renderer
+    over upstream wasm exists.
 - **Trigger:** ghostty-web passes the S1/S5 fixture corpus in a browser,
   including the phone, and its rendering bugs are fixed upstream. Re-check
   each time libghostty-rs is bumped.
@@ -1116,6 +1660,43 @@ tmux, and unparking takes about 200µs.
   Measure first. The milestone starts with a benchmark (RSS per pane at
   empty, full screen and 10k scrollback; per attached client) committed as a
   test.
+- **S9: measured 2026-10-01; the trigger already holds, but parking isn't the
+  first fix.** See [spikes/s9-memory](spikes/s9-memory/README.md).
+  - **Idle cost:** an idle, empty pane costs 3.1–3.3 MB of daemon RSS (50
+    panes: 172 MB; 500: 1.6 GB, with 5 threads per pane). Shims and bash add
+    about 1.7 MB more, so 500 idle shells cost about 2.5 GB in all.
+  - **Scrollback** costs about 1.7 KB per row at 200 columns: 10k lines is
+    33 MB per pane, and the 64 MiB cap is about 160 MB.
+  - **Memory isn't given back after panes close.** glibc keeps it: 500 panes
+    closed down to 1 still hold 191 MB.
+- **Step 1: cheap wins, before any parking.** Then rerun the S9 benchmark.
+  - **Drop Zig's 256 KiB per-thread signal stack in libghostty**, which glibc
+    gives every thread: 1.3 MB per pane. It's a one-line patch
+    (`ghostty-no-signal-stack.patch`) to carry and send upstream.
+  - **Avoid libghostty's ReleaseSafe page fill:** 1.5 MB per screen.
+    ReleaseFast plus the patch measured 0.48 MB per idle pane, which already
+    meets M9's done bar. But ReleaseFast drops safety checks on untrusted
+    program output, so it's a decision (open); an upstream fix that avoids
+    the fill would remove the trade.
+  - **Fix the malloc mmap threshold** (`mallopt` at startup, or another
+    allocator) and call `malloc_trim` after a pane closes. That saves about
+    13 MB per pane at 10k lines, and memory comes back.
+  - **The output ring holds 4 MiB, not 2 MiB,** because `Ring::push` extends
+    before draining. Set it to 1 MiB (replay never uses more than
+    `MAX_REPLAY_BYTES`) and drain first.
+  - **Lower the in-memory scrollback cap** from 64 to 16 MiB (about 28 MB per
+    pane). Full history is on disk.
+  - **Fold the reaper thread into the wait thread,** and use a tiny shim
+    binary instead of re-running the 21 MB daemon (about 0.3 GB at 500
+    panes).
+- **Step 2: parking, only if panes with real history still blow the budget.**
+  S9 found nothing that argues for PTY or client-buffer parking. Parking
+  can't save the shells and shims either (0.75–0.87 GB at 500 panes).
+- **Stalled clients:** a client that stops reading cost about 28 MB in one
+  burst, and up to about 64 MB per client from the 1,024-frame queue. Cap the
+  queue in bytes, not frames.
+- **CI benchmark:** S9's `bench.py` at 50 idle panes (3.07–3.11 MB per pane
+  over four runs) is the regression test M9 wants. Leave headroom.
 - **Terminal parking.**
   - After 60s with no PTY reads, write the VT state as a GHOSTSNP checkpoint,
     using the M2 path and S5's format, and free the engine.
