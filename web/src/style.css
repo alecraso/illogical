@@ -2555,3 +2555,145 @@ button {
     animation: none;
   }
 }
+
+/* M28: an edit Claude Code proposes, as a diff. */
+.diff-text .hunk {
+  color: #89b4fa;
+}
+.diff-card .agent-perm-q b {
+  font-weight: 600;
+}
+.diff-counts .add {
+  color: #a6e3a1;
+  font-style: normal;
+}
+.diff-counts .del {
+  color: #f38ba8;
+  font-style: normal;
+}
+.diff-edit {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 10em;
+  max-height: 40vh;
+  margin: 4px 0;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #cdd6f4;
+  background: #181825;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+/* M28: following an editor, over the swarm's field. */
+.follow {
+  position: absolute;
+  z-index: 8;
+  top: 76px;
+  left: 20px;
+  right: calc(var(--rail) + 20px);
+  bottom: 56px;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e2e;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.follow header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #313244;
+  background: #181825;
+  min-width: 0;
+}
+.follow-title {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  line-height: 1.25;
+  flex: none;
+}
+.follow-title span {
+  color: var(--mute);
+}
+.follow-file {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px/1.3 var(--f-mono);
+}
+.follow-at {
+  color: var(--mute);
+}
+.follow-diag i {
+  font-style: normal;
+  margin-left: 10px;
+}
+.follow-diag .e {
+  color: #f38ba8;
+}
+.follow-diag .w {
+  color: #f9e2af;
+}
+.follow-tools {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.follow-tools button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid #45475a;
+  background: #313244;
+}
+.follow-tools button.pri {
+  background: #89b4fa;
+  color: #11111b;
+  border-color: #89b4fa;
+  font-weight: 600;
+}
+.follow-tools button.ghost {
+  background: none;
+  border-color: transparent;
+}
+.follow-note {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--mute);
+  border-bottom: 1px solid #313244;
+}
+.follow-note.paused {
+  color: #f9e2af;
+}
+.follow-note.gone,
+.follow-note.error {
+  color: #f38ba8;
+}
+.follow-code {
+  flex: 1;
+  min-height: 0;
+}
+.follow-code .cm-editor {
+  height: 100%;
+}
+.swarm.phone .follow {
+  inset: 0;
+  border-radius: 0;
+  z-index: 9;
+}
+.swarm.phone .follow header {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.swarm.phone .follow-file {
+  order: 3;
+  flex-basis: 100%;
+}

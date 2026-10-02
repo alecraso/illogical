@@ -188,7 +188,7 @@ try {
     spawn(`${target}/illogicald`, [
       ...["--listen", `127.0.0.1:${DAEMON}`, "--name", "box", "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent"],
-      ...["--direct-url", `http://127.0.0.1:${DAEMON}`],
+      ...["--direct-url", `http://127.0.0.1:${DAEMON}`, "--no-claude-ide"],
     ], { stdio: process.env.DAEMON_LOG ? ["ignore", "inherit", "inherit"] : "ignore" }),
   );
   let dir: { daemons: { id: string; name: string; online: boolean; urls: string[] }[] } = { daemons: [] };

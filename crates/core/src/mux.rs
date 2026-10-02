@@ -271,6 +271,12 @@ impl Mux {
         self.next_pane
     }
 
+    /// An id from the panes' space for something outside the layout (M28:
+    /// an editor that joined the swarm), never reused.
+    pub fn reserve_pane(&mut self) -> PaneId {
+        self.new_pane()
+    }
+
     fn node_ids(&mut self) -> impl FnMut() -> NodeId + '_ {
         || {
             self.next_node += 1;

@@ -12,5 +12,8 @@ export default defineConfig({
     emptyOutDir: true,
     target: "es2022",
     rollupOptions: { input: { main: "index.html", share: "share.html" } },
+    // Follow mode's CodeMirror (M28) is a chunk of its own, about 510 kB
+    // (180 kB gzipped), loaded only when someone follows an editor.
+    chunkSizeWarningLimit: 560,
   },
 });

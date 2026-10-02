@@ -59,8 +59,8 @@ export type Policy =
 export type Attention = "idle" | "working" | "needs_input" | "done";
 
 /** M24: why a pane wants you. */
-export type ReasonKind = "ask" | "input" | "failed" | "exited" | "done";
-export type Action = "allow" | "deny" | "answer" | "dismiss";
+export type ReasonKind = "ask" | "input" | "failed" | "exited" | "done" | "paused" | "errors" | "conflict" | "diff";
+export type Action = "allow" | "deny" | "answer" | "dismiss" | "continue" | "accept" | "reject";
 
 export interface Reason {
   kind: ReasonKind;
@@ -86,6 +86,8 @@ export interface ActRequest {
   /** `allow` `always` in a terminal: which of Claude Code's suggestions. */
   suggestion?: number;
   message?: string;
+  /** M28 `accept`: the file as it should be saved, changed first. */
+  text?: string;
 }
 
 export interface CommandInfo {
@@ -163,7 +165,50 @@ export interface PaneInfo {
   file?: string | null;
   /** Started by an MCP client (M16): `mcp:<client>`, and the agent block whose token it came with. */
   started_by?: StartedBy | null;
+  /** M28: an editor's own report: an editor block's window, or an editor
+   * that joined the swarm (no tab). */
+  editor?: EditorInfo | null;
+  /** M28: an edit Claude Code here proposes, waiting as a diff. */
+  diff?: DiffInfo | null;
+  /** M28: Claude Code here is connected to illogical as its IDE. */
+  claude_ide?: boolean;
 }
+
+/** M28: what an editor says in summaries. */
+export interface EditorInfo {
+  /** `vscode`, `cursor`, `code-server`, `nvim`. */
+  app: string;
+  remote?: string | null;
+  /** `ssh-remote+geek`: for opening the same file from a desktop editor. */
+  authority?: string | null;
+  hostname?: string | null;
+  diag: { e: number; w: number; i: number };
+  dirty: number;
+  debug?: { state: "running" | "paused"; reason?: string | null; file?: string | null; line?: number | null } | null;
+  conflict?: string | null;
+  followers: number;
+}
+
+/** M28: an edit waiting as a diff. */
+export interface DiffInfo {
+  id: string;
+  file: string;
+  added: number;
+  removed: number;
+  /** A unified diff (hunks only), cut short when long. */
+  text: string;
+  new?: boolean;
+  at_ms: number;
+  ide: string;
+}
+
+/** M28: what a followed editor sends: lines from 1, columns from 0. */
+export type FollowMsg =
+  | { file: string; line: number; col: number; sel?: [number, number, number, number] | null; view?: [number, number] | null; mode?: string }
+  | { open: { file: string; version: number; text: string | null; lang?: string; too_big?: boolean } }
+  | { edit: { file: string; version: number; changes: { range: [number, number, number, number]; text: string }[] } }
+  | { diagnostics: { file: string; items: { range: [number, number, number, number]; severity: string; message: string }[] } }
+  | { gone: true };
 
 export interface StartedBy {
   by: string;
@@ -289,7 +334,9 @@ export type ClientMsg =
   | { type: "ping"; id: number }
   /** M23: summaries only (no pane output; panes leave out epoch, policy
    * and integration). Answered with a fresh State. */
-  | { type: "subscribe"; summary: boolean };
+  | { type: "subscribe"; summary: boolean }
+  /** M28: follow an editor's cursor and file (viewer access). */
+  | { type: "follow"; pane: PaneId; on: boolean };
 
 export type ServerMsg =
   | { type: "hello"; version: string; client: ClientId; state: State }
@@ -302,7 +349,8 @@ export type ServerMsg =
   | { type: "notice"; message: string }
   | { type: "control_request"; pane: PaneId; who: string; name: string }
   | { type: "trust_request"; pane: PaneId; who: string; name: string }
-  | { type: "delta"; delta: Delta };
+  | { type: "delta"; delta: Delta }
+  | { type: "follow"; pane: PaneId; msg: FollowMsg };
 
 export const enum FrameKind {
   Output = 1,

@@ -78,7 +78,10 @@ use crate::{Attention, PaneId, PaneInfo, Policy, SessionId, TabId};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttentionItem {
     pub pane: PaneId,
-    pub session: SessionId,
+    /// Its session; `None` for an editor that joined the swarm (M28),
+    /// which isn't in one.
+    #[serde(default)]
+    pub session: Option<SessionId>,
     pub state: Attention,
     pub reason: crate::Reason,
 }
@@ -110,6 +113,10 @@ pub struct ActRequest {
     /// `deny`: why, for the agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// `accept` (M28): the file as it should be saved, when someone
+    /// changed the proposal first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 impl ActRequest {

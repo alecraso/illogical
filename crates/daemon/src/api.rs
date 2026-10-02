@@ -65,6 +65,11 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
         .route("/api/panes/{id}/drivers", get(drivers))
+        .route("/api/panes/{id}/diff", get(diff_of))
+        .route("/api/ide", get(ide_get).put(ide_set))
+        .route("/api/editors", get(editors))
+        .route("/api/editors/vsix", get(vsix))
+        .route("/api/ide/mention", post(ide_mention))
         .route("/api/sessions/{id}/secrets", get(secrets))
         .route("/api/blocks", post(open_block))
         .route("/api/blocks/{id}", get(describe))
@@ -273,6 +278,29 @@ async fn act_one(
     by: Option<Driver>,
 ) -> Result<(), String> {
     use illogical_proto::{Action, AskWhat, Attention};
+    match req.action {
+        // An editor's debugger (M28).
+        Action::Continue => {
+            let b = app
+                .mux
+                .api(|r| Api::Block(pane, r))
+                .await
+                .flatten()
+                .ok_or_else(|| format!("%{pane} isn't an editor"))?;
+            return block_call(app, pane, &b, "continue", serde_json::json!({}), by).await.map(|_| ());
+        }
+        // An edit waiting as a diff (M28).
+        Action::Accept | Action::Reject => {
+            let by = by.unwrap_or(Driver { who: "owner".into(), name: "owner".into() });
+            let accept = req.action == Action::Accept;
+            return app
+                .mux
+                .api(|r| Api::DiffAnswer(pane, req.id.clone(), accept, req.text.clone(), by, r))
+                .await
+                .unwrap_or_else(|| Err("the daemon is stopping".into()));
+        }
+        _ => {}
+    }
     if req.action == Action::Dismiss {
         return match app.mux.api(|r| Api::Attention(pane, Attention::Idle, None, r)).await {
             Some(true) => Ok(()),
@@ -306,7 +334,7 @@ async fn act_one(
         }
         (Action::Allow, AskWhat::Question) => return Err(format!("%{pane} asks a question: answer it")),
         (Action::Answer, AskWhat::Approve) => return Err(format!("%{pane} asks for approval: allow or deny it")),
-        (Action::Dismiss, _) => unreachable!("handled above"),
+        (Action::Dismiss | Action::Continue | Action::Accept | Action::Reject, _) => unreachable!("handled above"),
     };
     if block {
         let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
@@ -1412,4 +1440,129 @@ mod secret_tests {
         assert!(super::find_secrets("PASSWORD=hunter22").contains(&"a password"));
         assert!(super::find_secrets("cargo build --release\n   Compiling foo").is_empty());
     }
+}
+
+/// `GET /api/panes/{id}/diff` (M28): the edit a pane's diff card shows,
+/// before and after, for changing it before accepting.
+async fn diff_of(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Path(id): Path<PaneId>,
+) -> Res<Json<serde_json::Value>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    if !who.is_owner() && app.mux.api(|r| Api::RoleOn(who, id, r)).await.flatten().is_none() {
+        return Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}")));
+    }
+    let (info, old, new) = app
+        .mux
+        .api(|r| Api::DiffOf(id, r))
+        .await
+        .flatten()
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, format!("%{id} has no edit waiting")))?;
+    Ok(Json(serde_json::json!({ "diff": info, "old": old, "new": new })))
+}
+
+/// `GET /api/ide` (M28): illogicald as Claude Code's IDE, and the other
+/// IDEs registered beside it.
+async fn ide_get(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    let Some(ide) = &app.mux.ide else {
+        return Ok(Json(serde_json::json!({ "on": false })));
+    };
+    Ok(Json(serde_json::json!({
+        "on": true,
+        "name": crate::ide::NAME,
+        "port": ide.port,
+        "lock_dir": ide.lock_dir,
+        "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()),
+        "others": ide.others(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct IdeSet {
+    /// Which IDE gets diffs: `illogical`, or another's name.
+    diffs: String,
+}
+
+/// `PUT /api/ide {"diffs": NAME}`: which IDE gets Claude Code's diffs.
+async fn ide_set(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(req): Json<IdeSet>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here (--no-claude-ide)"))?;
+    ide.set_diffs_to(Some(req.diffs)).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(serde_json::json!({ "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) })))
+}
+
+fn owner_only(who: &Option<axum::Extension<crate::acl::Principal>>) -> Res<()> {
+    match who {
+        Some(axum::Extension(w)) if !w.is_owner() => Err(ApiError(StatusCode::FORBIDDEN, "only the owner can".into())),
+        _ => Ok(()),
+    }
+}
+
+/// `GET /api/editors` (M28): every editor in the swarm, joined or a block.
+async fn editors(State(app): AppState, who: Option<axum::Extension<crate::acl::Principal>>) -> Json<serde_json::Value> {
+    let who = who.map(|axum::Extension(w)| w).filter(|w| !w.is_owner());
+    Json(app.mux.api(|r| Api::Editors(who, r)).await.unwrap_or_default().into())
+}
+
+#[derive(Deserialize)]
+struct Mention {
+    /// The terminal Claude Code runs in.
+    pane: PaneId,
+    file: String,
+    /// Lines, from 1.
+    start: u32,
+    end: u32,
+}
+
+/// `POST /api/ide/mention` (M28): put `@file#Lstart-end` in Claude Code's
+/// prompt in a pane, as an IDE does ("ask Claude about these lines" from a
+/// followed editor). Typing there needs editor access.
+async fn ide_mention(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(m): Json<Mention>,
+) -> Res<Json<serde_json::Value>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    if !who.is_owner() {
+        match app.mux.api(|r| Api::RoleOn(who, m.pane, r)).await.flatten() {
+            Some((role, _)) if role >= illogical_core::Role::Editor => {}
+            Some(_) => return Err(ApiError(StatusCode::FORBIDDEN, "you're watching that session".into())),
+            None => return Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{}", m.pane))),
+        }
+    }
+    let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here"))?;
+    let conns = app.mux.api(|r| Api::IdeConns(m.pane, r)).await.unwrap_or_default();
+    if conns.is_empty() {
+        return Err(ApiError(StatusCode::CONFLICT, format!("Claude Code in %{} isn't connected to illogical", m.pane)));
+    }
+    // From 0, as VS Code's extension sends them.
+    let params = serde_json::json!({
+        "filePath": m.file, "lineStart": m.start.saturating_sub(1), "lineEnd": m.end.max(m.start).saturating_sub(1),
+    });
+    for c in &conns {
+        ide.notify(Some(*c), "at_mentioned", params.clone());
+    }
+    Ok(Json(serde_json::json!({ "sent": conns.len() })))
+}
+
+/// `GET /api/editors/vsix` (M28): illogical's VS Code extension.
+async fn vsix() -> Response {
+    let name = crate::editor::vsix::file_name();
+    (
+        [
+            (header::CONTENT_TYPE, "application/vsix".to_owned()),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\"")),
+        ],
+        crate::editor::vsix::build(),
+    )
+        .into_response()
 }

@@ -161,7 +161,41 @@ pub enum Api {
     StartedBy(PaneId, illogical_proto::StartedBy),
     /// Typing by an MCP client (M16): as theirs, in the pane's history.
     InputBy(PaneId, Vec<u8>, String),
+    /// An editor joined the swarm (M28): it gets an id of its own.
+    EditorJoin(Arc<crate::editor::link::Link>, oneshot::Sender<PaneId>),
+    /// ...and left.
+    EditorLeave(PaneId),
+    /// What Claude Code's IDE connections did (M28).
+    Ide(crate::ide::Event),
+    /// Someone accepted (true) or rejected an edit waiting as a diff, by
+    /// its id or whichever waits; accepting may change it first.
+    DiffAnswer(PaneId, Option<String>, bool, Option<String>, Driver, oneshot::Sender<Result<(), String>>),
+    /// Every editor in the swarm (M28), as `who` may see them.
+    Editors(Option<crate::acl::Principal>, oneshot::Sender<Vec<serde_json::Value>>),
+    /// The IDE connections of Claude Code in a pane (M28).
+    IdeConns(PaneId, oneshot::Sender<Vec<u64>>),
+    /// The edit a pane's diff card shows: before and after.
+    DiffOf(PaneId, oneshot::Sender<Option<(illogical_proto::DiffInfo, String, String)>>),
 }
+
+/// An edit Claude Code proposes through its IDE connection (M28).
+struct PendingDiff {
+    /// Its pane, once its Claude Code's process is found in one.
+    pane: Option<PaneId>,
+    /// The relay's connection, and the call's id there.
+    conn: u64,
+    call: serde_json::Value,
+    tab: String,
+    /// The file as it is, and as it would be.
+    old: String,
+    new: String,
+    info: illogical_proto::DiffInfo,
+}
+
+/// How much of a file a diff card keeps.
+const MAX_DIFF_FILE: u64 = 4 << 20;
+/// ...and of its diff.
+const MAX_DIFF_TEXT: usize = 16 << 10;
 
 /// What a terminal's question got.
 #[derive(Debug, Clone, PartialEq)]
@@ -218,6 +252,8 @@ pub struct MuxHandle {
     pub daemon_id: String,
     /// This host's files, as the `fs` methods may read them.
     pub fs: Arc<crate::fs::Scope>,
+    /// Claude Code's IDE (M28), if on.
+    pub ide: Option<Arc<crate::ide::Ide>>,
 }
 
 impl MuxHandle {
@@ -279,6 +315,8 @@ pub struct Config {
     pub private: Vec<PathBuf>,
     /// Where agent blocks reach MCP (M16); `None`: they don't.
     pub mcp: Option<crate::mcp::Link>,
+    /// illogicald as Claude Code's IDE (M28); `None`: off.
+    pub ide: Option<Arc<crate::ide::Ide>>,
 }
 
 impl Config {
@@ -300,6 +338,11 @@ impl Config {
         }
         env.push(("ILLOGICAL_PANE".into(), pane.to_string()));
         env.push(("ILLOGICAL_SOCK".into(), self.socket.display().to_string()));
+        // Claude Code in a pane finds us as its IDE (M28), and only us.
+        if let Some(ide) = &self.ide {
+            env.retain(|(k, _)| k != "CLAUDE_CODE_SSE_PORT");
+            env.push(("CLAUDE_CODE_SSE_PORT".into(), ide.port.to_string()));
+        }
         env
     }
 
@@ -499,6 +542,12 @@ struct Daemon {
     last_tick: Instant,
     /// What the OS said each pane runs, and when it was read.
     procs: std::cell::RefCell<HashMap<PaneId, ProcSeen>>,
+    /// Who follows each editor (M28).
+    follows: HashMap<PaneId, std::collections::HashSet<ClientId>>,
+    /// Edits waiting as diffs (M28), and the pane each of Claude Code's
+    /// IDE connections runs in.
+    diffs: Vec<PendingDiff>,
+    ide_conns: HashMap<u64, (Option<u32>, Option<PaneId>)>,
 }
 
 /// Which panes changed.
@@ -587,6 +636,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         activity: HashMap::new(),
         last_tick: Instant::now(),
         procs: Default::default(),
+        follows: HashMap::new(),
+        diffs: Vec::new(),
+        ide_conns: HashMap::new(),
     };
     if !d.restore(kept) {
         // Something to attach to on first start.
@@ -595,12 +647,12 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         }
     }
     d.sweep_machines();
-    let (provider, daemon_id) = (d.config.provider.clone(), d.config.daemon_id.clone());
+    let (provider, daemon_id, ide) = (d.config.provider.clone(), d.config.daemon_id.clone(), d.config.ide.clone());
     let mut private = d.config.private.clone();
     private.push(store.root().to_path_buf());
     let fs = Arc::new(crate::fs::Scope::new(d.config.home.clone(), private));
     tokio::spawn(d.run(rx, notices_rx));
-    MuxHandle { tx, events, store, provider, daemon_id, fs }
+    MuxHandle { tx, events, store, provider, daemon_id, fs, ide }
 }
 
 /// A reason with nothing but its headline.
@@ -638,8 +690,59 @@ fn push_title(state: Attention, reason: Option<&Reason>) -> &'static str {
         Some(ReasonKind::Exited) => "Exited",
         Some(ReasonKind::Done) => "Done",
         Some(ReasonKind::Ask | ReasonKind::Input) => "Needs you",
+        Some(ReasonKind::Paused) => "Paused",
+        Some(ReasonKind::Errors) => "Errors",
+        Some(ReasonKind::Conflict) => "Merge conflict",
+        Some(ReasonKind::Diff) => "Wants to edit",
         None if state == Attention::Done => "Done",
         None => "Needs you",
+    }
+}
+
+/// "Claude Code wants to edit src/main.rs (+3 −1)".
+fn diff_headline(d: &illogical_proto::DiffInfo) -> String {
+    let verb = if d.new { "create" } else { "edit" };
+    format!("Claude Code wants to {verb} {} (+{} −{})", d.file, d.added, d.removed)
+}
+
+/// An `openDiff` call as a diff card: the file as it is now, and as it
+/// would be.
+fn new_diff(
+    pane: Option<PaneId>,
+    conn: u64,
+    call: serde_json::Value,
+    args: &serde_json::Value,
+    cwd: Option<&str>,
+) -> PendingDiff {
+    use std::io::Read;
+    let path = args["new_file_path"].as_str().or(args["old_file_path"].as_str()).unwrap_or("").to_owned();
+    let old_path = args["old_file_path"].as_str().unwrap_or(&path).to_owned();
+    let mut old = String::new();
+    let exists = std::fs::File::open(&old_path).and_then(|f| f.take(MAX_DIFF_FILE).read_to_string(&mut old)).is_ok();
+    let new: String = args["new_file_contents"].as_str().unwrap_or("").to_owned();
+    let (added, removed, text) = crate::ide::diff::unified(&old, &new, MAX_DIFF_TEXT);
+    let file = match cwd {
+        Some(c) => crate::paths::relative(c, &path),
+        None => path.clone(),
+    };
+    let id = format!("d{conn}-{}", call.to_string().trim_matches('"'));
+    PendingDiff {
+        pane,
+        conn,
+        call,
+        tab: args["tab_name"].as_str().unwrap_or("").to_owned(),
+        info: illogical_proto::DiffInfo {
+            id,
+            file,
+            added,
+            removed,
+            text,
+            new: !exists,
+            at_ms: now_ms(),
+            ide: crate::ide::NAME.into(),
+        },
+        old,
+        new,
     }
 }
 
@@ -844,7 +947,9 @@ impl Daemon {
             notices: self.notices.clone(),
             provider: self.config.provider.clone(),
             launch: self.config.launch.clone(),
-            env: self.config.env(id),
+            // Claude Code's IDE is for terminals: not an agent block's, nor
+            // VS Code's own terminals (M28).
+            env: self.config.env(id).into_iter().filter(|(k, _)| k != "CLAUDE_CODE_SSE_PORT").collect(),
             home: self.config.home.clone(),
             secrets: self.config.secrets.clone(),
             mcp: self.config.mcp.clone(),
@@ -886,6 +991,7 @@ impl Daemon {
                 _ = sleep_until(flush), if self.flush_due.is_some() => self.flush(),
                 _ = tick.tick() => {
                     self.tick_activity();
+                    self.find_ide_panes();
                     self.flush();
                 }
             }
@@ -985,11 +1091,212 @@ impl Daemon {
             return None;
         }
         if state == Attention::NeedsInput
-            && let Some(r) = self.ask_reason(pane)
+            && let Some(r) = self.diff_reason(pane).or_else(|| self.ask_reason(pane))
         {
             return Some(r);
         }
         self.reasons.get(&pane).cloned()
+    }
+
+    /// An edit waiting as a diff in a pane (M28): it comes before the
+    /// hook's permission card for the same edit.
+    fn diff_reason(&self, pane: PaneId) -> Option<Reason> {
+        let d = &self.diffs.iter().find(|d| d.pane == Some(pane))?.info;
+        Some(Reason {
+            kind: ReasonKind::Diff,
+            since_ms: d.at_ms,
+            headline: diff_headline(d),
+            command: None,
+            exit: None,
+            duration_ms: None,
+            bundle: None,
+            ask: None,
+            actions: vec![Action::Accept, Action::Reject, Action::Dismiss],
+        })
+    }
+
+    /// The process `pid` runs in one of our terminals: which (M28: the
+    /// Claude Code behind an IDE connection).
+    fn pane_of_pid(&self, pid: u32) -> Option<PaneId> {
+        let shells: HashMap<u32, PaneId> = self.panes.iter().filter_map(|(id, h)| Some((h.pid_now()?, *id))).collect();
+        let mut p = pid;
+        for _ in 0..64 {
+            if let Some(id) = shells.get(&p) {
+                return Some(*id);
+            }
+            p = crate::procinfo::ppid(p).filter(|p| *p > 1)?;
+        }
+        None
+    }
+
+    /// What Claude Code's IDE connections did (M28).
+    fn ide_event(&mut self, ev: crate::ide::Event) {
+        use crate::ide::Event;
+        let Some(ide) = self.config.ide.clone() else { return };
+        match ev {
+            Event::Hello => {
+                // The relay says again what's open; start from nothing.
+                let panes: Vec<PaneId> = self.diffs.drain(..).filter_map(|d| d.pane).collect();
+                self.ide_conns.clear();
+                for p in panes {
+                    self.diff_changed(p);
+                }
+            }
+            Event::Conn { conn, pid } => {
+                let pane = pid.and_then(|p| self.pane_of_pid(p));
+                info!(conn, ?pid, ?pane, "Claude Code connected to its IDE");
+                self.ide_conns.insert(conn, (pid, pane));
+                self.rehome(conn, pane);
+                if let Some(p) = pane {
+                    self.touch(p);
+                }
+            }
+            Event::Gone { conn } => {
+                if let Some((_, Some(p))) = self.ide_conns.remove(&conn) {
+                    self.touch(p);
+                }
+                let gone: Vec<PaneId> = self.diffs.iter().filter(|d| d.conn == conn).filter_map(|d| d.pane).collect();
+                self.diffs.retain(|d| d.conn != conn);
+                for p in gone {
+                    self.diff_changed(p);
+                }
+            }
+            Event::Call { conn, id, tool, args } => match tool.as_str() {
+                "openDiff" | "openDiff/here" => {
+                    // Another IDE gets diffs, unless passing it on failed.
+                    if tool == "openDiff"
+                        && let Some(to) = ide.target()
+                    {
+                        return ide.forward(to, conn, id, args, self.tx.clone());
+                    }
+                    let pane = self.ide_conns.get(&conn).and_then(|c| c.1);
+                    let cwd = pane
+                        .and_then(|p| self.panes.get(&p))
+                        .and_then(|h| h.status().cwd.or_else(|| h.cwd().map(|c| c.display().to_string())));
+                    let d = new_diff(pane, conn, id, &args, cwd.as_deref());
+                    info!(conn, ?pane, file = d.info.file, "an edit waits as a diff");
+                    self.diffs.retain(|x| !(x.conn == d.conn && x.call == d.call));
+                    self.diffs.push(d);
+                    if let Some(p) = pane {
+                        self.diff_changed(p);
+                    }
+                }
+                "getDiagnostics" => ide.reply(conn, &id, crate::ide::no_diagnostics()),
+                _ => ide.reply(conn, &id, serde_json::json!({ "content": [] })),
+            },
+            Event::Closed { conn, ids, .. } => {
+                ide.closed(conn, &ids);
+                let (gone, keep): (Vec<PendingDiff>, Vec<PendingDiff>) =
+                    self.diffs.drain(..).partition(|d| d.conn == conn && ids.contains(&d.call));
+                self.diffs = keep;
+                for d in gone {
+                    let Some(p) = d.pane else { continue };
+                    // The terminal answered it (M29's "Allowed, 14:02").
+                    self.answered.insert(
+                        p,
+                        illogical_proto::ask::Answered {
+                            id: d.info.id.clone(),
+                            how: "answered".into(),
+                            who: "terminal".into(),
+                            name: "the terminal".into(),
+                            at_ms: now_ms(),
+                            headline: diff_headline(&d.info),
+                        },
+                    );
+                    self.diff_changed(p);
+                }
+            }
+        }
+    }
+
+    /// The pane an IDE connection's diffs belong to is known now.
+    fn rehome(&mut self, conn: u64, pane: Option<PaneId>) {
+        let Some(p) = pane else { return };
+        let mut found = false;
+        for d in self.diffs.iter_mut().filter(|d| d.conn == conn && d.pane.is_none()) {
+            d.pane = Some(p);
+            found = true;
+        }
+        if found {
+            self.diff_changed(p);
+        }
+    }
+
+    /// IDE connections whose Claude Code wasn't found in a pane yet (the
+    /// panes come back after a restart a moment after the relay speaks):
+    /// look again.
+    fn find_ide_panes(&mut self) {
+        let lost: Vec<(u64, u32)> = self
+            .ide_conns
+            .iter()
+            .filter(|(_, (_, p))| p.is_none())
+            .filter_map(|(c, (pid, _))| Some((*c, (*pid)?)))
+            .collect();
+        for (conn, pid) in lost {
+            if let Some(pane) = self.pane_of_pid(pid) {
+                info!(conn, pid, pane, "found Claude Code's pane");
+                self.ide_conns.insert(conn, (Some(pid), Some(pane)));
+                self.rehome(conn, Some(pane));
+                self.touch(pane);
+            }
+        }
+    }
+
+    /// A pane's diffs changed: its card and its attention follow.
+    fn diff_changed(&mut self, pane: PaneId) {
+        match self.diff_reason(pane) {
+            Some(r) => {
+                let state = self.attention.get(&pane).copied().unwrap_or_default();
+                if state == Attention::NeedsInput {
+                    // Already asking: the card shows the diff now.
+                    self.reasons.insert(pane, r);
+                    self.emit(Some(pane), EventKind::Attention { state, reason: self.live_reason(pane) });
+                } else {
+                    let why = r.headline.clone();
+                    self.set_attention_with(pane, Attention::NeedsInput, &why, Some(r));
+                }
+            }
+            None => {
+                if self.reasons.get(&pane).is_some_and(|r| r.kind == ReasonKind::Diff) {
+                    if self.asks.contains_key(&pane) {
+                        self.reasons.remove(&pane);
+                    } else {
+                        self.set_attention(pane, Attention::Idle, "diff closed");
+                    }
+                }
+            }
+        }
+        self.touch(pane);
+    }
+
+    /// Someone answered a diff card (M28).
+    fn diff_answer(
+        &mut self,
+        pane: PaneId,
+        id: Option<String>,
+        accept: bool,
+        text: Option<String>,
+        by: Driver,
+    ) -> Result<(), String> {
+        let ide = self.config.ide.clone().ok_or("illogical isn't Claude Code's IDE here")?;
+        let at = self
+            .diffs
+            .iter()
+            .position(|d| d.pane == Some(pane) && id.as_ref().is_none_or(|i| *i == d.info.id))
+            .ok_or_else(|| format!("%{pane} has no edit waiting (the terminal answered it, or it was closed)"))?;
+        let d = self.diffs.remove(at);
+        let changed = text.as_ref().is_some_and(|t| *t != d.new);
+        let result =
+            if accept { crate::ide::saved(text.as_deref().unwrap_or(&d.new)) } else { crate::ide::rejected(&d.tab) };
+        ide.reply(d.conn, &d.call, result);
+        let how = match (accept, changed) {
+            (true, false) => "accepted",
+            (true, true) => "accepted with changes",
+            (false, _) => "rejected",
+        };
+        self.record_answer(pane, &by, &d.info.id, how, &diff_headline(&d.info));
+        self.diff_changed(pane);
+        Ok(())
     }
 
     /// An open question in a terminal (Claude Code's hook), or a block's
@@ -1103,6 +1410,10 @@ impl Daemon {
             What::BlockChanged => {
                 // Its summary (an editor's file) goes at the next tick.
                 self.mark(pane);
+                // An editor that joined has no renderer: its summary is all.
+                if self.blocks.get(&pane).is_some_and(|b| b.detached()) {
+                    return;
+                }
                 if let Some(msg) = self.block_msg(pane) {
                     for sub in self.clients.values().filter(|c| self.sees(&c.principal, pane)) {
                         let _ = sub.ctrl.send(ToClient::Msg(msg.clone()));
@@ -1112,6 +1423,33 @@ impl Daemon {
                 self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
             }
             What::Attention(state, why) => self.set_attention(pane, state, &why),
+            What::Reason(state, reason) => {
+                // The same reason again, saying more (the debugger's line,
+                // once it's known): the card says that now.
+                let same = self.attention.get(&pane) == Some(&state)
+                    && self.reasons.get(&pane).is_some_and(|r| r.kind == reason.kind);
+                if same {
+                    self.reasons.insert(pane, reason);
+                    self.emit(Some(pane), EventKind::Attention { state, reason: self.live_reason(pane) });
+                    self.touch(pane);
+                } else {
+                    let why = reason.headline.clone();
+                    self.set_attention_with(pane, state, &why, Some(reason));
+                }
+            }
+            What::Clear(kind) => {
+                if self.reasons.get(&pane).is_some_and(|r| r.kind == kind) {
+                    self.set_attention(pane, Attention::Idle, "cleared");
+                }
+            }
+            What::Follow(msg) => {
+                let msg = ServerMsg::Follow { pane, msg };
+                for c in self.follows.get(&pane).into_iter().flatten() {
+                    if let Some(sub) = self.clients.get(c) {
+                        let _ = sub.ctrl.send(ToClient::Msg(msg.clone()));
+                    }
+                }
+            }
             What::Event(kind) => self.emit(Some(pane), kind),
             What::Started => {
                 // What `run` started is gone; the new program isn't held.
@@ -1227,6 +1565,7 @@ impl Daemon {
             }
             Cmd::Disconnect { client } => {
                 let gone = self.clients.remove(&client).map(|c| c.principal);
+                self.unfollow(client, None);
                 self.sent.remove(&client);
                 self.summary.remove(&client);
                 self.focus.remove(&client);
@@ -1307,6 +1646,8 @@ impl Daemon {
             Api::RoleOn(who, pane, reply) => {
                 let r = if who.is_owner() {
                     Some((Role::Owner, None))
+                } else if self.is_presence(pane) {
+                    self.presence_role(&who).map(|r| (r, None))
                 } else {
                     self.session_of(pane).filter(|_| self.readable(&who, pane)).and_then(|s| {
                         let role = self.config.acl.role(&who, s)?;
@@ -1346,9 +1687,11 @@ impl Daemon {
                     if who.as_ref().is_some_and(|w| !self.readable(w, *pane)) {
                         continue;
                     }
-                    let (Some(reason), Some(session)) = (self.live_reason(*pane), self.session_of(*pane)) else {
+                    let Some(reason) = self.live_reason(*pane) else { continue };
+                    let session = self.session_of(*pane);
+                    if session.is_none() && !self.is_presence(*pane) {
                         continue;
-                    };
+                    }
                     out.push(illogical_proto::api::AttentionItem { pane: *pane, session, state: *state, reason });
                 }
                 out.sort_by_key(|i| (i.reason.since_ms, i.pane));
@@ -1390,6 +1733,58 @@ impl Daemon {
                 let _ = reply.send(self.run_command(req));
             }
             Api::InputBy(pane, data, by) => self.input(pane, data, Some(by)),
+            Api::Ide(ev) => self.ide_event(ev),
+            Api::IdeConns(pane, reply) => {
+                let mut v: Vec<u64> =
+                    self.ide_conns.iter().filter(|(_, c)| c.1 == Some(pane)).map(|(n, _)| *n).collect();
+                v.sort();
+                let _ = reply.send(v);
+            }
+            Api::Editors(who, reply) => {
+                let mut out: Vec<(PaneId, serde_json::Value)> = self
+                    .blocks
+                    .iter()
+                    .filter(|(id, b)| b.link().is_some() && who.as_ref().is_none_or(|w| self.readable(w, **id)))
+                    .map(|(id, b)| {
+                        let i = self.block_info(*id, b);
+                        let v = serde_json::json!({
+                            "pane": id, "block": !b.detached(), "editor": i.editor, "folder": i.cwd,
+                            "project": i.project, "file": i.file, "title": i.title, "attention": i.attention,
+                            "reason": i.reason,
+                        });
+                        (*id, v)
+                    })
+                    .collect();
+                out.sort_by_key(|(id, _)| *id);
+                let _ = reply.send(out.into_iter().map(|(_, v)| v).collect());
+            }
+            Api::DiffAnswer(pane, id, accept, text, by, reply) => {
+                let _ = reply.send(self.diff_answer(pane, id, accept, text, by));
+            }
+            Api::DiffOf(pane, reply) => {
+                let d = self.diffs.iter().find(|d| d.pane == Some(pane));
+                let _ = reply.send(d.map(|d| (d.info.clone(), d.old.clone(), d.new.clone())));
+            }
+            Api::EditorJoin(link, reply) => {
+                let id = self.mux.reserve_pane();
+                link.bind(id, self.notices.clone());
+                self.blocks.insert(id, crate::editor::presence::Presence::make(link));
+                // A new entry: everyone gets a whole State with it.
+                self.full = true;
+                self.broadcast();
+                self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
+                let _ = reply.send(id);
+            }
+            Api::EditorLeave(id) => {
+                if self.blocks.get(&id).is_some_and(|b| b.detached()) {
+                    self.blocks.remove(&id);
+                    self.attention.remove(&id);
+                    self.reasons.remove(&id);
+                    self.follows.remove(&id);
+                    self.full = true;
+                    self.broadcast();
+                }
+            }
             Api::StartedBy(pane, by) => {
                 if self.panes.contains_key(&pane) || self.blocks.contains_key(&pane) {
                     self.meta.entry(pane).or_default().started_by = Some(by);
@@ -2156,6 +2551,7 @@ impl Daemon {
                 // It leaves (or joins) everyone's presence.
                 self.soon();
             }
+            ClientMsg::Follow { pane, on } => self.follow(client, pane, on),
             ClientMsg::Focus { pane } => {
                 let before = self.focus.get(&client).copied();
                 match pane.filter(|p| self.sees(&who, *p)) {
@@ -2594,6 +2990,8 @@ impl Daemon {
                 activity: None,
                 title: None,
                 file: None,
+                editor: None,
+                diff: None,
                 ..info
             };
         }
@@ -2634,7 +3032,65 @@ impl Daemon {
     }
 
     fn sees(&self, who: &Principal, pane: PaneId) -> bool {
-        who.is_owner() || self.session_of(pane).and_then(|s| self.config.acl.role(who, s)).is_some()
+        who.is_owner()
+            || match self.session_of(pane) {
+                Some(s) => self.config.acl.role(who, s).is_some(),
+                None => self.is_presence(pane) && self.presence_role(who).is_some(),
+            }
+    }
+
+    /// An editor that joined the swarm (M28): in no session.
+    fn is_presence(&self, pane: PaneId) -> bool {
+        self.blocks.get(&pane).is_some_and(|b| b.detached())
+    }
+
+    /// Someone's role on the editors that joined this daemon: the owner's
+    /// editors are theirs; a team's members have their team role (M19).
+    fn presence_role(&self, who: &Principal) -> Option<Role> {
+        if who.is_owner() { Some(Role::Owner) } else { self.config.acl.team_role(who) }
+    }
+
+    /// Follow an editor (M28), or stop (`pane: None`: every one).
+    fn follow(&mut self, client: ClientId, pane: PaneId, on: bool) {
+        if !on {
+            return self.unfollow(client, Some(pane));
+        }
+        let Some(link) = self.blocks.get(&pane).and_then(|b| b.link()) else {
+            return self.tell_once(client, format!("%{pane} isn't an editor that can be followed"));
+        };
+        let Some(sub) = self.clients.get(&client) else { return };
+        if !self.readable(&sub.principal, pane) {
+            return self.tell_once(client, format!("no pane %{pane}"));
+        }
+        // What it shows now, then what it sends from here.
+        for msg in link.snapshot() {
+            let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Follow { pane, msg }));
+        }
+        let set = self.follows.entry(pane).or_default();
+        if set.insert(client) {
+            info!(pane, client, "following");
+            link.followers(set.len() as u32, true);
+        }
+    }
+
+    fn unfollow(&mut self, client: ClientId, pane: Option<PaneId>) {
+        let ids: Vec<PaneId> = match pane {
+            Some(p) => vec![p],
+            None => self.follows.keys().copied().collect(),
+        };
+        for id in ids {
+            let Some(set) = self.follows.get_mut(&id) else { continue };
+            if !set.remove(&client) {
+                continue;
+            }
+            let n = set.len() as u32;
+            if n == 0 {
+                self.follows.remove(&id);
+            }
+            if let Some(link) = self.blocks.get(&id).and_then(|b| b.link()) {
+                link.followers(n, false);
+            }
+        }
     }
 
     /// Why `client` can't act on `panes` with `role` (`None`: it can).
@@ -2644,7 +3100,12 @@ impl Daemon {
             return None;
         }
         for p in panes {
-            match self.session_of(*p).and_then(|s| self.config.acl.role(who, s)) {
+            let got = match self.session_of(*p) {
+                Some(s) => self.config.acl.role(who, s),
+                None if self.is_presence(*p) => self.presence_role(who),
+                None => None,
+            };
+            match got {
                 Some(r) if r >= role => {}
                 Some(_) => return Some("you're watching this session; you can't type or change it".into()),
                 None => return Some(format!("no pane %{p}")),
@@ -2977,7 +3438,9 @@ impl Daemon {
         let tabs: std::collections::HashSet<TabId> = st.sessions.iter().flat_map(|s| s.tabs.iter().copied()).collect();
         st.tabs.retain(|t| tabs.contains(&t.id));
         let panes: std::collections::HashSet<PaneId> = st.tabs.iter().flat_map(|t| t.root.panes()).collect();
-        st.panes.retain(|p| panes.contains(&p.id));
+        // Editors that joined (M28) are in no tab: by team role.
+        let editors = self.presence_role(who).is_some();
+        st.panes.retain(|p| panes.contains(&p.id) || (editors && self.is_presence(p.id)));
         let machines: std::collections::HashSet<MachineId> = st.panes.iter().filter_map(|p| p.host).collect();
         st.machines.retain(|m| machines.contains(&m.id));
         st.roles = Some(roles.into_iter().collect());
@@ -3096,6 +3559,9 @@ impl Daemon {
             activity: self.activity.get(&p.id).map(|(_, a)| *a).filter(|a| a.last_ms > 0),
             title: status.title.clone(),
             file: None,
+            editor: None,
+            diff: self.diffs.iter().find(|d| d.pane == Some(p.id)).map(|d| d.info.clone()),
+            claude_ide: self.ide_conns.values().any(|c| c.1 == Some(p.id)),
             started_by: meta.started_by.clone(),
             running,
             policy: meta.policy,
@@ -3157,6 +3623,9 @@ impl Daemon {
             activity: None,
             title: s.title,
             started_by: meta.started_by.clone(),
+            editor: s.editor,
+            diff: None,
+            claude_ide: false,
         }
     }
 

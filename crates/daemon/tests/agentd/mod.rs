@@ -171,6 +171,8 @@ impl Daemon {
             .arg("--state-dir")
             .arg(&self.state)
             .env("FAKE_ACP_DIR", &self.sessions)
+            // Not systemd's: a test run from a service would pass its own on.
+            .env_remove("NOTIFY_SOCKET")
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdout(Stdio::null())
             .stderr(Stdio::null())

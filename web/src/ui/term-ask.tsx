@@ -8,9 +8,11 @@
 // people don't answer differently (the first answer wins). Once answered,
 // the card says who did, and offers to send the agent a follow-up.
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
+import { openMenu } from "./menu";
 import type { Client } from "../client";
-import type { PaneId } from "../proto";
+import type { DiffInfo, PaneId } from "../proto";
+import { DiffCard } from "./diff-card";
 import { AskCard, type Answered, type Ask } from "../blocks/ask";
 import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE } from "./answer-card";
 import { Avatar } from "./people";
@@ -77,6 +79,72 @@ export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: 
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** An edit Claude Code proposes here, as a diff (M28): this pane's agent
+ * card while it waits. */
+export function TermDiff({ client, id, diff }: { client: Client; id: PaneId; diff: DiffInfo }) {
+  const [hidden, setHidden] = useState(false);
+  // Another IDE registered with Claude Code (VS Code with its extension):
+  // the owner can send diffs there from now on.
+  const [others, setOthers] = useState<string[]>([]);
+  const owner = !client.state?.roles;
+  useEffect(() => {
+    if (!owner) return;
+    void client
+      .request("GET", "/api/ide")
+      .then((r) => (r.ok ? r.json<{ others?: { name: string; alive: boolean }[] }>() : null))
+      .then((v) => setOthers([...new Set((v?.others ?? []).filter((o) => o.alive).map((o) => o.name))]))
+      .catch(() => {});
+  }, [owner]);
+  if (hidden) {
+    return (
+      <button class="pane-ask-pill" onPointerDown={(e) => e.stopPropagation()} onClick={() => setHidden(false)}>
+        Claude Code wants to edit…
+      </button>
+    );
+  }
+  return (
+    <div class="pane-ask" onPointerDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
+      <div class="pane-ask-bar">
+        <span>Claude Code wants to edit a file</span>
+        <Watching client={client} id={id} />
+        {others.length > 0 && (
+          <button
+            class="link"
+            data-diffs-to
+            title="Which IDE shows Claude Code's diffs"
+            onClick={(e) =>
+              openMenu(
+                e,
+                others.map((name) => ({
+                  label: `Send diffs to ${name} from now on`,
+                  run: () => void client.request("PUT", "/api/ide", { diffs: name }).then(() => client.toast(`Claude Code's diffs go to ${name} now`)),
+                })),
+              )
+            }
+          >
+            Diffs here ▾
+          </button>
+        )}
+        <button class="link" title="Look at the terminal; the edit stays open" onClick={() => setHidden(true)}>
+          Hide
+        </button>
+      </div>
+      <DiffCard
+        key={diff.id}
+        diff={diff}
+        can={mayAnswer(client, id)}
+        act={async (action, extra) => {
+          await client.act({ action, pane: id, id: diff.id, ...extra });
+        }}
+        full={async () => {
+          const res = await client.request("GET", `/api/panes/${id}/diff`);
+          return res.ok ? (await res.json<{ new: string }>()).new : null;
+        }}
+      />
     </div>
   );
 }

@@ -27,7 +27,23 @@ export const REASON_COL: Record<Reason["kind"], [number, number, number]> = {
   exited: [255, 84, 104],
   done: [99, 224, 160],
   input: [255, 192, 77],
+  paused: [110, 170, 255],
+  errors: [255, 84, 104],
+  conflict: [255, 140, 60],
+  diff: [185, 140, 255],
 };
+
+/** An editor that joined the swarm (M28): no tab, no PTY. Following it
+ * opens a view of its cursor instead of a tab. */
+export function isPresence(p: FleetPane): boolean {
+  return p.info.type === "editor" && !!p.info.editor && p.session === null;
+}
+
+/** An editor whose cursor can be followed: one that joined, or an editor
+ * block whose window is connected. */
+export function followable(p: FleetPane): boolean {
+  return !!p.info.editor && !p.stale;
+}
 
 export function kindOf(p: FleetPane): WorkKind {
   if (p.info.kind) return p.info.kind;
@@ -114,6 +130,14 @@ export function cardTitle(r: Reason, n: number, machines: string[], agent?: stri
       return n > 1 ? `${n} finished` : "Finished";
     case "input":
       return "Waiting for you";
+    case "paused":
+      return n > 1 ? `${n} debuggers paused` : "Debugger paused";
+    case "errors":
+      return n > 1 ? `${n} editors have errors` : "Errors after a save";
+    case "conflict":
+      return n > 1 ? `${n} merge conflicts` : "Merge conflict";
+    case "diff":
+      return n > 1 ? `${n} edits wait` : "Claude Code wants to edit";
   }
 }
 

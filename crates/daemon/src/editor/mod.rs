@@ -20,7 +20,10 @@
 //! In a VM there's no daemon socket for the extension to reach, so the
 //! block shows the file it was opened on and doesn't follow the cursor.
 
+pub mod link;
+pub mod presence;
 pub mod server;
+pub mod vsix;
 
 use std::{
     path::{Path, PathBuf},
@@ -109,6 +112,8 @@ pub struct Editor {
     /// A load found no server: reload the frame once it's up.
     missed: AtomicBool,
     closed: AtomicBool,
+    /// Its window's illogical extension, connected (M28).
+    link: Mutex<Option<Arc<link::Link>>>,
 }
 
 impl Editor {
@@ -156,6 +161,7 @@ impl Editor {
                 workspace,
                 missed: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
+                link: Mutex::new(None),
             }
         });
         match place {
@@ -292,7 +298,23 @@ impl Editor {
         }
     }
 
-    /// The extension's report: the active file and the cursor.
+    /// Its window says where its cursor is (M28's `peek`; M27's `report`
+    /// said the same).
+    fn peeked(&self, p: &link::Peek) {
+        {
+            let mut st = self.state.lock().unwrap();
+            st.file = p.file.as_deref().map(|f| relative(&st.folder, f));
+            st.line = p.line;
+            st.col = p.col;
+            st.top = p.top;
+            st.lines = p.lines.clone();
+            st.dirty = p.dirty;
+        }
+        *self.path.lock().unwrap() = p.file.clone();
+        self.ctx.changed();
+    }
+
+    /// The extension's report (M27): the active file and the cursor.
     fn report(&self, args: &Value) -> Result<Value, String> {
         let file = args["file"].as_str().map(str::to_owned);
         let n = |k: &str| args[k].as_u64().map(|v| v.min(u32::MAX as u64) as u32);
@@ -357,12 +379,47 @@ impl Block for Editor {
                 Some(f) => format!("{} — {}", f.rsplit('/').next().unwrap_or(f), st.name),
                 None => st.name.clone(),
             }),
+            editor: self.link.lock().unwrap().as_ref().map(|l| l.info()),
+        }
+    }
+
+    fn link(&self) -> Option<Arc<link::Link>> {
+        self.link.lock().unwrap().clone()
+    }
+
+    fn attach(&self, l: Arc<link::Link>) -> bool {
+        if self.closed.load(Ordering::Relaxed) {
+            return false;
+        }
+        let me = self.me.clone();
+        l.on_peek(move |p| {
+            if let Some(e) = me.upgrade() {
+                e.peeked(p);
+            }
+        });
+        l.bind(self.ctx.id, self.ctx.sink());
+        // A reload of the window connects again before the old one has gone.
+        *self.link.lock().unwrap() = Some(l);
+        self.ctx.changed();
+        true
+    }
+
+    fn detach(&self, l: &Arc<link::Link>) {
+        let mut cur = self.link.lock().unwrap();
+        if cur.as_ref().is_some_and(|c| Arc::ptr_eq(c, l)) {
+            *cur = None;
+            drop(cur);
+            self.ctx.changed();
         }
     }
 
     fn call(&self, method: &str, args: Value) -> BoxFuture<'static, Result<Value, String>> {
         let result = match method {
             "report" => self.report(&args),
+            "continue" => match self.link.lock().unwrap().clone() {
+                Some(l) => l.resume().map(|()| json!({})),
+                None => Err("its window isn't connected".into()),
+            },
             // Try again after a failed start (offline, say).
             "start" => {
                 let s = self.server.clone();
@@ -445,13 +502,9 @@ fn open_payload(origin: &str, file: &str, line: Option<u32>) -> String {
     Value::Array(payload).to_string()
 }
 
-/// `file` relative to `folder` when it's inside it.
+/// `file` relative to `folder` when it's inside it (through links).
 fn relative(folder: &str, file: &str) -> String {
-    let folder = folder.trim_end_matches('/');
-    match file.strip_prefix(folder).and_then(|r| r.strip_prefix('/')) {
-        Some(r) if !folder.is_empty() => r.to_owned(),
-        _ => file.to_owned(),
-    }
+    crate::paths::relative(folder, file)
 }
 
 /// A name for a file: no slashes or odd characters.

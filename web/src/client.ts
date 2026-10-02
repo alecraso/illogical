@@ -262,6 +262,33 @@ export class Client {
    * after are the ones it created, and become active. */
   private lastIntentAt = 0;
   private pendingBlocks = new Map<PaneId, unknown>();
+  /** M28: who wants each followed editor's stream. */
+  private editorFollows = new Map<PaneId, Set<(m: import("./proto").FollowMsg) => void>>();
+
+  /** Follow an editor (M28): `fn` gets what it sends, starting with what
+   * it shows now. Call what this returns to stop. */
+  followEditor(pane: PaneId, fn: (m: import("./proto").FollowMsg) => void): () => void {
+    let set = this.editorFollows.get(pane);
+    if (!set) {
+      set = new Set();
+      this.editorFollows.set(pane, set);
+      this.send({ type: "follow", pane, on: true });
+    }
+    set.add(fn);
+    return () => {
+      const s = this.editorFollows.get(pane);
+      if (!s?.delete(fn) || s.size) return;
+      this.editorFollows.delete(pane);
+      this.send({ type: "follow", pane, on: false });
+    };
+  }
+
+  /** Start a follow over: everything it shows again. */
+  refollowEditor(pane: PaneId) {
+    if (!this.editorFollows.has(pane)) return;
+    this.send({ type: "follow", pane, on: false });
+    this.send({ type: "follow", pane, on: true });
+  }
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -688,6 +715,8 @@ export class Client {
         this.focused = undefined;
         this.retry = 0;
         if (this.summary) this.send({ type: "subscribe", summary: true });
+        // A new connection: follow again what was followed.
+        for (const pane of this.editorFollows.keys()) this.send({ type: "follow", pane, on: true });
         this.applyState(msg.state, true);
         if (msg.state.roles) void this.loadNotify();
         break;
@@ -726,6 +755,9 @@ export class Client {
           { pane: msg.pane, who: msg.who, name: msg.name },
         ];
         this.emit();
+        break;
+      case "follow":
+        for (const fn of this.editorFollows.get(msg.pane) ?? []) fn(msg.msg);
         break;
       case "block": {
         const b = this.blocks.get(msg.block);

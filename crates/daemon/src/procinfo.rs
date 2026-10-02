@@ -25,6 +25,11 @@ pub fn foreground(pid: u32) -> Option<u32> {
     imp::foreground(pid)
 }
 
+/// A process's parent.
+pub fn ppid(pid: u32) -> Option<u32> {
+    imp::ppid(pid).filter(|p| *p > 0)
+}
+
 /// A process's command line.
 pub fn argv(pid: u32) -> Option<Vec<String>> {
     imp::argv(pid).map(|raw| raw.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect())
@@ -93,6 +98,11 @@ mod imp {
 
     pub fn cwd(pid: u32) -> Option<PathBuf> {
         std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
+
+    pub fn ppid(pid: u32) -> Option<u32> {
+        // ppid is field 4.
+        stat_field(pid, 1)?.parse().ok()
     }
 
     pub fn foreground(pid: u32) -> Option<u32> {
@@ -191,6 +201,10 @@ mod imp {
         // SAFETY: [[c_char; 32]; 32] is MAXPATHLEN contiguous bytes.
         let bytes: &[u8] = unsafe { std::slice::from_raw_parts(path.as_ptr().cast(), size_of_val(&path)) };
         c_path(bytes)
+    }
+
+    pub fn ppid(pid: u32) -> Option<u32> {
+        Some(bsdinfo(pid)?.pbi_ppid)
     }
 
     pub fn foreground(pid: u32) -> Option<u32> {

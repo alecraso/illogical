@@ -3,7 +3,10 @@
 // session or person, with what needs you lifted out to a rail of cards
 // (M24's reasons, bundled by their bundle keys) that anyone who may answer
 // can act on: allow, deny, answer, dismiss, and send the agent a follow-up
-// (M29). The look and the motion are the prototype's
+// (M29). Editors (M28) are tiles too: clicking one that joined from VS
+// Code, Cursor or nvim follows its cursor (`follow.tsx`); its debugger
+// stopping, errors after a save, a merge conflict and Claude Code's diffs
+// are cards. The look and the motion are the prototype's
 // (spikes/s16-swarm/canvas.html). On a phone the rail is a strip of cards
 // along the bottom, and the field pinches and pans.
 
@@ -16,7 +19,9 @@ import { Avatar } from "../ui/people";
 import { MenuLayer, openMenu } from "../ui/menu";
 import { usePhone, useSubscribe } from "../ui/hooks";
 import { Field, type FieldPane } from "./field";
-import { activityOf, bundleOf, cardTitle, GROUPINGS, groupOf, kindOf, KINDS, REASON_COL, reasonOf, type GroupBy } from "./model";
+import { FollowView, appName } from "./follow";
+import { DiffCard } from "../ui/diff-card";
+import { activityOf, bundleOf, cardTitle, followable, GROUPINGS, groupOf, isPresence, kindOf, KINDS, REASON_COL, reasonOf, type GroupBy } from "./model";
 
 const BY_KEY = "illogical.swarm.by";
 /** A done card leaves the rail by itself after this long. */
@@ -81,6 +86,8 @@ export function SwarmView({
   const [peek, setPeek] = useState<{ key: string; x: number; y: number; text: string } | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Done[]>([]);
+  /** M28: the editor being followed, by its key. */
+  const [following, setFollowing] = useState<string | null>(null);
   const [, tick] = useState(0);
   const canvas = useRef<HTMLCanvasElement>(null);
   const field = useRef<Field | null>(null);
@@ -140,7 +147,9 @@ export function SwarmView({
           group: groupOf(p, by),
           act: activityOf(p),
           stale: p.stale,
-          label: `%${p.id} ${p.info.current?.text ?? p.info.command ?? p.info.title ?? kindOf(p)}`,
+          label: p.info.editor
+            ? `%${p.id} ${p.info.file?.split("/").pop() ?? p.info.title ?? "editor"} · ${appName(p.info.editor.app)}`
+            : `%${p.id} ${p.info.current?.text ?? p.info.command ?? p.info.title ?? kindOf(p)}`,
           where: p.host,
           lastOut: p.info.activity?.last_ms ?? 0,
           att: r ? { col: REASON_COL[r.kind], bundle: onRail.get(p.key) ?? null } : null,
@@ -218,6 +227,8 @@ export function SwarmView({
   const openKey = (key: string) => {
     const p = byKey(key);
     if (!p) return;
+    // An editor that joined has no tab: follow it.
+    if (isPresence(p)) return setFollowing(key);
     back();
     fleet.open(p.host, p.id);
   };
@@ -248,7 +259,8 @@ export function SwarmView({
     const p = byKey(key);
     if (!p) return e.preventDefault();
     openMenu(e, [
-      { label: "Open", run: () => openKey(key) },
+      ...(isPresence(p) ? [] : [{ label: "Open", run: () => openKey(key) }]),
+      ...(followable(p) ? [{ label: "Follow", run: () => setFollowing(key) }] : []),
       ...(canEdit(fleet, p) ? [{ label: "Open in editor", run: () => void editIn(fleet, p, back) }] : []),
     ]);
   };
@@ -314,7 +326,16 @@ export function SwarmView({
             <p class="swarm-empty">Nothing needs you. Panes that ask, fail, finish or wait for input lift out of the swarm and land here.</p>
           )}
           {shown.map((b) => (
-            <Card key={b.key} b={b} fleet={fleet} focus={focus} show={() => field.current?.diveTo(b.panes[0].key)} open={() => openKey(b.panes[0].key)} back={back} />
+            <Card
+              key={b.key}
+              b={b}
+              fleet={fleet}
+              focus={focus}
+              show={() => field.current?.diveTo(b.panes[0].key)}
+              open={() => openKey(b.panes[0].key)}
+              follow={() => setFollowing(b.panes[0].key)}
+              back={back}
+            />
           ))}
           {answered.map((d) => (
             <AnsweredCard key={`${d.key}@${d.answered.at_ms}`} d={d} fleet={fleet} close={() => setAnswered((x) => x.filter((y) => y !== d))} />
@@ -348,6 +369,7 @@ export function SwarmView({
         </div>
       </div>
 
+      {following && <FollowView fleet={fleet} pkey={following} close={() => setFollowing(null)} back={back} />}
       <MenuLayer />
       {peek && (
         <div class="swarm-peek" style={{ left: `${Math.min(peek.x + 16, innerWidth - 700)}px`, top: `${Math.min(peek.y + 16, innerHeight - 160)}px` }}>
@@ -427,6 +449,7 @@ function Card({
   focus,
   show,
   open,
+  follow,
   back,
 }: {
   b: Bundle;
@@ -434,6 +457,7 @@ function Card({
   focus?: { host: string; pane: number } | null;
   show: () => void;
   open: () => void;
+  follow: () => void;
   back: () => void;
 }) {
   const [err, setErr] = useState<string | null>(null);
@@ -453,7 +477,8 @@ function Card({
     setErr(e);
   };
   const all = (label: string) => (n > 1 ? `${label} all ${n}` : label);
-  const kind = r.kind === "exited" ? "failed" : r.kind;
+  const kind = r.kind === "exited" || r.kind === "errors" ? "failed" : r.kind === "diff" ? "ask" : r.kind;
+  const diff = n === 1 && r.kind === "diff" ? first.info.diff : null;
   const focused = focus && b.panes.some((p) => p.host === focus.host && p.id === focus.pane);
   return (
     <div
@@ -471,7 +496,7 @@ function Card({
       <div class="cm">
         {ids} · {machines.length > 1 ? `${machines.length} machines` : machines[0]} · {project}
       </div>
-      {ask?.kind === "permission" ? (
+      {diff ? null : ask?.kind === "permission" ? (
         <PermissionBody ask={ask} />
       ) : (
         <div class="cq">
@@ -479,7 +504,18 @@ function Card({
           {r.command && r.kind !== "ask" && !r.headline.includes(r.command) ? <code> {r.command}</code> : null}
         </div>
       )}
-      {!can ? (
+      {diff ? (
+        <DiffCard
+          key={diff.id}
+          diff={diff}
+          can={can}
+          act={(action, extra) => run(action, { ...extra, id: diff.id })}
+          full={async () => {
+            const res = await fleet.request(first.host, "GET", `/api/panes/${first.id}/diff`);
+            return res.ok ? (await res.json<{ new: string }>()).new : null;
+          }}
+        />
+      ) : !can ? (
         <p class="ask-viewer">{VIEWER_NOTE}</p>
       ) : ask?.kind === "permission" ? (
         <PermissionButtons ask={ask} act={(action, extra) => void run(action, { ...extra, id: ask.id })} />
@@ -493,6 +529,11 @@ function Card({
         />
       ) : (
         <div class="ca">
+          {r.actions.includes("continue") && (
+            <button class="pri" data-continue disabled={busy} onClick={() => void run("continue")}>
+              {all("Continue")}
+            </button>
+          )}
           {r.actions.includes("allow") && (
             <button class="pri" disabled={busy} onClick={() => void run("allow")}>
               {all("Allow")}
@@ -512,9 +553,16 @@ function Card({
         </div>
       )}
       <div class="ca ca-nav">
-        <button class="ghost" onClick={open}>
-          Open
-        </button>
+        {!isPresence(first) && (
+          <button class="ghost" onClick={open}>
+            Open
+          </button>
+        )}
+        {n === 1 && followable(first) && (
+          <button class="ghost" data-follow-card onClick={follow}>
+            Follow
+          </button>
+        )}
         <button class="ghost" onClick={show}>
           Show
         </button>
@@ -523,7 +571,7 @@ function Card({
             Edit
           </button>
         )}
-        {can && r.kind === "ask" && (
+        {can && (r.kind === "ask" || r.kind === "diff") && (
           <button class="ghost" disabled={busy} onClick={() => void run("dismiss")}>
             {all("Dismiss")}
           </button>

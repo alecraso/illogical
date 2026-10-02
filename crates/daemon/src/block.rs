@@ -67,6 +67,22 @@ pub trait Block: Send + Sync {
     fn summary(&self) -> Summary {
         Summary::default()
     }
+    /// The editor connected to it (M28): an editor block's window, or an
+    /// editor that joined the swarm.
+    fn link(&self) -> Option<Arc<crate::editor::link::Link>> {
+        None
+    }
+    /// An editor says it's this block's window (M28): keep it, if this is
+    /// an editor block.
+    fn attach(&self, _link: Arc<crate::editor::link::Link>) -> bool {
+        false
+    }
+    /// ...and it went away.
+    fn detach(&self, _link: &Arc<crate::editor::link::Link>) {}
+    /// It isn't in the layout: an editor that joined the swarm (M28).
+    fn detached(&self) -> bool {
+        false
+    }
 }
 
 /// A block's part of its summary (M23): what it's busy with, where, and
@@ -79,6 +95,8 @@ pub struct Summary {
     pub project: Option<illogical_proto::Project>,
     pub file: Option<String>,
     pub title: Option<String>,
+    /// An editor's own report (M28).
+    pub editor: Option<illogical_proto::EditorInfo>,
 }
 
 /// An open permission request or question in a block (M24's `ask` reason).
@@ -173,6 +191,11 @@ impl BlockCtx {
             secrets: base.secrets,
             mcp: base.mcp,
         }
+    }
+
+    /// Where its notices go (M28: an editor's link sends its own).
+    pub fn sink(&self) -> NoticeSink {
+        self.notices.clone()
     }
 
     /// Its state changed: clients get the new one.
