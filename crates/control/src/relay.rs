@@ -41,6 +41,7 @@ const PING_EVERY: Duration = Duration::from_secs(15);
 /// A text message on a daemon's socket: "fetch your certificates now".
 pub const NUDGE: &str = "trust";
 const DEAD_AFTER: Duration = Duration::from_secs(45);
+const CLIENT_PING: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct Relay {
@@ -209,8 +210,10 @@ async fn splice(ws: WebSocket, stream: DuplexStream) -> (u64, u64) {
         let _ = wr.shutdown().await;
         n
     };
-    let down = async {
-        let mut n = 0u64;
+    // Frames from the stream, read in a task of their own: read_exact
+    // can't be raced against the ping timer without losing bytes.
+    let (frames_tx, mut frames) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let reader = tokio::spawn(async move {
         let mut len = [0u8; 4];
         while rd.read_exact(&mut len).await.is_ok() {
             let l = u32::from_be_bytes(len) as usize;
@@ -218,16 +221,32 @@ async fn splice(ws: WebSocket, stream: DuplexStream) -> (u64, u64) {
                 break;
             }
             let mut b = vec![0u8; l];
-            if rd.read_exact(&mut b).await.is_err() {
+            if rd.read_exact(&mut b).await.is_err() || frames_tx.send(b).await.is_err() {
                 break;
             }
-            n += l as u64;
-            if wtx.send(Message::Binary(b.into())).await.is_err() {
-                break;
+        }
+    });
+    let down = async {
+        let mut n = 0u64;
+        // Pings keep an idle channel open through proxies (Fly's among them).
+        let mut ping = tokio::time::interval(CLIENT_PING);
+        ping.tick().await;
+        loop {
+            tokio::select! {
+                f = frames.recv() => {
+                    let Some(b) = f else { break };
+                    n += b.len() as u64;
+                    if wtx.send(Message::Binary(b.into())).await.is_err() {
+                        break;
+                    }
+                }
+                _ = ping.tick() => if wtx.send(Message::Ping(Default::default())).await.is_err() { break },
             }
         }
         let _ = wtx.close().await;
         n
     };
-    tokio::join!(up, down)
+    let r = tokio::join!(up, down);
+    reader.abort();
+    r
 }

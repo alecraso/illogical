@@ -43,6 +43,16 @@ static arch="x86_64": web
     {{cargo}} build --release --target "$t" -p illogicald -p illogical -p illogical-control
     file {{target_dir}}/$t/release/illogicald {{target_dir}}/$t/release/illogical {{target_dir}}/$t/release/illogical-control
 
+# Deploy the hosted illogical control to Fly (packaging/control/fly.toml):
+# the static x86_64 binary in a distroless image, from a small build context.
+control-deploy: static
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ctx=$(mktemp -d)
+    trap 'rm -rf "$ctx"' EXIT
+    cp {{target_dir}}/x86_64-unknown-linux-musl/release/illogical-control packaging/control/Dockerfile packaging/control/fly.toml "$ctx"/
+    cd "$ctx" && fly deploy --local-only --ha=false
+
 # Release tarballs in dist/: illogical-VERSION-TARGET.tar.gz with both
 # binaries and the licenses, for the targets already built (`just static`,
 # `just static aarch64`, `just build` on a Mac).
