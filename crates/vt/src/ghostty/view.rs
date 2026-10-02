@@ -37,6 +37,8 @@ pub struct CellStyle {
     pub invisible: bool,
     pub strikethrough: bool,
     pub underline: bool,
+    /// Inside the selection (M32).
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -100,8 +102,9 @@ impl GhosttyEngine {
             let mut ri = rows.update(&snap).ok()?;
             let mut y = 0;
             while let Some(row) = ri.next() {
+                let sel = row.selection().ok().flatten().map(|s| s.start_x..=s.end_x);
                 if let Ok(mut ci) = cells.update(row) {
-                    let mut x = 0;
+                    let mut x: u16 = 0;
                     while let Some(cell) = ci.next() {
                         let raw = cell.raw_cell().ok();
                         let st = cell.style().unwrap_or_default();
@@ -132,6 +135,7 @@ impl GhosttyEngine {
                             invisible: st.invisible,
                             strikethrough: st.strikethrough,
                             underline: st.underline != Underline::None,
+                            selected: sel.as_ref().is_some_and(|s| s.contains(&x)),
                         };
                         text.clear();
                         let spacer = matches!(raw.and_then(|r| r.wide().ok()), Some(CellWide::SpacerTail));

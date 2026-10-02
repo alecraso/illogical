@@ -104,6 +104,8 @@ pub const DEFAULT_BG: RgbColor = RgbColor { r: 0x1e, g: 0x1e, b: 0x2e };
 pub const DEFAULT_CURSOR: RgbColor = RgbColor { r: 0xf5, g: 0xe0, b: 0xdc };
 
 pub struct GhosttyEngine {
+    /// Where a selection started (M32); before `term`, so it goes first.
+    anchor: Option<Box<copy::Anchor>>,
     term: Terminal<'static, 'static>,
     replies: Rc<RefCell<Vec<u8>>>,
     caps: Capabilities,
@@ -189,7 +191,7 @@ impl GhosttyEngine {
             .and_then(|t| t.set_default_bg_color(Some(DEFAULT_BG)))
             .and_then(|t| t.set_default_cursor_color(Some(DEFAULT_CURSOR)))
             .expect("default colors");
-        Self { term, replies, caps, wire: wire::Cache::default(), view: None }
+        Self { anchor: None, term, replies, caps, wire: wire::Cache::default(), view: None }
     }
 
     fn format(&self, format: Format, extras: bool, modes: bool) -> Vec<u8> {
@@ -372,9 +374,11 @@ impl VtEngine for GhosttyEngine {
     }
 }
 
+mod copy;
 mod inspect;
 mod view;
 mod wire;
+pub use copy::{Found, Unit};
 pub use inspect::{CaptureOpts, Line};
 pub use view::{CellStyle, Color, Cursor, CursorShape};
 
