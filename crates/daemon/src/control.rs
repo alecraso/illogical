@@ -31,6 +31,7 @@ use illogical_e2e::{
     cert::{Trusted, join_code},
     keys::fingerprint,
     now_ms,
+    push::PushSub,
     team::{AccountCerts, Roster, TeamPin, TeamRole},
 };
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,8 @@ pub struct Enrolled {
     pub others: Vec<(Cert, Principal)>,
     /// Team members' roles on every session (not owners: they're the owner).
     pub team_roles: HashMap<String, Role>,
+    /// Push subscriptions (M21) whose signatures checked out, and whose.
+    pub push: Vec<(Principal, PushSub)>,
 }
 
 impl Enrolled {
@@ -130,7 +133,7 @@ impl Enrolled {
                 others.push((c, Principal::User { id: g.principal.clone(), name: name.clone(), pic: None }));
             }
         }
-        Self { saved, keys, trusted, others, team_roles }
+        Self { saved, keys, trusted, others, team_roles, push: Vec::new() }
     }
 
     /// Every account outside this one that gets in, for control to route.
@@ -139,6 +142,12 @@ impl Enrolled {
         a.sort();
         a.dedup();
         a
+    }
+}
+
+impl std::fmt::Debug for Control {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Control").field("enrolled", &self.enrolled().is_some()).finish()
     }
 }
 
@@ -347,7 +356,8 @@ impl Control {
         if changed {
             write_saved(&self.state_dir, &saved)?;
         }
-        let next = Enrolled::build(saved, e.keys.clone(), &self.acl);
+        let mut next = Enrolled::build(saved, e.keys.clone(), &self.acl);
+        next.push = self.push_subs(&next).await;
         if next.trusted.get(&next.saved.cert.device).is_none() {
             warn!("this daemon's own certificate no longer checks out (revoked?)");
         }
@@ -355,6 +365,79 @@ impl Control {
         info!(devices = next.trusted.devices.len(), others = next.others.len(), changed, "certificates refreshed");
         self.install(Some(next));
         Ok(changed)
+    }
+
+    /// Notify people through control (M21): every verified subscription
+    /// `to` accepts, encrypted here for that subscription alone.
+    pub fn push(
+        self: &Arc<Self>,
+        pane: u32,
+        title: &str,
+        body: &str,
+        extra: Option<serde_json::Value>,
+        to: impl Fn(&Principal) -> bool,
+    ) {
+        let Some(e) = self.enrolled() else { return };
+        let subs: Vec<PushSub> = e.push.iter().filter(|(p, _)| to(p)).map(|(_, s)| s.clone()).collect();
+        if subs.is_empty() {
+            return;
+        }
+        let mut payload = serde_json::json!({
+            "title": title, "body": body, "pane": pane, "tag": format!("pane-{pane}"), "daemon": e.saved.cert.device,
+        });
+        if let Some(serde_json::Value::Object(extra)) = extra {
+            payload.as_object_mut().unwrap().extend(extra);
+        }
+        let payload = payload.to_string();
+        let me = self.clone();
+        tokio::spawn(async move {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            for s in subs {
+                let (Ok(ua), Ok(auth)) = (b64.decode(&s.p256dh), b64.decode(&s.auth)) else { continue };
+                let Ok(body) = crate::push::encrypt(
+                    payload.as_bytes(),
+                    &ua,
+                    &auth,
+                    &crate::push::new_secret(),
+                    &crate::push::random::<16>(),
+                ) else {
+                    continue;
+                };
+                let path = "/api/daemon/push";
+                let req = serde_json::json!({ "endpoint": s.endpoint, "body": base64::engine::general_purpose::STANDARD.encode(body) });
+                let res = me
+                    .http
+                    .post(format!("{}{path}", e.saved.url))
+                    .header(AUTH, auth_header(&e.keys, "POST", path))
+                    .json(&req)
+                    .send()
+                    .await;
+                if let Err(err) = res {
+                    warn!(error = %err, "can't push through control");
+                }
+            }
+        });
+    }
+
+    /// Subscriptions control has for the people this daemon serves, kept if
+    /// a device we trust signed them.
+    async fn push_subs(&self, e: &Enrolled) -> Vec<(Principal, PushSub)> {
+        #[derive(Deserialize)]
+        struct Subs {
+            subs: Vec<PushSub>,
+        }
+        let Ok(got) = self.get::<Subs>(e, "/api/daemon/push-subs").await else { return Vec::new() };
+        got.subs
+            .into_iter()
+            .filter_map(|s| {
+                if let Some(c) = e.trusted.get(&s.device) {
+                    return s.signed_by(c).then_some((Principal::Owner, s));
+                }
+                let (c, who) = e.others.iter().find(|(c, _)| c.device == s.device)?;
+                s.signed_by(c).then(|| (who.clone(), s))
+            })
+            .collect()
     }
 
     /// Tell control which accounts get in (it routes them; we decide).

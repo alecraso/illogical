@@ -12,6 +12,7 @@ mod auth;
 mod db;
 mod limit;
 mod passkey;
+mod push;
 mod relay;
 mod teams;
 
@@ -59,6 +60,11 @@ struct Args {
     #[arg(long, default_value = "https://api.github.com", hide = true)]
     github_api: String,
 
+    /// Push endpoints allowed besides the browsers' push services, as
+    /// host:port (tests).
+    #[arg(long = "push-host", hide = true)]
+    push_hosts: Vec<String>,
+
     /// Behind a proxy that puts the client's IP in a header (Fly:
     /// `Fly-Client-IP`), use it for rate limits. Only set this when every
     /// request comes through that proxy.
@@ -79,6 +85,7 @@ pub struct Github {
 }
 
 pub struct Config {
+    pub push_hosts: Vec<String>,
     pub public_url: String,
     /// `public_url`'s origin, as browsers send it.
     pub origin: String,
@@ -93,6 +100,7 @@ pub struct App {
     pub relay: relay::Relay,
     pub passkeys: passkey::Challenges,
     pub limits: limit::Limits,
+    pub vapid: push::Vapid,
 }
 
 /// An API error: `{"error": "..."}` with a status.
@@ -174,6 +182,10 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/daemon/peers", get(teams::daemon_peers))
         .route("/api/daemon/access", post(teams::daemon_access))
         .route("/api/relay/link/{id}", get(relay::link))
+        .route("/api/push/subscribe", post(push::subscribe))
+        .route("/api/push/unsubscribe", post(push::unsubscribe))
+        .route("/api/daemon/push-subs", get(push::daemon_subs))
+        .route("/api/daemon/push", post(push::daemon_send))
         .route("/api/relay/dial", get(relay::dial))
         .route("/api/relay/c/{id}", get(relay::client))
         .fallback(asset)
@@ -184,9 +196,10 @@ pub fn router(app: Arc<App>) -> Router {
 async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>) -> Json<serde_json::Value> {
     // Passkeys need a domain name: WebAuthn refuses IP addresses.
     let passkeys = url::Url::parse(&app.cfg.public_url).is_ok_and(|u| matches!(u.host(), Some(url::Host::Domain(_))));
-    Json(
-        json!({ "control": true, "url": app.cfg.public_url, "github": app.cfg.github.is_some(), "passkeys": passkeys }),
-    )
+    Json(json!({
+        "control": true, "url": app.cfg.public_url, "github": app.cfg.github.is_some(), "passkeys": passkeys,
+        "vapid": app.vapid.public(),
+    }))
 }
 
 /// Nothing frames control's pages, and nothing on them comes from elsewhere
@@ -268,13 +281,22 @@ async fn main() -> anyhow::Result<()> {
     if github.is_none() {
         tracing::warn!("no GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET: GitHub sign-in is off");
     }
+    let db = db::Db::open(&a.db)?;
+    let vapid = push::Vapid::load(&db)?;
     let app = Arc::new(App {
-        cfg: Config { origin: origin_of(&public_url)?, public_url, github, static_dir: a.static_dir },
-        db: db::Db::open(&a.db)?,
+        cfg: Config {
+            push_hosts: a.push_hosts,
+            origin: origin_of(&public_url)?,
+            public_url,
+            github,
+            static_dir: a.static_dir,
+        },
+        db,
         http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build()?,
         relay: Default::default(),
         passkeys: Default::default(),
         limits: limit::Limits::new(a.trust_proxy_header),
+        vapid,
     });
     // Nagle off: the relay's mux writes frames back to back (S15).
     let l = tokio::net::TcpListener::bind(a.listen).await?.tap_io(|t| {

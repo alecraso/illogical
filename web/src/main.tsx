@@ -6,7 +6,7 @@ import { Client } from "./client";
 import { directory } from "./hosts";
 import { App } from "./ui/app";
 import { measureCell } from "./ui/cells";
-import { registerWorker } from "./push";
+import { enableControlPush, registerWorker, setPushBackend } from "./push";
 import { ControlSession, detectControl } from "./control";
 import { ControlGate, ControlOverlay, controlMenuItems, NoMachines, useControl } from "./ui/control";
 import { setHostMenuExtras } from "./ui/hosts";
@@ -36,6 +36,18 @@ if (info && linkMatch) {
 }
 if (session) {
   setHostMenuExtras(() => controlMenuItems(session));
+  setPushBackend({
+    enable: () => enableControlPush(session.info.vapid, (sub) => session.subscribePush(sub)),
+    disable: async () => {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = await reg?.pushManager.getSubscription();
+      if (sub) {
+        await session.unsubscribePush(sub.endpoint).catch(() => {});
+        await sub.unsubscribe();
+      }
+      return "off";
+    },
+  });
   session.subscribe(() =>
     directory.setControl(
       session.daemons.map((d) => ({
@@ -114,8 +126,11 @@ if (!linkTarget) {
 
 // Opened from a notification (`#pane=N`), or told to by the service worker.
 // Notifications come from the home daemon, so show it first.
-const openPane = (pane: number) => {
-  if (directory.home !== null) directory.select(directory.home);
+const openPane = (pane: number, daemon?: string) => {
+  // From a notification through control: that daemon's host first.
+  const host = daemon ? directory.list?.hosts.find((h) => h.id === daemon)?.name : undefined;
+  if (host) directory.select(host);
+  else if (directory.home !== null) directory.select(directory.home);
   const go = () => {
     if (!client.info(pane)) return false;
     client.setActive(pane);
@@ -127,12 +142,23 @@ const openPane = (pane: number) => {
 };
 // A pane opened on the home daemon from elsewhere (a sandbox shell).
 window.addEventListener("illogical:open-pane", (e) => openPane((e as CustomEvent<number>).detail));
-const fromHash = /^#pane=(\d+)$/.exec(location.hash);
+const fromHash = /^#pane=(?:([0-9a-f]+)\.)?(\d+)$/.exec(location.hash);
 if (fromHash) {
-  openPane(Number(fromHash[1]));
+  const [, daemon, pane] = fromHash;
+  // A notification through control names its daemon: once its host is in
+  // the list, open the pane there.
+  const go = () => openPane(Number(pane), daemon);
+  if (daemon && !directory.find?.(directory.list?.hosts.find((h) => h.id === daemon)?.name ?? "")) {
+    const off = directory.subscribe(() => {
+      if (directory.list?.hosts.some((h) => h.id === daemon)) {
+        off();
+        go();
+      }
+    });
+  } else go();
   history.replaceState(null, "", "/");
 }
-if (!session) void registerWorker(openPane);
+if (!linkTarget) void registerWorker(openPane);
 
 // For end-to-end tests.
 Object.assign(window, {

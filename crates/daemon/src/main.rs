@@ -642,8 +642,10 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     // What `fs` never serves, besides the state directory.
     let private = vec![token_file.clone(), secrets.anthropic_key.clone(), secrets.claude_token.clone()];
     let acl = std::sync::Arc::new(acl::Acl::open(&state_dir));
+    let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone());
     let config = mux::Config {
         acl: acl.clone(),
+        control: control.clone(),
         owner_name: owner_login.clone().unwrap_or_else(|| "owner".into()),
         owner_pic: None,
         guest_machines: args.guest_machines,
@@ -673,7 +675,6 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
             .join("illogical/static")
     });
     let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
-    let control = control::Control::new(&state_dir, direct_urls, acl.clone());
     let app = server::App::new(
         access,
         identify,

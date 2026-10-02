@@ -61,7 +61,7 @@ self.addEventListener("push", (event) => {
       icon: "/icon.svg",
       requireInteraction: !!(approve || ask),
       actions,
-      data: { pane: msg.pane, approve, ask },
+      data: { pane: msg.pane, daemon: msg.daemon, approve, ask },
     }),
   );
 });
@@ -117,13 +117,14 @@ self.addEventListener("notificationclick", (event) => {
     );
     return;
   }
-  const url = pane ? `/#pane=${pane}` : "/";
+  // Through control (M21) a notification names its daemon.
+  const url = pane ? (data.daemon ? `/#pane=${data.daemon}.${pane}` : `/#pane=${pane}`) : "/";
   event.waitUntil(
     (async () => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const w of wins) {
         if ("focus" in w) {
-          w.postMessage({ type: "open-pane", pane });
+          w.postMessage({ type: "open-pane", pane, daemon: data.daemon });
           return w.focus();
         }
       }

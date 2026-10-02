@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS daemon_links (
     daemon TEXT PRIMARY KEY,
     until INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    k TEXT PRIMARY KEY,
+    v TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subs (
+    endpoint TEXT PRIMARY KEY,
+    account TEXT NOT NULL,
+    body TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS usage (
     account TEXT NOT NULL,
     day TEXT NOT NULL,
@@ -725,6 +734,57 @@ impl Db {
                 ))
             })
             .optional()?)
+    }
+
+    // ---- settings and push (M21)
+
+    pub fn setting(&self, k: &str) -> anyhow::Result<Option<String>> {
+        Ok(self.c().query_row("SELECT v FROM settings WHERE k = ?1", params![k], |r| r.get(0)).optional()?)
+    }
+
+    pub fn set_setting(&self, k: &str, v: &str) -> anyhow::Result<()> {
+        self.c().execute("INSERT OR REPLACE INTO settings (k, v) VALUES (?1, ?2)", params![k, v])?;
+        Ok(())
+    }
+
+    pub fn put_push_sub(&self, endpoint: &str, account: &str, body: &str) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT OR REPLACE INTO push_subs (endpoint, account, body) VALUES (?1, ?2, ?3)",
+            params![endpoint, account, body],
+        )?;
+        Ok(())
+    }
+
+    pub fn drop_push_sub(&self, endpoint: &str, account: Option<&str>) -> anyhow::Result<()> {
+        match account {
+            Some(a) => {
+                self.c().execute("DELETE FROM push_subs WHERE endpoint = ?1 AND account = ?2", params![endpoint, a])?
+            }
+            None => self.c().execute("DELETE FROM push_subs WHERE endpoint = ?1", params![endpoint])?,
+        };
+        Ok(())
+    }
+
+    pub fn push_subs(&self, account: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT body FROM push_subs WHERE account = ?1")?;
+        let rows = q.query_map(params![account], |r| r.get::<_, String>(0))?;
+        rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+    }
+
+    pub fn push_sub_account(&self, endpoint: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row("SELECT account FROM push_subs WHERE endpoint = ?1", params![endpoint], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// The accounts a daemon said it lets in.
+    pub fn daemon_accounts(&self, daemon: &str) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT account FROM daemon_access WHERE daemon = ?1")?;
+        let rows = q.query_map(params![daemon], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     // ---- metering
