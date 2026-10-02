@@ -8,6 +8,9 @@ export PATH := env("HOME") / ".cargo/bin" + ":" + env("PATH")
 
 cargo := "mise exec -- cargo"
 
+# Where cargo builds (CI keeps one per runner, outside the checkout).
+target_dir := env("CARGO_TARGET_DIR", justfile_directory() / "target")
+
 default:
     @just --list
 
@@ -37,7 +40,7 @@ static arch="x86_64": web
     # Cross: Zig links too, with its own musl and startup files, not rustc's.
     if [ {{arch}} != "$(uname -m)" ]; then export "CARGO_TARGET_${T}_LINKER=$PWD/scripts/zig-cc-musl" "CARGO_TARGET_${T}_RUSTFLAGS=-C link-self-contained=no"; fi
     {{cargo}} build --release --target "$t" -p illogicald -p illogical
-    file target/$t/release/illogicald target/$t/release/illogical
+    file {{target_dir}}/$t/release/illogicald {{target_dir}}/$t/release/illogical
 
 # Release tarballs in dist/: illogical-VERSION-TARGET.tar.gz with both
 # binaries and the licenses, for the targets already built (`just static`,
@@ -48,8 +51,8 @@ dist:
     v=$({{cargo}} pkgid -p illogicald | sed 's/.*[#@]//')
     mkdir -p dist
     for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin; do
-      d=target/$t/release
-      if [ "$t" = aarch64-apple-darwin ] && [ "$(uname -s)" = Darwin ]; then d=target/release; fi
+      d={{target_dir}}/$t/release
+      if [ "$t" = aarch64-apple-darwin ] && [ "$(uname -s)" = Darwin ]; then d={{target_dir}}/release; fi
       [ -x "$d/illogicald" ] || continue
       n=illogical-$v-$t; s=$(mktemp -d)/$n; mkdir -p "$s"
       cp "$d/illogicald" "$d/illogical" LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md README.md "$s/"
@@ -95,17 +98,17 @@ check-macos:
 
 # Run the daemon the way it runs for real (port 7681, behind `tailscale serve`).
 run *args: build
-    ./target/release/illogicald {{args}}
+    {{target_dir}}/release/illogicald {{args}}
 
 # Install as a systemd user service (starts at boot with lingering).
 install: build
-    ./target/release/illogicald install
+    {{target_dir}}/release/illogicald install
 
 # Dev loop: separate daemon on 7682 + Vite on 5173; leaves the real one alone.
 dev:
     {{cargo}} build -p illogicald
     trap 'kill 0' EXIT; \
-      ./target/debug/illogicald --listen 127.0.0.1:7682 --allow-origin http://localhost:5173 --state-dir ~/.local/state/illogical-dev & \
+      {{target_dir}}/debug/illogicald --listen 127.0.0.1:7682 --allow-origin http://localhost:5173 --state-dir ~/.local/state/illogical-dev & \
       (cd web && pnpm run dev)
 
 # Re-record snapshot fixtures (crates/vt/fixtures).

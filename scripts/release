@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Release steps for .forgejo/workflows/release.yml, against the Forgejo API.
+#
+#   release check-version TAG      the tag matches the workspace version
+#   release upload TAG FILE...     attach files to TAG's release (made if new)
+#   release sums TAG               SHA256SUMS of the release's tarballs
+#   release homebrew TAG           bump the formula in the Homebrew tap
+#
+# FORGEJO_TOKEN (upload, sums, homebrew) reads and writes releases; HOMEBREW_TAP_KEY (homebrew)
+# is an SSH deploy key for the tap.
+set -euo pipefail
+
+server=${GITHUB_SERVER_URL:-https://git.inevitable.fyi}
+repo=${GITHUB_REPOSITORY:-jhgaylor/illogical}
+api="$server/api/v1/repos/$repo"
+tap=git@git.inevitable.fyi:jhgaylor/homebrew-tap.git
+
+json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+call() { curl -fsS -H "Authorization: token $FORGEJO_TOKEN" "$@"; }
+
+# The release for a tag, made if it isn't there yet (both build jobs may
+# race to make it; the loser finds the winner's).
+release_id() {
+  local tag=$1 id
+  if id=$(call "$api/releases/tags/$tag" 2>/dev/null | json 'd["id"]'); then echo "$id"; return; fi
+  call -X POST -H 'Content-Type: application/json' "$api/releases" \
+    -d "{\"tag_name\":\"$tag\",\"name\":\"illogical ${tag#v}\",\"body\":\"Install: curl -fsSL https://illogical.widgets.wtf/install.sh | sh\"}" \
+    | json 'd["id"]' 2>/dev/null || call "$api/releases/tags/$tag" | json 'd["id"]'
+}
+
+upload() {
+  local id=$1 file=$2 name old
+  name=$(basename "$file")
+  # Replace an asset of the same name (a re-run).
+  old=$(call "$api/releases/$id/assets" | json "next((a['id'] for a in d if a['name'] == '$name'), '')")
+  [ -z "$old" ] || call -X DELETE "$api/releases/$id/assets/$old"
+  call -X POST -F "attachment=@$file" "$api/releases/$id/assets?name=$name" >/dev/null
+  echo "uploaded $name"
+}
+
+version() { mise exec -- cargo pkgid -p illogicald | sed 's/.*[#@]//'; }
+
+case "${1:-}" in
+  check-version)
+    v=$(version)
+    [ "$2" = "v$v" ] || { echo "tag $2 doesn't match the workspace version $v" >&2; exit 1; }
+    ;;
+  upload)
+    tag=$2; shift 2
+    id=$(release_id "$tag")
+    for f in "$@"; do upload "$id" "$f"; done
+    ;;
+  sums)
+    id=$(release_id "$2")
+    dir=$(mktemp -d)
+    call "$api/releases/$id/assets" | json "'\n'.join(a['name'] + ' ' + a['browser_download_url'] for a in d if a['name'].endswith('.tar.gz'))" \
+      | while read -r name url; do call -L -o "$dir/$name" "$url"; done
+    n=$(find "$dir" -name "*.tar.gz" | wc -l | tr -d " ")
+    [ "$n" = 3 ] || { echo "expected 3 tarballs, found $n" >&2; exit 1; }
+    (cd "$dir" && sha256sum -- *.tar.gz > SHA256SUMS && cat SHA256SUMS)
+    upload "$id" "$dir/SHA256SUMS"
+    ;;
+  homebrew)
+    tag=$2; v=${tag#v}
+    sums=$(call -L "$server/$repo/releases/download/$tag/SHA256SUMS")
+    sha() { echo "$sums" | awk -v f="illogical-$v-$1.tar.gz" '$2 == f { print $1 }'; }
+    key=$(mktemp); trap 'rm -f "$key"' EXIT
+    printf '%s\n' "$HOMEBREW_TAP_KEY" > "$key"; chmod 600 "$key"
+    export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    dir=$(mktemp -d)
+    git clone -q "$tap" "$dir"
+    mkdir -p "$dir/Formula"
+    sed -e "s/@VERSION@/$v/g" \
+      -e "s/@SHA_MAC@/$(sha aarch64-apple-darwin)/" \
+      -e "s/@SHA_LINUX_X86@/$(sha x86_64-unknown-linux-musl)/" \
+      -e "s/@SHA_LINUX_ARM@/$(sha aarch64-unknown-linux-musl)/" \
+      packaging/homebrew/illogical.rb.in > "$dir/Formula/illogical.rb"
+    cd "$dir"
+    git add Formula/illogical.rb
+    if git diff --cached --quiet; then echo "formula already at $v"; exit 0; fi
+    git -c user.name="illogical release" -c user.email="noreply@inevitable.fyi" commit -qm "illogical $v"
+    git push -q origin HEAD
+    echo "formula bumped to $v"
+    ;;
+  *)
+    sed -n '2,11p' "$0" >&2
+    exit 2
+    ;;
+esac

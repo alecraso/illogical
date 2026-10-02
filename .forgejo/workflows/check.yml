@@ -1,0 +1,33 @@
+# Every push: `just check` on Linux, build and test on macOS. Only pushes
+# (never pull requests), since these run on our own machines' hosts.
+name: check
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the build between runs
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/check" >> "$GITHUB_ENV"
+      - run: just bootstrap
+      - run: just check
+      - run: just check-macos
+      - name: install.sh
+        run: shellcheck -s sh scripts/install.sh
+      - name: THIRD_PARTY.md is current
+        run: just notices && git diff --exit-code THIRD_PARTY.md
+      - name: No secrets
+        run: gitleaks git --no-banner --redact .
+
+  macos:
+    runs-on: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the build between runs
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/check" >> "$GITHUB_ENV"
+      - run: just bootstrap
+      - run: just test
