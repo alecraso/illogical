@@ -23,7 +23,7 @@ use std::{
         unix::{fs::OpenOptionsExt, net::UnixStream},
     },
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -128,17 +128,8 @@ pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
     let record = record_path(s.dir);
     let _ = std::fs::remove_file(&record);
     let err = OpenOptions::new().create(true).append(true).mode(0o600).open(s.dir.join("agent.err"))?;
-    let mut cmd = if s.launch.scopes {
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-        let mut c = Command::new("systemd-run");
-        c.args(["--user", "--scope", "--quiet", "--collect"])
-            .arg(format!("--unit=illogical-agent-{}-{nanos}", s.id))
-            .arg("--")
-            .arg(&s.launch.exe);
-        c
-    } else {
-        Command::new(&s.launch.exe)
-    };
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let mut cmd = s.launch.command(&format!("illogical-agent-{}-{nanos}", s.id));
     let cwd = if s.cwd.is_dir() { s.cwd } else { Path::new("/") };
     for k in s.remove {
         cmd.env_remove(k);

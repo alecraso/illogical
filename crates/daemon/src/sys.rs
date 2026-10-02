@@ -12,6 +12,24 @@ use nix::{
     sys::socket::{AddressFamily, ControlMessage, MsgFlags, SockFlag, SockType, UnixAddr, sendmsg, socket},
 };
 
+/// What systemd tells the daemon's service about itself. Not for the
+/// programs in its panes: a daemon started in one would take itself for the
+/// service (scopes, the FD store).
+pub const SERVICE_ENV: &[&str] = &[
+    "NOTIFY_SOCKET",
+    "LISTEN_FDS",
+    "LISTEN_PID",
+    "LISTEN_FDNAMES",
+    "LISTEN_PIDFDID",
+    "INVOCATION_ID",
+    "JOURNAL_STREAM",
+    "WATCHDOG_PID",
+    "WATCHDOG_USEC",
+    "MEMORY_PRESSURE_WATCH",
+    "MEMORY_PRESSURE_WRITE",
+    "SYSTEMD_EXEC_PID",
+];
+
 /// Tell systemd about the daemon's state (`READY=1`, `STOPPING=1`) when it
 /// runs as a `Type=notify` service; a no-op otherwise.
 pub fn notify(state: &str) {
