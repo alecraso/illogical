@@ -6,7 +6,8 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createServer as createTcp, connect } from "node:net";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { certBody, evaluate, joinCode, type Cert } from "./src/e2e/cert.ts";
@@ -16,6 +17,7 @@ import { E2ESocket } from "./src/e2e/channel.ts";
 const CONTROL = 7791;
 const GITHUB = 7792;
 const DAEMON = 7793;
+const SPY = 7794;
 const base = `http://127.0.0.1:${CONTROL}`;
 const target = process.env.TARGET_DIR ?? "../target/debug";
 const procs: ChildProcess[] = [];
@@ -97,14 +99,28 @@ async function cert(k: DeviceKeys, by: DeviceKeys, account: string, kind: Cert["
 
 try {
   const db = join(temp("control"), "control.db");
+  const controlLog: Buffer[] = [];
   procs.push(
     spawn(`${target}/illogical-control`, [
       ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", db],
       ...["--github-client-id", "id", "--github-client-secret", "secret"],
       ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
-    ], { stdio: ["ignore", "ignore", "inherit"] }),
+    ], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_LOG: "illogical_control=debug" } }),
   );
+  procs.at(-1)!.stdout!.on("data", (d: Buffer) => controlLog.push(d));
+  procs.at(-1)!.stderr!.on("data", (d: Buffer) => controlLog.push(d));
   await up(`${base}/control.json`);
+  // Everything a client sends to and gets from control, as on the wire.
+  const wire: Buffer[] = [];
+  const spy = createTcp((c) => {
+    const up = connect(CONTROL, "127.0.0.1");
+    c.on("data", (d) => (wire.push(d), up.write(d)));
+    up.on("data", (d) => (wire.push(d), c.write(d)));
+    c.on("close", () => up.destroy());
+    up.on("close", () => c.destroy());
+    c.on("error", () => up.destroy());
+    up.on("error", () => c.destroy());
+  }).listen(SPY, "127.0.0.1");
 
   // 1. Sign in; the first device is self-signed.
   await signIn();
@@ -167,7 +183,7 @@ try {
   check("the daemon's certificate chains to our root", dcert?.kind === "daemon");
 
   // 5. Reach it through the relay (with the session cookie), then directly.
-  const relayUrl = `ws://127.0.0.1:${CONTROL}/api/relay/c/${d.id}`;
+  const relayUrl = `ws://127.0.0.1:${SPY}/api/relay/c/${d.id}`;
   for (const [how, url, headers] of [
     ["relayed", relayUrl, { cookie, origin: base }],
     ["direct", `ws://127.0.0.1:${DAEMON}/e2e`, {}],
@@ -188,6 +204,24 @@ try {
       sock.start();
       for (let i = 0; i < 30 && !texts.some((t) => t.includes('"hello"')); i++) await sleep(100);
       check(`${how}: the protocol's hello`, texts.some((t) => t.includes('"hello"')));
+      if (how === "relayed") {
+        // Type into a pane through the relay and read the output.
+        const hello = JSON.parse(texts.find((t) => t.includes('"hello"'))!);
+        const pane: number = hello.state.panes[0].id;
+        let out = "";
+        sock.onBinary = (b) => {
+          if (b[0] === 1 || b[0] === 2) out += new TextDecoder().decode(b.subarray(13));
+        };
+        sock.sendText(JSON.stringify({ type: "attach", panes: [{ pane, offset: null }] }));
+        const input = new TextEncoder().encode("echo SECRET-MARKER-$((6*7))\n");
+        const frame = new Uint8Array(13 + input.length);
+        frame[0] = 3;
+        new DataView(frame.buffer).setUint32(1, pane);
+        frame.set(input, 13);
+        sock.sendBinary(frame);
+        for (let i = 0; i < 50 && !out.includes("SECRET-MARKER-42"); i++) await sleep(100);
+        check("relayed: a command's output comes back", out.includes("SECRET-MARKER-42"));
+      }
       sock.close();
     } finally {
       globalThis.WebSocket = orig;
@@ -201,6 +235,18 @@ try {
     () => true,
   );
   check("an untrusted device is refused", nope);
+  // 7. Control never saw it: not on the wire, not in its database, not in
+  // its logs.
+  await sleep(500);
+  const onWire = Buffer.concat(wire).toString("latin1");
+  check("the relay leg carried traffic", onWire.length > 2000, `${onWire.length} bytes`);
+  check("no terminal content on control's wire", !onWire.includes("SECRET-MARKER"));
+  const dbDir = db.slice(0, db.lastIndexOf("/"));
+  const stored = readdirSync(dbDir).map((f) => readFileSync(join(dbDir, f)).toString("latin1")).join("");
+  check("no terminal content in control's database", stored.length > 0 && !stored.includes("SECRET-MARKER"));
+  const logs = Buffer.concat(controlLog).toString();
+  check("no terminal content in control's logs", logs.length > 0 && !logs.includes("SECRET-MARKER"), `${logs.length} bytes of log`);
+  spy.close();
 } catch (e) {
   console.log("FAIL", e);
   failed++;
