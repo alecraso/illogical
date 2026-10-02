@@ -103,10 +103,10 @@ terminal, OSC 133 command ranges are *command marks*, never "blocks".
 
       The pane is usable from `ready`. The buffer is bounded by the flow-control window; if it overflows, fall back to a full snapshot.
 - **Flow control.**
-  - **As built:** no ACKs. Each client's per-pane queue is bounded, and a full queue means `resync` (above). The window and ACKs below are still the design. #49 showed why they'd help: a browser's xterm buffers everything it has been sent, so a throttled page took about 10 s to even read its `resync`.
-  - Each client has a per-pane unacked window of 512KB. The client ACKs about every 64KB once xterm's write callback fires.
-  - A client that exceeds its window stops receiving. When it ACKs again, it gets a fresh snapshot rather than the backlog.
-  - The PTY is never paused for a slow client; the log absorbs the output.
+  - **Built in #52 (2026-10-02).** A client that attaches with `acks` sends `ack{pane, offset}` from xterm's write callback, about every 64KB, and keeps no more than a 512KB window unacked.
+  - **Holding back:** a client past its window, or whose queue is full, is held back rather than sent more. When it acks to within 256KB, it gets what it missed from the log, with nothing lost. If the log no longer has that (more than 1MB), it gets `resync`, and since #49 that brings the screen alone. A resize while it's held back also resyncs it, since the missed output was printed for the old size.
+  - **Clients that don't ack** (`illogical attach`, the tmux front end, the share viewer) keep the old rule: a full queue means `resync`.
+  - **The program is paused when the daemon falls behind.** It is never paused for a slow client; the log absorbs that output. But a pane's own program now writes into a bounded queue (64 chunks), so a flood runs only as fast as the pane takes it in, as in any terminal. What clients ask (attach, ack, keys) is served before that queue, so Ctrl-C stops a flood at once. Before #52, output piled up without limit in front of everything else: a debug daemon was still working through a flood 17 s after it ended, with every key and ack waiting behind it.
 - **M5 rule.** Every server event must map onto a tmux `%` notification, and split sizes must convert to cells deterministically for a given tab size. Ratios are stored; cells are derived.
 
 ### Size arbitration
@@ -2610,7 +2610,8 @@ illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` d
 
 1. **S19** (#48): done, below.
 2. **The resync fix** (#49): done 2026-10-02. Snapshots are capped at the client's scrollback and zstd-compressed, and a resync brings back the screen alone. With S19's four-pane flood, snapshots went from 1.44 GB of 1.53 GB received to 9.8 KB of 612 MB, and the TUI drew 7x as much real output. A quiet pane beside a flood in a browser throttled 6x echoes in under 100 ms (`web/e2e/flood.spec.ts`).
-3. **M31** (#50: `illogical tui`), then **M32** (#51: copy mode).
+3. **Flow control** (#52): done 2026-10-02. Clients ack what they have drawn, the daemon holds them to a 512 KB window, and a pane's program waits when the pane can't keep up. In a browser throttled 6x, a flooded pane catches up 0.2–0.4 s after the flood ends, against 15–25 s before. With four floods, the TUI never resyncs and uses about 36% of a core.
+4. **M31** (#50: `illogical tui`), then **M32** (#51: copy mode).
 
 #### S19: TUI spike
 

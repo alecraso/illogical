@@ -56,6 +56,11 @@ fn legacy() -> bool {
     std::env::var_os("S19_LEGACY").is_some()
 }
 
+/// Ack what the engines take in (#52), unless `S19_NO_ACKS` (or legacy).
+fn acks() -> bool {
+    !legacy() && std::env::var_os("S19_NO_ACKS").is_none()
+}
+
 struct Pane {
     term: Terminal<'static, 'static>,
     rs: RenderState<'static>,
@@ -67,6 +72,8 @@ struct Pane {
     resyncs: u32,
     /// Asked for the screen alone after a resync: keep the scrollback.
     resync: bool,
+    /// The offset last acked (#52).
+    acked: u64,
 }
 
 impl Pane {
@@ -80,6 +87,7 @@ impl Pane {
             offset: None,
             resyncs: 0,
             resync: false,
+            acked: 0,
         }
     }
 
@@ -336,7 +344,7 @@ impl App {
             });
         }
         if !attach.is_empty() {
-            self.send(&ClientMsg::Attach { panes: attach, zstd: !legacy() });
+            self.send(&ClientMsg::Attach { panes: attach, zstd: !legacy(), acks: acks() });
         }
         if self.follow_new
             && let Some(&p) = fresh.first()
@@ -380,7 +388,7 @@ impl App {
                     // too big to replay. S19_LEGACY: as before #49.
                     let (offset, history) = if legacy() { (None, None) } else { (p.offset, Some(0)) };
                     p.resync = history == Some(0) && offset.is_some();
-                    self.send(&ClientMsg::Attach { panes: vec![AttachPane { pane, offset, history }], zstd: !legacy() });
+                    self.send(&ClientMsg::Attach { panes: vec![AttachPane { pane, offset, history }], zstd: !legacy(), acks: acks() });
                 }
             }
             ServerMsg::Error { message, .. } => self.status = message,
@@ -414,7 +422,15 @@ impl App {
             p.resync = false;
         }
         p.term.vt_write(&data);
-        p.offset = Some(f.offset + if snapshot { 0 } else { data.len() as u64 });
+        let end = f.offset + if snapshot { 0 } else { data.len() as u64 };
+        p.offset = Some(end);
+        // #52: the engine has taken it in; say so about every 64 KB.
+        if snapshot {
+            p.acked = end;
+        } else if acks() && end - p.acked >= 64 * 1024 {
+            p.acked = end;
+            self.send(&ClientMsg::Ack { pane: f.pane, offset: end });
+        }
         self.dirty = true;
     }
 
