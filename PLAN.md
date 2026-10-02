@@ -3320,6 +3320,52 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
 - full-text search across transcripts that aren't open;
 - Codex and other agents' histories (the same shape would fit, behind the index's source).
 
+### Workspaces track (S21, M34, added 2026-10-02)
+
+A [chant](https://intentius.io/chant) workspace (a repo with a `chant.workspace.json`, such as `~/dev/intentius/chant`) as a block you work in. Its members are cards you open shells, agents and diffs on. Its records show with their state. A gate waiting in any member is illogical attention you can approve. illogical reads the workspace only through chant's read contract (chant `ws-017`), as one more reader beside hud and behold. Review actions on records stay hud's (`ws-052`).
+
+**Order:** S21 (#70), done below; then M34 (#73), with #74 (the shell environment) first or alongside, and #75 (approve as owner or editor) inside it. #76 holds drafts for chant that Jake files himself.
+
+#### S21: chant workspace as blocks spike
+
+**Done 2026-10-02: go** (see [spikes/s21-chant-workspace](spikes/s21-chant-workspace/README.md); the throwaway block is on branch `s21-workspace-block`).
+
+- **Read contract alone is enough.**
+  - `workspace ls`, `check --format json`, `records --current` and `status <env>` (all `--json`) give members, findings per member, records with `blockedBy` and drift, releases, and **each member's pending gates with chant's approve command**.
+  - No chant change is needed. `graph` runs only kind-`chant` members (24 of chant's 25 are `skipped`), and `lineage` needs a lock file, so neither is used.
+- **It works end to end on a dev daemon.** A gated op shows as `needs_input` ("delivery: ship waits at gate approve-ship") about 1 s after `chant run` exits. *Approve* runs `chant approve` in the member, and the attention clears. *Shell* opens a pane in the member, and a nested workspace opens as a second block.
+- **Cost:**
+  - A full read takes 1.2–1.5 s wall and **about 7.5 CPU-s** (four chant processes, each loading TypeScript through tsx; 285 MB peak).
+  - So, while drawn, the block checks a git fingerprint every 3 s (HEAD, `chant/lifecycle`, `status --porcelain`, `diff HEAD`; about 0.1 CPU-s), and reads in full only when it changes. That's 0.4% of a core when idle.
+- **The daemon has no node.** mise sets it up in `.bashrc`, which the daemon's `sh -c` never reads, so the spike takes PATH from `$SHELL -ic`. #74 makes that a cached per-host shell environment.
+- **Cards, not member blocks.** chant's 25 members as blocks would be 25 tiles of mostly lexicons. Cards launch real blocks in a member when you work on it.
+- **Approve:** chant records `resolvedBy` as the host's user. Decided 2026-10-02: the owner and editors may approve, each as themselves (`--approver`), and view-only guests may not (#75).
+- **For chant (#76):**
+  - a nested workspace's runs write gates under the outer prefix, so its own `status` never shows them;
+  - chant's declaration names no record kinds;
+  - gates need an env;
+  - one process for a workspace read would cut the cost about 4×;
+  - `--json` is inconsistent.
+
+#### M34: chant workspace blocks (#73)
+
+`BlockType::Workspace` as S21 built it, finished:
+
+- the reads through the workspace's own chant;
+- fingerprint freshness;
+- gates as attention, with *Approve* for the owner and editors (#75);
+- *Run op* in a pane;
+- *Shell*, *Agent* and *Changes* on a member;
+- nested workspaces as blocks;
+- `illogical workspace [DIR]`;
+- *Open as workspace* in a pane's menu and the picker when a directory holds a `chant.workspace.json`;
+- an MCP `open_workspace`;
+- web cards, the phone sheet (gates first) and a TUI line.
+
+**Tests:** the composer's fixtures, daemon tests for gate attention and approve, and an e2e spec with a toy gated op (CI needs node and a pinned chant).
+
+**Done when:** on geek, `illogical workspace ~/dev/intentius/chant` (after `npm install`) shows its members, and a gated op shows as attention within about 5 s. The phone can approve it, and the next `chant run` walks through.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
