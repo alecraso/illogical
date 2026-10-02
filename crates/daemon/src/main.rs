@@ -9,6 +9,7 @@ mod dial;
 mod dialout_mux;
 mod fs;
 mod history;
+mod holder;
 mod hosts;
 mod install;
 mod keys;
@@ -138,6 +139,13 @@ struct RunArgs {
     /// Don't merge the systemd user manager's environment into new panes.
     #[arg(long)]
     no_manager_env: bool,
+
+    /// Without systemd (macOS, containers): keep panes' programs running
+    /// while the daemon restarts, by having each pane's shim hold its
+    /// terminal. If no daemon comes back within a minute they end as before.
+    /// `illogicald install` sets it on macOS.
+    #[arg(long, env = "ILLOGICAL_KEEP_PANES")]
+    keep_panes: bool,
 
     /// Start shells without the integration that marks prompts, commands
     /// and exit codes.
@@ -453,7 +461,7 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd::OwnedFd>) -> anyhow::Result<()> {
+async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os::fd::OwnedFd>) -> anyhow::Result<()> {
     let mut public_hosts = args.public_hosts.clone();
     let mut owner = args.owner.clone();
     let local_api = tailscale::LocalApi::find(args.tailscale_socket.as_deref());
@@ -517,8 +525,13 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
     let store = store::StateDir::open(state_dir.clone())?;
     info!(state = %state_dir.display(), "state directory");
     start_sites(&args.blocks, &access, owner, args.listen, &state_dir)?;
-    let launch = pane::Launcher::detect();
-    info!(scopes = launch.scopes, fd_store = launch.fd_store, kept = kept.len(), "pane launcher");
+    let launch = pane::Launcher::detect(args.keep_panes);
+    if launch.hold {
+        // Terminals the last daemon's pane shims kept, adopted like the FD
+        // store's.
+        kept.extend(holder::collect(&state_dir));
+    }
+    info!(scopes = launch.scopes, fd_store = launch.fd_store, hold = launch.hold, kept = kept.len(), "pane launcher");
     store.prune_closed(store::CLOSED_RETENTION_MS);
     let integration = if args.no_shell_integration {
         None

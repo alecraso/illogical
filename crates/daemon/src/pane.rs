@@ -392,11 +392,15 @@ pub struct Launcher {
     pub exe: PathBuf,
     pub scopes: bool,
     pub fd_store: bool,
+    /// No FD store, but keep panes anyway: each shim holds its terminal
+    /// for the next daemon (`--keep-panes`, see [`crate::holder`]).
+    pub hold: bool,
 }
 
 impl Launcher {
     /// What works here: scopes and the FD store need a systemd user service.
-    pub fn detect() -> Self {
+    /// Without one, `keep_panes` has the shims keep terminals instead.
+    pub fn detect(keep_panes: bool) -> Self {
         let systemd = crate::sys::under_systemd();
         let have_run = std::process::Command::new("systemd-run")
             .arg("--version")
@@ -408,6 +412,7 @@ impl Launcher {
             exe: std::env::current_exe().unwrap_or_else(|_| "illogicald".into()),
             scopes: systemd && have_run,
             fd_store: systemd,
+            hold: keep_panes && !systemd,
         }
     }
 }
@@ -438,6 +443,9 @@ impl Process {
         // openpty leaves the master inheritable; the child must not hold its
         // own master or it never sees a hangup (spike S3).
         fcntl(&pty.master, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
+        // Nor a stray copy of the slave beyond its stdio (the shim would
+        // keep the terminal open after the program has gone).
+        fcntl(&pty.slave, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
         let stdio = |fd: &OwnedFd| fd.try_clone().map(Stdio::from);
 
         let cwd = if spawn.cwd.is_dir() { spawn.cwd.as_path() } else { Path::new("/") };
@@ -453,10 +461,28 @@ impl Process {
         } else {
             Command::new(&launch.exe)
         };
-        cmd.arg("_shim")
-            .arg("--record")
-            .arg(record)
-            .arg("--")
+        cmd.arg("_shim").arg("--record").arg(record);
+        let hold = launch.hold.then(|| crate::holder::socket_for(record.parent().unwrap_or(Path::new("."))));
+        if let Some(socket) = &hold {
+            cmd.arg("--hold").arg(socket);
+            // The master goes to the shim as fd 3 (without close-on-exec).
+            let master = pty.master.as_raw_fd();
+            use std::os::unix::process::CommandExt;
+            // SAFETY: only dup2/fcntl between fork and exec.
+            unsafe {
+                cmd.pre_exec(move || {
+                    let held = crate::shim::HELD_FD;
+                    if master == held {
+                        let flags = libc::fcntl(held, libc::F_GETFD);
+                        libc::fcntl(held, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                    } else if libc::dup2(master, held) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+        cmd.arg("--")
             .arg(&spawn.program)
             .args(&spawn.args)
             .current_dir(cwd)
@@ -464,6 +490,8 @@ impl Process {
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
             .env("ILLOGICAL_PANE", pane.to_string())
+            // The daemon's own setting, not the pane's.
+            .env_remove("ILLOGICAL_KEEP_PANES")
             .stdin(stdio(&pty.slave)?)
             .stdout(stdio(&pty.slave)?)
             .stderr(stdio(&pty.slave)?);
@@ -487,6 +515,13 @@ impl Process {
         });
         info!(pane, pid, program = %spawn.program, cwd = %cwd.display(), scope = launch.scopes, "started process");
         let master = File::from(pty.master);
+        if let Some(socket) = &hold {
+            // Our lease on the shim's copy: while we hold it, the shim keeps
+            // the pane; we have the master already.
+            if let Err(e) = crate::holder::borrow(pane, socket) {
+                warn!(pane, error = %e, "the shim isn't keeping the terminal; the pane ends with the daemon");
+            }
+        }
         if launch.fd_store {
             crate::sys::remove_fd(&fd_name(pane));
             if !crate::sys::store_fd(&fd_name(pane), master.as_raw_fd()) {

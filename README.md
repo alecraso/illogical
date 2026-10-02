@@ -447,9 +447,14 @@ just bootstrap && just install      # builds, installs a launchd agent, starts i
   stops it.
 - Panes run your login shell (from the user database, since launchd sets no
   `$SHELL`); zsh gets shell integration like bash.
-- There's no systemd, so there are no per-pane scopes and no FD store:
-  restarting or upgrading the daemon on a Mac ends its panes' programs.
-  Scrollback and layout come back, and panes follow their restart policy.
+- **Restarting doesn't touch running programs here either.** There's no
+  systemd FD store, so each pane's shim keeps its terminal while the daemon
+  is gone (`--keep-panes`, which the plist sets). A restart
+  (`launchctl kickstart -k gui/$UID/illogicald`), an upgrade (`illogicald
+  install`) or a crash leaves vim and builds running, and the new daemon
+  adopts them. Stopping it for good (`launchctl bootout`, logging out)
+  ends them a minute later, if no daemon has come back. The same flag works
+  on any host without systemd.
 - VM tabs and panes (wisp) are Linux-only.
 - To reach it from geek's page, put it behind the Tailscale app's serve
   (`/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg

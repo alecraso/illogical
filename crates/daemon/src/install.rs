@@ -158,6 +158,12 @@ mod launchd {
   <!-- Terminals are interactive: don't throttle them like a background job. -->
   <key>ProcessType</key>
   <string>Interactive</string>
+  <!-- No FD store here: pane shims keep the terminals while it restarts. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ILLOGICAL_KEEP_PANES</key>
+    <string>true</string>
+  </dict>
   <!-- Stop the daemon first, so it saves every pane. -->
   <key>ExitTimeOut</key>
   <integer>15</integer>
@@ -231,6 +237,7 @@ mod tests {
             "<string>/Users/me/.local/bin/illogicald</string>\n    <string>--listen</string>\n    <string>127.0.0.1:9000</string>\n    <string>a&lt;b</string>\n  </array>"
         ));
         assert!(t.contains("<key>RunAtLoad</key>"));
+        assert!(t.contains("<key>ILLOGICAL_KEEP_PANES</key>\n    <string>true</string>"));
     }
 
     #[test]

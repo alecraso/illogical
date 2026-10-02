@@ -1,4 +1,4 @@
-//! `illogicald _shim --record FILE -- PROGRAM ARGS...`
+//! `illogicald _shim --record FILE [--hold SOCKET] -- PROGRAM ARGS...`
 //!
 //! Sits between the daemon and a pane's program so the daemon can be
 //! restarted without its panes noticing. The shim forks the program as the
@@ -13,6 +13,10 @@
 //! signal <n>                 when it ends
 //! ```
 //!
+//! With `--hold`, the daemon has passed the PTY master as fd 3, and the shim
+//! keeps it for the next daemon (see [`crate::holder`]): there is no
+//! systemd FD store to keep it.
+//!
 //! It must run before any threads exist (it forks), so `main` dispatches to
 //! it before starting the async runtime.
 
@@ -25,14 +29,22 @@ use nix::{
 };
 
 pub fn run(args: &[String]) -> ! {
-    let (record, argv) = match parse(args) {
+    let (record, hold, argv) = match parse(args) {
         Some(x) => x,
         None => {
-            eprintln!("usage: illogicald _shim --record FILE -- PROGRAM [ARGS...]");
+            eprintln!("usage: illogicald _shim --record FILE [--hold SOCKET] -- PROGRAM [ARGS...]");
             std::process::exit(2);
         }
     };
     let cargs: Vec<CString> = argv.iter().map(|a| CString::new(a.as_str()).unwrap_or_default()).collect();
+    let holder = hold.and_then(|socket| match crate::holder::Holder::prepare(socket.as_ref(), HELD_FD) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            // The pane still runs; it just won't outlive the daemon.
+            eprintln!("illogical: can't keep the terminal ({e})\r");
+            None
+        }
+    });
 
     // SAFETY: single-threaded here (no runtime yet), so fork is sound.
     match unsafe { fork() } {
@@ -65,6 +77,12 @@ pub fn run(args: &[String]) -> ! {
                 libc::signal(libc::SIGQUIT, libc::SIG_IGN);
             }
             let pid = child.as_raw() as u32;
+            // Listening before the pid is recorded: the daemon waits for the
+            // record, then connects.
+            let socket = holder.as_ref().map(|h| h.socket().to_owned());
+            if let Some(h) = holder {
+                std::thread::spawn(move || h.serve(child.as_raw()));
+            }
             append(&record, &format!("pid {pid} {}\n", start_time(pid).unwrap_or(0)));
             let status = loop {
                 match waitpid(child, None) {
@@ -76,6 +94,9 @@ pub fn run(args: &[String]) -> ! {
                 }
             };
             append(&record, &status);
+            if let Some(s) = socket {
+                let _ = std::fs::remove_file(s);
+            }
             std::process::exit(0);
         }
         Err(e) => {
@@ -85,17 +106,26 @@ pub fn run(args: &[String]) -> ! {
     }
 }
 
-fn parse(args: &[String]) -> Option<(String, Vec<String>)> {
+/// Where the daemon puts the PTY master for `--hold`.
+pub const HELD_FD: i32 = 3;
+
+fn parse(args: &[String]) -> Option<(String, Option<String>, Vec<String>)> {
     let mut it = args.iter();
     if it.next()? != "--record" {
         return None;
     }
     let record = it.next()?.clone();
-    if it.next()? != "--" {
+    let mut hold = None;
+    let mut next = it.next()?;
+    if next == "--hold" {
+        hold = Some(it.next()?.clone());
+        next = it.next()?;
+    }
+    if next != "--" {
         return None;
     }
     let argv: Vec<String> = it.cloned().collect();
-    (!argv.is_empty()).then_some((record, argv))
+    (!argv.is_empty()).then_some((record, hold, argv))
 }
 
 fn append(path: &str, line: &str) {
@@ -159,7 +189,12 @@ mod tests {
     #[test]
     fn parses_args_and_records() {
         let a = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert_eq!(parse(&a(&["--record", "/r", "--", "bash", "-l"])), Some(("/r".into(), a(&["bash", "-l"]))));
+        assert_eq!(parse(&a(&["--record", "/r", "--", "bash", "-l"])), Some(("/r".into(), None, a(&["bash", "-l"]))));
+        assert_eq!(
+            parse(&a(&["--record", "/r", "--hold", "/h", "--", "zsh"])),
+            Some(("/r".into(), Some("/h".into()), a(&["zsh"])))
+        );
+        assert_eq!(parse(&a(&["--record", "/r", "--hold", "/h", "zsh"])), None);
         assert_eq!(parse(&a(&["--record", "/r", "--"])), None);
         assert_eq!(parse(&a(&["bash"])), None);
 
