@@ -2357,7 +2357,7 @@ One live view of every pane on every machine you (or your team) can see. Panes f
 2. **M23** (#37: pane summaries) and **M24** (#38: attention reasons and actions), side by side with **M29** (#46: team answers).
 3. **M25** (#39: every host in one page), then **M30** (#47: the team's swarm).
 4. **M26** (#40: the swarm view).
-5. **After the MVP:** editors, with **S17** (#41), **M27** (#42: VS Code blocks) and **M28** (#43: your editor in the swarm).
+5. **After the MVP:** editors, with **S17** (#41: done, below), **M27** (#42: VS Code blocks) and **M28** (#43: your editor in the swarm).
 
 #### S16: swarm spike (summary cost, fleet connections, canvas)
 
@@ -2397,6 +2397,37 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - **What worked:** a service worker loaded the non-extractable device key from IndexedDB, checked the chain, ran Noise and sent one approve in about 20 ms, against a local stand-in for the daemon.
   - **What it needs:** the directory and pins in IndexedDB (a worker can't read `localStorage`), approve and ask data in pushes sent through control, and `sw.js` as a bundled entry.
   - **Phones:** Android is likely fine, and iOS probably opens the card instead. Both are pending a real phone.
+
+#### S17: editors spike (Claude Code's IDE protocol, remote extensions, editor events, servers)
+
+**Done 2026-10-02, apart from the phone and the editors that weren't installed** (see [spikes/s17-editors](spikes/s17-editors/README.md)). Claude Code 2.1.287.
+
+- **illogicald as a Claude Code IDE: go, as a complement to M29's hook.**
+  - **How it works:** a lockfile in `~/.claude/ide/<port>.lock` (pid, folders, `ideName`, `transport: "ws"`, `authToken`) and MCP over a loopback WebSocket (subprotocol `mcp`, header `X-Claude-Code-Ide-Authorization`, no `Origin`).
+  - **What Claude Code sends:** every Edit and Write in default mode becomes `openDiff`, which waits for the answer: `FILE_SAVED` (with contents, which may be changed before accepting), `DIFF_REJECTED`, or `TAB_CLOSED`.
+  - **When the terminal answers first,** Claude Code calls `close_tab`, so the IDE learns it lost. The hook never does (S18).
+  - **Only Edit and Write.** Bash, MCP tools and AskUserQuestion stay with M29's hook and M6c, and acceptEdits sends nothing.
+  - **No reconnect:** after the IDE goes away, Claude Code stays disconnected until someone types `/ide`.
+- **Beside a real IDE:** an extension registers with its folders. If illogicald does too, `--ide` finds two valid IDEs and connects to neither.
+  - So illogicald registers with **no folders**, and puts `CLAUDE_CODE_SSE_PORT` in every pane's environment.
+  - Then Claude Code in a pane always picks illogicald, and anywhere else never sees it. Tested with a real code-server running Anthropic's extension.
+- **Remote extensions:** a `workspace` extension runs in the server's extension host and reached a unix socket on the server's machine.
+  - **Where it worked:** Microsoft's VS Code Server 1.140 (the build Remote-SSH installs, through `code serve-web`), code-server 1.140, and openvscode-server 1.109.
+  - **Containers:** in Docker it runs in the container, and reaches the host's socket only when its directory is mounted.
+  - **nvim** reaches the socket with core `vim.uv`.
+  - **Zed is out:** its extensions are WASM with no editor events (from its docs).
+  - **Not run:** the SSH leg itself, Cursor and the Dev Containers extension.
+- **Event rates while typing at 7.4 characters a second:** 16 events/s in nvim, 23 in VS Code.
+  - **Summary fields** (file, diagnostic counts, unsaved buffers, debugger) change about 0.1 times a second: about 2 B/s per editor at M23's 1 s tick.
+  - **A follower's stream** needs a 100 ms throttle: 7 messages and 0.4–0.6 KB/s, at most 100 ms behind. A 250 ms trailing debounce starved for up to 52 s while someone typed.
+  - Debugger events weren't measured.
+- **M27's server: code-server.**
+  - **For it:** VS Code 1.140 and about weekly (openvscode-server's latest is 1.109.5, from February); MIT; Open VSX; brotli (6.1 MB a page against 17 MB uncompressed); `--auth none`, `--disable-workspace-trust`, `--socket` and `--idle-timeout-seconds`.
+  - **Memory** on geek: 135 MB idle, 417 MB with a client once `chat.disableAIFeatures` is on (openvscode-server: 84 and 259).
+  - **In a wisp sprite:** 5.4 s to first start, 130 MB / 429 MB.
+  - **In an M6a browser block** with no auth of its own, both worked unchanged: a file showed 1.7–2.0 s after the block opened.
+  - **But the port answers any local process,** so M27 serves it on a 0600 unix socket.
+- **Follow mode: CodeMirror 6.** Read-only, with three languages, lint underlines and the terminal's colours: 182 KB gzipped, drawn in 66 ms. Monaco cut down to the same is 780 KB (4x the whole app).
 
 #### M23: pane summaries
 
@@ -2532,6 +2563,39 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - Real phones: iOS Web Push actions, and a service worker's WebSocket there. The tests stand in with CDP push delivery and a dispatched `notificationclick`.
   - The two people really on different networks.
   - Notification opt-in through control's own UI: the daemon decides, and the session menu sets it.
+
+#### M27: VS Code blocks (planned; what S17 changed)
+
+The issue (#42) holds the plan. S17 settles these points:
+
+- **The server is code-server.** It runs with `--auth none --disable-workspace-trust --disable-telemetry --disable-update-check`, with `--config`, `--user-data-dir` and `--extensions-dir` under illogical's state. Without those, it writes `~/.config/code-server` even for `--help`.
+- **Its defaults:**
+  - `chat.disableAIFeatures: true` (VS Code 1.140's agent host and Copilot runtime are 117 MB);
+  - the illogical theme;
+  - the illogical extension (M28) pre-installed, so every block is also an editor presence. Its preview tile is the lines around the cursor from that stream; a cross-origin block can't be screenshotted from the page.
+- **The daemon is its only auth.** It listens on a 0600 unix socket (`--socket`, `--socket-mode`), not a TCP port, which any local process can reach. M6a's port proxy gains a unix-socket target.
+- **Stopping it:** `--idle-timeout-seconds` for the idle stop, and a short `--reconnection-grace-time`. Otherwise its extension host stays up after the last block closes.
+- **The 3 s target:** on geek a block showed a file in 1.7–2.0 s; the phone run is still to do.
+
+#### M28: your editor in the swarm (planned; what S17 changed)
+
+The issue (#43) holds the plan. S17 settles these points:
+
+- **Editors:** VS Code and Cursor (one extension, `extensionKind: ["workspace"]`, on Open VSX and the Marketplace), and nvim (core `vim.uv`, no dependencies). Zed is dropped: its extensions can't see the cursor or open a socket.
+- **Finding the daemon:** the extension connects to `$ILLOGICAL_SOCK`, else the default socket path. Under Remote-SSH that path is on the remote machine.
+  - Dev containers need the socket's directory mounted. A dev container Feature adds the mount and `ILLOGICAL_SOCK`.
+- **The schema** is in [spikes/s17-editors](spikes/s17-editors/README.md#the-editor-event-schema-for-m28), in two parts:
+  - **A presence** in M23's summary (`kind: "editor"`, host, remote, project, file, diagnostic counts, unsaved buffers, debugger, followers) at the 1 s tick. Attention changes (paused, errors) go at once.
+  - **A follow stream** only while someone follows: cursor, selection, visible lines, then `open` and `edit` messages and the file's diagnostics. A 100 ms throttle, never a trailing debounce; it's content, so end-to-end channels only.
+- **Follow mode** draws with read-only CodeMirror 6, loaded only when someone follows.
+- **illogicald as a Claude Code IDE: go.**
+  - **Registering:** one loopback listener per daemon, and a lockfile with `workspaceFolders: []`, mode 0600. `CLAUDE_CODE_SSE_PORT` goes in every pane's environment.
+  - **Checks:** the token, and refuse any upgrade with an `Origin`.
+  - **The diff card:** `openDiff` becomes an accept/reject card, which can also edit the proposal before accepting. It closes on `close_tab` or `closeAllDiffTabs`.
+  - **"Which IDE gets diffs"** is a daemon setting. To send diffs to the user's real IDE, the daemon forwards `openDiff` to it, using that IDE's lockfile and token, instead of re-pointing the environment variable.
+  - **Extras:** `selection_changed` and `at_mentioned` let the web hand Claude Code lines from a follow view.
+  - **Restarts:** Claude Code doesn't reconnect by itself, so a daemon restart must keep these WebSockets (S3's fd store, or a small process that outlives the daemon).
+  - **Only Edit and Write** come this way; M29's hook still handles everything else.
 
 ### TUI track (S19, M31–M32, added 2026-10-02)
 
