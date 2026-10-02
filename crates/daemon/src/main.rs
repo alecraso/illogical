@@ -17,6 +17,7 @@ mod heap;
 mod history;
 mod holder;
 mod hosts;
+mod ide;
 mod install;
 mod keys;
 mod machine;
@@ -248,6 +249,15 @@ struct RunArgs {
     /// ~/.config/illogical/claude-oauth-token].
     #[arg(long, env = "ILLOGICAL_CLAUDE_TOKEN_FILE")]
     claude_token_file: Option<PathBuf>,
+    /// Don't be Claude Code's IDE (M28). By default Claude Code in a pane
+    /// connects to illogicald (`CLAUDE_CODE_SSE_PORT`) and its edits wait
+    /// as diff cards beside the terminal's own prompt.
+    #[arg(long, env = "ILLOGICAL_NO_CLAUDE_IDE")]
+    no_claude_ide: bool,
+    /// Where Claude Code looks for IDEs [default: $CLAUDE_CONFIG_DIR/ide,
+    /// else ~/.claude/ide].
+    #[arg(long, env = "ILLOGICAL_CLAUDE_IDE_DIR", hide = true)]
+    claude_ide_dir: Option<PathBuf>,
 
     #[command(flatten)]
     blocks: BlockArgs,
@@ -532,6 +542,11 @@ fn main() -> anyhow::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogicald=info".into()),
         )
         .init();
+    // Claude Code's IDE connections, kept across daemon restarts (M28).
+    if argv.get(1).map(String::as_str) == Some("_ide_relay") && argv.len() >= 4 {
+        let args = ide::relay::Args { dir: argv[2].clone().into(), lock_dir: argv[3].clone().into() };
+        return Ok(tokio::runtime::Runtime::new()?.block_on(ide::relay::run(args))?);
+    }
     let args = Args::parse();
     match args.command {
         Some(Command::Install {
@@ -735,6 +750,19 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         }
     });
     let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone(), args.no_relay);
+    // Claude Code's IDE (M28): its relay keeps the connections.
+    let ide = if args.no_claude_ide {
+        None
+    } else {
+        let lock_dir = args.claude_ide_dir.clone().unwrap_or_else(|| ide::default_lock_dir(&home()));
+        match ide::Ide::start(state_dir.join("ide"), lock_dir, launch.clone()).await {
+            Ok(i) => Some(i),
+            Err(e) => {
+                warn!(error = %e, "can't be Claude Code's IDE");
+                None
+            }
+        }
+    };
     let config = mux::Config {
         acl: acl.clone(),
         control: control.clone(),
@@ -754,8 +782,12 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         secrets,
         private,
         mcp: mcp_link,
+        ide: ide.clone(),
     };
     let mux = mux::start(config, store, kept, push.clone());
+    if let Some(i) = &ide {
+        i.run(mux.clone());
+    }
 
     let hosts = hosts::Hosts::open(&state_dir, name.clone(), provider);
     hosts.spawn_probe();

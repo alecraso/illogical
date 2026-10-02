@@ -144,7 +144,12 @@ pub fn router(app: Arc<App>) -> Router {
 /// Over the Unix socket (the CLI, programs in panes): the socket lives in
 /// the user's private state directory, so reaching it is the check.
 pub fn local_router(app: Arc<App>) -> Router {
-    Router::new().route("/ws", get(local_ws)).merge(api_routes(&app)).with_state(app)
+    Router::new()
+        .route("/ws", get(local_ws))
+        // Editors on this machine join the swarm here (M28).
+        .route("/api/editors/connect", get(crate::editor::link::connect))
+        .merge(api_routes(&app))
+        .with_state(app)
 }
 
 /// Over the tunnel to the home daemon (a dial-out host): the home daemon

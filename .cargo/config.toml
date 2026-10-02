@@ -3,3 +3,5 @@
 # runs ~3000x slower (0.2 MB/s). ReleaseSafe keeps safety checks (the engine
 # parses untrusted program output) and runs at hundreds of MB/s.
 LIBGHOSTTY_VT_SYS_OPTIMIZE = "ReleaseSafe"
+# Test daemons register as Claude Code's IDE (M28) here, not in ~/.claude.
+ILLOGICAL_CLAUDE_IDE_DIR = { value = "target/claude-ide", relative = true }

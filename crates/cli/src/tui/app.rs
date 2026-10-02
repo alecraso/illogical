@@ -378,7 +378,7 @@ impl App {
                 ServerMsg::TrustRequest { name, pane, .. } => {
                     self.say(format!("{name} asks to be trusted with %{pane}"))
                 }
-                ServerMsg::Pong { .. } => {}
+                ServerMsg::Pong { .. } | ServerMsg::Follow { .. } => {}
             },
         }
     }
@@ -918,6 +918,9 @@ impl App {
                 }
                 Action::Deny => m.push(item("Deny", answer(pane, Action::Deny, None))),
                 Action::Dismiss => m.push(item("Dismiss", answer(pane, Action::Dismiss, None))),
+                Action::Continue => m.push(item("Continue", answer(pane, Action::Continue, None))),
+                Action::Accept => m.push(item("Accept the edit", answer(pane, Action::Accept, None))),
+                Action::Reject => m.push(item("Reject the edit", answer(pane, Action::Reject, None))),
                 Action::Answer => {}
             }
         }
@@ -1199,6 +1202,9 @@ fn answer(pane: PaneId, action: Action, option: Option<&str>) -> Act {
         Action::Deny => "deny that",
         Action::Dismiss => "dismiss that",
         Action::Answer => "answer that",
+        Action::Continue => "continue",
+        Action::Accept => "accept that",
+        Action::Reject => "reject that",
     };
     Act::Api("/api/attention/act".into(), body, what)
 }

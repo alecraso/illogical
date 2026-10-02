@@ -1347,6 +1347,7 @@ impl<'a> Call<'a> {
             option: a.option.clone(),
             suggestion: None,
             message: a.message.clone(),
+            text: None,
         };
         crate::api::act_as(self.app, pane, &req, self.driver()).await?;
         let did = match a.action {

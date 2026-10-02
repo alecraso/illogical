@@ -69,6 +69,9 @@ pub enum ClientMsg {
     /// objects leave out `epoch`, `policy` and `integration`. Answered
     /// with a fresh `State` in that shape.
     Subscribe { summary: bool },
+    /// Follow an editor (M28): its cursor, selection and the file it shows
+    /// come as [`ServerMsg::Follow`] while `on`. Viewer access is enough.
+    Follow { pane: PaneId, on: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +183,15 @@ pub enum ReasonKind {
     Exited,
     /// A long command finished while nobody was looking.
     Done,
+    /// An editor's debugger stopped, at a breakpoint or an exception (M28).
+    Paused,
+    /// A save left errors in an editor's workspace that wasn't there before.
+    Errors,
+    /// An editor has a file with merge conflicts open.
+    Conflict,
+    /// An agent's edit waits for approval as a diff (Claude Code's
+    /// `openDiff`, with illogicald as its IDE).
+    Diff,
 }
 
 /// The open question or approval behind an `ask` reason.
@@ -213,6 +225,13 @@ pub enum Action {
     Answer,
     /// Clear it: seen, nothing to do.
     Dismiss,
+    /// A debugger stopped in an editor (M28): let it run on.
+    Continue,
+    /// Take an agent's proposed edit (M28: Claude Code's `openDiff`),
+    /// optionally changed first (`content`).
+    Accept,
+    /// Turn an agent's proposed edit down.
+    Reject,
 }
 
 /// A command the shell integration reported.
@@ -345,6 +364,11 @@ pub enum ServerMsg {
     /// field. Layout changes (sessions, tabs, splits, panes opening and
     /// closing) still come as a whole `State`, in order with these.
     Delta { delta: Delta },
+    /// What a followed editor sent (M28, S17's follow stream): `{file,
+    /// line, col, sel, view, mode}`, `{open: {file, version, text}}`,
+    /// `{edit: {file, version, changes}}`, `{diagnostics: {file, items}}`,
+    /// or `{gone: true}` when it left.
+    Follow { pane: PaneId, msg: serde_json::Value },
 }
 
 /// Changes to the last [`State`]: each pane in `panes` is `{id, ...}` with
@@ -630,6 +654,14 @@ pub struct PaneInfo {
     /// it asks again. For agent blocks too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answered: Option<ask::Answered>,
+    /// An edit Claude Code in this terminal proposes, waiting as a diff
+    /// (M28: illogicald as its IDE).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<DiffInfo>,
+    /// Claude Code in this terminal is connected to illogicald as its IDE
+    /// (M28): lines can be mentioned to it from a followed editor.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub claude_ide: bool,
     /// Claude Code in this terminal waits for a follow-up (its `illogical
     /// inbox` hook, M29): one sent now goes straight in.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -667,6 +699,89 @@ pub struct PaneInfo {
     /// What started it, when that wasn't you: an MCP client (M16).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<StartedBy>,
+    /// An editor's own report (M28): an editor block's, or someone's
+    /// editor elsewhere (VS Code, Cursor, nvim) that joined the swarm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor: Option<EditorInfo>,
+}
+
+/// What an editor says about itself in summaries (M28, S17's schema):
+/// what changes about once in ten seconds. The cursor and the file's text
+/// are content and go only to followers ([`ServerMsg::Follow`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorInfo {
+    /// `vscode`, `cursor`, `code-server`, `nvim`, ...
+    pub app: String,
+    /// VS Code's remote: `ssh-remote`, `dev-container`, ... (`None`: local).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    /// The remote's authority (`ssh-remote+geek`), to open the same file
+    /// from a desktop editor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<String>,
+    /// The machine it runs on, as it names itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    /// Diagnostics across the workspace.
+    #[serde(default)]
+    pub diag: Diag,
+    /// Files with unsaved changes.
+    #[serde(default)]
+    pub dirty: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug: Option<DebugState>,
+    /// A file with merge conflict markers that's open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<String>,
+    /// How many people follow it now: the editor says so.
+    #[serde(default)]
+    pub followers: u32,
+}
+
+/// Diagnostic counts: errors, warnings, information.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Diag {
+    #[serde(default)]
+    pub e: u32,
+    #[serde(default)]
+    pub w: u32,
+    #[serde(default)]
+    pub i: u32,
+}
+
+/// An editor's debug session.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DebugState {
+    /// `running` or `paused`.
+    pub state: String,
+    /// Why it stopped: `breakpoint`, `exception`, `step`, ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+}
+
+/// An edit an agent proposes, waiting as a diff (M28).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffInfo {
+    /// What `accept` and `reject` name.
+    pub id: String,
+    /// The file it changes (whole path), and relative to the pane's
+    /// directory when it's inside.
+    pub file: String,
+    /// Lines added and removed.
+    pub added: u32,
+    pub removed: u32,
+    /// The change as a unified diff, cut short when it's long.
+    pub text: String,
+    /// It makes a new file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new: bool,
+    pub at_ms: u64,
+    /// Which IDE shows it: `illogical`, or the one diffs go to.
+    pub ide: String,
 }
 
 /// Who started a pane or block through MCP (M16).

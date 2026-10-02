@@ -188,6 +188,13 @@ pub enum What {
     Attention(illogical_proto::Attention, String),
     /// A block's own event, for the event stream.
     Event(illogical_proto::EventKind),
+    /// A block asks for attention with a reason of its own (M28: an
+    /// editor's debugger paused, say).
+    Reason(illogical_proto::Attention, illogical_proto::Reason),
+    /// ...or lets go of it, if that's still why it wants you.
+    Clear(illogical_proto::ReasonKind),
+    /// What an editor sends its followers (M28).
+    Follow(serde_json::Value),
 }
 
 pub type NoticeSink = mpsc::UnboundedSender<Notice>;
