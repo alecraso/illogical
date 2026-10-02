@@ -4,7 +4,7 @@
 //! F`) keeps one WebSocket open to the home daemon's `/api/dial`, with its
 //! per-host token, and redials with backoff whenever it drops. It serves the
 //! same WebSocket protocol and HTTP API it serves on its own port, over
-//! streams the home daemon opens in that socket (`dialout_mux.rs`). It works
+//! streams the home daemon opens in that socket (`illogical_e2e::mux`). It works
 //! standalone all along: the tunnel is just one more way in.
 //!
 //! **The home daemon** treats it as one more host (`transport: dial_out`)
@@ -46,7 +46,9 @@ use tokio::{
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 use tracing::{info, warn};
 
-use crate::{dialout_mux::Mux, server::App};
+use illogical_e2e::mux::Mux;
+
+use crate::server::App;
 
 /// How often each end pings, and how long silence lasts before the tunnel
 /// is given up as dead.

@@ -6,7 +6,6 @@ mod api;
 mod block;
 mod browser;
 mod dial;
-mod dialout_mux;
 mod fs;
 mod history;
 mod holder;
