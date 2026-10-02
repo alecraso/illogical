@@ -1802,3 +1802,21 @@ button {
     grid-column: 1;
   }
 }
+
+.control-signins {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.control-secondary {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--raised);
+}
+
+.control-linkish {
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 0;
+}

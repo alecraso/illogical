@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS daemons (
     urls TEXT NOT NULL,
     last_seen INTEGER
 );
+CREATE TABLE IF NOT EXISTS passkeys (
+    id TEXT PRIMARY KEY,
+    account TEXT NOT NULL,
+    alg INTEGER NOT NULL,
+    public BLOB NOT NULL,
+    sign_count INTEGER NOT NULL,
+    created INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS usage (
     account TEXT NOT NULL,
     day TEXT NOT NULL,
@@ -83,6 +91,14 @@ pub struct DaemonRow {
     pub name: String,
     pub urls: Vec<String>,
     pub last_seen: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Passkey {
+    pub account: String,
+    pub alg: i64,
+    pub public: Vec<u8>,
+    pub sign_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +201,34 @@ impl Db {
     pub fn drop_session(&self, token_hash: &str) -> anyhow::Result<()> {
         self.c().execute("DELETE FROM sessions WHERE token_hash = ?1", params![token_hash])?;
         Ok(())
+    }
+
+    // ---- passkeys
+
+    pub fn add_passkey(&self, id: &str, account: &str, alg: i64, public: &[u8], now: u64) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO passkeys (id, account, alg, public, sign_count, created) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+            params![id, account, alg, public, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn passkey(&self, id: &str) -> anyhow::Result<Option<Passkey>> {
+        Ok(self
+            .c()
+            .query_row("SELECT account, alg, public, sign_count FROM passkeys WHERE id = ?1", params![id], |r| {
+                Ok(Passkey { account: r.get(0)?, alg: r.get(1)?, public: r.get(2)?, sign_count: r.get(3)? })
+            })
+            .optional()?)
+    }
+
+    pub fn passkey_used(&self, id: &str, count: u32) -> anyhow::Result<()> {
+        self.c().execute("UPDATE passkeys SET sign_count = ?2 WHERE id = ?1", params![id, count])?;
+        Ok(())
+    }
+
+    pub fn passkey_count(&self, account: &str) -> anyhow::Result<u64> {
+        Ok(self.c().query_row("SELECT COUNT(*) FROM passkeys WHERE account = ?1", params![account], |r| r.get(0))?)
     }
 
     // ---- devices

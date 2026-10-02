@@ -14,10 +14,13 @@ path = "src/main.rs"
 anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.1"
+ciborium = "0.2.2"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+ed25519-dalek = "3.0.0"
 futures-util = "0.3.34"
 hex = "0.4.3"
 illogical-e2e = { version = "0.1.0", path = "../e2e" }
+p256 = { version = "0.14.0", features = ["ecdsa"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "fallible_uint"] }
 rust-embed = { version = "8.12.0", features = ["mime-guess"] }

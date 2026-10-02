@@ -3,7 +3,7 @@
 // list, and how to add a machine.
 
 import { useEffect, useState } from "preact/hooks";
-import type { ControlSession } from "../control";
+import { passkeyRegister, passkeySignIn, type ControlSession } from "../control";
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 
@@ -35,13 +35,15 @@ export function ControlGate({ s }: { s: ControlSession }) {
       <Center>
         <h1>illogical</h1>
         <p>Your terminals, on every machine, from any device. End to end encrypted: this service introduces your devices to your machines and relays for them, but can't read what they say.</p>
-        {s.info.github ? (
-          <a class="primary control-signin" href={`/auth/github?next=${next}`} data-signin="github">
-            Sign in with GitHub
-          </a>
-        ) : (
-          <p class="control-error">No sign-in is configured on this control.</p>
-        )}
+        <div class="control-signins">
+          {s.info.github ? (
+            <a class="primary control-signin" href={`/auth/github?next=${next}`} data-signin="github">
+              Sign in with GitHub
+            </a>
+          ) : null}
+          {s.info.passkeys ? <PasskeyButtons /> : null}
+        </div>
+        {!s.info.github && !s.info.passkeys ? <p class="control-error">No sign-in is configured on this control.</p> : null}
       </Center>
     );
   }
@@ -58,9 +60,75 @@ export function ControlGate({ s }: { s: ControlSession }) {
           {fingerprint(s.keys.id)}
         </p>
         <p class="dim">Waiting…</p>
+        <RecoveryForm s={s} />
       </Center>
     );
   return null;
+}
+
+function PasskeyButtons() {
+  const [err, setErr] = useState("");
+  const go = (f: () => Promise<void>) =>
+    f().then(
+      () => location.reload(),
+      (e: Error) => setErr(e.name === "NotAllowedError" ? "Cancelled." : e.message),
+    );
+  return (
+    <>
+      <button class="primary control-signin" data-signin="passkey" onClick={() => go(passkeySignIn)}>
+        Sign in with a passkey
+      </button>
+      <button class="control-signin control-secondary" data-signup="passkey" onClick={() => go(passkeyRegister)}>
+        New here? Make an account with a passkey
+      </button>
+      {err ? <p class="control-error">{err}</p> : null}
+    </>
+  );
+}
+
+function RecoveryForm({ s }: { s: ControlSession }) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  if (!open)
+    return (
+      <button class="control-linkish" data-use-recovery onClick={() => setOpen(true)}>
+        Lost your other devices? Use a recovery code
+      </button>
+    );
+  return (
+    <form
+      class="control-code"
+      onSubmit={(e) => {
+        e.preventDefault();
+        s.useRecoveryCode(code).catch((x: Error) => setErr(x.message));
+      }}
+    >
+      <input placeholder="Recovery code" value={code} onInput={(e) => setCode((e.target as HTMLInputElement).value)} aria-label="Recovery code" />
+      <button type="submit">Use it</button>
+      {err ? <p class="control-error">{err}</p> : null}
+    </form>
+  );
+}
+
+/** Once, after the account's first device: the codes to keep. */
+function RecoveryCodes({ s }: { s: ControlSession }) {
+  return (
+    <Modal>
+      <h2>Your recovery codes</h2>
+      <p>If you lose every device that can approve new ones, one of these lets a new browser in. Each works once. Keep them somewhere safe and offline: they're shown only now, and this service never had them.</p>
+      {s.recoveryCodes!.map((c) => (
+        <p key={c} class="control-cmd" data-recovery-code>
+          {c}
+        </p>
+      ))}
+      <div class="prompt-buttons">
+        <button class="primary" data-saved-codes onClick={() => s.savedRecoveryCodes()}>
+          I've saved them
+        </button>
+      </div>
+    </Modal>
+  );
 }
 
 /** Ready, but no machine has joined yet. */
@@ -118,6 +186,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     };
   }, []);
   if (s.phase !== "ready") return null;
+  if (s.recoveryCodes) return <RecoveryCodes s={s} />;
   const join = /^#join=([A-Za-z0-9-]+)$/.exec(hash)?.[1];
   if (join) return <JoinPrompt s={s} code={join} />;
   const asking = s.pending[0];
@@ -253,6 +322,23 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
         ))}
       </ul>
       {err ? <p class="control-error">{err}</p> : null}
+      {s.info.passkeys ? (
+        <p class="dim">
+          {s.passkeys ? `${s.passkeys} passkey${s.passkeys === 1 ? "" : "s"} can sign in to this account. ` : "No passkey signs in to this account yet. "}
+          <button
+            class="control-linkish"
+            data-add-passkey
+            onClick={() =>
+              passkeyRegister().then(
+                () => void s.boot(),
+                (e: Error) => setErr(e.message),
+              )
+            }
+          >
+            Add one
+          </button>
+        </p>
+      ) : null}
       <div class="prompt-buttons">
         <button onClick={() => s.signOut(false)}>Sign out</button>
         <button onClick={close}>Done</button>

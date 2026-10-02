@@ -184,16 +184,14 @@ struct GithubUser {
 pub async fn github_callback(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<Callback>) -> Response {
     match github_finish(&app, &headers, q).await {
         Ok((account, next)) => {
-            let t = token();
-            let now = now_ms();
-            if let Err(e) = app.db.add_session(&hash(&t), &account, now, now + SESSION_DAYS * 86_400_000) {
-                warn!(error = %e, "storing a session");
-                return (StatusCode::INTERNAL_SERVER_ERROR, "couldn't sign you in").into_response();
-            }
+            let cookie = match start_session(&app, &account) {
+                Ok(c) => c,
+                Err(e) => return e.into_response(),
+            };
             info!(%account, "signed in with GitHub");
             let mut res = Redirect::to(&next).into_response();
             let h = res.headers_mut();
-            h.append(header::SET_COOKIE, set_cookie(&app, SESSION_COOKIE, &t, SESSION_DAYS * 86_400));
+            h.append(header::SET_COOKIE, cookie);
             h.append(header::SET_COOKIE, set_cookie(&app, STATE_COOKIE, "", 0));
             res
         }
@@ -254,6 +252,14 @@ async fn github_finish(app: &App, headers: &HeaderMap, q: Callback) -> Result<(S
         .account_for("github", &user.id.to_string(), &user.login, &new_account_id(), now_ms())
         .map_err(|e| e.to_string())?;
     Ok((account, next))
+}
+
+/// A new session for `account`: the Set-Cookie for it.
+pub fn start_session(app: &App, account: &str) -> Result<HeaderValue, ApiError> {
+    let t = token();
+    let now = now_ms();
+    app.db.add_session(&hash(&t), account, now, now + SESSION_DAYS * 86_400_000)?;
+    Ok(set_cookie(app, SESSION_COOKIE, &t, SESSION_DAYS * 86_400))
 }
 
 pub fn new_account_id() -> String {

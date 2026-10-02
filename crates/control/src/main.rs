@@ -10,6 +10,7 @@
 mod api;
 mod auth;
 mod db;
+mod passkey;
 mod relay;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -82,6 +83,7 @@ pub struct App {
     pub db: db::Db,
     pub http: reqwest::Client,
     pub relay: relay::Relay,
+    pub passkeys: passkey::Challenges,
 }
 
 /// An API error: `{"error": "..."}` with a status.
@@ -127,12 +129,17 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/auth/github", get(auth::github_start))
         .route("/auth/github/callback", get(auth::github_callback))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/passkey/register", post(passkey::register_start))
+        .route("/auth/passkey/register/finish", post(passkey::register_finish))
+        .route("/auth/passkey/login", post(passkey::login_start))
+        .route("/auth/passkey/login/finish", post(passkey::login_finish))
         .route("/api/me", get(api::me))
         .route("/api/devices", get(api::devices).post(api::enroll))
         .route("/api/devices/{id}", get(api::device))
         .route("/api/devices/{id}/approve", post(api::approve))
         .route("/api/devices/{id}/reject", post(api::reject))
         .route("/api/revocations", post(api::revoke))
+        .route("/api/recovery", post(api::add_recovery))
         .route("/api/join", post(api::join))
         .route("/api/join/{code}", get(api::join_poll))
         .route("/api/joins/{code}", get(api::join_show))
@@ -148,7 +155,11 @@ pub fn router(app: Arc<App>) -> Router {
 }
 
 async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>) -> Json<serde_json::Value> {
-    Json(json!({ "control": true, "url": app.cfg.public_url, "github": app.cfg.github.is_some() }))
+    // Passkeys need a domain name: WebAuthn refuses IP addresses.
+    let passkeys = url::Url::parse(&app.cfg.public_url).is_ok_and(|u| matches!(u.host(), Some(url::Host::Domain(_))));
+    Json(
+        json!({ "control": true, "url": app.cfg.public_url, "github": app.cfg.github.is_some(), "passkeys": passkeys }),
+    )
 }
 
 /// Nothing frames control's pages, and nothing on them comes from elsewhere
@@ -220,7 +231,8 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let a = Args::parse();
     let public_url = a.public_url.trim_end_matches('/').to_owned();
-    let github = match (a.github_client_id, a.github_client_secret) {
+    let set = |v: Option<String>| v.filter(|s| !s.is_empty());
+    let github = match (set(a.github_client_id), set(a.github_client_secret)) {
         (Some(client_id), Some(client_secret)) => {
             Some(Github { client_id, client_secret, url: a.github_url, api: a.github_api })
         }
@@ -234,6 +246,7 @@ async fn main() -> anyhow::Result<()> {
         db: db::Db::open(&a.db)?,
         http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build()?,
         relay: Default::default(),
+        passkeys: Default::default(),
     });
     // Nagle off: the relay's mux writes frames back to back (S15).
     let l = tokio::net::TcpListener::bind(a.listen).await?.tap_io(|t| {

@@ -9,7 +9,7 @@
 // directory and the keys, but it can't slip in a daemon of its own (and a
 // daemon can't be reached by a device it hasn't approved).
 
-import { certBody, evaluate, joinCode, normalizeCode, type Cert, type Revocation, revocationBody } from "./e2e/cert.ts";
+import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
 import { forget, loadEnrollment, loadKeys, saveEnrollment, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
 
@@ -17,6 +17,8 @@ export interface ControlInfo {
   control: true;
   url: string;
   github: boolean;
+  /** WebAuthn works here (control has a domain name, not an IP). */
+  passkeys: boolean;
 }
 
 export interface DirDaemon {
@@ -61,7 +63,103 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 
 const DIR_KEY = "illogical.control.directory";
 
+const b64u = (b: ArrayBuffer | Uint8Array) =>
+  btoa(String.fromCharCode(...new Uint8Array(b instanceof Uint8Array ? b : new Uint8Array(b))))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+
+/** Sign in with a passkey (any registered on this control). */
+export async function passkeySignIn(): Promise<void> {
+  const o = await api<{ challenge: string; rpId: string; userVerification: UserVerificationRequirement; timeout: number }>("/auth/passkey/login", {});
+  const cred = (await navigator.credentials.get({
+    publicKey: { challenge: unb64u(o.challenge), rpId: o.rpId, userVerification: o.userVerification, timeout: o.timeout },
+  })) as PublicKeyCredential | null;
+  if (!cred) throw new Error("no passkey chosen");
+  const r = cred.response as AuthenticatorAssertionResponse;
+  await api("/auth/passkey/login/finish", {
+    id: b64u(cred.rawId),
+    clientDataJSON: b64u(r.clientDataJSON),
+    authenticatorData: b64u(r.authenticatorData),
+    signature: b64u(r.signature),
+  });
+}
+
+/** Make a passkey: for the account signed in, or a new account. */
+export async function passkeyRegister(): Promise<void> {
+  type Options = {
+    challenge: string;
+    rp: PublicKeyCredentialRpEntity;
+    user: { id: string; name: string; displayName: string };
+    pubKeyCredParams: PublicKeyCredentialParameters[];
+    authenticatorSelection: AuthenticatorSelectionCriteria;
+    attestation: AttestationConveyancePreference;
+    timeout: number;
+  };
+  const o = await api<Options>("/auth/passkey/register", {});
+  const cred = (await navigator.credentials.create({
+    publicKey: { ...o, challenge: unb64u(o.challenge), user: { ...o.user, id: unb64u(o.user.id) } },
+  })) as PublicKeyCredential | null;
+  if (!cred) throw new Error("no passkey made");
+  const r = cred.response as AuthenticatorAttestationResponse;
+  await api("/auth/passkey/register/finish", {
+    id: b64u(cred.rawId),
+    clientDataJSON: b64u(r.clientDataJSON),
+    attestationObject: b64u(r.attestationObject),
+  });
+}
+
 export type Phase = "loading" | "signed-out" | "waiting" | "ready" | "error";
+
+// ---- recovery codes: an Ed25519 seed each, on paper only.
+
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const PKCS8_ED25519 = unhex("302e020100300506032b657004220420");
+
+function toCode(seed: Uint8Array): string {
+  let bits = 0;
+  let val = 0;
+  let out = "";
+  for (const b of seed) {
+    val = (val << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(val >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits) out += B32[(val << (5 - bits)) & 31];
+  return out.match(/.{1,4}/g)!.join("-");
+}
+
+function fromCode(code: string): Uint8Array<ArrayBuffer> | null {
+  const c = code.toUpperCase().replace(/[^A-Z2-7]/g, "");
+  if (c.length !== 52) return null;
+  const out: number[] = [];
+  let bits = 0;
+  let val = 0;
+  for (const ch of c) {
+    val = (val << 5) | B32.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      out.push((val >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  return Uint8Array.from(out.slice(0, 32));
+}
+
+const subtle = globalThis.crypto.subtle;
+
+async function recoveryKey(seed: Uint8Array): Promise<CryptoKey> {
+  const pkcs8 = new Uint8Array(48);
+  pkcs8.set(PKCS8_ED25519);
+  pkcs8.set(seed, 16);
+  return subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
+}
+
+const NO_NOISE = "0".repeat(64);
 
 /** A browser's name in its account's device list. */
 function deviceName(): string {
@@ -76,6 +174,10 @@ export class ControlSession {
   error = "";
   login = "";
   account = "";
+  /** Passkeys registered to the account. */
+  passkeys = 0;
+  /** Shown once, right after the account's first device enrolls. */
+  recoveryCodes: string[] | null = null;
   keys!: DeviceKeys;
   enrollment: Enrollment | undefined;
   /** Every device the account trusts, by this browser's reckoning. */
@@ -117,7 +219,7 @@ export class ControlSession {
     try {
       this.keys = await loadKeys();
       this.enrollment = await loadEnrollment(location.origin);
-      const me = await api<{ account: string; login: string; root: string | null }>("/api/me").catch((e) => {
+      const me = await api<{ account: string; login: string; root: string | null; passkeys: number }>("/api/me").catch((e) => {
         if (e instanceof HttpError && e.status === 401) return null;
         throw e;
       });
@@ -126,8 +228,9 @@ export class ControlSession {
         // daemons reachable directly while control is down.
         return this.set("signed-out");
       }
-      this.login = me.login;
+      this.login = me.login || "you";
       this.account = me.account;
+      this.passkeys = me.passkeys;
       if (this.enrollment && this.enrollment.account !== me.account) {
         // Signed in as someone else: this browser's place was in another
         // account. Start over as a new device of this one.
@@ -135,6 +238,11 @@ export class ControlSession {
       }
       if (!this.enrollment) await this.enroll(me.root);
       if (!this.enrollment) return;
+      if (this.usedRecovery) {
+        // Spent: nobody gets in with it again.
+        await this.revoke(this.usedRecovery).catch(() => {});
+        this.usedRecovery = null;
+      }
       await this.refresh();
       this.set("ready");
       this.timer = window.setInterval(() => void this.refresh(), 10_000);
@@ -176,6 +284,7 @@ export class ControlSession {
         );
       }
     }
+    if (root === null) await this.makeRecoveryCodes();
     // Pin the root as control reports it now, and check that our own
     // certificate chains back to it.
     const all = await api<{ trust: { account: string; root: string }; certs: Cert[]; revocations: Revocation[] }>("/api/devices");
@@ -185,6 +294,77 @@ export class ControlSession {
     this.enrollment = { control: location.origin, account: this.account, root: all.trust.root, cert: mine };
     await saveEnrollment(this.enrollment);
   }
+
+  /** Two recovery codes, signed by this (the first) device. */
+  private async makeRecoveryCodes() {
+    const codes: string[] = [];
+    const certs: Cert[] = [];
+    for (let i = 1; i <= 2; i++) {
+      const kp = (await subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
+      const seed = new Uint8Array(await subtle.exportKey("pkcs8", kp.privateKey)).slice(16);
+      const sign = new Uint8Array(await subtle.exportKey("raw", kp.publicKey));
+      const c: Cert = {
+        v: 1,
+        account: this.account,
+        device: await deviceId(unhex(NO_NOISE), sign),
+        kind: "recovery",
+        name: `recovery code ${i}`,
+        noise: NO_NOISE,
+        sign: hex(sign),
+        created: Date.now(),
+        approver: this.keys.id,
+        sig: "",
+      };
+      c.sig = await signText(this.keys, certBody(c));
+      certs.push(c);
+      codes.push(toCode(seed));
+    }
+    await api("/api/recovery", { certs });
+    this.recoveryCodes = codes;
+  }
+
+  savedRecoveryCodes() {
+    this.recoveryCodes = null;
+    this.emit();
+  }
+
+  /** While waiting for approval: approve this browser with a recovery
+   * code instead, then retire the code. */
+  async useRecoveryCode(code: string) {
+    const seed = fromCode(code);
+    if (!seed) throw new Error("a recovery code is 52 letters and digits");
+    const key = await recoveryKey(seed);
+    const devs = await api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[] }>("/api/devices");
+    // Only codes still good (a used one was revoked).
+    const live = devs.trust ? [...(await evaluate(devs.trust, devs.certs, devs.revocations)).values()] : [];
+    const probe = new TextEncoder().encode("illogical recovery probe");
+    const sig = new Uint8Array(await subtle.sign("Ed25519", key, probe));
+    let mine: Cert | undefined;
+    for (const c of live.filter((c) => c.kind === "recovery")) {
+      const pub = await subtle.importKey("raw", unhex(c.sign), { name: "Ed25519" }, false, ["verify"]);
+      if (await subtle.verify("Ed25519", pub, sig, probe)) mine = c;
+    }
+    if (!mine) throw new Error("that isn't one of this account's recovery codes (or it was used)");
+    const k = this.keys;
+    const cert: Cert = {
+      v: 1,
+      account: this.account,
+      device: k.id,
+      kind: "browser",
+      name: deviceName(),
+      noise: k.noisePub,
+      sign: k.signPub,
+      created: Date.now(),
+      approver: mine.device,
+      sig: "",
+    };
+    cert.sig = hex(new Uint8Array(await subtle.sign("Ed25519", key, new TextEncoder().encode(certBody(cert)))));
+    await api(`/api/devices/${k.id}/approve`, { cert });
+    this.usedRecovery = mine.device;
+  }
+
+  /** The recovery code that let this browser in, to retire once enrolled. */
+  private usedRecovery: string | null = null;
 
   /** Devices and the directory, checked against the pinned root. */
   async refresh() {

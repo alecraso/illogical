@@ -138,10 +138,16 @@ async function shell(page: Page, marker: string) {
 let laptop: Page;
 let phone: Page;
 
+let recoveryCodes: string[] = [];
+
 test("a stranger signs up and becomes the first device", async ({ browser }) => {
   laptop = await (await browser.newContext()).newPage();
   await signIn(laptop);
-  await expect(laptop.getByText("Add a machine")).toBeVisible();
+  // Recovery codes, once.
+  await expect(laptop.locator("[data-recovery-code]")).toHaveCount(2);
+  recoveryCodes = await laptop.locator("[data-recovery-code]").allTextContents();
+  await laptop.locator("[data-saved-codes]").click();
+  await expect(laptop.getByRole("heading", { name: "Add a machine" })).toBeVisible();
   await expect(laptop.locator(".control-cmd")).toContainText(`illogicald join ${base}`);
 });
 
@@ -178,6 +184,25 @@ test("a phone needs the laptop's approval", async ({ browser }) => {
   await expect.poll(() => hostNames(phone), { timeout: 20_000 }).toEqual(["box", "mac"]);
   await showHost(phone, "mac");
   await shell(phone, "phone");
+});
+
+test("with every device lost, a recovery code lets a new browser in, once", async ({ browser }) => {
+  const fresh = await (await browser.newContext()).newPage();
+  await signIn(fresh);
+  await expect(fresh.getByText("Approve this browser")).toBeVisible();
+  await fresh.locator("[data-use-recovery]").click();
+  await fresh.getByLabel("Recovery code").fill(recoveryCodes[0]);
+  await fresh.getByRole("button", { name: "Use it" }).click();
+  await expect.poll(() => hostNames(fresh), { timeout: 20_000 }).toEqual(["box", "mac"]);
+  // The code is spent: another browser can't use it again.
+  const again = await (await browser.newContext()).newPage();
+  await signIn(again);
+  await again.locator("[data-use-recovery]").click();
+  await again.getByLabel("Recovery code").fill(recoveryCodes[0]);
+  await again.getByRole("button", { name: "Use it" }).click();
+  await expect(again.locator(".control-error")).toContainText("isn't one of this account's recovery codes");
+  // The laptop (still enrolled) turns the second browser down.
+  await laptop.locator("[data-reject]").click();
 });
 
 test("removing the phone cuts it off", async () => {

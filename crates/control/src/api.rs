@@ -30,7 +30,8 @@ type R = Result<Json<Value>, ApiError>;
 
 pub async fn me(State(app): State<Arc<App>>, s: Session) -> R {
     let a = app.db.account(&s.account)?.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "no such account"))?;
-    Ok(Json(json!({ "account": a.id, "login": a.login, "root": a.root })))
+    let passkeys = app.db.passkey_count(&a.id)?;
+    Ok(Json(json!({ "account": a.id, "login": a.login, "root": a.root, "passkeys": passkeys })))
 }
 
 /// What the account trusts now, by control's own reckoning.
@@ -93,6 +94,29 @@ pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enrol
             Ok(Json(json!({ "approved": false, "root": root })))
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct RecoveryCerts {
+    certs: Vec<Cert>,
+}
+
+/// The first device's recovery codes: certificates it signed for keys only
+/// the person holds (on paper). Control never sees the keys.
+pub async fn add_recovery(State(app): State<Arc<App>>, s: Session, Json(b): Json<RecoveryCerts>) -> R {
+    if b.certs.len() > 4 {
+        return Err(err(StatusCode::BAD_REQUEST, "at most 4 recovery codes"));
+    }
+    for c in &b.certs {
+        if c.kind != Kind::Recovery || c.account != s.account {
+            return Err(err(StatusCode::BAD_REQUEST, "recovery certificates for your account"));
+        }
+        approval_ok(&app, &s.account, c)?;
+    }
+    for c in &b.certs {
+        app.db.put_device(c, true, now_ms())?;
+    }
+    Ok(Json(json!({})))
 }
 
 pub async fn devices(State(app): State<Arc<App>>, s: Session) -> R {
