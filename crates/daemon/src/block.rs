@@ -12,7 +12,12 @@
 //!   "needs you" list and push notifications work for every type;
 //! - **text**, a plain rendering for `capture --text`, history and search;
 //! - **methods**, called as `illogical call %N <method> [json]`;
-//! - **a log** in its own block directory, in the M2 segment store.
+//! - **a log** in its own block directory, in the M2 segment store: what
+//!   it did, or for a view of something kept elsewhere (a file, a repo),
+//!   only what it was pointed at, when (M11);
+//! - **drawn**: told whether any client draws it now (a full client
+//!   showing its tab; summaries don't count), so a view that watches a
+//!   machine can stop and let the machine sleep (M11).
 //!
 //! All blocks share one id space (`%N`) and one place in the layout tree.
 
@@ -51,6 +56,8 @@ pub trait Block: Send + Sync {
     }
     /// Its cells changed size (a terminal-like renderer may care).
     fn resize(&self, _cols: u16, _rows: u16) {}
+    /// Some client draws it now (true), or none does any more (M11).
+    fn drawn(&self, _on: bool) {}
     /// It's closing: stop whatever it runs. Its directory is retired after.
     fn close(&self);
     /// Extra fields for a push notification about it (an agent's pending
@@ -137,6 +144,8 @@ pub struct BlockEnv {
     pub secrets: Secrets,
     /// How an agent reaches the daemon's MCP server (M16).
     pub mcp: Option<crate::mcp::Link>,
+    /// This host's files, as `/api/fs` serves them (M7).
+    pub fs: Arc<crate::fs::Scope>,
 }
 
 /// What a block gets from the daemon.
@@ -163,6 +172,7 @@ pub struct BlockCtx {
     pub kept: Arc<Mutex<HashMap<String, OwnedFd>>>,
     pub secrets: Secrets,
     pub mcp: Option<crate::mcp::Link>,
+    pub fs: Arc<crate::fs::Scope>,
 }
 
 impl BlockCtx {
@@ -190,6 +200,16 @@ impl BlockCtx {
             kept: Arc::new(Mutex::new(kept)),
             secrets: base.secrets,
             mcp: base.mcp,
+            fs: base.fs,
+        }
+    }
+
+    /// Where its files are: this host's, or its machine's.
+    pub fn files(&self) -> Result<crate::fs::Target, String> {
+        match (&self.sprite, &self.provider) {
+            (None, _) => Ok(crate::fs::Target::Local(self.fs.clone())),
+            (Some(sprite), Some(p)) => Ok(crate::fs::Target::machine(p.clone(), sprite.clone())),
+            (Some(_), None) => Err("this block's machine can't be reached: VM panes aren't set up".into()),
         }
     }
 
@@ -231,6 +251,8 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::Browser => crate::browser::Browser::create(ctx, config),
         BlockType::Agent => crate::agent::Agent::create(ctx, config),
         BlockType::Editor => crate::editor::Editor::create(ctx, config),
+        BlockType::Diff => crate::review::diff::Diff::create(ctx, config),
+        BlockType::File => crate::review::file::FileView::create(ctx, config),
     }
 }
 

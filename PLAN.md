@@ -2050,7 +2050,7 @@ Superlogical's "automatic work disappears into jobs and logs".
 
 ### M11: file and diff blocks (after M7)
 
-**Cut by S8 (2026-10-02); next on track B.** The full brief is in
+**Cut by S8 (2026-10-02). Done 2026-10-02 (below), apart from a real phone.** The full brief is in
 [spikes/s8-blocks](spikes/s8-blocks/README.md#what-m11-cut-must-deliver).
 Changes from the plan below:
 
@@ -2083,6 +2083,36 @@ Changes from the plan below:
     on a local host and a VM;
   - a build that fails in a VM tab's terminal shows as *Failed* on the phone,
     and **Rerun** from the phone runs it again in that pane.
+
+#### M11 (cut): diff and file blocks, and Rerun
+
+**Done 2026-10-02, apart from a real phone.**
+
+- **What landed:**
+  - **Diff blocks** (`type: diff`, `crates/daemon/src/review/diff.rs`): `{repo, rev_a?, rev_b?}` on the block's host. One `sh -c` there (one exec on a VM, through `Provider::run`) finds the repository's top, checks the revisions, runs `git diff -M` and diffs each untracked file against `/dev/null`, cut at 4 MB, with `GIT_OPTIONAL_LOCKS=0`. The state is the file list (status, +/−, binary, too big over 256 KB) and, for files someone opened (`file {path}`, at most 12), their hunks with both sides' line numbers. `capture --text` is the unified diff. A repository with no commits is compared with the empty tree; an option-like revision is refused.
+  - **File blocks** (`type: file`, `review/file.rs`): `{path, line?}` read through M7's `fs` (`fs::Target`, now shared), so the same places are refused and a VM's file goes through the provider with no symlinks followed. At most 1 MiB, cut at a line; binary says so. Following an edit keeps the mark on its text (`follow`: common head and tail, else the same line nearest its place). `goto {line}`; `open {path, line?}` is the owner's only (someone with editor could otherwise read any file of the owner's).
+  - **Drawn** (S8's gap 4): `Block::drawn(bool)`. The mux works out, after every message, which blocks some full client draws: one whose `View` is their tab, and on a phone (`zoom`) the zoomed pane only; summaries-only clients don't count. The two views poll only then (every second here, 3s on a VM; the diff every 2s here) and say `watching` in their state. A block that nobody draws holds what it last read; brought back after a restart it reads nothing until drawn.
+  - **Viewers** (gap 2) get what's drawn in the pushed state; methods stay editor (gap 3: the log has only what each was pointed at).
+  - **Ways in:** *Changes* on a pane's and a tab's menu, the phone's sheet and a swarm tile with a project (a diff block beside the pane, on its machine, its directory's repository: `view_defaults` in the mux, like M27's editor); `illogical diff [%N] [--repo D] [REV_A [REV_B]]` (prints the block, then the files) and `illogical view [%N:|mN:]PATH[:LINE]`; MCP's `show_changes` and `show_file`; *Open file* on an agent block's tool call location. Tapping a hunk's line opens a file block beside the diff, or points the one it opened last there.
+  - **Web:** `blocks/diff.tsx` (the list, then hunks highlighted by `highlightLines`, the follow view's Lezer parsers and colours as `hl-*` classes, in the same lazy chunk) and `blocks/file.tsx` (M28's `CodeView`, read-only, with a marked line; edits replace only what changed, and it scrolls to the line only when someone moves the mark).
+  - **Rerun** (M10's remainder): M24's `failed` reason carries a `rerun` action when the command line is known. `/api/attention/act` with `rerun` types it again (`fs::type_line`, `cd`'s check that the shell is idle at its prompt) or says why not. From the phone's *Needs you*, a swarm card, the push (`sw.ts`: Rerun and Dismiss), the tab's ✗ badge (a menu), the TUI and `illogical rerun %N`.
+- **Tests:**
+  - `crates/daemon/tests/review.rs`: a repository with every kind of change (unstaged, staged, deleted, renamed, untracked, binary, a 400 KB diff), one revision, a range, a bad revision, not a repository, `capture`, `describe`, `illogical diff` and `illogical view`; a file block and a diff block that don't see edits while nothing draws them, follow them (the mark moving with its line) while a WebSocket client views their tab, stop when it goes, and ignore a summaries-only client; a viewer gets both states (hunks, text) and is refused every call, an editor may `goto` but not `open`; a failed build's `rerun` refused while busy, then run again (twice in its history).
+  - Unit tests: parsing git's output (every status, quoted and odd names, caps), hunk numbering, the mark following edits, the rerun line.
+  - `e2e/changes.spec.ts` on a Pixel 7 profile: on this host, *Changes* from the sheet lists the stand-in agent's files with +/−, a hunk's line opens a live file block marked there, both follow later edits, both stop watching when the phone shows the terminal and catch up when shown again; a viewer's phone sees both and can't change them; a failing build is *Failed* and *Rerun* in *Needs you* runs it again. On a VM tab (wisp): the same Changes → hunk → file flow with the agent writing through the Sprites API, both blocks on the tab's machine, `illogical diff`, `view`, `capture` and `describe` there, and a build failing in the VM tab's terminal rerun from the phone. `attention.rs` and `attention.spec.ts` expect Rerun on a failure and its notification.
+- **Decisions (2026-10-02):**
+  - "Drawn" comes from what clients already send (`View`'s tab and zoom), not a new message: no protocol change, and a phone showing another pane, or a phone page hidden long enough to drop its socket, stops the polling.
+  - "Open file" is an ordinary file block opened from the diff block (`from_pane`), not a diff method: the host and repository follow from the block, and the client reuses the file block it opened last.
+  - Expanded files are shared state, like the layout: someone opening a file's hunks opens them for everyone looking, which is what lets viewers see them.
+  - Polling (stat every 1–3s, `git diff` every 2–3s) rather than inotify: it works the same on a VM through the provider, and only runs while someone looks.
+  - Rerun types the command without dismissing first: its start sets the pane working, which replaces the reason; refused, the reason stays.
+  - The spec's ports are 7830 and 7831 (7826–7828 were already `editor-swarm.spec.ts`'s).
+  - *Changes* made the terminal's menu taller than a 640px window, so menus now scroll when they don't fit (`layout.spec.ts` and `tui.spec.ts` found it).
+- **Not covered:**
+  - a real phone (Playwright's Pixel 7 profile only), and tapping Rerun on a real notification (the test checks the notification's actions);
+  - an M4a peer's or a resident sandbox's repository is reached by opening the block on that host (its own daemon), not tested here;
+  - a working tree with more than 200 untracked files lists the first 200; a diff over 4 MB is cut (both say so);
+  - a file block on a VM refuses any path with a symlink in it, as `fs` does there.
 
 The original plan:
 

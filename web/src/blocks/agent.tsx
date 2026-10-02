@@ -13,6 +13,7 @@ import { theme } from "../theme";
 import { askText } from "../ui/menu";
 import { answeredLine, mayAnswer } from "../ui/term-ask";
 import { registerBlock, type BlockView } from "./view";
+import { openFile } from "./diff";
 import { AskCard, headline, type Ask, type Question } from "./ask";
 
 export interface Tool {
@@ -145,7 +146,7 @@ function Output({ data }: { data: string }) {
   return <div class="agent-output" ref={host} />;
 }
 
-function ToolCard({ t, live }: { t: Tool; live: boolean }) {
+function ToolCard({ t, live, openAt }: { t: Tool; live: boolean; openAt?: (path: string) => void }) {
   const [open, setOpen] = useState(true);
   const icon = t.name === "AskUserQuestion" ? "?" : { execute: "$", edit: "✎", read: "◱", delete: "✕", move: "→", search: "⌕", fetch: "↓", think: "…" }[t.kind] ?? "⚙";
   const body = t.output || t.text;
@@ -162,7 +163,20 @@ function ToolCard({ t, live }: { t: Tool; live: boolean }) {
       {open && (
         <>
           {t.command && t.command !== t.title && <pre class="agent-tool-cmd">$ {t.command}</pre>}
-          {t.locations.length > 0 && <div class="agent-tool-locs">{t.locations.join("  ")}</div>}
+          {t.locations.length > 0 && (
+            <div class="agent-tool-locs">
+              {t.locations.map((l) => (
+                <span key={l} class="agent-tool-loc">
+                  {l}
+                  {openAt && (
+                    <button class="link" data-open-file={l} title={`Open ${l}`} onClick={() => openAt(l)}>
+                      Open file
+                    </button>
+                  )}{" "}
+                </span>
+              ))}
+            </div>
+          )}
           {t.output ? (
             live ? <Output data={t.output} /> : <pre class="agent-tool-text">{strip(t.output)}</pre>
           ) : body ? (
@@ -326,7 +340,7 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
               );
             case "tool": {
               if (e.id === liveFrom) live = true;
-              return <ToolCard key={e.id} t={e} live={live} />;
+              return <ToolCard key={e.id} t={e} live={live} openAt={client.state?.roles ? undefined : (path) => void openFile(client, id, path, null)} />;
             }
           }
         })}

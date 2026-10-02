@@ -967,6 +967,7 @@ impl App {
                 Action::Continue => m.push(item("Continue", answer(pane, Action::Continue, None))),
                 Action::Accept => m.push(item("Accept the edit", answer(pane, Action::Accept, None))),
                 Action::Reject => m.push(item("Reject the edit", answer(pane, Action::Reject, None))),
+                Action::Rerun => m.push(item("Rerun", answer(pane, Action::Rerun, None))),
                 Action::Answer => {}
             }
         }
@@ -1264,6 +1265,7 @@ fn answer(pane: PaneId, action: Action, option: Option<&str>) -> Act {
         Action::Continue => "continue",
         Action::Accept => "accept that",
         Action::Reject => "reject that",
+        Action::Rerun => "run that again",
     };
     Act::Api("/api/attention/act".into(), body, what)
 }
