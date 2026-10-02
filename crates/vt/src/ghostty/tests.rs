@@ -551,3 +551,49 @@ fn engine_tag_fingerprints_the_snapshot_format() {
     assert_eq!(super::canary_snapshot(), super::canary_snapshot(), "GHOSTSNP is deterministic");
     assert!(!super::canary_snapshot().is_empty());
 }
+
+#[test]
+fn an_alt_screen_snapshot_mid_sequence_leaves_the_stream_alone() {
+    // Issue #53. The pane's stream stops inside a sequence under an alt
+    // screen; a snapshot then, and the rest of the stream, must give what
+    // the stream alone gives: in the live terminal, in a new snapshot of it,
+    // and in a terminal the snapshot was fed to (which gets the rest too).
+    let mut setup = String::new();
+    for i in 0..20 {
+        setup += &format!("\x1b[3{}mline {i}\x1b[0m\r\n", i % 8);
+    }
+    // And on the primary screen, where only the continuation matters.
+    let setups = [format!("{setup}$ app\x1b[?1049h\x1b[2;3Halt "), format!("{setup}$ ")];
+    let big = format!("\x1b]2;{}", "t".repeat(2 << 20));
+    let splits: &[(&str, &[u8], &[u8])] = &[
+        ("CSI", b"\x1b[38;2;1", b";2;3mcolored\x1b[0m"),
+        ("ESC", b"\x1b", b"7moved\x1b8saved"),
+        ("OSC", b"\x1b]2;tit", b"le\x1b\\titled"),
+        ("UTF-8", b"\xe4\xb8", b"\xad wide"),
+        // Too long to keep as a continuation: no copy of the terminal can
+        // be made (the snapshot has only the alt screen), and a terminal
+        // fed the snapshot prints the rest.
+        ("long OSC", big.as_bytes(), b"\x1b\\after"),
+    ];
+    for (setup, &(name, head, rest)) in setups.iter().flat_map(|s| splits.iter().map(move |x| (s, x))) {
+        let name = &format!("{name}{}", if setup.ends_with("alt ") { "" } else { ", primary" });
+        let mut a = engine_fed(40, 6, setup.as_bytes());
+        let mut want = engine_fed(40, 6, setup.as_bytes());
+        a.feed(head);
+        want.feed(head);
+        let snap = a.snapshot();
+        a.feed(rest);
+        want.feed(rest);
+        assert_same(&want, &a, &format!("{name}: live terminal"));
+        assert_eq!(want.snapshot(), a.snapshot(), "{name}: new snapshot");
+        if !name.starts_with("long OSC") {
+            let mut b = engine_fed(40, 6, &snap);
+            b.feed(rest);
+            assert_same(&want, &b, &format!("{name}: fed the snapshot"));
+            // With the primary screen and its history.
+            b.feed(b"\x1b[?1049l");
+            want.feed(b"\x1b[?1049l");
+            assert_same(&want, &b, &format!("{name}: fed the snapshot, primary"));
+        }
+    }
+}

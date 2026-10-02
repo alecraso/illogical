@@ -242,6 +242,34 @@ Each milestone ends with a demo against the acceptance list.
 
     Snapshots then take 1–3.3 ms instead of 0.03–0.5 ms, mostly from the
     prototype's slow cell compare.
+  - **Alt-screen snapshots mid-sequence: fixed 2026-10-02 (#53).** Under
+    an alt screen the wire path flips the live terminal to the primary
+    with `CSI ?47l` and back. If the PTY stream had stopped inside an
+    escape sequence or a UTF-8 character, the flip landed inside it, and
+    the rest of the sequence printed as text for every client.
+    - Decision: flip the live terminal only when its continuation is
+      empty (the parser is at ground). Otherwise decode a GHOSTSNP copy
+      with its scrollback, end its sequence with CAN, flip the copy and
+      format the primary from it. If no copy can be made (the sequence is
+      longer than the 1 MiB continuation limit), the snapshot has only the
+      alt screen; the next one after the sequence ends has it all.
+    - Why not always copy: a full GHOSTSNP round trip of up to 64 MiB of
+      scrollback on every attach and resync under a full-screen app. At
+      ground, a complete `?47l`/`?47h` pair can't disturb the parser, so
+      the copy is only paid for when it is needed.
+    - The same fix found a second half: a client fed a snapshot taken
+      mid-sequence had its parser at ground, so the rest printed there
+      too. The wire snapshot now ends with the continuation (the
+      sequence's start), as GHOSTSNP checkpoints already did.
+    - Tests: `an_alt_screen_snapshot_mid_sequence_leaves_the_stream_alone`
+      (split CSI, ESC, OSC, UTF-8, and an OSC too long to keep, on either
+      screen): the live terminal, a new snapshot, and a terminal fed the
+      snapshot and then the rest all match the stream fed without the
+      snapshot. `reattach.spec.ts` opens a page while a full-screen app's
+      SGR is half written.
+    - Also found: under systemd 254 and later, `systemd-run --scope`
+      expanded `$VAR` and `$$` in pane and agent commands (#56). The
+      launcher passes `--expand-environment=no` where systemd-run takes it.
   - **Cross-build:** the pinned Ghostty (`22d13172`) and `main` (`0081d453`)
     can't read each other's GHOSTSNP. Both directions fail cleanly with
     `INVALID_VALUE` on every fixture (the 64-byte BLAKE3 removal). So M2's
