@@ -113,6 +113,32 @@ the daemon stopping, crashing, or the machine rebooting:
   the frame's navigations; when the server dies it asks for you and shows
   the page again when the server is back. Events: `navigated`,
   `load_error`.
+- **Editor blocks** (M27). VS Code ([code-server](https://github.com/coder/code-server))
+  where a pane runs, as a block: *Open in editor* (a pane's menu, or a
+  tile's right-click in the swarm, or *Edit* on a card), or `illogical edit
+  [PATH[:LINE]]`. A folder opens as itself, a file in its project (its git
+  repository) at its line.
+  - One server per machine, shared by every editor block there: this host,
+    or the VM tab's machine (a sprite service there). It starts when a block
+    needs it, stops after 15 minutes with nothing open (`--editor-idle`), and
+    starts again when someone looks.
+  - It has no auth of its own. On this host it listens on a 0600 Unix
+    socket, not a port, and each block is served on its own origin like a
+    browser block on a port, so the daemon's checks are its only auth.
+    Opening one is the owner's: guests can't, viewers or editors.
+  - The release is pinned and checked against its SHA-256, downloaded once
+    into `~/.cache/illogical/code-server` the first time an editor opens
+    (the block shows the download), or `--code-server PATH`.
+  - Settings, extensions (from [Open VSX](https://open-vsx.org)) and state
+    are in `<state>/editor/`, so they outlive restarts. New settings start
+    with illogical's colours and VS Code's AI features off.
+  - illogical's extension in each window reports the active file, the
+    cursor and the lines around it: summaries say `kind: editor`, the
+    project and `file`, and the swarm's preview (and `capture`) is those
+    lines. After a daemon restart the window reconnects to the same
+    session; after a reboot the block asks the new server for the file it
+    had. In a VM it opens the file it was opened on and doesn't follow the
+    cursor (the extension can't reach the daemon from there).
 - **Agent blocks** (M6b). An agent run as UI instead of a TUI: messages,
   thoughts, tool-call cards with each command's output in a read-only
   terminal, permission requests as Approve / Always / Deny cards (big

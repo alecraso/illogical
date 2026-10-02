@@ -552,6 +552,8 @@ pub enum BlockType {
     Browser,
     /// An agent run driven over ACP (M6b).
     Agent,
+    /// VS Code (code-server) in a folder on the block's machine (M27).
+    Editor,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -659,6 +661,9 @@ pub struct PaneInfo {
     /// The title its program set (OSC 0/2), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The file an editor block shows (M27), relative to its folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     /// What started it, when that wasn't you: an MCP client (M16).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<StartedBy>,

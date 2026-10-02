@@ -13,6 +13,7 @@ import type { Action, Reason } from "../proto";
 import { AskCard, type Answered } from "../blocks/ask";
 import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE, type Requester } from "../ui/answer-card";
 import { Avatar } from "../ui/people";
+import { MenuLayer, openMenu } from "../ui/menu";
 import { usePhone, useSubscribe } from "../ui/hooks";
 import { Field, type FieldPane } from "./field";
 import { activityOf, bundleOf, cardTitle, GROUPINGS, groupOf, kindOf, KINDS, REASON_COL, reasonOf, type GroupBy } from "./model";
@@ -89,9 +90,14 @@ export function SwarmView({
   const firstSeen = useRef<Map<string, number>>(new Map());
   const peekCache = useRef<Map<string, { at: number; text: string }>>(new Map());
   // The field calls these; they see this render's panes.
-  const handlers = useRef<{ open(key: string): void; hover(key: string | null, x: number, y: number): Promise<void> | void }>({
+  const handlers = useRef<{
+    open(key: string): void;
+    hover(key: string | null, x: number, y: number): Promise<void> | void;
+    menu(key: string, e: MouseEvent): void;
+  }>({
     open: () => {},
     hover: () => {},
+    menu: () => {},
   });
 
   const panes = fleet.panes;
@@ -111,6 +117,7 @@ export function SwarmView({
       cardRect: (b) => rail.current?.querySelector<HTMLElement>(`[data-bundle="${CSS.escape(b)}"]`)?.getBoundingClientRect() ?? null,
       open: (key) => handlers.current.open(key),
       hover: (key, x, y) => void handlers.current.hover(key, x, y),
+      menu: (key, e) => handlers.current.menu(key, e),
     });
     field.current = f;
     f.start();
@@ -226,7 +233,9 @@ export function SwarmView({
     try {
       const res = await fleet.request(p.host, "GET", `/api/panes/${p.id}/capture?format=text`);
       const text = res.ok && res.text ? await res.text() : "";
-      const lines = text.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(-6).join("\n");
+      const all = text.split("\n").map((l) => l.trimEnd()).filter(Boolean);
+      // An editor's text is its file and the lines around its cursor (M27).
+      const lines = (p.info.type === "editor" ? all.slice(0, 7) : all.slice(-6)).join("\n");
       peekCache.current.set(key, { at: Date.now(), text: lines });
       setPeek((pk) => (pk?.key === key ? { ...pk, text: lines } : pk));
     } catch {
@@ -234,7 +243,17 @@ export function SwarmView({
     }
   };
 
-  handlers.current = { open: openKey, hover: hoverPane };
+  // Right-click a pane: open it, or (M27) VS Code where it runs.
+  const paneMenu = (key: string, e: MouseEvent) => {
+    const p = byKey(key);
+    if (!p) return e.preventDefault();
+    openMenu(e, [
+      { label: "Open", run: () => openKey(key) },
+      ...(canEdit(fleet, p) ? [{ label: "Open in editor", run: () => void editIn(fleet, p, back) }] : []),
+    ]);
+  };
+
+  handlers.current = { open: openKey, hover: hoverPane, menu: paneMenu };
   const machines = new Set(panes.map((p) => p.host)).size;
   const busy = panes.filter((p) => activityOf(p) > 0.3).length;
   const need = panes.filter((p) => reasonOf(p)).length;
@@ -295,7 +314,7 @@ export function SwarmView({
             <p class="swarm-empty">Nothing needs you. Panes that ask, fail, finish or wait for input lift out of the swarm and land here.</p>
           )}
           {shown.map((b) => (
-            <Card key={b.key} b={b} fleet={fleet} focus={focus} show={() => field.current?.diveTo(b.panes[0].key)} open={() => openKey(b.panes[0].key)} />
+            <Card key={b.key} b={b} fleet={fleet} focus={focus} show={() => field.current?.diveTo(b.panes[0].key)} open={() => openKey(b.panes[0].key)} back={back} />
           ))}
           {answered.map((d) => (
             <AnsweredCard key={`${d.key}@${d.answered.at_ms}`} d={d} fleet={fleet} close={() => setAnswered((x) => x.filter((y) => y !== d))} />
@@ -329,6 +348,7 @@ export function SwarmView({
         </div>
       </div>
 
+      <MenuLayer />
       {peek && (
         <div class="swarm-peek" style={{ left: `${Math.min(peek.x + 16, innerWidth - 700)}px`, top: `${Math.min(peek.y + 16, innerHeight - 160)}px` }}>
           <div class="ph">
@@ -340,6 +360,26 @@ export function SwarmView({
       )}
     </div>
   );
+}
+
+/** Whether VS Code can be opened where a pane runs (M27): a terminal's, and
+ * only by the host's owner (editor blocks are, like ports). */
+function canEdit(fleet: Fleet, p: FleetPane) {
+  return (p.info.type ?? "terminal") === "terminal" && fleet.role(p) === "owner" && !p.stale;
+}
+
+/** Open VS Code in a pane's directory, on its machine, and show it. */
+async function editIn(fleet: Fleet, p: FleetPane, back: () => void): Promise<string | null> {
+  try {
+    const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "editor", config: {}, from_pane: p.id });
+    const v = await res.json<{ block?: number; error?: string }>().catch(() => null);
+    if (!res.ok || v?.block === undefined) return v?.error ?? `couldn't (${res.status})`;
+    back();
+    fleet.open(p.host, v.block);
+    return null;
+  } catch (e) {
+    return String(e);
+  }
 }
 
 /** Act on a bundle: one request per host, naming its panes. */
@@ -381,7 +421,21 @@ function Watching({ fleet, panes }: { fleet: Fleet; panes: FleetPane[] }) {
   );
 }
 
-function Card({ b, fleet, focus, show, open }: { b: Bundle; fleet: Fleet; focus?: { host: string; pane: number } | null; show: () => void; open: () => void }) {
+function Card({
+  b,
+  fleet,
+  focus,
+  show,
+  open,
+  back,
+}: {
+  b: Bundle;
+  fleet: Fleet;
+  focus?: { host: string; pane: number } | null;
+  show: () => void;
+  open: () => void;
+  back: () => void;
+}) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const r = b.reason;
@@ -464,6 +518,11 @@ function Card({ b, fleet, focus, show, open }: { b: Bundle; fleet: Fleet; focus?
         <button class="ghost" onClick={show}>
           Show
         </button>
+        {n === 1 && canEdit(fleet, first) && (
+          <button class="ghost" data-edit onClick={() => void editIn(fleet, first, back).then(setErr)}>
+            Edit
+          </button>
+        )}
         {can && r.kind === "ask" && (
           <button class="ghost" disabled={busy} onClick={() => void run("dismiss")}>
             {all("Dismiss")}

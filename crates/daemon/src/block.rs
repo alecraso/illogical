@@ -63,6 +63,22 @@ pub trait Block: Send + Sync {
     fn waiting(&self) -> Option<Waiting> {
         None
     }
+    /// What it says about itself in summaries (M23), beyond its type.
+    fn summary(&self) -> Summary {
+        Summary::default()
+    }
+}
+
+/// A block's part of its summary (M23): what it's busy with, where, and
+/// for an editor, which file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub work: Option<illogical_proto::WorkKind>,
+    /// Where it works, and the git repository that is (on its machine).
+    pub cwd: Option<String>,
+    pub project: Option<illogical_proto::Project>,
+    pub file: Option<String>,
+    pub title: Option<String>,
 }
 
 /// An open permission request or question in a block (M24's `ask` reason).
@@ -191,6 +207,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::Terminal => Err("terminals aren't made here".into()),
         BlockType::Browser => crate::browser::Browser::create(ctx, config),
         BlockType::Agent => crate::agent::Agent::create(ctx, config),
+        BlockType::Editor => crate::editor::Editor::create(ctx, config),
     }
 }
 

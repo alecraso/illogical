@@ -63,6 +63,8 @@ export interface FieldHooks {
   cardRect(bundle: string): DOMRect | null;
   open(key: string): void;
   hover(key: string | null, x: number, y: number): void;
+  /** A right-click on a pane. */
+  menu?(key: string, e: MouseEvent): void;
 }
 
 const TW = 16;
@@ -405,6 +407,14 @@ export class Field {
     cv.addEventListener("pointerup", up);
     cv.addEventListener("pointercancel", up);
     cv.addEventListener("pointerleave", () => this.hooks.hover(null, 0, 0));
+    cv.addEventListener("contextmenu", (e) => {
+      const r = cv.getBoundingClientRect();
+      const t = this.paneAt(e.clientX - r.left, e.clientY - r.top);
+      if (t && this.hooks.menu) {
+        this.hooks.hover(null, 0, 0);
+        this.hooks.menu(t.key, e);
+      } else e.preventDefault();
+    });
     cv.addEventListener(
       "wheel",
       (e) => {

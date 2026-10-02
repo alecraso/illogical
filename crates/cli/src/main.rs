@@ -137,6 +137,26 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
+    /// Open an editor block: VS Code (code-server) on a folder, or on a
+    /// file in its project, on the machine this pane runs on. Prints its
+    /// block.
+    Edit {
+        /// A folder or file, optionally `FILE:LINE` [default: here].
+        path: Option<String>,
+        /// The line to show.
+        #[arg(long)]
+        line: Option<u32>,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`.
+        #[arg(long)]
+        split: Option<String>,
+        /// The machine it runs on: `mN`, or `local` for this host [default:
+        /// this pane's machine]. (`--host` is another daemon.)
+        #[arg(long)]
+        machine: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Start an agent block (Claude Code by default) and send it a prompt;
     /// prints its block. Then: `wait %N --idle`, `tail %N`, `call %N approve`.
     Agent {
@@ -500,6 +520,26 @@ fn default_socket() -> PathBuf {
 }
 
 /// The pane given, or the one we're running in.
+/// `src/main.rs:42` is a file and a line (when `check`, only if the file
+/// is there and the whole name isn't).
+fn file_line(p: &str, check: bool) -> (String, Option<u32>) {
+    if let Some((file, line)) = p.rsplit_once(':')
+        && let Ok(n) = line.parse::<u32>()
+        && !file.is_empty()
+        && (!check || (std::path::Path::new(file).exists() && !std::path::Path::new(p).exists()))
+    {
+        return (file.to_owned(), Some(n));
+    }
+    (p.to_owned(), None)
+}
+
+/// A path from here as a whole one.
+fn absolute(p: &str) -> anyhow::Result<String> {
+    let p = std::path::Path::new(p);
+    let whole = if p.is_absolute() { p.to_owned() } else { std::env::current_dir()?.join(p) };
+    Ok(whole.display().to_string())
+}
+
 fn here(p: Option<Pane>) -> anyhow::Result<u32> {
     match p {
         Some(Pane(n)) => Ok(n),
@@ -866,6 +906,51 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 "config": config,
                 "split": split,
                 "host": host,
+                "local": local,
+                "session": session,
+                "from_pane": env_pane(),
+            });
+            let v = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("%{}", v["block"]);
+            }
+        }
+        Command::Edit { path, line, split, machine, session } => {
+            let split = match split.as_deref() {
+                None => None,
+                Some("right") => Some(here(None)?),
+                Some(p) => Some(p.parse::<Pane>().map_err(anyhow::Error::msg)?.0),
+            };
+            let local = machine.as_deref() == Some("local");
+            let machine = match machine.filter(|_| !local) {
+                Some(m) => {
+                    Some(m.trim_start_matches('m').parse::<u32>().with_context(|| format!("not a machine: {m}"))?)
+                }
+                None => None,
+            };
+            // On this host (not another daemon's, not a VM's), a path is
+            // this directory's.
+            let mine = machine.is_none() && !REMOTE.load(std::sync::atomic::Ordering::Relaxed);
+            let (path, at) = match path {
+                Some(p) => {
+                    let (p, at) = file_line(&p, mine);
+                    (Some(p), at)
+                }
+                None => (None, None),
+            };
+            let path = match path {
+                Some(p) if mine => Some(absolute(&p)?),
+                Some(p) => Some(p),
+                None if mine => Some(std::env::current_dir()?.display().to_string()),
+                None => None,
+            };
+            let body = json!({
+                "type": "editor",
+                "config": { "path": path, "line": line.or(at) },
+                "split": split,
+                "host": machine,
                 "local": local,
                 "session": session,
                 "from_pane": env_pane(),
@@ -1295,6 +1380,20 @@ mod tests {
         assert!(super::duration("2w").is_err());
         assert_eq!(super::policy("hook:claude --continue").unwrap()["command"], "claude --continue");
         assert_eq!("%12".parse::<super::Pane>().unwrap().0, 12);
+    }
+
+    #[test]
+    fn files_with_lines() {
+        let s = |p: &str, check| super::file_line(p, check);
+        assert_eq!(s("src/main.rs:42", false), ("src/main.rs".into(), Some(42)));
+        assert_eq!(s("src/main.rs", false), ("src/main.rs".into(), None));
+        assert_eq!(s(":42", false), (":42".into(), None));
+        assert_eq!(s("a:b", false), ("a:b".into(), None));
+        // Here, only when the file is there.
+        assert_eq!(s("/nowhere/x.rs:3", true), ("/nowhere/x.rs:3".into(), None));
+        assert_eq!(s("/etc/hosts:3", true), ("/etc/hosts".into(), Some(3)));
+        assert_eq!(super::absolute("/a/b").unwrap(), "/a/b");
+        assert!(super::absolute("b").unwrap().ends_with("/b"));
     }
 
     #[test]

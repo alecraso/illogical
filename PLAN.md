@@ -2586,7 +2586,7 @@ One live view of every pane on every machine you (or your team) can see. Panes f
 2. **M23** (#37: pane summaries) and **M24** (#38: attention reasons and actions), side by side with **M29** (#46: team answers): done.
 3. **M25** (#39: every host in one page), then **M30** (#47: the team's swarm): done.
 4. **M26** (#40: the swarm view): done.
-5. **After the MVP:** editors, with **S17** (#41: done, below), **M27** (#42: VS Code blocks) and **M28** (#43: your editor in the swarm).
+5. **After the MVP:** editors, with **S17** (#41: done, below), **M27** (#42: VS Code blocks, done) and **M28** (#43: your editor in the swarm).
 
 #### S16: swarm spike (summary cost, fleet connections, canvas)
 
@@ -2862,9 +2862,37 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - The two people really on different networks.
   - Notification opt-in through control's own UI: the daemon decides, and the session menu sets it.
 
-#### M27: VS Code blocks (planned; what S17 changed)
+#### M27: VS Code blocks
 
-The issue (#42) holds the plan. S17 settles these points:
+**Done 2026-10-02, apart from a real phone and a real reboot.**
+
+- **What landed:**
+  - **An `editor` block type** (`crates/daemon/src/editor/`): VS Code as code-server on a folder, on the block's machine, drawn like a browser block on a port (its own site, `b-<id>-<key>.localhost` or `b-<id>.<domain>`). A folder opens as itself; a file opens in its project (its git root, else its directory) at its line.
+  - **Starting one:** *Open in editor* on a pane's menu, a tile's right-click menu in the swarm and *Edit* on a one-pane card there (on the pane's machine, in its directory), and `illogical edit [PATH[:LINE]] [--line N] [--machine mN|local] [--split right|%N]`. The owner's only, like ports (block sites admit only the owner): guests are refused, viewers and editors alike, and the menus don't offer it.
+  - **One server per machine** (`editor/server.rs`), shared by its blocks. On this host: a 0600 Unix socket beside the CLI's (`<sock>-code`), no TCP port, no auth of its own, `--config`/`--user-data-dir`/`--extensions-dir` under `<state>/editor/`, in a systemd scope of its own (else its own process group) so a daemon restart leaves it running. It starts when a block is made, or when a block's site is dialed and nothing answers (`ports::Target::Service`), and stops itself after `--editor-idle` (900 s, code-server's `--idle-timeout-seconds`); `--reconnection-grace-time 300`.
+  - **The release:** code-server 4.140.0 (VS Code 1.140, MIT), downloaded into `~/.cache/illogical/code-server/` the first time and checked against the release's SHA-256 (all four Linux/macOS builds pinned); the block shows the download's progress. `--code-server PATH` runs another. Nothing is committed or bundled.
+  - **Settings, extensions, theme:** a settings folder per user in `<state>/editor/`; new settings get the illogical theme, `chat.disableAIFeatures`, no startup editor and no secondary sidebar, and are the user's after that. Extensions come from Open VSX (code-server's default). illogical's extension (`editor/ext/`: the theme, from the terminal's colours, and a reporter) is installed by writing it into the extensions folder and its `extensions.json`.
+  - **Reports:** each block has a workspace file (`<state>/editor/w/<id>/<name>.code-workspace`) whose settings name the block (`illogical.block`). The extension reads it and `$ILLOGICAL_SOCK` and calls the block's `report` method (active file, cursor, the 7 lines around it, unsaved count), throttled to 250 ms and only on change.
+  - **In summaries (M23):** `kind: editor`, the project, and a new `PaneInfo.file` (relative to the folder); the title is "file — folder". `capture` (the swarm's hover preview) is `file:line` and those lines. Blocks now give their own summary fields (`Block::summary`), and a block's change goes out at the next tick.
+  - **Restoring:** the block's config keeps the folder, file, line and key (so the same origin). After a daemon restart the window's sockets reconnect to the same code-server session, file and all. After a reboot the page asks the new server for the file: opening a file is in the page's address (VS Code's `payload=[["openFile", "vscode-remote://<block's host>/path:line"]]`), so it needs no channel into the window.
+  - **In a VM:** the server is a sprite service on loopback port 13340 in the VM, which downloads and checks the same release there, reached through the Sprites proxy; the folder and project are found on the VM. The extension can't reach the daemon from there, so a VM's block shows the file it was opened on and doesn't follow the cursor.
+  - The TUI shows an editor block as "VS Code file:line".
+- **Measured** (geek, warm server, debug daemon, headless Chrome through the dev scheme): `illogical edit crates/control/src/auth.rs:20` to line 20 drawn in the block: 1.4 s on a desktop page, 1.9 s on a Pixel 7-sized page. code-server starts in about 0.3 s once unpacked; the download and unpack took 6 s here.
+- **Tests:** `crates/daemon/tests/editors.rs` with a stand-in code-server (`tests/fake_code_server.py`): its flags, socket mode and environment (no `ILLOGICAL_PANE`, no `VSCODE_*`); the workspace, theme and extension; the page's address; requests reach it only through the block's site, as `Host: localhost`; reports in summaries and captures; two blocks share one server; a daemon restart keeps the file and the server; a dead or idle server starts again on the next request; closing removes the site and workspace; viewers and editors can't open one. Unit tests: the download (bad checksum refused, nothing left over), the settings and extension install, payloads, paths. `web/e2e/editors.spec.ts` with the real code-server: *Open in editor* on the pane's directory, its origin and theme, the 0600 socket; `illogical edit FILE:LINE` under 3 s on desktop and phone-sized pages, reports following the cursor; the swarm's editor tile, its preview, and *Open in editor* from a tile; a daemon restart and a "reboot" (code-server killed too) with the file still open; a viewer has no menu item and is refused. `web/e2e/editors-vm.spec.ts` (needs wispd): VS Code in a VM tab from its terminal's menu, the theme there, and `illogical edit --machine mN` on a file in the VM.
+- **Decisions (2026-10-02):**
+  - Owner only, not "anyone with write access": block sites admit only the owner, so a guest's block couldn't be shown to them.
+  - The block's identity reaches the extension through its workspace file, and files open through the page's address; no daemon-to-extension channel. The cost: the title says "(Workspace)".
+  - The pinned release, not a `code-server` on `PATH`: illogical relies on recent flags.
+  - code-server's own logs stay in `~/.local/share/code-server`: moving them means a different `XDG_DATA_HOME`, which its terminals and language servers would inherit.
+  - `illogical edit --machine`, not `--host`: the global `--host` (another daemon) swallows a subcommand's `--host` (#61 for `open` and `agent`).
+- **Not covered:**
+  - the 3 s target from a real phone on geek over the tailnet scheme (Needs Jake);
+  - a real reboot of geek, and a `systemctl --user restart` of the installed service (the tests restart a daemon run by hand);
+  - macOS (the download and process group paths compile; not run on a Mac);
+  - the cursor in VM blocks, and blocks on another host's daemon from this page beyond what that daemon does itself;
+  - installing an extension from Open VSX in the tests.
+
+S17's notes for M27:
 
 - **The server is code-server.** It runs with `--auth none --disable-workspace-trust --disable-telemetry --disable-update-check`, with `--config`, `--user-data-dir` and `--extensions-dir` under illogical's state. Without those, it writes `~/.config/code-server` even for `--help`.
 - **Its defaults:**
