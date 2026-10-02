@@ -353,3 +353,175 @@ async fn sandbox_splice(app: &App, sandbox: &str, ws: WebSocket) -> anyhow::Resu
     };
     Ok(tokio::join!(up, down))
 }
+
+// ---- many daemons over one socket (M25)
+//
+// A page that shows every machine at once would otherwise hold a relay
+// socket per daemon, and browsers space out WebSocket connections to one
+// address past about eight (S16: 20 daemons took 2–5 s to come back after
+// a wake). Instead it opens `/api/relay/m` once and carries each daemon's
+// Noise channel inside it, as numbered channels. Each binary message is
+// `kind (1) ‖ channel (4, BE) ‖ payload`:
+//
+// - `OPEN` (page to control): payload is the daemon's id;
+// - `OPENED` (control to page): the daemon's stream is up;
+// - `DATA` (both ways): one Noise message;
+// - `CLOSE` (both ways): the channel is over; from control, payload is why.
+//
+// Control routes and counts, as for `/api/relay/c/<id>`, and can't read
+// what crosses.
+
+const M_OPEN: u8 = 1;
+const M_DATA: u8 = 2;
+const M_CLOSE: u8 = 3;
+const M_OPENED: u8 = 4;
+/// Channels one page may hold at once.
+const MAX_CHANNELS: usize = 64;
+
+fn mframe(kind: u8, chan: u32, payload: &[u8]) -> Vec<u8> {
+    let mut f = Vec::with_capacity(5 + payload.len());
+    f.push(kind);
+    f.extend_from_slice(&chan.to_be_bytes());
+    f.extend_from_slice(payload);
+    f
+}
+
+pub async fn many(State(app): State<Arc<App>>, s: Session, up: WebSocketUpgrade) -> Response {
+    up.max_message_size(MAX_WIRE + 5).on_upgrade(move |ws| many_socket(app, s.account, ws))
+}
+
+async fn many_socket(app: Arc<App>, account: String, ws: WebSocket) {
+    let (mut wtx, mut wrx) = ws.split();
+    let (out_tx, mut out) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+    let mut chans: HashMap<u32, tokio::sync::mpsc::Sender<Vec<u8>>> = HashMap::new();
+    let (done_tx, mut done) = tokio::sync::mpsc::unbounded_channel::<u32>();
+    let mut ping = tokio::time::interval(CLIENT_PING);
+    ping.tick().await;
+    loop {
+        tokio::select! {
+            m = wrx.next() => {
+                let b = match m {
+                    Some(Ok(Message::Binary(b))) => b,
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(_)) => continue,
+                };
+                if b.len() < 5 {
+                    break;
+                }
+                let chan = u32::from_be_bytes(b[1..5].try_into().unwrap());
+                let payload = &b[5..];
+                match b[0] {
+                    M_OPEN if !chans.contains_key(&chan) => {
+                        if chans.len() >= MAX_CHANNELS {
+                            let _ = out_tx.send(mframe(M_CLOSE, chan, b"too many channels on one socket")).await;
+                            continue;
+                        }
+                        let id = String::from_utf8_lossy(payload).into_owned();
+                        let (tx, rx) = tokio::sync::mpsc::channel(64);
+                        chans.insert(chan, tx);
+                        let (app, account, out, done) = (app.clone(), account.clone(), out_tx.clone(), done_tx.clone());
+                        tokio::spawn(async move {
+                            channel(app, account, id, chan, rx, out.clone()).await;
+                            let _ = done.send(chan);
+                        });
+                    }
+                    M_DATA => {
+                        if let Some(tx) = chans.get(&chan) {
+                            // A full channel (a daemon not reading) holds up
+                            // only this socket's reading, briefly; drop the
+                            // channel rather than everyone.
+                            if tx.try_send(payload.to_vec()).is_err() {
+                                chans.remove(&chan);
+                                let _ = out_tx.send(mframe(M_CLOSE, chan, b"the daemon isn't keeping up")).await;
+                            }
+                        }
+                    }
+                    M_CLOSE => {
+                        chans.remove(&chan);
+                    }
+                    _ => {}
+                }
+            }
+            f = out.recv() => match f {
+                Some(f) => if wtx.send(Message::Binary(f.into())).await.is_err() { break },
+                None => break,
+            },
+            Some(chan) = done.recv() => {
+                if chans.remove(&chan).is_some() {
+                    let _ = wtx.send(Message::Binary(mframe(M_CLOSE, chan, b"").into())).await;
+                }
+            }
+            _ = ping.tick() => if wtx.send(Message::Ping(Default::default())).await.is_err() { break },
+        }
+    }
+    // Dropping the senders ends every channel.
+}
+
+/// One daemon's channel inside a page's socket: its relay stream, framed as
+/// `/api/relay/c/<id>` frames it.
+async fn channel(
+    app: Arc<App>,
+    account: String,
+    id: String,
+    chan: u32,
+    mut from_page: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    out: tokio::sync::mpsc::Sender<Vec<u8>>,
+) {
+    let refuse = |why: &str| mframe(M_CLOSE, chan, why.as_bytes());
+    match crate::teams::may_reach(&app, &account, &id) {
+        Ok(true) => {}
+        _ => return drop(out.send(refuse("no such daemon")).await),
+    }
+    // Hosted sandboxes are reached through their provider, one socket each.
+    if app.hosted.is_some() && matches!(app.db.sandbox_of_daemon(&id), Ok(Some(_))) {
+        return drop(out.send(refuse("a hosted sandbox: use /api/relay/c")).await);
+    }
+    let slow = crate::billing::relay_standing(&app, &account).is_ok_and(|(_, _, slow)| slow);
+    let Some(stream) = app.relay.mux(&id).and_then(|m| m.open().ok()) else {
+        return drop(out.send(refuse("that daemon isn't connected to the relay")).await);
+    };
+    if out.send(mframe(M_OPENED, chan, b"")).await.is_err() {
+        return;
+    }
+    let (mut rd, mut wr) = tokio::io::split(stream);
+    let (sent, got) = (AtomicU64::new(0), AtomicU64::new(0));
+    let up = async {
+        while let Some(b) = from_page.recv().await {
+            sent.fetch_add(b.len() as u64, Ordering::Relaxed);
+            let mut f = Vec::with_capacity(4 + b.len());
+            f.extend_from_slice(&(b.len() as u32).to_be_bytes());
+            f.extend_from_slice(&b);
+            if wr.write_all(&f).await.is_err() {
+                break;
+            }
+        }
+        let _ = wr.shutdown().await;
+    };
+    let down = async {
+        let mut len = [0u8; 4];
+        while rd.read_exact(&mut len).await.is_ok() {
+            let l = u32::from_be_bytes(len) as usize;
+            if l > MAX_WIRE {
+                break;
+            }
+            let mut b = vec![0u8; l];
+            if rd.read_exact(&mut b).await.is_err() {
+                break;
+            }
+            got.fetch_add(l as u64, Ordering::Relaxed);
+            if slow {
+                tokio::time::sleep(Duration::from_micros(l as u64 * 1_000_000 / 65_536)).await;
+            }
+            if out.send(mframe(M_DATA, chan, &b)).await.is_err() {
+                break;
+            }
+        }
+    };
+    // Either side ending ends the channel.
+    tokio::select! {
+        _ = up => {},
+        _ = down => {},
+    }
+    let bytes = sent.load(Ordering::Relaxed) + got.load(Ordering::Relaxed);
+    let _ = app.db.add_relay_bytes(&account, &crate::day(now_ms()), bytes);
+}
