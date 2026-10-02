@@ -134,6 +134,9 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
   and phone).
+- `vendor/libghostty-vt-sys`: libghostty-rs's sys crate, vendored (the root
+  `Cargo.toml` patches it in) so the build can apply `patches/*.patch` to
+  Ghostty after checkout (M9: no Zig signal stack in every thread).
 - `spikes`: S1–S3 write-ups and code.
 
 ## Things M0–M4c taught us
@@ -147,6 +150,12 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
 - **libghostty in a debug build is ~3000x slower** (0.2 MB/s). `.cargo/config.toml`
   builds it as Zig ReleaseSafe in every profile: 175–580 MB/s, with safety
   checks kept, since it parses untrusted program output.
+- **A library's thread-locals are every thread's** (M9). Zig's 256 KiB
+  threadlocal signal stack went into the daemon's static TLS, and glibc
+  gave every thread a zeroed copy: 1.3 MB per pane. Check `readelf -S`
+  for `.tbss` after a libghostty upgrade. glibc also kept about half a busy
+  daemon's peak after panes closed, until `heap.rs` fixed the mmap
+  threshold. `crates/daemon/tests/memory.rs` guards both.
 - **Offsets need an epoch.** A reconnecting client's offset is only valid for
   the stream it came from; the pane's epoch changes when the daemon restarts.
 - **Size travels in order with output.** A client must resize before drawing
@@ -185,6 +194,10 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   program's pid, start time and exit status; the daemon watches through a
   `pidfd` (which works for non-children) and checks the start time before
   adopting, so a reused pid is never mistaken for the pane's program.
+- **A pane closed as it starts can't leave its program behind.** The shim
+  records the pid only after the exec, and it owns the SIGKILL that follows
+  a close's hangup, so it happens even if the daemon is gone. Test daemons
+  also kill whatever their state dir records as running before deleting it.
 - **DECSTR doesn't reset input modes.** A pane restored after its program
   died kept that program's mouse and focus reporting, so clicking sent stray
   `ESC [ O` to the new shell. The restore marker now turns them off.

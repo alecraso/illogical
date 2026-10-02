@@ -7,7 +7,8 @@
 //!   (`agent-N-in`, `agent-N-out`), so a daemon restart never closes them:
 //!   `claude-agent-acp` aborts its turn on stdin EOF (S7). The reader peeks
 //!   at the socket and only takes whole lines, after they're logged, so a
-//!   restart neither loses nor splits a frame. Its stderr goes to
+//!   restart neither loses nor splits a frame (one longer than the socket's
+//!   1 MiB buffer is the exception: see `read_lines`). Its stderr goes to
 //!   `agent.err` in the block's directory.
 //! - **In a VM** it runs as a non-TTY exec session on the block's sprite.
 //!   The session outlives the WebSocket (`max_run_after_disconnect`), so a
@@ -29,7 +30,7 @@ use std::{
 };
 
 use illogical_proto::PaneId;
-use nix::sys::socket::{MsgFlags, recv};
+use nix::sys::socket::{MsgFlags, recv, setsockopt, sockopt};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -125,6 +126,9 @@ fn pipe_cloexec() -> nix::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
 pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
     let (in_r, in_w) = pipe_cloexec()?;
     let (ours, theirs) = UnixStream::pair()?;
+    // Best effort: the kernel may cap it, and read_lines copes with less.
+    let _ = setsockopt(&theirs, sockopt::SndBuf, &OUT_BUF);
+    let _ = setsockopt(&ours, sockopt::RcvBuf, &OUT_BUF);
     let record = record_path(s.dir);
     let _ = std::fs::remove_file(&record);
     let err = OpenOptions::new().create(true).append(true).mode(0o600).open(s.dir.join("agent.err"))?;
@@ -243,10 +247,21 @@ fn run_local(id: PaneId, dir: PathBuf, in_w: OwnedFd, out: OwnedFd, pid: u32, fd
     }
 }
 
+/// The agent's stdout socket's buffer: room for a whole line, so lines are
+/// peeked whole (macOS's default is 8 KiB, Linux's about 200).
+const OUT_BUF: usize = 1 << 20;
+
 /// Whole lines from the socket, each handed to `sink` before it's taken
 /// off. Returns why it stopped.
+///
+/// A line longer than the socket's buffer can't be peeked whole: the
+/// buffer fills and the agent's write waits for us. So when a partial line
+/// stops growing, it's taken off and kept here until its end comes (a
+/// restart in the middle of such a line loses it).
 fn read_lines(sock: &OwnedFd, sink: &Sink) -> String {
     let mut buf = vec![0u8; 64 * 1024];
+    let mut carry: Vec<u8> = vec![];
+    let mut stalled = 0;
     loop {
         let n = match recv(sock.as_raw_fd(), &mut buf, MsgFlags::MSG_PEEK) {
             Ok(0) => return "closed its output".into(),
@@ -258,29 +273,52 @@ fn read_lines(sock: &OwnedFd, sink: &Sink) -> String {
             if n == buf.len() {
                 // A line longer than the buffer: look further.
                 buf.resize(buf.len() * 2, 0);
+            } else if n == stalled {
+                // Part of a line, and no more is coming until we take it.
+                carry.extend_from_slice(&buf[..n]);
+                if let Err(why) = take(sock, n) {
+                    return why;
+                }
+                stalled = 0;
             } else {
                 // Part of a line: wait for the rest.
+                stalled = n;
                 std::thread::sleep(Duration::from_millis(5));
             }
             continue;
         };
-        for line in buf[..last].split(|b| *b == b'\n') {
+        stalled = 0;
+        for (i, line) in buf[..last].split(|b| *b == b'\n').enumerate() {
+            let line = if i == 0 && !carry.is_empty() {
+                carry.extend_from_slice(line);
+                std::mem::take(&mut carry)
+            } else {
+                line.to_vec()
+            };
             if !line.iter().all(u8::is_ascii_whitespace) {
-                sink(FromAgent::Line(line.to_vec()));
+                sink(FromAgent::Line(line));
             }
         }
         // Now take them.
-        let mut left = last + 1;
-        let mut scratch = vec![0u8; left];
-        while left > 0 {
-            match recv(sock.as_raw_fd(), &mut scratch[..left], MsgFlags::empty()) {
-                Ok(0) => return "closed its output".into(),
-                Ok(k) => left -= k,
-                Err(nix::errno::Errno::EINTR) => {}
-                Err(e) => return format!("read failed: {e}"),
-            }
+        if let Err(why) = take(sock, last + 1) {
+            return why;
         }
     }
+}
+
+/// Take `n` bytes off the socket that a peek has already seen.
+fn take(sock: &OwnedFd, n: usize) -> Result<(), String> {
+    let mut left = n;
+    let mut scratch = vec![0u8; left];
+    while left > 0 {
+        match recv(sock.as_raw_fd(), &mut scratch[..left], MsgFlags::empty()) {
+            Ok(0) => return Err("closed its output".into()),
+            Ok(k) => left -= k,
+            Err(nix::errno::Errno::EINTR) => {}
+            Err(e) => return Err(format!("read failed: {e}")),
+        }
+    }
+    Ok(())
 }
 
 /// Runs first in the VM, under `bash -c`: installs Node and the adapter
@@ -521,4 +559,32 @@ fn last_words(dir: &Path) -> Option<String> {
     });
     let line = line.or_else(|| tail.lines().map(str::trim).rfind(|l| !l.is_empty()))?;
     Some(line.chars().take(240).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{io::Write, os::unix::net::UnixStream, sync::Mutex};
+
+    use super::*;
+
+    #[test]
+    fn a_line_longer_than_the_socket_buffer_comes_through_whole() {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let _ = setsockopt(&theirs, sockopt::SndBuf, &4096);
+        let _ = setsockopt(&ours, sockopt::RcvBuf, &4096);
+        let big = "x".repeat(300_000);
+        let lines = Arc::new(Mutex::new(vec![]));
+        let got = lines.clone();
+        let sink: Sink = Arc::new(move |f| {
+            if let FromAgent::Line(l) = f {
+                got.lock().unwrap().push(String::from_utf8(l).unwrap());
+            }
+        });
+        let text = format!("first\n{big}\nlast\n");
+        let writer = std::thread::spawn(move || theirs.write_all(text.as_bytes()).unwrap());
+        let reader = std::thread::spawn(move || read_lines(&OwnedFd::from(ours), &sink));
+        writer.join().unwrap();
+        assert_eq!(reader.join().unwrap(), "closed its output");
+        assert_eq!(*lines.lock().unwrap(), ["first".to_owned(), big, "last".to_owned()]);
+    }
 }

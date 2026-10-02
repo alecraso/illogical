@@ -6,6 +6,8 @@
 //! answers from after the sandbox is gone. Both daemons are real binaries on
 //! loopback; nothing ever connects to the sandbox's own port.
 
+mod strays;
+
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -35,6 +37,7 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }

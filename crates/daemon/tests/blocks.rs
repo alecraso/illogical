@@ -2,6 +2,8 @@
 //! block on ordinary pages): open, describe, call, capture, restore after a
 //! restart, close.
 
+mod strays;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -25,6 +27,7 @@ impl Drop for Daemon {
             let _ = c.kill();
             let _ = c.wait();
         }
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }

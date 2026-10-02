@@ -45,7 +45,7 @@ use tracing::{info, warn};
 use crate::{
     hosts::digest,
     mux::Api,
-    pane::{CLIENT_QUEUE, Subscriber, ToClient},
+    pane::{Subscriber, ToClient, client_queue},
     server::App,
     store::{now_ms, write_atomic},
 };
@@ -280,7 +280,7 @@ async fn view(
     mut socket: WebSocket,
 ) {
     let client = NEXT_VIEWER.fetch_add(1, Ordering::Relaxed);
-    let (data, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
+    let (data, mut data_rx) = client_queue();
     let (ctrl, mut ctrl_rx) = mpsc::unbounded_channel();
     // Watches one pane only; never sends the mux anything.
     let sub = Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner, name: None };

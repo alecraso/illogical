@@ -597,3 +597,17 @@ fn an_alt_screen_snapshot_mid_sequence_leaves_the_stream_alone() {
         }
     }
 }
+
+/// The in-memory scrollback stops at its byte budget (M9: 16 MiB, about
+/// 9.6k rows at 200 columns), well short of the lines written.
+#[test]
+fn scrollback_is_capped() {
+    let mut e = GhosttyEngine::new(200, 50);
+    let line = format!("{}\r\n", "x".repeat(199));
+    let chunk = line.repeat(1000);
+    for _ in 0..40 {
+        e.feed(chunk.as_bytes());
+    }
+    let kept = e.terminal().scrollback_rows().unwrap();
+    assert!((5_000..15_000).contains(&kept), "kept {kept} rows of 40,000");
+}

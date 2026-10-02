@@ -137,7 +137,9 @@ async fn tools_through_the_stdio_bridge() {
     let info = d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == pane).cloned().unwrap();
     assert_eq!(info["started_by"]["by"], "mcp:claude-code", "{info}");
     let failed = call(&s, "run", json!({ "command": "ls /nonexistent-m16", "cwd": dir, "wait": true })).await;
-    assert_eq!(failed["exit"], 2, "{failed}");
+    // GNU ls exits 2 for a missing path, BSD ls (macOS) 1.
+    let ls = Command::new("ls").arg("/nonexistent-m16").output().unwrap().status.code();
+    assert_eq!(failed["exit"].as_i64(), ls.map(i64::from), "{failed}");
     let h = call(&s, "history", json!({ "failed": true, "cwd": dir })).await;
     let cmds = h["commands"].as_array().unwrap();
     assert_eq!(cmds.len(), 1, "{h}");
@@ -390,15 +392,16 @@ fn an_agent_block_works_in_its_own_tab() {
         .collect::<String>();
     assert!(log.contains("<redacted>") && !log.contains(token), "the token stays out of the log");
 
-    // Its project's dev server, in a pane beside it...
+    // Its project's dev server, in a pane beside it... `python3 -m
+    // http.server`'s, without its HTTPServer, which looks up 127.0.0.1's
+    // name before it serves (35s on a Mac whose DNS doesn't answer that).
     let port = free_port();
-    let r = agent_mcp(
-        &d,
-        a,
-        "run",
-        json!({ "command": format!("python3 -m http.server {port} --bind 127.0.0.1"), "cwd": d.sessions }),
-    )
-    .unwrap();
+    let serve = format!(
+        "python3 -c 'import http.server as h, socketserver as s; \
+         v = s.TCPServer((\"127.0.0.1\", {port}), h.SimpleHTTPRequestHandler); \
+         print(\"Serving HTTP\", flush=True); v.serve_forever()'"
+    );
+    let r = agent_mcp(&d, a, "run", json!({ "command": serve, "cwd": d.sessions })).unwrap();
     let server = r["pane"].as_u64().unwrap();
     assert_eq!(tab_of(&d, server), tab_of(&d, a), "in its own tab");
     let m =

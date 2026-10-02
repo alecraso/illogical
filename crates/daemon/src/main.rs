@@ -12,6 +12,7 @@ mod control;
 mod dial;
 mod e2e;
 mod fs;
+mod heap;
 mod history;
 mod holder;
 mod hosts;
@@ -549,6 +550,7 @@ fn main() -> anyhow::Result<()> {
             tokio::runtime::Runtime::new()?.block_on(control::leave(&state_dir.unwrap_or_else(default_state_dir)))
         }
         None => {
+            heap::tune();
             // Pane terminals kept for us across a restart; taken before any
             // threads start.
             let kept = sys::take_listen_fds();
