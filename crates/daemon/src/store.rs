@@ -77,6 +77,9 @@ pub struct PaneMeta {
     /// Never shown to anyone but the owner (M14).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub private: bool,
+    /// Started through MCP (M16): by which client, for which agent block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_by: Option<illogical_proto::StartedBy>,
 }
 
 fn is_terminal(k: &BlockType) -> bool {

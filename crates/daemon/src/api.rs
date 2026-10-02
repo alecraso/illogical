@@ -1079,6 +1079,28 @@ async fn wait_for(app: &App, id: PaneId, p: PaneHandle, q: &WaitQuery) -> Res<Wa
     }
 }
 
+/// `wait` for MCP (M16): the same waits, with no limit of their own (the
+/// caller has one) and the error as a sentence.
+pub(crate) async fn wait_until(app: &App, id: PaneId, until: &str, re: Option<String>) -> Result<WaitResult, String> {
+    if until == "idle" || until == "needs-input" {
+        return wait_attention(app, id, until == "needs-input").await.map_err(|e| e.1);
+    }
+    let p = pane(app, id).await.map_err(|e| e.1)?;
+    let q = WaitQuery { until: until.to_owned(), re, timeout: None };
+    wait_for(app, id, p, &q).await.map_err(|e| e.1)
+}
+
+/// Allow, deny, answer or skip what a pane asks, as `by` (MCP's
+/// `agent_respond`, M16).
+pub(crate) async fn act_as(
+    app: &App,
+    pane: PaneId,
+    req: &illogical_proto::api::ActRequest,
+    by: Driver,
+) -> Result<(), String> {
+    act_one(app, pane, req, Some(by)).await
+}
+
 async fn export(State(app): AppState, Path(id): Path<PaneId>) -> Res<Response> {
     let dir = app
         .mux

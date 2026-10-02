@@ -101,6 +101,8 @@ pub struct BlockEnv {
     pub env: Vec<(String, String)>,
     pub home: PathBuf,
     pub secrets: Secrets,
+    /// How an agent reaches the daemon's MCP server (M16).
+    pub mcp: Option<crate::mcp::Link>,
 }
 
 /// What a block gets from the daemon.
@@ -126,6 +128,7 @@ pub struct BlockCtx {
     /// you use.
     pub kept: Arc<Mutex<HashMap<String, OwnedFd>>>,
     pub secrets: Secrets,
+    pub mcp: Option<crate::mcp::Link>,
 }
 
 impl BlockCtx {
@@ -152,6 +155,7 @@ impl BlockCtx {
             home: base.home,
             kept: Arc::new(Mutex::new(kept)),
             secrets: base.secrets,
+            mcp: base.mcp,
         }
     }
 

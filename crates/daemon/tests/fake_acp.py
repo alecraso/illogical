@@ -21,6 +21,9 @@ Prompts:
   signin         an MCP server's sign-in link; elicitation/complete follows
                  the accept
   codex ask      Codex's plan-mode question form
+  mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
+                 one, as illogical passes local agents, M16) with JSON as its
+                 arguments, and says "MCP " and the result as JSON
 
 Only clients that declare elicitation {form: {}, url: {}} get questions; the
 others get "I don't have access to an AskUserQuestion tool" (S13).
@@ -31,6 +34,8 @@ import os
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 
 DIR = os.environ.get("FAKE_ACP_DIR", "/tmp/fake-acp")
 os.makedirs(DIR, exist_ok=True)
@@ -209,6 +214,50 @@ def ask_user(sid, s, n, questions, msg):
     return "end_turn"
 
 
+def mcp_call(servers, tool, args):
+    """A tool call over Streamable HTTP, as an MCP client: initialize (a
+    2025-06-18 session), then tools/call; answers come as SSE."""
+    srv = next((x for x in servers or [] if x.get("name") == "illogical" and x.get("type") == "http"), None)
+    if srv is None:
+        return {"error": "no illogical http server in this session"}
+    base = {h["name"]: h["value"] for h in srv.get("headers", [])}
+    base.update({"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+
+    def post(body, session=None):
+        h = dict(base)
+        if session:
+            h.update({"Mcp-Session-Id": session, "MCP-Protocol-Version": "2025-06-18"})
+        req = urllib.request.Request(srv["url"], data=json.dumps(body).encode(), headers=h, method="POST")
+        try:
+            r = urllib.request.urlopen(req, timeout=120)
+        except urllib.error.HTTPError as e:
+            return e.code, None, e.read().decode()
+        text = r.read().decode()
+        msgs = []
+        if r.headers.get("Content-Type", "").startswith("text/event-stream"):
+            for block in text.split("\n\n"):
+                data = "".join(x[5:].lstrip() for x in block.split("\n") if x.startswith("data:"))
+                if data:
+                    msgs.append(json.loads(data))
+        elif text:
+            msgs.append(json.loads(text))
+        return r.status, r.headers.get("Mcp-Session-Id"), msgs
+
+    status, sid, msgs = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "fake-agent", "version": "1"}}})
+    if status != 200:
+        return {"error": f"HTTP {status}: {msgs}"}
+    post({"jsonrpc": "2.0", "method": "notifications/initialized"}, sid)
+    status, _, msgs = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                            "params": {"name": tool, "arguments": args}}, sid)
+    if status != 200:
+        return {"error": f"HTTP {status}: {msgs}"}
+    for m in msgs:
+        if m.get("id") == 2:
+            return m.get("result") or m.get("error")
+    return {"error": "no answer"}
+
+
 def prompt(mid, p):
     sid = p["sessionId"]
     s = load(sid)
@@ -301,6 +350,10 @@ def prompt(mid, p):
             stop = "cancelled"
         else:
             msg(f"Codex got: {json.dumps(answer, sort_keys=True)}")
+    elif text.startswith("mcp "):
+        _, tool, *rest = text.split(" ", 2)
+        args = json.loads(rest[0]) if rest else {}
+        msg("MCP " + json.dumps(mcp_call(s.get("mcp"), tool, args)))
     elif text == "crash":
         msg("bye")
         os._exit(3)
@@ -324,17 +377,22 @@ def handle(m):
     if method == "initialize":
         caps.update(p.get("clientCapabilities") or {})
         send({"id": mid, "result": {"protocolVersion": 1, "agentCapabilities": {
-            "loadSession": True, "sessionCapabilities": {"resume": {}}},
+            "loadSession": True, "sessionCapabilities": {"resume": {}},
+            "mcpCapabilities": {"http": True}},
             "agentInfo": {"name": "fake-acp", "version": "1"}, "authMethods": []}})
     elif method == "session/new":
         sid = f"fake-{os.getpid()}-{int(time.time() * 1000)}"
-        save(sid, {"updates": [], "cwd": p.get("cwd")})
+        save(sid, {"updates": [], "cwd": p.get("cwd"), "mcp": p.get("mcpServers")})
+        with open(os.path.join(DIR, f"mcp-{sid}.json"), "w") as f:
+            json.dump(p.get("mcpServers"), f)
         send({"id": mid, "result": {"sessionId": sid}})
     elif method in ("session/load", "session/resume"):
         s = load(p.get("sessionId", ""))
         if s is None:
             send({"id": mid, "error": {"code": -32002, "message": "no such session"}})
             return
+        s["mcp"] = p.get("mcpServers")
+        save(p["sessionId"], s)
         if method == "session/load":
             for u in s["updates"]:
                 send({"method": "session/update", "params": {"sessionId": p["sessionId"], "update": u}})

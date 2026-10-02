@@ -58,6 +58,8 @@ pub struct App {
     pub control: Arc<crate::control::Control>,
     /// Who else may reach which sessions (M12).
     pub acl: Arc<crate::acl::Acl>,
+    /// MCP's tokens (M16).
+    pub mcp: Arc<crate::mcp::Tokens>,
     next_client: AtomicU64,
 }
 
@@ -74,6 +76,7 @@ impl App {
         binaries: Option<crate::resident::Binaries>,
         control: Arc<crate::control::Control>,
         acl: Arc<crate::acl::Acl>,
+        mcp: Arc<crate::mcp::Tokens>,
     ) -> Arc<Self> {
         Arc::new(Self {
             access,
@@ -87,6 +90,7 @@ impl App {
             binaries,
             control,
             acl,
+            mcp,
             next_client: AtomicU64::new(1),
         })
     }
@@ -96,9 +100,10 @@ impl App {
     }
 }
 
-/// What a daemon serves to its owner: its own API.
-fn own_routes() -> Router<Arc<App>> {
+/// What a daemon serves to its owner: its own API, and MCP (M16).
+fn own_routes(app: &Arc<App>) -> Router<Arc<App>> {
     crate::api::routes()
+        .merge(crate::mcp::routes(app))
         .merge(crate::fs::routes())
         .merge(crate::hosts::routes())
         .merge(crate::share::api_routes())
@@ -108,8 +113,8 @@ fn own_routes() -> Router<Arc<App>> {
 /// Plus what makes it a home daemon: hosts dialing in and pushing history,
 /// the way through to dial-out hosts (`/h/NAME`), its provider's sandboxes,
 /// and the provider tunnel to resident daemons in them (`/tunnel/NAME`).
-fn api_routes() -> Router<Arc<App>> {
-    own_routes()
+fn api_routes(app: &Arc<App>) -> Router<Arc<App>> {
+    own_routes(app)
         .merge(crate::dial::routes())
         .merge(crate::sync::routes())
         .merge(crate::resident::routes())
@@ -125,7 +130,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/ws", get(ws))
         .route(crate::e2e::PATH, get(crate::e2e::ws))
         .merge(
-            api_routes()
+            api_routes(&app)
                 .layer(middleware::from_fn_with_state(app.clone(), crate::authz::check))
                 .layer(middleware::from_fn_with_state(app.clone(), api_origin)),
         )
@@ -139,20 +144,20 @@ pub fn router(app: Arc<App>) -> Router {
 /// Over the Unix socket (the CLI, programs in panes): the socket lives in
 /// the user's private state directory, so reaching it is the check.
 pub fn local_router(app: Arc<App>) -> Router {
-    Router::new().route("/ws", get(local_ws)).merge(api_routes()).with_state(app)
+    Router::new().route("/ws", get(local_ws)).merge(api_routes(&app)).with_state(app)
 }
 
 /// Over the tunnel to the home daemon (a dial-out host): the home daemon
 /// checked who is asking. Our own WebSocket and API only: nothing that
 /// would make this host a way to anywhere else (no `/h/`, no dialing in).
 pub fn tunnel_router(app: Arc<App>) -> Router {
-    Router::new().route("/ws", get(local_ws)).merge(own_routes()).with_state(app)
+    Router::new().route("/ws", get(local_ws)).merge(own_routes(&app)).with_state(app)
 }
 
 /// Inside an end-to-end channel (`e2e.rs`): the device was checked by the
 /// handshake. The daemon's own API only, as over the tunnel.
 pub fn channel_router(app: Arc<App>) -> Router {
-    own_routes().layer(middleware::from_fn_with_state(app.clone(), crate::authz::check)).with_state(app)
+    own_routes(&app).layer(middleware::from_fn_with_state(app.clone(), crate::authz::check)).with_state(app)
 }
 
 /// An embedded web client file.
@@ -222,6 +227,11 @@ async fn guard(
         }
         Class::Viewer => app.access.check_viewer(req.headers(), &peer),
         Class::Token => Ok(()),
+        // From this machine or the tailnet; the MCP layer checks the token.
+        Class::McpToken if matches!(peer, crate::access::Peer::Other) => {
+            Err((StatusCode::FORBIDDEN, "not from this machine or the tailnet".into()))
+        }
+        Class::McpToken => Ok(()),
     });
     let mut res = match checked {
         Ok(()) => next.run(req).await,
@@ -251,6 +261,9 @@ enum Class {
     /// Joining is how a tagged sandbox node adds itself; dialing in and
     /// pushing history are how a dial-out host reaches us.
     Token,
+    /// MCP with a bearer token (M16): an MCP client without a tailnet
+    /// identity of its own, or an agent block's.
+    McpToken,
 }
 
 /// Exactly `/share/<token>`, `/share/<token>/ws`, `/assets/<file>` or the
@@ -274,6 +287,8 @@ fn class(req: &Request) -> Class {
         || path.starts_with(crate::sync::PUSH_PREFIX)
     {
         Class::Token
+    } else if path == crate::mcp::PATH && req.headers().get(header::AUTHORIZATION).is_some() {
+        Class::McpToken
     } else if m == Method::GET && viewer_path(path) {
         Class::Viewer
     } else {
