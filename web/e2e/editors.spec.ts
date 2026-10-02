@@ -6,14 +6,16 @@
 // the extension reports the file and the cursor; the swarm shows the block
 // as an editor and opens one from a tile; the block survives a daemon
 // restart (and a "reboot", server and all) with the file still open; and a
-// viewer can't open one.
+// viewer can't open one. The app (127.0.0.1) and the blocks (*.localhost)
+// are different sites, and one test runs in a browser that blocks
+// third-party cookies, and so the block's storage (#69).
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { devices, expect, test, type FrameLocator, type Page } from "@playwright/test";
+import { chromium, devices, expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { menu, paneEl, panes, ready, reset, run } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { ANY, blockPort, daemonPort } from "./ports";
@@ -190,6 +192,35 @@ test("from a phone-sized page, a file opens in under 3 s once warm", async ({ br
   console.log(`phone-sized: ${AUTH} shown ${ms} ms after opening`);
   expect(ms).toBeLessThan(3000);
   await ctx.close();
+});
+
+test("from another site, in a browser that blocks third-party cookies: the file at its line (#69)", async () => {
+  // Chrome's "Block third-party cookies" refuses a cross-site frame its
+  // storage too: localStorage throws, and VS Code's workbench used to stop
+  // there, blank.
+  const profile = join(dir, "chrome-3pc-blocked");
+  mkdirSync(join(profile, "Default"), { recursive: true });
+  writeFileSync(join(profile, "Default/Preferences"), JSON.stringify({ profile: { cookie_controls_mode: 1, block_third_party_cookies: true } }));
+  const ctx = await chromium.launchPersistentContext(profile, { channel: "chrome", baseURL: APP, viewport: { width: 1000, height: 640 } });
+  try {
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
+    await page.goto("/");
+    await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+    const nav = page.waitForRequest((r) => r.isNavigationRequest() && r.frame() !== page.mainFrame() && r.url().includes("workspace="));
+    const block = JSON.parse((await cli("edit", `${AUTH}:20`)).stdout).block as PaneId;
+    await expect.poll(() => page.evaluate((b) => !!window.__illogical.client.info(b), block)).toBe(true);
+    await page.evaluate((b) => window.__illogical.client.setActive(b), block);
+    // A cross-site frame, refused its storage.
+    const h = await (await nav).allHeaders();
+    expect(h["sec-fetch-site"]).toBe("cross-site");
+    expect(h["sec-fetch-storage-access"]).toBe("none");
+    const f = frame(page, block);
+    await expect(shown(f, "Redirect")).toBeVisible({ timeout: 30_000 });
+    await expect(f.locator(".tab.active", { hasText: "auth.rs" })).toBeVisible();
+    await expect.poll(async () => (await blockState(page, block))?.line).toBe(20);
+  } finally {
+    await ctx.close();
+  }
 });
 
 test("in the swarm: an editor tile with its file, and Open in editor from a tile", async ({ page }) => {
