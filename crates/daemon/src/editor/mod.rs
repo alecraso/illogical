@@ -151,8 +151,10 @@ impl Editor {
                     e.reported(r);
                 }
             });
-            site.set_target(Target::Service(server.clone() as Arc<dyn Service>));
+            // The script before the target: a page served in between would
+            // come without it (#69).
             site.set_head_script(STORAGE_JS);
+            site.set_target(Target::Service(server.clone() as Arc<dyn Service>));
             Editor {
                 state: Mutex::new(State { machine: ctx.sprite.clone(), ..State::default() }),
                 path: Mutex::new(None),

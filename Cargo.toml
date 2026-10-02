@@ -9,7 +9,7 @@ exclude = ["vendor/libghostty-vt-sys"]
 libghostty-vt-sys = { path = "vendor/libghostty-vt-sys" }
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://git.inevitable.fyi/jhgaylor/illogical"
