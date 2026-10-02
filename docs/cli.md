@@ -23,7 +23,7 @@ illogical run --vm-tab                        # a tab whose panes share a new VM
 illogical machines                            # VMs, their owner (@tab or %pane) and state
 illogical open example.com                    # a browser block (--split %3 beside a pane)
 illogical open --split right :5173/about      # a port, beside this pane, on its VM tab's machine
-illogical open --host m2 :3000                # a port on machine m2 (--host local: this host)
+illogical open --machine m2 :3000             # a port on machine m2 (--machine local: this host)
 illogical edit src/main.rs:42                 # VS Code on this file's project, at line 42 (no path: here)
 illogical edit --machine m2 ~/app             # on machine m2 (--split right beside this pane)
 illogical diff                                # what changed here (a diff block; prints it, then the files)
@@ -38,7 +38,8 @@ illogical ide --diffs "Visual Studio Code"    # send Claude Code's diffs to that
 illogical describe %4                         # any block: type, place, state
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
-                                              #   --acp CMD, --vm, --model haiku, --cwd d, --wait)
+                                              #   --acp CMD, --vm, --machine m3, --model haiku,
+                                              #   --cwd d, --wait)
 illogical wait %5 --needs-input               # it asks to run something…
 illogical call %5 approve                     # …or '{"option":"always"}'; deny '{"reason":"…"}'; cancel
 illogical call %5 send '{"text":"and then?"}' # the next message (queued while it works)
@@ -82,7 +83,8 @@ illogical mcp token --list                    # tokens, and when each was last u
 illogical mcp token --revoke laptop           # cut it off at its next call
 ```
 
-`--json` prints the API's JSON. `send` then `wait` only sees what happened
+`--json` prints the API's JSON. `--host`, anywhere on the line, is another
+daemon; a machine (a VM) is `--machine mN`. `send` then `wait` only sees what happened
 after the send. The same calls are an HTTP API (`/api/...`, documented in
 `crates/proto/src/api.rs`) on the Unix socket and, behind the usual access
 checks, over the tailnet.

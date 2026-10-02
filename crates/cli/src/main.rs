@@ -41,6 +41,11 @@ struct Cli {
     cmd: Command,
 }
 
+/// `mN`, `N` or `local`: a machine, not a daemon's name.
+fn looks_like_machine(s: &str) -> bool {
+    s == "local" || s.trim_start_matches('m').parse::<u32>().is_ok()
+}
+
 /// Panes are `%N` or `N`; commands default to the pane they run in
 /// ($ILLOGICAL_PANE).
 #[derive(Clone, Debug)]
@@ -131,9 +136,9 @@ enum Command {
         split: Option<String>,
         /// The machine whose port it is: `mN` (see `illogical machines`), or
         /// `local` for this host [default: the VM tab's, when splitting
-        /// there; else this host].
+        /// there; else this host]. (`--host` is another daemon.)
         #[arg(long)]
-        host: Option<String>,
+        machine: Option<String>,
         #[arg(long)]
         session: Option<String>,
     },
@@ -231,11 +236,12 @@ enum Command {
         #[arg(long = "mcp", value_name = "NAME=COMMAND")]
         mcp: Vec<String>,
         /// On a new throwaway VM of its own.
-        #[arg(long, conflicts_with = "host")]
+        #[arg(long, conflicts_with = "machine")]
         vm: bool,
-        /// On this existing machine (`m3` or `3`).
+        /// On this existing machine (`m3` or `3`). (`--host` is another
+        /// daemon.)
         #[arg(long)]
-        host: Option<String>,
+        machine: Option<String>,
         /// Where it works [default: here, or the VM's home].
         #[arg(long)]
         cwd: Option<String>,
@@ -759,6 +765,14 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             eprintln!("illogical: {e:#}; reading what it synced here instead");
             (http::Target::Socket(socket(&cli)), cli.host.clone())
         }
+        // `open --host m2` meant a machine: the flag is `--machine` (#61).
+        Err(e)
+            if cli.host.as_deref().is_some_and(looks_like_machine)
+                && matches!(cli.cmd, Command::Open { .. } | Command::Edit { .. } | Command::Agent { .. }) =>
+        {
+            let m = cli.host.as_deref().unwrap_or_default();
+            return Err(e.context(format!("--host is another daemon; for machine {m}, use --machine {m}")));
+        }
         Err(e) => return Err(e),
     };
     REMOTE.store(!matches!(sock, http::Target::Socket(_)), std::sync::atomic::Ordering::Relaxed);
@@ -970,7 +984,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             let path = format!("/api/blocks/{}/call/{}", block.0, enc(&method));
             print_json(&request(&sock, "POST", &path, Some(&args))?.json()?);
         }
-        Command::Open { target, split, host, session } => {
+        Command::Open { target, split, machine, session } => {
             let config = match target.strip_prefix(':') {
                 Some(rest) => {
                     let (port, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
@@ -984,8 +998,8 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 Some("right") => Some(here(None)?),
                 Some(p) => Some(p.parse::<Pane>().map_err(anyhow::Error::msg)?.0),
             };
-            let local = host.as_deref() == Some("local");
-            let host = match host.filter(|_| !local) {
+            let local = machine.as_deref() == Some("local");
+            let host = match machine.filter(|_| !local) {
                 Some(m) => {
                     Some(m.trim_start_matches('m').parse::<u32>().with_context(|| format!("not a machine: {m}"))?)
                 }
@@ -1147,7 +1161,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 bail!("{e}");
             }
         }
-        Command::Agent { acp, fountain, codex, vault, model, mcp, vm, host, cwd, session, split, wait, prompt } => {
+        Command::Agent { acp, fountain, codex, vault, model, mcp, vm, machine, cwd, session, split, wait, prompt } => {
             let mut config = match (&acp, &fountain) {
                 (Some(cmd), _) => json!({ "agent": "acp", "command": cmd }),
                 (_, Some(name)) => json!({ "agent": "fountain", "fountain_agent": name, "vault": vault }),
@@ -1155,7 +1169,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 _ => json!({ "agent": "claude" }),
             };
             // A VM has none of this host's directories.
-            let cwd = if vm || host.is_some() {
+            let cwd = if vm || machine.is_some() {
                 cwd
             } else {
                 cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))
@@ -1169,7 +1183,8 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             if !prompt.is_empty() {
                 config["prompt"] = json!(prompt);
             }
-            let host = host.map(|h| h.trim_start_matches('m').parse::<u32>()).transpose().context("--host: m<N>")?;
+            let host =
+                machine.map(|h| h.trim_start_matches('m').parse::<u32>()).transpose().context("--machine: m<N>")?;
             let body = json!({
                 "type": "agent",
                 "config": config,
@@ -1684,5 +1699,20 @@ mod tests {
         assert_eq!(super::shell_command(&v(&["make", "test"])), "make test");
         assert_eq!(super::shell_command(&v(&["bash", "-c", "echo hi; exit 3"])), "bash -c 'echo hi; exit 3'");
         assert_eq!(super::shell_command(&v(&["echo", "it's"])), r"echo 'it'\''s'");
+    }
+
+    #[test]
+    fn machine_is_not_the_global_host() {
+        use clap::Parser;
+        let parse = |a: &[&str]| super::Cli::try_parse_from(a).unwrap();
+        let c = parse(&["illogical", "--host", "box", "open", "--machine", "m2", ":3000"]);
+        assert_eq!(c.host.as_deref(), Some("box"));
+        assert!(matches!(c.cmd, super::Command::Open { machine: Some(ref m), .. } if m == "m2"));
+        let c = parse(&["illogical", "agent", "--machine", "3", "hi"]);
+        assert!(c.host.is_none());
+        assert!(matches!(c.cmd, super::Command::Agent { machine: Some(ref m), .. } if m == "3"));
+        assert!(super::Cli::try_parse_from(["illogical", "agent", "--vm", "--machine", "m3"]).is_err());
+        assert!(super::looks_like_machine("m2") && super::looks_like_machine("local"));
+        assert!(!super::looks_like_machine("box"));
     }
 }
