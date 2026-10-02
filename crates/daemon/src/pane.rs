@@ -485,6 +485,9 @@ pub struct Launcher {
     /// This executable, which also serves as the shim.
     pub exe: PathBuf,
     pub scopes: bool,
+    /// systemd-run expands `$VAR` and `$$` in the command it's given
+    /// (since systemd 254) unless told not to: the shell is to do that.
+    pub no_expand: bool,
     pub fd_store: bool,
     /// No FD store, but keep panes anyway: each shim holds its terminal
     /// for the next daemon (`--keep-panes`, see [`crate::holder`]).
@@ -496,19 +499,47 @@ impl Launcher {
     /// Without one, `keep_panes` has the shims keep terminals instead.
     pub fn detect(keep_panes: bool) -> Self {
         let systemd = crate::sys::under_systemd();
-        let have_run = std::process::Command::new("systemd-run")
+        // "systemd 259 (259.5-0ubuntu3.4)"
+        let version = std::process::Command::new("systemd-run")
             .arg("--version")
-            .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| systemd_version(&String::from_utf8_lossy(&o.stdout)));
         Self {
             exe: std::env::current_exe().unwrap_or_else(|_| "illogicald".into()),
-            scopes: systemd && have_run,
+            scopes: systemd && version.is_some(),
+            no_expand: version.flatten().is_some_and(|v| v >= 254),
             fd_store: systemd,
             hold: keep_panes && !systemd,
         }
     }
+
+    /// A command that runs this executable (the shim) for a pane or an
+    /// agent: in its own scope `unit` when there are scopes. Without the
+    /// daemon's service environment, which isn't the program's.
+    pub fn command(&self, unit: &str) -> Command {
+        let mut c = if self.scopes {
+            let mut c = Command::new("systemd-run");
+            c.args(["--user", "--scope", "--quiet", "--collect"]);
+            if self.no_expand {
+                c.arg("--expand-environment=no");
+            }
+            c.arg(format!("--unit={unit}")).arg("--").arg(&self.exe);
+            c
+        } else {
+            Command::new(&self.exe)
+        };
+        for k in crate::sys::SERVICE_ENV {
+            c.env_remove(k);
+        }
+        c
+    }
+}
+
+fn systemd_version(out: &str) -> Option<u32> {
+    out.split_whitespace().nth(1)?.parse().ok()
 }
 
 fn fd_name(pane: PaneId) -> String {
@@ -544,17 +575,8 @@ impl Process {
 
         let cwd = if spawn.cwd.is_dir() { spawn.cwd.as_path() } else { Path::new("/") };
         let _ = std::fs::remove_file(record);
-        let mut cmd = if launch.scopes {
-            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-            let mut c = Command::new("systemd-run");
-            c.args(["--user", "--scope", "--quiet", "--collect"])
-                .arg(format!("--unit=illogical-pane-{pane}-{nanos}"))
-                .arg("--")
-                .arg(&launch.exe);
-            c
-        } else {
-            Command::new(&launch.exe)
-        };
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        let mut cmd = launch.command(&format!("illogical-pane-{pane}-{nanos}"));
         cmd.arg("_shim").arg("--record").arg(record);
         let hold = launch.hold.then(|| crate::holder::socket_for(record.parent().unwrap_or(Path::new("."))));
         if let Some(socket) = &hold {
@@ -1745,6 +1767,13 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn systemd_versions() {
+        assert_eq!(systemd_version("systemd 259 (259.5-0ubuntu3.4)\n+PAM +AUDIT"), Some(259));
+        assert_eq!(systemd_version("systemd 252 (252.33-1~deb12u1)"), Some(252));
+        assert_eq!(systemd_version(""), None);
+    }
 
     #[test]
     fn ring_keeps_the_tail_and_addresses_by_offset() {

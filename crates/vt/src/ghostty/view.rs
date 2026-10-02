@@ -188,10 +188,14 @@ impl GhosttyEngine {
 
     /// A key, as the program expects it: cursor and keypad modes,
     /// modifyOtherKeys and the kitty keyboard protocol, from what it has set.
+    /// Alt is always Alt: the outer terminal already decided whether macOS
+    /// Option typed a character or meant Alt, so libghostty's macOS default
+    /// (Option makes text, no ESC prefix) mustn't decide again.
     pub fn encode_key(&self, event: &key::Event) -> Vec<u8> {
         let mut out = Vec::new();
         if let Ok(mut enc) = key::Encoder::new() {
             enc.set_options_from_terminal(&self.term);
+            enc.set_macos_option_as_alt(key::OptionAsAlt::True);
             let _ = enc.encode_to_vec(event, &mut out);
         }
         out
@@ -276,6 +280,9 @@ mod tests {
         assert_eq!(e.encode_key(&up), b"\x1b[A");
         e.feed(b"\x1b[?1h"); // application cursor keys
         assert_eq!(e.encode_key(&up), b"\x1bOA");
+        // Alt is ESC-prefixed on macOS too (not Option's own character).
+        let alt_b = key(key::Key::B, key::Mods::ALT, Some("b"));
+        assert_eq!(e.encode_key(&alt_b), b"\x1bb");
 
         let shift_enter = key(key::Key::Enter, key::Mods::SHIFT, None);
         // As Ghostty sends it outside the kitty protocol.

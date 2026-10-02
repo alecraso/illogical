@@ -327,6 +327,21 @@ fn wait_file(d: &Daemon, path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
 }
 
+/// Under systemd a pane starts through systemd-run, which would expand
+/// `$VAR` and `$$` itself (the hook's `echo $$` came out as `$`). The shell
+/// gets the command as written, and none of the service's own environment.
+#[test]
+fn a_command_reaches_its_shell_as_written_under_systemd() {
+    let Some(d) = Daemon::service() else { return };
+    let out = d.sessions.join("written");
+    let cmd = format!("echo \"$$ ${{NOTIFY_SOCKET:-none}}\" '$HOME' > {}.tmp; mv {0}.tmp {0}", out.display());
+    d.post("/api/run", json!({ "command": cmd }));
+    let got = wait_file(&d, &out);
+    let words: Vec<&str> = got.split_whitespace().collect();
+    assert!(words[0].parse::<u32>().is_ok(), "{got:?}");
+    assert_eq!(words[1..], ["none", "$HOME"], "{got:?}");
+}
+
 #[test]
 fn claude_code_in_a_terminal_asks_through_its_hook() {
     let d = Daemon::child();
