@@ -29,6 +29,7 @@
 //! starts says so: the pane shows "started by mcp:<client>", and what the
 //! client typed is in history as theirs.
 
+pub mod relay;
 pub mod tokens;
 mod tools;
 
@@ -65,13 +66,16 @@ pub const PATH: &str = "/mcp";
 pub const SERVER_NAME: &str = "illogical";
 
 /// How an agent block reaches MCP: the daemon's loopback `/mcp`, or the
-/// CLI's bridge on the Unix socket, with the block's token.
+/// CLI's bridge on the Unix socket, with the block's token; in a VM, a
+/// relay the daemon opens into it (`relay.rs`).
 #[derive(Clone)]
 pub struct Link {
     pub url: String,
     pub cli: std::path::PathBuf,
     pub socket: std::path::PathBuf,
     pub tokens: Arc<Tokens>,
+    /// Serves a VM agent's connections; set once the server is up.
+    pub serve: Arc<std::sync::OnceLock<relay::Serve>>,
 }
 
 impl std::fmt::Debug for Link {
@@ -113,6 +117,25 @@ pub fn routes(app: &Arc<App>) -> Router<Arc<App>> {
         .nest_service(PATH, service)
         .layer(middleware::from_fn_with_state(app.clone(), authenticate))
         .merge(tokens::api_routes())
+}
+
+/// What serves a VM agent's relayed connections: an MCP session each, on
+/// stdio framing, scoped as the block's token would be over HTTP.
+pub fn pipe_server(app: &Arc<App>) -> relay::Serve {
+    let app = Arc::downgrade(app);
+    Arc::new(move |id, io| {
+        let Some(app) = app.upgrade() else { return };
+        let caller = Caller { scope: Scope::Block(id), token: Some(format!("%{id}")) };
+        let server = McpServer { app, fallback: Some(caller) };
+        tokio::spawn(async move {
+            match rmcp::ServiceExt::serve(server, tokio::io::split(io)).await {
+                Ok(running) => {
+                    let _ = running.waiting().await;
+                }
+                Err(e) => tracing::debug!(block = id, error = %e, "relayed MCP session didn't start"),
+            }
+        });
+    })
 }
 
 fn refuse(status: StatusCode, why: &str) -> Response {

@@ -22,7 +22,8 @@ Prompts:
                  the accept
   codex ask      Codex's plan-mode question form
   mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
-                 one, as illogical passes local agents, M16) with JSON as its
+                 one, as illogical passes local agents, M16; or a stdio one,
+                 as it passes agents in a VM, #59) with JSON as its
                  arguments, and says "MCP " and the result as JSON
 
 Only clients that declare elicitation {form: {}, url: {}} get questions; the
@@ -31,6 +32,7 @@ others get "I don't have access to an AskUserQuestion tool" (S13).
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -217,9 +219,11 @@ def ask_user(sid, s, n, questions, msg):
 def mcp_call(servers, tool, args):
     """A tool call over Streamable HTTP, as an MCP client: initialize (a
     2025-06-18 session), then tools/call; answers come as SSE."""
-    srv = next((x for x in servers or [] if x.get("name") == "illogical" and x.get("type") == "http"), None)
+    srv = next((x for x in servers or [] if x.get("name") == "illogical"), None)
     if srv is None:
-        return {"error": "no illogical http server in this session"}
+        return {"error": "no illogical server in this session"}
+    if srv.get("type") != "http":
+        return mcp_call_stdio(srv, tool, args)
     base = {h["name"]: h["value"] for h in srv.get("headers", [])}
     base.update({"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
 
@@ -256,6 +260,39 @@ def mcp_call(servers, tool, args):
         if m.get("id") == 2:
             return m.get("result") or m.get("error")
     return {"error": "no answer"}
+
+
+def mcp_call_stdio(srv, tool, args):
+    """The same over stdio: the server's command, newline-delimited."""
+    env = dict(os.environ)
+    env.update({e["name"]: e["value"] for e in srv.get("env", [])})
+    p = subprocess.Popen([srv["command"], *srv.get("args", [])], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         env=env)
+
+    def send(m):
+        p.stdin.write((json.dumps(m) + "\n").encode())
+        p.stdin.flush()
+
+    def answer(i):
+        for line in p.stdout:
+            m = json.loads(line)
+            if m.get("id") == i and "method" not in m:
+                return m
+        return {"error": "the server closed"}
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "fake-agent", "version": "1"}}})
+        m = answer(1)
+        if "result" not in m:
+            return {"error": f"initialize: {m}"}
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}})
+        m = answer(2)
+        return m.get("result") or m.get("error")
+    finally:
+        p.kill()
+        p.wait()
 
 
 def prompt(mid, p):
