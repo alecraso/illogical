@@ -102,7 +102,12 @@ async fn type_in(ws: &mut Ws, text: &str) {
 async fn watch(ws: &mut Ws, mut done: impl FnMut(&str) -> bool) -> String {
     send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false }).await;
     let mut seen = String::new();
+    // `recv` times out per message, and a busy pane's deltas arrive every
+    // second, so give up here instead of waiting forever.
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
+        let tail = seen.len().saturating_sub(300);
+        assert!(Instant::now() < deadline, "pane 1 never showed what was awaited; it ends: {:?}", &seen[tail..]);
         if let In::Frame(f) = recv(ws).await
             && f.pane == 1
         {
@@ -112,6 +117,20 @@ async fn watch(ws: &mut Ws, mut done: impl FnMut(&str) -> bool) -> String {
             }
         }
     }
+}
+
+/// A loop that prints `tick-N` every 50 ms until `stop` exists. Ending it
+/// with a file rather than Ctrl-C: an interrupt can land between two
+/// `sleep`s, where bash doesn't always end the loop (seen on macOS).
+fn tick_loop(stop: &std::path::Path) -> String {
+    format!("i=0; while [ ! -e '{}' ]; do i=$((i+1)); echo tick-$i; sleep 0.05; done\r", stop.display())
+}
+
+fn stop_file() -> PathBuf {
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let f = std::env::temp_dir().join(format!("illogical-stop-{}-{port}", std::process::id()));
+    let _ = std::fs::remove_file(&f);
+    f
 }
 
 fn ticks(text: &str) -> Vec<u32> {
@@ -131,7 +150,8 @@ async fn panes_keep_running_through_restart_and_crash() {
     let (mut ws, _) = svc.connect().await;
     type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
     let pid = shell_pid(&watch(&mut ws, |s| shell_pid(s).is_some()).await).unwrap();
-    type_in(&mut ws, "for i in $(seq 1 100000); do echo tick-$i; sleep 0.05; done\r").await;
+    let stop = stop_file();
+    type_in(&mut ws, &tick_loop(&stop)).await;
     watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 10)).await;
     drop(ws);
 
@@ -155,11 +175,12 @@ async fn panes_keep_running_through_restart_and_crash() {
     tokio::time::sleep(Duration::from_millis(500)).await;
     let (mut ws, _) = svc.connect().await;
     watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 80)).await;
-    type_in(&mut ws, "\x03").await;
+    std::fs::write(&stop, "").unwrap();
     type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
     let again = watch(&mut ws, |s| s.rsplit("tick-").next().is_some_and(|tail| shell_pid(tail).is_some())).await;
     let again = shell_pid(again.rsplit("tick-").next().unwrap()).unwrap();
     assert_eq!(again, pid, "the same shell, through a restart and a crash");
+    let _ = std::fs::remove_file(&stop);
     drop(ws);
 
     // Stop is the end (like a reboot): the shell goes away.
@@ -247,7 +268,8 @@ async fn shims_keep_panes_without_systemd() {
     type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
     let pid = shell_pid(&watch(&mut ws, |s| shell_pid(s).is_some()).await).unwrap();
     d.shells.push(pid);
-    type_in(&mut ws, "for i in $(seq 1 100000); do echo tick-$i; sleep 0.05; done\r").await;
+    let stop = stop_file();
+    type_in(&mut ws, &tick_loop(&stop)).await;
     watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 10)).await;
     drop(ws);
 
@@ -272,11 +294,12 @@ async fn shims_keep_panes_without_systemd() {
     d.start();
     let (mut ws, _) = d.connect().await;
     watch(&mut ws, |s| ticks(s).last().is_some_and(|n| *n >= 80)).await;
-    type_in(&mut ws, "\x03").await;
+    std::fs::write(&stop, "").unwrap();
     type_in(&mut ws, "echo pid=$((0+$$))x\r").await;
     let again = watch(&mut ws, |s| s.rsplit("tick-").next().is_some_and(|tail| shell_pid(tail).is_some())).await;
     let again = shell_pid(again.rsplit("tick-").next().unwrap()).unwrap();
     assert_eq!(again, pid, "the same shell, through a restart and a crash");
+    let _ = std::fs::remove_file(&stop);
     drop(ws);
 
     // Stopped for good: once no daemon has come back within the grace
