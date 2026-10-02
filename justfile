@@ -84,6 +84,17 @@ screenshots:
     cd web && pnpm run build && pnpm exec playwright test -c screenshots.config.ts
     scripts/webp
 
+# The project page (site/) with install.sh beside it, in target/site.
+site:
+    rm -rf {{target_dir}}/site && mkdir -p {{target_dir}}/site
+    cp -r site/. {{target_dir}}/site/
+    cp scripts/install.sh {{target_dir}}/site/install.sh
+
+# Publish the page to Cloudflare Pages (project "illogical", served at
+# illogical.widgets.wtf). Uses wrangler's login, or CLOUDFLARE_API_TOKEN.
+site-deploy: site
+    pnpm dlx wrangler@4 pages deploy {{target_dir}}/site --project-name illogical --branch main --commit-dirty=true
+
 # M4a for real: a wisp sprite installs the static daemon on the tailnet and
 # joins a throwaway home daemon's list; the phone gets vim there. Needs
 # ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE (an ephemeral tag:sandbox key) and wispd.
