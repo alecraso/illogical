@@ -433,6 +433,13 @@ impl Front {
                     self.notify();
                 }
             }
+            In::Msg(ServerMsg::Delta { delta }) => {
+                self.state.apply(&delta);
+                self.sync_panes()?;
+                if !self.busy {
+                    self.notify();
+                }
+            }
             In::Msg(ServerMsg::Resync { pane }) => self.resync(pane)?,
             In::Msg(ServerMsg::Error { id: Some(id), message }) => {
                 self.errors.insert(id, message);
