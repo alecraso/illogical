@@ -1803,7 +1803,8 @@ agents. Enterprise access control stays a non-goal (BRIEF.md).
 **Order:**
 - S12, then M12 and M13 are the core.
 - M14 makes write access safe enough to give out.
-- M15 reaches people outside your tailnet.
+- M15 reaches people outside your tailnet. **Superseded (2026-10-01) by the
+  control track's M19**, which does it through illogical control.
 - The track needs M3c (VM tabs) and M4a (federation). It's independent of M6
   to M11, but agent blocks (M6b) gain per-person approvals when both exist.
 
@@ -1826,6 +1827,7 @@ agents. Enterprise access control stays a non-goal (BRIEF.md).
   - Can the ACL limit them to port 443?
 - **Funnel.**
   - Is `tailscale funnel` on a second port usable for M15's invite flow?
+    (Moot since M15 was superseded; skip the Funnel part.)
   - What headers arrive, given there is no identity?
   - What are the rate limits?
 - **Input attribution cost.** Add a per-input index record
@@ -1840,7 +1842,7 @@ agents. Enterprise access control stays a non-goal (BRIEF.md).
 Every request has an author, and every session has an access list.
 
 - **Principals:**
-  - **user:** a tailnet login, or an M15 invitee;
+  - **user:** a tailnet login, or an illogical control account (M17);
   - **agent:** an M6b block, or a CLI/API token. It acts *for* a user, with
     at most that user's role;
   - **host:** an M4 peer daemon.
@@ -1933,6 +1935,9 @@ Make `editor` something you can hand out.
 
 #### M15: beyond the tailnet
 
+**Superseded (2026-10-01) by M19 in the control track:** invites, sign-in
+and read-only links move to illogical control. Kept for the record.
+
 Share with someone who isn't on your tailnet and won't install anything.
 
 - **Invites.**
@@ -1970,6 +1975,221 @@ Share with someone who isn't on your tailnet and won't install anything.
 - voice;
 - shared undo of layout changes.
 
+### Control track (S15, M17–M22, added 2026-10-01)
+
+The daemon is the WireGuard: a useful piece of technology for one person
+on their own network. This track is the Tailscale: a central service that
+makes it work for people who have never heard of a tailnet, and for teams.
+
+The code already draws the line. M4's **home daemon** is "a directory and
+control point, never a relay": it holds the host list and provider tokens,
+mints per-host tokens, and receives dial-out connections and log sync.
+That is a coordination server running on geek. This track moves that role
+into its own program, **illogical control** (`illogical-control`), which
+anyone can run and which we also host. Then it adds what a single home box
+can't do: accounts, reaching machines behind NAT, teams, push and hosted
+compute.
+
+**Decisions (2026-10-01):**
+
+| Question | Decision | Why |
+|---|---|---|
+| Who it's for first | **Small teams sharing sessions.** A few people pairing and watching each other's agents. | Sharing is where a central service adds the most. It needs accounts and a relay anyway, so solo use comes along for free. |
+| Can terminal content pass through the service in the clear? | **Never.** Output, input, scrollback, snapshots, history and push payloads are end-to-end encrypted. The service sees metadata only (who, which host, when, sizes). | It's shell access. A blanket promise is the trust story, and E2E can't be retrofitted. |
+| Self-hosting | **From day one.** `illogical-control` is open source, in this repo, and the hosted one runs the same code. | Keeps the promise checkable. The business is hosting, compute and teams, not lock-in. |
+| Pricing | **Free for one person; per seat for teams; sandboxes by usage.** Relay traffic is included, with fair-use caps. | Tailscale's shape: strangers try it free, teams pay for what teams need, compute costs what it costs. Self-hosted control has no billing. |
+| Whose machines a team's sessions run on | **Members' own daemons, team-owned daemons, and hosted VMs.** A team can enroll shared machines (a build box, a staging server) that belong to the team, not a person. | Teams have shared machines. M14's rule still holds: guests type in VMs unless trusted. |
+| M15 (Funnel invites, per-daemon GitHub sign-in, read-only links) | **Superseded by M19.** Invites, sign-in and read-only links move to control. | M15 solves per daemon what control solves once. M12–M14 carry over: they're the per-daemon enforcement control relies on. |
+| The tailnet | **Still a first-class path.** Tailnet users can skip control entirely, or enroll and keep direct tailnet connections. | Control adds; it doesn't replace. |
+
+**What control knows and doesn't:**
+
+- **Knows (metadata):**
+  - accounts, teams, members and roles;
+  - devices and daemons, and their public keys;
+  - the directory: hosts, sessions, tab and pane ids, names, presence;
+  - who connected to what and when, and byte counts;
+  - audit entries.
+- **Never has:**
+  - terminal bytes, snapshots or logs in the clear;
+  - keys that decrypt them;
+  - provider tokens for your own machines (those stay on your daemons).
+- **Names are metadata.** Session and tab names, and the pane titles shown in the directory, are visible to control. The README says so, and a per-team switch keeps names on daemons only (then the directory shows ids).
+
+**Trust.** The service distributes public keys, so a malicious control server could add a device of its own and read what it's sent. As with Tailscale's Tailnet Lock, **a new device must be approved by one of the user's existing devices** (the first is trusted on enrollment). Daemons only encrypt to devices carrying that approval, and team membership changes are signed by a team owner's device. Control can refuse service, but it can't read.
+
+**Order:**
+
+1. **S15**, then M17 and M18: accounts, directory, relay and E2E.
+2. **M19, teams.** It builds on M12 and M13; strangers can use illogical together from here.
+3. **M20, sandboxes**, and **M21, push**, in either order.
+4. **M22, billing**, when there's something to charge for.
+
+The launch issues (#19–#27: licence, releases, install, quickstart) come first: control is worth little if strangers can't install the daemon.
+
+**Later, not planned yet:**
+
+- encrypted history in control, with retention and cross-machine search run on clients;
+- the hosted MCP endpoint (M16 over the relay, with scoped tokens);
+- SSO/SCIM and policy;
+- a native mobile app.
+
+#### S15: spike before M17 (about two days)
+
+- **E2E design**, written up as a short spec:
+  - **Pairwise channels:** Noise (IK or XX) between a client device and a daemon, inside the relay's WebSocket. Measure overhead on attach and on a 1 MB burst.
+  - **Shared sessions:** the daemon encrypts a session's stream once, to a session key wrapped for each member device. On a revoke, rotate the key. Compare with plain per-viewer channels at 2, 5 and 20 viewers.
+  - **Device keys:**
+    - **Browser:** WebCrypto non-extractable keys in IndexedDB, plus passkeys (the WebAuthn PRF extension) to re-derive them. Does PRF work in Safari on iOS and in Chrome on Android?
+    - **CLI:** a key file.
+    - **Phone PWA:** what happens when the browser clears its storage.
+  - **Device approval:** the flow from an existing device; recovery codes for losing all of them.
+  - **Push:** Web Push payloads are already encrypted to the subscription (RFC 8291). Confirm control can forward them without seeing contents.
+- **Relay:**
+  - prototype on the M4c dial-out transport with control in the middle;
+  - round trip from a phone on cellular, via control, to a home machine;
+  - how many concurrent streams per daemon;
+  - what a hosted relay costs per active user-hour.
+- **Identity:**
+  - GitHub and Google OAuth, and passkeys as a first-class login;
+  - email magic links for invitees without either.
+- **Read-only links with no account:** the key travels in the URL fragment (`#k=…`), which browsers never send to the server. Check that this works through the service worker and with link previews (Slack's unfurler must not fetch the fragment).
+
+**Output:** `docs/control-e2e.md` (the spec) and a go/no-go on PRF for browser keys.
+
+#### M17: illogical control (accounts, devices, enrollment, directory)
+
+- **`crates/control`, the `illogical-control` binary:** axum, SQLite (Postgres optional for the hosted one), and the same release builds as the daemon. `illogical-control --domain control.example.com` serves the API and the web client.
+- **Accounts:**
+  - sign in with GitHub, Google or a passkey;
+  - a personal space by default; teams come in M19.
+- **Devices:**
+  - each browser, phone and CLI gets a device key at sign-in;
+  - the first device is trusted on enrollment;
+  - every later one shows "approve this device?" on an existing device, with a fingerprint to compare (the trust rule above);
+  - recovery codes.
+- **Daemons:**
+  - `illogicald join https://control.example.com` prints a code; approving it on a device enrolls the daemon to your account;
+  - a daemon has its own key;
+  - the M4 per-host tokens are minted by control from now on;
+  - `illogicald leave` removes it.
+- **Directory:**
+  - control keeps the host list: your daemons, last seen, and how to reach each one (direct URL or relay);
+  - it replaces the home daemon's `hosts.rs` list for enrolled daemons;
+  - the page fetches the list from control and caches it, so known hosts stay reachable while control is down (the same rule as today);
+  - geek stops being special.
+- **Daemon auth:**
+  - the daemon accepts a client that presents an approved device key for an account with access (personal: only you);
+  - tailnet identity still works for tailnet users;
+  - enforcement stays on the daemon, using M12's principals once they exist.
+- **The web client:**
+  - served by control (and still by each daemon);
+  - signs in, shows the directory, and connects straight to daemons over the tailnet or the relay (M18).
+- **Self-hosting:** documented in the README with a single binary and Caddy or `tailscale serve` in front. No feature is hosted-only except billing (M22).
+- **Done when:**
+  - a stranger with a Mac and a Linux box, and no Tailscale, signs up with GitHub and enrolls both daemons;
+  - the page lists both;
+  - adding a phone needs approval from the laptop;
+  - a self-hosted control on a VPS does the same.
+
+#### M18: relay and end-to-end encryption
+
+- **Relay:**
+  - an enrolled daemon keeps the M4c dial-out connection open to control;
+  - clients that can't reach a daemon directly (no tailnet, NAT both sides) connect to control, which splices the client's stream onto that daemon's connection;
+  - control forwards opaque frames, multiplexed as dial-out already is.
+- **Direct when possible:**
+  - the client tries in order: tailnet or LAN URLs from the directory, then the relay;
+  - the host chip shows which path is in use ("direct" or "relayed").
+  - Hole punching (WebRTC data channels, for example) is a later optimisation, not this milestone.
+- **E2E per S15:**
+  - every client–daemon stream is encrypted end to end, on the relay *and* on direct paths, so there's one code path;
+  - snapshots, output, input, method calls and events all go inside it;
+  - control sees connection metadata and byte counts.
+- **Fair use:** per-account relay byte counters, exposed to M22. Limits are configurable; self-hosted has none by default.
+- **Done when:**
+  - from a phone on cellular, attaching to a Mac behind home NAT through control draws vim correctly, and typing feels the same as on the tailnet (within 30 ms of the direct path);
+  - a packet capture on control shows no terminal content;
+  - control's database and logs contain no terminal content;
+  - switching the phone to the tailnet moves it to the direct path on reconnect.
+
+#### M19: teams (sharing, roles, team daemons, invites)
+
+Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, attribution). Control becomes where principals come from; daemons still enforce.
+
+- **Teams:**
+  - create a team, invite by email or link, and set roles (owner, editor, viewer);
+  - membership changes are signed by an owner's device, and daemons verify them (the trust rule);
+  - an owner can transfer ownership.
+- **Team daemons:**
+  - `illogicald join --team acme` enrolls a machine that belongs to the team;
+  - who may drive it is a team policy, with M14's trust grants for anything but VMs.
+- **Sharing a session (M13's dialog):**
+  - pick a person or the whole team, set a role, choose "with history" or "from now";
+  - the daemon wraps the session key for each member device (S15).
+  - **Revoking** removes the grant, rotates the key, and cuts the person off within a second.
+- **Presence** (avatars, focus outlines, follow) flows through control as metadata, so people on different networks see each other.
+- **Read-only links** (replacing M4c's share tokens and M15's links):
+  - a link with the key in its fragment shows one session live, read-only, with no account, until it expires;
+  - "from now" by default;
+  - control sees that the link was opened, never what it showed.
+- **Guests** (people outside the team) work as M14 says: their panes default to a VM (M20 when the team has hosted compute; otherwise a member's wisp).
+- **Kill switch:** an owner's `illogical team lock` revokes all links and invites and disconnects non-owners.
+- **Done when:**
+  - two people at different companies, neither on a tailnet, join a team by invite;
+  - each sees the other's session live, with avatars and focus;
+  - control passes back and forth between them;
+  - one runs a build on a team-owned box;
+  - a read-only link works in a logged-out browser and dies at expiry;
+  - removing a member cuts them off within a second.
+
+#### M20: hosted sandboxes
+
+"New VM tab" with no wisp on your own machine: the VM runs on hosted compute, billed by the minute.
+
+- **Providers:**
+  - control holds provider credentials for hosted compute and creates machines through the M4b `Provider` trait (Sprites, Fly, or our own Firecracker hosts running wisp);
+  - your own provider tokens stay on your daemons, as today.
+- **Each sandbox runs a daemon** enrolled to the team (M17's join, done automatically) and reached over the relay or direct.
+  - Its terminals are E2E like any daemon's; control creates the machine but holds no keys to its terminals.
+  - The sandbox's host key is approved automatically by the requesting device's approval, so no extra click is needed.
+- **Lifecycle:**
+  - a VM tab's machine lives as long as the tab (M3c's rule);
+  - idle machines sleep (M4b's wake rules);
+  - quotas per team and per member (M14's quotas, enforced by control).
+- **Metering:** sandbox minutes and storage per team, exposed to M22.
+- **Done when:**
+  - a team member with only a browser opens a VM tab, runs `claude` in it, splits a second shell into the same VM, closes the tab, and the machine is deleted;
+  - the minutes show up in the team's usage;
+  - a fifth VM over quota is refused with a clear message.
+
+#### M21: push relay
+
+- **Today:** each home daemon holds VAPID keys, and each phone subscribes to each daemon.
+- **With control:**
+  - control holds one VAPID key pair;
+  - devices subscribe once;
+  - daemons send notifications through control, addressed to the user's devices.
+- **Payloads are encrypted** for each device's push subscription (RFC 8291), so control and the browser's push service see neither the title nor the body. Control sees only "daemon X notified user Y".
+- **Per-user rules** come from M12: `needs-input` goes to editors who opted in, and approvals go to whoever is asked.
+- **Done when:**
+  - a phone that never connected to a Mac gets "needs input" from an agent there, through control;
+  - tapping it opens that pane over the relay;
+  - control's logs show no notification text.
+
+#### M22: billing and metering (hosted control only)
+
+- **Plans:**
+  - **Personal:** free; one person, any number of daemons, relay with fair-use caps.
+  - **Team:** per seat.
+  - **Sandboxes:** by usage (minutes and storage) on any plan with a payment method.
+- **Counters:** M18's relay bytes, M19's seats and M20's sandbox minutes, in control's database. A usage page per team.
+- **Billing:** Stripe, with webhooks into control. Over-limit behaviour:
+  - relay: a warning, then a slowdown;
+  - sandboxes: refuse new machines; never kill running ones.
+- **Off by default:** a self-hosted control has no billing unless configured.
+- **Done when:** a team upgrades, adds a seat, uses sandbox minutes and gets a correct invoice, and a free account over its relay cap sees the warning.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
@@ -2006,6 +2226,7 @@ Unit and property tests live in `core`. The `vt` crate is tested with snapshot r
   - WebSocket `Origin` must match exactly, scheme and port included: `http://` for loopback and `https://` for the tailnet name.
   - Still to do in M3: the HTTP API must refuse cross-origin requests that change anything (an `Origin` check, JSON-only bodies, no simple-form POSTs).
 - **Untrusted pages on the app's origin (M6a).** `tailscale serve` adds your identity to every request, so any script served from the app's origin is you. Proxied dev servers must be on a separate origin, and the WebSocket must keep checking `Origin`.
+- **Hosted control is a target** (control track). It holds every user's directory, device keys (public) and who-connected-when. E2E keeps terminal content out of reach, and device approval keeps control from adding a reader. But metadata leaks (names, hosts, timing) and outages are real: keep the directory cached on clients, keep the tailnet path working without control, and keep control's own logs free of anything a daemon sends inside a stream.
 - **Loopback trust.** Any local process can forge serve headers on 127.0.0.1. That is the same trust as the uid, and acceptable for single-user; require the `Host` header to match anyway.
 
 ## One-time setup (done 2026-10-01)
