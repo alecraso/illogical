@@ -1518,6 +1518,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "x509-parser",
+ "zstd",
 ]
 
 [[package]]

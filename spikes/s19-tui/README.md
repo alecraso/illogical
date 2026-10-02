@@ -69,6 +69,18 @@ ratatui's diff and the write to the tty. 200x50, four panes.
 
 RSS was 30–36 MB with every pane's scrollback held locally.
 
+**After #49** (snapshots capped at the client's 10k rows, zstd, the screen
+alone after a resync), with the same four floods:
+
+| | Received | Of it snapshots | Resyncs | Frames | TUI CPU |
+|---|---|---|---|---|---|
+| Before (`S19_LEGACY=1`) | 1.53 GB | 1.44 GB | 214 | 317 | 64% |
+| After | 612 MB | 9.8 KB (45 KB unpacked) | 155 | 569 | 56% |
+
+The TUI still can't keep up with four uncapped floods, so it still gets
+resynced. But each resync now costs a screen, not 5 MB, and the time goes
+to drawing seven times as much real output.
+
 **Drawing is not the problem.** A full redraw of every cell, with no use of
 ghostty's dirty rows yet, stays under 1 ms even when floods keep frames
 coming at 30–40 per second. The engines keep up with one 16 MB/s pane at a
@@ -141,8 +153,10 @@ CARGO_TARGET_DIR=../../target/s19 mise exec -- cargo build --release
 
 It is another client, so it claims the tab's size the way opening a browser
 window does. `S19_STATS=file` writes the frame timings on exit;
-`S19_RESYNC_FRESH=1` re-attaches with no offset, as the web client does.
+`S19_LEGACY=1` attaches as clients did before #49 (all history, no zstd, a
+fresh snapshot on every resync).
 
 `bench.sh` repeats the flood measurements on its own dev daemon (port 7791,
 state in a temporary directory) with the TUI in a 200x50 tmux session:
-`./bench.sh` floods four panes, `PANES=1 ./bench.sh` one.
+`./bench.sh` floods four panes, `PANES=1 ./bench.sh` one; `S19_LEGACY=1
+./bench.sh` compares with before #49.

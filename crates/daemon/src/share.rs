@@ -267,6 +267,9 @@ static NEXT_VIEWER: AtomicU64 = AtomicU64::new(1 << 61);
 
 /// One viewer: subscribed to the pane alone (never to the multiplexer, so
 /// it gets no layout), passing on output and sizes, and hung up on the
+/// Rows of scrollback the viewer page keeps.
+const VIEWER_SCROLLBACK: u32 = 10_000;
+
 /// moment it sends anything or its share ends.
 async fn view(
     app: Arc<App>,
@@ -281,7 +284,9 @@ async fn view(
     let (ctrl, mut ctrl_rx) = mpsc::unbounded_channel();
     // Watches one pane only; never sends the mux anything.
     let sub = Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner };
-    handle.attach(sub.clone(), None);
+    // The viewer page keeps as much scrollback as the app (share.ts).
+    let want = crate::pane::Want { history: Some(VIEWER_SCROLLBACK), ..Default::default() };
+    handle.attach_with(sub.clone(), want);
     info!(share = id, pane, "share viewer connected");
     // What it's looking at, before any of it.
     let hello = serde_json::json!({ "type": "share", "pane": pane, "expires_ms": expires_ms });
@@ -313,7 +318,7 @@ async fn view(
             Some(out) = ctrl_rx.recv() => {
                 // Fell behind and was dropped: start over from a snapshot.
                 if let ToClient::Msg(ServerMsg::Resync { .. }) = out {
-                    handle.attach(sub.clone(), None);
+                    handle.attach_with(sub.clone(), want);
                 }
             }
             e = events.recv() => {

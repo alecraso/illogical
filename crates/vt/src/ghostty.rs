@@ -19,6 +19,7 @@ use libghostty_vt::{
     fmt::{Format, Formatter, FormatterOptions},
     render::CursorVisualStyle,
     screen::{CellContentTag, Screen},
+    selection::Selection,
     snapshot::Decoder,
     style::{RgbColor, StyleColor},
     terminal::{
@@ -153,7 +154,32 @@ impl GhosttyEngine {
     }
 
     fn format(&self, format: Format, extras: bool, modes: bool) -> Vec<u8> {
+        self.format_history(format, extras, modes, None)
+    }
+
+    /// [`Self::format`], keeping at most `history` rows of scrollback above
+    /// the active area (`None`: all of it).
+    fn format_history(&self, format: Format, extras: bool, modes: bool, history: Option<usize>) -> Vec<u8> {
+        // The formatter takes a range as a selection: from `history` rows up
+        // to the active area's last cell.
+        let have = self.term.scrollback_rows().unwrap_or(0);
+        let from = history.filter(|h| *h < have).map(|h| (have - h) as u32);
+        let (cols, rows) = self.size();
+        let range = from.and_then(|y| {
+            let start = self.term.grid_ref(Point::Screen(PointCoordinate { x: 0, y })).ok()?;
+            let end = self
+                .term
+                .grid_ref(Point::Active(PointCoordinate {
+                    x: cols.saturating_sub(1),
+                    y: rows.saturating_sub(1).into(),
+                }))
+                .ok()?;
+            Some(Selection::new(start, end, false))
+        });
         let mut o = FormatterOptions::new().with_format(format).with_modes(modes);
+        if let Some(range) = &range {
+            o = o.with_selection(range);
+        }
         if extras {
             o = o
                 .with_palette(true)
@@ -222,9 +248,20 @@ impl GhosttyEngine {
     }
 
     /// Re-add the dropped trailing rows, unless the whole screen is blank.
-    fn pad_rows(&self, out: &mut Vec<u8>) -> Vec<u8> {
+    /// `history`: the cap the content was formatted with.
+    fn pad_rows(&self, out: &mut Vec<u8>, history: Option<usize>) -> Vec<u8> {
         let (pad, paint) = self.trailing_rows();
-        if pad < self.size().1 {
+        let rows = self.size().1;
+        if pad < rows {
+            // The newlines go from the end of the content. When history
+            // pushed the content to the bottom, the formatter's cursor is
+            // there already; when there's too little for that (a capped
+            // snapshot, a short scrollback), put it there.
+            let have = self.term.scrollback_rows().unwrap_or(0);
+            let written = history.map_or(have, |h| h.min(have)) + (rows - pad) as usize;
+            if written < rows as usize {
+                out.extend_from_slice(format!("\x1b[{written};1H").as_bytes());
+            }
             for _ in 0..pad {
                 out.extend_from_slice(b"\r\n");
             }
@@ -233,7 +270,7 @@ impl GhosttyEngine {
     }
 
     /// Title, cursor shape, dropped trailing rows and cursor position.
-    fn trailer(&self) -> Vec<u8> {
+    fn trailer(&self, history: Option<usize>) -> Vec<u8> {
         let mut out = Vec::new();
         let title = self.title();
         if !title.is_empty() {
@@ -250,7 +287,7 @@ impl GhosttyEngine {
             };
             out.extend_from_slice(format!("\x1b[{n} q").as_bytes());
         }
-        let paint = self.pad_rows(&mut out);
+        let paint = self.pad_rows(&mut out, history);
         if !paint.is_empty() {
             // DECSC/DECRC keeps the pen the formatter set up for the cursor.
             out.extend_from_slice(b"\x1b7");
@@ -319,6 +356,10 @@ impl VtEngine for GhosttyEngine {
     }
 
     fn snapshot(&mut self) -> Vec<u8> {
+        self.snapshot_history(None)
+    }
+
+    fn snapshot_history(&mut self, history: Option<usize>) -> Vec<u8> {
         let mut out = Vec::new();
         if self.term.active_screen().ok() == Some(Screen::Alternate) {
             // Where leaving the alternate screen puts the cursor back: the
@@ -326,8 +367,8 @@ impl VtEngine for GhosttyEngine {
             let saved = self.alt_saved_cursor();
             // Mode 47 switches screens without clearing or saving the cursor.
             self.term.vt_write(b"\x1b[?47l");
-            out.extend(self.format(Format::Vt, false, false));
-            self.pad_rows(&mut out);
+            out.extend(self.format_history(Format::Vt, false, false, history));
+            self.pad_rows(&mut out, history);
             if let Some((x, y)) = saved {
                 out.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
             }
@@ -339,25 +380,19 @@ impl VtEngine for GhosttyEngine {
             out.extend_from_slice(b"\x1b[?1049h\x1b[H");
             out.extend(self.format(Format::Vt, true, false));
             out.extend(self.modes());
+            // The alternate screen has no history.
+            out.extend(self.trailer(None));
         } else {
-            out.extend(self.format(Format::Vt, true, true));
+            out.extend(self.format_history(Format::Vt, true, true, history));
+            out.extend(self.trailer(history));
         }
-        out.extend(self.trailer());
         // The pending replies belong to the live stream, not the snapshot;
         // the screen flip above never produces any.
         out
     }
 
     fn screen_snapshot(&mut self) -> Vec<u8> {
-        // Replay the full snapshot into a scratch terminal of the same size,
-        // drop its scrollback (ED 3), and snapshot that.
-        let (cols, rows) = self.size();
-        let full = self.snapshot();
-        let mut scratch = GhosttyEngine::with_capabilities(cols, rows, self.caps);
-        scratch.feed(&full);
-        scratch.feed(b"\x1b[3J");
-        let _ = scratch.take_replies();
-        scratch.snapshot()
+        self.snapshot_history(Some(0))
     }
 
     fn plain_text(&self) -> String {

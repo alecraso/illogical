@@ -31,7 +31,7 @@ first=$("$cli" run -- "$work/flood.sh"); ids=("$first")
 "$cli" close %1 >/dev/null
 
 $T -f /dev/null new-session -d -s t -x 200 -y 50 \
-  "exec env S19_STATS=$work/stats.txt TERM=xterm-256color $tui $ILLOGICAL_SOCK"
+  "exec env ${S19_LEGACY:+S19_LEGACY=1} S19_STATS=$work/stats.txt TERM=xterm-256color $tui $ILLOGICAL_SOCK"
 sleep 1
 pid=$($T list-panes -t t -F '#{pane_pid}')
 touch "$work/go"

@@ -47,6 +47,14 @@ use tungstenite::{Message, WebSocket};
 const SIDEBAR: u16 = 26;
 const PREFIX: u8 = 0x1d; // Ctrl-]
 const FRAME: Duration = Duration::from_millis(16);
+/// Rows of history to ask for in a snapshot.
+const SCROLLBACK: u32 = 10_000;
+
+/// `S19_LEGACY=1`: attach as before #49 (all history, no zstd, a fresh
+/// snapshot on resync), to compare.
+fn legacy() -> bool {
+    std::env::var_os("S19_LEGACY").is_some()
+}
 
 struct Pane {
     term: Terminal<'static, 'static>,
@@ -57,6 +65,8 @@ struct Pane {
     /// Just past the last byte we have, to resume from after a resync.
     offset: Option<u64>,
     resyncs: u32,
+    /// Asked for the screen alone after a resync: keep the scrollback.
+    resync: bool,
 }
 
 impl Pane {
@@ -69,6 +79,7 @@ impl Pane {
             sym: String::new(),
             offset: None,
             resyncs: 0,
+            resync: false,
         }
     }
 
@@ -182,6 +193,8 @@ struct Stats {
     draw: Vec<Duration>,
     bytes: u64,
     snapshot_bytes: u64,
+    /// Snapshots before decompression.
+    snapshot_raw: u64,
     resyncs: u32,
     started: Option<Instant>,
 }
@@ -318,12 +331,12 @@ impl App {
         let mut attach = vec![];
         for (p, cols, rows) in here {
             self.panes.entry(p).or_insert_with(|| {
-                attach.push(AttachPane { pane: p, offset: None });
+                attach.push(AttachPane { pane: p, offset: None, history: (!legacy()).then_some(SCROLLBACK) });
                 Pane::new(cols, rows)
             });
         }
         if !attach.is_empty() {
-            self.send(&ClientMsg::Attach { panes: attach });
+            self.send(&ClientMsg::Attach { panes: attach, zstd: !legacy() });
         }
         if self.follow_new
             && let Some(&p) = fresh.first()
@@ -363,8 +376,11 @@ impl App {
                 if let Some(p) = self.panes.get_mut(&pane) {
                     p.resyncs += 1;
                     self.stats.resyncs += 1;
-                    let offset = if std::env::var_os("S19_RESYNC_FRESH").is_some() { None } else { p.offset };
-                    self.send(&ClientMsg::Attach { panes: vec![AttachPane { pane, offset }] });
+                    // #49: from our offset, and the screen alone if the gap is
+                    // too big to replay. S19_LEGACY: as before #49.
+                    let (offset, history) = if legacy() { (None, None) } else { (p.offset, Some(0)) };
+                    p.resync = history == Some(0) && offset.is_some();
+                    self.send(&ClientMsg::Attach { panes: vec![AttachPane { pane, offset, history }], zstd: !legacy() });
                 }
             }
             ServerMsg::Error { message, .. } => self.status = message,
@@ -377,15 +393,28 @@ impl App {
     fn on_frame(&mut self, b: &[u8]) {
         let Ok(f) = Frame::decode(b) else { return };
         let Some(p) = self.panes.get_mut(&f.pane) else { return };
-        if f.kind == FrameKind::Snapshot {
-            p.term.reset();
-        }
-        p.term.vt_write(&f.data);
-        p.offset = Some(f.offset + if f.kind == FrameKind::Snapshot { 0 } else { f.data.len() as u64 });
         self.stats.bytes += f.data.len() as u64;
-        if f.kind == FrameKind::Snapshot {
-            self.stats.snapshot_bytes += f.data.len() as u64;
+        let snapshot = matches!(f.kind, FrameKind::Snapshot | FrameKind::SnapshotZstd);
+        let data = if f.kind == FrameKind::SnapshotZstd { zstd::decode_all(&f.data[..]).unwrap_or_default() } else { f.data };
+        if snapshot {
+            self.stats.snapshot_bytes += b.len() as u64 - 13;
+            self.stats.snapshot_raw += data.len() as u64;
+            if p.resync {
+                // Keep the scrollback: push the screen into it under a rule,
+                // then start the screen and modes over (as the web client).
+                let rows = p.term.rows().unwrap_or(24);
+                let gap = format!(
+                    "\x1b[?1049l\x1b[0m\x1b[{rows};1H\r\n\x1b[2m── output skipped here ──\x1b[0m{}\x1b[!p\x1b[?7h\x1b[?1l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b]104\x1b\\\x1b[H\x1b[2J",
+                    "\r\n".repeat(rows as usize)
+                );
+                p.term.vt_write(gap.as_bytes());
+            } else {
+                p.term.reset();
+            }
+            p.resync = false;
         }
+        p.term.vt_write(&data);
+        p.offset = Some(f.offset + if snapshot { 0 } else { data.len() as u64 });
         self.dirty = true;
     }
 
@@ -953,10 +982,11 @@ fn main() -> anyhow::Result<()> {
         let s = &mut app.stats;
         let secs = s.started.map_or(0.0, |t| t.elapsed().as_secs_f64());
         let report = format!(
-            "frames {}\nseconds {secs:.1}\nbytes_in {}\nsnapshot_bytes {}\nresyncs {}\nbuild_ms p50 {:.3} p90 {:.3} p99 {:.3} max {:.3}\ndraw_ms p50 {:.3} p90 {:.3} p99 {:.3} max {:.3}\n",
+            "frames {}\nseconds {secs:.1}\nbytes_in {}\nsnapshot_bytes {}\nsnapshot_raw {}\nresyncs {}\nbuild_ms p50 {:.3} p90 {:.3} p99 {:.3} max {:.3}\ndraw_ms p50 {:.3} p90 {:.3} p99 {:.3} max {:.3}\n",
             s.build.len(),
             s.bytes,
             s.snapshot_bytes,
+            s.snapshot_raw,
             s.resyncs,
             pct(&mut s.build, 0.5),
             pct(&mut s.build, 0.9),
