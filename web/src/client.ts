@@ -173,6 +173,8 @@ export class Client {
   /** How an end-to-end client is connected, for the host chip. */
   path: "direct" | "relayed" | null = null;
 
+  /** M30: the daemon said this person's access was removed. */
+  revoked = false;
   /** M25: tries that ended before the daemon said hello. */
   failures = 0;
   /** M25: when the daemon last sent anything (ms), so a link that died
@@ -673,6 +675,7 @@ export class Client {
   private onMessage(msg: ServerMsg) {
     switch (msg.type) {
       case "hello":
+        this.revoked = false;
         this.clientId = msg.client;
         this.connected = true;
         this.focused = undefined;
@@ -699,6 +702,8 @@ export class Client {
         break;
       }
       case "error":
+        // M30: the daemon hangs up next; what it showed is no longer ours.
+        if (msg.message === "your access was removed") this.revoked = true;
         this.showError(msg.message);
         break;
       case "notice":

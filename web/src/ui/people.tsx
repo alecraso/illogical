@@ -311,6 +311,25 @@ export function ShareDialog({ client }: { client: Client }) {
             </div>
           </div>
         ) : null}
+        {control && client.e2e
+          ? control.teams
+              .filter((t) => t.verified && t.role !== null && !mine.some((g) => g.principal === `team:${t.team}`))
+              .map((t) => (
+                <p key={t.team} class="share-team">
+                  <button
+                    data-share-team={t.team}
+                    onClick={() =>
+                      // Pinned to its founder, as this browser pinned the
+                      // team: the machine checks every roster back to them.
+                      void set(`team:${t.team}`, role, history, { root: `${t.pin.founder}.${t.pin.founder_root}`, name: t.roster.name })
+                    }
+                  >
+                    Share with everyone in {t.roster.name}
+                  </button>{" "}
+                  <span class="dim">(as members come and go)</span>
+                </p>
+              ))
+          : null}
         <form
           class="share-add"
           onSubmit={(e) => {
