@@ -21,8 +21,10 @@ use libghostty_vt::{
 
 use crate::{Capabilities, VtEngine};
 
-/// Scrollback kept per pane, as a byte budget.
-const SCROLLBACK_BYTES: usize = 64 * 1024 * 1024;
+/// Scrollback kept in memory per pane, as a byte budget: about 9.6k rows at
+/// 200 columns, 24k at 80 (S9 measured 1.7 KB per 200-column row). The pane
+/// log on disk keeps all of it (`history`, `tail`, `search`).
+const SCROLLBACK_BYTES: usize = 16 * 1024 * 1024;
 /// Largest unfinished escape sequence a checkpoint can carry.
 const CONTINUATION_BYTES: usize = 1024 * 1024;
 

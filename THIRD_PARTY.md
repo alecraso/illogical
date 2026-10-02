@@ -6349,15 +6349,15 @@ limitations under the License.
 ## Apache License 2.0
 
 Used by:
-- [libghostty-vt-sys 0.2.1](https://github.com/uzaaft/libghostty-rs)
 - [libghostty-vt 0.2.1](https://github.com/uzaaft/libghostty-rs)
-- [illogical 0.3.0](https://git.inevitable.fyi/jhgaylor/illogical)
-- [illogical-control 0.3.0](https://git.inevitable.fyi/jhgaylor/illogical)
-- [illogical-core 0.3.0](https://git.inevitable.fyi/jhgaylor/illogical)
-- [illogicald 0.3.0](https://git.inevitable.fyi/jhgaylor/illogical)
-- [illogical-e2e 0.3.0](https://git.inevitable.fyi/jhgaylor/illogical)
-- [illogical-proto 0.3.0](https://git.inevitable.fyi/jhgaylor/illogical)
-- [illogical-vt 0.3.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [illogical 0.4.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [illogical-control 0.4.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [illogical-core 0.4.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [illogicald 0.4.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [illogical-e2e 0.4.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [illogical-proto 0.4.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [illogical-vt 0.4.0](https://git.inevitable.fyi/jhgaylor/illogical)
+- [libghostty-vt-sys 0.2.1](https://github.com/uzaaft/libghostty-rs)
 - [allocator-api2 0.2.21](https://github.com/zakarumych/allocator-api2)
 - [anyhow 1.0.104](https://github.com/dtolnay/anyhow)
 - [asn1-rs-impl 0.2.0](https://github.com/rusticata/asn1-rs.git)

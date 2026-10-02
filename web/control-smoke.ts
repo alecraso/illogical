@@ -16,13 +16,16 @@ import { E2ESocket } from "./src/e2e/channel.ts";
 import { signRoster } from "./src/e2e/team.ts";
 import { createHmac } from "node:crypto";
 
-const CONTROL = 7791;
-const GITHUB = 7792;
-const DAEMON = 7793;
-const SPY = 7794;
-const PUSH = 7795;
-const STRIPE = 7796;
-const SPRITES = 7798;
+// Ports the OS hands out, so runs side by side (CI and a worktree's
+// `just check` on one machine) don't collide.
+async function freePort(): Promise<number> {
+  const s = createTcp().listen(0, "127.0.0.1");
+  await new Promise((ok) => s.once("listening", ok));
+  const port = (s.address() as { port: number }).port;
+  await new Promise((ok) => s.close(ok));
+  return port;
+}
+const [CONTROL, GITHUB, DAEMON, SPY, PUSH, STRIPE, SPRITES] = await Promise.all(Array.from({ length: 7 }, freePort));
 const WHSEC = "whsec_smoke";
 // Who the fake GitHub signs in next.
 let asUser = "stranger";
