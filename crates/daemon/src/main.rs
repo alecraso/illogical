@@ -111,6 +111,10 @@ enum Command {
         /// This machine's name in the directory [default: the hostname].
         #[arg(long)]
         name: Option<String>,
+        /// Join it to a team (its id, from the team's page), not your
+        /// account alone: the team's members reach it by their team role.
+        #[arg(long)]
+        team: Option<String>,
         /// The daemon's state directory [default: as the daemon's].
         #[arg(long, env = "ILLOGICAL_STATE_DIR")]
         state_dir: Option<PathBuf>,
@@ -498,12 +502,12 @@ fn main() -> anyhow::Result<()> {
             install::install(!no_start, &daemon_args, reset_args)
         }
         Some(Command::Sandbox) => sandbox::supervise(),
-        Some(Command::Join { url, name, state_dir }) => {
+        Some(Command::Join { url, name, team, state_dir }) => {
             let name = name.unwrap_or_else(|| {
                 nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok()).unwrap_or_else(|| "illogical".into())
             });
             let dir = state_dir.unwrap_or_else(default_state_dir);
-            tokio::runtime::Runtime::new()?.block_on(control::join(&url, &name, &dir))
+            tokio::runtime::Runtime::new()?.block_on(control::join(&url, &name, team.as_deref(), &dir))
         }
         Some(Command::Leave { state_dir }) => {
             tokio::runtime::Runtime::new()?.block_on(control::leave(&state_dir.unwrap_or_else(default_state_dir)))
@@ -669,10 +673,33 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
             .join("illogical/static")
     });
     let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
-    let control = control::Control::new(&state_dir, direct_urls);
-    let app =
-        server::App::new(access, identify, mux.clone(), push, hosts, shares, synced, binaries, control.clone(), acl);
+    let control = control::Control::new(&state_dir, direct_urls, acl.clone());
+    let app = server::App::new(
+        access,
+        identify,
+        mux.clone(),
+        push,
+        hosts,
+        shares,
+        synced,
+        binaries,
+        control.clone(),
+        acl.clone(),
+    );
     control.start(app.clone());
+    // Read-only links end on time (M19).
+    {
+        let (acl, mux, control) = (acl.clone(), mux.clone(), control.clone());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if acl.prune_links() {
+                    mux.send(mux::Cmd::AclChanged);
+                    control.poke();
+                }
+            }
+        });
+    }
     start_reach(&args.reach, &app, name)?;
     // TCP_NODELAY on every accepted connection (axum leaves Nagle on).
     // Dial-out tunnels write a DATA frame and a GRANT back to back, and

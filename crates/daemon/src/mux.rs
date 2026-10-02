@@ -1919,6 +1919,11 @@ impl Daemon {
         if who.is_owner() || self.machine_of(pane).is_some() || self.blocks.contains_key(&pane) {
             return Ok(());
         }
+        // A team's machine is the team's: its members drive it by their
+        // team role, no one person's trust needed (M19).
+        if self.config.acl.team_role(who).is_some_and(|r| r >= Role::Editor) {
+            return Ok(());
+        }
         let until = self.trust.get(&(pane, who.id().to_owned())).copied().unwrap_or(0);
         if until > now_ms() {
             return Ok(());
@@ -2060,7 +2065,9 @@ impl Daemon {
         if who.is_owner() {
             return st;
         }
-        let roles = self.config.acl.roles(who);
+        // A grant per session, or a team role on all of them (M19).
+        let roles: BTreeMap<SessionId, Role> =
+            st.sessions.iter().filter_map(|s| Some((s.id, self.config.acl.role(who, s.id)?))).collect();
         st.sessions.retain(|s| roles.contains_key(&s.id));
         let tabs: std::collections::HashSet<TabId> = st.sessions.iter().flat_map(|s| s.tabs.iter().copied()).collect();
         st.tabs.retain(|t| tabs.contains(&t.id));

@@ -12,6 +12,7 @@ pub mod cert;
 pub mod channel;
 pub mod keys;
 pub mod mux;
+pub mod team;
 
 pub use cert::{Cert, Kind, Revocation, Trust};
 pub use keys::DeviceKeys;

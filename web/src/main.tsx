@@ -10,12 +10,30 @@ import { registerWorker } from "./push";
 import { ControlSession, detectControl } from "./control";
 import { ControlGate, ControlOverlay, controlMenuItems, NoMachines, useControl } from "./ui/control";
 import { setHostMenuExtras } from "./ui/hosts";
+import { setControlSession } from "./ui/people";
+import { unhex } from "./e2e/cert.ts";
 import { useSubscribe } from "./ui/hooks";
 
 // Served by illogical control (M17), not a daemon: sign in, enroll this
-// browser, and reach daemons through end-to-end channels.
+// browser, and reach daemons through end-to-end channels. A read-only link
+// (M19, `#link=…`) needs no account: its key is in the fragment.
 const info = await detectControl();
-const session = info ? new ControlSession(info) : null;
+const linkMatch = /^#link=([0-9a-f]+)\.([0-9a-f]{64})\.([0-9a-f]{64})\.([0-9a-f]{64})$/.exec(location.hash);
+const session = info && !linkMatch ? new ControlSession(info) : null;
+setControlSession(session);
+let linkTarget: import("./client").E2ETarget | undefined;
+if (info && linkMatch) {
+  const [, daemon, noise, seed, pub] = linkMatch;
+  const pkcs8 = new Uint8Array(48);
+  pkcs8.set(unhex("302e020100300506032b656e04220420"));
+  pkcs8.set(unhex(seed), 16);
+  const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, { name: "X25519" }, false, ["deriveBits"]);
+  const publicKey = await crypto.subtle.importKey("raw", unhex(pub), { name: "X25519" }, true, []);
+  const keys = { noise: { privateKey, publicKey }, sign: undefined as unknown as CryptoKeyPair, id: "link", noisePub: pub, signPub: "" };
+  linkTarget = { daemon: { id: daemon, noise }, direct: [], relay: `${info.url.replace(/^http/, "ws")}/api/relay/link/${daemon}`, keys };
+  // Keep the key out of the address bar (and of anything that reads it).
+  history.replaceState(null, "", "/");
+}
 if (session) {
   setHostMenuExtras(() => controlMenuItems(session));
   session.subscribe(() =>
@@ -36,6 +54,7 @@ if (session) {
 }
 
 function makeClient(base: string): Client {
+  if (linkTarget) return new Client(`e2e:${linkTarget.daemon.id}`, linkTarget);
   if (session && base.startsWith("e2e:")) return new Client(base, session.target(base.slice(4)));
   return new Client(base);
 }
@@ -80,15 +99,18 @@ const draw = () =>
 draw();
 connect();
 
-directory.subscribe(() => {
-  const base = directory.base();
-  if (base === client.base) return;
-  client.close();
-  client = makeClient(base);
-  draw();
-  connect();
-});
-void directory.refresh();
+// A link's page shows its one daemon: no host list.
+if (!linkTarget) {
+  directory.subscribe(() => {
+    const base = directory.base();
+    if (base === client.base) return;
+    client.close();
+    client = makeClient(base);
+    draw();
+    connect();
+  });
+  void directory.refresh();
+}
 
 // Opened from a notification (`#pane=N`), or told to by the service worker.
 // Notifications come from the home daemon, so show it first.

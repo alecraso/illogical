@@ -70,6 +70,45 @@ CREATE TABLE IF NOT EXISTS passkeys (
     sign_count INTEGER NOT NULL,
     created INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS teams (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    founder TEXT NOT NULL,
+    founder_root TEXT NOT NULL,
+    locked INTEGER NOT NULL DEFAULT 0,
+    created INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rosters (
+    team TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    PRIMARY KEY (team, version)
+);
+CREATE TABLE IF NOT EXISTS invites (
+    code_hash TEXT PRIMARY KEY,
+    team TEXT NOT NULL,
+    role TEXT NOT NULL,
+    expires INTEGER NOT NULL,
+    by_account TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS team_requests (
+    team TEXT NOT NULL,
+    account TEXT NOT NULL,
+    root TEXT NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created INTEGER NOT NULL,
+    PRIMARY KEY (team, account)
+);
+CREATE TABLE IF NOT EXISTS daemon_access (
+    daemon TEXT NOT NULL,
+    account TEXT NOT NULL,
+    PRIMARY KEY (daemon, account)
+);
+CREATE TABLE IF NOT EXISTS daemon_links (
+    daemon TEXT PRIMARY KEY,
+    until INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS usage (
     account TEXT NOT NULL,
     day TEXT NOT NULL,
@@ -77,6 +116,40 @@ CREATE TABLE IF NOT EXISTS usage (
     PRIMARY KEY (account, day)
 );
 ";
+
+/// Columns added after a table first shipped.
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let has = |table: &str, col: &str| -> rusqlite::Result<bool> {
+        let mut q = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let names: Vec<String> = q.query_map([], |r| r.get(1))?.collect::<Result<_, _>>()?;
+        Ok(names.iter().any(|n| n == col))
+    };
+    if !has("daemons", "team")? {
+        conn.execute_batch("ALTER TABLE daemons ADD COLUMN team TEXT")?;
+    }
+    if !has("joins", "team")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN team TEXT")?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Team {
+    pub id: String,
+    pub name: String,
+    pub founder: String,
+    pub founder_root: String,
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TeamRequest {
+    pub account: String,
+    pub root: String,
+    pub name: String,
+    pub role: String,
+    pub created: u64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Account {
@@ -108,6 +181,8 @@ pub struct Join {
     pub urls: Vec<String>,
     pub created: u64,
     pub account: Option<String>,
+    /// A team daemon's team (M19).
+    pub team: Option<String>,
 }
 
 fn cert_of(s: String) -> rusqlite::Result<Cert> {
@@ -121,12 +196,14 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
     pub fn memory() -> Self {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn).unwrap();
         Self { conn: Mutex::new(conn) }
     }
 
@@ -311,13 +388,21 @@ impl Db {
 
     // ---- joins
 
-    pub fn add_join(&self, code: &str, cert: &Cert, poll_hash: &str, urls: &[String], now: u64) -> anyhow::Result<()> {
+    pub fn add_join(
+        &self,
+        code: &str,
+        cert: &Cert,
+        poll_hash: &str,
+        urls: &[String],
+        team: Option<&str>,
+        now: u64,
+    ) -> anyhow::Result<()> {
         let c = self.c();
         // Old ones go first; a code can be asked for again.
         c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
         c.execute(
-            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account) VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
-            params![code, serde_json::to_string(cert)?, poll_hash, serde_json::to_string(urls)?, now],
+            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
+            params![code, serde_json::to_string(cert)?, poll_hash, serde_json::to_string(urls)?, now, team],
         )?;
         Ok(())
     }
@@ -326,7 +411,7 @@ impl Db {
         Ok(self
             .c()
             .query_row(
-                "SELECT cert, poll_hash, urls, created, account FROM joins WHERE code = ?1 AND created >= ?2",
+                "SELECT cert, poll_hash, urls, created, account, team FROM joins WHERE code = ?1 AND created >= ?2",
                 params![code, now.saturating_sub(JOIN_TTL_MS)],
                 |r| {
                     Ok(Join {
@@ -335,6 +420,7 @@ impl Db {
                         urls: serde_json::from_str(&r.get::<_, String>(2)?).unwrap_or_default(),
                         created: r.get(3)?,
                         account: r.get(4)?,
+                        team: r.get(5)?,
                     })
                 },
             )
@@ -401,6 +487,244 @@ impl Db {
         c.execute("DELETE FROM daemons WHERE id = ?1", params![id])?;
         c.execute("DELETE FROM devices WHERE id = ?1 AND kind = 'daemon'", params![id])?;
         Ok(())
+    }
+
+    // ---- people and teams (M19)
+
+    /// An account by its sign-in login (to share with a person).
+    pub fn account_by_login(&self, login: &str) -> anyhow::Result<Option<Account>> {
+        let c = self.c();
+        let id: Option<String> = c
+            .query_row("SELECT account FROM identities WHERE lower(login) = lower(?1) LIMIT 1", params![login], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        drop(c);
+        match id {
+            Some(id) => self.account(&id),
+            None => Ok(None),
+        }
+    }
+
+    pub fn add_team(&self, t: &Team, roster_version: u64, roster: &str, now: u64) -> anyhow::Result<()> {
+        let mut c = self.c();
+        let tx = c.transaction()?;
+        tx.execute(
+            "INSERT INTO teams (id, name, founder, founder_root, locked, created) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+            params![t.id, t.name, t.founder, t.founder_root, now],
+        )?;
+        tx.execute(
+            "INSERT INTO rosters (team, version, body) VALUES (?1, ?2, ?3)",
+            params![t.id, roster_version, roster],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn team(&self, id: &str) -> anyhow::Result<Option<Team>> {
+        Ok(self
+            .c()
+            .query_row("SELECT id, name, founder, founder_root, locked FROM teams WHERE id = ?1", params![id], |r| {
+                Ok(Team {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    founder: r.get(2)?,
+                    founder_root: r.get(3)?,
+                    locked: r.get(4)?,
+                })
+            })
+            .optional()?)
+    }
+
+    pub fn set_locked(&self, team: &str, locked: bool) -> anyhow::Result<()> {
+        self.c().execute("UPDATE teams SET locked = ?2 WHERE id = ?1", params![team, locked])?;
+        Ok(())
+    }
+
+    pub fn add_roster(&self, team: &str, version: u64, body: &str) -> anyhow::Result<()> {
+        let c = self.c();
+        c.execute("INSERT INTO rosters (team, version, body) VALUES (?1, ?2, ?3)", params![team, version, body])?;
+        if let Some(name) =
+            serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v["name"].as_str().map(str::to_owned))
+        {
+            c.execute("UPDATE teams SET name = ?2 WHERE id = ?1", params![team, name])?;
+        }
+        Ok(())
+    }
+
+    /// A team's rosters after `since`, oldest first (the whole chain for 0).
+    pub fn rosters(&self, team: &str, since: u64) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT body FROM rosters WHERE team = ?1 AND version > ?2 ORDER BY version")?;
+        let rows = q.query_map(params![team, since], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn latest_roster(&self, team: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row("SELECT body FROM rosters WHERE team = ?1 ORDER BY version DESC LIMIT 1", params![team], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
+    /// Teams an account is in, by their latest rosters.
+    pub fn teams_of(&self, account: &str) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT r.body FROM rosters r JOIN (SELECT team, MAX(version) v FROM rosters GROUP BY team) m
+             ON r.team = m.team AND r.version = m.v",
+        )?;
+        let rows: Vec<String> = q.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        Ok(rows
+            .into_iter()
+            .filter(|b| {
+                serde_json::from_str::<serde_json::Value>(b).ok().is_some_and(|v| {
+                    v["members"].as_array().is_some_and(|ms| ms.iter().any(|m| m["account"] == account))
+                })
+            })
+            .collect())
+    }
+
+    pub fn add_invite(&self, code_hash: &str, team: &str, role: &str, expires: u64, by: &str) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO invites (code_hash, team, role, expires, by_account) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![code_hash, team, role, expires, by],
+        )?;
+        Ok(())
+    }
+
+    /// (team, role) for a live invite.
+    pub fn invite(&self, code_hash: &str, now: u64) -> anyhow::Result<Option<(String, String)>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT team, role FROM invites WHERE code_hash = ?1 AND expires > ?2",
+                params![code_hash, now],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn drop_invites(&self, team: &str) -> anyhow::Result<()> {
+        let c = self.c();
+        c.execute("DELETE FROM invites WHERE team = ?1", params![team])?;
+        c.execute("DELETE FROM team_requests WHERE team = ?1", params![team])?;
+        Ok(())
+    }
+
+    pub fn add_request(&self, team: &str, r: &TeamRequest) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT OR REPLACE INTO team_requests (team, account, root, name, role, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![team, r.account, r.root, r.name, r.role, r.created],
+        )?;
+        Ok(())
+    }
+
+    pub fn requests(&self, team: &str) -> anyhow::Result<Vec<TeamRequest>> {
+        let c = self.c();
+        let mut q =
+            c.prepare("SELECT account, root, name, role, created FROM team_requests WHERE team = ?1 ORDER BY created")?;
+        let rows = q.query_map(params![team], |r| {
+            Ok(TeamRequest {
+                account: r.get(0)?,
+                root: r.get(1)?,
+                name: r.get(2)?,
+                role: r.get(3)?,
+                created: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn drop_request(&self, team: &str, account: &str) -> anyhow::Result<()> {
+        self.c().execute("DELETE FROM team_requests WHERE team = ?1 AND account = ?2", params![team, account])?;
+        Ok(())
+    }
+
+    pub fn set_daemon_team(&self, daemon: &str, team: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE daemons SET team = ?2 WHERE id = ?1", params![daemon, team])?;
+        Ok(())
+    }
+
+    pub fn daemon_team(&self, daemon: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row("SELECT team FROM daemons WHERE id = ?1", params![daemon], |r| r.get(0))
+            .optional()?
+            .flatten())
+    }
+
+    pub fn team_daemons(&self, team: &str) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT id FROM daemons WHERE team = ?1")?;
+        let rows = q.query_map(params![team], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The accounts a daemon says it lets in (for routing only: it checks
+    /// for itself).
+    pub fn set_access(&self, daemon: &str, accounts: &[String], links_until: Option<u64>) -> anyhow::Result<()> {
+        let mut c = self.c();
+        let tx = c.transaction()?;
+        tx.execute("DELETE FROM daemon_access WHERE daemon = ?1", params![daemon])?;
+        for a in accounts {
+            tx.execute("INSERT OR IGNORE INTO daemon_access (daemon, account) VALUES (?1, ?2)", params![daemon, a])?;
+        }
+        match links_until {
+            Some(u) => {
+                tx.execute("INSERT OR REPLACE INTO daemon_links (daemon, until) VALUES (?1, ?2)", params![daemon, u])?
+            }
+            None => tx.execute("DELETE FROM daemon_links WHERE daemon = ?1", params![daemon])?,
+        };
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn daemon_lets_in(&self, daemon: &str, account: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT 1 FROM daemon_access WHERE daemon = ?1 AND account = ?2",
+                params![daemon, account],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn daemon_has_links(&self, daemon: &str, now: u64) -> anyhow::Result<bool> {
+        Ok(self
+            .c()
+            .query_row("SELECT 1 FROM daemon_links WHERE daemon = ?1 AND until > ?2", params![daemon, now], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+
+    /// Daemons shared with an account (not its own, not by team).
+    pub fn shared_daemons(&self, account: &str) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT daemon FROM daemon_access WHERE account = ?1")?;
+        let rows = q.query_map(params![account], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn daemon_row(&self, id: &str) -> anyhow::Result<Option<(String, DaemonRow)>> {
+        Ok(self
+            .c()
+            .query_row("SELECT account, id, name, urls, last_seen FROM daemons WHERE id = ?1", params![id], |r| {
+                Ok((
+                    r.get(0)?,
+                    DaemonRow {
+                        id: r.get(1)?,
+                        name: r.get(2)?,
+                        urls: serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or_default(),
+                        last_seen: r.get(4)?,
+                    },
+                ))
+            })
+            .optional()?)
     }
 
     // ---- metering

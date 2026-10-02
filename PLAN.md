@@ -2212,6 +2212,19 @@ The launch issues (#19–#27: licence, releases, install, quickstart) come first
 
 #### M19: teams (sharing, roles, team daemons, invites)
 
+**Done 2026-10-02.**
+
+- **What landed:**
+  - signed team rosters (`illogical_e2e::team`): each version is signed by an owner's device of the version before, and a team daemon pins the founder at `illogicald join --team`;
+  - teams in control: invites, join requests that an owner admits by signing the next roster, roles, removal, and the lock;
+  - team daemons, whose members drive them by team role: the box is the team's, so no personal trust grant is needed;
+  - sharing a session with a person on control, with their root pinned in the grant;
+  - read-only links: a one-off X25519 key in the fragment, held by the daemon as a "from now" viewer until it expires, with an anonymous relay route only while links are live.
+  - `e2e/teams.spec.ts` covers the done-when.
+- **Trust on first use:** each browser pins other accounts' roots, and team founders, the first time it sees them, and a fingerprint is shown to compare. Control could lie at that first sight, the same limit as Tailnet Lock's first sign-in.
+- **Not covered by tests:** sharing a single session with a person outside a team (it's built, but not exercised end to end), and `illogical team lock` from the CLI (the lock is in the Teams panel).
+
+
 Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, attribution). Control becomes where principals come from; daemons still enforce.
 
 - **Teams:**

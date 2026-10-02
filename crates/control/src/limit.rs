@@ -26,6 +26,7 @@ pub struct Limits {
 pub const JOINS: (&str, usize) = ("join", 30);
 pub const ACCOUNTS: (&str, usize) = ("account", 10);
 pub const SIGN_INS: (&str, usize) = ("sign-in", 60);
+pub const LINKS: (&str, usize) = ("link", 240);
 const WINDOW: Duration = Duration::from_secs(3600);
 
 impl Limits {

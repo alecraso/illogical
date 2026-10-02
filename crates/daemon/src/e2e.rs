@@ -148,7 +148,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
         .ok_or_else(|| anyhow::anyhow!("closed before the handshake"))?;
     let enrolled = app.control.enrolled().ok_or_else(|| anyhow::anyhow!("not enrolled in control"))?;
     let (responder, who) = Responder::read(&enrolled.keys, &prologue(&enrolled.keys.id()), &m1)?;
-    let Some(device) = app.control.device(&who) else {
+    let Some((device, principal)) = app.control.device(&who) else {
         warn!(key = hex::encode(&who[..8]), "refused a channel from a device this daemon doesn't trust");
         anyhow::bail!("unknown device");
     };
@@ -156,15 +156,13 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     out.send(m2).await?;
     let out = Arc::new(Out { ch: Arc::new(ch), q: tokio::sync::Mutex::new(out) });
     let ch = out.ch.clone();
-    info!(device = device.device, name = device.name, "channel open");
+    info!(device = device.device, name = device.name, who = principal.id(), "channel open");
 
     let client = app.new_client_id();
     let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
-    // A device of the account this daemon joined: its owner.
-    app.mux.send(Cmd::Connect {
-        sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: crate::acl::Principal::Owner },
-    });
+    app.mux
+        .send(Cmd::Connect { sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: principal.clone() } });
     let router = crate::server::channel_router(app.clone());
     let mut changed = app.control.changed.subscribe();
     let result = loop {
@@ -184,7 +182,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
                         }
                     }
                     Ok(Some(Msg::Request { id, head, body })) => {
-                        tokio::spawn(answer(router.clone(), out.clone(), id, head, body));
+                        tokio::spawn(answer(router.clone(), out.clone(), id, head, body, principal.clone()));
                     }
                     Ok(Some(Msg::Response { .. })) => break Err(anyhow::anyhow!("a client doesn't answer requests")),
                     Err(e) => break Err(e),
@@ -220,8 +218,8 @@ fn to_msg(o: ToClient) -> Option<Msg> {
     }
 }
 
-async fn answer(router: Router, out: Arc<Out>, id: u32, head: RequestHead, body: Vec<u8>) {
-    let (status, content_type, body) = match call(router, head, body).await {
+async fn answer(router: Router, out: Arc<Out>, id: u32, head: RequestHead, body: Vec<u8>, who: crate::acl::Principal) {
+    let (status, content_type, body) = match call(router, head, body, who).await {
         Ok(r) => r,
         Err(e) => (
             400,
@@ -232,13 +230,21 @@ async fn answer(router: Router, out: Arc<Out>, id: u32, head: RequestHead, body:
     let _ = out.put(&Msg::Response { id, head: ResponseHead { status, content_type }, body }).await;
 }
 
-async fn call(router: Router, head: RequestHead, body: Vec<u8>) -> anyhow::Result<(u16, Option<String>, Vec<u8>)> {
+async fn call(
+    router: Router,
+    head: RequestHead,
+    body: Vec<u8>,
+    who: crate::acl::Principal,
+) -> anyhow::Result<(u16, Option<String>, Vec<u8>)> {
     anyhow::ensure!(head.path.starts_with("/api/"), "only the API is reachable this way");
     let mut req = Request::builder().method(head.method.as_str()).uri(head.path.as_str());
     if let Some(ct) = &head.content_type {
         req = req.header(header::CONTENT_TYPE, ct);
     }
-    let res = router.oneshot(req.body(Body::from(body))?).await?;
+    let mut req = req.body(Body::from(body))?;
+    // Who's asking: the API's checks (authz.rs) go by it.
+    req.extensions_mut().insert(who);
+    let res = router.oneshot(req).await?;
     let status = res.status().as_u16();
     let ct = res.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(str::to_owned);
     let body = axum::body::to_bytes(res.into_body(), MAX_MSG - 1024).await?;

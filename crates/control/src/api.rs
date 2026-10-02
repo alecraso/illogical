@@ -182,6 +182,9 @@ pub struct JoinReq {
     cert: Cert,
     #[serde(default)]
     urls: Vec<String>,
+    /// A machine that belongs to a team (M19), not a person.
+    #[serde(default)]
+    team: Option<String>,
 }
 
 fn check_urls(urls: &[String]) -> Result<(), ApiError> {
@@ -208,7 +211,12 @@ pub async fn join(
     check_urls(&b.urls)?;
     let code = join_code(&b.cert);
     let poll = token();
-    app.db.add_join(&code, &b.cert, &hash(&poll), &b.urls, now_ms())?;
+    if let Some(t) = &b.team
+        && app.db.team(t)?.is_none()
+    {
+        return Err(err(StatusCode::NOT_FOUND, "no such team"));
+    }
+    app.db.add_join(&code, &b.cert, &hash(&poll), &b.urls, b.team.as_deref(), now_ms())?;
     Ok(Json(json!({ "code": code, "poll": poll, "expires_in_secs": crate::db::JOIN_TTL_MS / 1000 })))
 }
 
@@ -228,7 +236,17 @@ pub async fn join_poll(State(app): State<Arc<App>>, Path(code): Path<String>, Qu
     let Some(account) = j.account else { return Ok(Json(json!({ "approved": false }))) };
     let (trust, certs, revs) = trusted(&app, &account)?;
     app.db.drop_join(&code)?;
-    Ok(Json(json!({ "approved": true, "cert": j.cert, "trust": trust, "certs": certs, "revocations": revs })))
+    // A team daemon pins the team's founder too.
+    let team = match &j.team {
+        Some(t) => app
+            .db
+            .team(t)?
+            .map(|t| json!({ "team": t.id, "founder": t.founder, "founder_root": t.founder_root, "name": t.name })),
+        None => None,
+    };
+    Ok(Json(
+        json!({ "approved": true, "cert": j.cert, "trust": trust, "certs": certs, "revocations": revs, "team": team }),
+    ))
 }
 
 /// What a signed-in person sees before approving a code.
@@ -239,7 +257,11 @@ pub async fn join_show(State(app): State<Arc<App>>, _s: Session, Path(code): Pat
         .join(&code, now_ms())?
         .filter(|j| j.account.is_none())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such code (expired?)"))?;
-    Ok(Json(json!({ "code": code, "cert": j.cert, "urls": j.urls, "created": j.created })))
+    let team = match &j.team {
+        Some(t) => app.db.team(t)?.map(|t| json!({ "team": t.id, "name": t.name })),
+        None => None,
+    };
+    Ok(Json(json!({ "code": code, "cert": j.cert, "urls": j.urls, "created": j.created, "team": team })))
 }
 
 pub async fn join_approve(
@@ -260,7 +282,19 @@ pub async fn join_approve(
     }
     approval_ok(&app, &s.account, &c)?;
     app.db.put_device(&c, true, now_ms())?;
+    // A team's machine: only its owners add one.
+    if let Some(team) = &j.team {
+        let r = app.db.latest_roster(team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+        let r: illogical_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
+        if r.member(&s.account).map(|m| m.role) != Some(illogical_e2e::team::TeamRole::Owner) {
+            return Err(err(StatusCode::FORBIDDEN, "only the team's owners add its machines"));
+        }
+    }
+    app.db.put_device(&c, true, now_ms())?;
     app.db.put_daemon(&s.account, &c.device, &c.name, &j.urls)?;
+    if let Some(team) = &j.team {
+        app.db.set_daemon_team(&c.device, team)?;
+    }
     app.db.approve_join(&code, &c)?;
     Ok(Json(json!({ "approved": true, "daemon": c.device })))
 }
@@ -282,7 +316,7 @@ pub async fn daemon_leave(State(app): State<Arc<App>>, d: DaemonAuth) -> R {
 // ---------------------------------------------------------------- directory
 
 pub async fn directory(State(app): State<Arc<App>>, s: Session) -> R {
-    let daemons: Vec<Value> = app
+    let mut daemons: Vec<Value> = app
         .db
         .daemons(&s.account)?
         .into_iter()
@@ -291,5 +325,20 @@ pub async fn directory(State(app): State<Arc<App>>, s: Session) -> R {
             json!({ "id": d.id, "name": d.name, "urls": d.urls, "last_seen": d.last_seen, "online": online })
         })
         .collect();
+    // Teams' machines and those shared with me (M19), with their owner
+    // account's certificates to check them by.
+    for id in crate::teams::reachable(&app, &s.account)? {
+        let Some((owner, d)) = app.db.daemon_row(&id)? else { continue };
+        if owner == s.account {
+            continue;
+        }
+        let online = app.relay.online(&d.id);
+        let team = app.db.daemon_team(&d.id)?;
+        let owner_name = app.db.account(&owner)?.map(|a| a.login).unwrap_or_default();
+        daemons.push(json!({
+            "id": d.id, "name": d.name, "urls": d.urls, "last_seen": d.last_seen, "online": online,
+            "account": owner, "owner_name": owner_name, "team": team, "chain": crate::teams::chain_of(&app, &owner)?,
+        }));
+    }
     Ok(Json(json!({ "daemons": daemons })))
 }

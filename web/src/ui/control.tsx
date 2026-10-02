@@ -174,10 +174,10 @@ function JoinCodeForm({ s }: { s: ControlSession }) {
 export function ControlOverlay({ s }: { s: ControlSession }) {
   useControl(s);
   const [hash, setHash] = useState(location.hash);
-  const [panel, setPanel] = useState<null | "devices" | "add">(null);
+  const [panel, setPanel] = useState<null | "devices" | "add" | "teams">(null);
   useEffect(() => {
     const on = () => setHash(location.hash);
-    const open = (e: Event) => setPanel((e as CustomEvent<"devices" | "add">).detail);
+    const open = (e: Event) => setPanel((e as CustomEvent<"devices" | "add" | "teams">).detail);
     addEventListener("hashchange", on);
     addEventListener("illogical:control-panel", open);
     return () => {
@@ -189,9 +189,15 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   if (s.recoveryCodes) return <RecoveryCodes s={s} />;
   const join = /^#join=([A-Za-z0-9-]+)$/.exec(hash)?.[1];
   if (join) return <JoinPrompt s={s} code={join} />;
+  const invite = /^#invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
+  if (invite) return <InvitePrompt s={s} team={invite[1]} code={invite[2]} />;
+  // Someone used an invite to a team I own: add them (sign the roster)?
+  const req = s.teams.flatMap((t) => (t.role === "owner" ? t.requests.map((r) => ({ t, r })) : []))[0];
+  if (req) return <AdmitPrompt s={s} team={req.t} req={req.r} />;
   const asking = s.pending[0];
   if (asking) return <DevicePrompt s={s} c={asking} />;
   if (panel === "devices") return <Devices s={s} close={() => setPanel(null)} />;
+  if (panel === "teams") return <Teams s={s} close={() => setPanel(null)} />;
   if (panel === "add")
     return (
       <Modal close={() => setPanel(null)}>
@@ -349,11 +355,158 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
 
 /** For the host menu. */
 export function controlMenuItems(s: ControlSession) {
-  const panel = (p: "devices" | "add") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+  const panel = (p: "devices" | "add" | "teams") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
   return [
     "separator" as const,
     { header: `${s.login}${s.stale ? " · control unreachable" : ""}` },
     { label: "Add a machine…", run: panel("add") },
+    { label: "Teams…", run: panel("teams") },
     { label: "Devices and machines…", run: panel("devices") },
   ];
+}
+
+function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code: string }) {
+  const [info, setInfo] = useState<{ name: string; role: string } | null>(null);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    s.showInvite(team, code).then(setInfo, (e: Error) => setErr(e.message));
+  }, [team, code]);
+  return (
+    <Modal close={clearHash}>
+      <h2>Join a team?</h2>
+      {err ? <p class="control-error">{err}</p> : null}
+      {info && !done ? (
+        <p>
+          You're invited to <b data-invite-team={team}>{info.name}</b> as {info.role === "viewer" ? "someone who watches" : info.role === "editor" ? "someone who drives" : "an owner"}.
+        </p>
+      ) : null}
+      {done ? <p data-invite-pending>Asked to join. An owner adds you when they're next here; their machines appear once they do.</p> : null}
+      <div class="prompt-buttons">
+        <button onClick={clearHash}>{done ? "Done" : "Not now"}</button>
+        {!done ? (
+          <button
+            class="primary"
+            data-accept-invite
+            disabled={!info}
+            onClick={() => s.acceptInvite(team, code).then(() => setDone(true), (e: Error) => setErr(e.message))}
+          >
+            Join
+          </button>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
+function AdmitPrompt({ s, team, req }: { s: ControlSession; team: import("../control").Team; req: import("../control").Team["requests"][number] }) {
+  const [err, setErr] = useState("");
+  return (
+    <Modal>
+      <h2>Add to {team.roster.name}?</h2>
+      <p>
+        <b>{req.name}</b> used an invite, as {req.role}. Their account's first device:
+      </p>
+      <p class="fingerprint" data-admit={req.account}>
+        {fingerprint(req.root)}
+      </p>
+      <p class="dim">If you can, check it with them. Adding them signs the team's new member list on this device.</p>
+      {err ? <p class="control-error">{err}</p> : null}
+      <div class="prompt-buttons">
+        <button onClick={() => s.rejectRequest(team.team, req.account).catch((e: Error) => setErr(e.message))}>Turn down</button>
+        <button class="primary" data-admit-yes onClick={() => s.admit(team.team, req).catch((e: Error) => setErr(e.message))}>
+          Add them
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function Teams({ s, close }: { s: ControlSession; close: () => void }) {
+  const [name, setName] = useState("");
+  const [err, setErr] = useState("");
+  const [link, setLink] = useState<string | null>(null);
+  const act = (f: () => Promise<unknown>) => f().catch((e: Error) => setErr(e.message));
+  return (
+    <Modal close={close}>
+      <h2>Teams</h2>
+      {s.teams.length === 0 ? <p class="dim">Teams share their machines with their members.</p> : null}
+      {s.teams.map((t) => (
+        <section key={t.team} class="team" data-team={t.team}>
+          <h3>
+            {t.roster.name} {t.locked ? <span class="control-error">· locked</span> : null}
+          </h3>
+          <p class="dim">
+            Team id <span class="control-cmd-inline">{t.team}</span>: add a machine with <code>illogicald join {s.info.url} --team {t.team}</code>
+          </p>
+          <ul class="control-devices">
+            {t.roster.members.map((m) => (
+              <li key={m.account} data-member={m.account}>
+                <span>
+                  {m.name}
+                  {m.account === s.account ? " (you)" : ""}
+                </span>
+                {t.role === "owner" && m.account !== s.account ? (
+                  <select
+                    value={m.role}
+                    onChange={(e) => {
+                      const role = (e.target as HTMLSelectElement).value as typeof m.role;
+                      void act(() => s.changeTeam(t.team, (ms) => ms.map((x) => (x.account === m.account ? { ...x, role } : x))));
+                    }}
+                  >
+                    <option value="viewer">watches</option>
+                    <option value="editor">drives</option>
+                    <option value="owner">owner</option>
+                  </select>
+                ) : (
+                  <span class="dim">{m.role}</span>
+                )}
+                {t.role === "owner" && m.account !== s.account ? (
+                  <button class="control-revoke" data-remove-member={m.account} onClick={() => act(() => s.changeTeam(t.team, (ms) => ms.filter((x) => x.account !== m.account)))}>
+                    Remove
+                  </button>
+                ) : (
+                  <span />
+                )}
+              </li>
+            ))}
+          </ul>
+          {t.role === "owner" ? (
+            <div class="prompt-buttons">
+              <button data-invite={t.team} onClick={() => act(async () => setLink(await s.invite(t.team, "editor")))}>
+                Invite link
+              </button>
+              <button class={t.locked ? "" : "control-revoke danger"} data-lock={t.team} onClick={() => act(() => s.lockTeam(t.team, !t.locked))}>
+                {t.locked ? "Unlock" : "Lock (owners only)"}
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ))}
+      {link ? (
+        <p>
+          Anyone with this link can ask to join (for a week); you approve each:
+          <span class="control-cmd" data-invite-link>
+            {link}
+          </span>
+        </p>
+      ) : null}
+      <form
+        class="control-code"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void act(() => s.createTeam(name)).then(() => setName(""));
+        }}
+      >
+        <input placeholder="New team's name" value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} aria-label="Team name" />
+        <button type="submit" disabled={!name.trim()}>
+          Make a team
+        </button>
+      </form>
+      {err ? <p class="control-error">{err}</p> : null}
+      <div class="prompt-buttons">
+        <button onClick={close}>Done</button>
+      </div>
+    </Modal>
+  );
 }

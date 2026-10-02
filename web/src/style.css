@@ -1979,3 +1979,14 @@ button {
 .share-warning {
   color: var(--danger);
 }
+
+.team h3 {
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+
+.control-cmd-inline,
+.team code {
+  font: 12px ui-monospace, monospace;
+  user-select: all;
+}

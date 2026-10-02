@@ -13,6 +13,7 @@ mod db;
 mod limit;
 mod passkey;
 mod relay;
+mod teams;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
@@ -109,6 +110,12 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
+impl From<serde_json::Error> for ApiError {
+    fn from(e: serde_json::Error) -> Self {
+        anyhow::Error::from(e).into()
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(json!({ "error": self.1 }))).into_response()
@@ -155,6 +162,18 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/daemon/trust", get(api::daemon_trust))
         .route("/api/daemon/leave", post(api::daemon_leave))
         .route("/api/directory", get(api::directory))
+        .route("/api/people", get(teams::person))
+        .route("/api/teams", get(teams::list).post(teams::create))
+        .route("/api/teams/{id}/roster", post(teams::set_roster))
+        .route("/api/teams/{id}/invites", post(teams::invite))
+        .route("/api/teams/{id}/requests/{account}/reject", post(teams::reject))
+        .route("/api/teams/{id}/lock", post(teams::lock))
+        .route("/api/invites/{team}/{code}", get(teams::show_invite))
+        .route("/api/invites/{team}/{code}/accept", post(teams::accept_invite))
+        .route("/api/daemon/team", get(teams::daemon_team))
+        .route("/api/daemon/peers", get(teams::daemon_peers))
+        .route("/api/daemon/access", post(teams::daemon_access))
+        .route("/api/relay/link/{id}", get(relay::link))
         .route("/api/relay/dial", get(relay::dial))
         .route("/api/relay/c/{id}", get(relay::client))
         .fallback(asset)

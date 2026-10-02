@@ -18,23 +18,29 @@
 //! `illogicald leave` tells control and removes the file.
 
 use std::{
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::Duration,
 };
 
 use anyhow::{Context, bail};
+use illogical_core::Role;
 use illogical_e2e::{
     Cert, DeviceKeys, Kind, Revocation, Trust,
     cert::{Trusted, join_code},
     keys::fingerprint,
     now_ms,
+    team::{AccountCerts, Roster, TeamPin, TeamRole},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
-use crate::server::App;
+use crate::{
+    acl::{Acl, Principal},
+    server::App,
+};
 
 pub const FILE: &str = "control.json";
 pub const KEY_FILE: &str = "daemon.key";
@@ -51,17 +57,95 @@ pub struct Saved {
     pub certs: Vec<Cert>,
     #[serde(default)]
     pub revocations: Vec<Revocation>,
+    /// A team's machine (M19): the team and its founder, pinned at join.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamPin>,
+    /// The team's roster as this daemon last verified it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roster: Option<Roster>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub team_certs: AccountCerts,
+    /// The team is locked: only its owners get in.
+    #[serde(default)]
+    pub locked: bool,
+    /// People sessions were shared with (by account): their certificates,
+    /// checked against the roots pinned in their grants.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub peers: BTreeMap<String, PeerCerts>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerCerts {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub certs: Vec<Cert>,
+    #[serde(default)]
+    pub revocations: Vec<Revocation>,
 }
 
 pub struct Enrolled {
     pub saved: Saved,
     pub keys: Arc<DeviceKeys>,
+    /// The account's own devices: the owner.
     pub trusted: Trusted,
+    /// Other people's devices (team members, people shared with), as who.
+    pub others: Vec<(Cert, Principal)>,
+    /// Team members' roles on every session (not owners: they're the owner).
+    pub team_roles: HashMap<String, Role>,
+}
+
+impl Enrolled {
+    fn build(saved: Saved, keys: Arc<DeviceKeys>, acl: &Acl) -> Self {
+        let trusted = saved.trust.evaluate(&saved.certs, &saved.revocations);
+        let mut others = Vec::new();
+        let mut team_roles = HashMap::new();
+        if let Some(r) = &saved.roster {
+            for m in &r.members {
+                if saved.locked && m.role != TeamRole::Owner {
+                    continue;
+                }
+                let who = match m.role {
+                    TeamRole::Owner => Principal::Owner,
+                    TeamRole::Editor | TeamRole::Viewer => {
+                        let role = if m.role == TeamRole::Editor { Role::Editor } else { Role::Viewer };
+                        team_roles.insert(format!("account:{}", m.account), role);
+                        Principal::User { id: format!("account:{}", m.account), name: m.name.clone(), pic: None }
+                    }
+                };
+                for c in r.devices(&m.account, &saved.team_certs).devices.into_values() {
+                    if c.kind.connects() {
+                        others.push((c, who.clone()));
+                    }
+                }
+            }
+        }
+        // People sessions were shared with, from the roots their grants pin.
+        for g in acl.list() {
+            let (Some(account), Some(root)) = (g.principal.strip_prefix("account:"), g.root.as_ref()) else { continue };
+            let Some(p) = saved.peers.get(account) else { continue };
+            let t = Trust { account: account.to_owned(), root: root.clone() }.evaluate(&p.certs, &p.revocations);
+            let name = if p.name.is_empty() { g.name.clone() } else { p.name.clone() };
+            for c in t.devices.into_values().filter(|c| c.kind.connects()) {
+                others.push((c, Principal::User { id: g.principal.clone(), name: name.clone(), pic: None }));
+            }
+        }
+        Self { saved, keys, trusted, others, team_roles }
+    }
+
+    /// Every account outside this one that gets in, for control to route.
+    fn accounts(&self) -> Vec<String> {
+        let mut a: Vec<String> = self.others.iter().map(|(c, _)| c.account.clone()).collect();
+        a.sort();
+        a.dedup();
+        a
+    }
 }
 
 /// This daemon's standing with control, shared with the channel handlers.
 pub struct Control {
     state_dir: PathBuf,
+    acl: Arc<Acl>,
     now: RwLock<Option<Arc<Enrolled>>>,
     /// Bumped whenever the trusted set changes: open channels re-check
     /// their device and close if it's gone.
@@ -71,6 +155,8 @@ pub struct Control {
     /// Control said the account's devices changed: refresh now.
     nudge: tokio::sync::Notify,
     http: reqwest::Client,
+    /// What control was last told about access.
+    published: std::sync::Mutex<Option<serde_json::Value>>,
 }
 
 fn read_saved(dir: &Path) -> anyhow::Result<Option<Saved>> {
@@ -96,14 +182,16 @@ pub fn auth_header(keys: &DeviceKeys, method: &str, path: &str) -> String {
 const AUTH: &str = "x-illogical-auth";
 
 impl Control {
-    pub fn new(state_dir: &Path, direct_urls: Vec<String>) -> Arc<Self> {
+    pub fn new(state_dir: &Path, direct_urls: Vec<String>, acl: Arc<Acl>) -> Arc<Self> {
         let me = Arc::new(Self {
             state_dir: state_dir.to_owned(),
+            acl,
             now: RwLock::new(None),
             changed: watch::channel(0).0,
             direct_urls,
             nudge: tokio::sync::Notify::new(),
             http: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().expect("http client"),
+            published: Default::default(),
         });
         me.reload();
         me
@@ -113,9 +201,44 @@ impl Control {
         self.now.read().unwrap().clone()
     }
 
-    /// The device behind a Noise key, if this daemon trusts it to connect.
-    pub fn device(&self, noise: &[u8]) -> Option<Cert> {
-        self.enrolled()?.trusted.by_noise(noise).filter(|c| c.kind.connects()).cloned()
+    /// Look again soon (grants changed here, say).
+    pub fn poke(&self) {
+        self.nudge.notify_one();
+    }
+
+    /// Who a Noise key belongs to, if this daemon lets them in: a device of
+    /// its own account (the owner), a team member's, or someone's a session
+    /// was shared with.
+    pub fn device(&self, noise: &[u8]) -> Option<(Cert, Principal)> {
+        let e = self.enrolled()?;
+        if let Some(c) = e.trusted.by_noise(noise).filter(|c| c.kind.connects()) {
+            return Some((c.clone(), Principal::Owner));
+        }
+        let key = hex::encode(noise);
+        if let Some(found) = e.others.iter().find(|(c, _)| c.noise == key) {
+            return Some(found.clone());
+        }
+        // A read-only link's key (M19): a viewer of one session, while it lasts.
+        let g = self.acl.link_by_key(&key)?;
+        let cert = Cert {
+            v: 1,
+            account: String::new(),
+            device: g.principal.clone(),
+            kind: Kind::Browser,
+            name: g.name.clone(),
+            noise: key,
+            sign: String::new(),
+            created: g.at,
+            approver: String::new(),
+            sig: String::new(),
+        };
+        Some((cert, Principal::User { id: g.principal, name: g.name, pic: None }))
+    }
+
+    fn install(&self, e: Option<Enrolled>) {
+        self.acl.set_team_roles(e.as_ref().map(|e| e.team_roles.clone()).unwrap_or_default());
+        *self.now.write().unwrap() = e.map(Arc::new);
+        self.changed.send_modify(|v| *v += 1);
     }
 
     /// Read `control.json` (and the key) again.
@@ -123,8 +246,7 @@ impl Control {
         let next = match read_saved(&self.state_dir).and_then(|s| {
             let Some(saved) = s else { return Ok(None) };
             let keys = DeviceKeys::load(&self.state_dir.join(KEY_FILE))?;
-            let trusted = saved.trust.evaluate(&saved.certs, &saved.revocations);
-            Ok(Some(Enrolled { saved, keys: Arc::new(keys), trusted }))
+            Ok(Some(Enrolled::build(saved, Arc::new(keys), &self.acl)))
         }) {
             Ok(n) => n,
             Err(e) => {
@@ -137,20 +259,18 @@ impl Control {
                 control = e.saved.url,
                 account = e.saved.trust.account,
                 devices = e.trusted.devices.len(),
+                others = e.others.len(),
                 "enrolled in control"
             );
         }
-        *self.now.write().unwrap() = next.map(Arc::new);
-        self.changed.send_modify(|v| *v += 1);
+        self.install(next);
     }
 
-    /// Fetch the account's certificates; keep what checks out.
-    async fn refresh(&self) -> anyhow::Result<()> {
-        let Some(e) = self.enrolled() else { return Ok(()) };
-        let path = "/api/daemon/trust";
+    async fn get<T: serde::de::DeserializeOwned>(&self, e: &Enrolled, path_and_query: &str) -> anyhow::Result<T> {
+        let path = path_and_query.split('?').next().unwrap_or(path_and_query);
         let res = self
             .http
-            .get(format!("{}{path}", e.saved.url))
+            .get(format!("{}{path_and_query}", e.saved.url))
             .header(AUTH, auth_header(&e.keys, "GET", path))
             .send()
             .await?;
@@ -160,27 +280,103 @@ impl Control {
                 res.text().await.unwrap_or_default()
             );
         }
+        Ok(res.error_for_status()?.json().await?)
+    }
+
+    /// Fetch certificates (the account's, the team's, people's shared
+    /// with); keep what checks out against what this daemon pinned.
+    async fn refresh(&self) -> anyhow::Result<bool> {
+        let Some(e) = self.enrolled() else { return Ok(false) };
         #[derive(Deserialize)]
-        struct Body {
+        struct Own {
             certs: Vec<Cert>,
             revocations: Vec<Revocation>,
         }
-        let b: Body = res.error_for_status()?.json().await?;
+        let own: Own = self.get(&e, "/api/daemon/trust").await?;
         let mut saved = e.saved.clone();
-        if (saved.certs.clone(), saved.revocations.clone()) == (b.certs.clone(), b.revocations.clone()) {
-            return Ok(());
+        saved.certs = own.certs;
+        saved.revocations = own.revocations;
+
+        if let Some(pin) = saved.team.clone() {
+            #[derive(Deserialize)]
+            struct TeamNow {
+                locked: bool,
+                rosters: Vec<Roster>,
+                certs: AccountCerts,
+            }
+            let since = saved.roster.as_ref().map_or(0, |r| r.version);
+            let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}")).await?;
+            let mut certs = saved.team_certs.clone();
+            certs.extend(t.certs);
+            let mut cur = saved.roster.clone();
+            for r in t.rosters {
+                if r.follows(cur.as_ref(), &pin, &certs) {
+                    cur = Some(r);
+                } else {
+                    warn!(version = r.version, "a team roster from control doesn't check out; ignoring it");
+                    break;
+                }
+            }
+            // Keep only the current members' certificates.
+            if let Some(r) = &cur {
+                certs.retain(|a, _| r.member(a).is_some());
+            }
+            saved.roster = cur;
+            saved.team_certs = certs;
+            saved.locked = t.locked;
         }
-        saved.certs = b.certs;
-        saved.revocations = b.revocations;
-        let trusted = saved.trust.evaluate(&saved.certs, &saved.revocations);
-        if trusted.get(&saved.cert.device).is_none() {
+
+        let accounts: Vec<String> =
+            self.acl.list().iter().filter_map(|g| g.principal.strip_prefix("account:").map(str::to_owned)).collect();
+        saved.peers = if accounts.is_empty() {
+            BTreeMap::new()
+        } else {
+            self.get(&e, &format!("/api/daemon/peers?accounts={}", accounts.join(","))).await?
+        };
+
+        let changed =
+            (saved.certs.clone(), saved.revocations.clone(), saved.roster.clone(), saved.locked, saved.peers.clone())
+                != (
+                    e.saved.certs.clone(),
+                    e.saved.revocations.clone(),
+                    e.saved.roster.clone(),
+                    e.saved.locked,
+                    e.saved.peers.clone(),
+                )
+                || saved.team_certs != e.saved.team_certs;
+        if changed {
+            write_saved(&self.state_dir, &saved)?;
+        }
+        let next = Enrolled::build(saved, e.keys.clone(), &self.acl);
+        if next.trusted.get(&next.saved.cert.device).is_none() {
             warn!("this daemon's own certificate no longer checks out (revoked?)");
         }
-        write_saved(&self.state_dir, &saved)?;
-        info!(devices = trusted.devices.len(), "account certificates updated");
-        *self.now.write().unwrap() = Some(Arc::new(Enrolled { saved, keys: e.keys.clone(), trusted }));
-        self.changed.send_modify(|v| *v += 1);
-        Ok(())
+        self.publish(&next).await;
+        info!(devices = next.trusted.devices.len(), others = next.others.len(), changed, "certificates refreshed");
+        self.install(Some(next));
+        Ok(changed)
+    }
+
+    /// Tell control which accounts get in (it routes them; we decide).
+    async fn publish(&self, e: &Enrolled) {
+        let links = self.acl.links_until();
+        let body = serde_json::json!({ "accounts": e.accounts(), "links_until": links });
+        if self.published.lock().unwrap().as_ref() == Some(&body) {
+            return;
+        }
+        let path = "/api/daemon/access";
+        let res = self
+            .http
+            .post(format!("{}{path}", e.saved.url))
+            .header(AUTH, auth_header(&e.keys, "POST", path))
+            .json(&body)
+            .send()
+            .await;
+        match res {
+            Ok(r) if r.status().is_success() => *self.published.lock().unwrap() = Some(body),
+            Ok(r) => warn!(status = %r.status(), "control refused the access list"),
+            Err(err) => warn!(error = %err, "can't tell control who gets in"),
+        }
     }
 
     /// Run for good: notice joins and leaves, keep certificates fresh, and
@@ -196,6 +392,7 @@ impl Control {
                 if now != stamp {
                     stamp = now;
                     me.reload();
+                    app.mux.send(crate::mux::Cmd::AclChanged);
                     if let Some(r) = relay.take() {
                         r.abort();
                     }
@@ -204,8 +401,10 @@ impl Control {
                 if me.enrolled().is_some() {
                     if last_refresh.elapsed() >= REFRESH {
                         last_refresh = std::time::Instant::now();
-                        if let Err(e) = me.refresh().await {
-                            warn!(error = %e, "can't refresh certificates from control");
+                        match me.refresh().await {
+                            // Roles may have changed: re-filter everyone.
+                            Ok(_) => app.mux.send(crate::mux::Cmd::AclChanged),
+                            Err(e) => warn!(error = %e, "can't refresh certificates from control"),
                         }
                         stamp = file_stamp(&me.state_dir);
                     }
@@ -284,13 +483,24 @@ struct JoinPoll {
     cert: Option<Cert>,
     trust: Option<Trust>,
     #[serde(default)]
+    team: Option<JoinTeam>,
+    #[serde(default)]
     certs: Vec<Cert>,
     #[serde(default)]
     revocations: Vec<Revocation>,
 }
 
-/// `illogicald join URL`: ask, show the code, wait, pin, save.
-pub async fn join(url: &str, name: &str, state_dir: &Path) -> anyhow::Result<()> {
+#[derive(Deserialize)]
+struct JoinTeam {
+    team: String,
+    founder: String,
+    founder_root: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// `illogicald join URL [--team ID]`: ask, show the code, wait, pin, save.
+pub async fn join(url: &str, name: &str, team: Option<&str>, state_dir: &Path) -> anyhow::Result<()> {
     let url = url.trim_end_matches('/').to_owned();
     if !(url.starts_with("https://") || url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost")) {
         bail!("control's URL must be https:// (or http on loopback, for testing)");
@@ -301,7 +511,11 @@ pub async fn join(url: &str, name: &str, state_dir: &Path) -> anyhow::Result<()>
     let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
     let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
     let http = reqwest::Client::builder().timeout(Duration::from_secs(20)).build()?;
-    let res = http.post(format!("{url}/api/join")).json(&serde_json::json!({ "cert": ask, "urls": [] })).send().await?;
+    let res = http
+        .post(format!("{url}/api/join"))
+        .json(&serde_json::json!({ "cert": ask, "urls": [], "team": team }))
+        .send()
+        .await?;
     if !res.status().is_success() {
         bail!("control said {}: {}", res.status(), res.text().await.unwrap_or_default());
     }
@@ -341,9 +555,31 @@ pub async fn join(url: &str, name: &str, state_dir: &Path) -> anyhow::Result<()>
         bail!("the approval doesn't check out against the account's devices; not joining");
     }
     let approver = trusted.get(&cert.approver).map(|c| c.name.clone()).unwrap_or_default();
-    let saved = Saved { url, trust: trust.clone(), cert: cert.clone(), certs: all, revocations: got.revocations };
+    let pin = got.team.as_ref().map(|t| TeamPin {
+        team: t.team.clone(),
+        founder: t.founder.clone(),
+        founder_root: t.founder_root.clone(),
+    });
+    if team.is_some() && pin.is_none() {
+        bail!("control approved it, but not as the team's machine; not joining");
+    }
+    let saved = Saved {
+        url,
+        trust: trust.clone(),
+        cert: cert.clone(),
+        certs: all,
+        revocations: got.revocations,
+        team: pin.clone(),
+        roster: None,
+        team_certs: Default::default(),
+        locked: false,
+        peers: Default::default(),
+    };
     write_saved(state_dir, &saved)?;
     println!("  Joined. Approved by \"{approver}\"; the account's first device is {}.", fingerprint(&trust.root));
+    if let (Some(t), Some(p)) = (&got.team, &pin) {
+        println!("  It belongs to the team {} (founded by the device {}).", t.name, fingerprint(&p.founder_root));
+    }
     println!("  This machine is {} ({}).", fingerprint(&cert.device), cert.name);
     println!("  A running daemon picks this up within a few seconds.");
     Ok(())
