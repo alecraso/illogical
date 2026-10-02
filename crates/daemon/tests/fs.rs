@@ -4,11 +4,11 @@
 //! generated names. Sprites this makes are named `illogical-m7-…` and
 //! deleted afterwards, whatever happens.
 
+mod listen;
 mod strays;
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    net::TcpListener,
     os::unix::net::UnixStream,
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -61,9 +61,8 @@ impl Daemon {
     fn new(tag: &str, wisp: bool) -> Self {
         let state = std::env::temp_dir().join(format!("ilg-m7-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&state);
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_illogicald"));
-        cmd.args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+        cmd.args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
             .arg("--state-dir")
             .arg(&state);
         if wisp {
@@ -84,10 +83,12 @@ impl Daemon {
     fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
         let mut s = UnixStream::connect(self.state.join("sock")).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .unwrap();
         let mut r = BufReader::new(s);

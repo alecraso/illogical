@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+#[path = "../listen/mod.rs"]
+mod listen;
 #[path = "../strays/mod.rs"]
 mod strays;
 
@@ -85,7 +87,8 @@ pub fn systemctl(args: &[&str]) -> bool {
     Command::new("systemctl").arg("--user").args(args).output().is_ok_and(|o| o.status.success())
 }
 
-pub fn dirs(tag: &str) -> (PathBuf, PathBuf, u16) {
+/// A test's state and sessions dirs, and a number for its names.
+pub fn dirs(tag: &str) -> (PathBuf, PathBuf, u32) {
     static N: AtomicU32 = AtomicU32::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);
     let state = std::env::temp_dir().join(format!("ilg-agt-{tag}-{}-{n}", std::process::id()));
@@ -93,8 +96,7 @@ pub fn dirs(tag: &str) -> (PathBuf, PathBuf, u16) {
     let _ = std::fs::remove_dir_all(&state);
     let _ = std::fs::remove_dir_all(&sessions);
     std::fs::create_dir_all(&sessions).unwrap();
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    (state, sessions, port)
+    (state, sessions, n)
 }
 
 impl Daemon {
@@ -109,10 +111,10 @@ impl Daemon {
 
     /// ...and extra environment.
     pub fn child_env(args: &[&str], env: &[(&str, &str)]) -> Self {
-        let (state, sessions, port) = dirs("c");
+        let (state, sessions, _) = dirs("c");
         let mut d = Self {
             how: How::Child(None),
-            port,
+            port: 0,
             state,
             sessions,
             args: args.iter().map(|s| s.to_string()).collect(),
@@ -128,8 +130,8 @@ impl Daemon {
             eprintln!("no systemd user manager; skipping");
             return None;
         }
-        let (state, sessions, port) = dirs("s");
-        let unit = format!("illogical-test-agent-{}-{port}", std::process::id());
+        let (state, sessions, n) = dirs("s");
+        let unit = format!("illogical-test-agent-{}-{n}", std::process::id());
         let ok = Command::new("systemd-run")
             .args(["--user", "--quiet", &format!("--unit={unit}")])
             .args(["-p", "Type=notify", "-p", "NotifyAccess=main", "-p", "FileDescriptorStoreMax=64"])
@@ -138,20 +140,28 @@ impl Daemon {
             .arg(format!("--setenv=PATH={}", std::env::var("PATH").unwrap_or_default()))
             .arg("--")
             .arg(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile"])
+            .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile"])
             .args(["--no-manager-env", "--wisp-token-file", "/nonexistent", "--state-dir"])
             .arg(&state)
             .status()
             .is_ok_and(|s| s.success());
         assert!(ok, "systemd-run failed");
-        let d = Self { how: How::Service(format!("{unit}.service")), port, state, sessions, args: vec![], env: vec![] };
+        let mut d =
+            Self { how: How::Service(format!("{unit}.service")), port: 0, state, sessions, args: vec![], env: vec![] };
+        d.port = listen::wait_port(&d.state);
         d.wait_up();
         Some(d)
     }
 
+    /// Start it: on a port of its choosing, then on the same one again.
     pub fn start(&mut self) {
+        let first = self.port == 0;
+        if first {
+            let _ = std::fs::remove_file(self.state.join("listen"));
+        }
+        let addr = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.port) };
         let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{}", self.port), "--shell", "bash --norc --noprofile"])
+            .args(["--listen", &addr, "--shell", "bash --norc --noprofile"])
             .arg("--no-manager-env")
             .args(if self.args.is_empty() {
                 vec!["--wisp-token-file".into(), "/nonexistent".into()]
@@ -167,6 +177,9 @@ impl Daemon {
             .spawn()
             .unwrap();
         self.how = How::Child(Some(child));
+        if first {
+            self.port = listen::wait_port(&self.state);
+        }
         self.wait_up();
     }
 
@@ -205,10 +218,12 @@ impl Daemon {
     pub fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
         let Ok(mut s) = UnixStream::connect(self.sock()) else { return (0, String::new()) };
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        let _ = write!(
-            s,
-            "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
+        let _ = s.write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         );
         let mut r = BufReader::new(s);
         let mut line = String::new();

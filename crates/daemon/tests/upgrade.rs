@@ -3,12 +3,13 @@
 //! systemd user service, so it needs a systemd user manager; it skips
 //! itself where there isn't one.
 
+mod listen;
 mod strays;
 
 use std::{
-    net::TcpListener,
     path::PathBuf,
     process::Command,
+    sync::atomic::{AtomicU32, Ordering},
     time::{Duration, Instant},
 };
 
@@ -25,7 +26,6 @@ fn systemctl(args: &[&str]) -> bool {
 
 struct Service {
     unit: String,
-    port: u16,
     state: PathBuf,
 }
 
@@ -44,8 +44,8 @@ impl Service {
             eprintln!("no systemd user manager; skipping");
             return None;
         }
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let unit = format!("illogical-test-{}-{port}", std::process::id());
+        static N: AtomicU32 = AtomicU32::new(0);
+        let unit = format!("illogical-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
         let state = std::env::temp_dir().join(&unit);
         let ok = Command::new("systemd-run")
             .args(["--user", "--quiet", &format!("--unit={unit}")])
@@ -53,19 +53,21 @@ impl Service {
             .args(["-p", "KillMode=mixed", "-p", "Restart=on-failure", "-p", "RestartSec=100ms"])
             .args(["--setenv=PS1=$ ", "--"])
             .arg(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile"])
+            .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile"])
             .args(["--no-manager-env", "--state-dir"])
             .arg(&state)
             .status()
             .is_ok_and(|s| s.success());
         assert!(ok, "systemd-run failed");
-        Some(Self { unit: format!("{unit}.service"), port, state })
+        Some(Self { unit: format!("{unit}.service"), state })
     }
 
+    /// Connect on the port it took this time (each start picks one).
     async fn connect(&self) -> (Ws, State) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if let Ok((mut ws, _)) = connect_async(format!("ws://127.0.0.1:{}/ws", self.port)).await
+            if let Some(port) = listen::port(&self.state)
+                && let Ok((mut ws, _)) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await
                 && let In::Msg(ServerMsg::Hello { state, .. }) = recv(&mut ws).await
             {
                 return (ws, state);
@@ -131,8 +133,12 @@ fn tick_loop(stop: &std::path::Path) -> String {
 }
 
 fn stop_file() -> PathBuf {
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let f = std::env::temp_dir().join(format!("illogical-stop-{}-{port}", std::process::id()));
+    static N: AtomicU32 = AtomicU32::new(0);
+    let f = std::env::temp_dir().join(format!(
+        "illogical-stop-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = std::fs::remove_file(&f);
     f
 }
@@ -200,7 +206,6 @@ async fn panes_keep_running_through_restart_and_crash() {
 /// macOS. Each pane's shim keeps its terminal while the daemon is gone.
 struct Plain {
     child: Option<std::process::Child>,
-    port: u16,
     state: PathBuf,
     /// Shells to make sure of at the end, whatever happened.
     shells: Vec<i32>,
@@ -211,16 +216,19 @@ const GRACE_MS: u64 = 3000;
 
 impl Plain {
     fn new() -> Self {
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let state = std::env::temp_dir().join(format!("illogical-keep-{}-{port}", std::process::id()));
-        let mut d = Self { child: None, port, state, shells: vec![] };
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let state = std::env::temp_dir().join(format!("illogical-keep-{}-{n}", std::process::id()));
+        let mut d = Self { child: None, state, shells: vec![] };
         d.start();
         d
     }
 
     fn start(&mut self) {
+        // Not the last one's port.
+        let _ = std::fs::remove_file(self.state.join("listen"));
         let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &format!("127.0.0.1:{}", self.port), "--shell", "bash --norc --noprofile"])
+            .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile"])
             .args(["--no-manager-env", "--keep-panes", "--state-dir"])
             .arg(&self.state)
             .env("PS1", "$ ")
@@ -240,7 +248,7 @@ impl Plain {
     }
 
     async fn connect(&self) -> (Ws, State) {
-        let svc = Service { unit: String::new(), port: self.port, state: PathBuf::new() };
+        let svc = Service { unit: String::new(), state: self.state.clone() };
         let r = svc.connect().await;
         std::mem::forget(svc);
         r

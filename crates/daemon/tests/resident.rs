@@ -5,10 +5,10 @@
 //! without a wisp token or the static build (`just static`). Going cold is
 //! in `web/e2e/resident.spec.ts`.
 
+mod listen;
 mod strays;
 
 use std::{
-    net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     time::{Duration, Instant},
@@ -99,9 +99,8 @@ fn a_shell_then_a_resident_daemon_through_the_tunnel() {
     let sprite = format!("illogical-m4b-test-{}", std::process::id());
     let state = std::env::temp_dir().join(format!("ilg-resident-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&state);
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", &format!("127.0.0.1:{port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
+        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
         .args(["--name", "home", "--wisp-url", WISP, "--tailscale-socket", "/nonexistent/tailscaled.sock"])
         .arg("--static-dir")
         .arg(static_dir())
