@@ -1559,8 +1559,8 @@ on a date. The suggested order:
    into tools any agent can use, and it is mostly a layer over M3's API.
 3. **M7**, because M11 needs its filesystem method, and the picker and session
    names are cheap.
-4. **S8**, to choose block types from real use of M6.
-5. **M10 / M11.**
+4. **S8**, to choose block types from real use of M6. Done 2026-10-02 (below).
+5. **M11, cut** (S8's choice), with M24's Rerun on terminals in place of M10.
 6. **M5** when a tmux client is wanted.
 7. **M8** when ghostty-web is ready.
 8. **M9** when the scale numbers say so.
@@ -1972,7 +1972,53 @@ list.
   if any. M10 and M11 below are the expected outcome, and S8 can reshape or
   drop them.
 
+#### S8: done 2026-10-02
+
+**Result: a cut of M11 next; no M10 block types; no notes block** (see
+[spikes/s8-blocks](spikes/s8-blocks/README.md)).
+
+- **The trigger hadn't held.** M6 landed 2026-10-01, and the daily daemon's
+  whole history is 131 commands over about 23 hours. #55 asked for the
+  decision anyway, so it was made on that day of use, Forgejo's issues, git
+  history, shell history on geek, and Claude Code's transcripts. There is no
+  `docs/dogfood.md`.
+- **People don't build, tail logs, read diffs or read files in illogical yet;
+  agents do all four in bulk** (this repo's transcripts: ~1,260 build or test
+  commands, ~1,000 polls of a background job, 625 git history or diff reads,
+  ~1,900 file prints, out of 7,595). Jake's own messages ask whether things
+  are built, merged and green, not to see diffs or logs.
+- **Job:** terminals already are job blocks for a person (M23's `build`/`test`
+  kinds, M24's `failed` reason with exit code and duration and a push,
+  `illogical wait`), and agents have their own background jobs and M16. What's
+  missing is acting on a failure from the phone: M24's unbuilt **Rerun**.
+- **Service:** no evidence of a dev server or service that needed keeping up.
+- **Diff and file:** nothing reviews an agent's changes on the phone, for any
+  agent, after the fact (M28's diff card is one pending Claude Code edit;
+  M27's code-server is the desktop). Agents read changes as a list first
+  (`--stat`/`--oneline` 3:1 over full diffs). A typical change here is 8
+  files and ~500 lines, p90 28 files and ~3,400. Most of the parts exist: M7's
+  `fs` on every host, M28's CodeMirror follow view, `Provider::run`, agent
+  tool calls' `locations`.
+- **Contract changes** (from fitting each candidate to `block.rs` on paper):
+  - viewers can't call block methods (`/api/blocks/N/call/*` is editor,
+    `/api/fs/*` owner), so a file or diff block puts what's drawn in its
+    pushed state;
+  - a block's log may be just an event log (a file block's truth is the file);
+  - a block must know whether any client draws it: `fs.watch` keeps a VM
+    awake, so file and diff blocks watch only while drawn;
+  - (not needed yet) a block can raise only plain `input`/`done` reasons; a
+    job or service type would need `BlockCtx::attention_with(Reason)`.
+- **Revisit** when someone keeps a terminal open only to watch a dev server or
+  a log, a VM tab's dev server dies across a wake, a CI or hal0 job is watched
+  from illogical, or the daily daemon has two weeks of history.
+
 ### M10: job and service blocks
+
+**Not as block types (S8, 2026-10-02).** #7 closes with S8's numbers. Its
+*Done when* about a failed build moves onto terminals: M24's `failed` reason
+gets a **Rerun** action, built with M11's cut below. The service block waits
+for S8's *revisit* triggers. The original plan is kept below for then.
+
 
 Structured views of work that has no human typing into it. These are
 Superlogical's "automatic work disappears into jobs and logs".
@@ -2003,6 +2049,43 @@ Superlogical's "automatic work disappears into jobs and logs".
     browser block on its port.
 
 ### M11: file and diff blocks (after M7)
+
+**Cut by S8 (2026-10-02); next on track B.** The full brief is in
+[spikes/s8-blocks](spikes/s8-blocks/README.md#what-m11-cut-must-deliver).
+Changes from the plan below:
+
+- **Diff block:** sources are a host's working tree against `HEAD` (staged,
+  unstaged, untracked), one rev against the working tree, or a range,
+  computed by `git` on the host (`Provider::run` on a VM). A file list with
+  +/− first, each file expanding to unified hunks, every line with **Open
+  file**. Unified on the desktop too (M27 has split diffs). No ACP tool-call
+  source: an agent block's tool call with a location gets **Open file**
+  instead, and M28's card already shows Claude Code's pending edit.
+- **File block:** `{host, path, line?}` through `fs.read`, drawn in M28's
+  CodeMirror follow view, scrolled to and marking `line`.
+- **Both** watch only while some client draws them (so a VM can sleep), put
+  what's drawn in their pushed state so a shared session's viewers see it
+  (methods stay editor-only), and log only what they were pointed at.
+- **Ways in:** `illogical diff [--host H | %N] [REV_A [REV_B]]`,
+  `illogical view %N:PATH[:LINE]`, the same as MCP tools, and **Changes** on
+  a tab's and a pane's menu and on swarm tiles with a project.
+- **Plus M10's remainder:** M24's `failed` reason on a terminal gets
+  **Rerun**, which types the command again into the pane's idle shell, from
+  the badge, *Needs you* and the push.
+- **Done when (replaces the one below):**
+  - from the phone, on a VM tab where an agent has changed files, **Changes**
+    opens a diff block listing them; tapping a hunk's line opens a live file
+    block at that line;
+  - both keep updating while the agent edits, and stop watching once no
+    client draws them;
+  - a shared session's viewer sees both and can't change what they show;
+  - `capture --text`, `describe`, `illogical diff` and `illogical view` work
+    on a local host and a VM;
+  - a build that fails in a VM tab's terminal shows as *Failed* on the phone,
+    and **Rerun** from the phone runs it again in that pane.
+
+The original plan:
+
 
 Read-only views for checking an agent's work from anywhere, especially the
 phone.
