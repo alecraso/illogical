@@ -164,9 +164,12 @@ test("two machines join by code; one direct, one only through the relay", async 
   await shell(laptop, "box");
   expect(await laptop.evaluate(() => window.__illogical.client.path)).toBe("direct");
 
+  await expect(laptop.locator(".host-button [data-path]")).toHaveText("direct");
+
   await showHost(laptop, "mac");
   await shell(laptop, "mac");
   expect(await laptop.evaluate(() => window.__illogical.client.path)).toBe("relayed");
+  await expect(laptop.locator(".host-button [data-path]")).toHaveText("relayed");
 });
 
 async function phoneContext(browser: Browser) {

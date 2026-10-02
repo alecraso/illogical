@@ -1820,3 +1820,21 @@ button {
   text-decoration: underline;
   padding: 0;
 }
+
+.host-path {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--raised);
+}
+
+.host-path.relayed {
+  color: var(--accent);
+}
+
+.control-cmd[data-recovery-code] {
+  word-break: normal;
+  overflow-wrap: normal;
+}

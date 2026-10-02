@@ -46,6 +46,11 @@ let client = makeClient(directory.base());
 const connect = () => {
   // In control mode there's nothing to connect to until a daemon is known.
   if (!session || client.e2e) client.connect();
+  if (session) {
+    const c = client;
+    directory.setPath(null);
+    c.subscribe(() => c === client && directory.setPath(c.connected ? c.path : null));
+  }
 };
 
 // The visible height excludes a phone's on-screen keyboard, so the key bar

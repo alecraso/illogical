@@ -48,7 +48,13 @@ export function HostButton() {
   };
   return (
     <button class="host-button" title="Hosts" data-host={directory.current} onClick={open} onContextMenu={open}>
-      {directory.current} <span class="caret">▾</span>
+      {directory.current}
+      {directory.path ? (
+        <span class={`host-path ${directory.path}`} data-path={directory.path} title={directory.path === "relayed" ? "Through illogical control's relay (end to end encrypted)" : "Straight to the machine"}>
+          {directory.path}
+        </span>
+      ) : null}{" "}
+      <span class="caret">▾</span>
     </button>
   );
 }
@@ -73,8 +79,13 @@ export function HostPicker() {
 /** Phone: the shown host's name in the header, when it isn't home. */
 export function HostCrumb() {
   useSubscribe((fn) => directory.subscribe(fn));
-  if (directory.shown === null) return null;
-  return <span class="host-crumb">{directory.current}</span>;
+  if (directory.shown === null && !directory.control) return null;
+  return (
+    <span class="host-crumb">
+      {directory.current}
+      {directory.path === "relayed" ? <span class="host-path relayed">relayed</span> : null}
+    </span>
+  );
 }
 
 /** Phone: a section of the sheet listing every host. */

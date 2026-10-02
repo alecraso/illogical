@@ -2080,6 +2080,24 @@ The launch issues (#19–#27: licence, releases, install, quickstart) come first
 
 #### M17: illogical control (accounts, devices, enrollment, directory)
 
+**Done 2026-10-01 (see [docs/control.md](docs/control.md)), with M18's relay.** Hosted at <https://control.illogical.widgets.wtf> (Fly, `packaging/control/`).
+
+- **What landed:**
+  - `crates/control`, with GitHub sign-in and passkeys (verified in-house: no OpenSSL in static builds);
+  - devices and approvals with fingerprints, recovery codes, and `illogicald join` / `leave`;
+  - the directory, rate limits on everything that needs no sign-in, and the web client's control mode.
+- **How it was tested:**
+  - `e2e/control.spec.ts`: a stranger signs up, two machines join, one direct and one relayed, and a phone needs approval;
+  - `e2e/passkey.spec.ts`;
+  - `just control-smoke`;
+  - by hand against the hosted control: a passkey sign-up, a daemon on geek joined, and a shell through Fly's relay.
+- **Changed from the plan:**
+  - Per-host tokens aren't minted by control. An enrolled daemon trusts device certificates instead, which is stronger and needs nothing minted.
+  - The CLI has no device key yet: it still reaches the local daemon, and others over the tailnet.
+- **Still to check by hand:**
+  - real GitHub sign-in (needs the GitHub App's credentials as Fly secrets);
+  - a Mac (jake-mini) joining.
+
 - **`crates/control`, the `illogical-control` binary:** axum, SQLite (Postgres optional for the hosted one), and the same release builds as the daemon. `illogical-control --domain control.example.com` serves the API and the web client.
 - **Accounts:**
   - sign in with GitHub, Google or a passkey;
@@ -2114,6 +2132,20 @@ The launch issues (#19–#27: licence, releases, install, quickstart) come first
   - a self-hosted control on a VPS does the same.
 
 #### M18: relay and end-to-end encryption
+
+**Done 2026-10-01, apart from the phone run.**
+
+- **What landed:**
+  - the relay (M4c's mux in control);
+  - Noise channels on both paths in control mode;
+  - "direct" or "relayed" in the host chip;
+  - per-account relay bytes per day;
+  - trust changes pushed to daemons over the relay socket, so approvals and removals take effect within seconds.
+- **Done-when results:**
+  - `just control-smoke` shows control's wire traffic, database and logs never contain what was typed.
+  - Through the hosted relay (ewr) from geek, the keystroke echo was 30 ms p50, measured in the browser.
+  - **Still to run:** a phone on cellular against a Mac behind NAT.
+- **Not changed:** a page served by a daemon itself still uses plain `/ws`, inside the tailnet's WireGuard. Only control mode uses Noise.
 
 - **Relay:**
   - an enrolled daemon keeps the M4c dial-out connection open to control;

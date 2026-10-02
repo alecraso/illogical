@@ -74,6 +74,14 @@ export class HostDirectory {
   /** The page is illogical control's (M17): the list comes from control,
    * and there's no home daemon. */
   control = false;
+  /** Control mode: how the shown host is reached, for the host chip. */
+  path: "direct" | "relayed" | null = null;
+
+  setPath(p: "direct" | "relayed" | null) {
+    if (p === this.path) return;
+    this.path = p;
+    this.emit();
+  }
   private listeners = new Set<() => void>();
 
   constructor() {
