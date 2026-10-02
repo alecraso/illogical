@@ -31,6 +31,7 @@ pub struct Daemon {
     pub state: PathBuf,
     pub sessions: PathBuf,
     args: Vec<String>,
+    env: Vec<(String, String)>,
 }
 
 impl Drop for Daemon {
@@ -99,9 +100,20 @@ impl Daemon {
 
     /// With extra daemon arguments (`--wisp-token-file …`).
     pub fn child_with(args: &[&str]) -> Self {
+        Self::child_env(args, &[])
+    }
+
+    /// ...and extra environment.
+    pub fn child_env(args: &[&str], env: &[(&str, &str)]) -> Self {
         let (state, sessions, port) = dirs("c");
-        let mut d =
-            Self { how: How::Child(None), port, state, sessions, args: args.iter().map(|s| s.to_string()).collect() };
+        let mut d = Self {
+            how: How::Child(None),
+            port,
+            state,
+            sessions,
+            args: args.iter().map(|s| s.to_string()).collect(),
+            env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        };
         d.start();
         d
     }
@@ -128,7 +140,7 @@ impl Daemon {
             .status()
             .is_ok_and(|s| s.success());
         assert!(ok, "systemd-run failed");
-        let d = Self { how: How::Service(format!("{unit}.service")), port, state, sessions, args: vec![] };
+        let d = Self { how: How::Service(format!("{unit}.service")), port, state, sessions, args: vec![], env: vec![] };
         d.wait_up();
         Some(d)
     }
@@ -145,6 +157,7 @@ impl Daemon {
             .arg("--state-dir")
             .arg(&self.state)
             .env("FAKE_ACP_DIR", &self.sessions)
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

@@ -559,6 +559,7 @@ function PaneSlot({
       onContextMenu={menu}
     >
       <HostBadge client={client} id={id} />
+      <StartedByBadge client={client} id={id} />
       <PaneMarks client={client} pane={id} />
       {!active && (info?.attention === "needs_input" || info?.attention === "done") && (
         <div class={`pane-badge ${info.attention}`} title={info.reason?.headline}>
@@ -590,6 +591,18 @@ function PaneSlot({
           ⠿
         </div>
       )}
+    </div>
+  );
+}
+
+/** What started a pane, when it was an MCP client (M16): an agent outside, or an agent block's. */
+function StartedByBadge({ client, id }: { client: Client; id: PaneId }) {
+  const s = client.info(id)?.started_by;
+  if (!s) return null;
+  const via = s.block !== undefined ? `, from agent block %${s.block}` : "";
+  return (
+    <div class="started-by" data-started-by={s.by} title={`Started through MCP by ${s.by}${via}. What it typed is in history as theirs.`}>
+      started by {s.by}
     </div>
   );
 }

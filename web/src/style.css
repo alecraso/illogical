@@ -706,6 +706,27 @@ button {
   opacity: 0.85;
 }
 
+.started-by {
+  position: absolute;
+  z-index: 5;
+  left: 6px;
+  bottom: 4px;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: auto;
+  cursor: default;
+  background: #cba6f722;
+  color: #cba6f7;
+  border: 1px solid #cba6f766;
+  opacity: 0.85;
+}
+
 .host-badge.starting {
   color: #f9e2af;
   border-color: #f9e2af66;

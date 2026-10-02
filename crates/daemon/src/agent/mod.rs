@@ -1401,7 +1401,7 @@ fn redacted(frame: &Value) -> std::borrow::Cow<'_, Value> {
     let mut f = frame.clone();
     for s in f["params"]["mcpServers"].as_array_mut().into_iter().flatten().filter(|s| ours(s)) {
         for key in ["headers", "env"] {
-            for kv in s[key].as_array_mut().into_iter().flatten() {
+            for kv in s.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
                 kv["value"] = json!("<redacted>");
             }
         }
