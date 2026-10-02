@@ -5,8 +5,9 @@ mod agent;
 mod api;
 mod block;
 mod browser;
+mod control;
 mod dial;
-mod dialout_mux;
+mod e2e;
 mod fs;
 mod history;
 mod holder;
@@ -100,6 +101,23 @@ enum Command {
     /// Keep tailscaled and the daemon running, as `install --tailnet` set
     /// them up (for machines without systemd); stops on SIGTERM.
     Sandbox,
+    /// Add this machine to your account on an illogical control
+    /// (`https://control.example.com`): prints a code to approve from a
+    /// device that's signed in. A running daemon picks it up.
+    Join {
+        url: String,
+        /// This machine's name in the directory [default: the hostname].
+        #[arg(long)]
+        name: Option<String>,
+        /// The daemon's state directory [default: as the daemon's].
+        #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+        state_dir: Option<PathBuf>,
+    },
+    /// Take this machine off the control it joined.
+    Leave {
+        #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+        state_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(clap::Args, Debug)]
@@ -116,6 +134,12 @@ struct RunArgs {
     /// Extra Host names to accept (the MagicDNS name is detected).
     #[arg(long = "public-host")]
     public_hosts: Vec<String>,
+
+    /// A URL clients can reach this daemon at directly, for control's
+    /// directory (`https://box.lan:7681`); its host is accepted too. The
+    /// tailnet name, if any, is listed without this.
+    #[arg(long = "direct-url", env = "ILLOGICAL_DIRECT_URL", value_delimiter = ',')]
+    direct_urls: Vec<String>,
 
     /// Extra origins whose pages may use this daemon (WebSocket and API),
     /// exactly as the browser sends them: the Vite dev server, or the home
@@ -426,6 +450,13 @@ fn socket_path(state_dir: &std::path::Path) -> PathBuf {
     socket
 }
 
+fn default_state_dir() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".local/state"))
+        .join("illogical")
+}
+
 fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
 }
@@ -460,6 +491,16 @@ fn main() -> anyhow::Result<()> {
             install::install(!no_start, &daemon_args, reset_args)
         }
         Some(Command::Sandbox) => sandbox::supervise(),
+        Some(Command::Join { url, name, state_dir }) => {
+            let name = name.unwrap_or_else(|| {
+                nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok()).unwrap_or_else(|| "illogical".into())
+            });
+            let dir = state_dir.unwrap_or_else(default_state_dir);
+            tokio::runtime::Runtime::new()?.block_on(control::join(&url, &name, &dir))
+        }
+        Some(Command::Leave { state_dir }) => {
+            tokio::runtime::Runtime::new()?.block_on(control::leave(&state_dir.unwrap_or_else(default_state_dir)))
+        }
         None => {
             // Pane terminals kept for us across a restart; taken before any
             // threads start.
@@ -481,9 +522,20 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
             .ok(),
         None => None,
     };
+    let mut direct_urls = args.direct_urls.clone();
+    for u in &direct_urls {
+        let host = reqwest::Url::parse(u).map_err(|e| anyhow::anyhow!("--direct-url {u}: {e}"))?;
+        let host = match (host.host_str(), host.port()) {
+            (Some(h), Some(p)) => format!("{h}:{p}"),
+            (Some(h), None) => h.to_owned(),
+            _ => anyhow::bail!("--direct-url {u} has no host"),
+        };
+        public_hosts.push(host);
+    }
     if let Some(t) = &status {
         info!(host = %t.host, userspace = t.userspace, "accepting tailnet host");
         public_hosts.push(t.host.clone());
+        direct_urls.push(format!("https://{}", t.host));
         owner = owner.or(t.login.clone());
     }
     info!(owner = owner.as_deref().unwrap_or("<none: tailnet requests refused>"), "tailnet owner");
@@ -524,12 +576,7 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         }
         None => (login_shell(), vec!["-l".into()]),
     };
-    let state_dir = args.state_dir.unwrap_or_else(|| {
-        std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".local/state"))
-            .join("illogical")
-    });
+    let state_dir = args.state_dir.clone().unwrap_or_else(default_state_dir);
     let store = store::StateDir::open(state_dir.clone())?;
     info!(state = %state_dir.display(), "state directory");
     start_sites(&args.blocks, &access, owner, args.listen, &state_dir)?;
@@ -610,7 +657,9 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
             .join("illogical/static")
     });
     let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
-    let app = server::App::new(access, identify, mux.clone(), push, hosts, shares, synced, binaries);
+    let control = control::Control::new(&state_dir, direct_urls);
+    let app = server::App::new(access, identify, mux.clone(), push, hosts, shares, synced, binaries, control.clone());
+    control.start(app.clone());
     start_reach(&args.reach, &app, name)?;
     // TCP_NODELAY on every accepted connection (axum leaves Nagle on).
     // Dial-out tunnels write a DATA frame and a GRANT back to back, and

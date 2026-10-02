@@ -27,8 +27,9 @@ web:
 build: web
     {{cargo}} build --release
 
-# Static musl binaries (daemon and CLI) for sandboxes, machines without
-# systemd and releases: target/ARCH-unknown-linux-musl/release/. ARCH is
+# Static musl binaries (daemon, CLI and illogical-control) for sandboxes,
+# machines without systemd, hosting control and releases:
+# target/ARCH-unknown-linux-musl/release/. ARCH is
 # x86_64 or aarch64. Zig, already here for libghostty, is the C compiler and
 # brings musl; for aarch64 it links too.
 static arch="x86_64": web
@@ -39,8 +40,18 @@ static arch="x86_64": web
     export ZIG_MUSL_ARCH={{arch}} "CC_${t//-/_}=$PWD/scripts/zig-cc-musl" "AR_${t//-/_}=$PWD/scripts/zig-ar"
     # Cross: Zig links too, with its own musl and startup files, not rustc's.
     if [ {{arch}} != "$(uname -m)" ]; then export "CARGO_TARGET_${T}_LINKER=$PWD/scripts/zig-cc-musl" "CARGO_TARGET_${T}_RUSTFLAGS=-C link-self-contained=no"; fi
-    {{cargo}} build --release --target "$t" -p illogicald -p illogical
-    file {{target_dir}}/$t/release/illogicald {{target_dir}}/$t/release/illogical
+    {{cargo}} build --release --target "$t" -p illogicald -p illogical -p illogical-control
+    file {{target_dir}}/$t/release/illogicald {{target_dir}}/$t/release/illogical {{target_dir}}/$t/release/illogical-control
+
+# Deploy the hosted illogical control to Fly (packaging/control/fly.toml):
+# the static x86_64 binary in a distroless image, from a small build context.
+control-deploy: static
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ctx=$(mktemp -d)
+    trap 'rm -rf "$ctx"' EXIT
+    cp {{target_dir}}/x86_64-unknown-linux-musl/release/illogical-control packaging/control/Dockerfile packaging/control/fly.toml "$ctx"/
+    cd "$ctx" && fly deploy --local-only --ha=false
 
 # Release tarballs in dist/: illogical-VERSION-TARGET.tar.gz with both
 # binaries and the licenses, for the targets already built (`just static`,
@@ -71,6 +82,18 @@ notices:
 test: web
     {{cargo}} test --workspace
     cd web && pnpm run typecheck
+    just e2e-interop control-smoke
+
+# Control end to end without a browser: sign in (fake GitHub), enroll,
+# join a daemon, reach it through the relay and directly.
+control-smoke:
+    {{cargo}} build -p illogical-control -p illogicald
+    cd web && node --experimental-strip-types --no-warnings control-smoke.ts
+
+# The browser's end-to-end crypto (web/src/e2e) against Rust's (crates/e2e).
+e2e-interop:
+    {{cargo}} build -p illogical-e2e --example interop
+    cd web && node --experimental-strip-types --no-warnings e2e-interop.ts
 
 # Browser tests in system Chrome; pass a URL to test a running daemon.
 e2e url="":

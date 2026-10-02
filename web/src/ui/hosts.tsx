@@ -11,16 +11,23 @@ function seen(name: string): string {
   if (!h) return "";
   // A sandbox's state comes from its provider; it may be asleep.
   if (h.transport === "provider") return `${h.status ?? "?"} · ${h.provider?.provider ?? "sandbox"}`;
+  if (h.transport === "control" && h.status === "online") return "online";
   if (h.last_seen_ms === null) return "not seen yet";
   const s = Math.max(0, Math.round((Date.now() - h.last_seen_ms) / 1000));
   const ago = s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
   return `seen ${ago} ago`;
 }
 
+/** More for the host menu (control mode: the account's items). */
+let extras: () => MenuItem[] = () => [];
+export function setHostMenuExtras(f: () => MenuItem[]) {
+  extras = f;
+}
+
 /** Only worth showing once there is somewhere else to go. */
 function useHosts(): boolean {
   useSubscribe((fn) => directory.subscribe(fn));
-  return directory.names.length > 1 || directory.shown !== null;
+  return directory.control || directory.names.length > 1 || directory.shown !== null;
 }
 
 /** Desktop: the shown host, opening a menu of the others. */
@@ -32,12 +39,22 @@ export function HostButton() {
       label: `${name === directory.current ? "✓ " : "    "}${name}${name === directory.home ? " (home)" : `  · ${seen(name)}`}`,
       run: () => directory.select(name),
     }));
-    if (directory.stale) items.push("separator", { label: "Home daemon unreachable: saved list", disabled: true, run: () => {} });
+    if (directory.stale) {
+      const what = directory.control ? "Control unreachable: saved list" : "Home daemon unreachable: saved list";
+      items.push("separator", { label: what, disabled: true, run: () => {} });
+    }
+    items.push(...extras());
     openMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, items);
   };
   return (
     <button class="host-button" title="Hosts" data-host={directory.current} onClick={open} onContextMenu={open}>
-      {directory.current} <span class="caret">▾</span>
+      {directory.current}
+      {directory.path ? (
+        <span class={`host-path ${directory.path}`} data-path={directory.path} title={directory.path === "relayed" ? "Through illogical control's relay (end to end encrypted)" : "Straight to the machine"}>
+          {directory.path}
+        </span>
+      ) : null}{" "}
+      <span class="caret">▾</span>
     </button>
   );
 }
@@ -62,8 +79,13 @@ export function HostPicker() {
 /** Phone: the shown host's name in the header, when it isn't home. */
 export function HostCrumb() {
   useSubscribe((fn) => directory.subscribe(fn));
-  if (directory.shown === null) return null;
-  return <span class="host-crumb">{directory.current}</span>;
+  if (directory.shown === null && !directory.control) return null;
+  return (
+    <span class="host-crumb">
+      {directory.current}
+      {directory.path === "relayed" ? <span class="host-path relayed">relayed</span> : null}
+    </span>
+  );
 }
 
 /** Phone: a section of the sheet listing every host. */
@@ -86,6 +108,22 @@ export function HostSection({ close }: { close: () => void }) {
           <span class="host-seen">{name === directory.home ? "home" : seen(name)}</span>
         </button>
       ))}
+      {extras().flatMap((item) =>
+        typeof item === "object" && "run" in item
+          ? [
+              <button
+                key={item.label}
+                class="sheet-item"
+                onClick={() => {
+                  item.run();
+                  close();
+                }}
+              >
+                {item.label}
+              </button>,
+            ]
+          : [],
+      )}
     </section>
   );
 }

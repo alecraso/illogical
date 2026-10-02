@@ -23,8 +23,11 @@ tabs and splits you drive with the mouse.
 - **Scriptable.** `illogical`, a CLI for scripts and agents: run, send,
   wait for a command or a match, tail, search every pane's history.
 
-Single user, Linux (x86_64, arm64) and macOS (Apple silicon). Not meant
-for the open internet: remote access is your tailnet only.
+Single user, Linux (x86_64, arm64) and macOS (Apple silicon). Remote
+access is over your tailnet, or through
+[illogical control](docs/control.md) for devices without one: end to end
+encrypted, so the service relays for your devices but can't read your
+terminals.
 
 ## Install
 
@@ -79,7 +82,15 @@ loginctl enable-linger $USER
    ```
 
    [docs/cli.md](docs/cli.md) has the rest.
-4. **Agents.** Install an adapter (needs Node), then *Start an agent…* in a
+4. **Without a tailnet**, add the machine to an account on illogical
+   control and use it from any browser:
+
+   ```
+   illogicald join https://control.illogical.widgets.wtf
+   ```
+
+   See [docs/control.md](docs/control.md), including running your own.
+5. **Agents.** Install an adapter (needs Node), then *Start an agent…* in a
    pane's menu, or `illogical agent "fix the failing test"`:
 
    ```
@@ -102,6 +113,9 @@ layout still come back. VM tabs are Linux only.
 - [docs/features.md](docs/features.md): everything it does, in detail.
 - [docs/advanced.md](docs/advanced.md): VM tabs (wisp), web apps beside
   their terminals, more machines and sandboxes, iTerm2 as a tmux client.
+- [docs/control.md](docs/control.md): illogical control, hosted or your
+  own; [docs/control-e2e.md](docs/control-e2e.md), how it keeps out of your
+  terminals.
 - [docs/cli.md](docs/cli.md): the CLI and the HTTP API.
 - [docs/development.md](docs/development.md): building, testing, the code's
   layout, and what building it taught us.

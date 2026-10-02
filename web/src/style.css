@@ -1687,3 +1687,154 @@ button {
   color: var(--letterbox);
   font-weight: 600;
 }
+
+/* ---- illogical control (M17): sign-in, approvals, devices */
+
+.control-center {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  gap: 4px;
+  padding: 24px 16px;
+  max-width: 34rem;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+.control-center h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.control-center .primary,
+.control-signin {
+  margin-top: 12px;
+  text-decoration: none;
+}
+
+.control-prompt h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.control-prompt p {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.fingerprint {
+  font: 600 18px ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.control-error {
+  color: var(--danger);
+}
+
+.dim {
+  color: var(--dim);
+}
+
+.control-cmd {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--letterbox);
+  font: 13px ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+
+.control-code {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.control-code input {
+  font: 14px ui-monospace, monospace;
+  padding: 6px 8px;
+  color: var(--fg);
+  background: var(--letterbox);
+  border: 1px solid var(--raised-hover);
+  border-radius: 6px;
+  width: 10rem;
+}
+
+.control-code button,
+.control-revoke {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--raised-hover);
+}
+
+.control-revoke.danger {
+  background: var(--danger);
+  color: var(--letterbox);
+}
+
+.control-devices {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.control-devices li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+@media (max-width: 700px) {
+  .control-devices li {
+    grid-template-columns: 1fr auto;
+  }
+  .control-devices li .dim {
+    grid-column: 1;
+  }
+}
+
+.control-signins {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.control-secondary {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--raised);
+}
+
+.control-linkish {
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 0;
+}
+
+.host-path {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--raised);
+}
+
+.host-path.relayed {
+  color: var(--accent);
+}
+
+.control-cmd[data-recovery-code] {
+  word-break: normal;
+  overflow-wrap: normal;
+}

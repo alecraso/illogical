@@ -156,7 +156,6 @@ impl Mux {
     }
 
     /// Streams open now.
-    #[cfg(test)]
     pub fn streams(&self) -> usize {
         self.inner.streams.lock().unwrap().len()
     }
