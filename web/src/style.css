@@ -1838,3 +1838,130 @@ button {
   word-break: normal;
   overflow-wrap: normal;
 }
+
+/* ---- other people (M13) */
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  overflow: hidden;
+  font: 600 10px system-ui, sans-serif;
+  color: var(--letterbox);
+  background: var(--who);
+  box-shadow: 0 0 0 2px var(--who);
+  cursor: pointer;
+  flex: none;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.people {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.following {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.tab-people {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.pane-outline {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--who);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.pane-people {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  display: flex;
+  gap: 4px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.pane-person,
+.pane-driver {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font: 600 11px system-ui, sans-serif;
+  color: var(--letterbox);
+  background: var(--who, var(--accent));
+}
+
+.pane-driver {
+  color: var(--fg);
+  background: var(--raised-hover);
+}
+
+.share-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.share-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.share-list li {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.share-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.share-add input:not([type="checkbox"]) {
+  flex: 1 1 12rem;
+}
+
+.share-history {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-weight: 400;
+}
+
+.share-dialog select {
+  padding: 4px;
+  color: var(--fg);
+  background: var(--letterbox);
+  border: 1px solid var(--raised-hover);
+  border-radius: 6px;
+}

@@ -1312,7 +1312,7 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
                 if let Some(log) = g.log.as_mut() {
                     let at = log.end();
                     let exit = Some(if t.stop.as_deref() == Some("end_turn") { 0 } else { 1 });
-                    let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(label), cwd });
+                    let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(label), cwd, by: None });
                     let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit });
                 }
             }
@@ -1341,7 +1341,7 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             if let Some(log) = g.log.as_mut() {
                 let at = log.end();
                 let exit = t.exit.or(Some(if t.status == "completed" { 0 } else { 1 }));
-                let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(t.label()), cwd });
+                let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(t.label()), cwd, by: None });
                 let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit });
             }
         }
@@ -1459,7 +1459,7 @@ impl Agent {
         let cwd = g.cfg.cwd.clone();
         if let Some(log) = g.log.as_mut() {
             let at = log.end();
-            let _ = log.record(at, Event::Command { at_ms: a.at_ms, text: Some(text), cwd });
+            let _ = log.record(at, Event::Command { at_ms: a.at_ms, text: Some(text), cwd, by: None });
             let _ = log.record(at, Event::End { at_ms: now_ms(), exit: Some(exit) });
         }
     }

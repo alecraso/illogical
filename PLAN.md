@@ -1883,6 +1883,23 @@ Every request has an author, and every session has an access list.
 
 #### M13: live sharing and presence
 
+**Done 2026-10-02.**
+
+- **What landed:**
+  - presence (avatars in the bar, dots on tabs, focus outlines and names on panes) and following someone;
+  - driving: the first to type drives; others are held back with the reason; take control, ask for it, hand over, or pair mode;
+  - attribution in the pane index, `illogical log %N [--who]`;
+  - the Share dialog;
+  - "from now" shares.
+  - `e2e/presence.spec.ts` covers the done-when.
+- **S12, answered:**
+  - **Input attribution** is one index record per handoff (`Driver { who }`) plus `by` on each command, not one record per input, so the index grows with handoffs rather than keystrokes.
+  - **"From now"** is a screen-only snapshot: the full snapshot is replayed into a scratch terminal, `ED 3` drops its scrollback, and that is snapshotted again (`VtEngine::screen_snapshot`). Its API (tail, capture and export) is refused below the share point.
+  - **Node sharing (a second real tailnet)** wasn't tried. The tests stand in with `Tailscale-User-Login` on loopback, as `tailscale serve` adds it.
+- **Known gaps:**
+  - A pane moved into a "from now" session after the share has no recorded floor, so its earlier history shows.
+  - Per-user push still waits.
+
 What it feels like to be in a session with someone.
 
 - **Share dialog** (right-click on the session or tab bar):

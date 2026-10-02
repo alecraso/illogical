@@ -7,7 +7,7 @@ use std::path::Path;
 
 use illogical_proto::{
     Event as ApiEvent, EventKind, PaneId,
-    api::{HistoryEntry, SearchHit},
+    api::{DriverEntry, HistoryEntry, SearchHit},
 };
 use regex::Regex;
 
@@ -25,6 +25,17 @@ pub struct Filter {
     pub matching: Option<Regex>,
 }
 
+/// Who typed in a pane, by handoff (M13), oldest first.
+pub fn drivers(dir: &Path) -> Vec<DriverEntry> {
+    read_events(dir)
+        .into_iter()
+        .filter_map(|(offset, e)| match e {
+            Event::Driver { at_ms, who } => Some(DriverEntry { at_ms, offset, who }),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Commands (from the shell integration's marks), oldest first.
 pub fn commands(dir: &Path, pane: PaneId, open: bool) -> Vec<HistoryEntry> {
     commands_in(read_events(dir), pane, open)
@@ -37,7 +48,7 @@ pub fn commands_in(events: Vec<(u64, Event)>, pane: PaneId, open: bool) -> Vec<H
     for (offset, e) in events {
         match e {
             Event::Cwd { path } => cwd = Some(path),
-            Event::Command { at_ms, text, cwd: c } => out.push(HistoryEntry {
+            Event::Command { at_ms, text, cwd: c, by } => out.push(HistoryEntry {
                 pane,
                 open,
                 text,
@@ -48,6 +59,7 @@ pub fn commands_in(events: Vec<(u64, Event)>, pane: PaneId, open: bool) -> Vec<H
                 start: offset,
                 end: None,
                 host: None,
+                by,
             }),
             Event::End { at_ms, exit } => {
                 if let Some(last) = out.last_mut().filter(|l| l.end.is_none()) {
@@ -272,8 +284,11 @@ mod tests {
         log.record(0, Event::Resize { cols: 100, rows: 30 }).unwrap();
         log.record(0, Event::Time { at_ms: 1_000 }).unwrap();
         log.append(b"$ make test\r\n").unwrap();
-        log.record(13, Event::Command { at_ms: 1_000, text: Some("make test".into()), cwd: Some("/src".into()) })
-            .unwrap();
+        log.record(
+            13,
+            Event::Command { at_ms: 1_000, text: Some("make test".into()), cwd: Some("/src".into()), by: None },
+        )
+        .unwrap();
         log.append(b"\x1b[31mFAILED\x1b[0m: 2 tests\r\n").unwrap();
         log.record(log.end(), Event::End { at_ms: 4_000, exit: Some(2) }).unwrap();
         log.append(b"$ ").unwrap();

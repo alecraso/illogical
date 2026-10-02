@@ -58,6 +58,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/tail", get(tail))
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
+        .route("/api/panes/{id}/drivers", get(drivers))
         .route("/api/blocks", post(open_block))
         .route("/api/blocks/{id}", get(describe))
         .route("/api/blocks/{id}/call/{method}", post(call))
@@ -874,6 +875,13 @@ struct HistoryQuery {
     /// Another host's synced history (`*`: every host's).
     #[serde(default)]
     host: Option<String>,
+}
+
+/// Who typed in a pane, by handoff (M13).
+async fn drivers(State(app): AppState, Path(id): Path<PaneId>) -> Res<Response> {
+    let dir = app.mux.store.pane_dir(id);
+    let list = tokio::task::spawn_blocking(move || history::drivers(&dir)).await.unwrap_or_default();
+    Ok(Json(list).into_response())
 }
 
 async fn history_(State(app): AppState, Query(q): Query<HistoryQuery>) -> Res<Response> {

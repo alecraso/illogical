@@ -66,6 +66,25 @@ export interface CommandInfo {
   ended_ms: number | null;
   start: number;
   end: number | null;
+  /** Who typed it (M13). */
+  by?: string;
+}
+
+/** Who drives a pane (M13). */
+export interface Driver {
+  /** Principal id: `owner`, `tailnet:<login>`, `account:<id>`. */
+  who: string;
+  name: string;
+}
+
+/** Someone connected (M13): one per client. */
+export interface Presence {
+  client: ClientId;
+  who: string;
+  name: string;
+  pic?: string;
+  tab?: TabId;
+  pane?: PaneId;
 }
 
 export interface PaneInfo {
@@ -88,6 +107,10 @@ export interface PaneInfo {
   /** A question Claude Code asks in this terminal (through its hook), drawn
    * as a card beside it (M6c). */
   ask?: import("./blocks/ask").Ask | null;
+  /** M13: who drives it; absent when nobody does yet. */
+  driver?: Driver;
+  /** Pair mode: every editor types at once. */
+  pair?: boolean;
 }
 
 export type BlockType = "terminal" | "browser" | "agent";
@@ -114,7 +137,12 @@ export type PaneOp =
   | { op: "set_policy"; policy: Policy }
   | { op: "purge" }
   | { op: "set_integration"; on: boolean }
-  | { op: "attention"; state: Attention };
+  | { op: "attention"; state: Attention }
+  | { op: "take_control" }
+  | { op: "request_control" }
+  | { op: "give_control"; to: string }
+  | { op: "release_control" }
+  | { op: "set_pair"; on: boolean };
 
 /** Clients' named options (tmux `@` options), per scope. */
 export interface Options {
@@ -140,6 +168,8 @@ export interface State {
   /** M12: for someone who isn't the daemon's owner, their role in each
    * session they see, as [session, role] pairs. Absent for the owner. */
   roles?: [SessionId, Role][];
+  /** M13: who else is here, and where they look. */
+  presence?: Presence[];
 }
 
 export type Role = "viewer" | "editor" | "owner";
@@ -176,7 +206,9 @@ export type ServerMsg =
   | { type: "resync"; pane: PaneId }
   | { type: "error"; id: number | null; message: string }
   | { type: "block"; block: PaneId; state: unknown }
-  | { type: "pong"; id: number };
+  | { type: "pong"; id: number }
+  | { type: "notice"; message: string }
+  | { type: "control_request"; pane: PaneId; who: string; name: string };
 
 export const enum FrameKind {
   Output = 1,

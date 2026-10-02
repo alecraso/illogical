@@ -348,6 +348,18 @@ impl VtEngine for GhosttyEngine {
         out
     }
 
+    fn screen_snapshot(&mut self) -> Vec<u8> {
+        // Replay the full snapshot into a scratch terminal of the same size,
+        // drop its scrollback (ED 3), and snapshot that.
+        let (cols, rows) = self.size();
+        let full = self.snapshot();
+        let mut scratch = GhosttyEngine::with_capabilities(cols, rows, self.caps);
+        scratch.feed(&full);
+        scratch.feed(b"\x1b[3J");
+        let _ = scratch.take_replies();
+        scratch.snapshot()
+    }
+
     fn plain_text(&self) -> String {
         String::from_utf8_lossy(&self.format(Format::Plain, false, false)).into_owned()
     }

@@ -10,10 +10,13 @@ import {
   decodeFrame,
   encodeFrame,
   FrameKind,
+  type ClientId,
   type ClientMsg,
+  type Driver,
   type Intent,
   type PaneId,
   type PaneOp,
+  type Presence,
   type ServerMsg,
   type SessionId,
   type State,
@@ -242,6 +245,58 @@ export class Client {
   /** What a block calls itself: a terminal's title, or its view's. */
   title(id: PaneId): string {
     return this.panes.get(id)?.title || this.blocks.get(id)?.view.title() || "";
+  }
+
+  // ---- other people (M13)
+
+  /** Someone asking to drive a pane this client's person drives. */
+  requests: { pane: PaneId; who: string; name: string }[] = [];
+
+  /** This client's principal id (`owner` for the daemon's owner). */
+  me(): string {
+    return this.state?.presence?.find((p) => p.client === this.clientId)?.who ?? "owner";
+  }
+
+  /** Everyone else connected, within what this client sees. */
+  others(): Presence[] {
+    const me = this.me();
+    return (this.state?.presence ?? []).filter((p) => p.who !== me);
+  }
+
+  /** Who drives `pane`, if it's someone else. */
+  drivenBy(pane: PaneId): Driver | undefined {
+    const d = this.info(pane)?.driver;
+    return d && d.who !== this.me() ? d : undefined;
+  }
+
+  /** Following someone's focus (a client id) until this client acts. */
+  following: ClientId | null = null;
+
+  follow(client: ClientId | null) {
+    this.following = client;
+    this.applyFollow();
+    this.emit();
+  }
+
+  private applyFollow() {
+    if (this.following === null) return;
+    const p = this.state?.presence?.find((x) => x.client === this.following);
+    if (!p) {
+      this.following = null;
+      return;
+    }
+    if (p.tab !== undefined && p.tab !== this.tab && this.tabView(p.tab)) {
+      this.tab = p.tab;
+      this.session = this.sessionOfTab(p.tab) ?? this.session;
+    }
+    if (p.pane !== undefined && p.tab !== undefined) this.activePane.set(p.tab, p.pane);
+  }
+
+  answerRequest(pane: PaneId, give: boolean) {
+    const r = this.requests.find((x) => x.pane === pane);
+    this.requests = this.requests.filter((x) => x.pane !== pane);
+    if (r && give) this.paneOp(pane, { op: "give_control", to: r.who });
+    this.emit();
   }
 
   /** This client's role in a session (M12): `owner` unless the daemon
@@ -535,6 +590,13 @@ export class Client {
       case "error":
         this.showError(msg.message);
         break;
+      case "notice":
+        this.showError(msg.message);
+        break;
+      case "control_request":
+        this.requests = [...this.requests.filter((r) => r.pane !== msg.pane), { pane: msg.pane, who: msg.who, name: msg.name }];
+        this.emit();
+        break;
       case "block": {
         const b = this.blocks.get(msg.block);
         if (b) {
@@ -600,6 +662,7 @@ export class Client {
       for (const [id, r] of t.layout.panes) this.panes.get(id)?.view.resize(r.cols, r.rows);
     }
     this.fixSelection();
+    this.applyFollow();
     // Show what we just made: a split's new pane, a new tab or session.
     if (created.length && Date.now() - this.lastIntentAt < 3000) {
       const tab = this.tabOfPane(created[0]);

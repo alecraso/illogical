@@ -122,6 +122,8 @@ test("made an editor, they type at once, without reconnecting", async () => {
   const clientId = await friend.evaluate(() => window.__illogical.client.clientId);
   expect((await api("/api/acl", { session: shared, principal: `tailnet:${FRIEND}`, role: "editor" })).ok).toBe(true);
   await expect.poll(() => friend.evaluate(() => window.__illogical.client.role())).toBe("editor");
+  // The owner typed there last, so drives it (M13): take control first.
+  await friend.evaluate((p) => window.__illogical.client.paneOp(p, { op: "take_control" }), sharedPane);
   await run(friend, sharedPane, "echo friend-$((6*7))", "friend-42");
   await expect.poll(() => text(owner, sharedPane)).toContain("friend-42");
   expect(await friend.evaluate(() => window.__illogical.client.clientId)).toBe(clientId);
