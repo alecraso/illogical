@@ -2106,7 +2106,18 @@ impl Daemon {
             .map(PathBuf::from)
             .or_else(|| from.and_then(|p| self.panes.get(&p)?.cwd()))
             .unwrap_or_else(|| self.config.home.clone());
-        let session = self.resolve_session(req.session.as_deref(), from)?;
+        // A session that doesn't exist yet starts with this pane, not a
+        // shell beside it (#17: a home daemon's remote panes go in a
+        // session of its name here).
+        let fresh = req.session.clone().filter(|n| {
+            req.split.is_none()
+                && !req.vm_tab
+                && !self.mux.sessions.iter().any(|s| s.name == *n || s.id.to_string() == *n)
+        });
+        let session = match fresh {
+            Some(_) => None,
+            None => self.resolve_session(req.session.as_deref(), from)?,
+        };
         let before: Vec<PaneId> = self.mux.panes();
         // Joining a split pane's host: its tab's machine (which a split
         // takes anyway), or a sandbox it has a shell on (borrowed again).
@@ -2147,7 +2158,7 @@ impl Daemon {
                 Intent::Split { pane, edge: illogical_proto::Edge::Right, local, cwd: None }
             }
             (None, Some(session)) => Intent::NewTab { session, from_pane: from, cwd: None },
-            (None, None) => Intent::NewSession { name: None, from_pane: from },
+            (None, None) => Intent::NewSession { name: fresh, from_pane: from },
         };
         let result = self.intent(None, intent);
         self.next_spawn = None;
@@ -2233,6 +2244,12 @@ impl Daemon {
             BlockType::Editor => self.editor_defaults(&mut req, from),
             BlockType::Diff | BlockType::File => self.view_defaults(&mut req, from),
             _ => {}
+        }
+        // A pane on another daemon (#17): only its place is here, never on
+        // a machine of ours.
+        if req.kind == BlockType::Remote {
+            crate::remote::parse(&req.config)?;
+            (req.vm, req.host, req.local) = (false, None, true);
         }
         let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();

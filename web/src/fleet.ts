@@ -495,6 +495,8 @@ export class Fleet {
       for (const info of st.panes) {
         // Someone else's private pane (M14): not even a tile.
         if (info.private && st.roles) continue;
+        // A pane from another host in this layout (#17): its own host lists it.
+        if (info.type === "remote") continue;
         out.push({
           key: `${name}:${info.id}`,
           host: name,

@@ -240,7 +240,14 @@ export interface Delta {
   presence?: Presence[];
 }
 
-export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file";
+export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote";
+
+/** A remote block's config and state (#17): a pane on another host in the
+ * home daemon's list, shown in this layout. */
+export interface RemoteRef {
+  host: string;
+  pane: PaneId;
+}
 export type MachineId = number;
 export type MachineState = "starting" | "running" | "gone";
 

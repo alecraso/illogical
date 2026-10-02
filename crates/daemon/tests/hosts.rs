@@ -246,3 +246,68 @@ fn tailnet_requests_need_the_owner_except_to_join_with_an_invite() {
     assert_eq!(home.http("GET", "/api/hosts/join", &[host], None).0, 403);
     assert_eq!(home.http("POST", "/api/run", &[host], Some(json!({}))).0, 403);
 }
+
+/// #17: a pane that runs on another daemon, with its place in the home
+/// daemon's layout. The home daemon keeps only `{host, pane}`; the pane is
+/// the other daemon's own, in a session named after the home daemon.
+#[test]
+fn a_remote_pane_runs_there_and_has_its_place_here() {
+    let home = start("home", &[]);
+    let other = start("other", &[]);
+    stdout(&cli(&home, &["hosts", "add", "other", &other.url()]));
+    let first = serde_json::from_str::<Value>(&stdout(&cli(&home, &["--json", "ls"]))).unwrap()[0]["id"].clone();
+
+    // A tab here, running there.
+    let made: Value =
+        serde_json::from_str(&stdout(&cli(&home, &["--host", "other", "--json", "run", "--home", "--cwd", "/tmp"])))
+            .unwrap();
+    let (block, pane) = (made["block"].as_u64().unwrap(), made["pane"].as_u64().unwrap());
+    assert_eq!(made["host"], "other");
+    let here: Value = serde_json::from_str(&stdout(&cli(&home, &["--json", "ls"]))).unwrap();
+    let b = here.as_array().unwrap().iter().find(|p| p["id"] == block).expect("the block is here");
+    assert_eq!(b["type"], "remote");
+    let there: Value = serde_json::from_str(&stdout(&cli(&other, &["--json", "ls"]))).unwrap();
+    let p = there.as_array().unwrap().iter().find(|p| p["id"] == pane).expect("the pane is there");
+    assert_eq!(p["type"], "terminal");
+    assert_eq!(p["session_name"], "home", "{p}");
+    // A new session there holds just that pane, not a shell beside it.
+    let in_session = there.as_array().unwrap().iter().filter(|p| p["session_name"] == "home").count();
+    assert_eq!(in_session, 1, "{there}");
+    let d: Value = serde_json::from_str(&stdout(&cli(&home, &["--json", "describe", &format!("%{block}")]))).unwrap();
+    assert_eq!(d["state"], json!({"host": "other", "pane": pane}), "{d}");
+
+    // Beside a pane here too; a second one joins the same session there.
+    let made: Value = serde_json::from_str(&stdout(&cli(
+        &home,
+        &["--host", "other", "--json", "run", "--home", "--split", &format!("%{first}"), "--", "echo beside; exec cat"],
+    )))
+    .unwrap();
+    let pane2 = made["pane"].as_u64().unwrap();
+    let there: Value = serde_json::from_str(&stdout(&cli(&other, &["--json", "ls"]))).unwrap();
+    assert_eq!(there.as_array().unwrap().iter().filter(|p| p["session_name"] == "home").count(), 2);
+    let tail = || stdout(&cli(&other, &["tail", &format!("%{pane2}"), "--text"]));
+    wait_for("its output there", || tail().contains("beside"));
+
+    // Only hosts in the list, and never this daemon itself.
+    for (host, why) in [("nope", "no host nope"), ("home", "is this daemon")] {
+        let body = json!({"type": "remote", "config": {"host": host, "pane": 1}});
+        let (status, _, body) = home.http("POST", "/api/blocks", &[], Some(body));
+        assert_eq!(status, 400);
+        assert!(body.contains(why), "{body}");
+    }
+
+    // The daemon closes only its place: the pane is still there.
+    let (status, _, _) = home.http("POST", &format!("/api/panes/{block}/close"), &[], None);
+    assert_eq!(status, 200);
+    let ids = |d: &Daemon| -> Vec<Value> {
+        let v: Value = serde_json::from_str(&stdout(&cli(d, &["--json", "ls"]))).unwrap();
+        v.as_array().unwrap().iter().map(|p| p["id"].clone()).collect()
+    };
+    assert!(!ids(&home).contains(&json!(block)));
+    assert!(ids(&other).contains(&json!(pane)));
+    // The CLI closes both, as the web client does.
+    let block2 = ids(&home).into_iter().find(|id| *id != first).unwrap();
+    stdout(&cli(&home, &["close", &format!("%{block2}")]));
+    assert!(!ids(&home).contains(&block2));
+    wait_for("the pane there to close", || !ids(&other).contains(&json!(pane2)));
+}
