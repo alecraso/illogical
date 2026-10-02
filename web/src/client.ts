@@ -33,6 +33,9 @@ import { makeBlockView, type BlockView } from "./blocks";
 import { E2ESocket, type DaemonRef } from "./e2e/channel.ts";
 import type { DeviceKeys } from "./e2e/keys.ts";
 
+/** Ack about this often (bytes drawn); the daemon allows 512 KB. */
+const ACK_EVERY = 64 * 1024;
+
 export interface PaneEntry {
   view: TerminalView;
   epoch: number;
@@ -42,6 +45,8 @@ export interface PaneEntry {
    * snapshot comes (the daemon may replay the gap instead). Output already
    * on its way can still arrive after the resync. */
   resync?: boolean;
+  /** The offset last acked: what the daemon knows we've drawn (#52). */
+  acked?: number;
 }
 
 /** A block that isn't a terminal: its type's view and latest state. */
@@ -855,7 +860,15 @@ export class Client {
       if (entry) entry.resync = p.history === 0;
     }
     const capped = panes.map((p) => ({ ...p, history: p.history ?? SCROLLBACK }));
-    this.send({ type: "attach", panes: capped, zstd: true });
+    this.send({ type: "attach", panes: capped, zstd: true, acks: true });
+  }
+
+  /** xterm has drawn `p` up to `end`: tell the daemon every so often, so it
+   * holds output back while we're slow instead of letting it pile up. */
+  private drew(pane: PaneId, p: PaneEntry, end: number) {
+    if (this.panes.get(pane) !== p || end - (p.acked ?? 0) < ACK_EVERY) return;
+    p.acked = end;
+    this.send({ type: "ack", pane, offset: end });
   }
 
   private onFrame(buf: ArrayBuffer) {
@@ -869,6 +882,8 @@ export class Client {
       p.resync = false;
       p.view.write(data);
       p.offset = f.offset;
+      // A snapshot isn't stream bytes: the daemon counts from its offset.
+      p.acked = f.offset;
       return;
     }
     if (f.kind !== FrameKind.Output || p.offset === null) return;
@@ -884,8 +899,9 @@ export class Client {
       if (skip >= data.length) return;
       data = data.subarray(skip);
     }
-    p.view.write(data);
-    p.offset += data.length;
+    const end = p.offset + data.length;
+    p.view.write(data, () => this.drew(f.pane, p, end));
+    p.offset = end;
   }
 }
 
