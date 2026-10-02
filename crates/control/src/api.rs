@@ -185,6 +185,9 @@ pub struct JoinReq {
     /// A machine that belongs to a team (M19), not a person.
     #[serde(default)]
     team: Option<String>,
+    /// A hosted sandbox's one-time ticket (M20).
+    #[serde(default)]
+    ticket: Option<String>,
 }
 
 fn check_urls(urls: &[String]) -> Result<(), ApiError> {
@@ -216,7 +219,13 @@ pub async fn join(
     {
         return Err(err(StatusCode::NOT_FOUND, "no such team"));
     }
-    app.db.add_join(&code, &b.cert, &hash(&poll), &b.urls, b.team.as_deref(), now_ms())?;
+    let sandbox = match &b.ticket {
+        Some(t) => {
+            Some(crate::sandboxes::ticket(&app, t)?.ok_or_else(|| err(StatusCode::FORBIDDEN, "that ticket is spent"))?)
+        }
+        None => None,
+    };
+    app.db.add_join(&code, &b.cert, &hash(&poll), &b.urls, b.team.as_deref(), sandbox.as_deref(), now_ms())?;
     Ok(Json(json!({ "code": code, "poll": poll, "expires_in_secs": crate::db::JOIN_TTL_MS / 1000 })))
 }
 
@@ -295,6 +304,10 @@ pub async fn join_approve(
     if let Some(team) = &j.team {
         app.db.set_daemon_team(&c.device, team)?;
     }
+    if let Some(sandbox) = &j.sandbox {
+        app.db.set_sandbox_daemon(sandbox, &c.device)?;
+        crate::sandboxes::enrolled(&app, sandbox, &c).await?;
+    }
     app.db.approve_join(&code, &c)?;
     Ok(Json(json!({ "approved": true, "daemon": c.device })))
 }
@@ -321,8 +334,10 @@ pub async fn directory(State(app): State<Arc<App>>, s: Session) -> R {
         .daemons(&s.account)?
         .into_iter()
         .map(|d| {
-            let online = app.relay.online(&d.id);
-            json!({ "id": d.id, "name": d.name, "urls": d.urls, "last_seen": d.last_seen, "online": online })
+            // A hosted sandbox is reached through its provider, which wakes it.
+            let sandbox = app.db.sandbox_of_daemon(&d.id).ok().flatten();
+            let online = app.relay.online(&d.id) || sandbox.is_some();
+            json!({ "id": d.id, "name": d.name, "urls": d.urls, "last_seen": d.last_seen, "online": online, "sandbox": sandbox })
         })
         .collect();
     // Teams' machines and those shared with me (M19), with their owner

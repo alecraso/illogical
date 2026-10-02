@@ -39,6 +39,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 x509-parser = "0.18.1"
 tower = { version = "0.5.3", features = ["util"] }
 hex = "0.4.3"
+url = "2.5.8"
 
 [lints]
 workspace = true

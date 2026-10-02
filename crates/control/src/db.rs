@@ -118,6 +118,16 @@ CREATE TABLE IF NOT EXISTS push_subs (
     account TEXT NOT NULL,
     body TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sandboxes (
+    id TEXT PRIMARY KEY,
+    account TEXT NOT NULL,
+    device TEXT NOT NULL,
+    ticket_hash TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created INTEGER NOT NULL,
+    deleted INTEGER,
+    daemon TEXT
+);
 CREATE TABLE IF NOT EXISTS usage (
     account TEXT NOT NULL,
     day TEXT NOT NULL,
@@ -139,6 +149,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("joins", "team")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN team TEXT")?;
     }
+    if !has("joins", "sandbox")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN sandbox TEXT")?;
+    }
     Ok(())
 }
 
@@ -149,6 +162,16 @@ pub struct Team {
     pub founder: String,
     pub founder_root: String,
     pub locked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SandboxRow {
+    pub id: String,
+    pub account: String,
+    pub device: String,
+    pub state: String,
+    pub created: u64,
+    pub deleted: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -192,6 +215,8 @@ pub struct Join {
     pub account: Option<String>,
     /// A team daemon's team (M19).
     pub team: Option<String>,
+    /// A hosted sandbox's (M20): its requester approves it by itself.
+    pub sandbox: Option<String>,
 }
 
 fn cert_of(s: String) -> rusqlite::Result<Cert> {
@@ -397,6 +422,7 @@ impl Db {
 
     // ---- joins
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_join(
         &self,
         code: &str,
@@ -404,14 +430,16 @@ impl Db {
         poll_hash: &str,
         urls: &[String],
         team: Option<&str>,
+        sandbox: Option<&str>,
         now: u64,
     ) -> anyhow::Result<()> {
         let c = self.c();
         // Old ones go first; a code can be asked for again.
         c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
         c.execute(
-            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
-            params![code, serde_json::to_string(cert)?, poll_hash, serde_json::to_string(urls)?, now, team],
+            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
+            params![code, serde_json::to_string(cert)?, poll_hash, serde_json::to_string(urls)?, now, team, sandbox],
         )?;
         Ok(())
     }
@@ -420,7 +448,7 @@ impl Db {
         Ok(self
             .c()
             .query_row(
-                "SELECT cert, poll_hash, urls, created, account, team FROM joins WHERE code = ?1 AND created >= ?2",
+                "SELECT cert, poll_hash, urls, created, account, team, sandbox FROM joins WHERE code = ?1 AND created >= ?2",
                 params![code, now.saturating_sub(JOIN_TTL_MS)],
                 |r| {
                     Ok(Join {
@@ -430,6 +458,7 @@ impl Db {
                         created: r.get(3)?,
                         account: r.get(4)?,
                         team: r.get(5)?,
+                        sandbox: r.get(6)?,
                     })
                 },
             )
@@ -734,6 +763,125 @@ impl Db {
                 ))
             })
             .optional()?)
+    }
+
+    // ---- hosted sandboxes (M20)
+
+    pub fn add_sandbox(
+        &self,
+        id: &str,
+        account: &str,
+        device: &str,
+        ticket_hash: &str,
+        now: u64,
+    ) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO sandboxes (id, account, device, ticket_hash, state, created) VALUES (?1, ?2, ?3, ?4, 'creating', ?5)",
+            params![id, account, device, ticket_hash, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_sandbox_state(&self, id: &str, state: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE sandboxes SET state = ?2 WHERE id = ?1", params![id, state])?;
+        Ok(())
+    }
+
+    fn sandbox_row(r: &rusqlite::Row) -> rusqlite::Result<SandboxRow> {
+        Ok(SandboxRow {
+            id: r.get(0)?,
+            account: r.get(1)?,
+            device: r.get(2)?,
+            state: r.get(3)?,
+            created: r.get(4)?,
+            deleted: r.get(5)?,
+        })
+    }
+
+    pub fn sandboxes(&self, account: &str) -> anyhow::Result<Vec<SandboxRow>> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT id, account, device, state, created, deleted FROM sandboxes WHERE account = ?1 ORDER BY created",
+        )?;
+        let rows = q.query_map(params![account], Self::sandbox_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn sandbox(&self, id: &str) -> anyhow::Result<Option<SandboxRow>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT id, account, device, state, created, deleted FROM sandboxes WHERE id = ?1",
+                params![id],
+                Self::sandbox_row,
+            )
+            .optional()?)
+    }
+
+    /// The sandbox a join ticket belongs to (before its daemon joined).
+    pub fn sandbox_by_ticket(&self, ticket_hash: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT id FROM sandboxes WHERE ticket_hash = ?1 AND daemon IS NULL AND deleted IS NULL",
+                params![ticket_hash],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// A join waiting for a sandbox's requester: its code and certificate.
+    pub fn sandbox_join(&self, sandbox: &str, now: u64) -> anyhow::Result<Option<(String, serde_json::Value)>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT code, cert FROM joins WHERE sandbox = ?1 AND account IS NULL AND created >= ?2",
+                params![sandbox, now.saturating_sub(JOIN_TTL_MS)],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .map(|(code, cert)| (code, serde_json::from_str(&cert).unwrap_or_default())))
+    }
+
+    pub fn set_sandbox_daemon(&self, id: &str, daemon: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE sandboxes SET daemon = ?2, state = 'running' WHERE id = ?1", params![id, daemon])?;
+        Ok(())
+    }
+
+    pub fn sandbox_daemon(&self, id: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row("SELECT daemon FROM sandboxes WHERE id = ?1", params![id], |r| r.get(0))
+            .optional()?
+            .flatten())
+    }
+
+    /// The live sandbox a daemon is in, if it is one.
+    pub fn sandbox_of_daemon(&self, daemon: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row("SELECT id FROM sandboxes WHERE daemon = ?1 AND deleted IS NULL", params![daemon], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn end_sandbox(&self, id: &str, now: u64) -> anyhow::Result<()> {
+        self.c().execute("UPDATE sandboxes SET deleted = ?2, state = 'deleted' WHERE id = ?1", params![id, now])?;
+        Ok(())
+    }
+
+    /// Sandbox minutes (M22): from creation to deletion (or now).
+    pub fn sandbox_minutes(&self, account: &str, since: u64, now: u64) -> anyhow::Result<u64> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT created, deleted FROM sandboxes WHERE account = ?1 AND (deleted IS NULL OR deleted > ?2)",
+        )?;
+        let rows = q.query_map(params![account, since], |r| Ok((r.get::<_, u64>(0)?, r.get::<_, Option<u64>>(1)?)))?;
+        let mut ms = 0u64;
+        for row in rows {
+            let (start, end) = row?;
+            ms += end.unwrap_or(now).saturating_sub(start.max(since));
+        }
+        Ok(ms.div_ceil(60_000))
     }
 
     // ---- settings and push (M21)

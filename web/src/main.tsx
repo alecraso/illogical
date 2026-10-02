@@ -48,7 +48,13 @@ if (session) {
       return "off";
     },
   });
-  session.subscribe(() =>
+  session.subscribe(() => {
+    // A hosted VM this browser started: show it once it's up.
+    const started = session.starting && session.daemons.find((d) => d.sandbox === session.starting);
+    if (started) {
+      session.starting = null;
+      queueMicrotask(() => directory.select(started.name));
+    }
     directory.setControl(
       session.daemons.map((d) => ({
         name: d.name,
@@ -60,8 +66,8 @@ if (session) {
         status: d.online ? "online" : "offline",
       })),
       session.stale,
-    ),
-  );
+    );
+  });
   void session.boot();
 }
 
@@ -80,7 +86,19 @@ const connect = () => {
   if (session) {
     const c = client;
     directory.setPath(null);
-    c.subscribe(() => c === client && directory.setPath(c.connected ? c.path : null));
+    let hadSessions = false;
+    c.subscribe(() => {
+      if (c !== client) return;
+      directory.setPath(c.connected ? c.path : null);
+      // A hosted VM whose last tab closed is done (M20): delete it.
+      const n = c.state?.sessions.length ?? 0;
+      if (n > 0) hadSessions = true;
+      const vm = session.daemons.find((d) => d.id === c.e2e?.daemon.id)?.sandbox;
+      if (vm && hadSessions && n === 0 && c.connected) {
+        hadSessions = false;
+        void session.deleteSandbox(vm);
+      }
+    });
   }
 };
 
