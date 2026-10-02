@@ -14,7 +14,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
-import { openPort } from "../blocks";
+import { openEditor, openPort } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk } from "./term-ask";
@@ -505,6 +505,9 @@ function PaneSlot({
       // A port where this pane runs: its machine, or this host.
       { label: mine ? "Open a port on this machine…" : "Open a port…", run: () => void openPort(client, { split: id, host: mine?.id, local: !mine }) },
       { label: "Start an agent…", run: () => startAgent(client, { split: id, from: id }) },
+      // M27: VS Code where this pane runs, in its directory. The owner's,
+      // like ports.
+      ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),
       ...(own && !tabMachine
         ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
         : []),

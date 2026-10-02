@@ -159,6 +159,8 @@ export interface PaneInfo {
   activity?: Activity | null;
   /** M23: the title its program set (OSC 0/2). */
   title?: string | null;
+  /** M27: the file an editor block shows, relative to its folder. */
+  file?: string | null;
   /** Started by an MCP client (M16): `mcp:<client>`, and the agent block whose token it came with. */
   started_by?: StartedBy | null;
 }
@@ -193,7 +195,7 @@ export interface Delta {
   presence?: Presence[];
 }
 
-export type BlockType = "terminal" | "browser" | "agent";
+export type BlockType = "terminal" | "browser" | "agent" | "editor";
 export type MachineId = number;
 export type MachineState = "starting" | "running" | "gone";
 

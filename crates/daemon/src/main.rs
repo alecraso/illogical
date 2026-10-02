@@ -11,6 +11,7 @@ mod classify;
 mod control;
 mod dial;
 mod e2e;
+mod editor;
 mod fs;
 mod history;
 mod holder;
@@ -251,7 +252,27 @@ struct RunArgs {
     blocks: BlockArgs,
 
     #[command(flatten)]
+    editors: EditorArgs,
+
+    #[command(flatten)]
     reach: ReachArgs,
+}
+
+/// Editor blocks (M27): VS Code as code-server, served like browser blocks
+/// on ports (so they need --block-listen).
+#[derive(clap::Args, Debug)]
+struct EditorArgs {
+    /// A code-server to run [default: the release illogical pins, downloaded
+    /// to ~/.cache/illogical/code-server the first time an editor opens].
+    #[arg(long, env = "ILLOGICAL_CODE_SERVER")]
+    code_server: Option<PathBuf>,
+    /// Stop an editor server after this many seconds with no editor open
+    /// (at least 60).
+    #[arg(long, env = "ILLOGICAL_EDITOR_IDLE", default_value_t = 900)]
+    editor_idle: u64,
+    /// Where code-server releases are downloaded from.
+    #[arg(long, env = "ILLOGICAL_CODE_SERVER_RELEASES", default_value = editor::server::RELEASES, hide = true)]
+    code_server_releases: String,
 }
 
 /// M4c: reaching a home daemon from a host that can only dial out, and
@@ -647,6 +668,22 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         }
     };
     let socket = socket_path(&state_dir);
+    editor::server::install(editor::server::Settings {
+        dir: state_dir.join("editor"),
+        // Beside the CLI's socket, which is kept short enough.
+        socket: PathBuf::from(format!("{}-code", socket.display())),
+        binary: args.editors.code_server.clone(),
+        cache: std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".cache"))
+            .join("illogical/code-server"),
+        releases: args.editors.code_server_releases.clone(),
+        idle: args.editors.editor_idle,
+        // Long enough to ride out a daemon restart, short enough that a
+        // closed block's extension host goes.
+        grace: 300,
+        launch: launch.clone(),
+    });
     let subject = format!("mailto:{}", owner_login.clone().unwrap_or_else(|| "illogical@localhost".into()));
     let push = match push::Push::open(state_dir.join("push"), subject) {
         Ok(p) => Some(p),

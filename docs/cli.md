@@ -24,6 +24,8 @@ illogical machines                            # VMs, their owner (@tab or %pane)
 illogical open example.com                    # a browser block (--split %3 beside a pane)
 illogical open --split right :5173/about      # a port, beside this pane, on its VM tab's machine
 illogical open --host m2 :3000                # a port on machine m2 (--host local: this host)
+illogical edit src/main.rs:42                 # VS Code on this file's project, at line 42 (no path: here)
+illogical edit --machine m2 ~/app             # on machine m2 (--split right beside this pane)
 illogical describe %4                         # any block: type, place, state
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,

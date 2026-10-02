@@ -13,6 +13,7 @@ setup as a worked example.
 - [Claude Code hooks](#claude-code-hooks)
 - [VM tabs and panes (wisp)](#vm-tabs-and-panes-wisp)
 - [Browser blocks on ports](#browser-blocks-on-ports)
+- [Editor blocks](#editor-blocks)
 - [Agents in a VM](#agents-in-a-vm)
 - [A Mac as another host](#a-mac-as-another-host)
 - [A sandbox on the tailnet](#a-sandbox-on-the-tailnet)
@@ -125,6 +126,27 @@ illogicald install -- --block-listen 100.x.y.z:7443 \
 `--block-acme-directory staging` uses the test CA while you try it;
 `--block-cert`/`--block-key` serve a certificate you renew yourself.
 Callers are checked with `tailscale whois`: only the owner gets in.
+
+## Editor blocks
+
+*Open in editor* and `illogical edit` run VS Code (code-server) and show it
+like a browser block on a port, so they need block sites
+(`--block-listen`, above); without them they say so.
+
+- **code-server:** the release illogical pins is downloaded the first time
+  an editor opens (about 230 MB) into `$XDG_CACHE_HOME/illogical/code-server`
+  and checked against its SHA-256. `--code-server PATH` runs another one
+  instead (a recent one: illogical passes `--idle-timeout-seconds` and
+  `--socket-mode`). In a VM the same
+  release is downloaded inside the VM.
+- **Where things are:** settings, extensions and VS Code's state in
+  `<state>/editor/` (`user/User/settings.json` is yours after the first
+  start), its log in `<state>/editor/code-server.log`, its socket beside
+  the CLI's (`<sock>-code`, mode 0600). code-server keeps its own logs in
+  `~/.local/share/code-server`.
+- **Stopping:** `--editor-idle SECONDS` (default 900, at least 60) after the
+  last window closes. It runs in a scope of its own, so restarting the daemon
+  leaves it, and open windows reconnect.
 
 ## Agents in a VM
 

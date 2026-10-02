@@ -1101,6 +1101,8 @@ impl Daemon {
                 }
             }
             What::BlockChanged => {
+                // Its summary (an editor's file) goes at the next tick.
+                self.mark(pane);
                 if let Some(msg) = self.block_msg(pane) {
                     for sub in self.clients.values().filter(|c| self.sees(&c.principal, pane)) {
                         let _ = sub.ctrl.send(ToClient::Msg(msg.clone()));
@@ -1808,11 +1810,14 @@ impl Daemon {
         Ok(block)
     }
 
-    fn open_block(&mut self, req: OpenRequest) -> Result<PaneId, String> {
+    fn open_block(&mut self, mut req: OpenRequest) -> Result<PaneId, String> {
         if req.kind == BlockType::Terminal {
             return Err("terminals are opened with run".into());
         }
         let from = req.from_pane.filter(|p| self.panes.contains_key(p) || self.blocks.contains_key(p));
+        if req.kind == BlockType::Editor {
+            self.editor_defaults(&mut req, from);
+        }
         let session = self.resolve_session(req.session.as_deref(), from)?;
         let before: Vec<PaneId> = self.mux.panes();
         self.last_block_error = None;
@@ -1856,6 +1861,29 @@ impl Daemon {
             return Err(self.last_block_error.take().unwrap_or_else(|| "the block couldn't start".into()));
         }
         Ok(id)
+    }
+
+    /// An editor opens on the machine of the pane it's opened from, in
+    /// that pane's directory, unless told otherwise.
+    fn editor_defaults(&self, req: &mut OpenRequest, from: Option<PaneId>) {
+        let beside = req.split.or(from);
+        if req.host.is_none() && !req.local && !req.vm {
+            req.host = beside.and_then(|p| self.meta.get(&p)).and_then(|m| m.host);
+        }
+        let has_path = ["path", "folder"].iter().any(|k| req.config.get(*k).is_some_and(|v| !v.is_null()));
+        if !has_path {
+            let here = req.host.is_none();
+            let cwd = beside.and_then(|p| self.info_of_any(p)).and_then(|i| i.cwd);
+            let path = match cwd {
+                Some(c) => c,
+                None if here => self.config.home.display().to_string(),
+                None => "~".into(),
+            };
+            if !req.config.is_object() {
+                req.config = serde_json::json!({});
+            }
+            req.config["path"] = path.into();
+        }
     }
 
     /// A new machine for the next pane; it's created when its first
@@ -2565,6 +2593,7 @@ impl Daemon {
                 project: None,
                 activity: None,
                 title: None,
+                file: None,
                 ..info
             };
         }
@@ -3066,6 +3095,7 @@ impl Daemon {
             work: Some(work),
             activity: self.activity.get(&p.id).map(|(_, a)| *a).filter(|a| a.last_ms > 0),
             title: status.title.clone(),
+            file: None,
             started_by: meta.started_by.clone(),
             running,
             policy: meta.policy,
@@ -3099,10 +3129,13 @@ impl Daemon {
     /// A non-terminal block's entry in the state.
     fn block_info(&self, id: PaneId, b: &Arc<dyn Block>) -> PaneInfo {
         let meta = self.meta.get(&id).cloned().unwrap_or_default();
+        let s = b.summary();
         PaneInfo {
             id,
             epoch: 0,
-            cwd: None,
+            project: s.project,
+            cwd: s.cwd,
+            file: s.file,
             command: None,
             running: true,
             policy: meta.policy,
@@ -3120,10 +3153,9 @@ impl Daemon {
             pair: false,
             private: meta.private,
             trusted: Vec::new(),
-            work: (b.kind() == BlockType::Agent).then_some(WorkKind::Agent),
-            project: None,
+            work: s.work.or((b.kind() == BlockType::Agent).then_some(WorkKind::Agent)),
             activity: None,
-            title: None,
+            title: s.title,
             started_by: meta.started_by.clone(),
         }
     }
