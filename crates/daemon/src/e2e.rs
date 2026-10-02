@@ -32,7 +32,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     mux::Cmd,
-    pane::{CLIENT_QUEUE, Subscriber, ToClient},
+    pane::{Subscriber, ToClient, client_queue},
     server::App,
 };
 
@@ -161,7 +161,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     // An owner here through control has a name of their own (M30).
     let name = principal.is_owner().then(|| app.control.name_of_account(&device.account)).flatten();
     let client = app.new_client_id();
-    let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
+    let (data_tx, mut data_rx) = client_queue();
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
     app.mux.send(Cmd::Connect {
         sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: principal.clone(), name },

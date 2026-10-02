@@ -1824,6 +1824,91 @@ tmux, and unparking takes about 200µs.
   - attaching to a parked pane draws it in under 50ms;
   - the benchmark guards against regressions in CI.
 
+#### M9 step 1: memory cheap wins (#3)
+
+**Done 2026-10-02.** An idle pane went from 3.3 MB to 1.8 MB of daemon RSS,
+a pane with history from 32 to 18 MB (10k lines) and from 149 to 18 MB (at
+the cap), and closed panes give their memory back.
+
+- **What landed:**
+  - **No Zig signal stack.** libghostty-rs's sys crate is vendored in
+    `vendor/libghostty-vt-sys` (the root `Cargo.toml` patches it in). Its
+    `build.rs` applies `patches/*.patch` after checking Ghostty out, and
+    fetches again when they change. `0001-no-signal-stack.patch` sets
+    `signal_stack_size = null`, so `.tbss` is 0x1f8 bytes, not 256 KiB per
+    thread. libghostty stays ReleaseSafe (Jake, 2026-10-02).
+  - **malloc** (`crates/daemon/src/heap.rs`, glibc only): `mallopt` fixes
+    the mmap and trim thresholds at 128 KiB at startup, and each pane's
+    thread calls `malloc_trim(0)` once its pane is gone. musl's malloc (the
+    static release builds) and macOS's don't need it.
+  - **The output ring** holds 1 MiB (`MAX_REPLAY_BYTES`), allocated once;
+    `push` drains before it extends, so it never grows.
+  - **Scrollback in memory** is capped at 16 MiB, not 64 (about 9.6k rows at
+    200 columns). The pane log on disk keeps everything.
+  - **Four threads per pane, not five:** the wait thread reaps the shim
+    after its program has gone.
+  - **The client queue is capped in bytes:** 8 MiB of live output per client
+    (it was 1,024 frames of up to 64 KiB, so up to 64 MiB). Snapshots and
+    replays count toward it but are never refused for it, since an attach
+    queues one per pane at once. Clients that ack (web, TUI) were already
+    held to `ACK_WINDOW` per pane.
+- **Not done, on purpose:**
+  - **A tiny shim binary.** The shim is still `illogicald _shim`: 1.0 MB USS
+    each with the signal stack gone (1.26 MB before), so a separate binary
+    would save about 0.4 GB at 500 panes. But it's one more binary in every
+    tarball, `install.sh`, `install --tailnet` and the macOS build. Shims
+    outlive daemon upgrades, so its record format would need versioning.
+    Worth it when 500-pane fleets are real.
+  - **ReleaseFast** (decided against) and **the page fill:** most of an
+    idle pane's 1.8 MB is libghostty's ReleaseSafe page fill. An upstream
+    fix would take it to about 0.5 MB. Drafts for Jake to file are in #63.
+- **The S9 rerun** (`bench.py`, same parameters, geek, 2026-10-02; daemon
+  RSS; `main` at 2440cc3 against this branch, both release builds):
+
+  | scenario | before | after |
+  |---|---|---|
+  | idle, baseline (1 pane) | 30.3 MB | 21.0 MB |
+  | idle, per pane at 10 / 50 / 200 / 500 | 3.48 / 3.33 / 3.30 / 3.30 MB | 2.15 / 1.88 / 1.81 / 1.78 MB |
+  | idle, 500 panes | 1,638 MB, 2,534 threads | 887 MB, 2,035 threads |
+  | idle, 500 closed down to 1 | 212 MB | 35 MB |
+  | idle, 500 reopened | 1,652 MB | 896 MB |
+  | shim USS each / bash USS each | 1.26 / 0.72 MB | 1.01 / 0.73 MB |
+  | 500 idle shells all in (daemon + shim + bash PSS) | 2.61 GB (5.2 MB each) | 1.74 GB (3.5 MB each) |
+  | 10k lines at 200x50, per pane (50 panes) | 31.7 MB | 17.8 MB |
+  | 10k lines, 50 panes closed down to 1 | 718 MB | 51 MB |
+  | 200k lines (the cap), per pane (10 panes) | 149.3 MB | 18.2 MB |
+  | 200k lines, 10 panes closed down to 1 | 776 MB | 44 MB |
+  | stalled client: 4 panes after the burst, no client | 315 MB | 94 MB |
+  | stalled client: over that, a client not reading | +1.8 MB | +0.5 MB |
+
+  The stalled-client run didn't fill the queue in either build, so the
+  byte cap is covered by a unit test, not by this number.
+- **Does the trigger still hold?**
+  - **RSS per idle pane above 2 MB:** no longer, just. It's 1.8 MB at 50
+    to 500 panes (2.1 MB at 10).
+  - **More than about 50 panes on geek, or an agent fleet:** these are
+    about use, not measured here. If either holds, the trigger holds.
+  - **The done bar isn't met:** 500 idle shells cost 1.78 MB each in daemon
+    RSS, not under 1 MB. Parking wouldn't fix that cheaply; the page fill
+    upstream (#63) would.
+  - **Panes with history** are about 18 MB each now, whatever their length:
+    a 500-pane fleet with full scrollback would be about 9 GB. That's what
+    step 2's terminal parking would save, if real fleets get there.
+- **Tests:**
+  - `crates/daemon/tests/memory.rs` (in `just check` on Linux, about 5 s):
+    S9's idle scenario at 50 panes against the debug binary. An idle pane
+    must cost at most 2.6 MB (it's 1.85 MB; `main` measured 3.1 MB and
+    fails), and the daemon may keep at most 8 MB after 49 panes close (it
+    keeps about 5 MB).
+  - Unit tests: the ring never grows past 1 MiB, even for a chunk bigger
+    than itself; the client queue refuses live output past 8 MiB but takes
+    snapshots, and counts only what it holds; libghostty keeps about 9.6k
+    rows of 40k written at 200 columns.
+- **Not covered:**
+  - `malloc_trim` and the thresholds on musl and macOS (they don't apply).
+  - Real workloads (Claude Code, long build logs, wide panes), as in S9.
+  - A stalled client that really fills its queue end to end.
+
 ### S8: block exploration (after M6 has been used for about two weeks)
 
 This spike decides which block types come next, from evidence instead of a

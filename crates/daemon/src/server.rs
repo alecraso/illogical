@@ -30,7 +30,7 @@ use crate::{
     acl::Principal,
     hosts::Hosts,
     mux::{Cmd, MuxHandle},
-    pane::{CLIENT_QUEUE, Subscriber, ToClient},
+    pane::{Subscriber, ToClient, client_queue},
     tailscale::Identify,
 };
 
@@ -335,7 +335,7 @@ async fn local_ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Res
 async fn connection(app: Arc<App>, mut socket: WebSocket, who: Principal) {
     let client: ClientId = app.new_client_id();
     info!(client, who = who.id(), "client connected");
-    let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
+    let (data_tx, mut data_rx) = client_queue();
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
     app.mux.send(Cmd::Connect { sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: who, name: None } });
 

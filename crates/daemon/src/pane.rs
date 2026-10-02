@@ -17,7 +17,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -42,9 +42,10 @@ use crate::{
 };
 
 /// Output kept in memory for clients that reconnect: anything within this
-/// many bytes of the end is replayed instead of snapshotted.
-const RING_BYTES: usize = 2 * 1024 * 1024;
+/// many bytes of the end is replayed instead of snapshotted. The ring holds
+/// exactly that much (M9: it used to hold 2 MiB and grow to 4).
 const MAX_REPLAY_BYTES: u64 = 1024 * 1024;
+const RING_BYTES: usize = MAX_REPLAY_BYTES as usize;
 /// Smaller snapshots go uncompressed: not worth a client's decoder.
 const MIN_ZSTD_BYTES: usize = 4096;
 /// Chunks of a local program's output (up to 64 KB each) waiting for the
@@ -55,13 +56,69 @@ const ACK_WINDOW: u64 = 512 * 1024;
 /// A held-back client gets output again once it has acked this close.
 const ACK_RESUME: u64 = ACK_WINDOW / 2;
 /// Frames queued per client before it counts as too slow and is resynced.
-pub const CLIENT_QUEUE: usize = 1024;
+const CLIENT_QUEUE: usize = 1024;
+/// Live output queued per client before it counts as too slow (M9: a frame
+/// is up to one 64 KiB read, so 1024 frames could hold 64 MiB). Snapshots
+/// and replays count toward it but are never refused for it: an attach to
+/// many panes queues them all at once.
+const CLIENT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 /// Checkpoint after this much output, or after this long idle with output
 /// since the last one.
 const CHECKPOINT_BYTES: u64 = 2 * 1024 * 1024;
 const CHECKPOINT_IDLE: Duration = Duration::from_secs(5);
 /// Most log a restore replays after a checkpoint, or at all without one.
 const RESTORE_REPLAY_BYTES: u64 = 8 * 1024 * 1024;
+
+/// A client's `data` queue: bounded in items, and in live output bytes.
+pub fn client_queue() -> (ClientTx, ClientRx) {
+    let (tx, rx) = mpsc::channel(CLIENT_QUEUE);
+    let bytes = Arc::new(AtomicUsize::new(0));
+    (ClientTx { tx, bytes: bytes.clone() }, ClientRx { rx, bytes })
+}
+
+#[derive(Clone, Debug)]
+pub struct ClientTx {
+    tx: mpsc::Sender<ToClient>,
+    bytes: Arc<AtomicUsize>,
+}
+
+impl ClientTx {
+    /// Queue an item, if there's room for one more.
+    pub fn try_send(&self, item: ToClient) -> Result<(), Full> {
+        let n = item.queued_bytes();
+        self.bytes.fetch_add(n, Ordering::Relaxed);
+        self.tx.try_send(item).map_err(|_| {
+            self.bytes.fetch_sub(n, Ordering::Relaxed);
+            Full
+        })
+    }
+
+    /// Queue live output, if the client isn't already this far behind.
+    fn try_send_output(&self, frame: Vec<u8>) -> Result<(), Full> {
+        if self.bytes.load(Ordering::Relaxed) + frame.len() > CLIENT_QUEUE_BYTES {
+            return Err(Full);
+        }
+        self.try_send(ToClient::Frame(frame))
+    }
+}
+
+/// A client's queue had no room (or it's gone).
+#[derive(Debug)]
+pub struct Full;
+
+pub struct ClientRx {
+    rx: mpsc::Receiver<ToClient>,
+    bytes: Arc<AtomicUsize>,
+}
+
+impl ClientRx {
+    /// The next item. Cancel safe, as `mpsc::Receiver::recv` is.
+    pub async fn recv(&mut self) -> Option<ToClient> {
+        let item = self.rx.recv().await?;
+        self.bytes.fetch_sub(item.queued_bytes(), Ordering::Relaxed);
+        Some(item)
+    }
+}
 
 /// What a client connection receives.
 #[derive(Debug)]
@@ -75,6 +132,17 @@ pub enum ToClient {
     Close,
 }
 
+impl ToClient {
+    /// What it counts for in a client's queue.
+    fn queued_bytes(&self) -> usize {
+        match self {
+            ToClient::Frame(f) => f.len(),
+            ToClient::Json(j) => j.len(),
+            ToClient::Msg(_) | ToClient::Close => 0,
+        }
+    }
+}
+
 /// A client's subscription. Everything the client must apply in order with
 /// a pane's output (sizes, snapshots, output) goes through the bounded
 /// `data` queue; `ctrl` is unbounded and carries layout state and the
@@ -82,7 +150,7 @@ pub enum ToClient {
 #[derive(Clone)]
 pub struct Subscriber {
     pub client: ClientId,
-    pub data: mpsc::Sender<ToClient>,
+    pub data: ClientTx,
     pub ctrl: mpsc::UnboundedSender<ToClient>,
     /// Who this client is (M12): what it sees and may do.
     pub principal: crate::acl::Principal,
@@ -625,10 +693,6 @@ impl Process {
             }
             thread::sleep(Duration::from_millis(5));
         };
-        // Reap the shim (or systemd-run) if it ends while we're its parent.
-        thread::spawn(move || {
-            let _ = child.wait();
-        });
         info!(pane, pid, program = %spawn.program, cwd = %cwd.display(), scope = launch.scopes, "started process");
         let master = File::from(pty.master);
         if let Some(socket) = &hold {
@@ -644,7 +708,7 @@ impl Process {
                 warn!(pane, "couldn't keep the terminal in the FD store");
             }
         }
-        Self::run(pid, master, record.to_owned(), pane, events)
+        Self::run(pid, Some(child), master, record.to_owned(), pane, events)
     }
 
     /// Take over a pane whose terminal and program outlived the previous
@@ -655,10 +719,19 @@ impl Process {
             return Err(std::io::Error::other("the pane's program is gone"));
         };
         info!(pane, pid, "adopted process");
-        Self::run(pid, File::from(master), record.to_owned(), pane, events)
+        Self::run(pid, None, File::from(master), record.to_owned(), pane, events)
     }
 
-    fn run(pid: u32, master: File, record: PathBuf, pane: PaneId, events: Sender<Cmd>) -> std::io::Result<Self> {
+    /// `shim` is the shim (or systemd-run) when we started it: our child, to
+    /// reap once the program has gone.
+    fn run(
+        pid: u32,
+        shim: Option<Child>,
+        master: File,
+        record: PathBuf,
+        pane: PaneId,
+        events: Sender<Cmd>,
+    ) -> std::io::Result<Self> {
         let mut reader = master.try_clone()?;
         let out = events.clone();
         thread::Builder::new().name(format!("pane{pane}-read")).spawn(move || {
@@ -689,6 +762,11 @@ impl Process {
         thread::Builder::new().name(format!("pane{pane}-wait")).spawn(move || {
             let (code, signal) = wait_for_exit(pid, &record);
             let _ = events.send(Cmd::Exited { key: pid as u64, code, signal });
+            // The shim ends right after its program (one thread fewer per
+            // pane than a reaper of its own, M9).
+            if let Some(mut shim) = shim {
+                let _ = shim.wait();
+            }
         })?;
 
         Ok(Self { pid, master, writer })
@@ -782,14 +860,22 @@ struct Ring {
 }
 
 impl Ring {
+    /// Empty, at `start`. Its one allocation is never touched past what's
+    /// written, and never grows: pushes drain before they extend.
+    fn new(start: u64) -> Self {
+        Ring { buf: VecDeque::with_capacity(RING_BYTES), start }
+    }
     fn end(&self) -> u64 {
         self.start + self.buf.len() as u64
     }
     fn push(&mut self, data: &[u8]) {
-        self.buf.extend(data);
-        let excess = self.buf.len().saturating_sub(RING_BYTES);
+        // Only the tail of a chunk bigger than the ring can stay.
+        let skip = data.len().saturating_sub(RING_BYTES);
+        let data = &data[skip..];
+        let excess = (self.buf.len() + data.len()).saturating_sub(RING_BYTES);
         self.buf.drain(..excess);
-        self.start += excess as u64;
+        self.buf.extend(data);
+        self.start += (excess + skip) as u64;
     }
     /// Bytes from `offset` to the end, if still held.
     fn since(&self, offset: u64) -> Option<Vec<u8>> {
@@ -876,7 +962,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             exec_saved: None,
             resume_otherwise: None,
             waiting: None,
-            ring: Ring { buf: VecDeque::new(), start: log.end() },
+            ring: Ring::new(log.end()),
             log: Some(log),
             subs: HashMap::new(),
             flows: HashMap::new(),
@@ -905,6 +991,9 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
         }
         st.begin(start);
         run(st, rx, program_rx);
+        // The pane's engine, ring and buffers are freed now: give the memory
+        // back rather than keep it for panes that may never come (S9).
+        crate::heap::trim();
     })?;
     Ok(handle)
 }
@@ -1436,7 +1525,7 @@ impl State {
             // in the client or starting it over.
             let full = match flow.as_ref() {
                 Some(f) if end.saturating_sub(f.acked) > ACK_WINDOW => true,
-                _ => sub.data.try_send(ToClient::Frame(frame.clone())).is_err(),
+                _ => sub.data.try_send_output(frame.clone()).is_err(),
             };
             match flow {
                 Some(f) if full => {
@@ -1777,7 +1866,7 @@ mod tests {
 
     #[test]
     fn ring_keeps_the_tail_and_addresses_by_offset() {
-        let mut r = Ring { buf: VecDeque::new(), start: 0 };
+        let mut r = Ring::new(0);
         r.push(b"hello ");
         r.push(b"world");
         assert_eq!(r.end(), 11);
@@ -1788,6 +1877,52 @@ mod tests {
         assert_eq!(r.start, 11);
         assert!(r.since(5).is_none());
         assert_eq!(r.since(r.end() - 2).unwrap(), b"xx");
+    }
+
+    #[tokio::test]
+    async fn client_queue_caps_live_output_in_bytes() {
+        let (tx, mut rx) = client_queue();
+        let chunk = vec![b'x'; 64 * 1024];
+        let mut queued = 0;
+        while tx.try_send_output(chunk.clone()).is_ok() {
+            queued += 1;
+        }
+        // 8 MiB of 64 KiB reads, not 1024 of them.
+        assert_eq!(queued, CLIENT_QUEUE_BYTES / chunk.len());
+        // A snapshot still goes in (an attach queues them all at once), and
+        // live output after it waits for the client to read.
+        assert!(tx.try_send(ToClient::Frame(vec![0; 3 * 1024 * 1024])).is_ok());
+        assert!(tx.try_send(ToClient::Msg(ServerMsg::Resync { pane: 1 })).is_ok());
+        assert!(tx.try_send_output(b"more".to_vec()).is_err());
+        for _ in 0..queued + 1 {
+            assert!(matches!(rx.recv().await, Some(ToClient::Frame(_))));
+        }
+        assert!(matches!(rx.recv().await, Some(ToClient::Msg(_))));
+        assert!(tx.try_send_output(chunk.clone()).is_ok());
+        // Refused items don't count.
+        assert_eq!(rx.bytes.load(Ordering::Relaxed), chunk.len());
+    }
+
+    #[test]
+    fn ring_never_grows_past_its_size() {
+        let mut r = Ring::new(100);
+        let cap = r.buf.capacity();
+        assert!(cap >= RING_BYTES);
+        // Pushes of every size, more than the ring holds in all, and one
+        // bigger than the ring.
+        for n in [1, 4096, 65536, 300_000, 1, RING_BYTES - 1, 7] {
+            r.push(&vec![b'a'; n]);
+            assert!(r.buf.len() <= RING_BYTES);
+        }
+        let total = 1 + 4096 + 65536 + 300_000 + 1 + (RING_BYTES - 1) + 7;
+        assert_eq!(r.end(), 100 + total as u64);
+        assert_eq!(r.buf.len(), RING_BYTES);
+        let mut big = vec![b'b'; RING_BYTES + 10];
+        big[10] = b'c';
+        r.push(&big);
+        assert_eq!(r.end(), 100 + (total + RING_BYTES + 10) as u64);
+        assert_eq!(r.since(r.start).unwrap()[0], b'c');
+        assert_eq!(r.buf.capacity(), cap);
     }
 
     #[test]
