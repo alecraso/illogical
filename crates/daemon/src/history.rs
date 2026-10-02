@@ -62,7 +62,9 @@ pub fn commands_in(events: Vec<(u64, Event)>, pane: PaneId, open: bool) -> Vec<H
                 by,
             }),
             Event::End { at_ms, exit } => {
-                if let Some(last) = out.last_mut().filter(|l| l.end.is_none()) {
+                // The latest one still running: a note recorded inside a
+                // command (M29's approvals) is its own finished entry.
+                if let Some(last) = out.iter_mut().rev().find(|l| l.end.is_none()) {
                     last.end = Some(offset);
                     last.ended_ms = Some(at_ms);
                     last.exit = exit;

@@ -95,6 +95,21 @@ pub struct Acl {
     /// A team daemon's members' roles on every session (M19), from the
     /// team's signed roster.
     team: RwLock<std::collections::HashMap<String, Role>>,
+    /// Who wants "needs you" notifications about what (M29), by principal
+    /// id; in `notify.json`.
+    notify_path: PathBuf,
+    notify: RwLock<BTreeMap<String, NotifyPref>>,
+}
+
+/// What someone other than the owner is notified about (M29): agents in
+/// these sessions, or everything they may edit here ("this team's agents"
+/// on a team daemon). The owner always is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotifyPref {
+    #[serde(default)]
+    pub all: bool,
+    #[serde(default)]
+    pub sessions: std::collections::BTreeSet<SessionId>,
 }
 
 impl Acl {
@@ -107,7 +122,59 @@ impl Acl {
             }),
             Err(_) => Vec::new(),
         };
-        Self { path, audit: state_dir.join("audit.jsonl"), grants: RwLock::new(grants), team: Default::default() }
+        let notify_path = state_dir.join("notify.json");
+        let notify = std::fs::read(&notify_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        Self {
+            path,
+            audit: state_dir.join("audit.jsonl"),
+            grants: RwLock::new(grants),
+            team: Default::default(),
+            notify_path,
+            notify: RwLock::new(notify),
+        }
+    }
+
+    /// Someone's role on a session, by principal id (`owner`, or a grant's).
+    pub fn role_of(&self, id: &str, session: SessionId) -> Option<Role> {
+        if id == "owner" {
+            return Some(Role::Owner);
+        }
+        self.role(&Principal::User { id: id.to_owned(), name: String::new(), pic: None }, session)
+    }
+
+    /// Whether `id` is told when an agent in `session` needs someone (M29):
+    /// the owner always; anyone else who may edit it and opted in.
+    pub fn notifies(&self, id: &str, session: Option<SessionId>) -> bool {
+        if id == "owner" {
+            return true;
+        }
+        let Some(session) = session else { return false };
+        if self.role_of(id, session).is_none_or(|r| r < Role::Editor) {
+            return false;
+        }
+        self.notify.read().unwrap().get(id).is_some_and(|p| p.all || p.sessions.contains(&session))
+    }
+
+    pub fn notify_pref(&self, id: &str) -> NotifyPref {
+        self.notify.read().unwrap().get(id).cloned().unwrap_or_default()
+    }
+
+    /// Opt in or out: one session, or all of them (`session: None`).
+    pub fn set_notify(&self, id: &str, session: Option<SessionId>, on: bool) -> std::io::Result<NotifyPref> {
+        let mut n = self.notify.write().unwrap();
+        let p = n.entry(id.to_owned()).or_default();
+        match session {
+            None => p.all = on,
+            Some(s) if on => {
+                p.sessions.insert(s);
+            }
+            Some(s) => {
+                p.sessions.remove(&s);
+            }
+        }
+        let out = p.clone();
+        write_atomic(&self.notify_path, &serde_json::to_vec_pretty(&*n).map_err(std::io::Error::other)?)?;
+        Ok(out)
     }
 
     /// Someone's role on a session: a grant, else their team role.
@@ -292,6 +359,12 @@ impl Acl {
                 warn!(error = %e, "can't drop a closed session's grant");
             }
         }
+    }
+
+    /// Something else worth auditing (M29: who answered an agent, who sent
+    /// it a follow-up).
+    pub fn record(&self, entry: serde_json::Value) {
+        self.log(entry);
     }
 
     fn log(&self, entry: serde_json::Value) {

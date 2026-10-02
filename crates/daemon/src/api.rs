@@ -22,7 +22,7 @@ use axum::{
 };
 use futures_util::stream::{self, StreamExt};
 use illogical_proto::{
-    EventKind, Frame, FrameKind, PaneId, SessionId,
+    Driver, EventKind, Frame, FrameKind, PaneId, SessionId,
     api::{AttentionRequest, KeysRequest, MouseRequest, Process, RunRequest, RunResponse, SendRequest, WaitResult},
 };
 use regex::Regex;
@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 use crate::{
     history::{self, Filter},
     keys,
-    mux::{Api, AskReply, Cmd, MuxHandle},
+    mux::{Api, AskReply, Cmd, InboxReply, MuxHandle},
     osc::strip,
     pane::{CaptureFormat, CaptureScope, PaneHandle, Subscriber, ToClient},
     push::Subscription,
@@ -54,6 +54,10 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/attention/act", post(act))
         .route("/api/panes/{id}/ask", post(ask))
         .route("/api/panes/{id}/ask/withdraw", post(ask_withdraw))
+        .route("/api/panes/{id}/permit", post(permit))
+        .route("/api/panes/{id}/hook", post(hook))
+        .route("/api/panes/{id}/inbox", post(inbox))
+        .route("/api/panes/{id}/followup", post(followup))
         .route("/api/panes/{id}/close", post(close))
         .route("/api/panes/{id}/capture", get(capture))
         .route("/api/panes/{id}/process", get(process))
@@ -74,6 +78,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/push/key", get(push_key))
         .route("/api/push/subscribe", post(push_subscribe))
         .route("/api/push/test", post(push_test))
+        .route("/api/notify", get(notify_get).post(notify_set))
 }
 
 struct ApiError(StatusCode, String);
@@ -252,15 +257,21 @@ async fn act(
         }
     }
     let mut results = Vec::new();
+    let by = who_is(&app, who).await;
     for pane in panes {
-        let r = act_one(&app, pane, &req).await;
+        let r = act_one(&app, pane, &req, by.clone()).await;
         results.push(ActResult { pane, ok: r.is_ok(), error: r.err() });
     }
     let status = if results.iter().any(|r| r.ok) { StatusCode::OK } else { StatusCode::CONFLICT };
     Ok((status, Json(ActResponse { results })).into_response())
 }
 
-async fn act_one(app: &App, pane: PaneId, req: &illogical_proto::api::ActRequest) -> Result<(), String> {
+async fn act_one(
+    app: &App,
+    pane: PaneId,
+    req: &illogical_proto::api::ActRequest,
+    by: Option<Driver>,
+) -> Result<(), String> {
     use illogical_proto::{Action, AskWhat, Attention};
     if req.action == Action::Dismiss {
         return match app.mux.api(|r| Api::Attention(pane, Attention::Idle, None, r)).await {
@@ -280,12 +291,14 @@ async fn act_one(app: &App, pane: PaneId, req: &illogical_proto::api::ActRequest
         return Err(format!("%{pane} now asks something else (it was answered)"));
     }
     let (method, args) = match (req.action, ask.what) {
-        (Action::Allow, AskWhat::Approve) => {
-            ("approve", serde_json::json!({ "id": id, "option": req.option.as_deref().unwrap_or("once") }))
-        }
-        (Action::Deny, AskWhat::Approve) => {
-            ("deny", serde_json::json!({ "id": id, "reason": req.message.as_deref().unwrap_or("") }))
-        }
+        (Action::Allow, AskWhat::Approve) => (
+            "approve",
+            serde_json::json!({ "id": id, "option": req.option.as_deref().unwrap_or("once"), "suggestion": req.suggestion }),
+        ),
+        (Action::Deny, AskWhat::Approve) => (
+            "deny",
+            serde_json::json!({ "id": id, "reason": req.message.as_deref().unwrap_or(""), "message": req.message }),
+        ),
         (Action::Deny, AskWhat::Question) => ("decline", serde_json::json!({ "id": id })),
         (Action::Answer, AskWhat::Question) => {
             let content = req.content.clone().filter(|c| c.is_object()).ok_or("answer needs content")?;
@@ -297,9 +310,9 @@ async fn act_one(app: &App, pane: PaneId, req: &illogical_proto::api::ActRequest
     };
     if block {
         let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
-        b.call(method, args).await.map(|_| ())
+        block_call(app, pane, &b, method, args, by).await.map(|_| ())
     } else {
-        answer_terminal(app, pane, method, args).await.map(|_| ()).map_err(|e| e.1)
+        answer_terminal(app, pane, method, args, by).await.map(|_| ()).map_err(|e| e.1)
     }
 }
 
@@ -355,8 +368,12 @@ async fn ask(
         tool_call_id: req.id,
         source: "hook".into(),
         at_ms: now_ms(),
+        tool: None,
+        input: None,
+        suggestions: None,
+        session: None,
     };
-    let (token, rx) = match app.mux.api(|r| Api::Ask(id, a, r)).await {
+    let (token, rx) = match app.mux.api(|r| Api::Ask(id, Box::new(a), r)).await {
         Some(Ok(r)) => r,
         Some(Err(e)) => return Err(ApiError(StatusCode::NOT_FOUND, e)),
         None => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
@@ -371,10 +388,135 @@ async fn ask(
         }
         Ok(AskReply::Decline) => serde_json::json!({ "action": "decline", "output": ask::hook_declined() }),
         Ok(AskReply::Terminal) => serde_json::json!({ "action": "terminal" }),
-        Ok(AskReply::Withdrawn) => serde_json::json!({ "action": "withdrawn" }),
+        // A question is never allowed or denied (the mux refuses that).
+        Ok(AskReply::Withdrawn | AskReply::Allow { .. } | AskReply::Deny { .. }) => {
+            serde_json::json!({ "action": "withdrawn" })
+        }
         // The daemon is going away; the asker asks the next one.
         Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }))
+}
+
+/// `illogical hook` on Claude Code's `PermissionRequest` (M29): a card
+/// with the tool, its input and Claude's suggestions, beside the terminal,
+/// until someone answers it or the terminal does. Answers `{action: allow
+/// | deny, output}` (the hook's output) or `{action: withdrawn}`.
+async fn permit(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    Json(hook): Json<serde_json::Value>,
+) -> Res<Json<serde_json::Value>> {
+    use illogical_proto::ask::{self, Ask, AskKind};
+    let tool = hook["tool_name"].as_str().ok_or_else(|| bad("no tool_name"))?.to_owned();
+    let input = hook["tool_input"].clone();
+    let session = format!("{}/{}", hook["session_id"].as_str().unwrap_or(""), hook["agent_id"].as_str().unwrap_or(""));
+    let a = Ask {
+        id: format!("p{}", now_ms()),
+        kind: AskKind::Permission,
+        message: ask::permission_message(&tool, &input),
+        questions: None,
+        schema: None,
+        url: None,
+        accepted: false,
+        tool_call_id: None,
+        source: "hook".into(),
+        at_ms: now_ms(),
+        tool: Some(tool),
+        input: Some(input),
+        suggestions: hook.get("permission_suggestions").filter(|s| s.is_array()).cloned(),
+        session: Some(session),
+    };
+    let (token, rx) = match app.mux.api(|r| Api::Ask(id, Box::new(a), r)).await {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Err(ApiError(StatusCode::NOT_FOUND, e)),
+        None => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    };
+    let mut guard = AskGuard { mux: app.mux.clone(), pane: id, token, armed: true };
+    let reply = rx.await;
+    guard.armed = false;
+    Ok(Json(match reply {
+        Ok(AskReply::Allow { always }) => {
+            serde_json::json!({ "action": "allow", "output": ask::permit_allow(always.as_ref()) })
+        }
+        Ok(AskReply::Deny { message }) => serde_json::json!({ "action": "deny", "output": ask::permit_deny(&message) }),
+        Ok(_) => serde_json::json!({ "action": "withdrawn" }),
+        Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }))
+}
+
+/// `illogical hook`: one of Claude Code's hook events (M29).
+async fn hook(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    Json(hook): Json<serde_json::Value>,
+) -> Res<Json<serde_json::Value>> {
+    app.mux.send(Cmd::Api(Api::Hook(id, hook)));
+    Ok(Json(serde_json::json!({})))
+}
+
+/// Drops a follow-up waiter if whoever waits goes away first.
+struct InboxGuard {
+    mux: MuxHandle,
+    pane: PaneId,
+    token: u64,
+}
+
+impl Drop for InboxGuard {
+    fn drop(&mut self) {
+        self.mux.send(Cmd::Api(Api::InboxGone(self.pane, self.token)));
+    }
+}
+
+/// `illogical inbox` (Claude Code's background `Stop` and `SessionStart`
+/// hook, M29): wait for a follow-up. `{action: follow_up, text, by}`, or
+/// `{action: replaced}` when a newer waiter took over.
+async fn inbox(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    Json(hook): Json<serde_json::Value>,
+) -> Res<Json<serde_json::Value>> {
+    let (token, rx) = match app.mux.api(|r| Api::Inbox(id, hook, r)).await {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Err(ApiError(StatusCode::NOT_FOUND, e)),
+        None => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    };
+    let _guard = InboxGuard { mux: app.mux.clone(), pane: id, token };
+    Ok(Json(match rx.await {
+        Ok(InboxReply::FollowUp { text, by }) => serde_json::json!({ "action": "follow_up", "text": text, "by": by }),
+        Ok(InboxReply::Replaced) => serde_json::json!({ "action": "replaced" }),
+        Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }))
+}
+
+#[derive(Deserialize)]
+struct FollowUpRequest {
+    text: String,
+}
+
+/// A follow-up for the agent in a pane (M29), from whoever may drive it:
+/// an agent block's next prompt, or Claude Code's in a terminal (through
+/// its inbox hook, never typed). Recorded as theirs. `{delivered}`: it went
+/// straight in (else it waits for the agent).
+async fn followup(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(req): Json<FollowUpRequest>,
+) -> Res<Json<serde_json::Value>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    let by = who_is(&app, who)
+        .await
+        .ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into()))?;
+    if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+        let name = (by.who != "owner").then_some(by.name.as_str());
+        b.call_by("send", serde_json::json!({ "text": req.text }), name).await.map_err(bad)?;
+        return Ok(Json(serde_json::json!({ "delivered": true })));
+    }
+    match app.mux.api(|r| Api::FollowUp(id, req.text, by, r)).await {
+        Some(Ok(now)) => Ok(Json(serde_json::json!({ "delivered": now }))),
+        Some(Err(e)) => Err(bad(e)),
+        None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }
 }
 
 #[derive(Deserialize)]
@@ -392,8 +534,50 @@ async fn ask_withdraw(
     Ok(Json(serde_json::json!({})))
 }
 
-/// A terminal's question answered by `call %N answer|decline|terminal`.
-async fn answer_terminal(app: &App, id: PaneId, method: &str, args: serde_json::Value) -> Res<Json<serde_json::Value>> {
+/// What to call whoever made a request (M13), to attribute what they did.
+async fn who_is(app: &App, who: crate::acl::Principal) -> Option<Driver> {
+    app.mux.api(|r| Api::Who(who, r)).await
+}
+
+/// A block's method, on someone's behalf (M29): an approval or answer is
+/// recorded as theirs, for its card, the pane's history and the audit log.
+async fn block_call(
+    app: &App,
+    pane: PaneId,
+    b: &Arc<dyn crate::block::Block>,
+    method: &str,
+    args: serde_json::Value,
+    by: Option<Driver>,
+) -> Result<serde_json::Value, String> {
+    let waiting = b.waiting();
+    let id = args["id"].as_str().map(str::to_owned);
+    // The transcript names whoever isn't its owner (the owner's own
+    // answers go unremarked, as before M29).
+    let name = by.as_ref().filter(|d| d.who != "owner").map(|d| d.name.as_str());
+    let out = b.call_by(method, args.clone(), name).await?;
+    let how = match method {
+        "approve" if args["option"].as_str().is_some_and(|o| o.starts_with("always")) => "allowed always",
+        "approve" => "allowed",
+        "deny" => "denied",
+        "answer" => "answered",
+        "decline" => "skipped",
+        _ => return Ok(out),
+    };
+    if let (Some(by), Some(w)) = (by, waiting.filter(|w| id.as_ref().is_none_or(|i| *i == w.id))) {
+        app.mux.send(Cmd::Api(Api::Answered(pane, by, w.id, how.into(), w.headline)));
+    }
+    Ok(out)
+}
+
+/// A terminal's question answered by `call %N answer|decline|terminal`, or
+/// a permission card by `approve|deny` (M29).
+async fn answer_terminal(
+    app: &App,
+    id: PaneId,
+    method: &str,
+    args: serde_json::Value,
+    by: Option<Driver>,
+) -> Res<Json<serde_json::Value>> {
     let ask_id = args["id"].as_str().map(str::to_owned);
     let reply = match method {
         "answer" => {
@@ -408,9 +592,24 @@ async fn answer_terminal(app: &App, id: PaneId, method: &str, args: serde_json::
             AskReply::Answer(content)
         }
         "decline" => AskReply::Decline,
+        // A permission card (M29): `option` once or always (with one of
+        // Claude Code's suggestions, by index: `suggestion`, default 0).
+        "approve" => AskReply::Allow {
+            always: (args["option"].as_str() == Some("always"))
+                .then(|| serde_json::json!(args["suggestion"].as_u64().unwrap_or(0))),
+        },
+        "deny" => {
+            let said = args["message"].as_str().or(args["reason"].as_str()).map(str::trim).filter(|m| !m.is_empty());
+            let name = by.as_ref().map_or("someone", |b| b.name.as_str());
+            let message = match said {
+                Some(m) => format!("{name} said no (through illogical): {m}"),
+                None => format!("{name} said no (through illogical)."),
+            };
+            AskReply::Deny { message }
+        }
         _ => AskReply::Terminal,
     };
-    match app.mux.api(|r| Api::AskReply(id, ask_id, reply, r)).await {
+    match app.mux.api(|r| Api::AskReply(id, ask_id, reply, by, r)).await {
         Some(Ok(a)) => Ok(Json(serde_json::json!({ "answered": a.id }))),
         Some(Err(e)) => Err(bad(e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
@@ -504,6 +703,7 @@ async fn describe(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serd
 async fn call(
     State(app): AppState,
     Path((id, method)): Path<(PaneId, String)>,
+    who: Option<axum::Extension<crate::acl::Principal>>,
     body: axum::body::Bytes,
 ) -> Res<Json<serde_json::Value>> {
     let args: serde_json::Value = if body.is_empty() {
@@ -511,8 +711,13 @@ async fn call(
     } else {
         serde_json::from_slice(&body).map_err(|e| bad(e.to_string()))?
     };
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    let by = match method.as_str() {
+        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" => who_is(&app, who).await,
+        _ => None,
+    };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
-        return b.call(&method, args).await.map(Json).map_err(bad);
+        return block_call(&app, id, &b, &method, args, by).await.map(Json).map_err(bad);
     }
     let p = pane(&app, id).await?;
     match method.as_str() {
@@ -542,7 +747,7 @@ async fn call(
                 .unwrap_or_default();
             Ok(Json(serde_json::json!({ "text": text })))
         }
-        "answer" | "decline" | "terminal" => answer_terminal(&app, id, &method, args).await,
+        "answer" | "decline" | "terminal" | "approve" | "deny" => answer_terminal(&app, id, &method, args, by).await,
         m => Err(bad(crate::block::no_method(illogical_proto::BlockType::Terminal, m))),
     }
 }
@@ -726,7 +931,7 @@ async fn wait_attention(app: &App, id: PaneId, needs_input: bool) -> Res<WaitRes
         let done = if needs_input { state == Attention::NeedsInput } else { state != Attention::Working };
         if done {
             let ask = ask.filter(|_| state == Attention::NeedsInput);
-            return Ok(WaitResult::Attention { state, ask });
+            return Ok(WaitResult::Attention { state, ask: ask.map(Box::new) });
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -1103,15 +1308,74 @@ async fn push_key(State(app): AppState) -> Res<Json<HashMap<&'static str, String
     Ok(Json(HashMap::from([("key", push.public_key())])))
 }
 
-async fn push_subscribe(State(app): AppState, Json(sub): Json<Subscription>) -> Res<Json<serde_json::Value>> {
+async fn push_subscribe(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(mut sub): Json<Subscription>,
+) -> Res<Json<serde_json::Value>> {
     let push = app.push.as_ref().ok_or(ApiError(StatusCode::NOT_FOUND, "push is off".into()))?;
+    // Anyone with access here may subscribe (M29); a subscription is its
+    // subscriber's, never someone else's.
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    if !who.is_owner() && !app.acl.knows(&who) {
+        return Err(ApiError(StatusCode::FORBIDDEN, "you have no access here".into()));
+    }
+    sub.who = (!who.is_owner()).then(|| who.id().to_owned());
     push.subscribe(sub).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
 }
 
-async fn push_test(State(app): AppState) -> Res<Json<serde_json::Value>> {
+#[derive(Deserialize)]
+struct NotifyRequest {
+    /// One session; none: everything you may edit here.
+    #[serde(default)]
+    session: Option<SessionId>,
+    on: bool,
+}
+
+/// What "needs you" notifications you get here (M29): `GET` yours, `POST`
+/// to opt in or out of a session's agents, or all of them.
+async fn notify_get(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<crate::acl::NotifyPref>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    if who.is_owner() {
+        return Ok(Json(crate::acl::NotifyPref { all: true, ..Default::default() }));
+    }
+    Ok(Json(app.acl.notify_pref(who.id())))
+}
+
+async fn notify_set(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(req): Json<NotifyRequest>,
+) -> Res<Json<crate::acl::NotifyPref>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    if who.is_owner() {
+        return Err(bad("the owner is always told"));
+    }
+    match req.session {
+        Some(s) if app.acl.role(&who, s).is_none_or(|r| r < illogical_core::Role::Editor) => {
+            return Err(ApiError(StatusCode::FORBIDDEN, "only people who may answer are told".into()));
+        }
+        None if !app.acl.knows(&who) => return Err(ApiError(StatusCode::FORBIDDEN, "you have no access here".into())),
+        _ => {}
+    }
+    let pref = app
+        .acl
+        .set_notify(who.id(), req.session, req.on)
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(pref))
+}
+
+async fn push_test(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
     let push = app.push.as_ref().ok_or(ApiError(StatusCode::NOT_FOUND, "push is off".into()))?;
-    push.send(0, "illogical", "Notifications work.", None);
+    let me = who.map(|axum::Extension(w)| w.id().to_owned()).unwrap_or_else(|| "owner".into());
+    push.send_to(0, "illogical", "Notifications work.", None, |w| w == me);
     Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
 }
 

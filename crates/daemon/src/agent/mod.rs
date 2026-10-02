@@ -411,10 +411,15 @@ impl Inner {
             }
             "deny" => {
                 let title = e["title"].as_str().unwrap_or("that");
+                let by = by_of(e);
                 match e["reason"].as_str().filter(|r| !r.is_empty()) {
-                    Some(r) => self.t.note(format!("Denied {title}: {r}"), at),
-                    None => self.t.note(format!("Denied {title}"), at),
+                    Some(r) => self.t.note(format!("Denied {title}{by}: {r}"), at),
+                    None => self.t.note(format!("Denied {title}{by}"), at),
                 }
+            }
+            "from" => {
+                let who = e["by"].as_str().unwrap_or("someone");
+                self.t.note(format!("A follow-up from {who}"), at);
             }
             "approve" => {
                 let title = e["title"].as_str().unwrap_or("that");
@@ -424,7 +429,7 @@ impl Inner {
                     "always" => format!("Allowed {title}, and always from now on"),
                     _ => format!("Allowed {title}"),
                 };
-                self.t.note(text, at);
+                self.t.note(format!("{text}{}", by_of(e)), at);
             }
             "remote" => {
                 self.status = Status::Remote;
@@ -443,11 +448,11 @@ impl Inner {
             }
             "answered" => {
                 let text = e["summary"].as_str().unwrap_or("");
-                self.t.note(format!("Answered: {text}"), at);
+                self.t.note(format!("Answered{}: {text}", by_of(e)), at);
             }
             "skipped" => {
                 let what = e["question"].as_str().unwrap_or("the question");
-                self.t.note(format!("Skipped: {what}"), at);
+                self.t.note(format!("Skipped{}: {what}", by_of(e)), at);
             }
             "dismissed" => {
                 let key = e["id"].as_str().unwrap_or_default();
@@ -738,6 +743,10 @@ impl Inner {
             tool_call_id,
             source: "agent".into(),
             at_ms: at,
+            tool: None,
+            input: None,
+            suggestions: None,
+            session: None,
         };
         if p["mode"] == "url" {
             ask.kind = AskKind::Url;
@@ -1386,7 +1395,7 @@ impl Agent {
             .ok_or_else(|| format!("no open request {key} (it was answered, or its tool call ended)"))
     }
 
-    fn approve(&self, args: &Value) -> Result<Value, String> {
+    fn approve(&self, args: &Value, by: Option<&str>) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
         let p = Self::find(&g, &args["id"])?;
         let option = args["option"].as_str().unwrap_or("once");
@@ -1413,14 +1422,14 @@ impl Agent {
             }
         }
         let how = if option.starts_with("always") { "always" } else { "once" };
-        g.note(json!({ "e": "approve", "title": p.title, "how": how }));
+        g.note(json!({ "e": "approve", "title": p.title, "how": how, "by": by }));
         g.out(json!({ "jsonrpc": "2.0", "id": p.rpc, "result": { "outcome": { "outcome": "selected", "optionId": chosen.id } } }));
         drop(g);
         self.changed();
         Ok(json!({ "approved": p.id, "option": chosen.id }))
     }
 
-    fn deny(&self, args: &Value) -> Result<Value, String> {
+    fn deny(&self, args: &Value, by: Option<&str>) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
         let p = Self::find(&g, &args["id"])?;
         let reason = args["reason"].as_str().unwrap_or("");
@@ -1433,7 +1442,7 @@ impl Agent {
             Some(o) => json!({ "outcome": "selected", "optionId": o.id }),
             None => json!({ "outcome": "cancelled" }),
         };
-        g.note(json!({ "e": "deny", "title": p.title, "reason": reason }));
+        g.note(json!({ "e": "deny", "title": p.title, "reason": reason, "by": by }));
         g.out(json!({ "jsonrpc": "2.0", "id": p.rpc, "result": { "outcome": outcome } }));
         drop(g);
         self.changed();
@@ -1455,11 +1464,11 @@ impl Agent {
     }
 
     /// Record a question and its answer in history (live only).
-    fn ask_history(g: &mut Inner, a: &Ask, text: String, exit: i32) {
+    fn ask_history(g: &mut Inner, a: &Ask, text: String, exit: i32, by: Option<&str>) {
         let cwd = g.cfg.cwd.clone();
         if let Some(log) = g.log.as_mut() {
             let at = log.end();
-            let _ = log.record(at, Event::Command { at_ms: a.at_ms, text: Some(text), cwd, by: None });
+            let _ = log.record(at, Event::Command { at_ms: a.at_ms, text: Some(text), cwd, by: by.map(str::to_owned) });
             let _ = log.record(at, Event::End { at_ms: now_ms(), exit: Some(exit) });
         }
     }
@@ -1467,7 +1476,7 @@ impl Agent {
     /// `answer {id?, content}`: submit a question card or form (`content` is
     /// its fields; without a `content` key, the arguments are), or open a
     /// link.
-    fn answer(&self, args: &Value) -> Result<Value, String> {
+    fn answer(&self, args: &Value, by: Option<&str>) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
         let e = Self::find_ask(&g, &args["id"])?;
         if e.ask.accepted {
@@ -1482,13 +1491,13 @@ impl Agent {
             }
         };
         let summary = ask::summary(&e.ask, &content);
-        g.note(json!({ "e": "answered", "id": e.ask.id, "summary": summary }));
+        g.note(json!({ "e": "answered", "id": e.ask.id, "summary": summary, "by": by }));
         let result = match e.ask.kind {
             AskKind::Url => json!({ "action": "accept" }),
             _ => json!({ "action": "accept", "content": content }),
         };
         g.out(json!({ "jsonrpc": "2.0", "id": e.rpc, "result": result }));
-        Self::ask_history(&mut g, &e.ask, format!("{} → {summary}", e.ask.headline()), 0);
+        Self::ask_history(&mut g, &e.ask, format!("{} → {summary}", e.ask.headline()), 0, by);
         drop(g);
         self.changed();
         Ok(json!({ "answered": e.ask.id }))
@@ -1496,15 +1505,15 @@ impl Agent {
 
     /// `decline {id?}`: skip a question or form; for a link already opened,
     /// just close its card.
-    fn decline(&self, args: &Value) -> Result<Value, String> {
+    fn decline(&self, args: &Value, by: Option<&str>) -> Result<Value, String> {
         let mut g = self.inner.lock().unwrap();
         let e = Self::find_ask(&g, &args["id"])?;
         if e.ask.accepted {
             g.note(json!({ "e": "dismissed", "id": e.ask.id }));
         } else {
-            g.note(json!({ "e": "skipped", "id": e.ask.id, "question": e.ask.headline() }));
+            g.note(json!({ "e": "skipped", "id": e.ask.id, "question": e.ask.headline(), "by": by }));
             g.out(json!({ "jsonrpc": "2.0", "id": e.rpc, "result": { "action": "decline" } }));
-            Self::ask_history(&mut g, &e.ask, format!("{} → skipped", e.ask.headline()), 1);
+            Self::ask_history(&mut g, &e.ask, format!("{} → skipped", e.ask.headline()), 1, by);
         }
         drop(g);
         self.changed();
@@ -1534,9 +1543,13 @@ impl Agent {
         Ok(json!({ "cancelled": true }))
     }
 
-    fn send(&self, args: &Value) -> Result<Value, String> {
+    fn send(&self, args: &Value, by: Option<&str>) -> Result<Value, String> {
         let text = args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or("send needs {\"text\": …}")?;
         let mut g = self.inner.lock().unwrap();
+        if let Some(by) = by {
+            // A follow-up from someone (M29): the transcript says whose.
+            g.note(json!({ "e": "from", "by": by }));
+        }
         g.enqueue(text, false);
         g.error = None;
         match g.status {
@@ -1591,12 +1604,16 @@ impl Block for Agent {
     }
 
     fn call(&self, method: &str, args: Value) -> BoxFuture<'static, Result<Value, String>> {
+        self.call_by(method, args, None)
+    }
+
+    fn call_by(&self, method: &str, args: Value, by: Option<&str>) -> BoxFuture<'static, Result<Value, String>> {
         let result = match method {
-            "send" => self.send(&args),
-            "approve" => self.approve(&args),
-            "deny" => self.deny(&args),
-            "answer" => self.answer(&args),
-            "decline" => self.decline(&args),
+            "send" => self.send(&args, by),
+            "approve" => self.approve(&args, by),
+            "deny" => self.deny(&args, by),
+            "answer" => self.answer(&args, by),
+            "decline" => self.decline(&args, by),
             "cancel" => self.cancel(),
             "start" | "resume" => self.start(),
             "forget" => {
@@ -1667,6 +1684,11 @@ impl Block for Agent {
             at_ms: e.ask.at_ms,
         })
     }
+}
+
+/// " by Sam", when a note says who (M29).
+fn by_of(e: &Value) -> String {
+    e["by"].as_str().map(|b| format!(" by {b}")).unwrap_or_default()
 }
 
 /// An agent block's transcript from its directory alone (for search over

@@ -83,3 +83,28 @@ export async function forget(control: string): Promise<void> {
     s.delete("keys");
   });
 }
+
+/** A daemon the service worker may answer a notification to (M29): what
+ * the page checked (its Noise key from a verified certificate) and how to
+ * reach it. The worker can't read `localStorage`, where the page keeps
+ * its directory, so the page copies the checked part here. */
+export interface WorkerDaemon {
+  id: string;
+  noise: string;
+  direct: string[];
+  relay: string;
+}
+
+export async function saveWorkerDirectory(daemons: WorkerDaemon[]): Promise<void> {
+  await kv("readwrite", (s) => void s.put(daemons, "worker-directory"));
+}
+
+export async function loadWorkerDirectory(): Promise<WorkerDaemon[]> {
+  return (await kv<WorkerDaemon[]>("readonly", (s) => s.get("worker-directory"))) ?? [];
+}
+
+/** The device keys, if this browser has made them (never makes them: for
+ * the service worker). */
+export async function existingKeys(): Promise<DeviceKeys | undefined> {
+  return kv<DeviceKeys>("readonly", (s) => s.get("keys"));
+}

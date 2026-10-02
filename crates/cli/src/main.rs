@@ -6,6 +6,7 @@
 mod ask;
 mod attach;
 mod fs;
+mod hook;
 mod hosts;
 mod http;
 mod tmux;
@@ -292,6 +293,14 @@ enum Command {
     /// print the answer for Claude Code. Outside an illogical pane, or
     /// "Answer in terminal": no output, so Claude Code shows its picker.
     Ask,
+    /// Claude Code's hooks (M29): `PermissionRequest` becomes an approval
+    /// card anyone who may answer can allow or deny; other events close a
+    /// card the terminal answered first. Outside an illogical pane: nothing.
+    Hook,
+    /// Claude Code's background (asyncRewake) `Stop` and `SessionStart`
+    /// hook: wait for a follow-up someone sends the agent, and wake it with
+    /// it (exit 2).
+    Inbox,
     /// What wants you, and why (M24); or, given a state, tell illogical
     /// whether this pane needs you (for agent hooks, which pass their JSON
     /// on stdin: its `message` becomes the headline).
@@ -563,6 +572,12 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
     if let Command::Ask = cli.cmd {
         // A hook: the local daemon only, and never an error.
         return Ok(ask::run(http::Target::Socket(socket(&cli))));
+    }
+    if let Command::Hook = cli.cmd {
+        return Ok(hook::run(http::Target::Socket(socket(&cli))));
+    }
+    if let Command::Inbox = cli.cmd {
+        return Ok(hook::inbox(http::Target::Socket(socket(&cli))));
     }
     let reads_history = matches!(cli.cmd, Command::History { .. } | Command::Search { .. } | Command::Tail { .. });
     let (sock, gone) = match hosts::target(socket(&cli), cli.host.as_deref()) {
@@ -1054,7 +1069,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 request(&sock, "POST", &format!("/api/panes/{}/close", p.0), None)?.json()?;
             }
         }
-        Command::Ask => unreachable!("handled first"),
+        Command::Ask | Command::Hook | Command::Inbox => unreachable!("handled first"),
         Command::Attention { state: None, .. } => {
             let v = request(&sock, "GET", "/api/attention", None)?.json()?;
             if json_out {

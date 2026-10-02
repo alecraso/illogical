@@ -40,6 +40,8 @@ illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
 illogical attention [--json]                  # what wants you and why: ask, failed, exited, done (bundle keys)
 illogical ask                                 # Claude Code's AskUserQuestion hook (below)
+illogical hook                                # Claude Code's permission prompts as cards anyone on the team answers (below)
+illogical inbox                               # Claude Code's background Stop hook: follow-ups from the team (below)
 illogical hosts                               # the home daemon's other hosts, last seen
 illogical hosts add box https://box.<tailnet>.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
@@ -110,3 +112,41 @@ card. The timeout (7 days, in seconds) is how long a question may wait;
 Claude Code's default would give up after 10 minutes and show its picker.
 If the daemon restarts while it waits, the card comes back. Outside an
 illogical pane it does nothing, and Claude Code shows its picker as usual.
+
+**Team answers.** Claude Code's tool permission prompts can be answered by
+anyone who may edit the pane's session, from a card beside the terminal,
+the "needs you" list, or a notification, and anyone who may drive the pane
+can send the agent its next instruction. Beside the `ask` hook:
+
+```json
+{
+  "hooks": {
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "illogical hook", "timeout": 604800 }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
+    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "illogical hook" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "illogical inbox", "asyncRewake": true, "timeout": 86400 }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "illogical inbox", "asyncRewake": true, "timeout": 86400 }] }]
+  }
+}
+```
+
+A permission prompt becomes a card with the tool, its input (the command,
+the file and its diff) and Claude Code's own "always allow" suggestions:
+*Allow*, *Always: …* (keeps that rule, as the terminal's option would), or
+*Deny* with a message Claude reads. Claude Code shows its own dialog too,
+and whichever answers first wins: a "Yes" in the terminal closes the card
+when the tool runs, "No" or Esc withdraws it. The card then says who
+answered ("Allowed by Sam, 14:02"), and so do the pane's history (`illogical
+history`, `illogical log %N --who`) and the audit log. Viewers see the card
+but can't answer it.
+
+After an answer, the card offers *Send a follow-up*. It reaches Claude Code
+through its `inbox` hook, which waits in the background after every turn
+and wakes it with the text as its next instruction, so it never mixes with
+whatever the driver has half typed. It's recorded as its sender's input.
+On someone's own machine a teammate needs their trust first (the card
+offers to ask for 30 minutes); on a team's machine or a VM, team editors
+send straight away. People other than the owner choose which agents
+notify them in the session menu ("Notify me about its agents").
