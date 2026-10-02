@@ -38,6 +38,7 @@ mod tls;
 
 use std::{net::SocketAddr, path::PathBuf};
 
+use axum::serve::ListenerExt;
 use clap::{Parser, Subcommand};
 use tracing::{info, warn};
 
@@ -611,7 +612,13 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
     let app = server::App::new(access, identify, mux.clone(), push, hosts, shares, synced, binaries);
     start_reach(&args.reach, &app, name)?;
-    let listener = tokio::net::TcpListener::bind(args.listen).await?;
+    // TCP_NODELAY on every accepted connection (axum leaves Nagle on).
+    // Dial-out tunnels write a DATA frame and a GRANT back to back, and
+    // with Nagle the second waits for the peer's delayed ACK: 40 ms on
+    // every keystroke relayed through `/h/<name>/ws` (found in S15).
+    let listener = tokio::net::TcpListener::bind(args.listen).await?.tap_io(|tcp| {
+        let _ = tcp.set_nodelay(true);
+    });
     info!(addr = %args.listen, "listening");
     // The CLI's socket: replace a stale one from a previous run.
     let _ = std::fs::remove_file(&socket);
