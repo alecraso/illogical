@@ -160,7 +160,7 @@ async fn until<T>(ws: &mut Ws, mut f: impl FnMut(&In) -> Option<T>) -> T {
 }
 
 async fn attach(ws: &mut Ws, offset: Option<u64>) {
-    let m = ClientMsg::Attach { panes: vec![AttachPane::new(1, offset)], zstd: false };
+    let m = ClientMsg::Attach { panes: vec![AttachPane::new(1, offset)], zstd: false, acks: false };
     ws.send(Message::Text(serde_json::to_string(&m).unwrap().into())).await.unwrap();
 }
 
@@ -268,7 +268,7 @@ async fn snapshot_shows_a_full_screen_app() {
 async fn snapshot_of(d: &Daemon, history: Option<u32>, zstd: bool) -> Frame {
     let (mut ws, _) = connect(d).await;
     let panes = vec![AttachPane { pane: 1, offset: None, history }];
-    send(&mut ws, ClientMsg::Attach { panes, zstd }).await;
+    send(&mut ws, ClientMsg::Attach { panes, zstd, acks: false }).await;
     let _size = recv_attach(&mut ws).await;
     let In::Frame(f) = recv_attach(&mut ws).await else { panic!("expected a snapshot") };
     f
@@ -313,6 +313,123 @@ async fn snapshots_carry_only_the_history_asked_for() {
     // The screen only, after a resync.
     let screen = lines_of(&snapshot_of(&d, Some(0), false).await.data);
     assert!(screen.len() <= 24 && all.ends_with(&screen), "{screen:?}");
+}
+
+/// Attach pane 1 as a client that acks, and take its size and snapshot;
+/// the offset it has drawn.
+async fn attach_acking(ws: &mut Ws) -> u64 {
+    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: true }).await;
+    let _size = recv_attach(ws).await;
+    let In::Frame(f) = recv_attach(ws).await else { panic!("expected a snapshot") };
+    f.offset
+}
+
+/// Read output without acking until it stops coming: the end offset, and
+/// whether a resync came instead.
+async fn read_until_held(ws: &mut Ws, mut end: u64) -> (u64, bool) {
+    loop {
+        match timeout(Duration::from_millis(1500), ws.next()).await {
+            Err(_) => return (end, false),
+            Ok(Some(Ok(Message::Binary(b)))) => {
+                let f = Frame::decode(&b).unwrap();
+                assert_eq!(f.offset, end, "gap or overlap in output stream");
+                end += f.data.len() as u64;
+            }
+            Ok(Some(Ok(Message::Text(t)))) => {
+                if matches!(serde_json::from_str(&t), Ok(ServerMsg::Resync { .. })) {
+                    return (end, true);
+                }
+            }
+            Ok(_) => panic!("connection ended"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_client_that_acks_is_held_back_then_gets_what_it_missed() {
+    let d = start().await;
+    let (mut ws, _) = connect(&d).await;
+    let start = attach_acking(&mut ws).await;
+    // About 1.2 MB: past the 512 KB window, and what's held back still fits
+    // in the 1 MB the log replays.
+    type_line(&mut ws, "head -c 1200000 /dev/zero | tr '\\0' x; echo; echo burst-$((1+1))").await;
+    let (held, resynced) = read_until_held(&mut ws, start).await;
+    assert!(!resynced, "held back, not resynced");
+    let got = held - start;
+    assert!(got > 256 * 1024 && got < 700 * 1024, "sent {got} bytes before holding back");
+
+    // Drawn it all: the rest comes, from exactly where it stopped.
+    send(&mut ws, ClientMsg::Ack { pane: 1, offset: held }).await;
+    read_until(&mut ws, Some(held), "burst-2").await;
+}
+
+#[tokio::test]
+async fn a_client_held_back_past_what_the_log_replays_resyncs() {
+    let d = start().await;
+    let (mut ws, _) = connect(&d).await;
+    let start = attach_acking(&mut ws).await;
+    type_line(&mut ws, "head -c 3000000 /dev/zero | tr '\\0' x; echo; echo burst-$((2+2))").await;
+    let (held, resynced) = read_until_held(&mut ws, start).await;
+    assert!(!resynced);
+    // Let the rest pile up in the log while it's held back.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    send(&mut ws, ClientMsg::Ack { pane: 1, offset: held }).await;
+    until(&mut ws, |m| matches!(m, In::Msg(ServerMsg::Resync { pane: 1 })).then_some(())).await;
+}
+
+#[tokio::test]
+async fn a_held_back_client_that_resizes_starts_over() {
+    let d = start().await;
+    let (mut ws, state) = connect_state(&d).await;
+    let tab = state.tabs[0].id;
+    let start = attach_acking(&mut ws).await;
+    type_line(&mut ws, "head -c 1200000 /dev/zero | tr '\\0' x; sleep 30").await;
+    let (_, resynced) = read_until_held(&mut ws, start).await;
+    assert!(!resynced);
+    // What it missed was printed for the old size: don't replay it.
+    send(&mut ws, ClientMsg::View { tab, cols: 90, rows: 20, zoom: None, claim: true }).await;
+    until(&mut ws, |m| matches!(m, In::Msg(ServerMsg::Resync { pane: 1 })).then_some(())).await;
+}
+
+#[tokio::test]
+async fn ctrl_c_stops_a_flood_at_once() {
+    let d = start().await;
+    let (mut ws, _) = connect(&d).await;
+    let mut end = attach_acking(&mut ws).await;
+    type_line(&mut ws, "yes flood-line").await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Keys go ahead of the output still waiting to be taken in.
+    let f = Frame { kind: FrameKind::Input, pane: 1, offset: 0, data: b"\x03".to_vec() };
+    ws.send(Message::Binary(f.encode().into())).await.unwrap();
+    let pressed = tokio::time::Instant::now();
+    type_line(&mut ws, "echo stopped-$((3+3))").await;
+    // Draw everything as it comes (acking) until the shell answers.
+    let mut seen = String::new();
+    loop {
+        assert!(pressed.elapsed() < Duration::from_secs(5), "still flooding 5 s after Ctrl-C");
+        match recv(&mut ws).await {
+            In::Frame(f) if f.kind == FrameKind::Output => {
+                end = end.max(f.offset + f.data.len() as u64);
+                seen = format!("{}{}", &seen[seen.len().saturating_sub(64)..], String::from_utf8_lossy(&f.data));
+                send(&mut ws, ClientMsg::Ack { pane: 1, offset: end }).await;
+                if seen.contains("stopped-6") {
+                    break;
+                }
+            }
+            // After a resync: the screen, where the answer may be already.
+            In::Frame(f) => {
+                end = f.offset;
+                if String::from_utf8_lossy(&f.data).contains("stopped-6") {
+                    break;
+                }
+            }
+            In::Msg(ServerMsg::Resync { pane: 1 }) => {
+                let panes = vec![AttachPane { pane: 1, offset: Some(end), history: Some(0) }];
+                send(&mut ws, ClientMsg::Attach { panes, zstd: false, acks: true }).await;
+            }
+            In::Msg(_) => {}
+        }
+    }
 }
 
 #[tokio::test]
@@ -393,7 +510,7 @@ async fn split_spawns_a_pane_and_exit_closes_it() {
     assert_eq!((tab.layout.panes[0].1.cols, tab.layout.panes[1].1.cols), (40, 39));
 
     // The new pane runs a shell of its own.
-    send(&mut ws, ClientMsg::Attach { panes: vec![AttachPane::new(2, None)], zstd: false }).await;
+    send(&mut ws, ClientMsg::Attach { panes: vec![AttachPane::new(2, None)], zstd: false, acks: false }).await;
     type_in(&mut ws, 2, "echo in-pane-$((1+1)); exit").await;
     let state = until(&mut ws, |m| match m {
         In::Msg(ServerMsg::State { state }) if state.panes.len() == 1 => Some(state.clone()),
@@ -409,7 +526,7 @@ async fn the_tab_takes_the_claiming_clients_size() {
     let d = start().await;
     let (mut a, state) = connect_state(&d).await;
     let tab = state.tabs[0].id;
-    send(&mut a, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false }).await;
+    send(&mut a, ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: false }).await;
     send(&mut a, ClientMsg::View { tab, cols: 101, rows: 30, zoom: None, claim: true }).await;
     until(&mut a, |m| matches!(m, In::Msg(ServerMsg::Size { pane: 1, cols: 101, rows: 30 })).then_some(())).await;
     type_line(&mut a, "stty size").await;
@@ -460,7 +577,7 @@ impl Daemon {
 use illogical_proto::{PaneOp, Policy};
 
 async fn attach_pane(ws: &mut Ws, pane: u32) -> String {
-    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(pane, None)], zstd: false }).await;
+    send(ws, ClientMsg::Attach { panes: vec![AttachPane::new(pane, None)], zstd: false, acks: false }).await;
     until(ws, |m| match m {
         In::Frame(f) if f.kind == FrameKind::Snapshot && f.pane == pane => {
             Some(String::from_utf8_lossy(&f.data).into_owned())

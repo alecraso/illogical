@@ -60,7 +60,7 @@ pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
     let mut size = term_size();
     let view = |s: (u16, u16)| ClientMsg::View { tab, cols: s.0, rows: s.1, zoom: Some(pane), claim: true };
     send(&mut ws, &view(size))?;
-    send(&mut ws, &ClientMsg::Attach { panes: vec![AttachPane::new(pane, None)], zstd: false })?;
+    send(&mut ws, &ClientMsg::Attach { panes: vec![AttachPane::new(pane, None)], zstd: false, acks: false })?;
 
     // Raw mode for the duration; restored however we leave.
     let stdin = std::io::stdin();

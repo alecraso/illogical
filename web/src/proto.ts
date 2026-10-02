@@ -268,7 +268,10 @@ export type Intent =
   | { op: "set_option"; scope: OptionScope; name: string; value: string | null };
 
 export type ClientMsg =
-  | { type: "attach"; panes: AttachPane[]; zstd?: boolean }
+  | { type: "attach"; panes: AttachPane[]; zstd?: boolean; acks?: boolean }
+  /** Everything of `pane` before `offset` is drawn (for an attach with
+   * `acks`, #52). */
+  | { type: "ack"; pane: PaneId; offset: number }
   | { type: "detach"; panes: PaneId[] }
   | { type: "view"; tab: TabId; cols: number; rows: number; zoom: PaneId | null; claim: boolean }
   | { type: "intent"; id: number | null; intent: Intent }

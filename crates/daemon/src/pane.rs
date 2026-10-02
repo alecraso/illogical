@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
 use illogical_proto::{ClientId, Frame, FrameKind, PaneId, ServerMsg};
 use illogical_vt::{GhosttyEngine, VtEngine};
 use nix::{
@@ -47,6 +47,13 @@ const RING_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REPLAY_BYTES: u64 = 1024 * 1024;
 /// Smaller snapshots go uncompressed: not worth a client's decoder.
 const MIN_ZSTD_BYTES: usize = 4096;
+/// Chunks of a local program's output (up to 64 KB each) waiting for the
+/// pane; past this the program waits.
+const PROGRAM_QUEUE: usize = 64;
+/// How far past its last ack a client that acks may be sent (#52).
+const ACK_WINDOW: u64 = 512 * 1024;
+/// A held-back client gets output again once it has acked this close.
+const ACK_RESUME: u64 = ACK_WINDOW / 2;
 /// Frames queued per client before it counts as too slow and is resynced.
 pub const CLIENT_QUEUE: usize = 1024;
 /// Checkpoint after this much output, or after this long idle with output
@@ -203,6 +210,10 @@ enum Cmd {
         sub: Subscriber,
         want: Want,
     },
+    Ack {
+        client: ClientId,
+        offset: u64,
+    },
     Detach {
         client: ClientId,
     },
@@ -247,6 +258,19 @@ pub struct Want {
     /// It may see output only from here on (M13: a "from now" share):
     /// below it, the screen and no history.
     pub floor: Option<u64>,
+    /// It acks what it has drawn: hold it to [`ACK_WINDOW`] (#52).
+    pub acks: bool,
+}
+
+/// Where a client that acks is in a pane's stream.
+#[derive(Debug, Clone, Copy)]
+struct Flow {
+    /// Just past the last byte queued for it.
+    sent: u64,
+    /// Just past the last byte it has drawn.
+    acked: u64,
+    /// Held back from here, until it acks enough.
+    paused: Option<u64>,
 }
 
 impl PaneHandle {
@@ -258,6 +282,10 @@ impl PaneHandle {
     }
     pub fn detach(&self, client: ClientId) {
         let _ = self.tx.send(Cmd::Detach { client });
+    }
+    /// `client` has drawn everything before `offset`.
+    pub fn ack(&self, client: ClientId, offset: u64) {
+        let _ = self.tx.send(Cmd::Ack { client, offset });
     }
     pub fn resize(&self, cols: u16, rows: u16) {
         let _ = self.tx.send(Cmd::Resize { cols, rows });
@@ -768,6 +796,8 @@ struct State {
     ring: Ring,
     log: Option<PaneLog>,
     subs: HashMap<ClientId, Subscriber>,
+    /// The subscribers that ack.
+    flows: HashMap<ClientId, Flow>,
     closing: bool,
     shell: Spawn,
     launch: Launcher,
@@ -776,6 +806,10 @@ struct State {
     hold: bool,
     notices: NoticeSink,
     events: Sender<Cmd>,
+    /// For the local program's output and exit: bounded, so a program that
+    /// prints faster than the pane can take it waits, and what clients ask
+    /// never queues behind a flood (#52).
+    program: Sender<Cmd>,
     pid: Arc<AtomicU32>,
     running: Arc<AtomicBool>,
     unsaved: u64,
@@ -793,6 +827,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
     let Setup { id, cols, rows, log, restore, start, shell, launch, hold, notices, host } = setup;
     let record = log.dir().join("process");
     let (tx, rx) = unbounded();
+    let (program_tx, program_rx) = bounded(PROGRAM_QUEUE);
     let epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
     let pid = Arc::new(AtomicU32::new(0));
     let running = Arc::new(AtomicBool::new(false));
@@ -817,6 +852,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             ring: Ring { buf: VecDeque::new(), start: log.end() },
             log: Some(log),
             subs: HashMap::new(),
+            flows: HashMap::new(),
             closing: false,
             shell,
             launch,
@@ -824,6 +860,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             hold,
             notices,
             events: tx,
+            program: program_tx,
             pid,
             running,
             unsaved: 0,
@@ -839,7 +876,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             st.restored_banner();
         }
         st.begin(start);
-        run(st, rx);
+        run(st, rx, program_rx);
     })?;
     Ok(handle)
 }
@@ -915,19 +952,32 @@ fn local_time(ms: u64) -> String {
     )
 }
 
-fn run(mut st: State, rx: Receiver<Cmd>) {
+fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
     loop {
-        let cmd = match rx.recv_timeout(Duration::from_secs(1)) {
+        // What clients ask goes first: an attach, an ack or a Ctrl-C must
+        // not wait behind a flood of output.
+        let cmd = match rx.try_recv() {
             Ok(cmd) => cmd,
-            Err(RecvTimeoutError::Timeout) => {
-                if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
-                    st.checkpoint();
+            Err(TryRecvError::Disconnected) => return,
+            Err(TryRecvError::Empty) => crossbeam_channel::select! {
+                recv(rx) -> cmd => match cmd {
+                    Ok(cmd) => cmd,
+                    Err(_) => return,
+                },
+                // `st` holds a sender, so this never disconnects.
+                recv(program) -> cmd => match cmd {
+                    Ok(cmd) => cmd,
+                    Err(_) => continue,
+                },
+                default(Duration::from_secs(1)) => {
+                    if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
+                        st.checkpoint();
+                    }
+                    st.check_quiet();
+                    st.save_exec();
+                    continue;
                 }
-                st.check_quiet();
-                st.save_exec();
-                continue;
-            }
-            Err(RecvTimeoutError::Disconnected) => return,
+            },
         };
         match cmd {
             Cmd::Output(data) => {
@@ -944,8 +994,10 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
             }
             Cmd::Note(text, by) => st.note(text, by),
             Cmd::Attach { sub, want } => st.attach(sub, want),
+            Cmd::Ack { client, offset } => st.ack(client, offset),
             Cmd::Detach { client } => {
                 st.subs.remove(&client);
+                st.flows.remove(&client);
             }
             Cmd::Resize { cols, rows } => st.resize(cols, rows),
             Cmd::Purge => st.purge(),
@@ -959,6 +1011,7 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
             Cmd::Close => {
                 st.closing = true;
                 st.subs.clear();
+                st.flows.clear();
                 match &st.process {
                     Some(p) => p.hang_up(),
                     None => return st.finish(),
@@ -1065,7 +1118,7 @@ impl State {
                 self.signal(at, Signal::CommandStart);
                 self.start(&spawn);
             }
-            Start::Adopt(master) => match Process::adopt(master, &self.record, id, self.events.clone()) {
+            Start::Adopt(master) => match Process::adopt(master, &self.record, id, self.program.clone()) {
                 Ok(p) => {
                     self.pid.store(p.pid, Ordering::Relaxed);
                     self.running.store(true, Ordering::Relaxed);
@@ -1198,7 +1251,7 @@ impl State {
             return self.attach_exec(&host, Begin::New { spawn: spawn.clone(), image, create: !host.borrowed });
         }
         let (cols, rows) = self.engine.size();
-        match Process::start(spawn, &self.launch, &self.record, cols, rows, self.id, self.events.clone()) {
+        match Process::start(spawn, &self.launch, &self.record, cols, rows, self.id, self.program.clone()) {
             Ok(p) => {
                 self.pid.store(p.pid, Ordering::Relaxed);
                 self.running.store(true, Ordering::Relaxed);
@@ -1341,9 +1394,32 @@ impl State {
         let was_quiet = self.last_output.elapsed() >= QUIET;
         self.last_output = Instant::now();
         let frame = Frame { kind: FrameKind::Output, pane: self.id, offset, data: data.to_vec() }.encode();
-        self.broadcast(|| ToClient::Frame(frame.clone()));
-
         let end = offset + data.len() as u64;
+        let mut lagged = Vec::new();
+        for (id, sub) in &self.subs {
+            let flow = self.flows.get_mut(id);
+            if flow.as_ref().is_some_and(|f| f.paused.is_some()) {
+                continue;
+            }
+            // Drawing too far behind (or its queue is full of small frames):
+            // hold back what's next until it acks, rather than piling it up
+            // in the client or starting it over.
+            let full = match flow.as_ref() {
+                Some(f) if end.saturating_sub(f.acked) > ACK_WINDOW => true,
+                _ => sub.data.try_send(ToClient::Frame(frame.clone())).is_err(),
+            };
+            match flow {
+                Some(f) if full => {
+                    debug!(pane = self.id, client = id, at = offset, acked = f.acked, "client behind; holding back");
+                    f.paused = Some(offset);
+                }
+                Some(f) => f.sent = end,
+                None if full => lagged.push(*id),
+                None => {}
+            }
+        }
+        self.resync(lagged);
+
         if self.last_time_mark.elapsed() >= Duration::from_secs(1) {
             self.last_time_mark = Instant::now();
             self.index(offset, Event::Time { at_ms: now_ms() });
@@ -1530,7 +1606,13 @@ impl State {
     fn broadcast(&mut self, item: impl Fn() -> ToClient) {
         let lagged: Vec<ClientId> =
             self.subs.iter().filter(|(_, sub)| sub.data.try_send(item()).is_err()).map(|(id, _)| *id).collect();
-        for id in lagged {
+        self.resync(lagged);
+    }
+
+    /// Drop these subscribers and tell them to attach again.
+    fn resync(&mut self, ids: Vec<ClientId>) {
+        for id in ids {
+            self.flows.remove(&id);
             if let Some(sub) = self.subs.remove(&id) {
                 debug!(pane = self.id, client = id, "client fell behind; resync");
                 let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Resync { pane: self.id }));
@@ -1538,11 +1620,41 @@ impl State {
         }
     }
 
+    /// A client that acks has drawn up to `offset`. If it was held back and
+    /// is close enough now, send it what it missed from the log, or have it
+    /// resync if the log no longer has that.
+    fn ack(&mut self, client: ClientId, offset: u64) {
+        let Some(f) = self.flows.get_mut(&client) else { return };
+        f.acked = f.acked.max(offset.min(f.sent));
+        let Some(from) = f.paused else { return };
+        if f.sent.saturating_sub(f.acked) > ACK_RESUME {
+            return;
+        }
+        let end = self.ring.end();
+        let missed = (end.saturating_sub(from) <= MAX_REPLAY_BYTES).then(|| self.ring.since(from)).flatten();
+        let Some(sub) = self.subs.get(&client) else { return };
+        let sent = match missed {
+            Some(bytes) if bytes.is_empty() => true,
+            Some(bytes) => {
+                let frame = Frame { kind: FrameKind::Output, pane: self.id, offset: from, data: bytes };
+                sub.data.try_send(ToClient::Frame(frame.encode())).is_ok()
+            }
+            None => false,
+        };
+        if sent {
+            debug!(pane = self.id, client, from, end, "client caught up; resuming");
+            f.paused = None;
+            f.sent = end;
+        } else {
+            self.resync(vec![client]);
+        }
+    }
+
     fn attach(&mut self, sub: Subscriber, want: Want) {
         if self.closing {
             return;
         }
-        let Want { offset, history, zstd, floor } = want;
+        let Want { offset, history, zstd, floor, acks } = want;
         let end = self.ring.end();
         let (cols, rows) = self.engine.size();
         // Nothing from before the floor: no replay from below it, and the
@@ -1568,11 +1680,23 @@ impl State {
         debug!(pane = self.id, client = sub.client, ?offset, end, kind = ?frame.as_ref().map(|f| f.kind), "attach");
         // The size goes first so the client resizes before drawing.
         let size = ServerMsg::Size { pane: self.id, cols, rows };
+        // What the client has once it draws this: from the replay's start, or
+        // (after a snapshot, which isn't stream bytes) the end.
+        let has = match &frame {
+            Some(f) if f.kind == FrameKind::Output => f.offset,
+            _ => end,
+        };
         let queued = sub.data.try_send(ToClient::Msg(size)).is_ok()
             && frame.is_none_or(|f| sub.data.try_send(ToClient::Frame(f.encode())).is_ok());
         if !queued {
+            self.flows.remove(&sub.client);
             let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Resync { pane: self.id }));
             return;
+        }
+        if acks {
+            self.flows.insert(sub.client, Flow { sent: end, acked: has, paused: None });
+        } else {
+            self.flows.remove(&sub.client);
         }
         self.subs.insert(sub.client, sub);
     }
@@ -1588,6 +1712,10 @@ impl State {
         if let Some(log) = &mut self.log {
             let _ = log.record(log.end(), Event::Resize { cols, rows });
         }
+        // A held-back client would draw what it missed at the new size:
+        // start it over instead.
+        let held: Vec<ClientId> = self.flows.iter().filter(|(_, f)| f.paused.is_some()).map(|(id, _)| *id).collect();
+        self.resync(held);
         let id = self.id;
         self.broadcast(|| ToClient::Msg(ServerMsg::Size { pane: id, cols, rows }));
     }

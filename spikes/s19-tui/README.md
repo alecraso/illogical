@@ -81,6 +81,12 @@ The TUI still can't keep up with four uncapped floods, so it still gets
 resynced. But each resync now costs a screen, not 5 MB, and the time goes
 to drawing seven times as much real output.
 
+**After #52** (the TUI acks what its engines take in; a pane's program
+waits when the daemon can't keep up), the floods are paced by the daemon.
+In 10 s the TUI received 402 MB with no resyncs, using 36% of a core
+(`S19_NO_ACKS=1`: 359 MB, 38%; `S19_LEGACY=1`: 413 MB, 39%, also no
+resyncs, because the pacing is in the daemon).
+
 **Drawing is not the problem.** A full redraw of every cell, with no use of
 ghostty's dirty rows yet, stays under 1 ms even when floods keep frames
 coming at 30–40 per second. The engines keep up with one 16 MB/s pane at a
@@ -154,7 +160,7 @@ CARGO_TARGET_DIR=../../target/s19 mise exec -- cargo build --release
 It is another client, so it claims the tab's size the way opening a browser
 window does. `S19_STATS=file` writes the frame timings on exit;
 `S19_LEGACY=1` attaches as clients did before #49 (all history, no zstd, a
-fresh snapshot on every resync).
+fresh snapshot on every resync). `S19_NO_ACKS=1` doesn't ack (#52).
 
 `bench.sh` repeats the flood measurements on its own dev daemon (port 7791,
 state in a temporary directory) with the TUI in a 200x50 tmux session:
