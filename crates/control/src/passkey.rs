@@ -14,12 +14,13 @@
 
 use std::{
     collections::HashMap,
+    net::SocketAddr,
     sync::{Arc, Mutex},
 };
 
 use axum::{
     Json,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -102,10 +103,15 @@ fn same_origin(app: &App, headers: &HeaderMap) -> Result<(), ApiError> {
 
 pub async fn register_start(
     State(app): State<Arc<App>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     same_origin(&app, &headers)?;
     let account = session_of(&app, &headers).await;
+    if account.is_none() {
+        // A new account each time: limited.
+        app.limits.check(crate::limit::ACCOUNTS, app.limits.client_ip(peer, &headers))?;
+    }
     let login = match &account {
         Some(a) => app.db.account(a)?.map(|x| x.login).unwrap_or_default(),
         None => String::new(),
@@ -249,8 +255,13 @@ async fn register(
     Ok((account, cookie))
 }
 
-pub async fn login_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn login_start(
+    State(app): State<Arc<App>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
     same_origin(&app, &headers)?;
+    app.limits.check(crate::limit::SIGN_INS, app.limits.client_ip(peer, &headers))?;
     let challenge = app.passkeys.issue(Purpose::Login);
     Ok(Json(
         json!({ "challenge": challenge, "rpId": rp_id(&app), "userVerification": "required", "timeout": CHALLENGE_TTL_MS }),

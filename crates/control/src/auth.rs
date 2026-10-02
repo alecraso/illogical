@@ -181,7 +181,15 @@ struct GithubUser {
     login: String,
 }
 
-pub async fn github_callback(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<Callback>) -> Response {
+pub async fn github_callback(
+    State(app): State<Arc<App>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    Query(q): Query<Callback>,
+) -> Response {
+    if let Err(e) = app.limits.check(crate::limit::SIGN_INS, app.limits.client_ip(peer, &headers)) {
+        return e.into_response();
+    }
     match github_finish(&app, &headers, q).await {
         Ok((account, next)) => {
             let cookie = match start_session(&app, &account) {

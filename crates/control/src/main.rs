@@ -10,6 +10,7 @@
 mod api;
 mod auth;
 mod db;
+mod limit;
 mod passkey;
 mod relay;
 
@@ -57,6 +58,12 @@ struct Args {
     #[arg(long, default_value = "https://api.github.com", hide = true)]
     github_api: String,
 
+    /// Behind a proxy that puts the client's IP in a header (Fly:
+    /// `Fly-Client-IP`), use it for rate limits. Only set this when every
+    /// request comes through that proxy.
+    #[arg(long, env = "ILLOGICAL_CONTROL_PROXY_HEADER")]
+    trust_proxy_header: Option<String>,
+
     /// Serve the web client from this directory instead of the built-in
     /// copy (development).
     #[arg(long)]
@@ -84,6 +91,7 @@ pub struct App {
     pub http: reqwest::Client,
     pub relay: relay::Relay,
     pub passkeys: passkey::Challenges,
+    pub limits: limit::Limits,
 }
 
 /// An API error: `{"error": "..."}` with a status.
@@ -247,13 +255,14 @@ async fn main() -> anyhow::Result<()> {
         http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build()?,
         relay: Default::default(),
         passkeys: Default::default(),
+        limits: limit::Limits::new(a.trust_proxy_header),
     });
     // Nagle off: the relay's mux writes frames back to back (S15).
     let l = tokio::net::TcpListener::bind(a.listen).await?.tap_io(|t| {
         let _ = t.set_nodelay(true);
     });
     info!(listen = %a.listen, url = %app.cfg.public_url, "illogical control");
-    axum::serve(l, router(app)).await?;
+    axum::serve(l, router(app).into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
 }
 

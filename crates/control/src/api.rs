@@ -194,7 +194,13 @@ fn check_urls(urls: &[String]) -> Result<(), ApiError> {
 
 /// A daemon asks to join; no account yet. It gets the code to show, and
 /// a token to poll with.
-pub async fn join(State(app): State<Arc<App>>, Json(b): Json<JoinReq>) -> R {
+pub async fn join(
+    State(app): State<Arc<App>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Json(b): Json<JoinReq>,
+) -> R {
+    app.limits.check(crate::limit::JOINS, app.limits.client_ip(peer, &headers))?;
     b.cert.check_request().map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
     if b.cert.kind != Kind::Daemon {
         return Err(err(StatusCode::BAD_REQUEST, "a daemon certificate"));
