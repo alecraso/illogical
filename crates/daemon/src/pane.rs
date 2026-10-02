@@ -121,6 +121,8 @@ pub struct CommandRec {
     pub started_ms: u64,
     pub ended_ms: Option<u64>,
     pub exit: Option<i32>,
+    /// Who typed it (M13).
+    pub by: Option<String>,
 }
 
 /// What a pane's thread knows that others want to read without asking it.
@@ -185,6 +187,7 @@ enum Cmd {
     Attach {
         sub: Subscriber,
         offset: Option<u64>,
+        floor: Option<u64>,
     },
     Detach {
         client: ClientId,
@@ -193,7 +196,8 @@ enum Cmd {
         cols: u16,
         rows: u16,
     },
-    Input(Vec<u8>),
+    /// Bytes, and who typed them if someone in particular did.
+    Input(Vec<u8>, Option<String>),
     Purge,
     Checkpoint(Sender<()>),
     Capture {
@@ -216,7 +220,12 @@ pub struct PaneHandle {
 
 impl PaneHandle {
     pub fn attach(&self, sub: Subscriber, offset: Option<u64>) {
-        let _ = self.tx.send(Cmd::Attach { sub, offset });
+        let _ = self.tx.send(Cmd::Attach { sub, offset, floor: None });
+    }
+    /// Attach someone who may see output only from `floor` on (M13: a
+    /// "from now" share): below it they get the screen, not history.
+    pub fn attach_from(&self, sub: Subscriber, offset: Option<u64>, floor: u64) {
+        let _ = self.tx.send(Cmd::Attach { sub, offset, floor: Some(floor) });
     }
     pub fn detach(&self, client: ClientId) {
         let _ = self.tx.send(Cmd::Detach { client });
@@ -225,7 +234,12 @@ impl PaneHandle {
         let _ = self.tx.send(Cmd::Resize { cols, rows });
     }
     pub fn input(&self, data: Vec<u8>) {
-        let _ = self.tx.send(Cmd::Input(data));
+        let _ = self.tx.send(Cmd::Input(data, None));
+    }
+    /// Typing by someone (M13): when that changes, the pane's history
+    /// notes it, and commands carry who started them.
+    pub fn input_by(&self, data: Vec<u8>, by: String) {
+        let _ = self.tx.send(Cmd::Input(data, Some(by)));
     }
     /// Let go of the session on the pane's machine without a word, before
     /// the machine is deleted (and `restart` follows).
@@ -723,6 +737,8 @@ struct State {
     scanner: crate::osc::Scanner,
     /// The command line reported just before its command starts.
     pending_text: Option<String>,
+    /// Who typed here last (M13); the next command is theirs.
+    typed_by: Option<String>,
     status: Arc<std::sync::Mutex<Status>>,
     last_time_mark: Instant,
 }
@@ -768,6 +784,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             last_output: Instant::now(),
             scanner: crate::osc::Scanner::new(),
             pending_text: None,
+            typed_by: None,
             status,
             last_time_mark: Instant::now() - Duration::from_secs(60),
         };
@@ -873,8 +890,13 @@ fn run(mut st: State, rx: Receiver<Cmd>) {
                     st.checkpoint();
                 }
             }
-            Cmd::Input(data) => st.input(data),
-            Cmd::Attach { sub, offset } => st.attach(sub, offset),
+            Cmd::Input(data, by) => {
+                if let Some(by) = by {
+                    st.typed_by(by);
+                }
+                st.input(data)
+            }
+            Cmd::Attach { sub, offset, floor } => st.attach(sub, offset, floor),
             Cmd::Detach { client } => {
                 st.subs.remove(&client);
             }
@@ -1179,6 +1201,17 @@ impl State {
         }
     }
 
+    /// Someone typed: when it's someone else than last time, the history
+    /// says so at this offset (`illogical log --who`).
+    fn typed_by(&mut self, by: String) {
+        if self.typed_by.as_deref() == Some(by.as_str()) {
+            return;
+        }
+        let at = self.ring.end();
+        self.index(at, Event::Driver { at_ms: now_ms(), who: by.clone() });
+        self.typed_by = Some(by);
+    }
+
     fn input(&mut self, data: Vec<u8>) {
         {
             let mut st = self.status.lock().unwrap();
@@ -1321,8 +1354,9 @@ impl State {
             Signal::CommandStart => {
                 let text = self.pending_text.take();
                 let cwd = self.status.lock().unwrap().cwd.clone();
-                self.index(at, Event::Command { at_ms: ms, text: text.clone(), cwd: cwd.clone() });
-                let rec = CommandRec { text, cwd, start: at, started_ms: ms, ..Default::default() };
+                let by = self.typed_by.clone();
+                self.index(at, Event::Command { at_ms: ms, text: text.clone(), cwd: cwd.clone(), by: by.clone() });
+                let rec = CommandRec { text, cwd, start: at, started_ms: ms, by, ..Default::default() };
                 let mut st = self.status.lock().unwrap();
                 st.current = Some(rec);
                 st.at_prompt = false;
@@ -1438,17 +1472,23 @@ impl State {
         }
     }
 
-    fn attach(&mut self, sub: Subscriber, offset: Option<u64>) {
+    fn attach(&mut self, sub: Subscriber, offset: Option<u64>, floor: Option<u64>) {
         if self.closing {
             return;
         }
         let end = self.ring.end();
         let (cols, rows) = self.engine.size();
+        // Nothing from before the floor: no replay from below it, and the
+        // screen without scrollback instead of a full snapshot.
+        let offset = offset.filter(|o| floor.is_none_or(|f| *o >= f));
         let replay = offset.filter(|o| end.saturating_sub(*o) <= MAX_REPLAY_BYTES).and_then(|o| self.ring.since(o));
         let frame = match replay {
             Some(bytes) if bytes.is_empty() => None,
             Some(bytes) => Some(Frame { kind: FrameKind::Output, pane: self.id, offset: offset.unwrap(), data: bytes }),
-            None => Some(Frame { kind: FrameKind::Snapshot, pane: self.id, offset: end, data: self.engine.snapshot() }),
+            None => {
+                let data = if floor.is_some() { self.engine.screen_snapshot() } else { self.engine.snapshot() };
+                Some(Frame { kind: FrameKind::Snapshot, pane: self.id, offset: end, data })
+            }
         };
         debug!(pane = self.id, client = sub.client, ?offset, end, kind = ?frame.as_ref().map(|f| f.kind), "attach");
         // The size goes first so the client resizes before drawing.

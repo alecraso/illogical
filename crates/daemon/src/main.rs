@@ -635,6 +635,8 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     let acl = std::sync::Arc::new(acl::Acl::open(&state_dir));
     let config = mux::Config {
         acl: acl.clone(),
+        owner_name: owner_login.clone().unwrap_or_else(|| "owner".into()),
+        owner_pic: None,
         shell,
         shell_args,
         home: home(),

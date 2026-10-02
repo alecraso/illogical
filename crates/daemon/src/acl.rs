@@ -16,7 +16,7 @@ use std::{
     sync::RwLock,
 };
 
-use illogical_core::{Role, SessionId};
+use illogical_core::{PaneId, Role, SessionId};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -25,16 +25,25 @@ use crate::store::{now_ms, write_atomic};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Principal {
     Owner,
-    /// `id` as in grants; `name` to show (a login).
+    /// `id` as in grants; `name` to show (a login); a picture, if the
+    /// tailnet gave one.
     User {
         id: String,
         name: String,
+        pic: Option<String>,
     },
 }
 
 impl Principal {
     pub fn tailnet(login: &str) -> Self {
-        Principal::User { id: format!("tailnet:{login}"), name: login.to_owned() }
+        Principal::User { id: format!("tailnet:{login}"), name: login.to_owned(), pic: None }
+    }
+
+    pub fn with_pic(self, pic: Option<String>) -> Self {
+        match self {
+            Principal::User { id, name, .. } => Principal::User { id, name, pic },
+            p => p,
+        }
     }
 
     pub fn id(&self) -> &str {
@@ -57,6 +66,10 @@ pub struct Grant {
     pub role: Role,
     pub by: String,
     pub at: u64,
+    /// A "from now" share (M13): each pane's stream offset when it was
+    /// granted. Output before it is never sent: no history, no scrollback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<BTreeMap<PaneId, u64>>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -94,6 +107,15 @@ impl Acl {
         }
     }
 
+    /// For a "from now" share: where `pane`'s output may start for them.
+    pub fn floor(&self, p: &Principal, session: SessionId, pane: PaneId) -> Option<u64> {
+        let Principal::User { id, .. } = p else { return None };
+        let g = self.grants.read().unwrap();
+        let from = g.iter().find(|g| g.session == session && &g.principal == id)?.from.as_ref()?;
+        // A pane made after the share has nothing from before it.
+        Some(from.get(&pane).copied().unwrap_or(0))
+    }
+
     /// A user's sessions and roles (empty: none).
     pub fn roles(&self, p: &Principal) -> BTreeMap<SessionId, Role> {
         let id = p.id();
@@ -118,8 +140,23 @@ impl Acl {
         role: Option<Role>,
         by: &str,
     ) -> std::io::Result<()> {
+        self.set_from(session, principal, name, role, by, None)
+    }
+
+    /// `from`: a "from now" share. Changing only the role of one keeps its
+    /// floor.
+    pub fn set_from(
+        &self,
+        session: SessionId,
+        principal: &str,
+        name: &str,
+        role: Option<Role>,
+        by: &str,
+        from: Option<BTreeMap<PaneId, u64>>,
+    ) -> std::io::Result<()> {
         let mut g = self.grants.write().unwrap();
         let before = g.clone();
+        let kept = g.iter().find(|x| x.session == session && x.principal == principal).and_then(|x| x.from.clone());
         g.retain(|x| !(x.session == session && x.principal == principal));
         if let Some(role) = role {
             g.push(Grant {
@@ -129,6 +166,7 @@ impl Acl {
                 role,
                 by: by.into(),
                 at: now_ms(),
+                from: from.or(kept),
             });
         }
         if let Err(e) = write_atomic(&self.path, &serde_json::to_vec_pretty(&File { grants: g.clone() }).unwrap()) {
@@ -237,6 +275,13 @@ pub mod api {
         name: Option<String>,
         /// `null` revokes.
         role: Option<Role>,
+        /// False: "from now", no history from before this (M13).
+        #[serde(default = "yes")]
+        history: bool,
+    }
+
+    fn yes() -> bool {
+        true
     }
 
     async fn set(State(app): State<Arc<App>>, Json(b): Json<Set>) -> Response {
@@ -249,7 +294,15 @@ pub mod api {
         }
         let principal = b.principal.to_ascii_lowercase();
         let name = b.name.unwrap_or_else(|| principal.split_once(':').map(|(_, n)| n.to_owned()).unwrap_or_default());
-        if let Err(e) = app.acl.set(b.session, &principal, &name, b.role, "owner") {
+        let from = if b.history || b.role.is_none() {
+            None
+        } else {
+            match app.mux.api(|r| crate::mux::Api::SessionEnds(b.session, r)).await.flatten() {
+                Some(ends) => Some(ends),
+                None => return (StatusCode::NOT_FOUND, Json(json!({ "error": "no such session" }))).into_response(),
+            }
+        };
+        if let Err(e) = app.acl.set_from(b.session, &principal, &name, b.role, "owner", from) {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response();
         }
         // Takes effect at once: new state for everyone, and a hang-up for

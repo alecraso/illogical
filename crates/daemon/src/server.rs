@@ -211,7 +211,8 @@ async fn guard(
     let mut req = req;
     let checked = app.access.check_host(req.headers()).and_then(|()| match class(&req) {
         Class::Owner => {
-            let who = app.access.check_identity(req.headers(), &peer)?;
+            let pic = req.headers().get("tailscale-user-profile-pic").and_then(|v| v.to_str().ok()).map(str::to_owned);
+            let who = app.access.check_identity(req.headers(), &peer)?.with_pic(pic);
             // Another user gets in only once something is shared with them.
             if !app.acl.knows(&who) {
                 return Err((StatusCode::FORBIDDEN, "nothing on this machine is shared with you".into()));

@@ -25,6 +25,9 @@ pub trait VtEngine {
     /// VT bytes that recreate the current state (both screens, scrollback,
     /// modes, cursor, title) when written to a fresh terminal of the same size.
     fn snapshot(&mut self) -> Vec<u8>;
+    /// The same without any scrollback: only what's on screen now (M13: a
+    /// "from now" viewer never gets history from before they were let in).
+    fn screen_snapshot(&mut self) -> Vec<u8>;
     /// Plain text of the active screen, including scrollback when the
     /// primary screen is active.
     fn plain_text(&self) -> String;

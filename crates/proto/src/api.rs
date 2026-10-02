@@ -263,6 +263,17 @@ pub struct HistoryEntry {
     /// A synced copy of another host's history (`host=NAME`), not ours.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// Who typed it (M13).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+}
+
+/// A handoff in a pane: from here on, `who` typed (`illogical log --who`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriverEntry {
+    pub at_ms: u64,
+    pub offset: u64,
+    pub who: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

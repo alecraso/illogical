@@ -225,6 +225,15 @@ pub enum Event {
         text: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
+        /// Who typed it (M13).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
+    },
+    /// Someone else started typing here (M13): one record per handoff, not
+    /// per keystroke.
+    Driver {
+        at_ms: u64,
+        who: String,
     },
     /// The command that started last finished.
     End {
@@ -512,7 +521,7 @@ mod tests {
         let mut log = PaneLog::open(dir.clone()).unwrap();
         log.record(0, Event::Resize { cols: 80, rows: 24 }).unwrap();
         log.record(42, Event::Restore { at_ms: 7 }).unwrap();
-        let cmd = Event::Command { at_ms: 9, text: Some("echo \"a;b\"".into()), cwd: None };
+        let cmd = Event::Command { at_ms: 9, text: Some("echo \"a;b\"".into()), cwd: None, by: None };
         log.record(50, cmd.clone()).unwrap();
         assert_eq!(
             log.events(),

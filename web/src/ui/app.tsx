@@ -10,6 +10,7 @@ import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
+import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { openPort } from "../blocks";
@@ -51,6 +52,19 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
     };
   }, [client]);
 
+  // Following someone stops as soon as you do something yourself.
+  useEffect(() => {
+    const stop = (e: Event) => {
+      if (client.following !== null && !(e.target as HTMLElement).closest?.(".avatar")) client.follow(null);
+    };
+    window.addEventListener("pointerdown", stop, true);
+    window.addEventListener("keydown", stop, true);
+    return () => {
+      window.removeEventListener("pointerdown", stop, true);
+      window.removeEventListener("keydown", stop, true);
+    };
+  }, [client]);
+
   useHoverToSwitchTabs(client);
   useReportFocus(client, phone);
   usePickerShortcut(client, phone);
@@ -85,6 +99,8 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <SandboxesLayer />
       <PickerLayer />
       <DragGhost />
+      <ControlRequests client={client} />
+      <ShareDialog client={client} />
       <StatusPill client={client} />
     </div>
   );
@@ -119,6 +135,8 @@ function TopBar({
       { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
       { label: "Sandboxes…", run: () => openSandboxes() },
       { label: "Rename session", run: () => setRenaming({ kind: "session", id: session.id }) },
+      // Sharing is the daemon's owner's (M13).
+      ...(state.roles ? [] : [{ label: "Share session…", run: () => shareSession(session.id) } as MenuItem]),
       "separator",
       ...notificationItems(client),
       "separator",
@@ -178,6 +196,7 @@ function TopBar({
         </button>
       </div>
       <div class="bar-fill" />
+      <PeopleBar client={client} />
     </header>
   );
 }
@@ -256,6 +275,7 @@ function TabItem({
         )
       )}
       <span class="tab-label">{label}</span>
+      <TabPeople client={client} tab={tab.id} />
       <AttentionBadge state={tabAttention(client, tab)} />
       <button
         class="tab-close"
@@ -499,6 +519,7 @@ function PaneSlot({
               },
             } as MenuItem,
           ]),
+      ...driveItems(client, id),
       "separator",
       ...restartItems(client, id),
       "separator",
@@ -529,6 +550,7 @@ function PaneSlot({
       onContextMenu={menu}
     >
       <HostBadge client={client} id={id} />
+      <PaneMarks client={client} pane={id} />
       {!active && (info?.attention === "needs_input" || info?.attention === "done") && (
         <div class={`pane-badge ${info.attention}`}>{info.attention === "done" ? "done" : "needs you"}</div>
       )}

@@ -65,11 +65,38 @@ pub async fn check(State(app): State<Arc<App>>, req: Request, next: Next) -> Res
         Policy::Anyone => next.run(req).await,
         Policy::Owner => refuse(StatusCode::FORBIDDEN, "only the owner can do that"),
         Policy::On(pane, need) => match app.mux.api(|r| Api::RoleOn(who, pane, r)).await.flatten() {
-            Some(r) if r >= need => next.run(req).await,
+            Some((r, floor)) if r >= need => {
+                if let Some(f) = floor
+                    && let Err(why) = from_now(req.uri().path(), req.uri().query().unwrap_or(""), f)
+                {
+                    return refuse(StatusCode::FORBIDDEN, why);
+                }
+                next.run(req).await
+            }
             Some(_) => refuse(StatusCode::FORBIDDEN, "you're watching this session; you can't change it"),
             None => refuse(StatusCode::NOT_FOUND, "no such pane"),
         },
     }
+}
+
+/// A "from now" share (M13): nothing before `floor` by any route. The
+/// screen, live output, and tails from at or after it.
+fn from_now(path: &str, query: &str, floor: u64) -> Result<(), &'static str> {
+    let param = |k: &str| url_param(query, k);
+    if path.ends_with("/export.cast") {
+        return Err("shared from now on: no history to export");
+    }
+    if path.ends_with("/capture") && param("scope").is_some_and(|s| s != "screen") {
+        return Err("shared from now on: the screen only");
+    }
+    if path.ends_with("/tail") && !param("from").and_then(|f| f.parse::<u64>().ok()).is_some_and(|f| f >= floor) {
+        return Err("shared from now on: tail with from at or after where the share began");
+    }
+    Ok(())
+}
+
+fn url_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v.to_owned())
 }
 
 #[cfg(test)]
@@ -91,5 +118,17 @@ mod tests {
         assert_eq!(policy(&g, "/api/search"), Policy::Owner);
         assert_eq!(policy(&p, "/api/acl"), Policy::Owner);
         assert_eq!(policy(&g, "/api/panes/x/capture"), Policy::Owner);
+    }
+
+    #[test]
+    fn from_now_shares() {
+        assert!(from_now("/api/panes/3/capture", "", 100).is_ok());
+        assert!(from_now("/api/panes/3/capture", "scope=screen&format=ansi", 100).is_ok());
+        assert!(from_now("/api/panes/3/capture", "scope=scrollback", 100).is_err());
+        assert!(from_now("/api/panes/3/tail", "", 100).is_err());
+        assert!(from_now("/api/panes/3/tail", "from=99", 100).is_err());
+        assert!(from_now("/api/panes/3/tail", "from=100&follow=1", 100).is_ok());
+        assert!(from_now("/api/panes/3/export.cast", "", 100).is_err());
+        assert!(from_now("/api/panes/3/process", "", 100).is_ok());
     }
 }

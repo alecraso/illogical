@@ -255,3 +255,23 @@ fn bad_checkpoints_are_rejected() {
     assert_eq!(GhosttyEngine::from_checkpoint(&corrupt).err(), Some(CheckpointError::Corrupt));
     assert_eq!(GhosttyEngine::from_checkpoint(&good[..good.len() / 2]).err(), Some(CheckpointError::Corrupt));
 }
+
+#[test]
+fn screen_snapshot_has_no_history() {
+    let mut a = GhosttyEngine::new(40, 5);
+    for i in 0..30 {
+        a.feed(format!("line {i}\r\n").as_bytes());
+    }
+    a.feed(b"on screen now");
+    assert!(a.plain_text().contains("line 0"));
+    let mut b = GhosttyEngine::new(40, 5);
+    b.feed(&a.screen_snapshot());
+    let text = b.plain_text();
+    assert!(!text.contains("line 0"), "history leaked: {text}");
+    assert!(!text.contains("line 25\n"), "history leaked: {text}");
+    assert!(text.contains("line 29") && text.contains("on screen now"), "screen lost: {text}");
+    // A full snapshot still has it all.
+    let mut c = GhosttyEngine::new(40, 5);
+    c.feed(&a.snapshot());
+    assert!(c.plain_text().contains("line 0"));
+}

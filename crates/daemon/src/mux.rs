@@ -13,8 +13,8 @@ use std::{
 
 use illogical_core::{Effect, Intent, Mux, Role};
 use illogical_proto::{
-    Attention, BlockType, ClientId, ClientMsg, CommandInfo, Event, EventKind, Machine, MachineId, MachineState, Owner,
-    PaneId, PaneInfo, PaneOp, Policy, ServerMsg, SessionId, State, TabId, TabView,
+    Attention, BlockType, ClientId, ClientMsg, CommandInfo, Driver, Event, EventKind, Machine, MachineId, MachineState,
+    Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, ServerMsg, SessionId, State, TabId, TabView,
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::Ask,
 };
@@ -105,8 +105,12 @@ pub enum Api {
     /// The asker gave up (Claude Code interrupted it): close the card.
     /// With a token, only if it's still that registration's.
     AskWithdraw(PaneId, Option<String>, Option<u64>),
-    /// Someone's role on the session a pane or block is in (M12).
-    RoleOn(crate::acl::Principal, PaneId, oneshot::Sender<Option<Role>>),
+    /// Someone's role on the session a pane or block is in (M12), and for
+    /// a "from now" share where its output may start for them (M13).
+    RoleOn(crate::acl::Principal, PaneId, oneshot::Sender<Option<(Role, Option<u64>)>>),
+    /// Where each pane of a session's output ends now (a "from now" share
+    /// starts there).
+    SessionEnds(SessionId, oneshot::Sender<Option<BTreeMap<PaneId, u64>>>),
 }
 
 /// What a terminal's question got.
@@ -168,6 +172,10 @@ impl MuxHandle {
 pub struct Config {
     /// Who else may reach which sessions (M12).
     pub acl: Arc<crate::acl::Acl>,
+    /// What to call the owner to others (M13): their login, else "owner".
+    pub owner_name: String,
+    /// The owner's picture, if the tailnet gave one.
+    pub owner_pic: Option<String>,
     pub shell: String,
     /// Arguments for an interactive shell, e.g. `["-l"]`.
     pub shell_args: Vec<String>,
@@ -342,6 +350,11 @@ struct Daemon {
     /// When each client was last told it can't type somewhere (once is
     /// enough while it keeps trying).
     refused: HashMap<ClientId, Instant>,
+    /// The tab each client shows (M13 presence).
+    viewing: HashMap<ClientId, TabId>,
+    /// Who drives each pane (M13), and panes in pair mode.
+    drivers: HashMap<PaneId, Driver>,
+    pair: std::collections::HashSet<PaneId>,
     /// Size each pane was last given.
     sizes: BTreeMap<PaneId, (u16, u16)>,
     config: Config,
@@ -389,6 +402,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         clients: HashMap::new(),
         focus: HashMap::new(),
         refused: HashMap::new(),
+        viewing: HashMap::new(),
+        drivers: HashMap::new(),
+        pair: Default::default(),
         sizes: BTreeMap::new(),
         config,
         store: store.clone(),
@@ -435,6 +451,7 @@ fn info_of(rec: CommandRec) -> CommandInfo {
         ended_ms: rec.ended_ms,
         start: rec.start,
         end: rec.end,
+        by: rec.by,
     }
 }
 
@@ -825,9 +842,19 @@ impl Daemon {
                 self.clients.insert(sub.client, sub);
             }
             Cmd::Disconnect { client } => {
-                self.clients.remove(&client);
+                let gone = self.clients.remove(&client).map(|c| c.principal);
                 self.focus.remove(&client);
                 self.refused.remove(&client);
+                self.viewing.remove(&client);
+                // Their last client left: they no longer drive anything.
+                if let Some(who) = gone
+                    && !self.clients.values().any(|c| c.principal.id() == who.id())
+                {
+                    self.drivers.retain(|_, d| d.who != who.id());
+                }
+                if !self.clients.is_empty() {
+                    self.broadcast();
+                }
                 for p in self.panes.values() {
                     p.detach(client);
                 }
@@ -836,12 +863,29 @@ impl Daemon {
                 }
             }
             Cmd::Input { client, pane, data } => {
-                if let Some(c) = client
-                    && let Some(why) = self.cant(c, &[pane], Role::Editor)
-                {
+                let Some(c) = client else { return self.input(pane, data, None) };
+                if let Some(why) = self.cant(c, &[pane], Role::Editor) {
                     return self.tell_once(c, why);
                 }
-                self.input(pane, data)
+                let Some(who) = self.clients.get(&c).map(|x| x.principal.clone()) else { return };
+                // One driver per pane, unless it's in pair mode: the first to
+                // type drives; anyone else is told how to take over.
+                if !self.pair.contains(&pane) {
+                    match self.drivers.get(&pane) {
+                        Some(d) if d.who != who.id() => {
+                            let why = format!("{} is driving this pane: take control (pane menu) or ask them", d.name);
+                            return self.tell_once(c, why);
+                        }
+                        Some(_) => {}
+                        None if self.panes.contains_key(&pane) => {
+                            self.drivers.insert(pane, self.driver_of(&who));
+                            self.broadcast();
+                        }
+                        None => {}
+                    }
+                }
+                let name = self.name_of(&who);
+                self.input(pane, data, Some(name))
             }
             Cmd::AclChanged => self.acl_changed(),
             Cmd::Msg { client, msg } => self.message(client, msg),
@@ -852,9 +896,12 @@ impl Daemon {
     }
 
     /// Someone typed in a pane: whatever it wanted, it has their attention.
-    fn input(&mut self, pane: PaneId, data: Vec<u8>) {
+    fn input(&mut self, pane: PaneId, data: Vec<u8>, by: Option<String>) {
         let Some(p) = self.panes.get(&pane) else { return };
-        p.input(data);
+        match by {
+            Some(by) => p.input_by(data, by),
+            None => p.input(data),
+        }
         // A question open beside it still wants an answer (typing in Claude
         // Code's prompt box doesn't answer it).
         if self.asks.contains_key(&pane) {
@@ -869,12 +916,26 @@ impl Daemon {
     fn api(&mut self, api: Api) {
         match api {
             Api::RoleOn(who, pane, reply) => {
-                let role = if who.is_owner() {
-                    Some(Role::Owner)
+                let r = if who.is_owner() {
+                    Some((Role::Owner, None))
                 } else {
-                    self.session_of(pane).and_then(|s| self.config.acl.role(&who, s))
+                    self.session_of(pane).and_then(|s| {
+                        let role = self.config.acl.role(&who, s)?;
+                        Some((role, self.config.acl.floor(&who, s, pane)))
+                    })
                 };
-                let _ = reply.send(role);
+                let _ = reply.send(r);
+            }
+            Api::SessionEnds(session, reply) => {
+                let ends = self.mux.session(session).ok().map(|s| {
+                    s.tabs
+                        .iter()
+                        .filter_map(|t| self.mux.tab(*t).ok())
+                        .flat_map(|t| t.root.panes())
+                        .filter_map(|p| self.panes.get(&p).map(|h| (p, h.status().end)))
+                        .collect()
+                });
+                let _ = reply.send(ends);
             }
             Api::Panes(reply) => {
                 let _ = reply.send(self.summaries());
@@ -1332,8 +1393,12 @@ impl Daemon {
                     if !self.sees(&who, a.pane) {
                         continue;
                     }
+                    let floor = self.session_of(a.pane).and_then(|s| self.config.acl.floor(&who, s, a.pane));
                     if let Some(p) = self.panes.get(&a.pane) {
-                        p.attach(sub.clone(), a.offset);
+                        match floor {
+                            Some(f) => p.attach_from(sub.clone(), a.offset, f),
+                            None => p.attach(sub.clone(), a.offset),
+                        }
                     }
                 }
             }
@@ -1345,6 +1410,9 @@ impl Daemon {
                 }
             }
             ClientMsg::View { tab, cols, rows, zoom, claim } => {
+                if self.viewing.insert(client, tab) != Some(tab) {
+                    self.broadcast();
+                }
                 // Only editors size a tab; viewers letterbox.
                 let editor = who.is_owner()
                     || self
@@ -1379,6 +1447,7 @@ impl Daemon {
                 let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Pong { id }));
             }
             ClientMsg::Focus { pane } => {
+                let before = self.focus.get(&client).copied();
                 match pane.filter(|p| self.sees(&who, *p)) {
                     Some(p) => {
                         self.focus.insert(client, p);
@@ -1391,10 +1460,16 @@ impl Daemon {
                         self.focus.remove(&client);
                     }
                 }
+                if self.focus.get(&client).copied() != before {
+                    self.broadcast();
+                }
             }
             ClientMsg::Pane { pane, op } => {
                 if let Some(why) = self.cant(client, &[pane], Role::Editor) {
                     let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id: None, message: why }));
+                    return;
+                }
+                if self.control_op(client, &who, pane, &op) {
                     return;
                 }
                 // Blocks of other types take what applies to them.
@@ -1429,6 +1504,12 @@ impl Daemon {
                         self.meta.entry(pane).or_default().integration = Some(on);
                     }
                     PaneOp::Attention { state } => self.set_attention(pane, state, "set by a client"),
+                    // Driving: handled before this.
+                    PaneOp::TakeControl
+                    | PaneOp::RequestControl
+                    | PaneOp::GiveControl { .. }
+                    | PaneOp::ReleaseControl
+                    | PaneOp::SetPair { .. } => {}
                 }
                 self.changed();
             }
@@ -1633,6 +1714,125 @@ impl Daemon {
         None
     }
 
+    fn name_of(&self, who: &Principal) -> String {
+        match who {
+            Principal::Owner => self.config.owner_name.clone(),
+            Principal::User { name, .. } => name.clone(),
+        }
+    }
+
+    fn driver_of(&self, who: &Principal) -> Driver {
+        Driver { who: who.id().to_owned(), name: self.name_of(who) }
+    }
+
+    fn tell(&self, who: &str, msg: ServerMsg) {
+        for c in self.clients.values().filter(|c| c.principal.id() == who) {
+            let _ = c.ctrl.send(ToClient::Msg(msg.clone()));
+        }
+    }
+
+    /// Driving a pane (M13). True if `op` was one of these.
+    fn control_op(&mut self, client: ClientId, who: &Principal, pane: PaneId, op: &PaneOp) -> bool {
+        let me = self.driver_of(who);
+        let title = format!("%{pane}");
+        match op {
+            PaneOp::TakeControl => {
+                if let Some(prev) = self.drivers.insert(pane, me.clone())
+                    && prev.who != me.who
+                {
+                    let message = format!("{} took control of {title}", me.name);
+                    self.tell(&prev.who, ServerMsg::Notice { message });
+                }
+                info!(pane, who = me.who, "took control");
+            }
+            PaneOp::RequestControl => match self.drivers.get(&pane).cloned() {
+                Some(d) if d.who != me.who && self.clients.values().any(|c| c.principal.id() == d.who) => {
+                    self.tell(&d.who, ServerMsg::ControlRequest { pane, who: me.who.clone(), name: me.name.clone() });
+                    if let Some(c) = self.clients.get(&client) {
+                        let message = format!("asked {} for control of {title}", d.name);
+                        let _ = c.ctrl.send(ToClient::Msg(ServerMsg::Notice { message }));
+                    }
+                    return true;
+                }
+                // Nobody (here) drives it: just take it.
+                _ => {
+                    self.drivers.insert(pane, me);
+                }
+            },
+            PaneOp::GiveControl { to } => {
+                let current = self.drivers.get(&pane).map(|d| d.who.clone());
+                if current.as_deref().is_some_and(|c| c != me.who) && !who.is_owner() {
+                    if let Some(c) = self.clients.get(&client) {
+                        let message = "only whoever drives it can hand it over".to_owned();
+                        let _ = c.ctrl.send(ToClient::Msg(ServerMsg::Error { id: None, message }));
+                    }
+                    return true;
+                }
+                let Some(to_who) = self.clients.values().map(|c| c.principal.clone()).find(|p| p.id() == to) else {
+                    return true;
+                };
+                let next = self.driver_of(&to_who);
+                let message = format!("{} handed you control of {title}", me.name);
+                self.drivers.insert(pane, next);
+                self.tell(to, ServerMsg::Notice { message });
+            }
+            PaneOp::ReleaseControl => {
+                if self.drivers.get(&pane).is_some_and(|d| d.who == me.who) {
+                    self.drivers.remove(&pane);
+                }
+            }
+            PaneOp::SetPair { on } => {
+                if *on {
+                    self.pair.insert(pane);
+                } else {
+                    self.pair.remove(&pane);
+                }
+            }
+            _ => return false,
+        }
+        self.broadcast();
+        true
+    }
+
+    /// Who is connected and where they look, within what `viewer` sees.
+    fn presence(&self, viewer: &Principal) -> Vec<Presence> {
+        let mut out: Vec<Presence> = self
+            .clients
+            .values()
+            .map(|c| Presence {
+                client: c.client,
+                who: c.principal.id().to_owned(),
+                name: self.name_of(&c.principal),
+                pic: match &c.principal {
+                    Principal::User { pic, .. } => pic.clone(),
+                    Principal::Owner => self.config.owner_pic.clone(),
+                },
+                tab: self.viewing.get(&c.client).copied(),
+                pane: self.focus.get(&c.client).copied(),
+            })
+            .filter(|p| {
+                viewer.is_owner()
+                    || p.who == viewer.id()
+                    || p.tab
+                        .and_then(|t| self.mux.session_of_tab(t).ok())
+                        .and_then(|s| self.config.acl.role(viewer, s))
+                        .is_some()
+            })
+            .map(|mut p| {
+                // Only where the viewer can see.
+                if !viewer.is_owner() {
+                    p.pane = p.pane.filter(|x| self.sees(viewer, *x));
+                    p.tab = p.tab.filter(|t| {
+                        self.mux.session_of_tab(*t).ok().and_then(|s| self.config.acl.role(viewer, s)).is_some()
+                    });
+                }
+                p
+            })
+            .collect();
+        out.sort_by_key(|p| p.client);
+        out
+    }
+
     fn tell_once(&mut self, client: ClientId, message: String) {
         let now = Instant::now();
         if self.refused.get(&client).is_some_and(|t| now.duration_since(*t) < Duration::from_secs(5)) {
@@ -1681,6 +1881,7 @@ impl Daemon {
     /// role in each.
     fn state_for(&self, who: &Principal) -> State {
         let mut st = self.state();
+        st.presence = self.presence(who);
         if who.is_owner() {
             return st;
         }
@@ -1779,6 +1980,8 @@ impl Daemon {
             kind: BlockType::Terminal,
             host: meta.host,
             ask: self.asks.get(&p.id).map(|a| a.ask.clone()),
+            driver: self.drivers.get(&p.id).cloned(),
+            pair: self.pair.contains(&p.id),
         }
     }
 
@@ -1799,6 +2002,8 @@ impl Daemon {
             kind: b.kind(),
             host: meta.host,
             ask: None,
+            driver: None,
+            pair: false,
         }
     }
 
@@ -1855,6 +2060,15 @@ impl Daemon {
         panes.sort_by_key(|p| p.id);
         let machines = self.machines.values().cloned().collect();
         let options = Box::new(self.mux.options.clone());
-        State { rev: self.mux.rev, sessions: self.mux.sessions.clone(), tabs, panes, machines, options, roles: None }
+        State {
+            rev: self.mux.rev,
+            sessions: self.mux.sessions.clone(),
+            tabs,
+            panes,
+            machines,
+            options,
+            roles: None,
+            presence: Vec::new(),
+        }
     }
 }

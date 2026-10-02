@@ -63,6 +63,16 @@ pub enum PaneOp {
     SetIntegration { on: bool },
     /// Set the pane's attention state (a client dismissing a badge).
     Attention { state: Attention },
+    /// Drive it now (M13); whoever drove it is told.
+    TakeControl,
+    /// Ask whoever drives it to hand over.
+    RequestControl,
+    /// Hand over to `to` (a principal id).
+    GiveControl { to: String },
+    /// Stop driving it: the next to type will.
+    ReleaseControl,
+    /// Pair mode: everyone who may edit types at once.
+    SetPair { on: bool },
 }
 
 /// Whether a pane wants you: the cheap version of an "agent block".
@@ -92,6 +102,9 @@ pub struct CommandInfo {
     /// Stream offsets of its output: `tail --from start`.
     pub start: u64,
     pub end: Option<u64>,
+    /// Who started it (M13), when someone other than the owner might have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
 }
 
 /// Something that happened, as streamed by `illogical events` and the event
@@ -193,6 +206,11 @@ pub enum ServerMsg {
     Block { block: PaneId, state: serde_json::Value },
     /// The answer to [`ClientMsg::Ping`].
     Pong { id: u64 },
+    /// Something to show briefly that isn't an error (M13: someone took
+    /// control of a pane you drove).
+    Notice { message: String },
+    /// `who` asks to drive `pane`, which this client's person drives.
+    ControlRequest { pane: PaneId, who: String, name: String },
 }
 
 /// Everything a client needs to draw: sessions in order, each tab's tree
@@ -215,6 +233,10 @@ pub struct State {
     /// owner, who owns everything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<Vec<(SessionId, illogical_core::Role)>>,
+    /// Who else is here and where they're looking (M13), within what this
+    /// client sees.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presence: Vec<Presence>,
 }
 
 pub type MachineId = u32;
@@ -357,6 +379,37 @@ pub struct PaneInfo {
     /// its hook), drawn as a card beside it (M6c).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<ask::Ask>,
+    /// Who is driving it (M13): only their typing reaches it, unless it's
+    /// in pair mode. `None`: nobody yet (the next to type drives).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver: Option<Driver>,
+    /// Pair mode: every editor types at once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pair: bool,
+}
+
+/// A pane's driver (M13).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Driver {
+    /// Principal id (`owner`, `tailnet:<login>`, `account:<id>`).
+    pub who: String,
+    pub name: String,
+}
+
+/// Someone looking at the daemon (M13): one per connected client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Presence {
+    pub client: ClientId,
+    /// Principal id: one person's clients share it.
+    pub who: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pic: Option<String>,
+    /// The tab it shows, and the pane it's focused on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<TabId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
 }
 
 fn yes() -> bool {
@@ -502,6 +555,7 @@ mod tests {
             machines: vec![],
             options: Box::new(options),
             roles: Some(vec![(1, illogical_core::Role::Viewer), (4, illogical_core::Role::Editor)]),
+            presence: vec![],
         };
         let msg = ServerMsg::State { state };
         let back: ServerMsg = serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();

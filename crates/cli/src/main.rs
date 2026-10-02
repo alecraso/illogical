@@ -321,6 +321,13 @@ enum Command {
         #[arg(long, value_name = "HOST")]
         synced: Option<String>,
     },
+    /// A pane's commands and who ran each; `--who`: who typed in it over
+    /// time (each handoff).
+    Log {
+        pane: Option<Pane>,
+        #[arg(long)]
+        who: bool,
+    },
     /// Search the output of every pane.
     Search {
         re: String,
@@ -1072,12 +1079,45 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 };
                 let closed = if c["open"].as_bool() == Some(false) { " (closed)" } else { "" };
                 let host = c["host"].as_str().map(|h| format!("{h}:")).unwrap_or_default();
+                let by = c["by"].as_str().map(|b| format!("  by {b}")).unwrap_or_default();
                 println!(
-                    "{exit}  {host}%{:<4} {:>8}  {}{closed}   [{}]",
+                    "{exit}  {host}%{:<4} {:>8}  {}{closed}   [{}]{by}",
                     c["pane"],
                     time(c["started_ms"].as_u64().unwrap_or(0)),
                     c["text"].as_str().unwrap_or("?"),
                     c["cwd"].as_str().unwrap_or("")
+                );
+            }
+        }
+        Command::Log { pane, who } => {
+            let id = here(pane)?;
+            if !who {
+                let v = request(&sock, "GET", &format!("/api/history?pane={id}&limit=1000"), None)?.json()?;
+                if json_out {
+                    print_json(&v);
+                    return Ok(0);
+                }
+                for c in v.as_array().into_iter().flatten() {
+                    println!(
+                        "{:>8}  {:<16} {}",
+                        time(c["started_ms"].as_u64().unwrap_or(0)),
+                        c["by"].as_str().unwrap_or("-"),
+                        c["text"].as_str().unwrap_or("?")
+                    );
+                }
+                return Ok(0);
+            }
+            let v = request(&sock, "GET", &format!("/api/panes/{id}/drivers"), None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            for d in v.as_array().into_iter().flatten() {
+                println!(
+                    "{:>8}  @{:<10} {}",
+                    time(d["at_ms"].as_u64().unwrap_or(0)),
+                    d["offset"],
+                    d["who"].as_str().unwrap_or("")
                 );
             }
         }
