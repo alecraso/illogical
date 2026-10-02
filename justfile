@@ -77,6 +77,13 @@ e2e url="":
     {{cargo}} build -p illogicald
     cd web && pnpm run build && E2E_BASE_URL="{{url}}" pnpm exec playwright test
 
+# The images in site/img/, from a throwaway daemon with a demo HOME and a
+# scripted agent (web/screenshots/). Needs nvim for the editor pane.
+screenshots:
+    {{cargo}} build -p illogicald -p illogical
+    cd web && pnpm run build && pnpm exec playwright test -c screenshots.config.ts
+    scripts/webp
+
 # M4a for real: a wisp sprite installs the static daemon on the tailnet and
 # joins a throwaway home daemon's list; the phone gets vim there. Needs
 # ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE (an ephemeral tag:sandbox key) and wispd.
