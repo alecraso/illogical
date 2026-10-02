@@ -283,9 +283,11 @@ pub fn last_tool(state: &Value) -> Value {
     entries(state).into_iter().rev().find(|e| e["type"] == "tool").unwrap_or_default()
 }
 
+/// Running: it exists and isn't a zombie (`ps`, so it works without /proc).
 pub fn alive(pid: u64) -> bool {
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
-        && !std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default().contains(") Z ")
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout);
+    !stat.trim().is_empty() && !stat.trim_start().starts_with('Z')
 }
 
 /// A phone subscribed to push notifications: a push service of our own,

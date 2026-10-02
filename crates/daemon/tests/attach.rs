@@ -90,6 +90,17 @@ enum In {
     Frame(Frame),
 }
 
+/// The next message that isn't a layout update: what attaching sends (size,
+/// then snapshot), even if a state change (a pane's cwd, say) lands first.
+async fn recv_attach(ws: &mut Ws) -> In {
+    loop {
+        match recv(ws).await {
+            In::Msg(ServerMsg::State { .. }) => {}
+            m => return m,
+        }
+    }
+}
+
 async fn recv(ws: &mut Ws) -> In {
     loop {
         let msg = timeout(Duration::from_secs(5), ws.next()).await.expect("timed out").unwrap().unwrap();
@@ -178,8 +189,8 @@ async fn fresh_attach_gets_size_then_snapshot() {
     let d = start().await;
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, None).await;
-    assert!(matches!(recv(&mut ws).await, In::Msg(ServerMsg::Size { pane: 1, cols: 80, rows: 24, .. })));
-    let In::Frame(f) = recv(&mut ws).await else { panic!("expected snapshot") };
+    assert!(matches!(recv_attach(&mut ws).await, In::Msg(ServerMsg::Size { pane: 1, cols: 80, rows: 24, .. })));
+    let In::Frame(f) = recv_attach(&mut ws).await else { panic!("expected snapshot") };
     assert_eq!(f.kind, FrameKind::Snapshot);
 }
 
@@ -188,8 +199,8 @@ async fn reconnect_resumes_from_offset_without_gaps() {
     let d = start().await;
     let (mut ws, epoch) = connect(&d).await;
     attach(&mut ws, None).await;
-    let _size = recv(&mut ws).await;
-    let In::Frame(snap) = recv(&mut ws).await else { panic!() };
+    let _size = recv_attach(&mut ws).await;
+    let In::Frame(snap) = recv_attach(&mut ws).await else { panic!() };
     type_line(&mut ws, "echo hello-$((40+2))").await;
     let end = read_until(&mut ws, Some(snap.offset), "hello-42").await;
     drop(ws);
@@ -217,8 +228,8 @@ async fn unknown_offset_falls_back_to_snapshot() {
     let d = start().await;
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, Some(10_000_000)).await;
-    let _size = recv(&mut ws).await;
-    let In::Frame(f) = recv(&mut ws).await else { panic!() };
+    let _size = recv_attach(&mut ws).await;
+    let In::Frame(f) = recv_attach(&mut ws).await else { panic!() };
     assert_eq!(f.kind, FrameKind::Snapshot);
 }
 
@@ -227,7 +238,7 @@ async fn snapshot_shows_a_full_screen_app() {
     let d = start().await;
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, None).await;
-    let _ = (recv(&mut ws).await, recv(&mut ws).await);
+    let _ = (recv_attach(&mut ws).await, recv_attach(&mut ws).await);
     // A tiny full-screen "app": alt screen, draw, wait.
     type_line(&mut ws, r"printf '\e[?1049h\e[H\e[2JFULLSCREEN-%s' $((6*7)); sleep 30").await;
     read_until(&mut ws, None, "FULLSCREEN-42").await;
@@ -235,8 +246,8 @@ async fn snapshot_shows_a_full_screen_app() {
 
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, None).await;
-    let _size = recv(&mut ws).await;
-    let In::Frame(f) = recv(&mut ws).await else { panic!() };
+    let _size = recv_attach(&mut ws).await;
+    let In::Frame(f) = recv_attach(&mut ws).await else { panic!() };
     let text = String::from_utf8_lossy(&f.data);
     assert!(text.contains("\x1b[?1049h"), "snapshot enters the alt screen");
     assert!(text.contains("FULLSCREEN-42"), "snapshot has the app's screen");
@@ -278,7 +289,7 @@ async fn slow_client_is_resynced() {
     let d = start().await;
     let (mut ws, _) = connect(&d).await;
     attach(&mut ws, None).await;
-    let _ = (recv(&mut ws).await, recv(&mut ws).await);
+    let _ = (recv_attach(&mut ws).await, recv_attach(&mut ws).await);
     type_line(&mut ws, "head -c 300000000 /dev/zero | tr '\\0' x").await;
     // Don't read while the output piles up.
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -451,8 +462,10 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     let snap = attach_pane(&mut ws, 1).await;
     assert!(snap.contains("marker-42"), "scrollback restored");
     assert!(snap.contains("restored"), "restore marker");
-    type_in(&mut ws, 1, "echo cwd=$(pwd)").await;
-    read_pane_until(&mut ws, 1, "cwd=/tmp").await;
+    // Physical paths: /tmp is a link to /private/tmp on macOS.
+    type_in(&mut ws, 1, "echo cwd=$(pwd -P)").await;
+    let tmp = std::fs::canonicalize("/tmp").unwrap();
+    read_pane_until(&mut ws, 1, &format!("cwd={}", tmp.display())).await;
 
     // The rerun pane shows what it would run; Enter runs it.
     let snap = attach_pane(&mut ws, 2).await;

@@ -7,6 +7,10 @@
 //! netstack forwarded to loopback. That second case matters: without it,
 //! anyone the tailnet ACL lets reach the sandbox would look like a local
 //! process.
+//!
+//! The Tailscale app on macOS has no such socket (its API is on a loopback
+//! port with a token); there the app's CLI is asked instead, which prints
+//! the same JSON.
 
 use std::{
     net::{IpAddr, SocketAddr},
@@ -25,8 +29,18 @@ const DEFAULT_SOCKETS: [&str; 2] = ["/run/tailscale/tailscaled.sock", "/var/run/
 
 #[derive(Debug, Clone)]
 pub struct LocalApi {
-    socket: PathBuf,
+    via: Via,
 }
+
+#[derive(Debug, Clone)]
+enum Via {
+    Socket(PathBuf),
+    /// The `tailscale` CLI (the macOS app's).
+    Cli(PathBuf),
+}
+
+/// The macOS app's CLI, wherever the app is.
+const APP_CLI: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 
 /// What Tailscale says about this machine.
 #[derive(Debug, Clone)]
@@ -43,21 +57,46 @@ pub struct Status {
 }
 
 impl LocalApi {
-    /// The given socket, else tailscaled's default one if it exists.
+    /// The given socket, else tailscaled's default one if it exists, else
+    /// (macOS) the Tailscale app's CLI.
     pub fn find(explicit: Option<&Path>) -> Option<Self> {
-        match explicit {
-            Some(p) => Some(Self { socket: p.to_owned() }),
-            None => DEFAULT_SOCKETS.iter().map(Path::new).find(|p| p.exists()).map(|p| Self { socket: p.to_owned() }),
+        let socket = match explicit {
+            Some(p) => Some(p.to_owned()),
+            None => DEFAULT_SOCKETS.iter().map(Path::new).find(|p| p.exists()).map(Path::to_owned),
+        };
+        if let Some(socket) = socket {
+            return Some(Self { via: Via::Socket(socket) });
         }
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        Path::new(APP_CLI).exists().then(|| Self { via: Via::Cli(PathBuf::from(APP_CLI)) })
+    }
+
+    /// `tailscale ARGS…`: its stdout on success, else what it said.
+    async fn cli(&self, cli: &Path, args: &[&str]) -> anyhow::Result<Result<Vec<u8>, String>> {
+        let out = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::process::Command::new(cli).args(args).kill_on_drop(true).output(),
+        )
+        .await
+        .context("tailscale didn't answer")?
+        .with_context(|| format!("running {}", cli.display()))?;
+        Ok(if out.status.success() {
+            Ok(out.stdout)
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+        })
     }
 
     /// One GET; the status and body. The local API wants exactly this Host
     /// (its own defence against DNS rebinding).
     async fn get(&self, path: &str) -> anyhow::Result<(u16, Vec<u8>)> {
         let go = async {
-            let mut s = tokio::net::UnixStream::connect(&self.socket)
+            let Via::Socket(socket) = &self.via else { bail!("no tailscaled socket") };
+            let mut s = tokio::net::UnixStream::connect(socket)
                 .await
-                .with_context(|| format!("connecting to {}", self.socket.display()))?;
+                .with_context(|| format!("connecting to {}", socket.display()))?;
             let req = format!("GET {path} HTTP/1.0\r\nHost: local-tailscaled.sock\r\nConnection: close\r\n\r\n");
             s.write_all(req.as_bytes()).await?;
             let mut buf = Vec::new();
@@ -68,6 +107,11 @@ impl LocalApi {
     }
 
     async fn status_json(&self) -> anyhow::Result<Value> {
+        if let Via::Cli(cli) = &self.via {
+            let out =
+                self.cli(cli, &["status", "--json"]).await?.map_err(|e| anyhow::anyhow!("tailscale status: {e}"))?;
+            return Ok(serde_json::from_slice(&out)?);
+        }
         let (code, body) = self.get("/localapi/v0/status").await?;
         if code != 200 {
             bail!("tailscaled status: HTTP {code}");
@@ -103,6 +147,13 @@ impl LocalApi {
     /// `None` if tailscaled doesn't know it: then it isn't a tailnet
     /// connection.
     pub async fn whois(&self, addr: SocketAddr) -> anyhow::Result<Option<Peer>> {
+        if let Via::Cli(cli) = &self.via {
+            return match self.cli(cli, &["whois", "--json", &addr.to_string()]).await? {
+                Ok(out) => Ok(Some(parse_whois(&serde_json::from_slice(&out)?))),
+                Err(e) if e.contains("not found") => Ok(None),
+                Err(e) => bail!("tailscale whois: {e}"),
+            };
+        }
         let (code, body) = self.get(&format!("/localapi/v0/whois?proto=tcp&addr={addr}")).await?;
         match code {
             200 => Ok(Some(parse_whois(&serde_json::from_slice(&body)?))),

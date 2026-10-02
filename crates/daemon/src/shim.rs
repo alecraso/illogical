@@ -41,7 +41,7 @@ pub fn run(args: &[String]) -> ! {
             // shell does job control as if the daemon had started it.
             let _ = setsid();
             // SAFETY: TIOCSCTTY on our stdin, the PTY slave.
-            unsafe { libc::ioctl(0, libc::TIOCSCTTY, 0) };
+            unsafe { libc::ioctl(0, libc::TIOCSCTTY as _, 0) };
             let err = execvp(&cargs[0], &cargs).unwrap_err();
             let _ = writeln!(std::io::stderr(), "illogical: can't run {}: {err}\r", argv[0]);
             std::process::exit(127);
@@ -105,14 +105,10 @@ fn append(path: &str, line: &str) {
     }
 }
 
-/// A process's start time (clock ticks since boot), field 22 of
-/// /proc/PID/stat. With the pid it identifies a process even if the pid is
-/// later reused.
+/// A process's start time. With the pid it identifies a process even if the
+/// pid is later reused.
 pub fn start_time(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // Fields after the command, which is in parentheses and may contain
-    // spaces; starttime is the 20th of them.
-    stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()
+    crate::procinfo::start_time(pid)
 }
 
 /// What a record says about the program.

@@ -273,29 +273,23 @@ impl PaneHandle {
     fn pid(&self) -> Option<u32> {
         Some(self.pid.load(Ordering::Relaxed)).filter(|p| *p != 0)
     }
-    /// The process's working directory, from /proc.
+    /// The process's working directory, from the OS.
     pub fn cwd(&self) -> Option<PathBuf> {
-        std::fs::read_link(format!("/proc/{}/cwd", self.pid()?)).ok()
+        crate::procinfo::cwd(self.pid()?)
     }
     /// The command in the foreground, if it isn't the shell itself: what
     /// "re-run" would run again. It is the foreground process's command line
-    /// as /proc shows it now, so `bash -c 'a; b'` that exec'd into `b` reads
+    /// as the OS shows it now, so `bash -c 'a; b'` that exec'd into `b` reads
     /// as `b`; the typed command line needs shell integration (M3).
     pub fn command(&self) -> Option<String> {
         let shell = self.pid()?;
         // The shell is a session leader; its foreground job is the
         // terminal's foreground process group.
-        let fg = std::fs::read_to_string(format!("/proc/{shell}/stat")).ok()?;
-        let tpgid: i32 = fg.rsplit_once(')')?.1.split_whitespace().nth(5)?.parse().ok()?;
-        if tpgid <= 0 || tpgid as u32 == shell {
+        let tpgid = crate::procinfo::foreground(shell)?;
+        if tpgid == shell {
             return None;
         }
-        let raw = std::fs::read(format!("/proc/{tpgid}/cmdline")).ok()?;
-        let args: Vec<String> = raw
-            .split(|b| *b == 0)
-            .filter(|a| !a.is_empty())
-            .map(|a| shell_quote(&String::from_utf8_lossy(a)))
-            .collect();
+        let args: Vec<String> = crate::procinfo::argv(tpgid)?.iter().map(|a| shell_quote(a)).collect();
         (!args.is_empty()).then(|| args.join(" "))
     }
 }
@@ -612,13 +606,11 @@ static NEXT_EXEC: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 /// Wait for a process that may not be our child (a restarted daemon is no
 /// longer its parent), then read how it ended from the shim's record.
 fn wait_for_exit(pid: u32, record: &Path) -> (Option<i32>, Option<i32>) {
-    // SAFETY: pidfd_open takes a pid and flags and returns a new fd.
-    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) } as i32;
-    if fd >= 0 {
-        let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
-        // SAFETY: one valid pollfd; the fd is ours and closed below.
-        while unsafe { libc::poll(&mut pfd, 1, -1) } < 0 {}
-        unsafe { libc::close(fd) };
+    if !crate::procinfo::wait_gone(pid) {
+        // Can't be watched: poll until it's gone.
+        while crate::procinfo::start_time(pid).is_some() {
+            thread::sleep(Duration::from_millis(200));
+        }
     }
     // The shim writes the status right after reaping; give it a moment.
     for _ in 0..200 {
@@ -1228,6 +1220,10 @@ impl State {
             self.last_time_mark = Instant::now();
             self.index(offset, Event::Time { at_ms: now_ms() });
         }
+        // Move the end first: a command that ends in this chunk becomes
+        // `last` below, and input sent once that's visible must be marked
+        // after it, or `send` then `wait` would get that command again.
+        self.status.lock().unwrap().end = end;
         for (at, signal) in self.scanner.feed(data, offset) {
             self.signal(at, signal);
         }

@@ -111,9 +111,19 @@ pub struct LocalSpawn<'a> {
     pub launch: &'a Launcher,
 }
 
+/// A pipe whose ends aren't inherited (`pipe2` doesn't exist on macOS).
+fn pipe_cloexec() -> nix::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
+    use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+    let (r, w) = nix::unistd::pipe()?;
+    for fd in [&r, &w] {
+        fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
+    }
+    Ok((r, w))
+}
+
 /// Start an agent server on this host.
 pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
-    let (in_r, in_w) = nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)?;
+    let (in_r, in_w) = pipe_cloexec()?;
     let (ours, theirs) = UnixStream::pair()?;
     let record = record_path(s.dir);
     let _ = std::fs::remove_file(&record);

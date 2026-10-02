@@ -519,27 +519,15 @@ async fn process(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Proce
         return guest_process(&app, id, &m).await;
     }
     let pid = p.pid_now().ok_or_else(|| ApiError(StatusCode::CONFLICT, "nothing is running in that pane".into()))?;
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
-    let tpgid: u32 = stat
-        .rsplit_once(')')
-        .and_then(|(_, rest)| rest.split_whitespace().nth(5)?.parse::<i32>().ok())
-        .filter(|t| *t > 0)
-        .map(|t| t as u32)
-        .unwrap_or(pid);
-    let argv: Vec<String> = std::fs::read(format!("/proc/{tpgid}/cmdline"))
-        .unwrap_or_default()
-        .split(|b| *b == 0)
-        .filter(|a| !a.is_empty())
-        .map(|a| String::from_utf8_lossy(a).into_owned())
-        .collect();
-    let link = |what: &str| std::fs::read_link(format!("/proc/{tpgid}/{what}")).ok().map(|p| p.display().to_string());
+    use crate::procinfo;
+    let tpgid = procinfo::foreground(pid).unwrap_or(pid);
     Ok(Json(Process {
         pid,
         foreground: tpgid,
-        comm: std::fs::read_to_string(format!("/proc/{tpgid}/comm")).unwrap_or_default().trim().to_owned(),
-        argv,
-        exe: link("exe"),
-        cwd: link("cwd"),
+        comm: procinfo::comm(tpgid).unwrap_or_default(),
+        argv: procinfo::argv(tpgid).unwrap_or_default(),
+        exe: procinfo::exe(tpgid).map(|p| p.display().to_string()),
+        cwd: procinfo::cwd(tpgid).map(|p| p.display().to_string()),
     }))
 }
 

@@ -196,8 +196,7 @@ impl Scope {
         }
         let f =
             OpenOptions::new().read(true).custom_flags(flags.bits()).open(real).map_err(|e| FsError::io(real, e))?;
-        let opened =
-            std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).map_err(|e| FsError::io(real, e))?;
+        let opened = crate::procinfo::fd_path(f.as_raw_fd()).map_err(|e| FsError::io(real, e))?;
         if opened != real {
             return Err(FsError::Denied(format!("{}: changed while it was opened", real.display())));
         }
@@ -207,13 +206,11 @@ impl Scope {
     pub fn list(&self, path: &str, dirs_only: bool) -> Res<FsList> {
         let real = self.resolve(path)?;
         let dir = self.open(&real, true)?;
-        let entries =
-            std::fs::read_dir(format!("/proc/self/fd/{}", dir.as_raw_fd())).map_err(|e| FsError::io(&real, e))?;
+        let entries = crate::procinfo::list_dir(&dir, &real).map_err(|e| FsError::io(&real, e))?;
         let mut out = Vec::new();
         let mut truncated = false;
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let Ok(meta) = e.metadata() else { continue };
+        for (name, meta) in entries {
+            let name = name.to_string_lossy().into_owned();
             let entry = entry_of(&real.join(&name), &name, &meta);
             if dirs_only && !entry.is_dir() {
                 continue;
@@ -723,10 +720,19 @@ mod tests {
         symlink("/proc/self", home.join("me")).unwrap();
         symlink(&state, home.join("st")).unwrap();
         let s = Scope::new(home.clone(), vec![state.clone()]);
-        for p in ["/proc/self/environ", "/proc/1/environ", "~/env", "~/me/environ", "/sys/kernel", "/dev/zero"] {
+        // macOS has no /proc (or /sys) for the links to lead into.
+        let (reads, lists): (&[&str], &[&str]) = if cfg!(target_os = "linux") {
+            (
+                &["/proc/self/environ", "/proc/1/environ", "~/env", "~/me/environ", "/sys/kernel", "/dev/zero"],
+                &["/proc", "~/me", "~/st", "~/state", "/tmp/../proc/self"],
+            )
+        } else {
+            (&["/proc/self/environ", "/dev/zero"], &["~/st", "~/state"])
+        };
+        for p in reads {
             assert!(matches!(s.read(p, 0, 10), Err(FsError::Denied(_))), "{p}");
         }
-        for p in ["/proc", "~/me", "~/st", "~/state", "/tmp/../proc/self"] {
+        for p in lists {
             assert!(matches!(s.list(p, false), Err(FsError::Denied(_))), "{p}");
         }
         assert!(matches!(s.read("~/st/key", 0, 10), Err(FsError::Denied(_))));

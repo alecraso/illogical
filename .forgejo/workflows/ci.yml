@@ -42,3 +42,11 @@ jobs:
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
+
+      # No macOS runner: check that the Apple silicon build still compiles
+      # (Zig as its C compiler; linking and tests need a Mac).
+      - name: Rust (macOS, check only)
+        run: |
+          rustup target add aarch64-apple-darwin
+          CC_aarch64_apple_darwin="$PWD/scripts/zig-cc-macos" AR_aarch64_apple_darwin="$PWD/scripts/zig-ar" \
+            cargo clippy --target aarch64-apple-darwin --workspace --all-targets -- -D warnings

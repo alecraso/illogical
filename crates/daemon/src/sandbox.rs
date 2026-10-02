@@ -422,8 +422,8 @@ fn running_supervisor(config: &Config) -> Option<Pid> {
     let pid: i32 = fs::read_to_string(config.pidfile()).ok()?.trim().parse().ok()?;
     let pid = Pid::from_raw(pid);
     // Alive, and ours (not a recycled pid).
-    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    let is_ours = cmdline.split(|b| *b == 0).nth(1) == Some(b"sandbox");
+    let argv = crate::procinfo::argv(pid.as_raw() as u32)?;
+    let is_ours = argv.get(1).map(String::as_str) == Some("sandbox");
     (kill(pid, None).is_ok() && is_ours).then_some(pid)
 }
 
