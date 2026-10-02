@@ -20,6 +20,9 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
+const OWNER: &str = "me@example.com";
+const FRIEND: &str = "friend@example.com";
+
 fn fake_claude() -> String {
     format!("{}/tests/fake_claude.py", env!("CARGO_MANIFEST_DIR"))
 }
@@ -35,7 +38,15 @@ fn setup(tag: &str) -> Setup {
     let locks = std::env::temp_dir().join(format!("ilg-ide-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&locks);
     let d = Daemon::child_env(
-        &["--keep-panes", "--wisp-token-file", "/nonexistent"],
+        &[
+            "--keep-panes",
+            "--wisp-token-file",
+            "/nonexistent",
+            "--owner",
+            OWNER,
+            "--tailscale-socket",
+            "/nonexistent/sock",
+        ],
         &[("ILLOGICAL_CLAUDE_IDE_DIR", locks.to_str().unwrap()), ("ILLOGICAL_KEEP_GRACE_MS", "20000")],
     );
     Setup { d, locks }
@@ -294,4 +305,59 @@ async fn diffs_can_go_to_another_ide() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "from claude\n# from the other IDE\n");
     assert!(info(d, pane)["diff"].is_null(), "no card here: it went to the other IDE");
     task.abort();
+}
+
+/// Watching a session isn't answering for it: a viewer sees the diff, and
+/// can't accept it; an editor can (M12).
+#[tokio::test(flavor = "multi_thread")]
+async fn only_those_who_may_drive_answer_a_diff() {
+    let s = setup("roles");
+    let d = &s.d;
+    let pane = tokio::task::block_in_place(|| claude(d));
+    let file = d.sessions.join("shared.txt");
+    std::fs::write(&file, "before\n").unwrap();
+    tokio::task::block_in_place(|| {
+        say(d, pane, &format!("edit {} after\\n", file.display()));
+        d.wait_for("a diff", || info(d, pane)["diff"].is_object());
+    });
+    let session = info(d, pane)["session"].as_u64().unwrap();
+    let http = reqwest::Client::new();
+    let url = |p: &str| format!("http://127.0.0.1:{}{p}", d.port);
+    let accept = || {
+        http.post(url("/api/attention/act"))
+            .header("tailscale-user-login", FRIEND)
+            .json(&json!({ "action": "accept", "pane": pane }))
+            .send()
+    };
+    // A stranger: nothing.
+    assert!([403, 404].contains(&accept().await.unwrap().status().as_u16()));
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "viewer" }));
+    // A viewer sees it...
+    let r =
+        http.get(url(&format!("/api/panes/{pane}/diff"))).header("tailscale-user-login", FRIEND).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.json::<Value>().await.unwrap()["new"], "after\n");
+    // ...and can't accept it.
+    let r = accept().await.unwrap();
+    assert_eq!(r.status(), 403, "{}", r.text().await.unwrap());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
+    // Someone who may drive the session can.
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "editor" }));
+    assert_eq!(accept().await.unwrap().status(), 200);
+    tokio::task::block_in_place(|| wait_text(d, pane, "result FILE_SAVED"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "after\n");
+    let answered = &info(d, pane)["answered"];
+    assert_eq!(
+        (answered["how"].as_str(), answered["who"].as_str()),
+        (Some("accepted"), Some(format!("tailnet:{FRIEND}").as_str()))
+    );
+    // Which IDE gets diffs is the owner's to say.
+    let r = http
+        .put(url("/api/ide"))
+        .header("tailscale-user-login", FRIEND)
+        .json(&json!({ "diffs": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
 }

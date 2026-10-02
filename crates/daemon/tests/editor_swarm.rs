@@ -30,7 +30,11 @@ struct Editor {
 
 impl Editor {
     async fn join(d: &Daemon, hello: Value) -> Self {
-        let mut s = UnixStream::connect(d.sock()).await.unwrap();
+        Self::join_at(&d.sock(), hello).await
+    }
+
+    async fn join_at(sock: &std::path::Path, hello: Value) -> Self {
+        let mut s = UnixStream::connect(sock).await.unwrap();
         s.write_all(
             b"GET /api/editors/connect HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: illogical-editor\r\n\r\n",
         )
@@ -356,9 +360,10 @@ async fn nvim_joins_follows_and_leaves() {
     let deadline = Instant::now() + Duration::from_secs(15);
     let id = loop {
         web.pump(Duration::from_millis(100)).await;
-        let found = web.state.as_ref().and_then(|s| {
-            s.panes.iter().find(|p| p.editor.as_ref().is_some_and(|e| e.app == "nvim")).map(|p| p.id)
-        });
+        let found = web
+            .state
+            .as_ref()
+            .and_then(|s| s.panes.iter().find(|p| p.editor.as_ref().is_some_and(|e| e.app == "nvim")).map(|p| p.id));
         if let Some(id) = found {
             break id;
         }
@@ -377,7 +382,11 @@ async fn nvim_joins_follows_and_leaves() {
     assert_eq!(edit["edit"]["changes"][0], json!({ "range": [3, 0, 4, 0], "text": "hree\n" }));
     // Deleting the last line: the newline before it goes too.
     keys("Gdd");
-    let edit = web.followed("the last line deleted", |v| v["edit"]["changes"][0]["text"] == "" && v["edit"]["changes"][0]["range"][0] == 3).await;
+    let edit = web
+        .followed("the last line deleted", |v| {
+            v["edit"]["changes"][0]["text"] == "" && v["edit"]["changes"][0]["range"][0] == 3
+        })
+        .await;
     assert_eq!(edit["edit"]["changes"][0]["range"], json!([3, 4, 5, 0]));
     // A save that leaves it unsaved-free, and the summary says so.
     keys(":w<CR>");
@@ -389,4 +398,71 @@ async fn nvim_joins_follows_and_leaves() {
     assert_eq!(remembered.trim(), "[]");
     let _ = nvim.kill();
     let _ = nvim.wait();
+}
+
+/// An editor isn't in any session: someone a session was shared with
+/// doesn't see it, its preview, or its stream (the owner's, and a team's
+/// members' on a team daemon).
+#[tokio::test(flavor = "multi_thread")]
+async fn guests_of_a_session_dont_see_editors() {
+    const FRIEND: &str = "friend@example.com";
+    let d = Daemon::child_with(&[
+        "--wisp-token-file",
+        "/nonexistent",
+        "--owner",
+        "me@example.com",
+        "--tailscale-socket",
+        "/nonexistent/sock",
+    ]);
+    let root = repo(&d);
+    let session = d.get("/api/panes")[0]["session"].as_u64().unwrap();
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "editor" }));
+    let ed = Editor::join(&d, json!({ "editor": "vscode", "workspace": root })).await;
+    let id = ed.id;
+    let http = reqwest::Client::new();
+    let get =
+        |p: String| http.get(format!("http://127.0.0.1:{}{p}", d.port)).header("tailscale-user-login", FRIEND).send();
+    assert_eq!(get("/api/editors".into()).await.unwrap().json::<Value>().await.unwrap(), json!([]));
+    assert!([403, 404].contains(&get(format!("/api/panes/{id}/capture")).await.unwrap().status().as_u16()));
+    // Their page: the session's panes, not the editor; following it is refused.
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+    req.headers_mut().insert("tailscale-user-login", FRIEND.parse().unwrap());
+    let (ws, _) = connect_async(req).await.unwrap();
+    let mut guest = Client { ws, state: None, follows: vec![] };
+    guest.pump(Duration::from_millis(500)).await;
+    let st = guest.state.as_ref().unwrap();
+    assert!(!st.panes.is_empty());
+    assert!(st.panes.iter().all(|p| p.id != id && p.editor.is_none()));
+    guest.send(ClientMsg::Follow { pane: id, on: true }).await;
+    guest.pump(Duration::from_millis(500)).await;
+    assert!(guest.follows.is_empty());
+    // The owner's does.
+    let mut me = Client::connect(&d).await;
+    me.until("the editor", id, |p| p.is_some()).await;
+}
+
+/// A dev container gets the editors' socket alone (its directory mounted):
+/// joining as an editor works there, and nothing else does.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_editors_socket_only_joins_editors() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = Daemon::child();
+    let root = repo(&d);
+    let dir = d.state.join("editors");
+    assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "the socket, and nothing else");
+    let sock = dir.join("sock");
+    let ed = Editor::join_at(&sock, json!({ "editor": "vscode", "remote": "dev-container", "workspace": root })).await;
+    let list = d.get("/api/editors");
+    assert_eq!(
+        (list[0]["pane"].as_u64(), list[0]["editor"]["remote"].as_str()),
+        (Some(ed.id as u64), Some("dev-container"))
+    );
+    // The daemon's API isn't there.
+    let mut s = UnixStream::connect(&sock).await.unwrap();
+    s.write_all(b"GET /api/panes HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await.unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    assert!(out.starts_with("HTTP/1.1 404"), "{out}");
 }

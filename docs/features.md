@@ -135,10 +135,61 @@ the daemon stopping, crashing, or the machine rebooting:
   - illogical's extension in each window reports the active file, the
     cursor and the lines around it: summaries say `kind: editor`, the
     project and `file`, and the swarm's preview (and `capture`) is those
-    lines. After a daemon restart the window reconnects to the same
-    session; after a reboot the block asks the new server for the file it
-    had. In a VM it opens the file it was opened on and doesn't follow the
-    cursor (the extension can't reach the daemon from there).
+    lines. It's the same extension as for your own VS Code (M28, below), so
+    a block can be followed and its debugger's stops are cards too. After a
+    daemon restart the window reconnects to the same session; after a
+    reboot the block asks the new server for the file it had. In a VM it
+    opens the file it was opened on and doesn't follow the cursor (the
+    extension can't reach the daemon from there).
+- **Your editor in the swarm** (M28). VS Code, Cursor or nvim on any of
+  your machines shows up in the swarm beside your panes: a tile of kind
+  editor in its project, with its file, its errors and unsaved files, and
+  the lines around its cursor as its preview.
+  - **Joining.** VS Code and Cursor: illogical's extension (`illogical
+    editors install`, or the VSIX from `illogical editors vsix`), then
+    *illogical: Show this workspace in the swarm*. nvim: `editors/nvim`
+    (illogical.nvim) and `:IllogicalJoin`. Each folder joins only when
+    asked, and that's remembered for it; *Take this workspace out of the
+    swarm* (`:IllogicalLeave`) removes it at once.
+  - **Where.** The editor talks to the illogical daemon on the machine its
+    files are on: under Remote-SSH the extension runs on the remote
+    machine, so it's that machine's daemon and that machine's cluster. In
+    a dev container, the dev container feature in `editors/devcontainer`
+    mounts the daemon's editors' socket (`<state>/editors/sock`, which lets
+    an editor join and nothing else).
+  - **Following.** Click its tile (or *Follow* on a card, or an editor
+    block's right-click) for a read-only view of the file it has open that
+    follows its cursor across files, with its selection, the file's
+    diagnostics and the debugger's line. The editor sends this only while
+    someone follows (its status bar says how many), only for files open in
+    it, and only to the people following, on their own end-to-end
+    connections; summaries carry no file contents or cursor, and control
+    sees only that an editor exists. From the view: *Continue* a paused
+    debugger, *Open here* (the same file and line in VS Code or Cursor on
+    this computer or over SSH to that machine, or in an editor block
+    there), and *Ask Claude* (puts `@file#L3-5` in Claude Code's prompt in
+    a terminal on that machine).
+  - **Cards on the rail.** The debugger stopping (*Continue*), errors that
+    a save brought, and a merge conflict that's open. Dismiss clears one.
+  - **Who sees it.** An editor isn't in a session: it's yours, and on a
+    team's daemon its members' by their team role. Following is viewer
+    access; *Continue* needs editor.
+- **illogicald as Claude Code's IDE** (M28). Claude Code in a pane
+  connects to illogicald the way it does to VS Code (every pane has
+  `CLAUDE_CODE_SSE_PORT`; `--no-claude-ide` turns it off), so each edit it
+  wants to make (Edit and Write, in default mode) waits as a diff card on
+  the pane and on the swarm's rail. *Accept* (or *Change…* first) and
+  Claude Code writes it; *Reject* and it doesn't. Its terminal prompt
+  still works: when the terminal answers first, the card closes and says
+  so. Anyone who may drive the pane's session may answer; viewers see the
+  diff. The connections are held by a small relay process that outlives a
+  daemon restart, so Claude Code (which never reconnects by itself) keeps
+  its IDE and the card comes back. illogicald registers with no workspace
+  folders, so Claude Code anywhere else never picks it; if you'd rather
+  have diffs in VS Code with Claude Code's extension, `illogical ide
+  --diffs "Visual Studio Code"` (or *Diffs here* on a card) passes them
+  there. Bash and other tools stay with the hooks in [*Claude Code in a
+  pane*](cli.md#claude-code-in-a-pane).
 - **Agent blocks** (M6b). An agent run as UI instead of a TUI: messages,
   thoughts, tool-call cards with each command's output in a read-only
   terminal, permission requests as Approve / Always / Deny cards (big
@@ -379,8 +430,8 @@ the daemon stopping, crashing, or the machine rebooting:
   to a rail of cards bundled by cause ("3 failed on build-02", "2 agents
   ask"), where you allow, deny, answer or dismiss them all at once, and
   send an agent its next instruction. Hover a tile to peek at its last
-  lines, click it to open it. On a phone the cards are a strip along the
-  bottom. `just fake-fleet` runs three throwaway machines to try it on.
+  lines, click it to open it (an editor that joined: follow it). On a
+  phone the cards are a strip along the bottom. `just fake-fleet` runs three throwaway machines to try it on.
 - **Tools for any agent** (M16, MCP). Claude Code, Codex or any MCP client
   gets illogical as tools: `run` a command in a pane you can watch and
   take over (here, on a throwaway VM, or a sandbox; it outlives the

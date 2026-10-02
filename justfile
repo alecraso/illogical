@@ -106,6 +106,13 @@ e2e url="":
     {{cargo}} build -p illogicald
     cd web && pnpm run build && E2E_BASE_URL="{{url}}" pnpm exec playwright test
 
+# illogical's VS Code extension as a VSIX in target/ (M28), for Open VSX
+# (`npx ovsx publish FILE`) and the Marketplace (`npx @vscode/vsce publish
+# --packagePath FILE`).
+vsix:
+    {{cargo}} build -p illogicald
+    {{target_dir}}/debug/illogicald _vsix {{target_dir}}
+
 # The images in site/img/, from a throwaway daemon with a demo HOME and a
 # scripted agent (web/screenshots/). Needs nvim for the editor pane.
 screenshots:

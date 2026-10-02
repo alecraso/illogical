@@ -50,7 +50,10 @@ pub fn build() -> Vec<u8> {
         publisher = esc(s("publisher")),
         display = esc(s("displayName")),
         description = esc(s("description")),
-        tags = esc(pkg["keywords"].as_array().map(|k| k.iter().filter_map(|t| t.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default()),
+        tags = esc(pkg["keywords"]
+            .as_array()
+            .map(|k| k.iter().filter_map(|t| t.as_str()).collect::<Vec<_>>().join(","))
+            .unwrap_or_default()),
         engine = esc(pkg["engines"]["vscode"].as_str().unwrap_or("*").to_owned()),
         repo = esc(pkg["repository"]["url"].as_str().unwrap_or("").to_owned()),
     );
@@ -159,7 +162,13 @@ mod tests {
         let Ok(out) = out else { return };
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let names = String::from_utf8_lossy(&out.stdout);
-        for n in ["[Content_Types].xml", "extension.vsixmanifest", "extension/package.json", "extension/extension.js", "extension/README.md"] {
+        for n in [
+            "[Content_Types].xml",
+            "extension.vsixmanifest",
+            "extension/package.json",
+            "extension/extension.js",
+            "extension/README.md",
+        ] {
             assert!(names.lines().any(|l| l == n), "{n} in {names}");
         }
         let text = String::from_utf8_lossy(&bytes);

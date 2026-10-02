@@ -152,6 +152,13 @@ pub fn local_router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
+/// Editors only (M28): `<state>/editors/sock`, the one socket a dev
+/// container gets (its directory mounted): joining the swarm as an editor
+/// is all it can do there, not drive the daemon.
+pub fn editors_router(app: Arc<App>) -> Router {
+    Router::new().route("/api/editors/connect", get(crate::editor::link::connect)).with_state(app)
+}
+
 /// Over the tunnel to the home daemon (a dial-out host): the home daemon
 /// checked who is asking. Our own WebSocket and API only: nothing that
 /// would make this host a way to anywhere else (no `/h/`, no dialing in).

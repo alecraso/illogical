@@ -28,6 +28,10 @@ tabs and splits you drive with the mouse.
   needs someone (an agent asking, a build failing) lifts out to a rail of
   cards, where anyone on the team who may answer allows, answers or sends
   the agent its next instruction, and everyone sees who did.
+- **Your editor in the swarm.** VS Code, Cursor or nvim (over Remote-SSH
+  too) shows up beside your panes once you ask it to. Follow its cursor
+  from your phone; a debugger stopping, or Claude Code wanting to edit a
+  file, is a card you answer from anywhere.
 - **Scriptable.** `illogical`, a CLI for scripts and agents: run, send,
   wait for a command or a match, tail, search every pane's history.
 - **In any terminal, too.** `illogical tui` draws the same tabs and splits

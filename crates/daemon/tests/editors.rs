@@ -275,6 +275,42 @@ async fn an_editor_on_this_host() {
     let (_, ls) = d.raw("GET", "/api/panes", None);
     assert!(ls.contains("\"file\":\"src/lib.rs\""), "{ls}");
 
+    // M28: the window's extension joins the swarm as this block (its
+    // workspace names it), not as an editor of its own: the block reports
+    // through it, and it can be followed.
+    let mut link = UnixStream::connect(d.sock()).unwrap();
+    write!(
+        link,
+        "GET /api/editors/connect HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: illogical-editor\r\n\r\n"
+    )
+    .unwrap();
+    let mut r = BufReader::new(link.try_clone().unwrap());
+    let mut line = String::new();
+    r.read_line(&mut line).unwrap();
+    assert!(line.starts_with("HTTP/1.1 101"), "{line}");
+    while {
+        line.clear();
+        r.read_line(&mut line).unwrap();
+        !line.trim().is_empty()
+    } {}
+    writeln!(link, "{}", json!({"t": "hello", "editor": "code-server", "workspace": proj, "block": id})).unwrap();
+    line.clear();
+    r.read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&line).unwrap(), json!({"t": "welcome", "id": id}));
+    writeln!(link, "{}", json!({"t": "peek", "file": lib, "line": 10, "col": 9, "top": 8, "lines": lines, "dirty": 0}))
+        .unwrap();
+    writeln!(link, "{}", json!({"t": "summary", "diag": {"e": 1, "w": 0, "i": 0}})).unwrap();
+    wait_for("the peek", || d.block(id)["state"]["col"] == 9 && d.block(id)["state"]["dirty"] == 0);
+    let b = d.block(id);
+    assert_eq!(b["info"]["file"], "src/lib.rs");
+    assert_eq!(b["info"]["editor"]["app"], "code-server");
+    assert_eq!(b["info"]["editor"]["diag"]["e"], 1);
+    assert_eq!(d.get("/api/editors").as_array().unwrap().len(), 1, "the block, once");
+    assert_eq!(d.get("/api/editors")[0]["block"], true);
+    drop(r);
+    drop(link);
+    wait_for("its link to go", || d.block(id)["info"]["editor"].is_null());
+
     // A second block shares the server.
     let other = d.dir.join("other").canonicalize().unwrap();
     let id2 =

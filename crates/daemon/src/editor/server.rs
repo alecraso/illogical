@@ -458,7 +458,8 @@ fn install_ext(exts: &Path) -> io::Result<()> {
     let list = exts.join("extensions.json");
     let mut all: Vec<serde_json::Value> =
         std::fs::read(&list).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-    let ours = |v: &serde_json::Value| v["identifier"]["id"].as_str().is_some_and(|id| id == EXT_ID || OLD_IDS.contains(&id));
+    let ours =
+        |v: &serde_json::Value| v["identifier"]["id"].as_str().is_some_and(|id| id == EXT_ID || OLD_IDS.contains(&id));
     if all.iter().any(|v| ours(v) && v["relativeLocation"] == rel.as_str()) {
         return Ok(());
     }

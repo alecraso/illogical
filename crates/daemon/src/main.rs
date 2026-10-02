@@ -520,6 +520,20 @@ fn socket_path(state_dir: &std::path::Path) -> PathBuf {
     socket
 }
 
+/// `<state>/editors/sock`, in a 0700 directory with nothing else in it, for
+/// a dev container to mount (M28).
+fn editors_socket(state_dir: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = state_dir.join("editors");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    let sock = dir.join("sock");
+    let _ = std::fs::remove_file(&sock);
+    let l = tokio::net::UnixListener::bind(&sock)?;
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
+    Ok(l)
+}
+
 fn default_state_dir() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -849,6 +863,13 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     let local = tokio::net::UnixListener::bind(&socket)?;
     info!(socket = %socket.display(), "listening");
     tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
+    // Editors in dev containers join here (M28): a directory of its own.
+    match editors_socket(&state_dir) {
+        Ok(l) => {
+            tokio::spawn(axum::serve(l, server::editors_router(app.clone())).into_future());
+        }
+        Err(e) => warn!(error = %e, "no socket for editors in containers"),
+    }
     sys::notify("READY=1");
     tokio::select! {
         r = axum::serve(listener, server::router(app).into_make_service_with_connect_info::<SocketAddr>()) => r?,

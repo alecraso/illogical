@@ -26,6 +26,11 @@ illogical open --split right :5173/about      # a port, beside this pane, on its
 illogical open --host m2 :3000                # a port on machine m2 (--host local: this host)
 illogical edit src/main.rs:42                 # VS Code on this file's project, at line 42 (no path: here)
 illogical edit --machine m2 ~/app             # on machine m2 (--split right beside this pane)
+illogical editors                             # editors in the swarm: VS Code, Cursor, nvim, editor blocks
+illogical editors install                     # illogical's extension into VS Code or Cursor here (--with cursor)
+illogical editors vsix -o illogical.vsix      # ...or its VSIX, to install by hand
+illogical ide                                 # illogicald as Claude Code's IDE: its port, where diffs go
+illogical ide --diffs "Visual Studio Code"    # send Claude Code's diffs to that IDE instead (illogical: back)
 illogical describe %4                         # any block: type, place, state
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
@@ -234,10 +239,20 @@ curl --unix-socket "$ILLOGICAL_SOCK" -X POST localhost/api/panes/3/followup \
 ```
 
 `/api/attention/act` takes `action` (`allow`, `deny`, `answer`,
-`dismiss`) and a `pane` or a list of `panes`, plus `option: "always"` and
-`suggestion: N` (which of Claude Code's suggestions) for allow, `message`
-for deny and `content` (the card's fields) for answer. Each pane is checked
-on its own (editor on its session) and answered on its own.
+`dismiss`, and for M28 `accept`, `reject` and `continue`) and a `pane` or
+a list of `panes`, plus `option: "always"` and `suggestion: N` (which of
+Claude Code's suggestions) for allow, `message` for deny, `content` (the
+card's fields) for answer and `text` (the file as it should be saved) for
+accept. Each pane is checked on its own (editor on its session) and
+answered on its own.
+
+**Diffs** (M28, no hooks needed). Claude Code in a pane connects to
+illogicald as its IDE (`CLAUDE_CODE_SSE_PORT` is set in every pane), and
+its Edit and Write calls wait as diff cards on the pane and the rail:
+accept, change then accept, or reject. `GET /api/panes/N/diff` has the
+file before and after. With the `PermissionRequest` hook too, the diff
+card is what shows for an edit; the hook still covers Bash and the rest.
+In `acceptEdits` mode Claude Code sends no diffs.
 
 **Notifications.** The owner is always told. Anyone else who may answer
 chooses which agents notify them: *Notify me about its agents* in the

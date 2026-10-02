@@ -1052,7 +1052,13 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 let n = e["editor"]["followers"].as_u64().unwrap_or(0);
                 let following = if n > 0 { format!("  {n} following") } else { String::new() };
                 let why = e["reason"]["headline"].as_str().map(|h| format!("  [{h}]")).unwrap_or_default();
-                println!("%{:<4} {:<12} {:<40} {}{following}{why}", e["pane"], format!("{app}{remote}"), s("folder"), s("file"));
+                println!(
+                    "%{:<4} {:<12} {:<40} {}{following}{why}",
+                    e["pane"],
+                    format!("{app}{remote}"),
+                    s("folder"),
+                    s("file")
+                );
             }
         }
         Command::Editors { cmd: Some(EditorsCmd::Vsix { out }) } => {
@@ -1108,8 +1114,14 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             println!("diffs go to: {}", v["diffs"].as_str().unwrap_or(""));
             for o in v["others"].as_array().into_iter().flatten() {
                 let alive = if o["alive"] == true { "" } else { "  (gone)" };
-                let folders: Vec<&str> = o["folders"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-                println!("  also: {:<24} port {}  {}{alive}", o["name"].as_str().unwrap_or("?"), o["port"], folders.join(", "));
+                let folders: Vec<&str> =
+                    o["folders"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                println!(
+                    "  also: {:<24} port {}  {}{alive}",
+                    o["name"].as_str().unwrap_or("?"),
+                    o["port"],
+                    folders.join(", ")
+                );
             }
         }
         Command::Machines => {
@@ -1474,6 +1486,17 @@ fn shell_command(argv: &[String]) -> String {
         .join(" ")
 }
 
+/// illogical's VS Code extension, from the daemon (M28).
+fn vsix(sock: &http::Target) -> anyhow::Result<(String, Vec<u8>)> {
+    let res = request(sock, "GET", "/api/editors/vsix", None)?;
+    let name = res
+        .header("content-disposition")
+        .and_then(|d| d.split("filename=").nth(1))
+        .map(|f| f.trim_matches('"').to_owned())
+        .unwrap_or_else(|| "illogical-editor.vsix".into());
+    Ok((name, res.bytes()?))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1508,15 +1531,4 @@ mod tests {
         assert_eq!(super::shell_command(&v(&["bash", "-c", "echo hi; exit 3"])), "bash -c 'echo hi; exit 3'");
         assert_eq!(super::shell_command(&v(&["echo", "it's"])), r"echo 'it'\''s'");
     }
-}
-
-/// illogical's VS Code extension, from the daemon (M28).
-fn vsix(sock: &http::Target) -> anyhow::Result<(String, Vec<u8>)> {
-    let res = request(sock, "GET", "/api/editors/vsix", None)?;
-    let name = res
-        .header("content-disposition")
-        .and_then(|d| d.split("filename=").nth(1))
-        .map(|f| f.trim_matches('"').to_owned())
-        .unwrap_or_else(|| "illogical-editor.vsix".into());
-    Ok((name, res.bytes()?))
 }
