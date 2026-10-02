@@ -219,6 +219,38 @@ test.describe("phone", () => {
   const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["Pixel 7"];
   test.use({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch });
 
+  test("cluster names never overlap on a phone, by project or by machine", async ({ page }) => {
+    await swarm(page);
+    // Crowd it: the synthetic fleet adds projects and machines beside the
+    // real ones, and a few need you, so labels carry their longest lines.
+    const stop = await page.evaluateHandle(() => window.__illogical.swarmFake(300));
+    await fake.trouble("build-02", 2);
+    type Box = { name: string; x0: number; y0: number; x1: number; y1: number };
+    const overlaps = async () => {
+      const boxes: Box[] = await page.evaluate(() => (window.__illogical.swarm as unknown as { labelBoxes: Box[] }).labelBoxes);
+      const out: string[] = [];
+      for (let i = 0; i < boxes.length; i++)
+        for (let j = i + 1; j < boxes.length; j++) {
+          const [a, b] = [boxes[i], boxes[j]];
+          if (a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1) out.push(`${a.name} × ${b.name}`);
+        }
+      return { n: boxes.length, out };
+    };
+    for (const by of ["project", "machine"]) {
+      await page.locator(`[data-g="${by}"]`).click();
+      await page.locator("[data-fit]").tap();
+      // Through the regroup's animation and after it settles.
+      for (let i = 0; i < 12; i++) {
+        await page.waitForTimeout(400);
+        const { n, out } = await overlaps();
+        expect(n, `${by}: clusters drawn`).toBeGreaterThanOrEqual(6);
+        expect(out, `${by}: overlapping names`).toEqual([]);
+      }
+    }
+    await stop.evaluate((f) => f());
+    await clearRail(page);
+  });
+
   test("cards along the bottom: allow and dismiss there; pinch zooms; a tap opens a pane", async ({ page }) => {
     await swarm(page);
     await clearRail(page);

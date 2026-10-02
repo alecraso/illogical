@@ -103,8 +103,7 @@ test.describe("phone", () => {
   const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["Pixel 7"];
   test.use({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch });
   test("the swarm on a phone: cards along the bottom", async ({ page }) => {
-    // By machine: six clusters read better on a narrow screen.
-    await swarm(page, "machine");
+    await swarm(page);
     await page.screenshot({ path: join(out, "swarm-phone.png") });
   });
 });

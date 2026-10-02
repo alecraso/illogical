@@ -225,7 +225,12 @@ export class FakeFleet {
 
   stop() {
     for (const m of this.machines) m.proc.kill("SIGKILL");
-    rmSync(this.root, { recursive: true, force: true });
+    // Its panes' programs may still be writing for a moment.
+    try {
+      rmSync(this.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      // A scratch directory under /tmp: left to the system.
+    }
   }
 }
 
