@@ -2,7 +2,7 @@
 //! haiku each), so they only run when asked:
 //!
 //! ```sh
-//! ILLOGICAL_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp cargo test -p illogicald --test agents_real
+//! ILLOGICAL_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp,mcp-cc cargo test -p illogicald --test agents_real
 //! ```
 //!
 //! - `questions` (M6c): Claude Code's AskUserQuestion in an agent block,
@@ -16,6 +16,11 @@
 //!   Runs in `target/m29-tui`.
 //! - `mcp` (M6c): an MCP server's form and sign-in link (`fake_mcp.py`)
 //!   through Claude Code in an agent block.
+//! - `mcp-cc` (M16): Claude Code outside illogical (`claude -p`, haiku),
+//!   with `illogical mcp` as its MCP server: a build that fails after a
+//!   while, waited through; it reads why, fixes it and reruns, and the
+//!   pane says "started by mcp:claude-code". With `mcp-vm` too, the build
+//!   runs in a throwaway wisp VM pane (needs wisp).
 //! - `claude`: Claude Code through the pinned `claude-agent-acp`, on your
 //!   own login, in a scratch git repo: a command it asks to run, approved.
 //! - `codex`: `codex-acp` against your `codex`.
@@ -402,4 +407,63 @@ fn an_mcp_servers_form_and_sign_in_link() {
     let got = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(form && link, "{t}\nthe MCP server got:\n{got}");
     assert!(t.contains(r#""size":"M""#) || t.contains(r#""size": "M""#), "{t}");
+}
+
+/// M16: Claude Code outside illogical uses it through `illogical mcp`.
+#[test]
+fn claude_code_outside_runs_a_build_through_mcp() {
+    if !wanted("mcp-cc") {
+        return;
+    }
+    let on_vm = std::env::var("ILLOGICAL_REAL_AGENTS").unwrap_or_default().split(',').any(|w| w.trim() == "mcp-vm");
+    let wisp = home().join(".local/share/wisp/token");
+    if on_vm && !wisp.exists() {
+        eprintln!("skipping: mcp-vm needs wisp");
+        return;
+    }
+    let d = if on_vm { Daemon::child_with(&["--wisp-token-file", wisp.to_str().unwrap()]) } else { Daemon::child() };
+    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    assert!(
+        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap().success()
+    );
+    let repo = scratch(&d);
+    let config = d.sessions.join("mcp.json");
+    let server = json!({ "mcpServers": { "illogical": { "command": cli, "args": ["--socket", d.sock(), "mcp"] } } });
+    std::fs::write(&config, server.to_string()).unwrap();
+    // A build that takes a while and fails until a file exists.
+    let marker = if on_vm { "/tmp/ready".to_owned() } else { format!("{repo}/ready") };
+    let build = format!("sleep 20; test -f {marker} && echo BUILD-OK || {{ echo 'error: {marker} is missing (touch it)'; false; }}");
+    let place = if on_vm { "with vm: true (a throwaway VM pane; run the fix in that same pane with send_input)" } else { "" };
+    let prompt = format!(
+        "Use the illogical MCP tools. Run this build with the run tool {place}, with wait true: `{build}`. \
+         If it fails, read why, fix it, and run the build again until it succeeds (wait again if it's still running). \
+         Then reply with just the word DONE."
+    );
+    let mut cmd = std::process::Command::new("claude");
+    for v in CLAUDE_ENV {
+        cmd.env_remove(v);
+    }
+    let out = cmd
+        .current_dir(&repo)
+        .args(["-p", "--model", "haiku", "--strict-mcp-config", "--setting-sources", "local", "--mcp-config"])
+        .arg(&config)
+        .args(["--allowedTools", "mcp__illogical__*", "--output-format", "text"])
+        .arg(&prompt)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("DONE"), "{said}\n{}", String::from_utf8_lossy(&out.stderr));
+    // History: the build failed, then (after the fix) passed, as Claude's.
+    let h = d.get("/api/history?limit=50");
+    let builds: Vec<&Value> =
+        h.as_array().unwrap().iter().filter(|c| c["text"].as_str().is_some_and(|t| t.contains("BUILD-OK"))).collect();
+    assert!(builds.len() >= 2, "{h}");
+    assert_ne!(builds[0]["exit"], 0, "{h}");
+    assert_eq!(builds.last().unwrap()["exit"], 0, "{h}");
+    assert!(builds.iter().all(|c| c["by"] == "mcp:claude-code"), "{h}");
+    let panes = d.get("/api/panes");
+    assert!(panes.as_array().unwrap().iter().any(|p| p["started_by"]["by"] == "mcp:claude-code"), "{panes}");
+    if on_vm {
+        assert!(!d.get("/api/machines").as_array().unwrap().is_empty(), "on a VM");
+    }
 }

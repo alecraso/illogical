@@ -168,13 +168,20 @@ impl McpServer {
     }
 }
 
-/// What resource results carry: Claude Code rejects them without (S14).
+/// What list and resource results carry: Claude Code 2.1.287 rejects them
+/// without (S14 saw it for resources; `tools/list` too, at 2026-07-28).
 fn fresh<T: CacheHints>(r: T) -> T {
     r.hints()
 }
 
 trait CacheHints {
     fn hints(self) -> Self;
+}
+
+impl CacheHints for ListToolsResult {
+    fn hints(self) -> Self {
+        self.with_ttl_ms(0).with_cache_scope(CacheScope::Private)
+    }
 }
 
 impl CacheHints for ListResourcesResult {
@@ -215,7 +222,7 @@ impl ServerHandler for McpServer {
         ctx: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let scope = self.caller(&ctx).scope;
-        Ok(ListToolsResult::with_all_items(tools::list(scope)))
+        Ok(fresh(ListToolsResult::with_all_items(tools::list(scope))))
     }
 
     async fn call_tool(

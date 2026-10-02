@@ -201,6 +201,32 @@ async fn tools_through_the_stdio_bridge() {
     s.cancel().await.unwrap();
 }
 
+/// As Claude Code speaks it (2026-07-28, stateless, `server/discover`), on
+/// the daemon's socket.
+#[tokio::test(flavor = "multi_thread")]
+async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
+    use rmcp::{ClientLifecycleMode, ClientServiceExt, model::{CacheScope, ProtocolVersion}};
+    let d = Daemon::child();
+    let sock = d.sock().display().to_string();
+    let transport = StreamableHttpClientTransport::from_unix_socket(sock.as_str(), "http://localhost/mcp");
+    let s = Client::named("claude-code")
+        .serve_with_lifecycle(transport, ClientLifecycleMode::Discover { preferred_versions: vec![ProtocolVersion::V_2026_07_28] })
+        .await
+        .unwrap();
+    // Without ttlMs and cacheScope, Claude Code 2.1.287 refuses the list
+    // (and retries it, then gives up: no tools).
+    let tools = s.list_tools(None).await.unwrap();
+    assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
+    assert_eq!(tools.tools.len(), 13);
+    let t = s.list_resource_templates(None).await.unwrap();
+    assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
+    let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
+    assert_eq!(r["exit"], 0);
+    let info = d.get(&format!("/api/blocks/{}", r["pane"]))["info"].clone();
+    assert_eq!(info["started_by"]["by"], "mcp:claude-code", "the name from each request's _meta");
+    s.cancel().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_bridge_outlives_a_daemon_restart() {
     let mut d = Daemon::child();
