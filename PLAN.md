@@ -2351,12 +2351,19 @@ Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, 
 
 One live view of every pane on every machine you (or your team) can see. Panes form clusters on their own, by project, machine, kind or person, and anything that needs you lifts out to a "needs you" rail. There, anyone on the team who may answer can answer, and send the agent its next instruction. The issues hold the detail: the MVP is #44.
 
+**The MVP (#44) is done (2026-10-02), apart from real phones and different networks.** `e2e/swarm-mvp.spec.ts` walks its done-when in one flow: two people on a team, a laptop and a phone each, two machines each and a team box, all through a local control's relay; both swarms grouped by person; a Claude Code approval on one person's machine on all four rails, allowed by the other from the phone's strip and attributed to them; the follow-up through the agent's inbox (after a trust grant on a personal machine, straight through on the team's box); `log --who` and history naming who did both.
+
+- **Still pending:**
+  - real phones (iOS notification actions, a service worker's WebSocket there, the canvas on real hardware), and people on genuinely different networks; loopback and Playwright's phone contexts stand in;
+  - what each ticket left for after the MVP: previews and live preview text (#37, #40), prompt detection and the rerun, restart and send actions (#38), pulse clustering, the correlation toast and keyboard shortcuts (#40);
+  - two owners of one team box are one principal as drivers (#47).
+
 **Order:**
 
 1. **S16** (#36) and **S18** (#45): done, below.
-2. **M23** (#37: pane summaries) and **M24** (#38: attention reasons and actions), side by side with **M29** (#46: team answers).
-3. **M25** (#39: every host in one page), then **M30** (#47: the team's swarm).
-4. **M26** (#40: the swarm view).
+2. **M23** (#37: pane summaries) and **M24** (#38: attention reasons and actions), side by side with **M29** (#46: team answers): done.
+3. **M25** (#39: every host in one page), then **M30** (#47: the team's swarm): done.
+4. **M26** (#40: the swarm view): done.
 5. **After the MVP:** editors, with **S17** (#41), **M27** (#42: VS Code blocks) and **M28** (#43: your editor in the swarm).
 
 #### S16: swarm spike (summary cost, fleet connections, canvas)
