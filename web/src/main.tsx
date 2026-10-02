@@ -6,6 +6,7 @@ import { Client } from "./client";
 import { Fleet, type HostRef } from "./fleet";
 import { directory } from "./hosts";
 import { App } from "./ui/app";
+import { remotes } from "./blocks";
 import { measureCell } from "./ui/cells";
 import { enableControlPush, registerWorker, setPushBackend } from "./push";
 import { ControlSession, detectControl } from "./control";
@@ -257,6 +258,8 @@ Object.assign(window, {
       return client;
     },
     hosts: directory,
+    /** #17: the connections remote panes use, by host. */
+    remotes,
     control: session,
     fleet,
     /** M26: made-up panes in the swarm (frame-rate check, screenshots). */

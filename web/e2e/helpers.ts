@@ -9,6 +9,7 @@ declare global {
     __illogical: {
       client: Client;
       hosts: HostDirectory;
+      remotes: { client(host: string): Client | undefined };
       control: ControlSession | null;
       fleet: import("../src/fleet").Fleet;
       summaries(): Client;

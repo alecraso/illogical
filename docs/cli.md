@@ -54,6 +54,8 @@ illogical hosts                               # the home daemon's other hosts, l
 illogical hosts add box https://box.<tailnet>.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
 illogical --host box run --wait -- make       # any command, on another host
+illogical --host box run --home               # a shell on box, as a tab in this daemon's layout
+illogical --host box run --home --split %4    # …beside %4 here (close %N closes it on box too)
 illogical hosts token sbx                     # a dial-out host's token (prints it once)
 illogical hosts revoke sbx                    # …revoked, and its connection dropped
 illogical share %3 --ttl 2h                   # a read-only link to a pane

@@ -692,6 +692,18 @@ async fn open_block(
     Json(req): Json<illogical_proto::api::OpenRequest>,
 ) -> Res<Json<serde_json::Value>> {
     let who = who.map(|axum::Extension(w)| w);
+    // A pane on another daemon (#17) names a host in our list: that's
+    // where clients look it up.
+    if req.kind == illogical_proto::BlockType::Remote {
+        let at = crate::remote::parse(&req.config).map_err(bad)?;
+        let list = app.hosts.list();
+        if at.host == list.this {
+            return Err(bad(format!("{} is this daemon: its panes go in the layout as they are", at.host)));
+        }
+        if !list.hosts.iter().any(|h| h.name == at.host) {
+            return Err(bad(format!("no host {} in this daemon's list", at.host)));
+        }
+    }
     match app.mux.api(|r| Api::Open(req, who, r)).await {
         Some(Ok(block)) => Ok(Json(serde_json::json!({ "block": block }))),
         Some(Err(e)) => Err(bad(e)),

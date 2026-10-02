@@ -180,6 +180,28 @@ export class Client {
   /** How an end-to-end client is connected, for the host chip. */
   path: "direct" | "relayed" | null = null;
 
+  /** #17: a connection for another layout's remote panes: only these
+   * terminals are drawn and attached (`null`: every pane, as usual). */
+  only: Set<PaneId> | null = null;
+
+  /** #17: draw and attach `pane` too. */
+  want(pane: PaneId) {
+    this.only ??= new Set();
+    if (this.only.has(pane)) return;
+    this.only.add(pane);
+    if (this.connected && this.state) this.applyState(this.state, false);
+  }
+
+  /** #17: stop drawing `pane`. */
+  unwant(pane: PaneId) {
+    if (!this.only?.delete(pane)) return;
+    const entry = this.panes.get(pane);
+    if (entry) {
+      entry.view.dispose();
+      this.panes.delete(pane);
+    }
+  }
+
   /** M30: the daemon said this person's access was removed. */
   revoked = false;
   /** M25: tries that ended before the daemon said hello. */
@@ -660,6 +682,17 @@ export class Client {
 
   intent(intent: Intent) {
     this.lastIntentAt = Date.now();
+    // Closing a block that stands for something elsewhere (#17: a remote
+    // pane) closes that too.
+    const closing =
+      intent.op === "close_pane"
+        ? [intent.pane]
+        : intent.op === "close_tab"
+          ? (this.tabView(intent.tab) ? paneIds(this.tabView(intent.tab)!) : [])
+          : intent.op === "close_session"
+            ? (this.state?.sessions.find((s) => s.id === intent.session)?.tabs ?? []).flatMap((t) => (this.tabView(t) ? paneIds(this.tabView(t)!) : []))
+            : [];
+    for (const id of closing) this.blocks.get(id)?.view.closing?.();
     this.send({ type: "intent", id: this.nextId++, intent });
   }
 
@@ -813,7 +846,7 @@ export class Client {
     const created: PaneId[] = [];
     const live = new Set(state.panes.map((p) => p.id));
     for (const [id, entry] of this.panes) {
-      if (!live.has(id)) {
+      if (!live.has(id) || (this.only && !this.only.has(id))) {
         entry.view.dispose();
         this.panes.delete(id);
       }
@@ -825,6 +858,7 @@ export class Client {
       }
     }
     for (const info of state.panes) {
+      if (this.only && !this.only.has(info.id)) continue;
       if (info.type !== "terminal") {
         if (!this.blocks.has(info.id)) {
           const view = makeBlockView(info.type, this, info.id);
@@ -852,12 +886,15 @@ export class Client {
     }
     // Layout is the truth for sizes of visible panes.
     for (const t of state.tabs) {
-      for (const [id, r] of t.layout.panes) this.panes.get(id)?.view.resize(r.cols, r.rows);
+      for (const [id, r] of t.layout.panes) {
+        this.panes.get(id)?.view.resize(r.cols, r.rows);
+        this.blocks.get(id)?.view.layout?.(r.cols, r.rows, t.owner === this.clientId);
+      }
     }
     this.fixSelection();
     this.applyFollow();
     // Show what we just made: a split's new pane, a new tab or session.
-    if (created.length && Date.now() - this.lastIntentAt < 3000) {
+    if (created.length && !this.only && Date.now() - this.lastIntentAt < 3000) {
       const tab = this.tabOfPane(created[0]);
       if (tab) {
         this.session = this.sessionOfTab(tab.id) ?? this.session;

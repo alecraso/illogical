@@ -261,6 +261,19 @@ the daemon stopping, crashing, or the machine rebooting:
   `illogical --host NAME …` runs any command on another host. A sandbox
   (a sprite, a container: no systemd needed) gets a static daemon on the
   tailnet with one command and adds itself to the list; see *Use it*.
+- **Panes from several hosts in one layout** (#17). The home daemon's
+  tabs and splits can hold panes that run on another host in its list:
+  *New tab on box* (the `+` button's right-click menu), *Split right on
+  box* (a pane's menu), or `illogical --host box run --home`. The page
+  connects to that host directly for the pane's bytes (the home daemon
+  keeps only where it is, and relays nothing), and it moves, docks and
+  breaks out like any pane, live in every window. Its terminal is the
+  host's own: its size follows its place here, and its restart policy and
+  history are the host's, where it sits in a session named after the home
+  daemon. While the host is down the pane says so and greys out; it comes
+  back by itself. Closing it here closes it there; if the host can't be
+  reached, it stays open there. A pane its host closes (it exited, or was
+  closed on the host's own page) leaves the layout here too.
 - **Hosts that can only dial out** (M4c). A sandbox that allows nothing
   in but outbound HTTPS runs `illogicald --peer wss://home.… --token FILE`:
   it keeps one WebSocket open to the home daemon and serves its own
