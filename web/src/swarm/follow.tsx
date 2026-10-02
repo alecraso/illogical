@@ -83,7 +83,9 @@ export function FollowView({ fleet, pkey, close, back }: { fleet: Fleet; pkey: s
   const can = !!p && fleet.role(p) !== "viewer";
   const ed = p?.info.editor;
   const folder = p?.info.cwd ?? "";
-  const rel = file && folder && file.startsWith(folder + "/") ? file.slice(folder.length + 1) : file;
+  // The daemon's relative file goes through links (macOS /var is /private/var).
+  const known = p?.info.file;
+  const rel = file && folder && file.startsWith(folder + "/") ? file.slice(folder.length + 1) : file && known && file.endsWith("/" + known) ? known : file;
   const others = Math.max(0, (ed?.followers ?? 1) - 1);
   const paused = ed?.debug?.state === "paused";
 

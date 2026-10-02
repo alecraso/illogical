@@ -87,36 +87,19 @@ pub fn history(store: &StateDir, f: &Filter, limit: usize) -> Vec<HistoryEntry> 
 
 /// Commands that pass the filter, the last `limit` by start time.
 pub fn filtered(all: impl Iterator<Item = HistoryEntry>, f: &Filter, limit: usize) -> Vec<HistoryEntry> {
-    let dirs = f.cwd.as_deref().map(cwd_forms);
+    let dirs = f.cwd.as_deref().map(crate::paths::forms);
     let mut all: Vec<HistoryEntry> = all
         .filter(|c| !f.failed || c.exit.is_some_and(|e| e != 0))
         .filter(|c| f.since_ms.is_none_or(|s| c.started_ms >= s))
-        .filter(|c| dirs.as_ref().is_none_or(|ds| c.cwd.as_deref().is_some_and(|x| ds.iter().any(|d| is_under(x, d)))))
+        .filter(|c| {
+            dirs.as_ref()
+                .is_none_or(|ds| c.cwd.as_deref().is_some_and(|x| ds.iter().any(|d| crate::paths::is_under(x, d))))
+        })
         .filter(|c| f.matching.as_ref().is_none_or(|re| c.text.as_deref().is_some_and(|t| re.is_match(t))))
         .collect();
     all.sort_by_key(|c| c.started_ms);
     let skip = all.len().saturating_sub(limit);
     all.split_off(skip)
-}
-
-/// A cwd filter as given and resolved: a shell reports its real directory,
-/// so `/var/x` on macOS (a link to `/private/var`) is recorded as
-/// `/private/var/x`, and a path through any symlink likewise.
-fn cwd_forms(d: &str) -> Vec<String> {
-    let d = if d.len() > 1 { d.trim_end_matches('/') } else { d };
-    let mut forms = vec![d.to_owned()];
-    if let Ok(real) = std::fs::canonicalize(d) {
-        let real = real.to_string_lossy().into_owned();
-        if real != d {
-            forms.push(real);
-        }
-    }
-    forms
-}
-
-/// `path` is `dir` or below it (`/src/a` isn't under `/src/ab`).
-fn is_under(path: &str, dir: &str) -> bool {
-    path.strip_prefix(dir).is_some_and(|rest| rest.is_empty() || rest.starts_with('/') || dir.ends_with('/'))
 }
 
 /// Lines of output (escape sequences stripped) matching `re`, newest panes

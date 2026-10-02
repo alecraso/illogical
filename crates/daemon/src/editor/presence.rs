@@ -112,13 +112,10 @@ impl Block for Presence {
     }
 }
 
-/// `file` relative to `folder` when it's inside it.
+/// `file` relative to `folder` when it's inside it (through links).
 pub fn relative(folder: Option<&str>, file: &str) -> String {
-    let Some(folder) = folder.map(|f| f.trim_end_matches('/')).filter(|f| !f.is_empty()) else {
-        return file.to_owned();
-    };
-    match file.strip_prefix(folder).and_then(|r| r.strip_prefix('/')) {
-        Some(r) => r.to_owned(),
+    match folder {
+        Some(f) => crate::paths::relative(f, file),
         None => file.to_owned(),
     }
 }

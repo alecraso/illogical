@@ -25,6 +25,7 @@ mod mcp;
 mod mux;
 mod osc;
 mod pane;
+mod paths;
 mod ports;
 mod procinfo;
 mod provider;

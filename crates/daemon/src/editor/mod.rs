@@ -502,13 +502,9 @@ fn open_payload(origin: &str, file: &str, line: Option<u32>) -> String {
     Value::Array(payload).to_string()
 }
 
-/// `file` relative to `folder` when it's inside it.
+/// `file` relative to `folder` when it's inside it (through links).
 fn relative(folder: &str, file: &str) -> String {
-    let folder = folder.trim_end_matches('/');
-    match file.strip_prefix(folder).and_then(|r| r.strip_prefix('/')) {
-        Some(r) if !folder.is_empty() => r.to_owned(),
-        _ => file.to_owned(),
-    }
+    crate::paths::relative(folder, file)
 }
 
 /// A name for a file: no slashes or odd characters.

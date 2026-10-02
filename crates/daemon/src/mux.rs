@@ -721,9 +721,9 @@ fn new_diff(
     let exists = std::fs::File::open(&old_path).and_then(|f| f.take(MAX_DIFF_FILE).read_to_string(&mut old)).is_ok();
     let new: String = args["new_file_contents"].as_str().unwrap_or("").to_owned();
     let (added, removed, text) = crate::ide::diff::unified(&old, &new, MAX_DIFF_TEXT);
-    let file = match cwd.map(|c| c.trim_end_matches('/')) {
-        Some(c) if !c.is_empty() => path.strip_prefix(c).and_then(|r| r.strip_prefix('/')).unwrap_or(&path).to_owned(),
-        _ => path.clone(),
+    let file = match cwd {
+        Some(c) => crate::paths::relative(c, &path),
+        None => path.clone(),
     };
     let id = format!("d{conn}-{}", call.to_string().trim_matches('"'));
     PendingDiff {
