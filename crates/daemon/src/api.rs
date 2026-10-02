@@ -136,7 +136,7 @@ impl Tap {
                         return Some((f.offset, f.data));
                     }
                 }
-                ToClient::Msg(_) => {}
+                ToClient::Msg(_) | ToClient::Json(_) => {}
                 ToClient::Close => return None,
             }
         }

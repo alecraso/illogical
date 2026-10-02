@@ -293,7 +293,10 @@ function TabItem({
   );
 }
 
-function RenameInput({ value, onDone }: { value: string; onDone: (v: string | null) => void }) {
+function RenameInput({ value: initial, onDone }: { value: string; onDone: (v: string | null) => void }) {
+  // What's typed, so a re-render (live pane updates arrive every second)
+  // doesn't put the old name back.
+  const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
   useLayoutEffect(() => {
@@ -310,6 +313,7 @@ function RenameInput({ value, onDone }: { value: string; onDone: (v: string | nu
       ref={ref}
       class="rename"
       value={value}
+      onInput={(e) => setValue((e.target as HTMLInputElement).value)}
       onKeyDown={(e) => {
         if (e.key === "Enter") finish((e.target as HTMLInputElement).value);
         if (e.key === "Escape") finish(null);

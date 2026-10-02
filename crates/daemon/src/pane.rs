@@ -59,6 +59,9 @@ const RESTORE_REPLAY_BYTES: u64 = 8 * 1024 * 1024;
 pub enum ToClient {
     Frame(Vec<u8>),
     Msg(ServerMsg),
+    /// A control message already serialized (a `State` shaped for one
+    /// client, M23).
+    Json(String),
     /// Hang up (access revoked).
     Close,
 }
@@ -146,6 +149,12 @@ pub struct Status {
     /// The shell drew its prompt and nothing has started since (shell
     /// integration says so): typing a line there runs it in the shell.
     pub at_prompt: bool,
+    /// When the last output arrived (ms since the epoch; 0: none yet). With
+    /// `end`, a running byte count, the mux works out how busy a pane is
+    /// without waking it (M23).
+    pub last_output_ms: u64,
+    /// The title the program set (OSC 0 or 2), if any.
+    pub title: Option<String>,
 }
 
 /// Quiet this long and a busy pane counts as quiet.
@@ -286,6 +295,11 @@ impl PaneHandle {
     }
     /// Note that input is about to be sent, before it's queued: a `wait`
     /// that follows a `send` then sees only what happens after it.
+    /// The pane's running byte count and when it last printed (M23): one
+    /// lock, nothing asked of the pane's thread.
+    pub fn output_seen(&self) -> (u64, u64) {
+        self.status.lock().map(|s| (s.end, s.last_output_ms)).unwrap_or_default()
+    }
     pub fn mark_input(&self) {
         if let Ok(mut st) = self.status.lock() {
             st.input_at = st.end;
@@ -308,6 +322,12 @@ impl PaneHandle {
     /// "re-run" would run again. It is the foreground process's command line
     /// as the OS shows it now, so `bash -c 'a; b'` that exec'd into `b` reads
     /// as `b`; the typed command line needs shell integration (M3).
+    /// The pane's own process's command line (a shell, or what `illogical
+    /// run` started), quoted.
+    pub fn own_command(&self) -> Option<String> {
+        let args: Vec<String> = crate::procinfo::argv(self.pid()?)?.iter().map(|a| shell_quote(a)).collect();
+        (!args.is_empty()).then(|| args.join(" "))
+    }
     pub fn command(&self) -> Option<String> {
         let shell = self.pid()?;
         // The shell is a session leader; its foreground job is the
@@ -1323,9 +1343,19 @@ impl State {
             mouse: [1000, 1002, 1003].iter().any(|m| self.engine.dec_mode(*m)),
             sgr_mouse: self.engine.dec_mode(1006),
         };
+        // A title only changes in an OSC 0/1/2, so only look for one then.
+        let title = data
+            .windows(3)
+            .any(|w| w[0] == 0x1b && w[1] == b']' && matches!(w[2], b'0' | b'2'))
+            .then(|| self.engine.title())
+            .map(|t| Some(t).filter(|t| !t.is_empty()));
         let busy_now = {
             let mut st = self.status.lock().unwrap();
             st.end = end;
+            st.last_output_ms = now_ms();
+            if let Some(t) = title {
+                st.title = t;
+            }
             st.modes = modes;
             let flip = !st.busy;
             st.busy = true;

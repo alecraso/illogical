@@ -7,6 +7,7 @@ mod api;
 mod authz;
 mod block;
 mod browser;
+mod classify;
 mod control;
 mod dial;
 mod e2e;

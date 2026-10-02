@@ -186,6 +186,13 @@ Object.assign(window, {
     },
     hosts: directory,
     control: session,
+    /** M23: a second connection to the same daemon that only takes
+     * summaries (what the swarm and the fleet use). */
+    summaries: () => {
+      const c = new Client(client.base, client.e2e, true);
+      c.connect();
+      return c;
+    },
     cell,
     text: (pane: number) => client.panes.get(pane)?.view.text() ?? client.blocks.get(pane)?.view.text() ?? "",
     screen: (pane: number) => client.panes.get(pane)?.view.screen() ?? "",

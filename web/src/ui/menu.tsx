@@ -166,6 +166,8 @@ export function PromptLayer() {
           <input
             ref={input}
             value={p.value}
+            // Kept as typed: the page re-renders as panes change.
+            onInput={(e) => (p.value = (e.target as HTMLInputElement).value)}
             placeholder={p.placeholder}
             onKeyDown={(e) => e.key === "Escape" && finish(null)}
           />

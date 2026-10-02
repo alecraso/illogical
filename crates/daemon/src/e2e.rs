@@ -214,6 +214,7 @@ fn to_msg(o: ToClient) -> Option<Msg> {
     match o {
         ToClient::Frame(bytes) => Some(Msg::Binary(bytes)),
         ToClient::Msg(m) => Some(Msg::Text(serde_json::to_string(&m).expect("serialize"))),
+        ToClient::Json(t) => Some(Msg::Text(t)),
         ToClient::Close => None,
     }
 }

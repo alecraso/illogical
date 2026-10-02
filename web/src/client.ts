@@ -13,9 +13,11 @@ import {
   type ActRequest,
   type ClientId,
   type ClientMsg,
+  type Delta,
   type Driver,
   type Intent,
   type PaneId,
+  type PaneInfo,
   type PaneOp,
   type Presence,
   type ServerMsg,
@@ -151,6 +153,9 @@ export class Client {
   constructor(
     readonly base = "",
     readonly e2e?: E2ETarget,
+    /** M23: summaries only, for the swarm and the fleet: no terminals, no
+     * pane output, just what every pane is up to. */
+    readonly summary = false,
   ) {}
 
   /** How an end-to-end client is connected, for the host chip. */
@@ -623,11 +628,15 @@ export class Client {
         this.connected = true;
         this.focused = undefined;
         this.retry = 0;
+        if (this.summary) this.send({ type: "subscribe", summary: true });
         this.applyState(msg.state, true);
         if (msg.state.roles) void this.loadNotify();
         break;
       case "state":
         this.applyState(msg.state, false);
+        break;
+      case "delta":
+        this.applyDelta(msg.delta);
         break;
       case "size":
         this.panes.get(msg.pane)?.view.resize(msg.cols, msg.rows);
@@ -672,10 +681,41 @@ export class Client {
     }
   }
 
+  /** M23: the fields that changed. Panes come and go with a new State;
+   * a pane new to this client here (it became visible) goes the same
+   * way. */
+  private applyDelta(d: Delta) {
+    const old = this.state;
+    if (!old) return;
+    const byId = new Map<PaneId, PaneInfo>(old.panes.map((p) => [p.id, p]));
+    let added = false;
+    for (const patch of d.panes ?? []) {
+      const was = byId.get(patch.id);
+      if (!was) added = true;
+      byId.set(patch.id, { ...(was ?? {}), ...patch } as PaneInfo);
+    }
+    for (const id of d.gone ?? []) byId.delete(id);
+    const state: State = {
+      ...old,
+      panes: [...byId.values()].sort((a, b) => a.id - b.id),
+      machines: d.machines ?? old.machines,
+      presence: d.presence ?? old.presence,
+    };
+    if (added || d.gone?.length) return this.applyState(state, false);
+    this.state = state;
+    this.applyFollow();
+    this.emit();
+  }
+
   /** Bring panes and the local selection in line with the server. On a
    * new connection every known pane resumes from its offset. */
   private applyState(state: State, reconnect: boolean) {
     this.state = state;
+    if (this.summary) {
+      this.fixSelection();
+      this.emit();
+      return;
+    }
     const attach: { pane: PaneId; offset: number | null }[] = [];
     const created: PaneId[] = [];
     const live = new Set(state.panes.map((p) => p.id));

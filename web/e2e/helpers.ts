@@ -10,6 +10,7 @@ declare global {
       client: Client;
       hosts: HostDirectory;
       control: ControlSession | null;
+      summaries(): Client;
       text(pane: PaneId): string;
       screen(pane: PaneId): string;
       size(pane: PaneId): [number, number] | null;

@@ -307,7 +307,7 @@ async fn view(
                 Some(ToClient::Msg(m @ ServerMsg::Size { .. })) => {
                     if socket.send(Message::Text(serde_json::to_string(&m).unwrap_or_default().into())).await.is_err() { break None }
                 }
-                Some(ToClient::Msg(_)) => {}
+                Some(ToClient::Msg(_) | ToClient::Json(_)) => {}
                 Some(ToClient::Close) | None => break Some("the pane closed"),
             },
             Some(out) = ctrl_rx.recv() => {

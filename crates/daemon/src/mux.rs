@@ -13,9 +13,9 @@ use std::{
 
 use illogical_core::{Effect, Intent, Mux, Role};
 use illogical_proto::{
-    Action, AskRef, AskWhat, Attention, BlockType, ClientId, ClientMsg, CommandInfo, Driver, Event, EventKind, Machine,
-    MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, Reason, ReasonKind, ServerMsg,
-    SessionId, State, TabId, TabView,
+    Action, Activity, AskRef, AskWhat, Attention, BlockType, ClientId, ClientMsg, CommandInfo, Delta, Driver, Event,
+    EventKind, Machine, MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, Reason, ReasonKind,
+    ServerMsg, SessionId, State, TabId, TabView, WorkKind,
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::{Ask, AskKind},
 };
@@ -52,6 +52,16 @@ const FAILED_AFTER_MS: u64 = 3_000;
 /// Programs that wait for you quietly: one of these going quiet mid-command
 /// means it probably needs input.
 const AGENTS: &[&str] = &["claude", "codex", "aider", "gemini", "opencode", "goose", "amp"];
+/// Changes a card depends on (attention, a question, who drives) reach
+/// clients within this (M23); several in a row go together.
+const URGENT: Duration = Duration::from_millis(40);
+/// Everything else (activity, directories, commands) at most this often.
+const TICK: Duration = Duration::from_secs(1);
+/// What the OS says a pane runs is read again after this.
+const PROC_FRESH: Duration = Duration::from_secs(1);
+/// Pane fields a summary leaves out (M23): a client that needs them reads
+/// the pane.
+const NOT_IN_SUMMARIES: &[&str] = &["epoch", "policy", "integration"];
 
 pub enum Cmd {
     Connect {
@@ -465,6 +475,57 @@ struct Daemon {
     save_due: Option<Instant>,
     last_saved: Option<SavedParts>,
     shutting_down: bool,
+    // ---- what clients were last sent (M23)
+    /// Panes whose details changed since the last flush.
+    dirty: Dirty,
+    /// Send everyone a whole `State` at the next flush (grants changed).
+    full: bool,
+    /// When the next flush is due, if a change is waiting.
+    flush_due: Option<Instant>,
+    /// Per client: what it has, to send it only what changed.
+    sent: HashMap<ClientId, Sent>,
+    /// Clients that only want summaries (the swarm, the fleet).
+    summary: std::collections::HashSet<ClientId>,
+    /// Each pane's byte count at the last tick, and its activity.
+    activity: HashMap<PaneId, (u64, Activity)>,
+    last_tick: Instant,
+    /// What the OS said each pane runs, and when it was read.
+    procs: std::cell::RefCell<HashMap<PaneId, ProcSeen>>,
+}
+
+/// Which panes changed.
+#[derive(Default)]
+enum Dirty {
+    #[default]
+    Clean,
+    Panes(std::collections::HashSet<PaneId>),
+    All,
+}
+
+/// A pane as one client has it.
+type PaneJson = serde_json::Map<String, serde_json::Value>;
+/// The changed panes as one person sees them (`None`: not any more).
+type PaneView = Vec<(PaneId, Option<PaneJson>)>;
+
+/// What one client was last sent.
+#[derive(Default)]
+struct Sent {
+    rev: u64,
+    panes: HashMap<PaneId, PaneJson>,
+    machines: Vec<Machine>,
+    presence: Vec<Presence>,
+}
+
+/// A pane's working directory and foreground command, as the OS showed
+/// them.
+#[derive(Clone)]
+struct ProcSeen {
+    at: Instant,
+    cwd: Option<String>,
+    command: Option<String>,
+    /// What it's busy with, from `command`, else the pane's own process
+    /// (what `illogical run` started has no shell above it).
+    work: WorkKind,
 }
 
 /// `kept`: pane terminals systemd kept for us across a restart, by FD name.
@@ -510,6 +571,14 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         save_due: None,
         last_saved: None,
         shutting_down: false,
+        dirty: Dirty::All,
+        full: false,
+        flush_due: None,
+        sent: HashMap::new(),
+        summary: Default::default(),
+        activity: HashMap::new(),
+        last_tick: Instant::now(),
+        procs: Default::default(),
     };
     if !d.restore(kept) {
         // Something to attach to on first start.
@@ -566,21 +635,15 @@ fn push_title(state: Attention, reason: Option<&Reason>) -> &'static str {
     }
 }
 
-/// What asks bundle by: the project a directory is in (its git root), else
-/// the directory. A directory on a machine (not this host) is taken as is.
-/// M23's project, once panes carry it, replaces this.
+/// What asks bundle by: the project a directory is in (its git root, from
+/// M23's cached lookup), else the directory. A directory on a machine (not
+/// this host) is taken as is.
 pub fn project_key(cwd: Option<&str>, local: bool) -> String {
     let Some(cwd) = cwd else { return String::new() };
-    if local {
-        let mut dir = Some(std::path::Path::new(cwd));
-        while let Some(d) = dir {
-            if d.join(".git").exists() {
-                return d.display().to_string();
-            }
-            dir = d.parent();
-        }
+    match local.then(|| crate::classify::project(cwd)).flatten() {
+        Some(p) => p.root,
+        None => cwd.to_owned(),
     }
-    cwd.to_owned()
 }
 
 /// A duration as people say it: 42s, 3m 5s, 1h 2m.
@@ -791,8 +854,11 @@ impl Daemon {
 
     async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Cmd>, mut notices: mpsc::UnboundedReceiver<Notice>) {
         let mut refresh = tokio::time::interval(REFRESH);
+        let mut tick = tokio::time::interval(TICK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let due = self.save_due.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+            let flush = self.flush_due.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
             tokio::select! {
                 cmd = rx.recv() => match cmd {
                     Some(Cmd::Shutdown(done)) => {
@@ -808,6 +874,17 @@ impl Daemon {
                     self.save();
                 }
                 _ = refresh.tick() => self.save(),
+                _ = sleep_until(flush), if self.flush_due.is_some() => self.flush(),
+                _ = tick.tick() => {
+                    self.tick_activity();
+                    self.flush();
+                }
+            }
+            // A new layout goes out at once, in order with what follows.
+            if self.full
+                || self.clients.values().any(|c| self.sent.get(&c.client).is_none_or(|s| s.rev != self.mux.rev))
+            {
+                self.flush();
             }
         }
     }
@@ -888,7 +965,7 @@ impl Daemon {
             }
             self.config.control.push(pane, title, &body, extra, move |who| acl.notifies(who.id(), session));
         }
-        self.broadcast();
+        self.touch(pane);
     }
 
     /// Why a pane wants you now (M24): an open question or approval while it
@@ -1063,7 +1140,7 @@ impl Daemon {
                     let text = self.panes.get(&pane).and_then(|h| h.status().current.and_then(|c| c.text));
                     self.emit(Some(pane), EventKind::CommandStart { text });
                     self.set_attention(pane, Attention::Working, "command started");
-                    self.broadcast();
+                    self.touch(pane);
                 }
                 Signal::CommandEnd { exit } => {
                     let last = self.panes.get(&pane).and_then(|h| h.status().last);
@@ -1073,7 +1150,7 @@ impl Daemon {
                     // Something that asked for you still wants you after its
                     // command ends; only input (or a client) clears that.
                     if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
-                        self.broadcast();
+                        self.touch(pane);
                         return;
                     }
                     let failed = exit.is_some_and(|e| e != 0 && e != 130) && took_ms >= FAILED_AFTER_MS;
@@ -1101,11 +1178,11 @@ impl Daemon {
                     } else {
                         self.set_attention(pane, Attention::Idle, "command ended");
                     }
-                    self.broadcast();
+                    self.touch(pane);
                 }
                 Signal::Cwd { path } => {
                     self.emit(Some(pane), EventKind::Cwd { path });
-                    self.broadcast();
+                    self.mark(pane);
                 }
                 Signal::Notify { title, body } => {
                     self.emit(Some(pane), EventKind::Notify { title: title.clone(), body: body.clone() });
@@ -1125,21 +1202,22 @@ impl Daemon {
     fn handle(&mut self, cmd: Cmd) {
         match cmd {
             Cmd::Connect { sub } => {
-                let hello = ServerMsg::Hello {
-                    version: env!("CARGO_PKG_VERSION").into(),
-                    client: sub.client,
-                    state: self.state_for(&sub.principal),
-                };
-                let _ = sub.ctrl.send(ToClient::Msg(hello));
-                for id in self.blocks.keys().filter(|id| self.sees(&sub.principal, **id)) {
+                let state = self.state_for(&sub.principal);
+                let (client, who) = (sub.client, sub.principal.clone());
+                self.clients.insert(client, sub.clone());
+                self.send_state(client, state, false, true);
+                for id in self.blocks.keys().filter(|id| self.sees(&who, **id)) {
                     if let Some(msg) = self.block_msg(*id) {
                         let _ = sub.ctrl.send(ToClient::Msg(msg));
                     }
                 }
-                self.clients.insert(sub.client, sub);
+                // Everyone else sees them arrive.
+                self.soon();
             }
             Cmd::Disconnect { client } => {
                 let gone = self.clients.remove(&client).map(|c| c.principal);
+                self.sent.remove(&client);
+                self.summary.remove(&client);
                 self.focus.remove(&client);
                 self.refused.remove(&client);
                 self.viewing.remove(&client);
@@ -1369,7 +1447,7 @@ impl Daemon {
         if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
             // Already asking for you (Claude Code's own hook, say): this is
             // what it wants, and the card changed.
-            self.broadcast();
+            self.touch(pane);
         } else {
             self.set_attention(pane, Attention::NeedsInput, &why);
         }
@@ -1423,7 +1501,7 @@ impl Daemon {
         }
         if terminal {
             // It asks again in the terminal: still wants you.
-            self.broadcast();
+            self.touch(pane);
         } else {
             self.after_ask(pane);
         }
@@ -1436,7 +1514,7 @@ impl Daemon {
         if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
             self.set_attention(pane, Attention::Working, "answered");
         } else {
-            self.broadcast();
+            self.touch(pane);
         }
     }
 
@@ -1972,7 +2050,8 @@ impl Daemon {
             }
             ClientMsg::View { tab, cols, rows, zoom, claim } => {
                 if self.viewing.insert(client, tab) != Some(tab) {
-                    self.broadcast();
+                    // Presence only: no pane changed.
+                    self.soon();
                 }
                 // Only editors size a tab; viewers letterbox.
                 let editor = who.is_owner()
@@ -2010,7 +2089,21 @@ impl Daemon {
                 }
             }
             ClientMsg::Ping { id } => {
+                // Whatever it did has been sent before the answer.
+                self.flush();
                 let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Pong { id }));
+            }
+            ClientMsg::Subscribe { summary } => {
+                if summary {
+                    self.summary.insert(client);
+                    for p in self.panes.values() {
+                        p.detach(client);
+                    }
+                } else {
+                    self.summary.remove(&client);
+                }
+                let state = self.state_for(&who);
+                self.send_state(client, state, summary, false);
             }
             ClientMsg::Focus { pane } => {
                 let before = self.focus.get(&client).copied();
@@ -2027,7 +2120,7 @@ impl Daemon {
                     }
                 }
                 if self.focus.get(&client).copied() != before {
-                    self.broadcast();
+                    self.soon();
                 }
             }
             ClientMsg::Pane { pane, op } => {
@@ -2252,12 +2345,232 @@ impl Daemon {
         self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
     }
 
-    fn broadcast(&self) {
-        let mut states: HashMap<&Principal, State> = HashMap::new();
-        for sub in self.clients.values() {
-            let state = states.entry(&sub.principal).or_insert_with(|| self.state_for(&sub.principal));
-            let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::State { state: state.clone() }));
+    /// Something changed: every client hears what, shortly (M23). Layout
+    /// changes go as a whole `State`; anything else as a `Delta` of the
+    /// fields that changed. Where it's one pane, [`Self::touch`] is cheaper.
+    fn broadcast(&mut self) {
+        self.dirty = Dirty::All;
+        self.soon();
+    }
+
+    /// One pane's details changed (attention, a question, its driver).
+    fn touch(&mut self, pane: PaneId) {
+        self.procs.borrow_mut().remove(&pane);
+        self.mark(pane);
+        self.soon();
+    }
+
+    /// One pane's details changed, but nobody needs it before the next
+    /// tick (its directory).
+    fn mark(&mut self, pane: PaneId) {
+        match &mut self.dirty {
+            Dirty::All => {}
+            Dirty::Panes(s) => {
+                s.insert(pane);
+            }
+            Dirty::Clean => self.dirty = Dirty::Panes([pane].into()),
         }
+    }
+
+    fn soon(&mut self) {
+        let at = Instant::now() + URGENT;
+        if self.flush_due.is_none_or(|d| d > at) {
+            self.flush_due = Some(at);
+        }
+    }
+
+    /// Work out each pane's output rate from its byte count, without
+    /// touching the pane's thread (a parked pane stays parked).
+    fn tick_activity(&mut self) {
+        let now = Instant::now();
+        let secs = now.duration_since(self.last_tick).as_secs_f64().max(0.001);
+        self.last_tick = now;
+        let mut changed = vec![];
+        for (id, h) in &self.panes {
+            let (end, last_ms) = h.output_seen();
+            let (prev, old) = self.activity.get(id).copied().unwrap_or((end, Activity::default()));
+            let bps = (end.saturating_sub(prev) as f64 / secs).round().min(u32::MAX as f64) as u32;
+            let next = Activity { bps, last_ms };
+            self.activity.insert(*id, (end, next));
+            if next != old {
+                changed.push(*id);
+            }
+        }
+        self.activity.retain(|id, _| self.panes.contains_key(id));
+        for id in changed {
+            self.mark(id);
+        }
+    }
+
+    /// Send every client what changed since it was last sent anything.
+    fn flush(&mut self) {
+        self.flush_due = None;
+        let dirty = std::mem::take(&mut self.dirty);
+        let full = std::mem::take(&mut self.full);
+        if self.clients.is_empty() {
+            return;
+        }
+        let ids: Vec<PaneId> = match dirty {
+            Dirty::Clean => vec![],
+            Dirty::Panes(s) => s.into_iter().collect(),
+            Dirty::All => self.panes.keys().chain(self.blocks.keys()).copied().collect(),
+        };
+        let infos: HashMap<PaneId, PaneInfo> =
+            ids.iter().filter_map(|id| Some((*id, self.info_of_any(*id)?))).collect();
+        let clients: Vec<(ClientId, Principal)> =
+            self.clients.values().map(|c| (c.client, c.principal.clone())).collect();
+        // Most clients are one person's: work each view out once.
+        let mut states: HashMap<Principal, State> = HashMap::new();
+        let mut views: HashMap<(Principal, bool), PaneView> = HashMap::new();
+        let mut people: HashMap<Principal, (Vec<Machine>, Vec<Presence>)> = HashMap::new();
+        for (client, who) in clients {
+            let summary = self.summary.contains(&client);
+            let stale = full || self.sent.get(&client).is_none_or(|s| s.rev != self.mux.rev);
+            if stale {
+                let state = states.entry(who.clone()).or_insert_with(|| self.state_for(&who)).clone();
+                self.send_state(client, state, summary, false);
+                continue;
+            }
+            let view = views.entry((who.clone(), summary)).or_insert_with(|| {
+                ids.iter()
+                    .map(|id| {
+                        let v = infos
+                            .get(id)
+                            .filter(|_| self.sees(&who, *id))
+                            .map(|i| self.pane_value(&who, i.clone(), summary));
+                        (*id, v)
+                    })
+                    .collect()
+            });
+            let (machines, presence) =
+                people.entry(who.clone()).or_insert_with(|| (self.machines_for(&who), self.presence(&who)));
+            let Some(sent) = self.sent.get_mut(&client) else { continue };
+            let mut delta = Delta::default();
+            for (id, v) in view.iter() {
+                match v {
+                    Some(new) => {
+                        let old = sent.panes.get(id);
+                        let mut patch = serde_json::Map::new();
+                        for (k, val) in new {
+                            if old.and_then(|o| o.get(k)) != Some(val) {
+                                patch.insert(k.clone(), val.clone());
+                            }
+                        }
+                        for k in old.into_iter().flat_map(|o| o.keys()) {
+                            if !new.contains_key(k) {
+                                patch.insert(k.clone(), serde_json::Value::Null);
+                            }
+                        }
+                        if !patch.is_empty() {
+                            patch.insert("id".into(), (*id).into());
+                            delta.panes.push(patch);
+                            sent.panes.insert(*id, new.clone());
+                        }
+                    }
+                    None => {
+                        if sent.panes.remove(id).is_some() {
+                            delta.gone.push(*id);
+                        }
+                    }
+                }
+            }
+            if sent.machines != *machines {
+                sent.machines = machines.clone();
+                delta.machines = Some(machines.clone());
+            }
+            if sent.presence != *presence {
+                sent.presence = presence.clone();
+                delta.presence = Some(presence.clone());
+            }
+            if !delta.is_empty()
+                && let Some(c) = self.clients.get(&client)
+            {
+                let _ = c.ctrl.send(ToClient::Msg(ServerMsg::Delta { delta }));
+            }
+        }
+    }
+
+    /// A whole `State` for one client (and what it now has), or its
+    /// `Hello`.
+    fn send_state(&mut self, client: ClientId, state: State, summary: bool, hello: bool) {
+        let Some(c) = self.clients.get(&client) else { return };
+        let who = c.principal.clone();
+        let mut sent = Sent {
+            rev: state.rev,
+            panes: HashMap::new(),
+            machines: state.machines.clone(),
+            presence: state.presence.clone(),
+        };
+        let mut panes = Vec::with_capacity(state.panes.len());
+        for p in &state.panes {
+            let v = self.pane_value(&who, p.clone(), summary);
+            sent.panes.insert(p.id, v.clone());
+            panes.push(serde_json::Value::Object(v));
+        }
+        let msg = if hello {
+            ServerMsg::Hello { version: env!("CARGO_PKG_VERSION").into(), client, state }
+        } else {
+            ServerMsg::State { state }
+        };
+        // Panes as this client has them (private ones blanked, summaries
+        // trimmed): the same objects deltas will be worked out against.
+        let mut json = serde_json::to_value(&msg).unwrap_or_default();
+        json["state"]["panes"] = serde_json::Value::Array(panes);
+        let _ = c.ctrl.send(ToClient::Json(json.to_string()));
+        self.sent.insert(client, sent);
+    }
+
+    /// A pane as `who` gets it: someone else's private pane shows only that
+    /// it's there and private (M14); a summary leaves out what the swarm
+    /// doesn't need.
+    fn pane_value(
+        &self,
+        who: &Principal,
+        mut info: PaneInfo,
+        summary: bool,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        if info.private && !who.is_owner() {
+            info = PaneInfo {
+                cwd: None,
+                command: None,
+                current: None,
+                last: None,
+                ask: None,
+                reason: None,
+                work: None,
+                project: None,
+                activity: None,
+                title: None,
+                ..info
+            };
+        }
+        let serde_json::Value::Object(mut m) = serde_json::to_value(&info).unwrap_or_default() else {
+            return Default::default();
+        };
+        if summary {
+            for k in NOT_IN_SUMMARIES {
+                m.remove(*k);
+            }
+        }
+        m
+    }
+
+    /// The machines `who` sees: those their panes run on.
+    fn machines_for(&self, who: &Principal) -> Vec<Machine> {
+        if who.is_owner() {
+            return self.machines.values().cloned().collect();
+        }
+        let hosts: std::collections::HashSet<MachineId> = self
+            .mux
+            .sessions
+            .iter()
+            .filter(|s| self.config.acl.role(who, s.id).is_some())
+            .flat_map(|s| &s.tabs)
+            .filter_map(|t| self.mux.tab(*t).ok())
+            .flat_map(|t| t.root.panes())
+            .filter_map(|p| self.meta.get(&p).and_then(|m| m.host))
+            .collect();
+        self.machines.values().filter(|m| hosts.contains(&m.id)).cloned().collect()
     }
 
     // ---- who may see and do what (M12)
@@ -2576,6 +2889,8 @@ impl Daemon {
                 p.detach(client);
             }
         }
+        // Sessions and roles changed with them: everyone starts over.
+        self.full = true;
         self.broadcast();
     }
 
@@ -2603,9 +2918,9 @@ impl Daemon {
     }
 
     /// Note each running pane's directory and the command a re-run would
-    /// run. True if any changed.
-    fn refresh_meta(&mut self) -> bool {
-        let mut changed = false;
+    /// run, and mark the panes where either changed.
+    fn refresh_meta(&mut self) {
+        let mut changed = vec![];
         for (id, h) in &self.panes {
             if !h.running() {
                 continue;
@@ -2615,23 +2930,30 @@ impl Daemon {
             let cwd = status.cwd.clone().or_else(|| h.cwd().map(|c| c.display().to_string())).or(m.cwd.clone());
             // The command line as typed, when the shell integration reported
             // it; otherwise what /proc says is in the foreground.
+            let fg = h.command();
             let command = match status.current {
-                Some(c) => c.text.or_else(|| h.command()),
-                None => h.command(),
+                Some(c) => c.text.or_else(|| fg.clone()),
+                None => fg.clone(),
             };
-            changed |= m.cwd != cwd || m.command != command;
+            // What clients were told runs there (and so its kind), too.
+            let told = self.procs.borrow().get(id).map(|s| s.command.clone());
+            if m.cwd != cwd || m.command != command || told.is_some_and(|t| t != fg) {
+                changed.push(*id);
+            }
             (m.cwd, m.command) = (cwd, command);
         }
-        changed
+        for id in changed {
+            self.procs.borrow_mut().remove(&id);
+            self.mark(id);
+        }
     }
 
     /// Write the layout and pane details if anything changed since the last
     /// write.
     fn save(&mut self) {
-        // Whichever notices a new directory or command tells the clients.
-        if self.refresh_meta() {
-            self.broadcast();
-        }
+        // Whichever notices a new directory or command tells the clients
+        // (at the next tick).
+        self.refresh_meta();
         for (id, b) in &self.blocks {
             if let Some(m) = self.meta.get_mut(id) {
                 m.config = Some(b.config());
@@ -2667,15 +2989,45 @@ impl Daemon {
         info!(panes = self.panes.len(), "saved for shutdown");
     }
 
+    /// A pane's directory and foreground command from the OS, read at most
+    /// once a second (or again after something happened in it).
+    fn proc_seen(&self, p: &PaneHandle) -> ProcSeen {
+        if let Some(seen) = self.procs.borrow().get(&p.id).filter(|s| s.at.elapsed() < PROC_FRESH) {
+            return seen.clone();
+        }
+        let command = p.command();
+        let work = match &command {
+            Some(c) => crate::classify::kind(c),
+            None => p.own_command().map_or(WorkKind::Shell, |c| crate::classify::kind(&c)),
+        };
+        let seen = ProcSeen { at: Instant::now(), cwd: p.cwd().map(|c| c.display().to_string()), command, work };
+        self.procs.borrow_mut().insert(p.id, seen.clone());
+        seen
+    }
+
     fn pane_info(&self, p: &PaneHandle) -> PaneInfo {
         let meta = self.meta.get(&p.id).cloned().unwrap_or_default();
         let running = p.running();
         let status = p.status();
+        let seen = if running { Some(self.proc_seen(p)) } else { None };
+        let cwd = status.cwd.clone().or_else(|| seen.as_ref().and_then(|s| s.cwd.clone())).or(meta.cwd);
+        // The process's own command line sees through aliases; the typed
+        // text is next best (a command that hasn't started its process yet).
+        let typed = status.current.as_ref().and_then(|c| c.text.as_deref()).map(crate::classify::kind);
+        let work = match &seen {
+            Some(s) if s.command.is_some() => s.work,
+            _ => typed.or(seen.as_ref().map(|s| s.work)).unwrap_or(WorkKind::Shell),
+        };
+        let command = if running { seen.and_then(|s| s.command) } else { meta.command };
         PaneInfo {
             id: p.id,
             epoch: p.epoch,
-            cwd: status.cwd.clone().or_else(|| p.cwd().map(|c| c.display().to_string())).or(meta.cwd),
-            command: if running { p.command() } else { meta.command },
+            project: cwd.as_deref().and_then(crate::classify::project),
+            cwd,
+            command,
+            work: Some(work),
+            activity: self.activity.get(&p.id).map(|(_, a)| *a).filter(|a| a.last_ms > 0),
+            title: status.title.clone(),
             running,
             policy: meta.policy,
             current: status.current.map(info_of),
@@ -2729,6 +3081,10 @@ impl Daemon {
             pair: false,
             private: meta.private,
             trusted: Vec::new(),
+            work: (b.kind() == BlockType::Agent).then_some(WorkKind::Agent),
+            project: None,
+            activity: None,
+            title: None,
         }
     }
 
