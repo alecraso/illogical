@@ -28,11 +28,20 @@ fn notify_with_fds(state: &str, fds: &[RawFd]) -> bool {
     let Some(path) = std::env::var_os("NOTIFY_SOCKET") else { return false };
     let path = path.to_string_lossy().into_owned();
     let addr = match path.strip_prefix('@') {
+        #[cfg(target_os = "linux")]
         Some(name) => UnixAddr::new_abstract(name.as_bytes()),
+        #[cfg(not(target_os = "linux"))]
+        Some(_) => return false,
         None => UnixAddr::new(path.as_str()),
     };
     let Ok(addr) = addr else { return false };
-    let Ok(sock) = socket(AddressFamily::Unix, SockType::Datagram, SockFlag::SOCK_CLOEXEC, None) else {
+    // systemd only exists on Linux, where the socket can be close-on-exec
+    // from the start.
+    #[cfg(target_os = "linux")]
+    let flags = SockFlag::SOCK_CLOEXEC;
+    #[cfg(not(target_os = "linux"))]
+    let flags = SockFlag::empty();
+    let Ok(sock) = socket(AddressFamily::Unix, SockType::Datagram, flags, None) else {
         return false;
     };
     let iov = [IoSlice::new(state.as_bytes())];

@@ -55,6 +55,13 @@ check: test
     {{cargo}} fmt --all --check
     {{cargo}} clippy --workspace --all-targets -- -D warnings
 
+# Type-check and lint the macOS (Apple silicon) build from Linux. Zig is the
+# C compiler; this compiles but doesn't link, so build and test on a Mac too.
+check-macos:
+    rustup target add aarch64-apple-darwin >/dev/null
+    CC_aarch64_apple_darwin="$PWD/scripts/zig-cc-macos" AR_aarch64_apple_darwin="$PWD/scripts/zig-ar" \
+      {{cargo}} clippy --target aarch64-apple-darwin --workspace --all-targets -- -D warnings
+
 # Run the daemon the way it runs for real (port 7681, behind `tailscale serve`).
 run *args: build
     ./target/release/illogicald {{args}}

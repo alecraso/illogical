@@ -145,7 +145,8 @@ fn names(list: &Value) -> Vec<String> {
 #[test]
 fn this_hosts_files_cd_and_names() {
     let d = Daemon::new("local", false);
-    let root = std::env::temp_dir().join(format!("ilg-m7-files-{}", std::process::id()));
+    // Physical path: on macOS the temp dir is under /var, a link to /private/var.
+    let root = std::env::temp_dir().canonicalize().unwrap().join(format!("ilg-m7-files-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("src/deep")).unwrap();
     std::fs::write(root.join("notes.txt"), "0123456789").unwrap();
@@ -164,7 +165,12 @@ fn this_hosts_files_cd_and_names() {
     assert_eq!((status, body.as_str()), (200, "3456"));
     assert_eq!(d.get(&format!("/api/fs/stat?path={}/notes.txt", enc(&r)))["size"], 10);
     // Refused: kernel files, a link into them, the daemon's own state.
-    for p in ["/proc/self/environ".to_owned(), format!("{r}/env"), d.state.join("daemon-id").display().to_string()] {
+    // (macOS has no /proc: there the link leads nowhere, a 404.)
+    let mut refused = vec!["/proc/self/environ".to_owned(), d.state.join("daemon-id").display().to_string()];
+    if cfg!(target_os = "linux") {
+        refused.push(format!("{r}/env"));
+    }
+    for p in refused {
         let (status, body) = d.raw("GET", &format!("/api/fs/read?path={}", enc(&p)), None);
         assert_eq!(status, 403, "{p}: {body}");
     }

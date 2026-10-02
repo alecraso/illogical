@@ -433,6 +433,34 @@ pane should have from boot (`PATH` additions, `EDITOR`), put `KEY=value`
 lines in `~/.config/environment.d/50-illogical.conf`. Panes run `$SHELL -l`,
 so your profile runs too.
 
+**A Mac.** The daemon and CLI build and run on macOS (Apple silicon), so a
+Mac can be one of the hosts. With the Xcode command line tools, Rust
+(rustup) and mise:
+
+```
+just bootstrap && just install      # builds, installs a launchd agent, starts it
+```
+
+- `illogicald install` writes `~/Library/LaunchAgents/illogicald.plist`,
+  which starts it at login and after a crash; logs go to
+  `~/Library/Logs/illogicald.log`. `launchctl bootout gui/$UID/illogicald`
+  stops it.
+- Panes run your login shell (from the user database, since launchd sets no
+  `$SHELL`); zsh gets shell integration like bash.
+- There's no systemd, so there are no per-pane scopes and no FD store:
+  restarting or upgrading the daemon on a Mac ends its panes' programs.
+  Scrollback and layout come back, and panes follow their restart policy.
+- VM tabs and panes (wisp) are Linux-only.
+- To reach it from geek's page, put it behind the Tailscale app's serve
+  (`/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg
+  --https=443 http://127.0.0.1:7681`), run the daemon with `--allow-origin
+  https://geek.tailb2e8f2.ts.net` (pass it to `illogicald install --`),
+  and on geek `illogical hosts add mac https://<mac>.tailb2e8f2.ts.net`.
+  The host switcher then shows it. The daemon learns its tailnet name and
+  owner from the app's CLI, since the app has no tailscaled socket.
+- `just check-macos` checks the Mac build from Linux (CI runs it); linking
+  and the tests need a Mac.
+
 **A sandbox on the tailnet** (M4a). `just static` builds static x86_64 musl
 binaries in `target/x86_64-unknown-linux-musl/release/`. Copy
 `illogicald` and `illogical` into the sandbox, then:

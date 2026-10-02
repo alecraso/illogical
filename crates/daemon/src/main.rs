@@ -17,6 +17,7 @@ mod mux;
 mod osc;
 mod pane;
 mod ports;
+mod procinfo;
 mod provider;
 mod provider_tunnel;
 mod push;
@@ -51,8 +52,9 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Install as a systemd user service that starts at boot: copies this
-    /// binary to ~/.local/bin, writes the unit, enables and (re)starts it.
+    /// Install as a service that starts at boot (a systemd user service) or
+    /// at login (a launchd agent on macOS): copies this binary to
+    /// ~/.local/bin, writes the unit or plist, enables and (re)starts it.
     /// With --tailnet (sandboxes, no systemd): joins the tailnet with a
     /// userspace tailscaled and runs the daemon there, both kept running by
     /// `illogicald sandbox`.
@@ -373,6 +375,19 @@ fn daemon_id(store: &store::StateDir) -> String {
     id
 }
 
+/// `$SHELL`, else the login shell from the user database: launchd and some
+/// service managers don't set `$SHELL`, and macOS's `/bin/bash` is 3.2.
+fn login_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let user = nix::unistd::User::from_uid(nix::unistd::getuid()).ok()??;
+            Some(user.shell.to_string_lossy().into_owned()).filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "/bin/bash".into())
+}
+
 /// The CLI's socket: `sock` in the state directory, unless that path is too
 /// long for a Unix socket (about 108 bytes); then one in `$XDG_RUNTIME_DIR`
 /// (else /tmp) named by a hash of the directory, recorded in `sock.path`.
@@ -491,7 +506,7 @@ async fn run(args: RunArgs, kept: std::collections::HashMap<String, std::os::fd:
             let program = words.next().ok_or_else(|| anyhow::anyhow!("--shell is empty"))?;
             (program, words.collect())
         }
-        None => (std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()), vec!["-l".into()]),
+        None => (login_shell(), vec!["-l".into()]),
     };
     let state_dir = args.state_dir.unwrap_or_else(|| {
         std::env::var_os("XDG_STATE_HOME")

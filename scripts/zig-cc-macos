@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# C compiler for checking the aarch64-apple-darwin build from Linux (`just
+# check-macos`): Zig ships macOS libc headers, so no SDK is needed to compile
+# (linking needs a Mac). cc-rs adds Apple flags Zig can't parse (`-arch X`,
+# a Rust-style `--target=`, `-mmacosx-version-min=`); drop them.
+args=()
+skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in
+    -arch) skip=1 ;;
+    --target=* | -mmacosx-version-min=*) ;;
+    *) args+=("$a") ;;
+  esac
+done
+exec zig cc -target aarch64-macos "${args[@]}"

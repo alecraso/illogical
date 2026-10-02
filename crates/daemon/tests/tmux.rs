@@ -823,6 +823,11 @@ fn iterm2s_conversation_gets_tmuxs_answers() {
             continue;
         };
         compared += 1;
+        // The fixture's vi screen is Debian's vim (ruler on by default);
+        // other systems' vim draws it differently.
+        if !cfg!(target_os = "linux") && key.starts_with("capture-pane") {
+            continue;
+        }
         if let Err(e) = compare(&cmd, &(ok, body), &theirs) {
             failures.push(e);
         }
@@ -1011,8 +1016,23 @@ fn wezterm_and_ghostty_get_what_they_parse() {
 /// side by side, each pane at a `$ ` prompt.
 #[test]
 fn formats_match_real_tmux() {
-    if Command::new("tmux").arg("-V").output().is_err() {
+    // `tmux 3.6`, `tmux 3.5a`, `tmux next-3.7`: the formats compared are 3.6's.
+    let Ok(v) = Command::new("tmux").arg("-V").output() else {
         eprintln!("tmux not installed; skipping");
+        return;
+    };
+    let v = String::from_utf8_lossy(&v.stdout);
+    let num: String = v
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("")
+        .trim_start_matches("next-")
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let mut parts = num.split('.').map(|n| n.parse::<u32>().unwrap_or(0));
+    if (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) < (3, 6) {
+        eprintln!("{} is older than 3.6; skipping", v.trim());
         return;
     }
     let daemon = Daemon::start();
