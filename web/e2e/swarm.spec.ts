@@ -81,7 +81,13 @@ test("clusters by project (with fallback groups), machine, kind, session and per
   await page.reload();
   await expect(page.locator('[data-g="machine"]')).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => clusters(page)).toEqual(["build-01", "build-02", "geek"]);
-  // Tiles are coloured by kind: the legend has every kind.
+  // By person (M30): yours, a teammate's and a team's, from the synthetic
+  // fleet's owners beside these.
+  const stop = await page.evaluateHandle(() => window.__illogical.swarmFake(40));
+  await page.locator('[data-g="person"]').click();
+  await expect.poll(() => clusters(page)).toEqual(["sam", "team infra", "you"]);
+  await stop.evaluate((f) => f());
+    // Tiles are coloured by kind: the legend has every kind.
   await expect(page.locator(".swarm-legend span")).toHaveCount(7);
 });
 

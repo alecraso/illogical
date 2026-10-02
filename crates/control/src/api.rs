@@ -337,7 +337,9 @@ pub async fn directory(State(app): State<Arc<App>>, s: Session) -> R {
             // A hosted sandbox is reached through its provider, which wakes it.
             let sandbox = app.db.sandbox_of_daemon(&d.id).ok().flatten();
             let online = app.relay.online(&d.id) || sandbox.is_some();
-            json!({ "id": d.id, "name": d.name, "urls": d.urls, "last_seen": d.last_seen, "online": online, "sandbox": sandbox })
+            // One of my machines may be a team's (I joined it for them, M30).
+            let team = app.db.daemon_team(&d.id).ok().flatten();
+            json!({ "id": d.id, "name": d.name, "urls": d.urls, "last_seen": d.last_seen, "online": online, "sandbox": sandbox, "team": team })
         })
         .collect();
     // Teams' machines and those shared with me (M19), with their owner

@@ -167,7 +167,7 @@ export function SwarmView({
       const a = p.info.answered;
       // Worth keeping a card for: someone else answered, or the agent can
       // take a follow-up.
-      const worth = a && (a.who !== fleet.me(p.host) || p.info.inbox || p.info.type === "agent");
+      const worth = a && (a.who !== fleet.meOn(p.host) || p.info.inbox || p.info.type === "agent");
       if (a && worth && (!r.ask || a.id === r.ask.id) && !answered.some((d) => d.key === key && d.answered.at_ms === a.at_ms)) {
         next.push({ key, pane: p, answered: a, until: now + ANSWERED_MS });
       }
@@ -368,7 +368,8 @@ function requester(fleet: Fleet, host: string): Requester {
 /** Teammates who have one of these panes open (M13 presence). */
 function Watching({ fleet, panes }: { fleet: Fleet; panes: FleetPane[] }) {
   const seen = new Set<string>();
-  const people = panes.flatMap((p) => fleet.presence(p.host).filter((x) => x.pane === p.id && x.who !== fleet.me(p.host)));
+  // M30: who has each pane open.
+  const people = panes.flatMap((p) => (p.watchers ?? []).filter((x) => x.who !== fleet.meOn(p.host)));
   const unique = people.filter((x) => !seen.has(x.who) && seen.add(x.who));
   if (!unique.length) return null;
   return (

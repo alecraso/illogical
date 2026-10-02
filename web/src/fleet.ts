@@ -18,7 +18,7 @@
 // - A heartbeat notices a link that died without closing.
 
 import { Client } from "./client";
-import type { PaneInfo, State } from "./proto";
+import type { Driver, PaneInfo, Presence, State } from "./proto";
 import { RelayMux } from "./e2e/relaymux";
 
 export type HostStatus = "connecting" | "connected" | "stale" | "offline" | "asleep" | "capped";
@@ -35,6 +35,19 @@ export interface HostRef {
    * team it belongs to. Absent: yours. */
   owner?: string;
   team?: string | null;
+  /** M30: the owner's account id (`account:<id>` is their principal), and
+   * the team's name. */
+  ownerId?: string;
+  teamName?: string;
+}
+
+/** M30: whose a pane is, for clustering by person: you, a teammate (by
+ * account), or a team (a team's own machine). */
+export interface Person {
+  /** `me`, `account:<id>` or `team:<id>`. */
+  id: string;
+  name: string;
+  kind: "me" | "person" | "team";
 }
 
 export interface FleetHost extends HostRef {
@@ -59,6 +72,12 @@ export interface FleetPane {
   stale: boolean;
   owner?: string;
   team?: string | null;
+  /** M30: whose it is (its session's owner, which is its machine's). */
+  person: Person;
+  /** M30: who drives it (M13), if anyone does. */
+  driver: Driver | null;
+  /** M30: who has it open now (M13 presence), other than summaries. */
+  watchers: Presence[];
 }
 
 /** Most summary connections one page holds (S16: about 14 MB a page for
@@ -102,6 +121,8 @@ export class Fleet {
   private merged: FleetPane[] | null = null;
   /** Shown when the cap leaves hosts out. */
   notice: string | null = null;
+  /** M30: what to call this person ("me" otherwise). */
+  me = "me";
   /** Connects started, and how many failed, since the last wake (for the
    * tests and the S16 comparison). */
   stats = { started: 0, wakeAt: 0, allBackMs: null as number | null };
@@ -266,7 +287,14 @@ export class Fleet {
     const was = e.state;
     // Its try is over, either way: the next one may go.
     if (c.connected || !c.linked) this.trying.get(c)?.();
-    if (c.connected) {
+    if (c.revoked) {
+      // M30: access was removed (a share revoked, a member removed, a team
+      // locked): what it showed goes, it isn't kept greyed.
+      e.summary = null;
+      e.state = "offline";
+      e.lostAt = Date.now();
+      this.save();
+    } else if (c.connected) {
       e.state = "connected";
       e.lastSeen = Date.now();
       e.lostAt = null;
@@ -401,7 +429,7 @@ export class Fleet {
   }
 
   /** This client's principal id on a host. */
-  me(host: string): string {
+  meOn(host: string): string {
     const e = this.hosts.get(host);
     return e?.summary?.presence?.find((p) => p.client === e.client?.clientId)?.who ?? "owner";
   }
@@ -423,6 +451,22 @@ export class Fleet {
     this.emit();
   }
 
+  /** M30: whose a host's panes are. */
+  personOf(ref: HostRef): Person {
+    if (ref.team) return { id: `team:${ref.team}`, name: ref.teamName ?? ref.team, kind: "team" };
+    if (ref.ownerId) return { id: `account:${ref.ownerId}`, name: ref.owner ?? ref.ownerId, kind: "person" };
+    return { id: "me", name: this.me, kind: "me" };
+  }
+
+  /** M30: the panes grouped by person (you first, then people, then
+   * teams), for "cluster by person". */
+  byPerson(): { person: Person; panes: FleetPane[] }[] {
+    const groups = new Map<string, { person: Person; panes: FleetPane[] }>();
+    for (const p of this.panes) (groups.get(p.person.id) ?? groups.set(p.person.id, { person: p.person, panes: [] }).get(p.person.id)!).panes.push(p);
+    const rank = { me: 0, person: 1, team: 2 };
+    return [...groups.values()].sort((a, b) => rank[a.person.kind] - rank[b.person.kind] || a.person.name.localeCompare(b.person.name));
+  }
+
   /** Every pane on every host, as last known. Someone else's private pane
    * (M14) is left out: it shows only that it's there. */
   get panes(): FleetPane[] {
@@ -435,7 +479,11 @@ export class Fleet {
       for (const s of st.sessions) for (const t of s.tabs) sessionOf.set(t, { id: s.id, name: s.name });
       const tabOf = new Map<number, number>();
       for (const t of st.tabs) for (const [p] of t.layout.panes) tabOf.set(p, t.id);
+      const person = this.personOf(e.ref);
+      const watchers = new Map<number, Presence[]>();
+      for (const p of st.presence ?? []) if (p.pane !== undefined) (watchers.get(p.pane) ?? watchers.set(p.pane, []).get(p.pane)!).push(p);
       for (const info of st.panes) {
+        // Someone else's private pane (M14): not even a tile.
         if (info.private && st.roles) continue;
         out.push({
           key: `${name}:${info.id}`,
@@ -446,6 +494,9 @@ export class Fleet {
           stale: e.state !== "connected",
           owner: e.ref.owner,
           team: e.ref.team,
+          person,
+          driver: info.driver ?? null,
+          watchers: watchers.get(info.id) ?? [],
         });
       }
     }

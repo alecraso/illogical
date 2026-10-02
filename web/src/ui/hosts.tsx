@@ -71,10 +71,23 @@ export function HostButton() {
   if (!useHosts()) return null;
   const open = (e: MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const items: MenuItem[] = directory.names.map((name) => ({
+    const item = (name: string): MenuItem => ({
       label: `${name === directory.current ? "✓ " : "    "}${name}${name === directory.home ? " (home)" : ""}  · ${fleetLabel(name) ?? seen(name)}`,
       run: () => directory.select(name),
-    }));
+    });
+    // M30: grouped by whose they are (yours, each teammate's, each team's)
+    // once there's more than one person.
+    const groups = new Map<string, { label: string; names: string[] }>();
+    for (const name of directory.names) {
+      const h = fleet?.host(name);
+      const p = h ? fleet!.personOf(h) : { id: "me", name: "", kind: "me" as const };
+      const label = p.kind === "me" ? "Yours" : p.kind === "team" ? `Team ${p.name}` : `${p.name}'s`;
+      (groups.get(p.id) ?? groups.set(p.id, { label, names: [] }).get(p.id)!).names.push(name);
+    }
+    const items: MenuItem[] =
+      groups.size > 1
+        ? [...groups.values()].flatMap((g) => [{ header: g.label } as MenuItem, ...g.names.map(item)])
+        : directory.names.map(item);
     items.push("separator", { label: "Swarm: every pane at once", run: openSwarm });
     if (fleet?.notice) items.push("separator", { label: fleet.notice, disabled: true, run: () => {} });
     if (directory.stale) {

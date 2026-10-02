@@ -52,7 +52,23 @@ export function fakeSwarm(fleet: Fleet, n: number): () => void {
       project: project ? { root: `/home/fake/src/${project}`, name: project } : null,
       activity: { bps: Math.random() < 0.45 ? Math.round(rnd(50, 5000)) : 0, last_ms: Date.now() },
     } as unknown as PaneInfo;
-    panes.push({ key: `fake-${host}:${i + 1}`, host, id: i + 1, info, session: { id: 1, name: "main" }, stale: false });
+    // Whose (M30): build machines are the team's, the sandbox a teammate's.
+    const person = host.startsWith("build-")
+      ? { id: "team:infra", name: "infra", kind: "team" as const }
+      : host === "sandbox-a"
+        ? { id: "account:sam", name: "sam", kind: "person" as const }
+        : { id: "me", name: "me", kind: "me" as const };
+    panes.push({
+      key: `fake-${host}:${i + 1}`,
+      host,
+      id: i + 1,
+      info,
+      session: { id: 1, name: "main" },
+      stale: false,
+      person,
+      driver: null,
+      watchers: [],
+    });
   }
   fleet.inject(panes);
   const t = setInterval(() => {

@@ -149,6 +149,8 @@ const fleetHosts = (): HostRef[] =>
       status: h?.status,
       owner: d?.account ? (d.owner_name ?? d.account) : undefined,
       team: d?.team ?? null,
+      ownerId: d?.account,
+      teamName: d?.team ? session?.teams.find((t) => t.team === d.team)?.roster.name : undefined,
     };
   });
 fleet.onOpen = (host, pane) => {
@@ -164,6 +166,11 @@ fleet.onOpen = (host, pane) => {
 };
 setFleet(fleet);
 if (!linkTarget) {
+  // Teams load after the directory: their names come with them (M30).
+  session?.subscribe(() => {
+    if (session.login) fleet.me = session.login;
+    fleet.setHosts(fleetHosts());
+  });
   directory.subscribe(() => fleet.setHosts(fleetHosts()));
   fleet.setHosts(fleetHosts());
   fleet.start();

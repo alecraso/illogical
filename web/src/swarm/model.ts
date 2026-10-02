@@ -48,14 +48,11 @@ export function dirGroup(cwd: string | null | undefined, host: string): string {
   return top ? `/${top}` : "/";
 }
 
-/** Whose a pane is, for clustering by person: M30 gives each pane its
- * session's owner; until then the host's owner from the directory. Yours
- * are "you"; a team's machines are the team's. */
+/** Whose a pane is, for clustering by person (M30): you, a teammate, or a
+ * team. */
 export function personOf(p: FleetPane): string {
-  const owner = (p.info as { owner?: string | null }).owner ?? p.owner;
-  if (owner) return owner;
-  if (p.team) return `team ${p.team}`;
-  return "you";
+  if (!p.person || p.person.kind === "me") return "you";
+  return p.person.kind === "team" ? `team ${p.person.name}` : p.person.name;
 }
 
 export function groupOf(p: FleetPane, by: GroupBy): string {

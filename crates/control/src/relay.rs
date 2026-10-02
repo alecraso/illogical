@@ -421,7 +421,12 @@ async fn many_socket(app: Arc<App>, account: String, ws: WebSocket) {
                         chans.insert(chan, tx);
                         let (app, account, out, done) = (app.clone(), account.clone(), out_tx.clone(), done_tx.clone());
                         tokio::spawn(async move {
-                            channel(app, account, id, chan, rx, out.clone()).await;
+                            let opened = channel(app, account, id, chan, rx, out.clone()).await;
+                            // After everything it sent, in the same queue: a
+                            // daemon's last words (why it hung up) arrive.
+                            if opened {
+                                let _ = out.send(mframe(M_CLOSE, chan, b"")).await;
+                            }
                             let _ = done.send(chan);
                         });
                     }
@@ -447,9 +452,7 @@ async fn many_socket(app: Arc<App>, account: String, ws: WebSocket) {
                 None => break,
             },
             Some(chan) = done.recv() => {
-                if chans.remove(&chan).is_some() {
-                    let _ = wtx.send(Message::Binary(mframe(M_CLOSE, chan, b"").into())).await;
-                }
+                chans.remove(&chan);
             }
             _ = ping.tick() => if wtx.send(Message::Ping(Default::default())).await.is_err() { break },
         }
@@ -466,22 +469,27 @@ async fn channel(
     chan: u32,
     mut from_page: tokio::sync::mpsc::Receiver<Vec<u8>>,
     out: tokio::sync::mpsc::Sender<Vec<u8>>,
-) {
+) -> bool {
     let refuse = |why: &str| mframe(M_CLOSE, chan, why.as_bytes());
     match crate::teams::may_reach(&app, &account, &id) {
         Ok(true) => {}
-        _ => return drop(out.send(refuse("no such daemon")).await),
+        _ => {
+            let _ = out.send(refuse("no such daemon")).await;
+            return false;
+        }
     }
     // Hosted sandboxes are reached through their provider, one socket each.
     if app.hosted.is_some() && matches!(app.db.sandbox_of_daemon(&id), Ok(Some(_))) {
-        return drop(out.send(refuse("a hosted sandbox: use /api/relay/c")).await);
+        let _ = out.send(refuse("a hosted sandbox: use /api/relay/c")).await;
+        return false;
     }
     let slow = crate::billing::relay_standing(&app, &account).is_ok_and(|(_, _, slow)| slow);
     let Some(stream) = app.relay.mux(&id).and_then(|m| m.open().ok()) else {
-        return drop(out.send(refuse("that daemon isn't connected to the relay")).await);
+        let _ = out.send(refuse("that daemon isn't connected to the relay")).await;
+        return false;
     };
     if out.send(mframe(M_OPENED, chan, b"")).await.is_err() {
-        return;
+        return false;
     }
     let (mut rd, mut wr) = tokio::io::split(stream);
     let (sent, got) = (AtomicU64::new(0), AtomicU64::new(0));
@@ -524,4 +532,5 @@ async fn channel(
     }
     let bytes = sent.load(Ordering::Relaxed) + got.load(Ordering::Relaxed);
     let _ = app.db.add_relay_bytes(&account, &crate::day(now_ms()), bytes);
+    true
 }
