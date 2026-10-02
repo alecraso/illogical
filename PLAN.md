@@ -2436,6 +2436,51 @@ One live view of every pane on every machine you (or your team) can see. Panes f
 - **Tests:** `crates/daemon/tests/attention.rs` (a failing `cargo test`, a long `make build`, a quick failure that isn't one, Claude Code's question through the hook answered by `act`, three agent approvals allowed and denied as a list, the push's actions, the event stream); `e2e/attention.spec.ts` (a failure's badge and headline, dismissed on one client and gone on the other; a pushed failure offers Dismiss).
 - **Not covered (after the MVP):** prompt detection for `input` (`[sudo] password`, `[y/N]`), and the `rerun`, `restart` and `send` actions. A 10-minute build is tested as a 5-second one. Approvals of Claude Code's tool permission prompts in terminals come with M29.
 
+#### M29: team answers
+
+**Done 2026-10-02, apart from real phones.**
+
+- **What landed:**
+  - **Every answer has an author.** Approving, denying, answering and skipping, from a card, `call`, the act route or a notification, record the person who made the request. Their name goes into an agent block's transcript ("Allowed git push by sam") and its history entries. Any pane's card closes on every client saying who and when (`PaneInfo.answered`: "Allowed by sam, 14:02"). It also goes into the pane's history (`allowed: Bash: cargo test`, by them), into `illogical log --who` (a turn of theirs) and into the audit log (`action: answer`). The first answer wins; a second gets "it was answered".
+  - **Claude Code's permission prompts in terminals** become approval cards through `illogical hook` on its `PermissionRequest` hook. The card is matched to the `PreToolUse` just before it (same session and subagent, tool and input) for its `tool_use_id`, whichever arrives first. It shows the tool, its input (the command, the file and its diff) and Claude's own suggestions: Allow, Always (one suggestion as `updatedPermissions`), Deny, and Deny with a message. AskUserQuestion stays with `illogical ask`.
+  - **Cards close when the terminal answers first:**
+    - `PostToolUse` or `PostToolUseFailure` for its tool call ("allowed in the terminal");
+    - the session's next `PreToolUse`, `Stop`, `UserPromptSubmit` or `SessionStart` ("closed");
+    - the hook's SIGTERM after "No" or Esc ("denied in the terminal").
+    `illogical hook` passes these events to the daemon.
+  - **Follow-ups.** Once a card is answered, it has a "Send a follow-up" box (`POST /api/panes/N/followup`).
+    - Agent blocks: the block's next prompt, attributed.
+    - Claude Code in a terminal: `illogical inbox`, a background (`asyncRewake`) hook on `Stop` and `SessionStart`, waits for it. There is one waiter per pane (a newer one replaces the older), and follow-ups queue (up to 8) until one is waiting. It exits 2 with the text, which wakes Claude Code. Nothing is typed into the prompt.
+    - The follow-up is recorded as input from its sender.
+    - Who may send one is the drive-rights rule (`MayDrive`, as for `send`). On someone's own machine, a 403 makes the box offer "Ask <owner> for 30 minutes" (M14's trust request).
+  - **Who's looking:** the card shows avatars of teammates who have the pane open (M13 presence).
+  - **Push to the team.** `needs_input` goes to the owner and to every editor of the session who opted in, per session or for everything they may edit ("this team's agents"). Opting in is in the session menu (`/api/notify`, kept in `notify.json`). This holds for the daemon's own push, whose subscriptions now belong to a principal and may come from anyone with access, and through control, which before notified every editor.
+  - **Answering from a notification.**
+    - Pushes carry what to approve, for terminals too, and through control as well (encrypted per device).
+    - `sw.js` is now built from `src/sw.ts` (`vite.sw.config.ts`).
+    - The control page copies its checked directory (daemon id, Noise key, URLs, relay) into IndexedDB. The service worker answers Allow, Deny, a one-tap answer or Dismiss through `/api/attention/act`: on the daemon's own page with a fetch, and through control over an end-to-end channel it opens with the device key.
+    - A tap opens the pane, with its card.
+  - **Viewers** see the card and who answered, without buttons or a follow-up box. The API refuses them (403).
+- **Tests:**
+  - `crates/daemon/tests/team_answers.rs`, on S18's fixtures:
+    - a card matched to its tool call;
+    - allow, allow always and deny-with-a-message as Claude Code takes them;
+    - history and audit;
+    - each way the terminal closes a card;
+    - AskUserQuestion left alone;
+    - the inbox waking, queueing and being replaced.
+  - `e2e/team-answers.spec.ts` (control, a team box and Jake's machine on loopback, all reached through the relay; Sam on a Pixel-sized touch context):
+    - Sam allows Jake's cargo test from the phone, and Jake's page says "Allowed by sam";
+    - Sam's follow-up needs Jake's trust, then reaches the inbox;
+    - `illogical log --who` and `history` attribute both to sam;
+    - on the team box the follow-up goes straight through, and the viewer sees the card but gets a 403;
+    - the service worker allows a card over its own channel.
+  - `agents_real.rs` `team` (opt-in, haiku): the real Claude Code 2.1.287 TUI. A `touch` allowed from the card ran ("Allowed by PermissionRequest hook"), and a follow-up through the inbox woke the idle agent.
+- **Not covered:**
+  - Real phones: iOS Web Push actions, and a service worker's WebSocket there. The tests stand in with CDP push delivery and a dispatched `notificationclick`.
+  - The two people really on different networks.
+  - Notification opt-in through control's own UI: the daemon decides, and the session menu sets it.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |

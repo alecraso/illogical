@@ -1392,7 +1392,7 @@ impl Daemon {
             Api::InboxGone(pane, token) => {
                 if self.inbox.get(&pane).is_some_and(|w| w.token == token) {
                     self.inbox.remove(&pane);
-                    self.broadcast();
+                    self.touch(pane);
                 }
             }
             Api::FollowUp(pane, text, by, reply) => {
@@ -1541,7 +1541,7 @@ impl Daemon {
             "at": at_ms, "by": by.who, "name": by.name, "action": "answer", "pane": pane, "how": how,
             "headline": headline,
         }));
-        self.broadcast();
+        self.touch(pane);
     }
 
     /// The terminal answered a permission card first (M29): Claude Code
@@ -1625,7 +1625,7 @@ impl Daemon {
         if let Some(old) = self.inbox.insert(pane, Waiter { token, reply: tx }) {
             let _ = old.reply.send(InboxReply::Replaced);
         } else {
-            self.broadcast();
+            self.touch(pane);
         }
         Ok((token, rx))
     }
@@ -1661,7 +1661,7 @@ impl Daemon {
                 false
             }
         };
-        self.broadcast();
+        self.touch(pane);
         Ok(now)
     }
 
@@ -2537,6 +2537,7 @@ impl Daemon {
                 last: None,
                 ask: None,
                 reason: None,
+                answered: None,
                 work: None,
                 project: None,
                 activity: None,
