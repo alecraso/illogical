@@ -5,6 +5,8 @@
 //! same success or error, and the same body once ids, checksums and the
 //! known differences are set aside.
 
+mod strays;
+
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
@@ -83,6 +85,7 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }

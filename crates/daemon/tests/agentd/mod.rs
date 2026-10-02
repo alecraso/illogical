@@ -2,6 +2,9 @@
 
 #![allow(dead_code)]
 
+#[path = "../strays/mod.rs"]
+mod strays;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -67,6 +70,7 @@ impl Drop for Daemon {
         }
         // Anything it left running.
         let _ = Command::new("pkill").args(["-f", &self.sessions.display().to_string()]).status();
+        strays::kill_programs(&self.state);
         if std::env::var_os("ILLOGICAL_KEEP_TEST_STATE").is_some() {
             eprintln!("kept {}", self.state.display());
             return;

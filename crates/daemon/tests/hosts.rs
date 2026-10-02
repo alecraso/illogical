@@ -4,6 +4,8 @@
 //! kept out of it (`--tailscale-socket` points nowhere), and a fake tailnet
 //! name stands in for serve.
 
+mod strays;
+
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -29,6 +31,7 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        strays::kill_programs(&self.state);
         let _ = std::fs::remove_dir_all(&self.state);
     }
 }
