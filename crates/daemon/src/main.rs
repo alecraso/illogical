@@ -18,6 +18,7 @@ mod hosts;
 mod install;
 mod keys;
 mod machine;
+mod mcp;
 mod mux;
 mod osc;
 mod pane;
@@ -677,6 +678,23 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     // What `fs` never serves, besides the state directory.
     let private = vec![token_file.clone(), secrets.anthropic_key.clone(), secrets.claude_token.clone()];
     let acl = std::sync::Arc::new(acl::Acl::open(&state_dir));
+    let mcp_tokens = mcp::Tokens::open(&state_dir);
+    // Agent blocks reach MCP on loopback (M16); not where loopback needs
+    // the provider's tunnel token (a resident daemon).
+    let mcp_link = args.provider_token_sha256.is_none().then(|| {
+        let ip = match args.listen.ip() {
+            std::net::IpAddr::V4(v4) if v4.is_unspecified() => std::net::Ipv4Addr::LOCALHOST.into(),
+            std::net::IpAddr::V6(v6) if v6.is_unspecified() => std::net::Ipv6Addr::LOCALHOST.into(),
+            ip => ip,
+        };
+        let cli = std::env::current_exe().map(|e| e.with_file_name("illogical")).ok().filter(|c| c.exists());
+        mcp::Link {
+            url: format!("http://{}/mcp", SocketAddr::new(ip, args.listen.port())),
+            cli: cli.unwrap_or_else(|| "illogical".into()),
+            socket: socket.clone(),
+            tokens: mcp_tokens.clone(),
+        }
+    });
     let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone(), args.no_relay);
     let config = mux::Config {
         acl: acl.clone(),
@@ -696,6 +714,7 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         daemon_id: daemon_id(&store),
         secrets,
         private,
+        mcp: mcp_link,
     };
     let mux = mux::start(config, store, kept, push.clone());
 
@@ -722,6 +741,7 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
         binaries,
         control.clone(),
         acl.clone(),
+        mcp_tokens,
     );
     control.start(app.clone());
     // Read-only links end on time (M19).

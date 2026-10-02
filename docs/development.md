@@ -120,10 +120,12 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   (`fs.rs`), names (`illogical_core::names`). M6c: questions and forms
   (`illogical_proto::ask`: the card's shape and how its answer becomes
   Claude Code's; agent blocks' elicitations in `agent/`; a terminal's
-  questions in `mux.rs` and the `/ask` route).
+  questions in `mux.rs` and the `/ask` route). M16: MCP (`mcp/`: the server at `/mcp`, its
+  tools, and client and block tokens).
 - `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
   another daemon with `--host` (`hosts.rs`); `ask.rs` is Claude Code's
-  AskUserQuestion hook. `tmux/` is the tmux
+  AskUserQuestion hook; `mcp.rs` is `illogical mcp`, the stdio bridge to
+  `/mcp`. `tmux/` is the tmux
   control-mode front end (M5): the command parser and `-F` format expander,
   layout strings derived from the daemon's ratios (spike S11's converter),
   and a mirror terminal per pane so captures line up with the output

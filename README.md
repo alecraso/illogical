@@ -114,6 +114,37 @@ loginctl enable-linger $USER
    Claude Code in an ordinary pane can raise the same notifications,
    question cards and permission cards, and take follow-ups, through its
    hooks: see [Claude Code in a pane](docs/cli.md#claude-code-in-a-pane).
+7. **As tools for any agent (MCP).** Give Claude Code (or Codex, or any
+   MCP client) illogical's tools: it runs builds and dev servers in panes
+   you can watch from the phone and take over, waits on them, starts and
+   answers other agents, and searches what happened yesterday.
+
+   ```
+   claude mcp add illogical -- illogical mcp
+   ```
+
+   The read-only tools are safe to allow outright; leave the rest to ask.
+   In `~/.claude/settings.json` (or the project's `.claude/settings.json`):
+
+   ```json
+   {
+     "permissions": {
+       "allow": [
+         "mcp__illogical__read_output", "mcp__illogical__capture_screen", "mcp__illogical__wait",
+         "mcp__illogical__list", "mcp__illogical__history", "mcp__illogical__search",
+         "mcp__illogical__read_file"
+       ],
+       "ask": [
+         "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__close",
+         "mcp__illogical__open_port", "mcp__illogical__start_agent", "mcp__illogical__agent_respond"
+       ]
+     }
+   }
+   ```
+
+   What it starts says "started by mcp:claude-code". Agent blocks get the
+   same tools by themselves, limited to their own tab. Over HTTP, tokens,
+   and the tools: [MCP](docs/cli.md#mcp).
 
 ## On macOS
 

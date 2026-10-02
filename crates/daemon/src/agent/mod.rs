@@ -340,9 +340,42 @@ impl Inner {
         self.note(json!({ "e": "queue", "text": text, "front": front }));
     }
 
+    /// The MCP servers a session gets: the block's own, and illogical's
+    /// (M16), scoped to the block's tab. Over HTTP on loopback when the
+    /// agent takes it, else `illogical mcp` on stdio with the token in its
+    /// environment. Not for a VM's agent (a guest reaches nothing on the
+    /// host) or a Fountain agent (it runs in Fountain's sandbox).
+    fn servers(&self, ctx: &BlockCtx) -> Vec<Value> {
+        let mut list = self.cfg.mcp_servers.clone();
+        let Some(link) = &ctx.mcp else { return list };
+        if ctx.sprite.is_some()
+            || self.cfg.def.agent == Kind::Fountain
+            || list.iter().any(|s| s["name"] == crate::mcp::SERVER_NAME)
+        {
+            return list;
+        }
+        let token = link.tokens.block_token(ctx.id);
+        list.push(if self.caps["mcpCapabilities"]["http"] == true {
+            json!({
+                "type": "http",
+                "name": crate::mcp::SERVER_NAME,
+                "url": link.url,
+                "headers": [{ "name": "Authorization", "value": format!("Bearer {token}") }],
+            })
+        } else {
+            json!({
+                "name": crate::mcp::SERVER_NAME,
+                "command": link.cli.display().to_string(),
+                "args": ["mcp", "--socket", link.socket.display().to_string()],
+                "env": [{ "name": "ILLOGICAL_MCP_TOKEN", "value": token }],
+            })
+        });
+        list
+    }
+
     /// Send a frame: log it, account for it, then write it.
     fn out(&mut self, frame: Value) {
-        self.write_log("out", &frame);
+        self.write_log("out", &redacted(&frame));
         self.on_out(&frame, now_ms());
         if let Some(link) = &self.link {
             link.send(frame.to_string().into_bytes());
@@ -1230,7 +1263,7 @@ async fn run(
                             g.interrupted = false;
                             let session = g.session();
                             let cwd = g.cfg.cwd.clone().unwrap_or_else(|| "/".into());
-                            let mcp = g.cfg.mcp_servers.clone();
+                            let mcp = g.servers(&ctx);
                             g.request("session/load", json!({ "sessionId": session, "cwd": cwd, "mcpServers": mcp }));
                         } else if g.status == Status::Remote {
                             remote_check = Some(tokio::time::Instant::now() + REMOTE_POLL);
@@ -1282,12 +1315,12 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             match &g.cfg.session_id {
                 Some(sid) if resume && !g.t.entries.is_empty() => {
                     let sid = sid.clone();
-                    let mcp = g.cfg.mcp_servers.clone();
+                    let mcp = g.servers(ctx);
                     g.request("session/resume", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 Some(sid) if load => {
                     let sid = sid.clone();
-                    let mcp = g.cfg.mcp_servers.clone();
+                    let mcp = g.servers(ctx);
                     g.request("session/load", json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }));
                 }
                 _ => new_session(ctx, g, &cwd),
@@ -1358,9 +1391,27 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
     }
 }
 
+/// A frame as the log keeps it: without illogical's MCP token (M16).
+fn redacted(frame: &Value) -> std::borrow::Cow<'_, Value> {
+    use std::borrow::Cow;
+    let ours = |s: &Value| s["name"] == crate::mcp::SERVER_NAME;
+    if !frame["params"]["mcpServers"].as_array().is_some_and(|l| l.iter().any(ours)) {
+        return Cow::Borrowed(frame);
+    }
+    let mut f = frame.clone();
+    for s in f["params"]["mcpServers"].as_array_mut().into_iter().flatten().filter(|s| ours(s)) {
+        for key in ["headers", "env"] {
+            for kv in s.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
+                kv["value"] = json!("<redacted>");
+            }
+        }
+    }
+    Cow::Owned(f)
+}
+
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
     let meta = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default();
-    let mcp = g.cfg.mcp_servers.clone();
+    let mcp = g.servers(ctx);
     g.request("session/new", json!({ "cwd": cwd, "mcpServers": mcp, "_meta": meta }));
 }
 

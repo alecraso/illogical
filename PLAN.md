@@ -1483,6 +1483,51 @@ sprite:
 - A client on another tailnet machine uses `/mcp` over HTTP with a token,
   and revoking the token cuts it off.
 
+#### M16: as built
+
+**Done 2026-10-02, apart from agent blocks in a VM (#59) and a real phone.**
+
+- **What landed:**
+  - **The server** (`crates/daemon/src/mcp/`): rmcp 3.5.0 (pinned) in the daemon, one `StreamableHttpService` at `/mcp` on every router the API is on (the socket, TCP, the dial-out tunnel, end-to-end channels), so both the stateless 2026-07-28 protocol and 2025-06-18 sessions work. It's a layer over the mux's own calls (`Api::Run`, `Api::Open`, the API's waits and `act`), not a client of the HTTP API.
+  - **Thirteen tools** (`mcp/tools.rs`), the table's twelve with `history` and `search` apart: `run`, `send_input`, `read_output`, `capture_screen`, `wait`, `list`, `close`, `history`, `search`, `open_port`, `start_agent`, `agent_respond`, `read_file`.
+    - Each answers with `structuredContent` that has a `summary` sentence, and the same JSON as text. Failures are `isError` with a sentence ("pane %7 is gone; its last command `make` exited 2 3m ago").
+    - Annotations: the seven readers are `readOnlyHint`; `run`, `send_input`, `close` and `agent_respond` are `destructiveHint`; `run` and `start_agent` are open-world.
+    - Output is paged at 16,000 characters (40,000 at most) by stream offset, cut at line ends, with `next_offset`; an agent's transcript pages by character.
+    - `wait` and `run` with `wait` send progress every 15s and answer "still running" (with the offset and the last lines) after 100s, or `timeout`.
+  - **Resources:** `illogical://history` and the templates `illogical://pane/{id}/output`, `…/screen` and `illogical://block/{id}`, read-only, with cache hints.
+  - **`illogical mcp`** (`crates/cli/src/mcp.rs`): a stdio server relaying to `/mcp` over the socket, or another daemon with `--host`. It adds the session id, protocol version and `Mcp-Method`/`Mcp-Name` headers Streamable HTTP wants, keeps the client's order (each message goes once the one before has its headers, and everything waits for `initialize`), and reopens the session with the client's own `initialize` when a restarted daemon answers 404.
+  - **Tokens** (`mcp/tokens.rs`): `illogical mcp token --name N [--scope full|read]`, `--list`, `--revoke N`, over `/api/mcp/tokens` (the owner's). Only hashes are kept, in `mcp/tokens.json`. A request to `/mcp` with a bearer token skips the identity check (`Class::McpToken`, from this machine or the tailnet only) and is checked against the tokens on every request, so revoking cuts a client off at its next call.
+  - **Agent blocks** get an `illogical` server in `session/new`, `load` and `resume`: `http` on the daemon's loopback `/mcp` when the agent advertises `mcpCapabilities.http` (claude-agent-acp does), else `illogical mcp --socket` with the token in its `env`. The token is an HMAC of the block's id under `mcp/key`, so it's the same after a restart, ends with the block, and is `<redacted>` in the block's log.
+  - **Scope of a block's token:** `run`, `open_port` and `start_agent` split beside the agent (or a pane in its tab), on the tab's machine in a VM tab, with no `vm`, `vm_tab`, `machine` or `session`. `send_input`, `close` and `agent_respond` reach only what it started; the readers reach its tab; `history` and `search` are filtered to its tab's panes.
+  - **Who did it:** every call is logged (`mcp call`, with tool, client, token and scope). A pane or block an MCP client started carries `started_by` (`{by: "mcp:<client>", block}`, in `layout.json`), shown on the pane ("started by mcp:claude-code"). `run` types its command into a new shell (`Api::InputBy`), so history has it with `by: mcp:<client>` and the shell stays for you. The client's name is its own (`clientInfo`, per request at 2026-07-28), else the token's name.
+  - **Web:** a small "started by …" badge on the pane, bottom left.
+- **Decisions (2026-10-02):**
+  - **The bridge is a plain relay, not rmcp in the CLI.** The CLI stays without tokio, and the bridge doesn't need to understand the tools. rmcp's HTTP client is used in tests instead.
+  - **`run` types into a shell** instead of `$SHELL -c`, so the command is in history with its exit code and who ran it, `wait` can wait for the command's end, and the shell is left for you to take over. It waits for the shell's prompt first (20s here, 5 minutes for a VM).
+  - **Any `Authorization` on `/mcp` must be one of our bearer tokens.** It's what skips the identity check, so a request with some other credential (or a malformed one) is refused, never treated as the owner's.
+  - **rmcp's Host check is off.** The daemon's own (`Access::check_host`, with the tailnet names) runs on every TCP request; the socket is private. The exact-Origin rule is the API's (`api_origin`).
+  - **`tools/list` needs `ttlMs` and `cacheScope` too.** Claude Code 2.1.287 refused our `tools/list` without them (it retried four times and loaded no tools), which S14 hadn't seen. Every list and read result now carries `ttlMs: 0`, `cacheScope: private`.
+  - **`list` and `history` for a block's token are filtered, not refused**; a closed pane is readable with a full token only (its tab is gone).
+  - **`agent_respond` maps `skip` to deny** (a question's decline), as `/api/attention/act` does.
+- **Tests:**
+  - `crates/daemon/tests/mcp.rs`, with rmcp's client:
+    - through `illogical mcp` (a 2025-06-18 session): the tool list and annotations; `run` with `wait` (exit code, last lines); "started by" and history's `by`; 4,000 lines read back a page at a time; a wait answering "still running" with progress, then `C-c` and exit 130; typing and a match; `capture_screen`, `list`, `search`, resources, `read_file`; a closed pane's error and its output still read;
+    - stateless 2026-07-28 on the socket: cache hints on `tools/list` and templates, and the client's name from `_meta`;
+    - the bridge across a daemon restart;
+    - HTTP with a client token: used, `used_ms`; a read token sees seven tools and can't `run`; revoked mid-session and refused after; an unknown token, `Basic` credentials and an empty bearer refused; a foreign Origin refused;
+    - an agent block (`fake_acp.py`, which now advertises http MCP and calls tools on `mcp TOOL JSON`): it got loopback `/mcp` with its token, kept out of its log; it starts `python3 -m http.server` beside itself, waits for it, and opens it in a browser block beside itself; it lists only its tab; six ways of touching another tab are refused; history has nothing from the other tab; it can't close what it didn't start; its token is refused once it closes;
+    - one agent starts another (`start_agent`), waits until it asks, answers it (`agent_respond`), waits for the end of its turn and reads the answer in its transcript, and the answer is recorded as `mcp:fake-agent`'s;
+    - "what failed in this repo yesterday": history moved back 30 hours, asked with `failed`, `cwd`, `since 2d`, `before 1d`.
+  - `web/e2e/mcp.spec.ts`: a command run over `/mcp` as `claude-code`, its pane showing "started by mcp:claude-code", and history having it as theirs.
+  - `agents_real.rs` `mcp-cc` (opt-in, `ILLOGICAL_REAL_AGENTS=mcp-cc`, with `mcp-vm` for a VM pane): the real Claude Code (`claude -p`, haiku) with `illogical mcp` runs a build that fails after 20s, waits through it, reads why, fixes it and reruns, all in history as `mcp:claude-code`. Passed on geek, on the host and in a wisp VM pane.
+  - Unit tests: tokens (hash only, block tokens stable and per block, revoke), paging, durations, the annotations, the bridge's headers.
+- **Not covered:**
+  - agent blocks in a VM get no server yet: the host-side relay is #59. Fountain agents don't get one (by design);
+  - watching the build on a real phone (Needs Jake);
+  - Codex as a client wasn't run against it (S14 ran it against rmcp; the bridge's session path is what it uses, and is tested);
+  - resource subscriptions (dropped in S14: no client subscribes);
+  - `run` with `host` (another daemon): use `illogical mcp --host` instead.
+
 ### After M6: order and triggers
 
 Everything below is planned, but each item starts when its trigger holds, not

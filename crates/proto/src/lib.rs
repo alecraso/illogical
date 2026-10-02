@@ -659,6 +659,20 @@ pub struct PaneInfo {
     /// The title its program set (OSC 0/2), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// What started it, when that wasn't you: an MCP client (M16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_by: Option<StartedBy>,
+}
+
+/// Who started a pane or block through MCP (M16).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartedBy {
+    /// `mcp:<client>`, as the pane and history show it.
+    pub by: String,
+    /// The agent block whose token it came with, if any: that block may
+    /// drive and close it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<PaneId>,
 }
 
 /// A pane's driver (M13).

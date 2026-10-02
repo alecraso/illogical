@@ -159,6 +159,13 @@ export interface PaneInfo {
   activity?: Activity | null;
   /** M23: the title its program set (OSC 0/2). */
   title?: string | null;
+  /** Started by an MCP client (M16): `mcp:<client>`, and the agent block whose token it came with. */
+  started_by?: StartedBy | null;
+}
+
+export interface StartedBy {
+  by: string;
+  block?: PaneId;
 }
 
 export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor";

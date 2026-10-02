@@ -65,12 +65,89 @@ illogical run --cwd ~/src                     # a shell in a directory, in a new
 illogical run --split %4 --join --cwd ~/app   # beside %4, where it runs (its VM tab's machine)
 illogical cd %4 ~/src                         # typed into %4's shell, only if it's at its prompt
 illogical tmux -CC attach [-t SESSION]        # be tmux for iTerm2 (see *Use it*)
+illogical mcp                                 # an MCP server on stdio (claude mcp add illogical -- illogical mcp)
+illogical mcp token --name laptop [--scope read]  # a token for /mcp over HTTP, printed once
+illogical mcp token --list                    # tokens, and when each was last used
+illogical mcp token --revoke laptop           # cut it off at its next call
 ```
 
 `--json` prints the API's JSON. `send` then `wait` only sees what happened
 after the send. The same calls are an HTTP API (`/api/...`, documented in
 `crates/proto/src/api.rs`) on the Unix socket and, behind the usual access
 checks, over the tailnet.
+
+## MCP
+
+`illogical mcp` is an MCP server on stdin and stdout, for clients that
+start one as a command. It relays to the daemon's own server at `/mcp`
+over its socket (or another daemon's, with `--host`), so it can be
+started and stopped freely, and a daemon restart doesn't break it.
+
+```
+claude mcp add illogical -- illogical mcp
+codex mcp add illogical -- illogical mcp
+```
+
+The tools:
+
+| Tool | What it does | Reads only |
+|---|---|---|
+| `run` | A command in a new tab or split (`cwd`, `split`, `vm`, `vm_tab`, `machine`, `session`, `policy`), typed into a shell so it's in history and you can take over. With `wait`, its exit code and last lines. | no |
+| `send_input` | Text (Enter after it unless `enter: false`) and named keys (`C-c`, `Up`) to a pane; to an agent block, its next prompt | no |
+| `read_output` | A pane's output as text: the latest, from an `offset`, or its `last_command`'s. Paged (16,000 characters by default): pass `next_offset` back | yes |
+| `capture_screen` | What a pane shows now | yes |
+| `wait` | Until `command_end`, `exit`, `match` (a `pattern`), `idle` or `needs_input`. After `timeout` seconds (100 by default) it answers "still running" with the offset: call it again | yes |
+| `list` | Panes and blocks: where, what they run, attention, who started them | yes |
+| `close` | Close a pane or block (and a VM it owns) | no |
+| `history` | Commands across panes: `failed`, `since` and `before` (`2d`, `36h`), `cwd`, `match` | yes |
+| `search` | Lines of output matching a regex | yes |
+| `open_port` | A browser block on a port of a pane's machine, beside it | no |
+| `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt | no |
+| `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
+| `read_file` | A text file on this host or a pane's machine, paged | yes |
+
+Resources: `illogical://history`, and the templates
+`illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and
+`illogical://block/{id}`.
+
+Waits send a progress notification every 15 seconds: over HTTP, Claude
+Code drops a call that's silent for 60. If a long build still doesn't fit,
+`MCP_TOOL_TIMEOUT` raises Claude Code's own limit, but the tools return
+"still running" well before any limit.
+
+**Over HTTP.** The daemon serves the same tools at `/mcp` (Streamable
+HTTP). From your own machines on the tailnet nothing more is needed:
+
+```
+claude mcp add --transport http illogical https://home.<tailnet>.ts.net/mcp
+```
+
+A client without a tailnet identity of its own (a tagged node, a
+container) needs a token:
+
+```
+illogical mcp token --name ci                 # prints ilm_…, once
+claude mcp add --transport http illogical https://home.<tailnet>.ts.net/mcp \
+  --header "Authorization: Bearer ilm_…"
+illogical mcp token --revoke ci               # its next call is refused
+```
+
+`--scope read` makes a token that sees and calls the read-only tools only.
+`illogical mcp --token T` (or `ILLOGICAL_MCP_TOKEN`) sends one through the
+bridge.
+
+**Agent blocks** get the server without asking: local agents as `/mcp` on
+loopback (or `illogical mcp`, if the agent doesn't take HTTP servers), with
+a token of their own that only reaches the block's tab. An agent can start
+panes and blocks there (on the tab's machine, in a VM tab), drive and
+close what it started, and read the rest of its tab; other tabs and new
+VMs are refused. The token ends with the block, and stays out of its log.
+Agents in a VM or in Fountain's sandboxes don't get it yet.
+
+**Who did it.** Every call is logged with the client's name and token. A
+pane or block an MCP client started says "started by mcp:CLIENT" (the
+client's own name, `claude-code` say), and what it typed is in history as
+`mcp:CLIENT`'s.
 
 ## Claude Code in a pane
 

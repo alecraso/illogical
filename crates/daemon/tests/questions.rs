@@ -297,9 +297,13 @@ fn the_block_declares_form_and_url_elicitation() {
     let new = logged(&d, id, "session/new").expect("session/new in the log");
     let new: Value = serde_json::from_str(&new).unwrap();
     assert_eq!(
-        new["m"]["params"]["mcpServers"],
-        json!([{ "name": "forms", "command": "python3", "args": ["/srv/forms.py", "--log", "a b"], "env": [] }])
+        new["m"]["params"]["mcpServers"][0],
+        json!({ "name": "forms", "command": "python3", "args": ["/srv/forms.py", "--log", "a b"], "env": [] })
     );
+    // And illogical's own (M16), its token kept out of the log.
+    let ours = &new["m"]["params"]["mcpServers"][1];
+    assert_eq!((ours["name"].as_str(), ours["type"].as_str()), (Some("illogical"), Some("http")), "{new}");
+    assert_eq!(ours["headers"], json!([{ "name": "Authorization", "value": "<redacted>" }]));
 }
 
 // ---------------------------------------------------------------- terminals
