@@ -15,6 +15,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { daemonPort } from "./ports.ts";
 
 const fixtures = resolve(import.meta.dirname, "../../crates/daemon/tests/fixtures");
 
@@ -116,8 +117,8 @@ export class FakeFleet {
   }
 
   /** Start a daemon; the first is the home daemon the page comes from, and
-   * lists the others. */
-  async machine(name: string, port: number): Promise<FakeMachine> {
+   * lists the others. On `port`, or one of its choosing. */
+  async machine(name: string, port = 0): Promise<FakeMachine> {
     const state = join(this.root, `state-${name}`);
     const home = this.machines[0]?.url;
     const proc = spawn(
@@ -132,6 +133,7 @@ export class FakeFleet {
         env: { ...process.env, HOME: this.home, PATH: `${this.bin}:${process.env.PATH}`, FAKE_FIXTURES: fixtures },
       },
     );
+    if (!port) port = await daemonPort(state, proc);
     const url = `http://127.0.0.1:${port}`;
     for (let i = 0; i < 100; i++) {
       try {

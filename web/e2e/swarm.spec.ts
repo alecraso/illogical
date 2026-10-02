@@ -10,20 +10,16 @@
 import { devices, expect, test, type Page } from "@playwright/test";
 import { FakeFleet } from "./fake-fleet";
 
-const WORK = 7766;
-const BUILD1 = 7767;
-const BUILD2 = 7768;
-const home = `http://127.0.0.1:${WORK}`;
 let fake: FakeFleet;
 
-test.use({ baseURL: home });
+test.use({ baseURL: async ({}, use) => use(fake?.machines[0]?.url) });
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
   fake = new FakeFleet();
-  await fake.machine("workstation", WORK);
-  await fake.machine("build-01", BUILD1);
-  await fake.machine("build-02", BUILD2);
+  await fake.machine("workstation");
+  await fake.machine("build-01");
+  await fake.machine("build-02");
   await fake.populate();
 });
 

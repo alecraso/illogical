@@ -55,9 +55,8 @@ impl Daemon {
     fn new() -> Self {
         let state = std::env::temp_dir().join(format!("ilg-sites-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&state);
-        let blocks = free_port();
         let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", listen::ANY, "--block-listen", &format!("127.0.0.1:{blocks}")])
+            .args(["--listen", listen::ANY, "--block-listen", listen::ANY])
             .args(["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"])
             .arg("--state-dir")
             .arg(&state)
@@ -65,8 +64,10 @@ impl Daemon {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let mut d = Self { child: Some(child), state, port: 0, blocks };
+        let mut d = Self { child: Some(child), state, port: 0, blocks: 0 };
         d.port = listen::wait_port(&d.state);
+        d.blocks = listen::wait_block_port(&d.state);
+        let blocks = d.blocks;
         d.wait_for("daemon", || UnixStream::connect(d.sock()).is_ok());
         d.wait_for("block listener", || std::net::TcpStream::connect(("127.0.0.1", blocks)).is_ok());
         d

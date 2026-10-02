@@ -8,22 +8,23 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { ANY, controlPort } from "./ports";
 
-const PORT = 7760;
 // WebAuthn needs a domain name; localhost counts as secure.
-const base = `http://localhost:${PORT}`;
+let base = "";
 let control: ChildProcess;
 let dir: string;
 
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 
 test.beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "illogical-e2e-passkey-"));
   control = spawn(
     "../target/debug/illogical-control",
-    ["--listen", `127.0.0.1:${PORT}`, "--public-url", base, "--db", join(dir, "control.db"), "--static-dir", "dist"],
+    ["--listen", ANY, "--public-url", "http://localhost:0", "--db", join(dir, "control.db"), "--static-dir", "dist"],
     { stdio: "ignore", env: { ...process.env, GITHUB_CLIENT_ID: "", GITHUB_CLIENT_SECRET: "" } },
   );
+  base = `http://localhost:${await controlPort(join(dir, "control.db"), control)}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/control.json`)).ok) return;

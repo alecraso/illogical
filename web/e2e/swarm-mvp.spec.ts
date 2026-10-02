@@ -18,14 +18,13 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { createServer as tcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { devices, expect, test, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
+import { ANY, controlPort, listen } from "./ports";
 
-const CONTROL = 7774;
-const GITHUB = 7775;
-const base = `http://127.0.0.1:${CONTROL}`;
+let base = "";
+let github = "";
 const cli = resolve("../target/debug/illogical");
 const fixtures = resolve("../crates/daemon/tests/fixtures");
 const procs: ChildProcess[] = [];
@@ -34,7 +33,7 @@ const states = new Map<string, string>();
 let gh: Server;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 
 const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["Pixel 7"];
 const PHONE = { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch };
@@ -45,20 +44,9 @@ function temp(what: string) {
   return d;
 }
 
-/** A free port outside the e2e range (7750–7789). */
-function freePort(): Promise<number> {
-  return new Promise((res) => {
-    const s = tcpServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = (s.address() as { port: number }).port;
-      s.close(() => res(p >= 7750 && p <= 7789 ? freePort() : p));
-    });
-  });
-}
-
 test.beforeAll(async () => {
   gh = createServer((req, res) => {
-    const u = new URL(req.url!, `http://127.0.0.1:${GITHUB}`);
+    const u = new URL(req.url!, "http://github");
     if (u.pathname === "/login/oauth/authorize") {
       const who = /(?:^|;\s*)as=(\w+)/.exec(req.headers.cookie ?? "")?.[1] ?? "nobody";
       const back = new URL(u.searchParams.get("redirect_uri")!);
@@ -77,18 +65,21 @@ test.beforeAll(async () => {
       const id = [...login].reduce((h, c) => h * 31 + c.charCodeAt(0), 7);
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id, login }));
     } else res.writeHead(404).end();
-  }).listen(GITHUB, "127.0.0.1");
+  });
+  github = `http://127.0.0.1:${await listen(gh)}`;
+  const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
       "../target/debug/illogical-control",
       [
-        ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", join(temp("db"), "control.db")],
+        ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
-        ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
+        ...["--github-url", github, "--github-api", github],
       ],
       { stdio: "ignore" },
     ),
   );
+  base = `http://127.0.0.1:${await controlPort(db, procs.at(-1))}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/control.json`)).ok) break;
@@ -108,7 +99,7 @@ test.afterAll(() => {
 /** Someone's first browser: signed in, its recovery codes saved. */
 async function laptop(browser: Browser, login: string, opts: BrowserContextOptions = {}): Promise<Page> {
   const ctx = await browser.newContext(opts);
-  await ctx.addCookies([{ name: "as", value: login, url: `http://127.0.0.1:${GITHUB}` }]);
+  await ctx.addCookies([{ name: "as", value: login, url: github }]);
   const page = await ctx.newPage();
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
@@ -120,7 +111,7 @@ async function laptop(browser: Browser, login: string, opts: BrowserContextOptio
 /** Their phone: signed in as the same person, approved from the laptop. */
 async function phone(browser: Browser, login: string, approver: Page): Promise<Page> {
   const ctx = await browser.newContext(PHONE);
-  await ctx.addCookies([{ name: "as", value: login, url: `http://127.0.0.1:${GITHUB}` }]);
+  await ctx.addCookies([{ name: "as", value: login, url: github }]);
   const page = await ctx.newPage();
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
@@ -155,12 +146,11 @@ async function machine(page: Page, name: string, team?: string) {
   await page.goto(link);
   await page.locator("[data-approve-join]").click();
   expect(await exited).toBe(0);
-  const port = await freePort();
   procs.push(
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+        ...["--listen", ANY, "--name", name, "--state-dir", state],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },

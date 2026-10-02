@@ -14,9 +14,10 @@ import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { open, text } from "./helpers";
 import type { PaneId } from "../src/proto";
+import { ANY, daemonPort } from "./ports";
 
-const PORT = 7830;
-const VM_PORT = 7831;
+let PORT = 0;
+let VM_PORT = 0;
 const OWNER = "me@example.com";
 const FRIEND = "friend@example.com";
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
@@ -32,20 +33,24 @@ const phone = (() => {
   return { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch };
 })();
 
-const dir = mkdtempSync(join(tmpdir(), "ilg-e2e-changes-"));
-const repo = join(dir, "repo");
+// Made in beforeAll: this module is loaded more than once (#62).
+let dir = "";
+let repo = "";
+let vmState = "";
 let daemons: ChildProcess[] = [];
 
-async function start(port: number, state: string, args: string[], env: Record<string, string> = {}) {
+/** Start a daemon; its port. */
+async function start(state: string, args: string[], env: Record<string, string> = {}) {
   const d = spawn(
     "../target/debug/illogicald",
-    ["--listen", `127.0.0.1:${port}`, "--state-dir", state, "--shell", "bash --norc --noprofile", "--no-manager-env", ...args],
+    ["--listen", ANY, "--state-dir", state, "--shell", "bash --norc --noprofile", "--no-manager-env", ...args],
     { stdio: "ignore", env: { ...process.env, ...env } },
   );
   daemons.push(d);
+  const port = await daemonPort(state, d);
   for (let i = 0; i < 100; i++) {
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return;
+      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return port;
     } catch {
       // not up yet
     }
@@ -58,19 +63,22 @@ const git = (...args: string[]) => execFileSync("git", ["-C", repo, "-c", "user.
 const APP = ["export function hello() {", '  return "hello";', "}", "", "export const answer = 41;", ""].join("\n");
 
 test.beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), "ilg-e2e-changes-"));
+  repo = join(dir, "repo");
+  vmState = join(dir, "vm-state");
   mkdirSync(join(repo, "src"), { recursive: true });
   git("init", "-q", "-b", "main");
   writeFileSync(join(repo, "src/app.ts"), APP);
   writeFileSync(join(repo, "README.md"), "# demo\n");
   git("add", ".");
   git("commit", "-qm", "init");
-  await start(PORT, join(dir, "state"), ["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock", "--wisp-token-file", "/nonexistent"]);
+  PORT = await start(join(dir, "state"), ["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock", "--wisp-token-file", "/nonexistent"]);
 });
 
 test.afterAll(() => {
   for (const d of daemons) d.kill("SIGKILL");
   daemons = [];
-  rmSync(dir, { recursive: true, force: true });
+  if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
 const base = (port: number) => `http://127.0.0.1:${port}`;
@@ -112,7 +120,7 @@ async function changesToFile(page: Page, term: PaneId, path: string, lineText: s
 
 test.describe("on this host", () => {
   test.describe.configure({ mode: "serial" });
-  test.use({ baseURL: base(PORT), ...phone });
+  test.use({ baseURL: async ({}, use) => use(base(PORT)), ...phone });
 
   let term: PaneId = 0;
   let diff: PaneId = 0;
@@ -219,7 +227,6 @@ test.describe("on this host", () => {
 
 // ---------------------------------------------------------------- a VM tab
 
-const vmState = join(dir, "vm-state");
 const wisp = (method: string, path: string, body?: string) =>
   fetch(`${WISP}/v1/sprites${path}`, { method, headers: { Authorization: `Bearer ${token}` }, body });
 /** Write a file in the VM, as an agent there would. */
@@ -231,7 +238,7 @@ const cli = (...args: string[]) => execFileSync("../target/debug/illogical", ["-
 
 test.describe("on a VM tab", () => {
   test.describe.configure({ mode: "serial" });
-  test.use({ baseURL: base(VM_PORT), ...phone });
+  test.use({ baseURL: async ({}, use) => use(base(VM_PORT)), ...phone });
 
   let sprite = "";
   let term: PaneId = 0;
@@ -240,7 +247,7 @@ test.describe("on a VM tab", () => {
 
   test.beforeAll(async () => {
     if (!token) return;
-    await start(VM_PORT, vmState, ["--tailscale-socket", "/nonexistent/sock"], { ILLOGICAL_WISP_URL: WISP });
+    VM_PORT = await start(vmState, ["--tailscale-socket", "/nonexistent/sock"], { ILLOGICAL_WISP_URL: WISP });
   });
   test.afterAll(async () => {
     if (!token) return;

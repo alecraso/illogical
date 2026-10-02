@@ -21,12 +21,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { devices, expect, test, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
 import { text } from "./helpers";
+import { ANY, controlPort, listen } from "./ports";
 
-const CONTROL = 7783;
-const GITHUB = 7784;
-const TEAMBOX = 7785;
-const MAC = 7786;
-const base = `http://127.0.0.1:${CONTROL}`;
+let base = "";
+let github = "";
 const cli = resolve("../target/debug/illogical");
 const fixtures = resolve("../crates/daemon/tests/fixtures");
 const procs: ChildProcess[] = [];
@@ -34,7 +32,7 @@ const dirs: string[] = [];
 let gh: Server;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
   const d = mkdtempSync(join(tmpdir(), `illogical-e2e-answers-${what}-`));
@@ -44,7 +42,7 @@ function temp(what: string) {
 
 test.beforeAll(async () => {
   gh = createServer((req, res) => {
-    const u = new URL(req.url!, `http://127.0.0.1:${GITHUB}`);
+    const u = new URL(req.url!, "http://github");
     if (u.pathname === "/login/oauth/authorize") {
       const who = /(?:^|;\s*)as=(\w+)/.exec(req.headers.cookie ?? "")?.[1] ?? "nobody";
       const back = new URL(u.searchParams.get("redirect_uri")!);
@@ -63,18 +61,21 @@ test.beforeAll(async () => {
       const id = [...login].reduce((h, c) => h * 31 + c.charCodeAt(0), 7);
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id, login }));
     } else res.writeHead(404).end();
-  }).listen(GITHUB, "127.0.0.1");
+  });
+  github = `http://127.0.0.1:${await listen(gh)}`;
+  const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
       "../target/debug/illogical-control",
       [
-        ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", join(temp("db"), "control.db")],
+        ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
-        ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
+        ...["--github-url", github, "--github-api", github],
       ],
       { stdio: "ignore" },
     ),
   );
+  base = `http://127.0.0.1:${await controlPort(db, procs.at(-1))}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/control.json`)).ok) break;
@@ -93,7 +94,7 @@ test.afterAll(() => {
 
 async function person(browser: Browser, login: string, opts: BrowserContextOptions = {}): Promise<Page> {
   const ctx = await browser.newContext(opts);
-  await ctx.addCookies([{ name: "as", value: login, url: `http://127.0.0.1:${GITHUB}` }]);
+  await ctx.addCookies([{ name: "as", value: login, url: github }]);
   const page = await ctx.newPage();
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
@@ -103,7 +104,7 @@ async function person(browser: Browser, login: string, opts: BrowserContextOptio
 }
 
 /** A daemon joins control (as Jake's, or the team's) and starts. */
-async function machine(owner: Page, name: string, port: number, team?: string): Promise<string> {
+async function machine(owner: Page, name: string, team?: string): Promise<string> {
   const state = temp(name);
   const args = ["join", base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])];
   const joining = spawn("../target/debug/illogicald", args, { stdio: ["ignore", "pipe", "ignore"] });
@@ -124,7 +125,7 @@ async function machine(owner: Page, name: string, port: number, team?: string): 
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+        ...["--listen", ANY, "--name", name, "--state-dir", state],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },
@@ -197,7 +198,7 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
     await jake.locator("[data-admit-yes]").click();
     await expect(jake.locator("[data-admit-yes]")).toHaveCount(0, { timeout: 15_000 });
   }
-  mac = await machine(jake, "mac", MAC);
+  mac = await machine(jake, "mac");
 
   // Jake shares the session on his machine with Sam, who may drive it.
   await show(jake, "mac");
@@ -261,7 +262,7 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
 });
 
 test("on the team's box the follow-up goes straight through, and a viewer can't answer", async () => {
-  await machine(jake, "teambox", TEAMBOX, team);
+  await machine(jake, "teambox", team);
   for (const p of [jake, sam, val]) {
     await p.evaluate(() => window.__illogical.control!.refresh());
     await show(p, "teambox");

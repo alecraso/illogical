@@ -12,10 +12,10 @@ import { join } from "node:path";
 import { devices, expect, test, type Frame, type Page } from "@playwright/test";
 import { menu, open, paneEl, text, type as typeIn } from "./helpers";
 import type { PaneId } from "../src/proto";
+import { ANY, blockPort, daemonPort } from "./ports";
 
-const PORT = 7703;
-const BLOCKS = 7704;
-const APP = `http://127.0.0.1:${PORT}`;
+let BLOCKS = 0;
+let APP = "";
 const NODE = "v22.20.0";
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
@@ -25,8 +25,8 @@ const token = (() => {
     return "";
   }
 })();
-const state = mkdtempSync(join(tmpdir(), "ilg-e2e-vmdev-"));
-test.use({ baseURL: APP });
+let state = "";
+test.use({ baseURL: async ({}, use) => use(APP) });
 test.describe.configure({ mode: "serial" });
 
 const wisp = (method: string, path: string, body?: string) =>
@@ -55,11 +55,14 @@ if (import.meta.hot) import.meta.hot.accept("./label.js", (m) => (h.textContent 
 let daemon: ChildProcess | undefined;
 test.beforeAll(async () => {
   if (!token) return;
+  state = mkdtempSync(join(tmpdir(), "ilg-e2e-vmdev-"));
   daemon = spawn(
     "../target/debug/illogicald",
-    ["--listen", `127.0.0.1:${PORT}`, "--block-listen", `127.0.0.1:${BLOCKS}`, "--shell", "bash --norc --noprofile"],
+    ["--listen", ANY, "--block-listen", ANY, "--shell", "bash --norc --noprofile"],
     { stdio: "ignore", env: { ...process.env, ILLOGICAL_STATE_DIR: state, ILLOGICAL_WISP_URL: WISP } },
   );
+  APP = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
+  BLOCKS = await blockPort(state, daemon);
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${APP}/`)).ok) return;
@@ -73,6 +76,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   daemon?.kill("SIGKILL");
   // Anything a failed test left behind: only this daemon's machines.
+  if (!state) return;
   let id: string | null = null;
   try {
     id = readFileSync(join(state, "daemon-id"), "utf8").trim();
@@ -94,7 +98,7 @@ async function frameOf(page: Page): Promise<Frame> {
   let frame: Frame | undefined;
   await expect
     .poll(() => {
-      frame = page.frames().find((f) => /^http:\/\/b-\d+-[a-z0-9]{20}\.localhost:7704\//.test(f.url()));
+      frame = page.frames().find((f) => new RegExp(`^http://b-\\d+-[a-z0-9]{20}\\.localhost:${BLOCKS}/`).test(f.url()));
       return frame?.url() ?? null;
     })
     .not.toBeNull();

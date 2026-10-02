@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { menu, open, paneEl, panes, ready, tab, text, type } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
-const PORT = 7746;
-const base = `http://127.0.0.1:${PORT}`;
+let base = "";
 const TMUX = ["-L", `illogical-e2e-tui-${process.pid}`];
 let daemon: ChildProcess;
 let state: string;
@@ -25,7 +25,7 @@ const hasTmux = (() => {
   }
 })();
 
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 test.describe.configure({ mode: "serial" });
 test.skip(!hasTmux, "needs tmux to give the TUI a terminal");
 
@@ -34,11 +34,12 @@ test.beforeAll(async () => {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${PORT}`, "--state-dir", state],
+      ...["--listen", ANY, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
     ],
     { stdio: "ignore", env: { ...process.env, PS1: "$ " } },
   );
+  base = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/api/host`)).ok) break;

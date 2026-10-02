@@ -177,7 +177,8 @@ struct RunArgs {
 
     /// A URL clients can reach this daemon at directly, for control's
     /// directory (`https://box.lan:7681`); its host is accepted too. The
-    /// tailnet name, if any, is listed without this.
+    /// tailnet name, if any, is listed without this. Port 0 is the port
+    /// --listen got.
     #[arg(long = "direct-url", env = "ILLOGICAL_DIRECT_URL", value_delimiter = ',')]
     direct_urls: Vec<String>,
 
@@ -332,7 +333,8 @@ struct ReachArgs {
 struct BlockArgs {
     /// Serve browser blocks on ports here [default: off]. Without
     /// --block-domain this must be loopback, and blocks are
-    /// `http://b-<id>-<key>.localhost:<port>`.
+    /// `http://b-<id>-<key>.localhost:<port>`. Port 0 picks a free one,
+    /// recorded in `block-listen` in the state directory.
     #[arg(long, env = "ILLOGICAL_BLOCK_LISTEN")]
     block_listen: Option<SocketAddr>,
     /// Name blocks `b-<id>.<DOMAIN>`, over HTTPS, for the owner on the
@@ -367,7 +369,18 @@ fn start_sites(
     listen: SocketAddr,
     state_dir: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let Some(addr) = b.block_listen else { return Ok(()) };
+    let Some(mut addr) = b.block_listen else { return Ok(()) };
+    // Port 0: bound now, so blocks are named with the port it got (#67).
+    let mut bound = None;
+    if addr.port() == 0 {
+        let l = std::net::TcpListener::bind(addr).map_err(|e| anyhow::anyhow!("can't listen on {addr}: {e}"))?;
+        l.set_nonblocking(true)?;
+        addr = l.local_addr()?;
+        bound = Some(l);
+        if let Err(e) = store::write_atomic(&state_dir.join("block-listen"), addr.to_string().as_bytes()) {
+            warn!(error = %e, "can't record the block sites' address");
+        }
+    }
     let (scheme, tls) = match &b.block_domain {
         None => {
             if !addr.ip().is_loopback() {
@@ -417,6 +430,12 @@ fn start_sites(
     tokio::spawn(async move {
         // The tailnet address may not be up yet at boot.
         let listener = loop {
+            if let Some(l) = bound.take() {
+                match tokio::net::TcpListener::from_std(l) {
+                    Ok(l) => break l,
+                    Err(e) => warn!(%addr, error = %e, "can't serve block sites"),
+                }
+            }
             match tokio::net::TcpListener::bind(addr).await {
                 Ok(l) => break l,
                 Err(e) => {
@@ -642,8 +661,13 @@ async fn run(
         None => None,
     };
     let mut direct_urls = args.direct_urls.clone();
-    for u in &direct_urls {
-        let host = reqwest::Url::parse(u).map_err(|e| anyhow::anyhow!("--direct-url {u}: {e}"))?;
+    for u in &mut direct_urls {
+        let mut host = reqwest::Url::parse(u).map_err(|e| anyhow::anyhow!("--direct-url {u}: {e}"))?;
+        // Port 0: the one --listen got (#67).
+        if host.port() == Some(0) {
+            let _ = host.set_port(Some(args.listen.port()));
+            *u = host.as_str().trim_end_matches('/').to_owned();
+        }
         let host = match (host.host_str(), host.port()) {
             (Some(h), Some(p)) => format!("{h}:{p}"),
             (Some(h), None) => h.to_owned(),

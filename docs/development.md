@@ -254,7 +254,10 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   `/share/<token>/../api/panes` through the viewer's door (the router then
   found nothing, but only by luck); the guard now accepts the exact shapes.
 - **clap gives a subcommand's positional the same id as a global flag of
-  the same name.** `illogical synced rm sbx` set `--host sbx`.
+  the same name.** `illogical synced rm sbx` set `--host sbx`. A
+  subcommand's own `--host` loses to the global one the same way, so
+  `open` and `agent` take `--machine mN`, like `edit` (#61); a `--host
+  mN` there that isn't in the host list says so.
 - **"Cold" can be had on demand.** wisp turns a suspended sprite cold
   after `--warm-ttl` (1h) by dropping its memory snapshot, which makes the
   next wake a real boot. Its web UI's operator endpoints do the same at
@@ -283,8 +286,17 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   exited with "address in use", and the test waited out its deadline as
   "daemon did not start" (#66). `--listen 127.0.0.1:0` now has the daemon
   pick its own port, bound before anything else, and record it in
-  `state/listen`; test daemons use that. Only `--block-listen` still takes
-  a picked port.
+  `state/listen`; test daemons use that. `--block-listen 127.0.0.1:0`
+  does the same in `state/block-listen`, and illogical-control's `--listen`
+  in `listen` beside its database; `--direct-url` and control's
+  `--public-url` with port 0 mean the port it got. The Playwright specs
+  use all of these (`web/e2e/ports.ts`), and their fake servers listen on
+  port 0, so a run takes no port but `E2E_PORT` and two worktrees can run
+  the suite at once (#67).
+- **A spec module is loaded more than once.** Playwright loads each spec
+  in the runner as well as the worker, so a top-level `mkdtempSync` left
+  a directory per run that `afterAll` never saw (#62). Make them in
+  `beforeAll`; the config's own run directories go when the runner exits.
 - **Send a test's HTTP request in one write.** `write!` on a socket writes
   each piece of the format string separately; a handler that answers
   without reading the body (a 404) closed the connection before the body

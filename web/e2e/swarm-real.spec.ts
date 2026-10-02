@@ -8,8 +8,8 @@
 // Claude Code reads only a settings file of its own here (your settings
 // aren't touched), in target/m26-tui.
 
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { open } from "./helpers";
@@ -23,7 +23,7 @@ test("a real Claude Code permission prompt, allowed from the rail", async ({ pag
   const cli = resolve("../target/debug/illogical");
   const dir = resolve("../target/m26-tui");
   mkdirSync(dir, { recursive: true });
-  const settings = join(mkdtempSync(join(tmpdir(), "ilg-m26-")), "settings.json");
+  const settings = join(dir, "settings.json");
   const hook = (cmd: string) => [{ hooks: [{ type: "command", command: `${cli} ${cmd}`, timeout: 604800 }] }];
   const inbox = [{ hooks: [{ type: "command", command: `${cli} inbox`, asyncRewake: true, timeout: 86400 }] }];
   writeFileSync(

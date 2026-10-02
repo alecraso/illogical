@@ -19,9 +19,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { ready, type as typeIn } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
-const PORT = 7722;
 const STATIC = "../target/x86_64-unknown-linux-musl/release";
 const read = (path: string) => {
   try {
@@ -36,7 +36,7 @@ const missing = !wispToken ? "no wisp token" : !existsSync(`${STATIC}/illogicald
 
 const sprite = `illogical-m4b-e2e-${Date.now().toString(36)}`;
 const auth = { Authorization: `Bearer ${wispToken}` };
-const base = `http://127.0.0.1:${PORT}`;
+let base = "";
 let home: ChildProcess | undefined;
 let state = "";
 
@@ -78,10 +78,11 @@ test.beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), "illogical-e2e-m4b-"));
   home = spawn(
     "../target/debug/illogicald",
-    ["--listen", `127.0.0.1:${PORT}`, "--name", "home", "--shell", "bash --norc --noprofile", "--no-manager-env"]
+    ["--listen", ANY, "--name", "home", "--shell", "bash --norc --noprofile", "--no-manager-env"]
       .concat(["--state-dir", state, "--static-dir", STATIC]),
     { stdio: "ignore" },
   );
+  base = `http://127.0.0.1:${await daemonPort(state, home)}`;
   await expect.poll(() => fetch(`${base}/api/host`).then((r) => r.ok, () => false), { timeout: 15_000 }).toBe(true);
   expect((await wisp("POST", "", JSON.stringify({ name: sprite }))).ok).toBe(true);
 });
@@ -93,7 +94,7 @@ test.afterAll(async () => {
 });
 
 const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["Pixel 7"];
-test.use({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch, baseURL: base });
+test.use({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch, baseURL: async ({}, use) => use(base) });
 
 const connected = (page: Page) =>
   page.evaluate(() => !!window.__illogical?.client.connected && window.__illogical.client.state !== null);

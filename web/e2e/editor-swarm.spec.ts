@@ -14,14 +14,12 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { devices, expect, test, type Page } from "@playwright/test";
+import { ANY, daemonPort } from "./ports";
 
-const PORT = 7826;
-const BLOCKS = 7827;
-const CODE = 7828;
-const APP = `http://127.0.0.1:${PORT}`;
-const VSCODE = `http://127.0.0.1:${CODE}`;
+let APP = "";
+let VSCODE = "";
 const OWNER = "me@example.com";
-test.use({ baseURL: APP });
+test.use({ baseURL: async ({}, use) => use(APP) });
 test.describe.configure({ mode: "serial" });
 
 const sh = promisify(execFile);
@@ -75,11 +73,12 @@ test.beforeAll(async () => {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${PORT}`, "--block-listen", `127.0.0.1:${BLOCKS}`, "--state-dir", state],
+      ...["--listen", ANY, "--block-listen", ANY, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
     ],
     { stdio: "ignore", env: { ...process.env, ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent", XDG_DATA_HOME: join(dir, "data") } },
   );
+  APP = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
   await up(`${APP}/api/host`);
   const bin = await codeServer();
   // The extension, from the daemon, into a code-server of its own: the
@@ -93,9 +92,19 @@ test.beforeAll(async () => {
   await sh(bin, [...own, "--install-extension", vsix], { env });
   mkdirSync(join(dir, "cs/user/User"), { recursive: true });
   writeFileSync(join(dir, "cs/user/User/settings.json"), JSON.stringify({ "workbench.startupEditor": "none", "chat.disableAIFeatures": true, "security.workspace.trust.enabled": false }));
-  code = spawn(bin, [...own, "--auth", "none", "--bind-addr", `127.0.0.1:${CODE}`, "--disable-telemetry", "--disable-update-check", "--disable-workspace-trust", "--ignore-last-opened"], {
-    stdio: "ignore",
+  code = spawn(bin, [...own, "--auth", "none", "--bind-addr", ANY, "--disable-telemetry", "--disable-update-check", "--disable-workspace-trust", "--ignore-last-opened"], {
+    stdio: ["ignore", "pipe", "ignore"],
     env,
+  });
+  // It says where it listens.
+  VSCODE = await new Promise<string>((ok, fail) => {
+    let out = "";
+    code!.stdout!.on("data", (d) => {
+      out += d;
+      const m = /HTTP server listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(out);
+      if (m) ok(m[1]);
+    });
+    code!.once("exit", () => fail(new Error(`code-server exited: ${out}`)));
   });
   await up(`${VSCODE}/healthz`);
 });

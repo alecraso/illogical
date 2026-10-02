@@ -21,9 +21,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { active, ready, run } from "./helpers";
+import { daemonPort } from "./ports";
 
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
-const HOME_PORT = 7693;
 const STATIC = "../target/x86_64-unknown-linux-musl/release";
 const keyFile = process.env.ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE ?? "";
 const reuse = process.env.ILLOGICAL_E2E_SANDBOX ?? "";
@@ -54,7 +54,7 @@ const missing = !authkey && !reuse
         : "";
 
 const sprite = reuse || `illogical-m4a-e2e-${Date.now().toString(36)}`;
-const homeUrl = `http://${tailnetIp}:${HOME_PORT}`;
+let homeUrl = "";
 const auth = { Authorization: `Bearer ${wispToken}` };
 let home: ChildProcess | undefined;
 let homeState = "";
@@ -97,9 +97,10 @@ test.beforeAll(async () => {
   homeState = mkdtempSync(join(tmpdir(), "illogical-e2e-home-"));
   home = spawn(
     "../target/debug/illogicald",
-    ["--listen", `${tailnetIp}:${HOME_PORT}`, "--name", "home", "--state-dir", homeState, "--no-manager-env"],
+    ["--listen", `${tailnetIp}:0`, "--name", "home", "--state-dir", homeState, "--no-manager-env"],
     { stdio: "ignore" },
   );
+  homeUrl = `http://${tailnetIp}:${await daemonPort(homeState, home)}`;
   await expect.poll(() => fetch(`${homeUrl}/api/host`).then((r) => r.ok, () => false), { timeout: 15_000 }).toBe(true);
   const invite = (await (await fetch(`${homeUrl}/api/hosts/invite`, { method: "POST" })).json()).token as string;
 
