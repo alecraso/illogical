@@ -289,6 +289,9 @@ async fn http_with_a_token_until_it_is_revoked() {
     assert!(s.call_tool(CallToolRequestParams::new("list")).await.is_err(), "revoked mid-session");
     assert!(http(&d, &token, Client::named("claude-code")).await.is_err());
     assert!(http(&d, "ilm_0000", Client::named("claude-code")).await.is_err(), "an unknown token");
+    // Something that isn't a bearer token is no way around the owner's check.
+    assert_eq!(post_mcp(d.port, "Basic b3duZXI6eA=="), 401);
+    assert_eq!(post_mcp(d.port, "Bearer "), 401);
     call(&w, "list", json!({})).await;
 
     // A web page elsewhere can't use it from a browser (exact Origin).

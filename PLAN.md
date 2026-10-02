@@ -1469,6 +1469,7 @@ sprite:
 - **Decisions (2026-10-02):**
   - **The bridge is a plain relay, not rmcp in the CLI.** The CLI stays without tokio, and the bridge doesn't need to understand the tools. rmcp's HTTP client is used in tests instead.
   - **`run` types into a shell** instead of `$SHELL -c`, so the command is in history with its exit code and who ran it, `wait` can wait for the command's end, and the shell is left for you to take over. It waits for the shell's prompt first (20s here, 5 minutes for a VM).
+  - **Any `Authorization` on `/mcp` must be one of our bearer tokens.** It's what skips the identity check, so a request with some other credential (or a malformed one) is refused, never treated as the owner's.
   - **rmcp's Host check is off.** The daemon's own (`Access::check_host`, with the tailnet names) runs on every TCP request; the socket is private. The exact-Origin rule is the API's (`api_origin`).
   - **`tools/list` needs `ttlMs` and `cacheScope` too.** Claude Code 2.1.287 refused our `tools/list` without them (it retried four times and loaded no tools), which S14 hadn't seen. Every list and read result now carries `ttlMs: 0`, `cacheScope: private`.
   - **`list` and `history` for a block's token are filtered, not refused**; a closed pane is readable with a full token only (its tab is gone).
@@ -1478,7 +1479,7 @@ sprite:
     - through `illogical mcp` (a 2025-06-18 session): the tool list and annotations; `run` with `wait` (exit code, last lines); "started by" and history's `by`; 4,000 lines read back a page at a time; a wait answering "still running" with progress, then `C-c` and exit 130; typing and a match; `capture_screen`, `list`, `search`, resources, `read_file`; a closed pane's error and its output still read;
     - stateless 2026-07-28 on the socket: cache hints on `tools/list` and templates, and the client's name from `_meta`;
     - the bridge across a daemon restart;
-    - HTTP with a client token: used, `used_ms`; a read token sees seven tools and can't `run`; revoked mid-session and refused after; a foreign Origin refused;
+    - HTTP with a client token: used, `used_ms`; a read token sees seven tools and can't `run`; revoked mid-session and refused after; an unknown token, `Basic` credentials and an empty bearer refused; a foreign Origin refused;
     - an agent block (`fake_acp.py`, which now advertises http MCP and calls tools on `mcp TOOL JSON`): it got loopback `/mcp` with its token, kept out of its log; it starts `python3 -m http.server` beside itself, waits for it, and opens it in a browser block beside itself; it lists only its tab; six ways of touching another tab are refused; history has nothing from the other tab; it can't close what it didn't start; its token is refused once it closes;
     - one agent starts another (`start_agent`), waits until it asks, answers it (`agent_respond`), waits for the end of its turn and reads the answer in its transcript, and the answer is recorded as `mcp:fake-agent`'s;
     - "what failed in this repo yesterday": history moved back 30 hours, asked with `failed`, `cwd`, `since 2d`, `before 1d`.

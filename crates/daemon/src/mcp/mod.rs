@@ -122,12 +122,17 @@ fn refuse(status: StatusCode, why: &str) -> Response {
 /// Whose request this is: a bearer token's holder, or the owner (who got
 /// past the server's checks, or is on the socket).
 async fn authenticate(State(app): State<Arc<App>>, mut req: Request, next: Next) -> Response {
-    let bearer = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
-        .map(|t| t.trim().to_owned());
+    // Any Authorization at all skipped the identity check (`server.rs`):
+    // it must be one of our tokens, never the owner by default.
+    let bearer = match req.headers().get(header::AUTHORIZATION) {
+        None => None,
+        Some(v) => {
+            match v.to_str().ok().and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))) {
+                Some(t) => Some(t.trim().to_owned()),
+                None => return refuse(StatusCode::UNAUTHORIZED, "MCP takes a bearer token (Authorization: Bearer …)"),
+            }
+        }
+    };
     let caller = match bearer {
         None => Caller { scope: Scope::Full, token: None },
         Some(t) => match app.mcp.check(&t) {
