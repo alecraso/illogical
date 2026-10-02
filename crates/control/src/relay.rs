@@ -195,6 +195,25 @@ pub async fn link(
 }
 
 fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUpgrade) -> Response {
+    // A hosted sandbox (M20) doesn't dial in: it's reached through the
+    // provider's proxy, which wakes it.
+    if let Ok(Some(sandbox)) = app.db.sandbox_of_daemon(&id)
+        && app.hosted.is_some()
+    {
+        return up.max_message_size(MAX_WIRE).on_upgrade(move |ws| async move {
+            let (up, down) = match sandbox_splice(&app, &sandbox, ws).await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(%sandbox, error = %e, "can't reach the sandbox");
+                    return;
+                }
+            };
+            let who = account.or_else(|| app.db.daemon_account(&id).ok().flatten());
+            if let Some(a) = who {
+                let _ = app.db.add_relay_bytes(&a, &crate::day(now_ms()), up + down);
+            }
+        });
+    }
     let Some(mux) = app.relay.mux(&id) else {
         return err(StatusCode::SERVICE_UNAVAILABLE, "that daemon isn't connected to the relay").into_response();
     };
@@ -278,4 +297,51 @@ async fn splice(ws: WebSocket, stream: DuplexStream) -> (u64, u64) {
     let r = tokio::join!(up, down);
     reader.abort();
     r
+}
+
+/// A client's channel onto a hosted sandbox's daemon (`/e2e`), through the
+/// provider's proxy: WebSocket messages both ways, one for one.
+async fn sandbox_splice(app: &App, sandbox: &str, ws: WebSocket) -> anyhow::Result<(u64, u64)> {
+    use tokio_tungstenite::tungstenite::Message as T;
+    let h = app.hosted.as_ref().ok_or_else(|| anyhow::anyhow!("no hosted sandboxes"))?;
+    let stream = h.sprites.dial(sandbox, crate::sandboxes::PORT).await?;
+    let url = format!("ws://localhost:{}/e2e", crate::sandboxes::PORT);
+    let (daemon, _) = tokio_tungstenite::client_async(url, stream).await?;
+    let (mut dtx, mut drx) = daemon.split();
+    let (mut ctx, mut crx) = ws.split();
+    let up = async {
+        let mut n = 0u64;
+        while let Some(Ok(m)) = crx.next().await {
+            match m {
+                Message::Binary(b) => {
+                    n += b.len() as u64;
+                    if dtx.send(T::Binary(b.to_vec().into())).await.is_err() {
+                        break;
+                    }
+                }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+        let _ = dtx.close().await;
+        n
+    };
+    let down = async {
+        let mut n = 0u64;
+        while let Some(Ok(m)) = drx.next().await {
+            match m {
+                T::Binary(b) => {
+                    n += b.len() as u64;
+                    if ctx.send(Message::Binary(b.to_vec().into())).await.is_err() {
+                        break;
+                    }
+                }
+                T::Close(_) => break,
+                _ => {}
+            }
+        }
+        let _ = ctx.close().await;
+        n
+    };
+    Ok(tokio::join!(up, down))
 }

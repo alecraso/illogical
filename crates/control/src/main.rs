@@ -14,6 +14,8 @@ mod limit;
 mod passkey;
 mod push;
 mod relay;
+mod sandboxes;
+mod sprites;
 mod teams;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -60,6 +62,22 @@ struct Args {
     #[arg(long, default_value = "https://api.github.com", hide = true)]
     github_api: String,
 
+    /// Hosted sandboxes (M20): the Sprites API they're made with, and its
+    /// token (SPRITES_TOKEN). Off without a token.
+    #[arg(long, default_value = "https://api.sprites.dev", env = "ILLOGICAL_SPRITES_URL")]
+    sprites_url: String,
+    #[arg(long, env = "SPRITES_TOKEN", hide_env_values = true)]
+    sprites_token: Option<String>,
+    /// The static daemon (x86_64 musl) to put in them.
+    #[arg(long, default_value = "/illogicald", env = "ILLOGICAL_SANDBOX_BINARY")]
+    sandbox_binary: PathBuf,
+    /// Accounts that may make them, comma-separated (`*`: everyone).
+    #[arg(long, env = "ILLOGICAL_SANDBOX_ACCOUNTS", value_delimiter = ',')]
+    sandbox_accounts: Vec<String>,
+    /// How many each may have at once.
+    #[arg(long, default_value_t = 2, env = "ILLOGICAL_SANDBOX_QUOTA")]
+    sandbox_quota: usize,
+
     /// Push endpoints allowed besides the browsers' push services, as
     /// host:port (tests).
     #[arg(long = "push-host", hide = true)]
@@ -101,6 +119,7 @@ pub struct App {
     pub passkeys: passkey::Challenges,
     pub limits: limit::Limits,
     pub vapid: push::Vapid,
+    pub hosted: Option<sandboxes::Hosted>,
 }
 
 /// An API error: `{"error": "..."}` with a status.
@@ -186,6 +205,9 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/push/unsubscribe", post(push::unsubscribe))
         .route("/api/daemon/push-subs", get(push::daemon_subs))
         .route("/api/daemon/push", post(push::daemon_send))
+        .route("/api/sandboxes", get(sandboxes::list).post(sandboxes::create))
+        .route("/api/sandboxes/{id}", axum::routing::delete(sandboxes::delete))
+        .route("/api/daemon/sandbox-done", post(sandboxes::done))
         .route("/api/relay/dial", get(relay::dial))
         .route("/api/relay/c/{id}", get(relay::client))
         .fallback(asset)
@@ -283,6 +305,15 @@ async fn main() -> anyhow::Result<()> {
     }
     let db = db::Db::open(&a.db)?;
     let vapid = push::Vapid::load(&db)?;
+    let hosted = match a.sprites_token.filter(|t| !t.is_empty()) {
+        Some(t) => Some(sandboxes::Hosted {
+            sprites: sprites::Sprites::new(&a.sprites_url, t)?,
+            binary: a.sandbox_binary,
+            allow: a.sandbox_accounts,
+            quota: a.sandbox_quota,
+        }),
+        None => None,
+    };
     let app = Arc::new(App {
         cfg: Config {
             push_hosts: a.push_hosts,
@@ -297,6 +328,7 @@ async fn main() -> anyhow::Result<()> {
         passkeys: Default::default(),
         limits: limit::Limits::new(a.trust_proxy_header),
         vapid,
+        hosted,
     });
     // Nagle off: the relay's mux writes frames back to back (S15).
     let l = tokio::net::TcpListener::bind(a.listen).await?.tap_io(|t| {

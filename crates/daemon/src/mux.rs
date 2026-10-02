@@ -179,6 +179,8 @@ pub struct Config {
     /// Illogical control: notifications through it go to people's
     /// devices (M21).
     pub control: Arc<crate::control::Control>,
+    /// A hosted sandbox (M20): when its last session closes, it's done.
+    pub sandbox_of_control: bool,
     /// What to call the owner to others (M13): their login, else "owner".
     pub owner_name: String,
     /// The owner's picture, if the tailnet gave one.
@@ -1601,6 +1603,9 @@ impl Daemon {
         let effects = self.mux.apply(intent.clone()).map_err(|e| refused(e.to_string()))?;
         for gone in before.into_iter().filter(|s| self.mux.session(*s).is_err()) {
             self.config.acl.forget_session(gone);
+        }
+        if self.config.sandbox_of_control && self.mux.sessions.is_empty() {
+            self.config.control.sandbox_done();
         }
         info!(?client, ?intent, "intent");
         let rects = self.mux.pane_rects();

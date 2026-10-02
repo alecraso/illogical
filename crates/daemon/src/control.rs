@@ -166,6 +166,9 @@ pub struct Control {
     http: reqwest::Client,
     /// What control was last told about access.
     published: std::sync::Mutex<Option<serde_json::Value>>,
+    /// Reached through a provider's proxy (a hosted sandbox, M20): no relay
+    /// socket, so certificates are fetched more often instead of nudged.
+    pub no_relay: bool,
 }
 
 fn read_saved(dir: &Path) -> anyhow::Result<Option<Saved>> {
@@ -191,7 +194,7 @@ pub fn auth_header(keys: &DeviceKeys, method: &str, path: &str) -> String {
 const AUTH: &str = "x-illogical-auth";
 
 impl Control {
-    pub fn new(state_dir: &Path, direct_urls: Vec<String>, acl: Arc<Acl>) -> Arc<Self> {
+    pub fn new(state_dir: &Path, direct_urls: Vec<String>, acl: Arc<Acl>, no_relay: bool) -> Arc<Self> {
         let me = Arc::new(Self {
             state_dir: state_dir.to_owned(),
             acl,
@@ -201,6 +204,7 @@ impl Control {
             nudge: tokio::sync::Notify::new(),
             http: reqwest::Client::builder().timeout(Duration::from_secs(20)).build().expect("http client"),
             published: Default::default(),
+            no_relay,
         });
         me.reload();
         me
@@ -420,6 +424,25 @@ impl Control {
         });
     }
 
+    /// A hosted sandbox's last session closed (M20): control deletes it.
+    pub fn sandbox_done(self: &Arc<Self>) {
+        let Some(e) = self.enrolled() else { return };
+        let me = self.clone();
+        tokio::spawn(async move {
+            let path = "/api/daemon/sandbox-done";
+            info!("last session closed: asking control to delete this sandbox");
+            let r = me
+                .http
+                .post(format!("{}{path}", e.saved.url))
+                .header(AUTH, auth_header(&e.keys, "POST", path))
+                .send()
+                .await;
+            if let Err(err) = r {
+                warn!(error = %err, "can't tell control this sandbox is done");
+            }
+        });
+    }
+
     /// Subscriptions control has for the people this daemon serves, kept if
     /// a device we trust signed them.
     async fn push_subs(&self, e: &Enrolled) -> Vec<(Principal, PushSub)> {
@@ -482,7 +505,8 @@ impl Control {
                     last_refresh = std::time::Instant::now() - REFRESH;
                 }
                 if me.enrolled().is_some() {
-                    if last_refresh.elapsed() >= REFRESH {
+                    let every = if me.no_relay { Duration::from_secs(10) } else { REFRESH };
+                    if last_refresh.elapsed() >= every {
                         last_refresh = std::time::Instant::now();
                         match me.refresh().await {
                             // Roles may have changed: re-filter everyone.
@@ -491,7 +515,7 @@ impl Control {
                         }
                         stamp = file_stamp(&me.state_dir);
                     }
-                    if relay.as_ref().is_none_or(|r| r.is_finished()) {
+                    if !me.no_relay && relay.as_ref().is_none_or(|r| r.is_finished()) {
                         relay = Some(tokio::spawn(keep_relay(me.clone(), app.clone())));
                     }
                 } else if let Some(r) = relay.take() {
@@ -583,10 +607,17 @@ struct JoinTeam {
 }
 
 /// `illogicald join URL [--team ID]`: ask, show the code, wait, pin, save.
-pub async fn join(url: &str, name: &str, team: Option<&str>, state_dir: &Path) -> anyhow::Result<()> {
+/// A hosted sandbox (M20) joins with the `ticket` control gave it.
+pub async fn join(
+    url: &str,
+    name: &str,
+    team: Option<&str>,
+    ticket: Option<&str>,
+    state_dir: &Path,
+) -> anyhow::Result<()> {
     let url = url.trim_end_matches('/').to_owned();
-    if !(url.starts_with("https://") || url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost")) {
-        bail!("control's URL must be https:// (or http on loopback, for testing)");
+    if !url.starts_with("https://") && !private_http(&url) {
+        bail!("control's URL must be https:// (or http on loopback or a private network, for testing)");
     }
     if let Some(s) = read_saved(state_dir)? {
         bail!("already joined to {} (account {}); `illogicald leave` first", s.url, s.trust.account);
@@ -596,7 +627,7 @@ pub async fn join(url: &str, name: &str, team: Option<&str>, state_dir: &Path) -
     let http = reqwest::Client::builder().timeout(Duration::from_secs(20)).build()?;
     let res = http
         .post(format!("{url}/api/join"))
-        .json(&serde_json::json!({ "cert": ask, "urls": [], "team": team }))
+        .json(&serde_json::json!({ "cert": ask, "urls": [], "team": team, "ticket": ticket }))
         .send()
         .await?;
     if !res.status().is_success() {
@@ -666,6 +697,31 @@ pub async fn join(url: &str, name: &str, team: Option<&str>, state_dir: &Path) -
     println!("  This machine is {} ({}).", fingerprint(&cert.device), cert.name);
     println!("  A running daemon picks this up within a few seconds.");
     Ok(())
+}
+
+/// A hosted sandbox's side of joining (M20): its key, made here and never
+/// leaving, and the request control fetches through the provider.
+pub fn join_request(name: &str, out: &Path, state_dir: &Path) -> anyhow::Result<()> {
+    let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
+    let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
+    crate::store::write_atomic(out, &serde_json::to_vec(&ask)?)?;
+    Ok(())
+}
+
+/// `http://` to loopback or a private address: a test or lab control.
+fn private_http(url: &str) -> bool {
+    let Ok(u) = reqwest::Url::parse(url) else { return false };
+    if u.scheme() != "http" {
+        return false;
+    }
+    match u.host() {
+        Some(url::Host::Domain(d)) => d == "localhost",
+        Some(url::Host::Ipv4(ip)) => {
+            ip.is_loopback() || ip.is_private() || (ip.octets()[0] == 100 && ip.octets()[1] & 0xc0 == 64)
+        }
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 /// `illogicald leave`: tell control, forget it.

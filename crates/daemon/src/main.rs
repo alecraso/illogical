@@ -115,7 +115,22 @@ enum Command {
         /// account alone: the team's members reach it by their team role.
         #[arg(long)]
         team: Option<String>,
+        /// A hosted sandbox's one-time ticket (control passes it).
+        #[arg(long, hide = true)]
+        ticket: Option<String>,
         /// The daemon's state directory [default: as the daemon's].
+        #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+        state_dir: Option<PathBuf>,
+    },
+    /// A hosted sandbox (M20): make this daemon's key and write its
+    /// certificate request to `out`, for control to fetch through the
+    /// provider (it then writes control.json back).
+    #[command(hide = true)]
+    JoinRequest {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        out: PathBuf,
         #[arg(long, env = "ILLOGICAL_STATE_DIR")]
         state_dir: Option<PathBuf>,
     },
@@ -140,6 +155,16 @@ struct RunArgs {
     /// Extra Host names to accept (the MagicDNS name is detected).
     #[arg(long = "public-host")]
     public_hosts: Vec<String>,
+
+    /// Don't keep a socket open to control's relay: control reaches this
+    /// daemon through its provider's proxy (a hosted sandbox).
+    #[arg(long, hide = true)]
+    no_relay: bool,
+
+    /// A hosted sandbox (M20): when the last session closes, ask control
+    /// to delete it.
+    #[arg(long, hide = true)]
+    sandbox_of_control: bool,
 
     /// A URL clients can reach this daemon at directly, for control's
     /// directory (`https://box.lan:7681`); its host is accepted too. The
@@ -502,12 +527,21 @@ fn main() -> anyhow::Result<()> {
             install::install(!no_start, &daemon_args, reset_args)
         }
         Some(Command::Sandbox) => sandbox::supervise(),
-        Some(Command::Join { url, name, team, state_dir }) => {
+        Some(Command::Join { url, name, team, ticket, state_dir }) => {
             let name = name.unwrap_or_else(|| {
                 nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok()).unwrap_or_else(|| "illogical".into())
             });
             let dir = state_dir.unwrap_or_else(default_state_dir);
-            tokio::runtime::Runtime::new()?.block_on(control::join(&url, &name, team.as_deref(), &dir))
+            tokio::runtime::Runtime::new()?.block_on(control::join(
+                &url,
+                &name,
+                team.as_deref(),
+                ticket.as_deref(),
+                &dir,
+            ))
+        }
+        Some(Command::JoinRequest { name, out, state_dir }) => {
+            control::join_request(&name, &out, &state_dir.unwrap_or_else(default_state_dir))
         }
         Some(Command::Leave { state_dir }) => {
             tokio::runtime::Runtime::new()?.block_on(control::leave(&state_dir.unwrap_or_else(default_state_dir)))
@@ -642,10 +676,11 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     // What `fs` never serves, besides the state directory.
     let private = vec![token_file.clone(), secrets.anthropic_key.clone(), secrets.claude_token.clone()];
     let acl = std::sync::Arc::new(acl::Acl::open(&state_dir));
-    let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone());
+    let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone(), args.no_relay);
     let config = mux::Config {
         acl: acl.clone(),
         control: control.clone(),
+        sandbox_of_control: args.sandbox_of_control,
         owner_name: owner_login.clone().unwrap_or_else(|| "owner".into()),
         owner_pic: None,
         guest_machines: args.guest_machines,

@@ -6,6 +6,7 @@ import { useEffect, useState } from "preact/hooks";
 import { passkeyRegister, passkeySignIn, type ControlSession } from "../control";
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
+import { directory } from "../hosts";
 
 export function useControl(s: ControlSession) {
   useSubscribe((fn) => s.subscribe(fn));
@@ -144,10 +145,28 @@ export function NoMachines({ s }: { s: ControlSession }) {
 function AddMachine({ s }: { s: ControlSession }) {
   return (
     <div class="control-add">
+      {s.sandboxesOpen ? <HostedVm s={s} /> : null}
       <p>Install illogical on it, then run:</p>
       <pre class="control-cmd">illogicald join {s.info.url}</pre>
       <p>It prints a link with a code. Open the link here (or type the code below) and approve it.</p>
       <JoinCodeForm s={s} />
+    </div>
+  );
+}
+
+/** A hosted VM (M20): no machine of your own needed. */
+function HostedVm({ s }: { s: ControlSession }) {
+  useControl(s);
+  const [err, setErr] = useState("");
+  const starting = s.starting ? s.sandboxes.find((x) => x.id === s.starting) : undefined;
+  return (
+    <div class="hosted-vm">
+      <p>Or use a hosted VM: a fresh Linux machine, deleted when you close its last tab.</p>
+      <button class="primary" data-start-vm disabled={!!starting && !starting.state.startsWith("failed")} onClick={() => s.startSandbox().catch((e: Error) => setErr(e.message))}>
+        {starting && !starting.state.startsWith("failed") ? `Starting (${starting.state})…` : "Start a hosted VM"}
+      </button>
+      {starting?.state.startsWith("failed") ? <p class="control-error">{starting.state}</p> : null}
+      {err ? <p class="control-error">{err}</p> : null}
     </div>
   );
 }
@@ -356,9 +375,12 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
 /** For the host menu. */
 export function controlMenuItems(s: ControlSession) {
   const panel = (p: "devices" | "add" | "teams") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+  const shown = s.daemons.find((d) => d.name === directory.current);
   return [
     "separator" as const,
     { header: `${s.login}${s.stale ? " · control unreachable" : ""}` },
+    ...(s.sandboxesOpen ? [{ label: "New hosted VM", run: () => void s.startSandbox() }] : []),
+    ...(shown?.sandbox ? [{ label: "Delete this VM", run: () => void s.deleteSandbox(shown.sandbox!) }] : []),
     { label: "Add a machine…", run: panel("add") },
     { label: "Teams…", run: panel("teams") },
     { label: "Devices and machines…", run: panel("devices") },

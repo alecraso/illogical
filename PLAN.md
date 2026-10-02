@@ -2255,6 +2255,23 @@ Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, 
 
 #### M20: hosted sandboxes
 
+**Done 2026-10-02, against wisp. Hosted on real Sprites once control has a token.**
+
+- **How a sandbox comes up:**
+  - Control makes a sprite (`crates/control/src/sprites.rs`), puts the static daemon in it, and runs a service.
+  - The service writes a join request with a key made in the sandbox; control fetches it through the provider.
+  - The browser that asked approves it by itself (the code is recomputed from the key), and control writes `control.json` back.
+- **How it's reached:** through the provider's proxy to `/e2e`. The sandbox never dials in, so it sleeps when idle.
+- **How it ends:** closing its last tab deletes it (the daemon tells control, and the page does too).
+- **Who may make one:** only allowlisted accounts (`--sandbox-accounts`), each up to a quota (`--sandbox-quota`, default 2).
+- **Metering:** sandbox minutes, from creation to deletion.
+- `e2e/sandboxes.spec.ts` covers the done-when on wisp, apart from running `claude`, which needs credentials in the VM.
+- **To go live:**
+  - a Sprites token as `SPRITES_TOKEN` on the Fly app;
+  - the static daemon in the control image (`/illogicald`);
+  - your account id in `ILLOGICAL_SANDBOX_ACCOUNTS`.
+
+
 "New VM tab" with no wisp on your own machine: the VM runs on hosted compute, billed by the minute.
 
 - **Providers:**
