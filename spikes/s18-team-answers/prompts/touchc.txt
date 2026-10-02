@@ -1,0 +1,1 @@
+Use the Bash tool to run exactly: touch c.txt   Then reply "done c".
