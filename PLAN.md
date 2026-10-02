@@ -3215,6 +3215,94 @@ What #50 asked for:
   - Output that `capture --last-command` and the screen don't agree on: tabs (the log has a tab, the screen has spaces), trailing spaces a program printed, and output redrawn in place (progress bars). There, `o` copies what the screen shows.
   - The archive replays at the pane's current width, so output from when it was another width is wrapped as it would be now.
 
+### Conversations track (S20, M33, added 2026-10-02)
+
+Every Claude Code conversation on a machine shows up in illogical, whether it ran in a terminal or in the desktop app's Code tab. Any of them can be opened as a block and continued. Both write `~/.claude/projects/<cwd-slug>/<sessionId>.jsonl`; geek has 386 of them. Claude Desktop chats are out of scope (decided 2026-10-02). They live on claude.ai's servers, with no local store or supported API to continue them in.
+
+**Most of the work is already done.** An agent block whose config holds a `session_id` opens that session when it starts. It uses `session/resume` when it already has a transcript and `session/load` when it doesn't (`crates/daemon/src/agent/mod.rs`, around line 1346). `Status::Stopped` is a block that isn't running until you press *Resume*. So a past conversation is a stopped Claude agent block with that session id and a transcript read from the jsonl. What's missing: an index of the sessions, a jsonl-to-transcript converter, liveness, and the pickers.
+
+**What's on disk (checked 2026-10-02):**
+
+- `~/.claude/projects/*/<id>.jsonl`: one JSON object per line. `user` and `assistant` lines carry `message.content`, plus `cwd`, `gitBranch`, `entrypoint`, `isSidechain` and `parentUuid`. There are also bookkeeping lines (`attachment`, `queue-operation`, `ai-title`, `last-prompt`, `cost-state`, …). In the files touched in the last 30 days, `entrypoint` was `cli` 206 times, `sdk-cli` 103 times and `sdk-ts` 68 times. `sdk-ts` is probably our own agent blocks (`claude-agent-acp` is TypeScript). Which one the desktop app writes isn't known yet.
+- `~/.claude/sessions/<pid>.json`: one file per running Claude Code process, with `pid`, `sessionId`, `cwd`, `entrypoint`, `kind`, `status` (idle, …) and `updatedAt`. This tells us which sessions are live and which process owns each one.
+- `claude-agent-acp` 0.85.0 implements `session/list`, `session/resume`, `session/load`, `session/close` and `session/fork` (`unstable_forkSession`).
+
+#### S20: conversations spike (about half a day)
+
+Answer these before M33. Each answer goes in as a fixture or a measured number:
+
+1. **The transcript's shape.**
+   - Which line types and content blocks occur across the 386 files, and the Claude Code versions that wrote them.
+   - How a rewind, an edited prompt or a compaction shows up. If the file holds branches, the conversation is the `parentUuid` chain back from the last leaf, not the lines in file order.
+   - Where subagent (Task) runs live: sidechain lines or separate files.
+   - Capture redacted fixtures covering Bash, Edit, thinking, a compaction, a subagent, AskUserQuestion and an image.
+2. **Continuing a CLI session through the adapter.** Does `session/resume` work on a session the CLI created? The adapter's bundled Claude Code (2.1.280) may be a different version from the CLI that wrote the session. Does the next turn remember the earlier context, and does `claude --resume <id>` in a terminal see the new turns afterwards?
+3. **`settingSources`.** Agent blocks pass `[]` so your hooks don't fire inside them (M6b). Find out whether that also drops `CLAUDE.md` and project settings. Someone continuing a terminal session expects those. Find the smallest set that keeps `CLAUDE.md` and leaves out the hooks.
+4. **Fork.** Does `session/fork` leave the original jsonl untouched and return a new id that `session/resume` then works on?
+5. **Two writers.** What actually goes wrong when a block resumes a session that a terminal still has open, and both write turns. This decides whether fork is the default (the expectation) or only advice.
+6. **The desktop app.** Start one session in the desktop app's Code tab on geek. Note its `entrypoint` and `kind`, where its jsonl goes, and whether `~/.claude/sessions` lists it.
+
+#### M33: Claude Code conversations as blocks
+
+1. **The index (daemon).**
+   - Watch `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`) with inotify. Index each session's id, cwd (from its lines; the directory slug is lossy), git branch, entrypoint, title, first prompt, last activity, message count and size.
+   - The title comes from the latest `ai-title` or summary line, else the first prompt.
+   - Read only the start and end of each file, as the SDK's `listSessions` does. Keep the index in the state directory, keyed by path with mtime and size, so a restart only rereads files that changed. The index builds in the background and never delays startup.
+   - **Sources:** terminal (`cli`), desktop (whatever S20 finds) and other.
+   - **Left out:**
+     - sessions any agent block of this daemon has ever had (the daemon keeps a set of them, ended blocks included);
+     - sidechain and subagent files;
+     - sessions with no prompt;
+     - sessions whose cwd no longer exists, which is how test daemons' `/tmp/ilg-*` sessions disappear. *Show all* brings these back.
+   - **Liveness:** a session is live while a process in `~/.claude/sessions` holds it and that pid is still alive (check `procStart` so a reused pid doesn't count). The `pid → /proc/<pid>/cgroup` lookup then tells us whether it is one of our panes' scopes. If it is, the pane's `PaneInfo` gets the session id, and the conversation says *Live in pane %N*.
+   - Each daemon indexes its own machine. M25's fleet view gathers them from every host, the Mac included.
+2. **The converter (jsonl to `transcript::Entry`).**
+   - Follow the `parentUuid` chain as S20 settles it.
+   - `user` text becomes `User`. `assistant` content becomes `Agent` for text, `Thought` for thinking, and `Tool` for a tool_use (name, title, and for Bash the command). A `tool_result` fills in that tool's output and its status (completed, or failed when `is_error` is set). A compaction becomes a `Note` ("Conversation compacted").
+   - Meta lines, attachments, bookkeeping and unknown types are skipped, so a new Claude Code version shows less rather than breaking.
+   - It is pure and synchronous, and is unit tested against S20's fixtures.
+3. **Conversations as stopped blocks.**
+   - Opening a conversation creates a Claude agent block that is `Stopped`. Its config holds `cwd`, `session_id` and `imported: true`, and its transcript comes from the converter. No process starts, so opening costs only the reading.
+   - While the conversation is live elsewhere, the block reads its jsonl again on every change, so you can follow a terminal session from the phone, read-only.
+   - The header names the source and where it is live (*Live in pane %4*, *Live in Claude desktop*, *Live in a terminal, pid 1234*). `capture --text`, `history` and `search` work on it like any agent block.
+4. **Continue, or fork when it's live.**
+   - **Not live:** *Continue* starts `claude-agent-acp` through the existing start path. The block already has a transcript, so it sends `session/resume` with no replay. The block's log begins with the imported entries as one `imported` record, so a restart or reboot restores the block as M6b does.
+   - **Live in one of our panes:** *Go to pane* is the main action.
+   - **Live anywhere else:** *Fork* calls `session/fork` and continues in the new session. The original is left alone. Continuing is offered again once that process exits. (S20 item 5 can relax this.)
+   - `settingSources` comes from S20 item 3, for imported blocks only.
+5. **Pickers.**
+   - **Web:** a *Conversations* picker grouped by project (cwd). It searches titles and first prompts, filters by live, source and machine, and opens into a new tab or the focused pane.
+   - **TUI:** the same picker on a key.
+   - **CLI:**
+     - `illogical claude ls [--cwd D] [--live] [--json]`;
+     - `illogical claude open <id|prefix>` prints the block id;
+     - `illogical agent --resume <id>` and `--fork <id>` continue a conversation directly.
+   - **MCP:** `list_conversations` and `open_conversation`.
+
+**Tests:**
+
+- unit tests for the converter (S20's fixtures, branches, unknown line types) and the index (incremental rescans, what's left out, liveness with a reused pid);
+- a daemon test with a fake `~/.claude` and the fake ACP agent: opening starts no process, *Continue* sends `session/resume` with the id, *Fork* sends `session/fork`, and the block restores after a restart;
+- `web/e2e/conversations.spec.ts`: a seeded `~/.claude` shows up in the picker, opens and continues. Dev and test daemons always pass `--socket`.
+
+**Done when:**
+
+- a Claude Code session run in a plain terminal outside illogical and then exited shows up in the picker within 2 s, with its title and folder, and opens with its whole transcript (tool calls and their output) without starting anything;
+- *Continue* gets a reply that uses the earlier context, and `claude --resume <id>` in a terminal then shows the new turns;
+- a session still open in a terminal shows as live, its block follows new turns, and *Fork* continues it without changing the terminal's jsonl;
+- a session in an illogical pane says which pane and jumps there;
+- a desktop Code tab session shows up as *desktop* and continues;
+- our own agent blocks and test daemons' sessions don't show up;
+- geek's 386-plus transcripts index cold in the background, with the time measured, and a restart only rereads files that changed;
+- a continued block survives a daemon restart and a reboot like any agent block.
+
+**Not in M33:**
+
+- Claude Desktop chats;
+- cloud sessions (claude.ai/code);
+- full-text search across transcripts that aren't open;
+- Codex and other agents' histories (the same shape would fit, behind the index's source).
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
