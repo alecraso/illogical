@@ -58,6 +58,34 @@ export type Policy =
 
 export type Attention = "idle" | "working" | "needs_input" | "done";
 
+/** M24: why a pane wants you. */
+export type ReasonKind = "ask" | "input" | "failed" | "exited" | "done";
+export type Action = "allow" | "deny" | "answer" | "dismiss";
+
+export interface Reason {
+  kind: ReasonKind;
+  since_ms: number;
+  headline: string;
+  command?: string;
+  exit?: number;
+  duration_ms?: number;
+  /** Same key, one card on a rail: `failed:<machine>`, `ask:<project>:<agent>`. */
+  bundle?: string;
+  ask?: { id: string; what: "approve" | "question"; agent: string };
+  actions: Action[];
+}
+
+/** `POST /api/attention/act`. */
+export interface ActRequest {
+  action: Action;
+  pane?: PaneId;
+  panes?: PaneId[];
+  id?: string;
+  content?: Record<string, unknown>;
+  option?: string;
+  message?: string;
+}
+
 export interface CommandInfo {
   text: string | null;
   cwd: string | null;
@@ -99,6 +127,8 @@ export interface PaneInfo {
   current: CommandInfo | null;
   last: CommandInfo | null;
   attention: Attention;
+  /** M24: why it wants you, when it does. */
+  reason?: Reason | null;
   /** Shell integration for shells started in this pane. */
   integration: boolean;
   type: BlockType;

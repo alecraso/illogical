@@ -276,7 +276,7 @@ function TabItem({
       )}
       <span class="tab-label">{label}</span>
       <TabPeople client={client} tab={tab.id} />
-      <AttentionBadge state={tabAttention(client, tab)} />
+      <AttentionBadge {...tabAttention(client, tab)} />
       <button
         class="tab-close"
         title="Close tab"
@@ -524,7 +524,7 @@ function PaneSlot({
       ...restartItems(client, id),
       "separator",
       ...(info && (info.attention === "needs_input" || info.attention === "done")
-        ? [{ label: "Dismiss", run: () => client.paneOp(id, { op: "attention", state: "idle" }) } as MenuItem]
+        ? [{ label: "Dismiss", run: () => void client.act({ action: "dismiss", pane: id }) } as MenuItem]
         : []),
       {
         label: "Shell integration (new shells)",
@@ -552,7 +552,9 @@ function PaneSlot({
       <HostBadge client={client} id={id} />
       <PaneMarks client={client} pane={id} />
       {!active && (info?.attention === "needs_input" || info?.attention === "done") && (
-        <div class={`pane-badge ${info.attention}`}>{info.attention === "done" ? "done" : "needs you"}</div>
+        <div class={`pane-badge ${info.attention}`} title={info.reason?.headline}>
+          {info.reason?.kind === "failed" ? "failed" : info.reason?.kind === "exited" ? "exited" : info.attention === "done" ? "done" : "needs you"}
+        </div>
       )}
       {info?.ask && <TermAsk client={client} id={id} ask={info.ask} />}
       {waiting && (

@@ -38,6 +38,7 @@ illogical tail %5 -f                          # any block's text as it grows
 illogical attach %3                           # from a real terminal; Ctrl-] detaches
 illogical close %3                            # its output stays in history
 illogical attention needs-input               # from a hook, in the current pane
+illogical attention [--json]                  # what wants you and why: ask, failed, exited, done (bundle keys)
 illogical ask                                 # Claude Code's AskUserQuestion hook (below)
 illogical hosts                               # the home daemon's other hosts, last seen
 illogical hosts add box https://box.<tailnet>.ts.net
@@ -80,7 +81,9 @@ checks, over the tailnet.
 ```
 
 Outside an illogical pane the command does nothing, so the hooks are safe
-everywhere. Without them, an agent going quiet mid-command is the fallback.
+everywhere. The Notification hook's message ("Claude needs your permission
+to use Bash") becomes the headline `illogical attention` shows. Without
+them, an agent going quiet mid-command is the fallback.
 
 **Claude Code's questions** (AskUserQuestion) can be answered from a card
 beside its terminal, on any client and from the phone, instead of its

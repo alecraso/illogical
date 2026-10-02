@@ -292,10 +292,12 @@ enum Command {
     /// print the answer for Claude Code. Outside an illogical pane, or
     /// "Answer in terminal": no output, so Claude Code shows its picker.
     Ask,
-    /// Tell illogical whether this pane needs you (for agent hooks).
+    /// What wants you, and why (M24); or, given a state, tell illogical
+    /// whether this pane needs you (for agent hooks, which pass their JSON
+    /// on stdin: its `message` becomes the headline).
     Attention {
-        /// needs-input, done, working or idle.
-        state: String,
+        /// needs-input, done, working or idle; none lists what wants you.
+        state: Option<String>,
         #[arg(long)]
         pane: Option<Pane>,
     },
@@ -505,6 +507,19 @@ fn span(secs: u64) -> String {
         3600..86400 => format!("{}h", secs / 3600),
         _ => format!("{}d", secs / 86400),
     }
+}
+
+/// A hook's `message` (Claude Code's Notification: "Claude needs your
+/// permission to use Bash"), when its JSON is on stdin.
+fn hook_message() -> Option<String> {
+    use std::io::{IsTerminal, Read};
+    if std::io::stdin().is_terminal() {
+        return None;
+    }
+    let mut input = String::new();
+    std::io::stdin().take(1 << 20).read_to_string(&mut input).ok()?;
+    let v: Value = serde_json::from_str(&input).ok()?;
+    v["message"].as_str().map(str::to_owned).filter(|m| !m.is_empty())
 }
 
 fn print_json(v: &Value) {
@@ -1040,13 +1055,30 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             }
         }
         Command::Ask => unreachable!("handled first"),
-        Command::Attention { state, pane } => {
+        Command::Attention { state: None, .. } => {
+            let v = request(&sock, "GET", "/api/attention", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            for i in v.as_array().into_iter().flatten() {
+                let r = &i["reason"];
+                let bundle = r["bundle"].as_str().map(|b| format!("  [{b}]")).unwrap_or_default();
+                println!(
+                    "%{:<4} {:<7} {}{bundle}",
+                    i["pane"],
+                    r["kind"].as_str().unwrap_or(""),
+                    r["headline"].as_str().unwrap_or("")
+                );
+            }
+        }
+        Command::Attention { state: Some(state), pane } => {
             let state = state.replace('-', "_");
             // Hooks (Claude Code's, say) run this in every terminal; outside an
             // illogical pane there's nobody to tell, and that's fine.
             let Ok(pane) = here(pane) else { return Ok(0) };
             let path = format!("/api/panes/{pane}/attention");
-            request(&sock, "POST", &path, Some(&json!({"state": state})))?.json()?;
+            request(&sock, "POST", &path, Some(&json!({"state": state, "why": hook_message()})))?.json()?;
         }
         Command::History { pane, failed, since, cwd, matching, limit, synced } => {
             let mut q = vec![format!("limit={limit}")];

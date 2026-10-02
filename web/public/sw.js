@@ -2,7 +2,8 @@
 // and opens that pane when one is tapped. An agent block's permission
 // request comes with Approve and Deny actions, and an agent's question with
 // one or two answers comes with them as actions (M6c), answered from here
-// without opening the app. It also keeps the last copy of the page itself, used
+// without opening the app; a failure or a finished command can be dismissed
+// (M24). It also keeps the last copy of the page itself, used
 // only when the daemon that serves it doesn't answer: the page can then
 // still reach the other hosts on its saved list (M4a). Nothing else is
 // cached.
@@ -45,6 +46,7 @@ self.addEventListener("push", (event) => {
   }
   const approve = msg.approve && typeof msg.approve.id === "string" ? msg.approve : null;
   const ask = msg.ask && typeof msg.ask.id === "string" && Array.isArray(msg.ask.options) ? msg.ask : null;
+  const reason = msg.reason && Array.isArray(msg.reason.actions) ? msg.reason : null;
   const actions = approve
     ? [
         { action: "approve", title: "Approve" },
@@ -52,7 +54,10 @@ self.addEventListener("push", (event) => {
       ]
     : ask
       ? ask.options.slice(0, 2).map((o, i) => ({ action: `answer-${i}`, title: o }))
-      : [];
+      : // M24: a failure or a finished build can be dismissed from here.
+        reason && reason.actions.includes("dismiss")
+        ? [{ action: "dismiss", title: "Dismiss" }]
+        : [];
   event.waitUntil(
     self.registration.showNotification(msg.title || "illogical", {
       body: msg.body || "",
@@ -61,7 +66,7 @@ self.addEventListener("push", (event) => {
       icon: "/icon.svg",
       requireInteraction: !!(approve || ask),
       actions,
-      data: { pane: msg.pane, daemon: msg.daemon, approve, ask },
+      data: { pane: msg.pane, daemon: msg.daemon, approve, ask, reason },
     }),
   );
 });
@@ -97,6 +102,16 @@ self.addEventListener("notificationclick", (event) => {
           });
         }
       })(),
+    );
+    return;
+  }
+  if (event.action === "dismiss" && pane) {
+    event.waitUntil(
+      fetch("/api/attention/act", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "dismiss", pane }),
+      }).catch(() => {}),
     );
     return;
   }

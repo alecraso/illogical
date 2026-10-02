@@ -116,6 +116,84 @@ pub enum Attention {
     Done,
 }
 
+/// Why a pane wants you (M24): what happened, not just "needs you", so a
+/// client can explain it, bundle it with others and act on it. Every
+/// `needs_input` and `done` pane has one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reason {
+    pub kind: ReasonKind,
+    /// When it started wanting you.
+    pub since_ms: u64,
+    /// One line: the question, the command that failed, what finished.
+    pub headline: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<i32>,
+    /// `done` and `failed`: how long the command ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Reasons with the same key are one card on a "needs you" rail ("11
+    /// failed on build-03"): `failed:<machine>`, `exited:<machine>`,
+    /// `ask:<project>:<agent>`. `None` never bundles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<String>,
+    /// `ask`: what is asked, and how to answer it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<AskRef>,
+    /// What [`api::ActRequest`] can do about it here.
+    pub actions: Vec<Action>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasonKind {
+    /// An agent asks: a question, or a permission to approve.
+    Ask,
+    /// It waits on you some other way (a bell, a notification, an agent
+    /// gone quiet).
+    Input,
+    /// A command that ran a while ended with a non-zero exit.
+    Failed,
+    /// The pane's program ended (with a non-zero code, or its machine went).
+    Exited,
+    /// A long command finished while nobody was looking.
+    Done,
+}
+
+/// The open question or approval behind an `ask` reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskRef {
+    /// What `allow`, `deny` and `answer` name (a permission request's id, or
+    /// a question's).
+    pub id: String,
+    /// `approve` (allow or deny it) or `question` (answer or skip it).
+    pub what: AskWhat,
+    /// Who asks: the agent (`claude`, `fountain`, …).
+    pub agent: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskWhat {
+    Approve,
+    Question,
+}
+
+/// Something done about a reason (`POST /api/attention/act`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Action {
+    /// Approve a permission request.
+    Allow,
+    /// Refuse a permission request, or skip a question.
+    Deny,
+    /// Answer a question (with content).
+    Answer,
+    /// Clear it: seen, nothing to do.
+    Dismiss,
+}
+
 /// A command the shell integration reported.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandInfo {
@@ -164,6 +242,9 @@ pub enum EventKind {
     Bell,
     Attention {
         state: Attention,
+        /// Why (M24); none when it went idle or working.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<Reason>,
     },
     Exit {
         code: Option<i32>,
@@ -398,6 +479,9 @@ pub struct PaneInfo {
     pub last: Option<CommandInfo>,
     #[serde(default)]
     pub attention: Attention,
+    /// Why it wants you (M24), when it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<Reason>,
     /// Shell integration for shells started in this pane.
     #[serde(default = "yes")]
     pub integration: bool,

@@ -13,8 +13,9 @@ use std::{
 
 use illogical_core::{Effect, Intent, Mux, Role};
 use illogical_proto::{
-    Attention, BlockType, ClientId, ClientMsg, CommandInfo, Driver, Event, EventKind, Machine, MachineId, MachineState,
-    Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, ServerMsg, SessionId, State, TabId, TabView,
+    Action, AskRef, AskWhat, Attention, BlockType, ClientId, ClientMsg, CommandInfo, Driver, Event, EventKind, Machine,
+    MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, Reason, ReasonKind, ServerMsg,
+    SessionId, State, TabId, TabView,
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::Ask,
 };
@@ -45,6 +46,9 @@ const SAVE_DEBOUNCE: Duration = Duration::from_millis(250);
 const REFRESH: Duration = Duration::from_secs(5);
 /// A command that ran at least this long, finishing unwatched, is "done".
 const DONE_AFTER_MS: u64 = 5_000;
+/// A command that ran at least this long and failed is "failed" (M24);
+/// quicker ones you were typing at anyway.
+const FAILED_AFTER_MS: u64 = 3_000;
 /// Programs that wait for you quietly: one of these going quiet mid-command
 /// means it probably needs input.
 const AGENTS: &[&str] = &["claude", "codex", "aider", "gemini", "opencode", "goose", "amp"];
@@ -82,7 +86,13 @@ pub enum Api {
     Panes(oneshot::Sender<Vec<PaneSummary>>),
     Run(RunRequest, oneshot::Sender<Result<PaneId, String>>),
     Pane(PaneId, oneshot::Sender<Option<PaneHandle>>),
-    Attention(PaneId, Attention, oneshot::Sender<bool>),
+    Attention(PaneId, Attention, Option<String>, oneshot::Sender<bool>),
+    /// Every pane that wants you and why (M24), within what someone may
+    /// read (`None`: the owner).
+    AttentionList(Option<crate::acl::Principal>, oneshot::Sender<Vec<illogical_proto::api::AttentionItem>>),
+    /// Why one pane wants you now, and whether it's a block (else a
+    /// terminal).
+    Reason(PaneId, oneshot::Sender<Option<(Reason, bool)>>),
     Close(PaneId, oneshot::Sender<bool>),
     /// Open a block of any type; for a guest (M14), their principal: then
     /// it must be an agent beside a pane they edit, and runs on a VM of
@@ -355,6 +365,8 @@ struct Daemon {
     panes: HashMap<PaneId, PaneHandle>,
     meta: HashMap<PaneId, PaneMeta>,
     attention: HashMap<PaneId, Attention>,
+    /// Why each pane wants you (M24), as recorded when it started to.
+    reasons: HashMap<PaneId, Reason>,
     clients: HashMap<ClientId, Subscriber>,
     /// The pane each client's focused window is looking at.
     focus: HashMap<ClientId, PaneId>,
@@ -412,6 +424,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         panes: HashMap::new(),
         meta: HashMap::new(),
         attention: HashMap::new(),
+        reasons: HashMap::new(),
         clients: HashMap::new(),
         focus: HashMap::new(),
         refused: HashMap::new(),
@@ -454,6 +467,60 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
     let fs = Arc::new(crate::fs::Scope::new(d.config.home.clone(), private));
     tokio::spawn(d.run(rx, notices_rx));
     MuxHandle { tx, events, store, provider, daemon_id, fs }
+}
+
+/// A reason with nothing but its headline.
+fn plain_reason(kind: ReasonKind, headline: &str) -> Reason {
+    Reason {
+        kind,
+        since_ms: now_ms(),
+        headline: headline.to_owned(),
+        command: None,
+        exit: None,
+        duration_ms: None,
+        bundle: None,
+        ask: None,
+        actions: vec![Action::Dismiss],
+    }
+}
+
+/// What a notification about a reason is titled.
+fn push_title(state: Attention, reason: Option<&Reason>) -> &'static str {
+    match reason.map(|r| r.kind) {
+        Some(ReasonKind::Failed) => "Failed",
+        Some(ReasonKind::Exited) => "Exited",
+        Some(ReasonKind::Done) => "Done",
+        Some(ReasonKind::Ask | ReasonKind::Input) => "Needs you",
+        None if state == Attention::Done => "Done",
+        None => "Needs you",
+    }
+}
+
+/// What asks bundle by: the project a directory is in (its git root), else
+/// the directory. A directory on a machine (not this host) is taken as is.
+/// M23's project, once panes carry it, replaces this.
+pub fn project_key(cwd: Option<&str>, local: bool) -> String {
+    let Some(cwd) = cwd else { return String::new() };
+    if local {
+        let mut dir = Some(std::path::Path::new(cwd));
+        while let Some(d) = dir {
+            if d.join(".git").exists() {
+                return d.display().to_string();
+            }
+            dir = d.parent();
+        }
+    }
+    cwd.to_owned()
+}
+
+/// A duration as people say it: 42s, 3m 5s, 1h 2m.
+pub fn human_took(ms: u64) -> String {
+    let s = ms / 1000;
+    match s {
+        0..60 => format!("{s}s"),
+        60..3600 => format!("{}m {}s", s / 60, s % 60),
+        _ => format!("{}h {}m", s / 3600, (s % 3600) / 60),
+    }
 }
 
 fn info_of(rec: CommandRec) -> CommandInfo {
@@ -684,39 +751,137 @@ impl Daemon {
     }
 
     fn set_attention(&mut self, pane: PaneId, state: Attention, why: &str) {
+        let reason = match state {
+            Attention::NeedsInput => Some(plain_reason(ReasonKind::Input, why)),
+            Attention::Done => Some(plain_reason(ReasonKind::Done, why)),
+            _ => None,
+        };
+        self.set_attention_with(pane, state, why, reason);
+    }
+
+    /// Set a pane's attention, and why (M24). An open ask overrides the
+    /// stored reason while it's open (see [`Self::live_reason`]).
+    fn set_attention_with(&mut self, pane: PaneId, state: Attention, why: &str, reason: Option<Reason>) {
         let old = self.attention.get(&pane).copied().unwrap_or_default();
-        if old == state || !(self.panes.contains_key(&pane) || self.blocks.contains_key(&pane)) {
+        if !(self.panes.contains_key(&pane) || self.blocks.contains_key(&pane)) {
+            return;
+        }
+        if old == state {
+            // Another reason for the same state (a second command done, or a
+            // failure after a bell): keep the newer one if it says more.
+            let newer = match (&reason, self.reasons.get(&pane)) {
+                (Some(r), Some(o)) => r.kind != o.kind && r.kind != ReasonKind::Input,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            if newer && let Some(r) = reason {
+                self.reasons.insert(pane, r);
+                self.emit(Some(pane), EventKind::Attention { state, reason: self.live_reason(pane) });
+                self.broadcast();
+            }
             return;
         }
         info!(pane, ?state, why, "attention");
         self.attention.insert(pane, state);
-        self.emit(Some(pane), EventKind::Attention { state });
+        match reason {
+            Some(r) => self.reasons.insert(pane, r),
+            None => self.reasons.remove(&pane),
+        };
+        let reason = self.live_reason(pane);
+        self.emit(Some(pane), EventKind::Attention { state, reason: reason.clone() });
         if matches!(state, Attention::NeedsInput | Attention::Done)
             && !self.focused(pane)
             && let Some(push) = &self.push
         {
-            let title = match state {
-                Attention::NeedsInput => "Needs you",
-                _ => "Done",
-            };
-            let extra = self.blocks.get(&pane).and_then(|b| b.push_extra()).or_else(|| {
+            let title = push_title(state, reason.as_ref());
+            let body = reason.as_ref().map_or(why, |r| r.headline.as_str());
+            let mut extra = self.blocks.get(&pane).and_then(|b| b.push_extra()).or_else(|| {
                 let choice = self.asks.get(&pane)?.ask.push_choice()?;
                 Some(serde_json::json!({ "ask": choice }))
             });
-            push.send(pane, title, why, extra);
+            if let Some(r) = &reason {
+                let x = extra.get_or_insert_with(|| serde_json::json!({}));
+                x["reason"] = serde_json::json!({ "kind": r.kind, "actions": r.actions, "bundle": r.bundle });
+            }
+            push.send(pane, title, body, extra);
         }
         if matches!(state, Attention::NeedsInput | Attention::Done) && !self.focused(pane) {
             // Through control (M21): the owner, and whoever may edit the
             // session. Approve and answer actions need the daemon's own
             // page, so those notifications just open the pane.
-            let title = if state == Attention::NeedsInput { "Needs you" } else { "Done" };
+            let title = push_title(state, reason.as_ref());
+            let body = reason.as_ref().map_or(why, |r| r.headline.as_str()).to_owned();
             let session = self.session_of(pane);
             let acl = self.config.acl.clone();
-            self.config.control.push(pane, title, why, None, move |who| {
+            self.config.control.push(pane, title, &body, None, move |who| {
                 who.is_owner() || session.and_then(|s| acl.role(who, s)).is_some_and(|r| r >= Role::Editor)
             });
         }
         self.broadcast();
+    }
+
+    /// Why a pane wants you now (M24): an open question or approval while it
+    /// needs input, else what was recorded when its state changed.
+    fn live_reason(&self, pane: PaneId) -> Option<Reason> {
+        let state = self.attention.get(&pane).copied().unwrap_or_default();
+        if !matches!(state, Attention::NeedsInput | Attention::Done) {
+            return None;
+        }
+        if state == Attention::NeedsInput
+            && let Some(r) = self.ask_reason(pane)
+        {
+            return Some(r);
+        }
+        self.reasons.get(&pane).cloned()
+    }
+
+    /// An open question in a terminal (Claude Code's hook), or a block's
+    /// open permission request or question.
+    fn ask_reason(&self, pane: PaneId) -> Option<Reason> {
+        let (id, what, headline, agent, cwd, at_ms) = if let Some(a) = self.asks.get(&pane) {
+            let agent = self.agent_name(pane).unwrap_or_else(|| "claude".into());
+            let cwd =
+                self.panes.get(&pane).and_then(|h| h.status().cwd.or_else(|| h.cwd().map(|c| c.display().to_string())));
+            (a.ask.id.clone(), AskWhat::Question, a.ask.headline(), agent, cwd, a.ask.at_ms)
+        } else {
+            let w = self.blocks.get(&pane)?.waiting()?;
+            (w.id, w.what, w.headline, w.agent, w.cwd, w.at_ms)
+        };
+        let local = self.meta.get(&pane).and_then(|m| m.host).is_none();
+        let project = project_key(cwd.as_deref(), local);
+        let actions = match what {
+            AskWhat::Approve => vec![Action::Allow, Action::Deny, Action::Dismiss],
+            AskWhat::Question => vec![Action::Answer, Action::Deny, Action::Dismiss],
+        };
+        Some(Reason {
+            kind: ReasonKind::Ask,
+            since_ms: at_ms,
+            headline,
+            command: None,
+            exit: None,
+            duration_ms: None,
+            bundle: Some(format!("ask:{project}:{agent}")),
+            ask: Some(AskRef { id, what, agent }),
+            actions,
+        })
+    }
+
+    /// The agent running in a terminal, by its command line.
+    fn agent_name(&self, pane: PaneId) -> Option<String> {
+        let h = self.panes.get(&pane)?;
+        let text = h.status().current.and_then(|c| c.text).or_else(|| h.command()).unwrap_or_default();
+        text.split_whitespace().take(3).find_map(|w| {
+            let name = w.rsplit('/').next().unwrap_or(w);
+            AGENTS.iter().find(|a| name == **a || name.starts_with(&format!("{a}-"))).map(|a| (*a).to_owned())
+        })
+    }
+
+    /// What a pane's failures bundle by: the machine it runs on.
+    fn machine_key(&self, pane: PaneId) -> String {
+        match self.machine_of(pane) {
+            Some(m) => m.name.clone().unwrap_or_else(|| m.sprite.clone()),
+            None => "here".into(),
+        }
     }
 
     fn looks_like_agent(&self, pane: PaneId) -> bool {
@@ -744,7 +909,23 @@ impl Daemon {
                     return;
                 }
                 if !self.focused(pane) {
-                    self.set_attention(pane, Attention::Done, &format!("exited with code {}", code.unwrap_or(-1)));
+                    let failed = machine_gone || code.is_some_and(|c| c != 0);
+                    let headline = if machine_gone {
+                        "its machine went away".to_owned()
+                    } else {
+                        format!("exited with code {}", code.unwrap_or(-1))
+                    };
+                    let reason = if failed {
+                        Reason {
+                            exit: code,
+                            bundle: Some(format!("exited:{}", self.machine_key(pane))),
+                            command: self.meta.get(&pane).and_then(|m| m.command.clone()),
+                            ..plain_reason(ReasonKind::Exited, &headline)
+                        }
+                    } else {
+                        Reason { exit: code, ..plain_reason(ReasonKind::Done, &headline) }
+                    };
+                    self.set_attention_with(pane, Attention::Done, &headline, Some(reason));
                 }
                 self.changed();
             }
@@ -814,7 +995,7 @@ impl Daemon {
                 }
                 Signal::CommandEnd { exit } => {
                     let last = self.panes.get(&pane).and_then(|h| h.status().last);
-                    let took = last.as_ref().map(|l| l.ended_ms.unwrap_or(l.started_ms) - l.started_ms).unwrap_or(0);
+                    let took_ms = last.as_ref().map(|l| l.ended_ms.unwrap_or(l.started_ms) - l.started_ms).unwrap_or(0);
                     let text = last.and_then(|l| l.text);
                     self.emit(Some(pane), EventKind::CommandEnd { text: text.clone(), exit });
                     // Something that asked for you still wants you after its
@@ -823,9 +1004,28 @@ impl Daemon {
                         self.broadcast();
                         return;
                     }
-                    if took >= DONE_AFTER_MS && !self.focused(pane) {
-                        let what = format!("{} exited {}", text.as_deref().unwrap_or("command"), exit.unwrap_or(-1));
-                        self.set_attention(pane, Attention::Done, &what);
+                    let failed = exit.is_some_and(|e| e != 0 && e != 130) && took_ms >= FAILED_AFTER_MS;
+                    if (failed || took_ms >= DONE_AFTER_MS) && !self.focused(pane) {
+                        let name = text.clone().unwrap_or_else(|| "command".into());
+                        let (kind, headline, bundle) = if failed {
+                            let h =
+                                format!("{name} failed (exit {}) after {}", exit.unwrap_or(-1), human_took(took_ms));
+                            (ReasonKind::Failed, h, Some(format!("failed:{}", self.machine_key(pane))))
+                        } else {
+                            let h = match exit {
+                                Some(0) | None => format!("{name} finished after {}", human_took(took_ms)),
+                                Some(e) => format!("{name} exited {e} after {}", human_took(took_ms)),
+                            };
+                            (ReasonKind::Done, h, None)
+                        };
+                        let reason = Reason {
+                            command: text.clone(),
+                            exit,
+                            duration_ms: Some(took_ms),
+                            bundle,
+                            ..plain_reason(kind, &headline)
+                        };
+                        self.set_attention_with(pane, Attention::Done, &headline, Some(reason));
                     } else {
                         self.set_attention(pane, Attention::Idle, "command ended");
                     }
@@ -974,10 +1174,27 @@ impl Daemon {
             Api::Pane(pane, reply) => {
                 let _ = reply.send(self.panes.get(&pane).cloned());
             }
-            Api::Attention(pane, state, reply) => {
+            Api::Attention(pane, state, why, reply) => {
                 let known = self.panes.contains_key(&pane) || self.blocks.contains_key(&pane);
-                self.set_attention(pane, state, "set by the API");
+                self.set_attention(pane, state, why.as_deref().unwrap_or("set by the API"));
                 let _ = reply.send(known);
+            }
+            Api::AttentionList(who, reply) => {
+                let mut out = Vec::new();
+                for (pane, state) in &self.attention {
+                    if who.as_ref().is_some_and(|w| !self.readable(w, *pane)) {
+                        continue;
+                    }
+                    let (Some(reason), Some(session)) = (self.live_reason(*pane), self.session_of(*pane)) else {
+                        continue;
+                    };
+                    out.push(illogical_proto::api::AttentionItem { pane: *pane, session, state: *state, reason });
+                }
+                out.sort_by_key(|i| (i.reason.since_ms, i.pane));
+                let _ = reply.send(out);
+            }
+            Api::Reason(pane, reply) => {
+                let _ = reply.send(self.live_reason(pane).map(|r| (r, self.blocks.contains_key(&pane))));
             }
             Api::Machines(reply) => {
                 let _ = reply.send(self.machines.values().cloned().collect());
@@ -2179,6 +2396,7 @@ impl Daemon {
             current: status.current.map(info_of),
             last: status.last.map(info_of),
             attention: self.attention.get(&p.id).copied().unwrap_or_default(),
+            reason: self.live_reason(p.id),
             integration: meta.integration.unwrap_or(true),
             kind: BlockType::Terminal,
             host: meta.host,
@@ -2213,6 +2431,7 @@ impl Daemon {
             current: None,
             last: None,
             attention: self.attention.get(&id).copied().unwrap_or_default(),
+            reason: self.live_reason(id),
             integration: false,
             kind: b.kind(),
             host: meta.host,

@@ -643,6 +643,10 @@ button {
   color: #a6e3a1;
 }
 
+.att.failed {
+  color: #f38ba8;
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.35;

@@ -11,6 +11,8 @@
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
 //! | POST | `/api/panes/N/ask` | `{questions, id}` (AskUserQuestion's, from `illogical ask`) | when answered: `{action: accept\|decline\|terminal\|withdrawn, content?, output?}` |
 //! | POST | `/api/panes/N/ask/withdraw` | `{id}` | `{}`: the asker gave up |
+//! | GET | `/api/attention` | | `[AttentionItem]`: every pane that wants you, and why (M24) |
+//! | POST | `/api/attention/act` | `ActRequest` | `ActResponse`: one result per pane |
 //! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
 //! | POST | `/api/blocks` | `OpenRequest` | `{"block": N}` |
 //! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |
@@ -66,6 +68,63 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{Attention, PaneId, PaneInfo, Policy, SessionId, TabId};
+
+/// `GET /api/attention`: a pane that wants you (M24).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttentionItem {
+    pub pane: PaneId,
+    pub session: SessionId,
+    pub state: Attention,
+    pub reason: crate::Reason,
+}
+
+/// `POST /api/attention/act`: do something about one pane's reason, or
+/// several at once ("allow all 3", "dismiss all 11"). Each pane needs
+/// editor on its session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActRequest {
+    pub action: crate::Action,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panes: Vec<PaneId>,
+    /// The ask it answers (`AskRef::id`); without one, whatever the pane
+    /// asks now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// `answer`: the card's fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<serde_json::Value>,
+    /// `allow`: `once` (default) or `always`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option: Option<String>,
+    /// `deny`: why, for the agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl ActRequest {
+    /// The panes it names, once each.
+    pub fn targets(&self) -> Vec<PaneId> {
+        let mut out: Vec<PaneId> = self.pane.into_iter().chain(self.panes.iter().copied()).collect();
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|p| seen.insert(*p));
+        out
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActResult {
+    pub pane: PaneId,
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActResponse {
+    pub results: Vec<ActResult>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaneSummary {
@@ -208,6 +267,9 @@ pub struct MouseRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttentionRequest {
     pub state: Attention,
+    /// What it's about (a hook's message), for the reason's headline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
