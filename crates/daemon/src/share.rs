@@ -279,7 +279,8 @@ async fn view(
     let client = NEXT_VIEWER.fetch_add(1, Ordering::Relaxed);
     let (data, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
     let (ctrl, mut ctrl_rx) = mpsc::unbounded_channel();
-    let sub = Subscriber { client, data, ctrl };
+    // Watches one pane only; never sends the mux anything.
+    let sub = Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner };
     handle.attach(sub.clone(), None);
     info!(share = id, pane, "share viewer connected");
     // What it's looking at, before any of it.
@@ -307,7 +308,7 @@ async fn view(
                     if socket.send(Message::Text(serde_json::to_string(&m).unwrap_or_default().into())).await.is_err() { break None }
                 }
                 Some(ToClient::Msg(_)) => {}
-                None => break Some("the pane closed"),
+                Some(ToClient::Close) | None => break Some("the pane closed"),
             },
             Some(out) = ctrl_rx.recv() => {
                 // Fell behind and was dropped: start over from a snapshot.

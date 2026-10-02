@@ -9,7 +9,7 @@ use std::{
 };
 
 use axum::{
-    Router,
+    Extension, Router,
     body::Body,
     extract::{
         ConnectInfo, Request, State,
@@ -27,6 +27,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     access::Access,
+    acl::Principal,
     hosts::Hosts,
     mux::{Cmd, MuxHandle},
     pane::{CLIENT_QUEUE, Subscriber, ToClient},
@@ -55,6 +56,8 @@ pub struct App {
     pub synced: Arc<crate::sync::Synced>,
     /// Enrollment in illogical control: trusted devices, the relay.
     pub control: Arc<crate::control::Control>,
+    /// Who else may reach which sessions (M12).
+    pub acl: Arc<crate::acl::Acl>,
     next_client: AtomicU64,
 }
 
@@ -70,6 +73,7 @@ impl App {
         synced: Arc<crate::sync::Synced>,
         binaries: Option<crate::resident::Binaries>,
         control: Arc<crate::control::Control>,
+        acl: Arc<crate::acl::Acl>,
     ) -> Arc<Self> {
         Arc::new(Self {
             access,
@@ -82,6 +86,7 @@ impl App {
             synced,
             binaries,
             control,
+            acl,
             next_client: AtomicU64::new(1),
         })
     }
@@ -93,7 +98,11 @@ impl App {
 
 /// What a daemon serves to its owner: its own API.
 fn own_routes() -> Router<Arc<App>> {
-    crate::api::routes().merge(crate::fs::routes()).merge(crate::hosts::routes()).merge(crate::share::api_routes())
+    crate::api::routes()
+        .merge(crate::fs::routes())
+        .merge(crate::hosts::routes())
+        .merge(crate::share::api_routes())
+        .merge(crate::acl::api::routes())
 }
 
 /// Plus what makes it a home daemon: hosts dialing in and pushing history,
@@ -115,7 +124,11 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws))
         .route(crate::e2e::PATH, get(crate::e2e::ws))
-        .merge(api_routes().layer(middleware::from_fn_with_state(app.clone(), api_origin)))
+        .merge(
+            api_routes()
+                .layer(middleware::from_fn_with_state(app.clone(), crate::authz::check))
+                .layer(middleware::from_fn_with_state(app.clone(), api_origin)),
+        )
         .merge(crate::share::viewer_routes())
         .fallback(asset)
         .layer(middleware::from_fn_with_state(app.clone(), cors))
@@ -139,7 +152,7 @@ pub fn tunnel_router(app: Arc<App>) -> Router {
 /// Inside an end-to-end channel (`e2e.rs`): the device was checked by the
 /// handshake. The daemon's own API only, as over the tunnel.
 pub fn channel_router(app: Arc<App>) -> Router {
-    own_routes().with_state(app)
+    own_routes().layer(middleware::from_fn_with_state(app.clone(), crate::authz::check)).with_state(app)
 }
 
 /// An embedded web client file.
@@ -195,8 +208,17 @@ async fn guard(
     next: Next,
 ) -> Response {
     let peer = app.identify.peer(addr).await;
+    let mut req = req;
     let checked = app.access.check_host(req.headers()).and_then(|()| match class(&req) {
-        Class::Owner => app.access.check_identity(req.headers(), &peer),
+        Class::Owner => {
+            let who = app.access.check_identity(req.headers(), &peer)?;
+            // Another user gets in only once something is shared with them.
+            if !app.acl.knows(&who) {
+                return Err((StatusCode::FORBIDDEN, "nothing on this machine is shared with you".into()));
+            }
+            req.extensions_mut().insert(who);
+            Ok(())
+        }
         Class::Viewer => app.access.check_viewer(req.headers(), &peer),
         Class::Token => Ok(()),
     });
@@ -276,24 +298,30 @@ async fn asset(uri: Uri) -> Response {
     }
 }
 
-async fn ws(State(app): State<Arc<App>>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
+async fn ws(
+    State(app): State<Arc<App>>,
+    who: Option<Extension<Principal>>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
     if let Err((status, why)) = app.access.check_origin(&headers) {
         warn!(%why, "rejected websocket");
         return (status, why).into_response();
     }
-    upgrade.on_upgrade(move |socket| connection(app, socket))
+    let who = who.map(|Extension(w)| w).unwrap_or(Principal::Owner);
+    upgrade.on_upgrade(move |socket| connection(app, socket, who))
 }
 
 async fn local_ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| connection(app, socket))
+    upgrade.on_upgrade(move |socket| connection(app, socket, Principal::Owner))
 }
 
-async fn connection(app: Arc<App>, mut socket: WebSocket) {
+async fn connection(app: Arc<App>, mut socket: WebSocket, who: Principal) {
     let client: ClientId = app.new_client_id();
-    info!(client, "client connected");
+    info!(client, who = who.id(), "client connected");
     let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
-    app.mux.send(Cmd::Connect { sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx } });
+    app.mux.send(Cmd::Connect { sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: who } });
 
     loop {
         tokio::select! {
@@ -309,7 +337,9 @@ async fn connection(app: Arc<App>, mut socket: WebSocket) {
                 }
                 None => break,
             },
-            Some(out) = ctrl_rx.recv() => if send(&mut socket, out).await.is_err() { break },
+            Some(out) = ctrl_rx.recv() => {
+                if matches!(out, ToClient::Close) || send(&mut socket, out).await.is_err() { break }
+            }
             Some(out) = data_rx.recv() => if send(&mut socket, out).await.is_err() { break },
         }
     }
@@ -326,7 +356,9 @@ pub(crate) fn handle(app: &App, client: ClientId, msg: Message) -> anyhow::Resul
         Message::Binary(bytes) => {
             let frame = Frame::decode(&bytes)?;
             match frame.kind {
-                FrameKind::Input => app.mux.send(Cmd::Input { pane: frame.pane, data: frame.data }),
+                FrameKind::Input => {
+                    app.mux.send(Cmd::Input { client: Some(client), pane: frame.pane, data: frame.data })
+                }
                 k => anyhow::bail!("unexpected frame kind {k:?} from client"),
             }
         }
@@ -339,6 +371,7 @@ async fn send(socket: &mut WebSocket, out: ToClient) -> Result<(), axum::Error> 
     let msg = match out {
         ToClient::Frame(bytes) => Message::Binary(bytes.into()),
         ToClient::Msg(m) => Message::Text(serde_json::to_string(&m).expect("serialize").into()),
+        ToClient::Close => return Ok(()),
     };
     socket.send(msg).await
 }

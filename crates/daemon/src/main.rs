@@ -1,8 +1,10 @@
 //! illogicald: owns the terminals; clients attach over WebSocket.
 
 mod access;
+mod acl;
 mod agent;
 mod api;
+mod authz;
 mod block;
 mod browser;
 mod control;
@@ -630,7 +632,9 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     };
     // What `fs` never serves, besides the state directory.
     let private = vec![token_file.clone(), secrets.anthropic_key.clone(), secrets.claude_token.clone()];
+    let acl = std::sync::Arc::new(acl::Acl::open(&state_dir));
     let config = mux::Config {
+        acl: acl.clone(),
         shell,
         shell_args,
         home: home(),
@@ -658,7 +662,8 @@ async fn run(args: RunArgs, mut kept: std::collections::HashMap<String, std::os:
     });
     let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
     let control = control::Control::new(&state_dir, direct_urls);
-    let app = server::App::new(access, identify, mux.clone(), push, hosts, shares, synced, binaries, control.clone());
+    let app =
+        server::App::new(access, identify, mux.clone(), push, hosts, shares, synced, binaries, control.clone(), acl);
     control.start(app.clone());
     start_reach(&args.reach, &app, name)?;
     // TCP_NODELAY on every accepted connection (axum leaves Nagle on).

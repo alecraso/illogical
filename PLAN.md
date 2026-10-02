@@ -1839,6 +1839,16 @@ agents. Enterprise access control stays a non-goal (BRIEF.md).
 
 #### M12: principals and roles
 
+**Done 2026-10-02.**
+
+- **What landed:**
+  - `illogical_core::access::need` is the one decision function;
+  - the daemon's `acl.rs` stores grants and the audit log, and `authz.rs` is the API half;
+  - the mux checks every message and filters each client's state;
+  - `illogical access`;
+  - `e2e/access.spec.ts` covers the done-when.
+- **Deferred to M13:** per-user push, and recording who approved an agent. Non-owners can't subscribe to push yet.
+
 Every request has an author, and every session has an access list.
 
 - **Principals:**

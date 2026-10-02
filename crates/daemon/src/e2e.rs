@@ -161,7 +161,10 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     let client = app.new_client_id();
     let (data_tx, mut data_rx) = mpsc::channel(CLIENT_QUEUE);
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
-    app.mux.send(Cmd::Connect { sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx } });
+    // A device of the account this daemon joined: its owner.
+    app.mux.send(Cmd::Connect {
+        sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: crate::acl::Principal::Owner },
+    });
     let router = crate::server::channel_router(app.clone());
     let mut changed = app.control.changed.subscribe();
     let result = loop {
@@ -187,8 +190,14 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
                     Err(e) => break Err(e),
                 }
             }
-            Some(o) = ctrl_rx.recv() => if let Err(e) = out.put(&to_msg(o)).await { break Err(e) },
-            Some(o) = data_rx.recv() => if let Err(e) = out.put(&to_msg(o)).await { break Err(e) },
+            Some(o) = ctrl_rx.recv() => {
+                let Some(m) = to_msg(o) else { break Ok(()) };
+                if let Err(e) = out.put(&m).await { break Err(e) }
+            }
+            Some(o) = data_rx.recv() => {
+                let Some(m) = to_msg(o) else { break Ok(()) };
+                if let Err(e) = out.put(&m).await { break Err(e) }
+            }
             Ok(()) = changed.changed() => {
                 if app.control.device(&who).is_none() {
                     info!(device = device.device, "device no longer trusted: closing its channel");
@@ -202,10 +211,12 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     result
 }
 
-fn to_msg(o: ToClient) -> Msg {
+/// `None`: hang up.
+fn to_msg(o: ToClient) -> Option<Msg> {
     match o {
-        ToClient::Frame(bytes) => Msg::Binary(bytes),
-        ToClient::Msg(m) => Msg::Text(serde_json::to_string(&m).expect("serialize")),
+        ToClient::Frame(bytes) => Some(Msg::Binary(bytes)),
+        ToClient::Msg(m) => Some(Msg::Text(serde_json::to_string(&m).expect("serialize"))),
+        ToClient::Close => None,
     }
 }
 

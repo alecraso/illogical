@@ -3,6 +3,7 @@
 //! sending intents. IDs follow tmux (`$session`, `@tab` for tmux's window,
 //! `%pane`) and are never reused.
 
+pub mod access;
 pub mod layout;
 pub mod mux;
 pub mod names;
@@ -14,6 +15,7 @@ pub type PaneId = u32;
 pub type NodeId = u32;
 pub type ClientId = u64;
 
+pub use access::{Need, Role};
 pub use layout::{Layout, Rect, SplitRect};
 pub use mux::{Effect, Error, Intent, Mux, OptionMap, OptionScope, Options, Session, Tab};
 pub use tree::{Child, Dir, Edge, Node};

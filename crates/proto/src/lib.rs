@@ -209,6 +209,12 @@ pub struct State {
     /// Clients' named options (tmux `@` options), per scope.
     #[serde(default)]
     pub options: Box<Options>,
+    /// For someone who isn't the daemon's owner (M12): their role in each
+    /// session they see, as `[[session, role], ...]` (JSON object keys
+    /// can't come back as numbers inside a tagged message). Absent for the
+    /// owner, who owns everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<(SessionId, illogical_core::Role)>>,
 }
 
 pub type MachineId = u32;
@@ -495,6 +501,7 @@ mod tests {
             panes: vec![],
             machines: vec![],
             options: Box::new(options),
+            roles: Some(vec![(1, illogical_core::Role::Viewer), (4, illogical_core::Role::Editor)]),
         };
         let msg = ServerMsg::State { state };
         let back: ServerMsg = serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
