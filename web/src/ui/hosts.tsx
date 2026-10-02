@@ -3,6 +3,7 @@
 // that host's layout, connected straight to it.
 
 import { directory } from "../hosts";
+import type { Fleet } from "../fleet";
 import { useSubscribe } from "./hooks";
 import { openMenu, type MenuItem } from "./menu";
 
@@ -18,6 +19,39 @@ function seen(name: string): string {
   return `seen ${ago} ago`;
 }
 
+let fleet: Fleet | null = null;
+/** M25: every host's summary connection, for what the menu says of each. */
+export function setFleet(f: Fleet) {
+  fleet = f;
+}
+
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
+}
+
+/** What the fleet knows of a host: live with its panes, or how it's away. */
+export function fleetLabel(name: string): string | null {
+  const h = fleet?.host(name);
+  if (!h) return null;
+  const n = h.summary?.panes.length ?? 0;
+  const panes = `${n} pane${n === 1 ? "" : "s"}`;
+  switch (h.state) {
+    case "connected":
+      return `${panes} · live`;
+    case "connecting":
+      return h.summary ? `${panes} · connecting` : "connecting";
+    case "stale":
+      return `${panes} · stale, seen ${h.lastSeen ? ago(h.lastSeen) : "?"} ago`;
+    case "offline":
+      return h.summary ? `${panes} · offline` : "offline";
+    case "asleep":
+      return `asleep${h.summary ? ` · ${panes}` : ""}`;
+    case "capped":
+      return `${h.summary ? `${panes} · ` : ""}not live (too many machines)`;
+  }
+}
+
 /** More for the host menu (control mode: the account's items). */
 let extras: () => MenuItem[] = () => [];
 export function setHostMenuExtras(f: () => MenuItem[]) {
@@ -27,6 +61,7 @@ export function setHostMenuExtras(f: () => MenuItem[]) {
 /** Only worth showing once there is somewhere else to go. */
 function useHosts(): boolean {
   useSubscribe((fn) => directory.subscribe(fn));
+  useSubscribe((fn) => fleet?.subscribe(fn) ?? (() => {}));
   return directory.control || directory.names.length > 1 || directory.shown !== null;
 }
 
@@ -36,9 +71,10 @@ export function HostButton() {
   const open = (e: MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const items: MenuItem[] = directory.names.map((name) => ({
-      label: `${name === directory.current ? "✓ " : "    "}${name}${name === directory.home ? " (home)" : `  · ${seen(name)}`}`,
+      label: `${name === directory.current ? "✓ " : "    "}${name}${name === directory.home ? " (home)" : ""}  · ${fleetLabel(name) ?? seen(name)}`,
       run: () => directory.select(name),
     }));
+    if (fleet?.notice) items.push("separator", { label: fleet.notice, disabled: true, run: () => {} });
     if (directory.stale) {
       const what = directory.control ? "Control unreachable: saved list" : "Home daemon unreachable: saved list";
       items.push("separator", { label: what, disabled: true, run: () => {} });
@@ -105,7 +141,10 @@ export function HostSection({ close }: { close: () => void }) {
           }}
         >
           {name}
-          <span class="host-seen">{name === directory.home ? "home" : seen(name)}</span>
+          <span class="host-seen" data-fleet={fleet?.host(name)?.state}>
+            {name === directory.home ? "home · " : ""}
+            {fleetLabel(name) ?? seen(name)}
+          </span>
         </button>
       ))}
       {extras().flatMap((item) =>

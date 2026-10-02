@@ -2436,6 +2436,38 @@ One live view of every pane on every machine you (or your team) can see. Panes f
 - **Tests:** `crates/daemon/tests/attention.rs` (a failing `cargo test`, a long `make build`, a quick failure that isn't one, Claude Code's question through the hook answered by `act`, three agent approvals allowed and denied as a list, the push's actions, the event stream); `e2e/attention.spec.ts` (a failure's badge and headline, dismissed on one client and gone on the other; a pushed failure offers Dismiss).
 - **Not covered (after the MVP):** prompt detection for `input` (`[sudo] password`, `[y/N]`), and the `rerun`, `restart` and `send` actions. A 10-minute build is tested as a 5-second one. Approvals of Claude Code's tool permission prompts in terminals come with M29.
 
+#### M25: the fleet in one page
+
+**Done 2026-10-02, apart from real phones and a real provider sandbox.**
+
+- **What landed:**
+  - **Every host at once** (`web/src/fleet.ts`): the page holds a summaries-only connection (M23) to every host in the directory, control's list or the home daemon's, each over its usual transport and its own end-to-end channel. The tab view still connects for real to the one host it shows, so a pane's output is attached only when it's opened (`fleet.open(host, pane)`, which also wakes a sleeping sandbox).
+  - **One model:** a pane is `host:pane` (`FleetPane`: the host, its `PaneInfo`, its session, `stale`, and the host's owner and team from control's directory). Each host is `connected`, `stale` (dropped, with when it was last heard), `offline` (never reached, or gone a minute), `asleep` or `capped`. A host that's away keeps its panes in view from the last summary, greyed (`stale: true`), and the last summaries are kept in `localStorage` for the next load.
+  - **One socket to control for every relayed daemon** (`/api/relay/m`, `web/src/e2e/relaymux.ts`): numbered channels (`OPEN`, `OPENED`, `DATA`, `CLOSE`) inside one WebSocket, each carrying one daemon's Noise channel through the daemon's existing relay stream, so the daemon side is unchanged. Control routes, checks `may_reach` per channel, counts bytes per account and slows free accounts over their allowance, as for `/api/relay/c/<id>`. The tab view's own channel goes the same way. Hosted sandboxes keep a socket each (their provider's proxy). A control without the route falls back to a socket per daemon.
+  - **Behaving well:**
+    - connects go through a limiter (4 at a time, each holding its slot until it connects or fails, at most 3 s), with jitter;
+    - after a wake (a gap in the page's timers, the page becoming visible, or `online`) every host that's down reconnects, spread over 1.5 s;
+    - a heartbeat (a `ping` to a host quiet for 3 s) notices a link that died without closing within 6–7 s;
+    - a slow or dead host only ever holds its own slot;
+    - at most 24 connections, the most recently used first; the rest show from what was last known, with a notice in the host menu;
+    - a provider sandbox that isn't `running` is never connected just to be counted.
+  - The host menu (and the phone's sheet) says what each host is doing: "2 panes · live", "stale, seen 4s ago", "asleep".
+  - A summaries-only connection isn't a person: it's left out of presence, and doesn't keep its person driving a pane (M13).
+- **Measured** (`e2e/fleet.spec.ts`, `e2e/fleet-control.spec.ts`, headless Chrome on geek, loopback):
+
+  | | hosts | first connect | after a wake (3 runs) | failed tries | relay sockets |
+  |---|---|---|---|---|---|
+  | S16 (one socket each, all at once) | 20 | 4.2 s | 2.2–4.6 s | 0 | 20 |
+  | M25, direct | 23 | 0.38 s | 0.47–0.48 s | 0 | 0 |
+  | M25, through control | 20 (19 relayed) | | 0.50–0.52 s | 0 | **1** |
+
+- **Tests:** `e2e/fleet.spec.ts` (three machines' panes in one page on the laptop and a Pixel-sized phone; opening one attaches it in its tab; a killed machine greys at once and a stopped one, its socket still open, within 10 s, and both come back; 20 more machines back after three simulated wakes with no failed tries; a cold sandbox not connected; the cap's notice); `e2e/fleet-control.spec.ts` (a direct and two relay-only machines on a local control, on the laptop and an approved phone; the relayed ones over one `/api/relay/m` socket and no `/api/relay/c/`; a relayed machine killed greys within 10 s and comes back; 20 machines with 19 relayed come back after three wakes over one new socket with no failures).
+- **Not covered:**
+  - real phones and different networks (loopback stands in, as for S15, S16 and S18), and daemons on different addresses (all here are 127.0.0.1);
+  - a real resident sandbox: a tailnet stand-in plays it, and "asleep" is tested from a provider status, not a real Sprites or wisp sandbox;
+  - an "unplugged" machine is a stopped process (its socket stays open), not a pulled cable.
+- **For M30 (#47):** `fleet.list` and `fleet.panes` are the merged model; each host carries `owner` and `team` from control's directory (a session's owner is its daemon's: absent means yours, `team` a team box). `fleet.touch(host)` keeps a host among the 24 live ones.
+
 #### M29: team answers
 
 **Done 2026-10-02, apart from real phones.**

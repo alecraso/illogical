@@ -237,6 +237,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/stripe/webhook", post(billing::webhook))
         .route("/api/relay/dial", get(relay::dial))
         .route("/api/relay/c/{id}", get(relay::client))
+        .route("/api/relay/m", get(relay::many))
         .fallback(asset)
         .layer(axum::middleware::map_response(headers))
         .with_state(app)

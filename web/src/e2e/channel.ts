@@ -9,6 +9,7 @@
 import { cat, Initiator, type Cipher } from "./noise.ts";
 import type { DeviceKeys } from "./keys.ts";
 import { unhex } from "./cert.ts";
+import { RelayMux, type SocketLike } from "./relaymux.ts";
 
 const CHUNK = 16 * 1024;
 const MAX_MSG = 64 << 20;
@@ -85,6 +86,24 @@ export interface Response {
   text(): string;
 }
 
+/** A way to a daemon: a WebSocket URL, or (`mux`) a channel inside the
+ * page's one socket to control's relay (M25). */
+export interface Route {
+  url: string;
+  timeoutMs: number;
+  /** `wss://control…/api/relay/m`: reach the daemon through it, as a
+   * channel, instead of a socket of its own at `url`. */
+  mux?: string;
+  /** Only if a `mux` route before it couldn't reach control at all (an
+   * older control without the shared socket). */
+  ifNoMux?: boolean;
+}
+
+function openRoute(r: Route, id: string): Promise<SocketLike> {
+  if (r.mux) return RelayMux.for(r.mux).open(id, r.timeoutMs);
+  return openSocket(r.url, r.timeoutMs) as Promise<unknown> as Promise<SocketLike>;
+}
+
 function openSocket(url: string, timeoutMs: number): Promise<WebSocket> {
   return new Promise((res, rej) => {
     const ws = new WebSocket(url);
@@ -119,11 +138,11 @@ export class E2ESocket {
   private pending = new Map<number, { res: (r: Response) => void; rej: (e: Error) => void }>();
   private closed = false;
 
-  private ws: WebSocket;
+  private ws: SocketLike;
   private send_: Cipher;
   private recv: Cipher;
 
-  private constructor(ws: WebSocket, send: Cipher, recv: Cipher, early: Uint8Array[]) {
+  private constructor(ws: SocketLike, send: Cipher, recv: Cipher, early: Uint8Array[]) {
     this.ws = ws;
     this.send_ = send;
     this.recv = recv;
@@ -139,25 +158,28 @@ export class E2ESocket {
   }
 
   /** Try each URL in order (direct ones first, the relay last). */
-  static async connect(urls: { url: string; timeoutMs: number }[], daemon: DaemonRef, keys: DeviceKeys): Promise<E2ESocket> {
+  static async connect(urls: Route[], daemon: DaemonRef, keys: DeviceKeys): Promise<E2ESocket> {
     let last: unknown = new Error("no way to reach it");
-    for (const { url, timeoutMs } of urls) {
+    let refused = false;
+    for (const route of urls) {
+      if (route.ifNoMux && refused) continue;
       try {
-        const ws = await openSocket(url, timeoutMs);
+        const ws = await openRoute(route, daemon.id);
         try {
-          return await E2ESocket.handshake(ws, daemon, keys, timeoutMs);
+          return await E2ESocket.handshake(ws, daemon, keys, route.timeoutMs);
         } catch (e) {
           ws.close();
           throw e;
         }
       } catch (e) {
         last = e;
+        if (route.mux && (e as { refused?: boolean }).refused) refused = true;
       }
     }
     throw last;
   }
 
-  private static handshake(ws: WebSocket, daemon: DaemonRef, keys: DeviceKeys, timeoutMs: number): Promise<E2ESocket> {
+  private static handshake(ws: SocketLike, daemon: DaemonRef, keys: DeviceKeys, timeoutMs: number): Promise<E2ESocket> {
     return new Promise((res, rej) => {
       const ik = new Initiator(keys.noise, unhex(daemon.noise));
       const t = setTimeout(() => rej(new Error("handshake timed out")), Math.max(timeoutMs, 5000));
