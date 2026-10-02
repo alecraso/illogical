@@ -16,13 +16,14 @@ import { promisify } from "node:util";
 import { devices, expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { menu, paneEl, panes, ready, reset, run } from "./helpers";
 import type { PaneId } from "../src/proto";
+import { ANY, blockPort, daemonPort } from "./ports";
 
-const PORT = 7822;
-const BLOCKS = 7823;
-const APP = `http://127.0.0.1:${PORT}`;
+let PORT = 0;
+let BLOCKS = 0;
+let APP = "";
 const OWNER = "me@example.com";
 const FRIEND = "friend@example.com";
-test.use({ baseURL: APP });
+test.use({ baseURL: async ({}, use) => use(APP) });
 test.describe.configure({ mode: "serial" });
 
 // Made in beforeAll: this module is loaded more than once.
@@ -37,12 +38,16 @@ async function start() {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${PORT}`, "--block-listen", `127.0.0.1:${BLOCKS}`, "--state-dir", state],
+      ...["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--block-listen", BLOCKS ? `127.0.0.1:${BLOCKS}` : ANY, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
     ],
     // code-server keeps its own logs under XDG_DATA_HOME: not the user's.
     { stdio: "ignore", env: { ...process.env, ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent", XDG_DATA_HOME: join(dir, "data") } },
   );
+  // On ports of its choosing, then on the same ones again.
+  PORT ||= await daemonPort(state, daemon);
+  BLOCKS ||= await blockPort(state, daemon);
+  APP = `http://127.0.0.1:${PORT}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${APP}/api/host`)).ok) return;

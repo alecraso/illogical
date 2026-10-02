@@ -13,10 +13,11 @@ import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
 import { menu, open, paneEl } from "./helpers";
 import type { PaneId } from "../src/proto";
+import { ANY, blockPort, daemonPort } from "./ports";
 
-const PORT = 7824;
-const BLOCKS = 7825;
-const APP = `http://127.0.0.1:${PORT}`;
+let PORT = 0;
+let BLOCKS = 0;
+let APP = "";
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
   try {
@@ -25,7 +26,7 @@ const token = (() => {
     return "";
   }
 })();
-test.use({ baseURL: APP });
+test.use({ baseURL: async ({}, use) => use(APP) });
 test.describe.configure({ mode: "serial" });
 
 const wisp = (method: string, path: string, body?: string) =>
@@ -42,9 +43,12 @@ test.beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), "ilg-e2e-edvm-"));
   daemon = spawn(
     "../target/debug/illogicald",
-    ["--listen", `127.0.0.1:${PORT}`, "--block-listen", `127.0.0.1:${BLOCKS}`, "--shell", "bash --norc --noprofile"],
+    ["--listen", ANY, "--block-listen", ANY, "--shell", "bash --norc --noprofile"],
     { stdio: "ignore", env: { ...process.env, ILLOGICAL_STATE_DIR: state, ILLOGICAL_WISP_URL: WISP } },
   );
+  PORT = await daemonPort(state, daemon);
+  BLOCKS = await blockPort(state, daemon);
+  APP = `http://127.0.0.1:${PORT}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${APP}/`)).ok) return;

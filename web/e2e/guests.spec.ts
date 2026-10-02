@@ -10,9 +10,9 @@ import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ready, run, text } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
-const PORT = 7773;
-const base = `http://127.0.0.1:${PORT}`;
+let base = "";
 const OWNER = "me@example.com";
 const GUEST = "guest@example.com";
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
@@ -27,7 +27,7 @@ let daemon: ChildProcess;
 let dir: string;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 test.skip(!token, "needs wispd and its token");
 
 test.beforeAll(async () => {
@@ -35,11 +35,12 @@ test.beforeAll(async () => {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${PORT}`, "--state-dir", dir, "--owner", OWNER, "--guest-machines", "2"],
+      ...["--listen", ANY, "--state-dir", dir, "--owner", OWNER, "--guest-machines", "2"],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
     { stdio: "ignore" },
   );
+  base = `http://127.0.0.1:${await daemonPort(dir, daemon)}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/api/host`)).ok) return;

@@ -7,23 +7,24 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Frame, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import { menu, open, paneEl, panes, reset } from "./helpers";
 import type { PaneId } from "../src/proto";
+import { ANY, blockPort, daemonPort } from "./ports";
 
-const PORT = 7700;
-const BLOCKS = 7701;
-const VITE = 7702;
-const APP = `http://127.0.0.1:${PORT}`;
-test.use({ baseURL: APP });
+let BLOCKS = 0;
+let VITE = 0;
+let APP = "";
+test.use({ baseURL: async ({}, use) => use(APP) });
 test.describe.configure({ mode: "serial" });
 
-const state = mkdtempSync(join(tmpdir(), "ilg-e2e-ports-"));
-const project = mkdtempSync(join(tmpdir(), "ilg-e2e-vite-"));
-const PWNED = join(state, "pwned");
+let state = "";
+let project = "";
+let PWNED = "";
 
 const files: Record<string, string> = {
   "index.html": `<!doctype html><html><head><title>Dev app</title><meta name="viewport" content="width=device-width"></head>
@@ -45,17 +46,24 @@ let vite: ViteDevServer | undefined;
 
 async function startVite() {
   // Vite's defaults: it listens on "localhost", which may be ::1 only.
+  // On a port of its choosing, then on the same one again.
   vite = await createServer({ root: project, configFile: false, logLevel: "silent", server: { port: VITE, strictPort: true } });
   await vite.listen();
+  VITE ||= (vite.httpServer!.address() as AddressInfo).port;
 }
 
 test.beforeAll(async () => {
+  state = mkdtempSync(join(tmpdir(), "ilg-e2e-ports-"));
+  project = mkdtempSync(join(tmpdir(), "ilg-e2e-vite-"));
+  PWNED = join(state, "pwned");
   for (const [name, text] of Object.entries(files)) write(name, text);
   daemon = spawn(
     "../target/debug/illogicald",
-    ["--listen", `127.0.0.1:${PORT}`, "--block-listen", `127.0.0.1:${BLOCKS}`, "--shell", "bash --norc --noprofile"],
+    ["--listen", ANY, "--block-listen", ANY, "--shell", "bash --norc --noprofile"],
     { stdio: "ignore", env: { ...process.env, ILLOGICAL_STATE_DIR: state, ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent" } },
   );
+  APP = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
+  BLOCKS = await blockPort(state, daemon);
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${APP}/`)).ok) break;
@@ -70,8 +78,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await vite?.close();
   daemon?.kill("SIGKILL");
-  rmSync(state, { recursive: true, force: true });
-  rmSync(project, { recursive: true, force: true });
+  for (const d of [state, project]) if (d) rmSync(d, { recursive: true, force: true });
 });
 
 /** The block's frame, once it has loaded from the block's own name. */
@@ -79,7 +86,7 @@ async function frameOf(page: Page): Promise<Frame> {
   let frame: Frame | undefined;
   await expect
     .poll(() => {
-      frame = page.frames().find((f) => /^http:\/\/b-\d+-[a-z0-9]{20}\.localhost:7701\//.test(f.url()));
+      frame = page.frames().find((f) => new RegExp(`^http://b-\\d+-[a-z0-9]{20}\\.localhost:${BLOCKS}/`).test(f.url()));
       return frame?.url() ?? null;
     })
     .not.toBeNull();

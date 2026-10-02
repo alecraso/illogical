@@ -9,33 +9,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { active, menu, paneEl, panes, ready, run, text } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
-const HOME = 7690;
-const OTHER = 7691;
-const homeUrl = `http://127.0.0.1:${HOME}`;
-const otherUrl = `http://127.0.0.1:${OTHER}`;
+let homeUrl = "";
+let otherUrl = "";
 const states: string[] = [];
-const daemons = new Map<number, ChildProcess>();
+const daemons = new Map<string, ChildProcess>();
 
-test.use({ baseURL: homeUrl });
+test.use({ baseURL: async ({}, use) => use(homeUrl) });
 test.describe.configure({ mode: "serial" });
 
-async function startDaemon(port: number, name: string, extra: string[] = []) {
+/** Start a daemon; its URL. */
+async function startDaemon(name: string, extra: string[] = []) {
   const state = mkdtempSync(join(tmpdir(), `illogical-e2e-hosts-${name}-`));
   states.push(state);
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+      ...["--listen", ANY, "--name", name, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...extra,
     ],
     { stdio: "ignore" },
   );
-  daemons.set(port, d);
+  daemons.set(name, d);
+  const url = `http://127.0.0.1:${await daemonPort(state, d)}`;
   for (let i = 0; i < 100; i++) {
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return;
+      if ((await fetch(`${url}/api/host`)).ok) return url;
     } catch {
       // not up yet
     }
@@ -44,19 +45,19 @@ async function startDaemon(port: number, name: string, extra: string[] = []) {
   throw new Error(`daemon ${name} did not start`);
 }
 
-async function stopDaemon(port: number) {
-  const d = daemons.get(port);
+async function stopDaemon(name: string) {
+  const d = daemons.get(name);
   if (!d) return;
   const exited = new Promise((r) => d.once("exit", r));
   d.kill("SIGTERM");
   await exited;
-  daemons.delete(port);
+  daemons.delete(name);
 }
 
 test.beforeAll(async () => {
-  await startDaemon(HOME, "home");
+  homeUrl = await startDaemon("home");
   // The other daemon accepts the home daemon's page, exactly.
-  await startDaemon(OTHER, "other", ["--allow-origin", homeUrl]);
+  otherUrl = await startDaemon("other", ["--allow-origin", homeUrl]);
   const res = await fetch(`${homeUrl}/api/hosts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -159,7 +160,7 @@ test("with the home daemon down, the saved list still reaches the other host", a
   await expect.poll(() => connected(page)).toBe(true);
   await page.evaluate(() => window.__illogical.hosts.select("home"));
   await expect.poll(() => base(page)).toBe("");
-  await stopDaemon(HOME);
+  await stopDaemon("home");
 
   await page.reload();
   // The list is the saved one; home is unreachable, so it offers the others.

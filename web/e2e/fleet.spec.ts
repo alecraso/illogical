@@ -8,43 +8,45 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
+import { ANY, daemonPort } from "./ports";
 
-const HOME = 7755;
-const MINI = 7756;
-const SANDBOX = 7757;
-const homeUrl = `http://127.0.0.1:${HOME}`;
+let homeUrl = "";
 
 const states: string[] = [];
-const daemons = new Map<number, ChildProcess>();
-const stateOf = new Map<number, string>();
+const daemons = new Map<string, ChildProcess>();
+const stateOf = new Map<string, string>();
+const portOf = new Map<string, number>();
 
-test.use({ baseURL: homeUrl });
+test.use({ baseURL: async ({}, use) => use(homeUrl) });
 test.describe.configure({ mode: "serial" });
 
-async function startDaemon(port: number, name: string, extra: string[] = []) {
-  let state = stateOf.get(port);
+/** Start (or restart, on the same port) a daemon; its port. */
+async function startDaemon(name: string, extra: string[] = []) {
+  let state = stateOf.get(name);
   if (!state) {
     state = mkdtempSync(join(tmpdir(), `ilg-e2e-fleet-${name}-`));
     states.push(state);
-    stateOf.set(port, state);
+    stateOf.set(name, state);
   }
+  const listen = portOf.has(name) ? `127.0.0.1:${portOf.get(name)}` : ANY;
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+      ...["--listen", listen, "--name", name, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...extra,
     ],
     { stdio: "ignore" },
   );
-  daemons.set(port, d);
+  daemons.set(name, d);
+  const port = portOf.get(name) ?? (await daemonPort(state, d));
+  portOf.set(name, port);
   for (let i = 0; i < 100; i++) {
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return;
+      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return port;
     } catch {
       // not yet
     }
@@ -53,38 +55,27 @@ async function startDaemon(port: number, name: string, extra: string[] = []) {
   throw new Error(`daemon ${name} did not start`);
 }
 
-async function addHost(name: string, port: number) {
+async function addHost(name: string) {
   const res = await fetch(`${homeUrl}/api/hosts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, urls: [`http://127.0.0.1:${port}`] }),
+    body: JSON.stringify({ name, urls: [`http://127.0.0.1:${portOf.get(name)}`] }),
   });
   expect(res.ok).toBe(true);
 }
 
-/** A free port outside the e2e range. */
-function freePort(): Promise<number> {
-  return new Promise((res) => {
-    const s = createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = (s.address() as { port: number }).port;
-      s.close(() => res(p >= 7750 && p <= 7789 ? freePort() : p));
-    });
-  });
-}
-
 test.beforeAll(async () => {
-  await startDaemon(HOME, "geek");
-  await startDaemon(MINI, "jake-mini", ["--allow-origin", homeUrl]);
-  await startDaemon(SANDBOX, "sandbox", ["--allow-origin", homeUrl]);
-  await addHost("jake-mini", MINI);
-  await addHost("sandbox", SANDBOX);
+  homeUrl = `http://127.0.0.1:${await startDaemon("geek")}`;
+  await startDaemon("jake-mini", ["--allow-origin", homeUrl]);
+  await startDaemon("sandbox", ["--allow-origin", homeUrl]);
+  await addHost("jake-mini");
+  await addHost("sandbox");
   // Something to tell them apart by.
-  for (const [port, word] of [
-    [MINI, "mini"],
-    [SANDBOX, "box"],
+  for (const [name, word] of [
+    ["jake-mini", "mini"],
+    ["sandbox", "box"],
   ] as const) {
-    await fetch(`http://127.0.0.1:${port}/api/run`, {
+    await fetch(`http://127.0.0.1:${portOf.get(name)}/api/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cwd: "/tmp", command: `echo ${word}; sleep 600` }),
@@ -153,7 +144,7 @@ test("every machine's panes in one page, on the laptop and the phone", async ({ 
 test("a machine that stops answering greys within 10 s, and comes back", async ({ page }) => {
   await allThree(page);
   // Killed: its socket closes.
-  daemons.get(MINI)!.kill("SIGKILL");
+  daemons.get("jake-mini")!.kill("SIGKILL");
   const t0 = Date.now();
   await expect.poll(() => panesByHost(page).then((b) => b["jake-mini"]?.stale), { timeout: 10_000 }).toBe(true);
   expect(Date.now() - t0).toBeLessThan(10_000);
@@ -161,13 +152,13 @@ test("a machine that stops answering greys within 10 s, and comes back", async (
   expect((await panesByHost(page))["jake-mini"].n).toBe(2);
   expect((await hostStates(page))["jake-mini"]).toBe("stale");
   expect((await panesByHost(page)).sandbox.stale).toBe(false);
-  await startDaemon(MINI, "jake-mini", ["--allow-origin", homeUrl]);
+  await startDaemon("jake-mini", ["--allow-origin", homeUrl]);
   await expect.poll(() => hostStates(page).then((s) => s["jake-mini"]), { timeout: 15_000 }).toBe("connected");
   await expect.poll(() => panesByHost(page).then((b) => b["jake-mini"]?.stale)).toBe(false);
 
   // Unplugged: the socket stays open but nothing answers (a stopped
   // process stands in for a machine gone off the network).
-  const box = daemons.get(SANDBOX)!;
+  const box = daemons.get("sandbox")!;
   box.kill("SIGSTOP");
   const t1 = Date.now();
   try {
@@ -185,10 +176,9 @@ test("twenty machines come back after a wake without a burst of failures", async
   test.setTimeout(120_000);
   const many: string[] = [];
   for (let i = 0; i < 20; i++) {
-    const port = await freePort();
     const name = `m${String(i).padStart(2, "0")}`;
-    await startDaemon(port, name, ["--allow-origin", homeUrl]);
-    await addHost(name, port);
+    await startDaemon(name, ["--allow-origin", homeUrl]);
+    await addHost(name);
     many.push(name);
   }
   await page.goto("/");

@@ -11,16 +11,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { active, menu, paneEl, ready, run, text } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
-const HOME = 7730;
-const SANDBOX = 7731;
-const homeUrl = `http://127.0.0.1:${HOME}`;
+let HOME = 0;
+let SANDBOX = 0;
+let homeUrl = "";
 const dirs: string[] = [];
 const daemons = new Map<string, ChildProcess>();
 let homeState = "";
 let sandboxState = "";
 
-test.use({ baseURL: homeUrl });
+test.use({ baseURL: async ({}, use) => use(homeUrl) });
 test.describe.configure({ mode: "serial" });
 
 function temp(what: string) {
@@ -29,20 +30,22 @@ function temp(what: string) {
   return d;
 }
 
-async function startDaemon(name: string, port: number, state: string, extra: string[] = []) {
+/** Start a daemon; its port. */
+async function startDaemon(name: string, state: string, extra: string[] = []) {
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+      ...["--listen", ANY, "--name", name, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...extra,
     ],
     { stdio: "ignore" },
   );
   daemons.set(name, d);
+  const port = await daemonPort(state, d);
   for (let i = 0; i < 100; i++) {
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return;
+      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return port;
     } catch {
       // not up yet
     }
@@ -59,7 +62,8 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 
 test.beforeAll(async () => {
   homeState = temp("home");
-  await startDaemon("home", HOME, homeState);
+  HOME = await startDaemon("home", homeState);
+  homeUrl = `http://127.0.0.1:${HOME}`;
   // A token for the sandbox, minted by home; only its hash stays there.
   const { token } = await json<{ token: string }>("/api/hosts/sbx/token", { method: "POST" });
   const tokenFile = join(temp("token"), "token");
@@ -67,7 +71,7 @@ test.beforeAll(async () => {
   // The sandbox listens on loopback only for its own CLI; nothing here
   // ever connects to that port. It dials home.
   sandboxState = temp("sbx");
-  await startDaemon("sbx", SANDBOX, sandboxState, [
+  SANDBOX = await startDaemon("sbx", sandboxState, [
     ...["--peer", `ws://127.0.0.1:${HOME}`, "--token", tokenFile],
     ...["--sync", "--sync-live", "--sync-every", "1"],
   ]);

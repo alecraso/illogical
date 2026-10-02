@@ -8,24 +8,19 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { createServer as tcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { ANY, controlPort, daemonPort, listen } from "./ports";
 
-const CONTROL = 7761;
-const GITHUB = 7762;
-const BOX = 7763;
-const MAC = 7764;
-const SANDBOX = 7765;
-const base = `http://127.0.0.1:${CONTROL}`;
+let base = "";
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
 const daemonOf = new Map<string, { proc: ChildProcess; args: string[] }>();
 let gh: Server;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
   const d = mkdtempSync(join(tmpdir(), `illogical-e2e-fleetc-${what}-`));
@@ -47,7 +42,7 @@ async function up(url: string) {
 
 test.beforeAll(async () => {
   gh = createServer((req, res) => {
-    const u = new URL(req.url!, `http://127.0.0.1:${GITHUB}`);
+    const u = new URL(req.url!, "http://github");
     if (u.pathname === "/login/oauth/authorize") {
       const back = new URL(u.searchParams.get("redirect_uri")!);
       back.searchParams.set("code", "c0de");
@@ -58,18 +53,21 @@ test.beforeAll(async () => {
     } else if (u.pathname === "/user") {
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: 8, login: "fleet" }));
     } else res.writeHead(404).end();
-  }).listen(GITHUB, "127.0.0.1");
+  });
+  const github = `http://127.0.0.1:${await listen(gh)}`;
+  const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
       "../target/debug/illogical-control",
       [
-        ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", join(temp("db"), "control.db")],
+        ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
-        ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
+        ...["--github-url", github, "--github-api", github],
       ],
       { stdio: "ignore" },
     ),
   );
+  base = `http://127.0.0.1:${await controlPort(db, procs.at(-1))}`;
   await up(`${base}/control.json`);
 });
 
@@ -91,8 +89,8 @@ function runDaemon(name: string) {
   d.proc = spawn("../target/debug/illogicald", d.args, { stdio: "ignore" });
 }
 
-/** `illogicald join`, approved from `page`; then the daemon runs. */
-async function addMachine(page: Page, name: string, port: number, direct: boolean) {
+/** `illogicald join`, approved from `page`; then the daemon runs. Its port. */
+async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
   const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["ignore", "pipe", "ignore"] });
   procs.push(joining);
@@ -111,12 +109,13 @@ async function addMachine(page: Page, name: string, port: number, direct: boolea
   await page.locator("[data-approve-join]").click();
   expect(await exited).toBe(0);
   const args = [
-    ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+    ...["--listen", ANY, "--name", name, "--state-dir", state],
     ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
-    ...(direct ? ["--direct-url", `http://127.0.0.1:${port}`] : []),
+    ...(direct ? ["--direct-url", "http://127.0.0.1:0"] : []),
   ];
   daemonOf.set(name, { proc: undefined as unknown as ChildProcess, args });
   runDaemon(name);
+  return daemonPort(state, daemonOf.get(name)!.proc);
 }
 
 const ready = (page: Page) => page.waitForFunction(() => window.__illogical?.control?.phase === "ready", null, { timeout: 20_000 });
@@ -156,9 +155,9 @@ test("the laptop sees every machine at once; relayed ones share one socket to co
   laptop = await (await browser.newContext()).newPage();
   await signIn(laptop);
   await laptop.locator("[data-saved-codes]").click();
-  await addMachine(laptop, "box", BOX, true);
-  await addMachine(laptop, "mac", MAC, false);
-  await addMachine(laptop, "sandbox", SANDBOX, false);
+  const box = await addMachine(laptop, "box", true);
+  await addMachine(laptop, "mac", false);
+  await addMachine(laptop, "sandbox", false);
   const urls = sockets(laptop);
   await laptop.goto("/");
   await everyMachine(laptop);
@@ -168,7 +167,7 @@ test("the laptop sees every machine at once; relayed ones share one socket to co
   expect(relayed.filter((u) => u.endsWith("/api/relay/m"))).toHaveLength(1);
   expect(relayed.filter((u) => u.includes("/api/relay/c/"))).toHaveLength(0);
   // The direct one went straight to its machine.
-  expect(urls.some((u) => u.startsWith(`ws://127.0.0.1:${BOX}/e2e`))).toBe(true);
+  expect(urls.some((u) => u.startsWith(`ws://127.0.0.1:${box}/e2e`))).toBe(true);
   await laptop.evaluate(() => window.__illogical.hosts.select("mac"));
   await expect.poll(() => laptop.evaluate(() => window.__illogical.client.connected), { timeout: 20_000 }).toBe(true);
   expect(urls.filter((u) => u.includes("/api/relay/"))).toHaveLength(1);
@@ -202,20 +201,9 @@ test("a relayed machine that goes away greys within 10 s, and comes back", async
   await expect.poll(() => fleetPanes(laptop).then((p) => p.mac?.stale)).toBe(false);
 });
 
-/** A free port outside the e2e range. */
-function freePort(): Promise<number> {
-  return new Promise((res) => {
-    const s = tcpServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = (s.address() as { port: number }).port;
-      s.close(() => res(p >= 7750 && p <= 7789 ? freePort() : p));
-    });
-  });
-}
-
 test("twenty machines, nineteen of them relayed: one socket, back after a wake without failures", async () => {
   test.setTimeout(180_000);
-  for (let i = 0; i < 17; i++) await addMachine(laptop, `r${String(i).padStart(2, "0")}`, await freePort(), false);
+  for (let i = 0; i < 17; i++) await addMachine(laptop, `r${String(i).padStart(2, "0")}`, false);
   await laptop.goto("/");
   await ready(laptop);
   const live = () => laptop.evaluate(() => (window.__illogical?.fleet?.list ?? []).filter((h) => h.state === "connected").length);
@@ -233,7 +221,7 @@ test("twenty machines, nineteen of them relayed: one socket, back after a wake w
     wakes.push(await laptop.evaluate(() => ({ allBackMs: window.__illogical.fleet.stats.allBackMs!, failures: window.__illogical.fleet.failures })));
     const opened = urls.slice(before).filter((u) => u.includes("/api/relay/"));
     // Nineteen daemons came back over one new socket to the relay.
-    expect(opened).toEqual([`ws://127.0.0.1:${CONTROL}/api/relay/m`]);
+    expect(opened).toEqual([`${base.replace("http", "ws")}/api/relay/m`]);
   }
   console.log(`fleet through control: 20 machines (19 relayed); wakes: ${JSON.stringify(wakes)}`);
   for (const w of wakes) {

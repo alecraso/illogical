@@ -8,17 +8,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { active, menu, open, paneEl, panes, ready, run, tab, tabsInSession, text, type } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
-const PORT = 7686;
-const state = mkdtempSync(join(tmpdir(), "illogical-e2e-restore-"));
-test.use({ baseURL: `http://127.0.0.1:${PORT}` });
+let PORT = 0;
+let state = "";
+test.use({ baseURL: async ({}, use) => use(`http://127.0.0.1:${PORT}`) });
 
+/** Start the daemon: on a port of its choosing, then on the same one again. */
 async function startDaemon(): Promise<ChildProcess> {
   const d = spawn(
     "../target/debug/illogicald",
-    ["--listen", `127.0.0.1:${PORT}`, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", state],
+    ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", state],
     { stdio: "ignore" },
   );
+  PORT ||= await daemonPort(state, d);
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) return d;
@@ -37,13 +40,16 @@ async function stopDaemon(d: ChildProcess) {
 }
 
 let daemon: ChildProcess | undefined;
+test.beforeAll(async () => {
+  state = mkdtempSync(join(tmpdir(), "illogical-e2e-restore-"));
+  daemon = await startDaemon();
+});
 test.afterAll(() => {
   daemon?.kill("SIGKILL");
-  rmSync(state, { recursive: true, force: true });
+  if (state) rmSync(state, { recursive: true, force: true });
 });
 
 test("after a restart: tabs, splits, cwd and scrollback are back; policies apply", async ({ page }) => {
-  daemon = await startDaemon();
   await open(page);
   const first = await active(page);
   await ready(page, first);

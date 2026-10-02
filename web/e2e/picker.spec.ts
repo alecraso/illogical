@@ -9,12 +9,11 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { paneEl, ready, text, type as typeIn } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 import type { PaneId } from "../src/proto";
 
-const HOME = 7750;
-const OTHER = 7751;
-const homeUrl = `http://127.0.0.1:${HOME}`;
-const otherUrl = `http://127.0.0.1:${OTHER}`;
+let homeUrl = "";
+let otherUrl = "";
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
   try {
@@ -25,30 +24,32 @@ const token = (() => {
 })();
 
 const states: string[] = [];
-const daemons = new Map<number, ChildProcess>();
-// Directories to browse, on this host.
-const root = mkdtempSync(join(tmpdir(), "ilg-m7-dirs-"));
-for (const d of ["alpha/beta", "alpha/delta", "gamma", "with space"]) mkdirSync(join(root, d), { recursive: true });
+const daemons = new Map<string, ChildProcess>();
+// Directories to browse, on this host (made in beforeAll: a spec module is
+// loaded more than once, #62).
+let root = "";
 
-test.use({ baseURL: homeUrl });
+test.use({ baseURL: async ({}, use) => use(homeUrl) });
 test.describe.configure({ mode: "serial" });
 
-async function startDaemon(port: number, name: string, extra: string[] = []) {
+/** Start a daemon; its URL. */
+async function startDaemon(name: string, extra: string[] = []) {
   const state = mkdtempSync(join(tmpdir(), `ilg-e2e-m7-${name}-`));
   states.push(state);
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+      ...["--listen", ANY, "--name", name, "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...extra,
     ],
     { stdio: "ignore" },
   );
-  daemons.set(port, d);
+  daemons.set(name, d);
+  const url = `http://127.0.0.1:${await daemonPort(state, d)}`;
   for (let i = 0; i < 100; i++) {
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/api/host`)).ok) return;
+      if ((await fetch(`${url}/api/host`)).ok) return url;
     } catch {
       // not up yet
     }
@@ -61,8 +62,10 @@ const wisp = (method: string, path: string) =>
   fetch(`${WISP}/v1/sprites${path}`, { method, headers: { Authorization: `Bearer ${token}` } });
 
 test.beforeAll(async () => {
-  await startDaemon(HOME, "home");
-  await startDaemon(OTHER, "other", ["--allow-origin", homeUrl]);
+  root = mkdtempSync(join(tmpdir(), "ilg-m7-dirs-"));
+  for (const d of ["alpha/beta", "alpha/delta", "gamma", "with space"]) mkdirSync(join(root, d), { recursive: true });
+  homeUrl = await startDaemon("home");
+  otherUrl = await startDaemon("other", ["--allow-origin", homeUrl]);
   const res = await fetch(`${homeUrl}/api/hosts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -87,7 +90,7 @@ test.afterAll(async () => {
     }
     rmSync(state, { recursive: true, force: true });
   }
-  rmSync(root, { recursive: true, force: true });
+  if (root) rmSync(root, { recursive: true, force: true });
 });
 
 const connected = (page: Page) =>

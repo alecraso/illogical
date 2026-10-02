@@ -11,17 +11,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { ready, run, text } from "./helpers";
+import { ANY, controlPort, listen } from "./ports";
 
-const CONTROL = 7780;
-const GITHUB = 7781;
-const BOX = 7782;
-const base = `http://127.0.0.1:${CONTROL}`;
+let base = "";
+let github = "";
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
 let gh: Server;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
   const d = mkdtempSync(join(tmpdir(), `illogical-e2e-teams-${what}-`));
@@ -32,7 +31,7 @@ function temp(what: string) {
 test.beforeAll(async () => {
   // A fake GitHub with as many users as there are `as` cookies.
   gh = createServer((req, res) => {
-    const u = new URL(req.url!, `http://127.0.0.1:${GITHUB}`);
+    const u = new URL(req.url!, "http://github");
     if (u.pathname === "/login/oauth/authorize") {
       const who = /(?:^|;\s*)as=(\w+)/.exec(req.headers.cookie ?? "")?.[1] ?? "nobody";
       const back = new URL(u.searchParams.get("redirect_uri")!);
@@ -51,18 +50,21 @@ test.beforeAll(async () => {
       const id = [...login].reduce((h, c) => h * 31 + c.charCodeAt(0), 7);
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id, login }));
     } else res.writeHead(404).end();
-  }).listen(GITHUB, "127.0.0.1");
+  });
+  github = `http://127.0.0.1:${await listen(gh)}`;
+  const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
       "../target/debug/illogical-control",
       [
-        ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", join(temp("db"), "control.db")],
+        ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
-        ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
+        ...["--github-url", github, "--github-api", github],
       ],
       { stdio: "ignore" },
     ),
   );
+  base = `http://127.0.0.1:${await controlPort(db, procs.at(-1))}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/control.json`)).ok) break;
@@ -81,7 +83,7 @@ test.afterAll(() => {
 
 async function person(browser: Browser, login: string): Promise<Page> {
   const ctx = await browser.newContext();
-  await ctx.addCookies([{ name: "as", value: login, url: `http://127.0.0.1:${GITHUB}` }]);
+  await ctx.addCookies([{ name: "as", value: login, url: github }]);
   const page = await ctx.newPage();
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
@@ -137,7 +139,7 @@ test("a team-owned box joins; both use it through the relay and pass control", a
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", `127.0.0.1:${BOX}`, "--name", "buildbox", "--state-dir", state],
+        ...["--listen", ANY, "--name", "buildbox", "--state-dir", state],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },

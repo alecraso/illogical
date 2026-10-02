@@ -11,8 +11,9 @@ import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { dragTo, menu, open, paneEl, screen, text, type as typeIn } from "./helpers";
 import type { PaneId } from "../src/proto";
+import { ANY, daemonPort } from "./ports";
 
-const PORT = 7687;
+let PORT = 0;
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
   try {
@@ -21,16 +22,18 @@ const token = (() => {
     return "";
   }
 })();
-const state = mkdtempSync(join(tmpdir(), "ilg-e2e-tm-"));
-test.use({ baseURL: `http://127.0.0.1:${PORT}` });
+let state = "";
+test.use({ baseURL: async ({}, use) => use(`http://127.0.0.1:${PORT}`) });
 test.describe.configure({ mode: "serial" });
 
+/** Start the daemon: on a port of its choosing, then on the same one again. */
 async function startDaemon(): Promise<ChildProcess> {
   const d = spawn(
     "../target/debug/illogicald",
-    ["--listen", `127.0.0.1:${PORT}`, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", state],
+    ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", state],
     { stdio: "ignore" },
   );
+  PORT ||= await daemonPort(state, d);
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) return d;
@@ -54,6 +57,7 @@ const spriteExists = async (name: string) => (await wisp("GET", `/${name}`)).sta
 
 let daemon: ChildProcess | undefined;
 test.beforeAll(async () => {
+  state = mkdtempSync(join(tmpdir(), "ilg-e2e-tm-"));
   if (token) daemon = await startDaemon();
 });
 test.afterAll(async () => {
@@ -70,7 +74,7 @@ test.afterAll(async () => {
     const list = await (await wisp("GET", `?prefix=illogical-eph-${id}-`)).json();
     for (const s of list.sprites ?? []) await wisp("DELETE", `/${s.name}`);
   }
-  rmSync(state, { recursive: true, force: true });
+  if (state) rmSync(state, { recursive: true, force: true });
 });
 
 const panesOf = (page: Page) => page.evaluate(() => window.__illogical.client.state!.panes);

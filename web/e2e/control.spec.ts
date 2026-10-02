@@ -11,18 +11,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { ready, run, text } from "./helpers";
+import { ANY, controlPort, listen } from "./ports";
 
-const CONTROL = 7750;
-const GITHUB = 7751;
-const BOX = 7752;
-const MAC = 7753;
-const base = `http://127.0.0.1:${CONTROL}`;
+let base = "";
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
 let gh: Server;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
   const d = mkdtempSync(join(tmpdir(), `illogical-e2e-control-${what}-`));
@@ -44,7 +41,7 @@ async function up(url: string) {
 
 test.beforeAll(async () => {
   gh = createServer((req, res) => {
-    const u = new URL(req.url!, `http://127.0.0.1:${GITHUB}`);
+    const u = new URL(req.url!, "http://github");
     if (u.pathname === "/login/oauth/authorize") {
       const back = new URL(u.searchParams.get("redirect_uri")!);
       back.searchParams.set("code", "c0de");
@@ -55,18 +52,21 @@ test.beforeAll(async () => {
     } else if (u.pathname === "/user") {
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: 7, login: "stranger" }));
     } else res.writeHead(404).end();
-  }).listen(GITHUB, "127.0.0.1");
+  });
+  const github = `http://127.0.0.1:${await listen(gh)}`;
+  const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
       "../target/debug/illogical-control",
       [
-        ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", join(temp("db"), "control.db")],
+        ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
-        ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
+        ...["--github-url", github, "--github-api", github],
       ],
       { stdio: "ignore" },
     ),
   );
+  base = `http://127.0.0.1:${await controlPort(db, procs.at(-1))}`;
   await up(`${base}/control.json`);
 });
 
@@ -83,7 +83,7 @@ async function signIn(page: Page) {
 }
 
 /** `illogicald join`, approved from `page`; then the daemon runs. */
-async function addMachine(page: Page, name: string, port: number, direct: boolean) {
+async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
   const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["ignore", "pipe", "ignore"] });
   procs.push(joining);
@@ -105,9 +105,9 @@ async function addMachine(page: Page, name: string, port: number, direct: boolea
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+        ...["--listen", ANY, "--name", name, "--state-dir", state],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
-        ...(direct ? ["--direct-url", `http://127.0.0.1:${port}`] : []),
+        ...(direct ? ["--direct-url", "http://127.0.0.1:0"] : []),
       ],
       { stdio: "ignore" },
     ),
@@ -152,8 +152,8 @@ test("a stranger signs up and becomes the first device", async ({ browser }) => 
 });
 
 test("two machines join by code; one direct, one only through the relay", async () => {
-  await addMachine(laptop, "box", BOX, true);
-  await addMachine(laptop, "mac", MAC, false);
+  await addMachine(laptop, "box", true);
+  await addMachine(laptop, "mac", false);
   await laptop.goto("/");
   await expect.poll(() => hostNames(laptop), { timeout: 20_000 }).toEqual(["box", "mac"]);
   await expect

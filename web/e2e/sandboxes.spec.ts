@@ -13,11 +13,10 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ready, run, text } from "./helpers";
+import { controlPort, listen } from "./ports";
 
 const HOST = "127.0.0.1";
-const CONTROL = 7790;
-const GITHUB = 7791;
-const base = `http://${HOST}:${CONTROL}`;
+let base = "";
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
 const BINARY = "../target/x86_64-unknown-linux-musl/release/illogicald";
 const token = (() => {
@@ -32,14 +31,14 @@ const dirs: string[] = [];
 let gh: Server;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 test.skip(!token || !existsSync(BINARY), "needs wispd, its token, and `just static`");
 
 const wisp = (method: string, path: string) => fetch(`${WISP}/v1/sprites${path}`, { method, headers: { Authorization: `Bearer ${token}` } });
 
 test.beforeAll(async () => {
   gh = createServer((req, res) => {
-    const u = new URL(req.url!, `http://127.0.0.1:${GITHUB}`);
+    const u = new URL(req.url!, "http://github");
     if (u.pathname === "/login/oauth/authorize") {
       const back = new URL(u.searchParams.get("redirect_uri")!);
       back.searchParams.set("code", "c");
@@ -50,16 +49,17 @@ test.beforeAll(async () => {
     } else if (u.pathname === "/user") {
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: 99, login: "browseronly" }));
     } else res.writeHead(404).end();
-  }).listen(GITHUB, "127.0.0.1");
+  });
+  const github = `http://127.0.0.1:${await listen(gh)}`;
   const d = mkdtempSync(join(tmpdir(), "illogical-e2e-sbx-"));
   dirs.push(d);
   procs.push(
     spawn(
       "../target/debug/illogical-control",
       [
-        ...["--listen", `${HOST}:${CONTROL}`, "--public-url", base, "--db", join(d, "control.db"), "--static-dir", "dist"],
+        ...["--listen", `${HOST}:0`, "--public-url", `http://${HOST}:0`, "--db", join(d, "control.db"), "--static-dir", "dist"],
         ...["--github-client-id", "id", "--github-client-secret", "s"],
-        ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
+        ...["--github-url", github, "--github-api", github],
         ...["--sprites-url", WISP, "--sandbox-binary", BINARY, "--sandbox-accounts", "*", "--sandbox-quota", "2"],
       ],
       {
@@ -68,6 +68,7 @@ test.beforeAll(async () => {
       },
     ),
   );
+  base = `http://${HOST}:${await controlPort(join(d, "control.db"), procs.at(-1))}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/control.json`)).ok) break;

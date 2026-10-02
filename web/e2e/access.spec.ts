@@ -11,27 +11,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ready, run, text } from "./helpers";
+import { ANY, daemonPort } from "./ports";
 
-const PORT = 7770;
-const base = `http://127.0.0.1:${PORT}`;
+let base = "";
 const OWNER = "me@example.com";
 const FRIEND = "friend@example.com";
 let daemon: ChildProcess;
 let dir: string;
 
 test.describe.configure({ mode: "serial" });
-test.use({ baseURL: base });
+test.use({ baseURL: async ({}, use) => use(base) });
 
 test.beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "illogical-e2e-access-"));
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${PORT}`, "--state-dir", dir, "--owner", OWNER],
+      ...["--listen", ANY, "--state-dir", dir, "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
     { stdio: "ignore" },
   );
+  base = `http://127.0.0.1:${await daemonPort(dir, daemon)}`;
   for (let i = 0; i < 100; i++) {
     try {
       if ((await fetch(`${base}/api/host`)).ok) return;
