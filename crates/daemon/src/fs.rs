@@ -175,7 +175,7 @@ impl Scope {
     }
 
     /// Symlinks resolved, and allowed.
-    fn resolve(&self, path: &str) -> Res<PathBuf> {
+    pub(crate) fn resolve(&self, path: &str) -> Res<PathBuf> {
         let abs = self.absolute(path);
         if let Some(e) = self.refused(&lexical(&abs)) {
             return Err(e);
@@ -304,7 +304,8 @@ fn lexical(p: &Path) -> PathBuf {
 // ---------------------------------------------------------------- machines
 
 /// A machine's files, through its provider.
-struct Machine {
+#[derive(Clone)]
+pub(crate) struct Machine {
     provider: Arc<dyn Provider>,
     sprite: String,
 }
@@ -436,7 +437,10 @@ struct FsQuery {
     len: Option<u64>,
 }
 
-enum Target {
+/// Where files are read: this host, or a machine through its provider.
+/// M11's file and diff blocks keep one.
+#[derive(Clone)]
+pub(crate) enum Target {
     Local(Arc<Scope>),
     Machine(Machine),
 }
@@ -469,6 +473,33 @@ async fn target(app: &App, q: &FsQuery) -> Res<Target> {
 }
 
 impl Target {
+    /// A machine's, through `provider`.
+    pub(crate) fn machine(provider: Arc<dyn Provider>, sprite: String) -> Self {
+        Target::Machine(Machine { provider, sprite })
+    }
+
+    /// Up to `len` bytes (at most [`READ_MAX`]) from `offset`, and the size.
+    pub(crate) async fn read(&self, path: &str, offset: u64, len: u64) -> Res<(Vec<u8>, u64)> {
+        let len = len.min(READ_MAX);
+        match self {
+            Target::Local(s) => {
+                let (s, path) = (s.clone(), path.to_owned());
+                blocking(move || s.read(&path, offset, len)).await
+            }
+            Target::Machine(m) => m.read(path, offset, len).await,
+        }
+    }
+
+    pub(crate) async fn stat(&self, path: &str) -> Res<FsEntry> {
+        match self {
+            Target::Local(s) => {
+                let (s, path) = (s.clone(), path.to_owned());
+                blocking(move || s.stat(&path)).await
+            }
+            Target::Machine(m) => m.stat(path).await,
+        }
+    }
+
     async fn list(self, path: String, dirs_only: bool) -> Res<FsList> {
         match self {
             Target::Local(s) => blocking(move || s.list(&path, dirs_only)).await,
@@ -646,6 +677,14 @@ async fn cd(
     UrlPath(id): UrlPath<PaneId>,
     Json(req): Json<CdRequest>,
 ) -> Res<Json<serde_json::Value>> {
+    let line = cd_line(&req.path).ok_or_else(|| FsError::Bad(format!("can't cd to {:?}", req.path)))?;
+    type_line(&app, id, line, "cd").await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// Type `line` into a terminal whose shell waits at its prompt: `cd`, and
+/// M11's rerun of a failed command. `what` names it in the refusal.
+pub(crate) async fn type_line(app: &App, id: PaneId, line: String, what: &str) -> Res<()> {
     let busy = |why: String| FsError::Bad(format!("not sent: {why}"));
     let panes = app.mux.api(Api::Panes).await.unwrap_or_default();
     let info = panes.into_iter().find(|s| s.info.id == id).ok_or(FsError::NotFound(format!("no pane %{id}")))?.info;
@@ -661,7 +700,7 @@ async fn cd(
         return Err(busy(format!("nothing is running in %{id} (start its shell first)")));
     }
     if st.current.is_some() || matches!(info.attention, Attention::Working | Attention::NeedsInput) {
-        return Err(busy(format!("%{id} is running something; cd only goes to a shell waiting at its prompt")));
+        return Err(busy(format!("%{id} is running something; {what} only goes to a shell waiting at its prompt")));
     }
     // This host's panes: the foreground process must be the shell itself.
     if info.host.is_none() && p.command().is_some() {
@@ -670,10 +709,18 @@ async fn cd(
     if !st.at_prompt {
         return Err(busy(format!("%{id}'s shell hasn't shown its prompt yet")));
     }
-    let line = cd_line(&req.path).ok_or_else(|| FsError::Bad(format!("can't cd to {:?}", req.path)))?;
     p.mark_input();
     app.mux.send(Cmd::Input { client: None, pane: id, data: line.into_bytes() });
-    Ok(Json(serde_json::json!({})))
+    Ok(())
+}
+
+/// A command line typed again: end of line, erase it, the command, Enter.
+pub(crate) fn rerun_line(command: &str) -> Option<String> {
+    let c = command.trim();
+    if c.is_empty() || c.chars().any(|ch| ch.is_control() && ch != '\t') {
+        return None;
+    }
+    Some(format!("\x05\x15{c}\r"))
 }
 
 /// End of line, erase it (what was half typed), then `cd -- 'PATH'`.
@@ -786,6 +833,8 @@ mod tests {
         assert_eq!(cd_line("~/it's").unwrap(), "\x05\x15cd -- ~/'it'\\''s'\r");
         assert_eq!(cd_line("~").unwrap(), "\x05\x15cd -- ~\r");
         assert!(cd_line("/x\ny").is_none());
+        assert_eq!(rerun_line(" make build ").unwrap(), "\x05\x15make build\r");
+        assert!(rerun_line("a\nb").is_none());
         assert_eq!(lexical(Path::new("/a/../../proc/./self")), PathBuf::from("/proc/self"));
     }
 }

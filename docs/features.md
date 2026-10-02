@@ -57,6 +57,10 @@ the daemon stopping, crashing, or the machine rebooting:
     or dismiss (`/api/attention/act`). `illogical attention --json` lists
     them, `illogical events` streams them, and notifications are titled by
     them. Dismissing on one screen clears it on every other.
+  - **Rerun** (M11). A failed command typed at a prompt can be run again:
+    *Rerun* on the phone's *Needs you*, a swarm card, the notification, or
+    the tab's ✗ badge, or `illogical rerun %N`. It's typed into the pane
+    only once its shell is idle at its prompt.
   - **What each pane is** (M23). Every pane carries what it's running
     (shell, build, test, agent, server, logs or editor, from the program
     itself, so an alias for `claude` still reads as an agent), its git
@@ -141,6 +145,31 @@ the daemon stopping, crashing, or the machine rebooting:
     reboot the block asks the new server for the file it had. In a VM it
     opens the file it was opened on and doesn't follow the cursor (the
     extension can't reach the daemon from there).
+- **Changes: diff and file blocks** (M11). For checking what an agent
+  did, from anywhere and especially the phone. *Changes* (a pane's or a
+  tab's menu, the phone's sheet, a swarm tile with a project) opens a diff
+  block beside the pane, on its machine (a VM tab's too), for its git
+  repository: a list of changed files with +/− first (staged, unstaged and
+  untracked against HEAD; or one revision against the working tree; or a
+  range). Tap a file for its unified hunks, highlighted; tap a line to
+  open a file block there, scrolled to it and marked. `illogical diff
+  [%N] [REV_A [REV_B]]` and `illogical view [%N:|mN:]PATH[:LINE]` open them
+  from a shell, `show_changes` and `show_file` from MCP, and *Open file*
+  on an agent's tool call opens the file it touched.
+  - **Live while looked at.** Both follow the files as they change (every
+    second here, every 3 seconds on a VM), but only while some client
+    draws them; with nobody looking they stop, so a VM can sleep, and
+    catch up when someone looks again. The file block keeps its mark on
+    the same line of text when lines above it change.
+  - **Read-only.** Nothing in them edits or reverts. What they show is in
+    their state, so a shared session's viewers see the same; changing it
+    (opening a file's hunks, moving the mark) needs editor, and pointing a
+    file block at another file, or opening one, is the owner's.
+  - **Caps.** A file's diff over 256 KB shows as too big (open the file),
+    a binary file as binary; a file block shows the first 1 MiB. `git`
+    runs on the block's host (through the provider on a VM) and never
+    takes the repository's lock. `capture --text` is the unified diff, or
+    the file.
 - **Your editor in the swarm** (M28). VS Code, Cursor or nvim on any of
   your machines shows up in the swarm beside your panes: a tile of kind
   editor in its project, with its file, its errors and unsaved files, and
@@ -394,16 +423,33 @@ the daemon stopping, crashing, or the machine rebooting:
     TUI is attached to their pane. Pastes are bracketed when the program
     asked; focus changes are reported to programs that want them.
   - **Ctrl-]** then: `v`/`s` split right/down, `c` new tab, `x` close,
-    `o` or arrows to move focus, `z` zoom, `n`/`p` or `1`–`9` tabs, `r`
-    rename the tab, `m`/`t` the pane's and tab's menus, `w` the sidebar, `b`
-    hide it, `q` detach, `?` all of these, Ctrl-] again to type it.
+    `o` or arrows to move focus, `z` zoom, `[` copy mode, `n`/`p` or
+    `1`–`9` tabs, `r` rename the tab, `m`/`t` the pane's and tab's menus,
+    `w` the sidebar, `b` hide it, `q` detach, `?` all of these, Ctrl-]
+    again to type it.
   - **The mouse**: click to focus, drag dividers, Alt-drag a pane onto
     another's edge to move it (or its middle to swap), right-click a pane,
     tab, session or *needs you* entry for its menu (the browser's: split,
     zoom, move, restart policy, shell integration, forget history,
     dismiss, close). The wheel scrolls back through a pane's history
-    (Shift+PgUp/PgDn too), sends arrow keys to a pager or editor, or goes
-    to the program if it takes the mouse.
+    (Shift+PgUp/PgDn too) under a dim ↑ marker saying how far, until you
+    type; it sends arrow keys to a pager or editor, or goes to the program
+    if it takes the mouse.
+  - **Selecting and copying** (M32). Drag to select within a pane, double-
+    click a word, triple-click a line; letting go copies. When the program
+    takes the mouse, Shift-drag selects. Copies go to your terminal's
+    clipboard through OSC 52, so they work over ssh (in tmux, with
+    `set-clipboard on`). The text is what `illogical capture` would print:
+    soft-wrapped lines joined, no trailing blanks.
+  - **Copy mode** (`Ctrl-] [`): hjkl or arrows, Ctrl-U/D/B/F and PgUp/PgDn,
+    `0` `$` `g` `G` move; `v` selects, `V` selects lines, `y` or Enter
+    copies and leaves; `/` and `?` search down and up (lower-case ignores
+    case), `n`/`N` again; `[` and `]` jump between prompts and `o` selects
+    a command's output, both by the shell integration's marks, so `o` `y`
+    copies what `illogical capture --last-command` prints; `q` or Esc
+    leaves. A search that runs out of the 10k rows the TUI holds reads the
+    pane's saved output (up to 32 MB of it) and keeps looking; that deeper
+    history shows until you leave.
   - **The sidebar** (`Ctrl-] w`): arrows move, Enter goes there, and on a
     *needs you* entry `a` allows, `A` allows always, `d` denies and `x`
     dismisses, without opening the pane.

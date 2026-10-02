@@ -528,6 +528,21 @@ export class Client {
     );
   }
 
+  /** Open a block (`POST /api/blocks`) and show it: its id, or null (and
+   * the error as a toast). */
+  async openBlock(body: Record<string, unknown>, failure = "couldn't open that"): Promise<PaneId | null> {
+    this.lastIntentAt = Date.now();
+    try {
+      const res = await this.request("POST", "/api/blocks", body);
+      const v = await res.json<{ block?: PaneId; error?: string }>().catch(() => null);
+      if (res.ok && typeof v?.block === "number") return v.block;
+      this.toast(v?.error ?? `${failure} (${res.status})`);
+    } catch {
+      this.toast(failure);
+    }
+    return null;
+  }
+
   /** POST to the API and show what it makes (a pane from `/api/run`);
    * the error if it failed, for whoever asked to show it. */
   async make(path: string, body: unknown): Promise<string | null> {

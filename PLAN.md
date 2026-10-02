@@ -2081,7 +2081,7 @@ Superlogical's "automatic work disappears into jobs and logs".
 
 ### M11: file and diff blocks (after M7)
 
-**Cut by S8 (2026-10-02); next on track B.** The full brief is in
+**Cut by S8 (2026-10-02). Done 2026-10-02 (below), apart from a real phone.** The full brief is in
 [spikes/s8-blocks](spikes/s8-blocks/README.md#what-m11-cut-must-deliver).
 Changes from the plan below:
 
@@ -2114,6 +2114,36 @@ Changes from the plan below:
     on a local host and a VM;
   - a build that fails in a VM tab's terminal shows as *Failed* on the phone,
     and **Rerun** from the phone runs it again in that pane.
+
+#### M11 (cut): diff and file blocks, and Rerun
+
+**Done 2026-10-02, apart from a real phone.**
+
+- **What landed:**
+  - **Diff blocks** (`type: diff`, `crates/daemon/src/review/diff.rs`): `{repo, rev_a?, rev_b?}` on the block's host. One `sh -c` there (one exec on a VM, through `Provider::run`) finds the repository's top, checks the revisions, runs `git diff -M` and diffs each untracked file against `/dev/null`, cut at 4 MB, with `GIT_OPTIONAL_LOCKS=0`. The state is the file list (status, +/−, binary, too big over 256 KB) and, for files someone opened (`file {path}`, at most 12), their hunks with both sides' line numbers. `capture --text` is the unified diff. A repository with no commits is compared with the empty tree; an option-like revision is refused.
+  - **File blocks** (`type: file`, `review/file.rs`): `{path, line?}` read through M7's `fs` (`fs::Target`, now shared), so the same places are refused and a VM's file goes through the provider with no symlinks followed. At most 1 MiB, cut at a line; binary says so. Following an edit keeps the mark on its text (`follow`: common head and tail, else the same line nearest its place). `goto {line}`; `open {path, line?}` is the owner's only (someone with editor could otherwise read any file of the owner's).
+  - **Drawn** (S8's gap 4): `Block::drawn(bool)`. The mux works out, after every message, which blocks some full client draws: one whose `View` is their tab, and on a phone (`zoom`) the zoomed pane only; summaries-only clients don't count. The two views poll only then (every second here, 3s on a VM; the diff every 2s here) and say `watching` in their state. A block that nobody draws holds what it last read; brought back after a restart it reads nothing until drawn.
+  - **Viewers** (gap 2) get what's drawn in the pushed state; methods stay editor (gap 3: the log has only what each was pointed at).
+  - **Ways in:** *Changes* on a pane's and a tab's menu, the phone's sheet and a swarm tile with a project (a diff block beside the pane, on its machine, its directory's repository: `view_defaults` in the mux, like M27's editor); `illogical diff [%N] [--repo D] [REV_A [REV_B]]` (prints the block, then the files) and `illogical view [%N:|mN:]PATH[:LINE]`; MCP's `show_changes` and `show_file`; *Open file* on an agent block's tool call location. Tapping a hunk's line opens a file block beside the diff, or points the one it opened last there.
+  - **Web:** `blocks/diff.tsx` (the list, then hunks highlighted by `highlightLines`, the follow view's Lezer parsers and colours as `hl-*` classes, in the same lazy chunk) and `blocks/file.tsx` (M28's `CodeView`, read-only, with a marked line; edits replace only what changed, and it scrolls to the line only when someone moves the mark).
+  - **Rerun** (M10's remainder): M24's `failed` reason carries a `rerun` action when the command line is known. `/api/attention/act` with `rerun` types it again (`fs::type_line`, `cd`'s check that the shell is idle at its prompt) or says why not. From the phone's *Needs you*, a swarm card, the push (`sw.ts`: Rerun and Dismiss), the tab's ✗ badge (a menu), the TUI and `illogical rerun %N`.
+- **Tests:**
+  - `crates/daemon/tests/review.rs`: a repository with every kind of change (unstaged, staged, deleted, renamed, untracked, binary, a 400 KB diff), one revision, a range, a bad revision, not a repository, `capture`, `describe`, `illogical diff` and `illogical view`; a file block and a diff block that don't see edits while nothing draws them, follow them (the mark moving with its line) while a WebSocket client views their tab, stop when it goes, and ignore a summaries-only client; a viewer gets both states (hunks, text) and is refused every call, an editor may `goto` but not `open`; a failed build's `rerun` refused while busy, then run again (twice in its history).
+  - Unit tests: parsing git's output (every status, quoted and odd names, caps), hunk numbering, the mark following edits, the rerun line.
+  - `e2e/changes.spec.ts` on a Pixel 7 profile: on this host, *Changes* from the sheet lists the stand-in agent's files with +/−, a hunk's line opens a live file block marked there, both follow later edits, both stop watching when the phone shows the terminal and catch up when shown again; a viewer's phone sees both and can't change them; a failing build is *Failed* and *Rerun* in *Needs you* runs it again. On a VM tab (wisp): the same Changes → hunk → file flow with the agent writing through the Sprites API, both blocks on the tab's machine, `illogical diff`, `view`, `capture` and `describe` there, and a build failing in the VM tab's terminal rerun from the phone. `attention.rs` and `attention.spec.ts` expect Rerun on a failure and its notification.
+- **Decisions (2026-10-02):**
+  - "Drawn" comes from what clients already send (`View`'s tab and zoom), not a new message: no protocol change, and a phone showing another pane, or a phone page hidden long enough to drop its socket, stops the polling.
+  - "Open file" is an ordinary file block opened from the diff block (`from_pane`), not a diff method: the host and repository follow from the block, and the client reuses the file block it opened last.
+  - Expanded files are shared state, like the layout: someone opening a file's hunks opens them for everyone looking, which is what lets viewers see them.
+  - Polling (stat every 1–3s, `git diff` every 2–3s) rather than inotify: it works the same on a VM through the provider, and only runs while someone looks.
+  - Rerun types the command without dismissing first: its start sets the pane working, which replaces the reason; refused, the reason stays.
+  - The spec's ports are 7830 and 7831 (7826–7828 were already `editor-swarm.spec.ts`'s).
+  - *Changes* made the terminal's menu taller than a 640px window, so menus now scroll when they don't fit (`layout.spec.ts` and `tui.spec.ts` found it).
+- **Not covered:**
+  - a real phone (Playwright's Pixel 7 profile only), and tapping Rerun on a real notification (the test checks the notification's actions);
+  - an M4a peer's or a resident sandbox's repository is reached by opening the block on that host (its own daemon), not tested here;
+  - a working tree with more than 200 untracked files lists the first 200; a diff over 4 MB is cut (both say so);
+  - a file block on a VM refuses any path with a symlink in it, as `fs` does there.
 
 The original plan:
 
@@ -3094,7 +3124,7 @@ illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` d
 1. **S19** (#48): done, below.
 2. **The resync fix** (#49): done 2026-10-02. Snapshots are capped at the client's scrollback and zstd-compressed, and a resync brings back the screen alone. With S19's four-pane flood, snapshots went from 1.44 GB of 1.53 GB received to 9.8 KB of 612 MB, and the TUI drew 7x as much real output. A quiet pane beside a flood in a browser throttled 6x echoes in under 100 ms (`web/e2e/flood.spec.ts`).
 3. **Flow control** (#52): done 2026-10-02. Clients ack what they have drawn, the daemon holds them to a 512 KB window, and a pane's program waits when the pane can't keep up. In a browser throttled 6x, a flooded pane catches up 0.2–0.4 s after the flood ends, against 15–25 s before. With four floods, the TUI never resyncs and uses about 36% of a core.
-4. **M31** (#50: `illogical tui`): done 2026-10-02. Then **M32** (#51: copy mode).
+4. **M31** (#50: `illogical tui`): done 2026-10-02. Then **M32** (#51: copy mode): done 2026-10-02.
 
 #### S19: TUI spike
 
@@ -3154,12 +3184,36 @@ What #50 asked for:
 
 #### M32: copy mode in the TUI
 
-Detail is in #51:
+**Done 2026-10-02, apart from OSC 52 on real terminals over ssh.** `crates/vt/src/ghostty/copy.rs` and `crates/cli/src/tui/copy.rs`; docs/features.md has the keys.
 
-- the wheel and keys scroll the pane's local engine;
-- drag selects within a pane (libghostty selection) and copies through OSC 52, which works over ssh;
-- a keyboard copy mode searches history;
-- command marks select one command's output.
+- **What landed:**
+  - **The engine** (`crates/vt`) selects and finds with libghostty's own selection. A selection starts at a tracked point, so it stays on its text as output scrolls it, and grows by cell, word or line (`select_word`, `select_line`). `select_output` takes a command's output between its OSC 133 marks, as Ghostty does. `prompt_rows` lists prompts. `find` searches up or down from a point and wraps; a lower-case needle ignores case, and columns count wide characters as two. `selection_text` formats the selection as plain text, unwrapped and trimmed, as `illogical capture` does. `cells()` marks selected cells, drawn reversed.
+  - **The mouse:** drag selects, a double-click selects a word and a triple-click a line; letting go copies. A drag past the pane's edge scrolls it. When the program takes the mouse the drag goes to it, and Shift-drag selects instead.
+  - **Copying** writes OSC 52 to the outer terminal after the next frame, and says "Copied N lines".
+  - **Copy mode** (`Ctrl-] [`, or the pane's menu): a cursor through the pane's history, starting where the program's is. It has hjkl and arrows, half and whole pages, `0 $ g G`, `v`/`V`, `y`/Enter, `/` `?` `n` `N`, `[` `]` between prompts and `o` for a command's output. The status line turns yellow and lists them.
+  - **Scrollback:** the wheel and Shift+PgUp/PgDn (M31) now show a dim `↑N` marker. Typing goes back to the bottom and clears a selection.
+  - **Deep search.** A search that misses in the 10k rows the TUI holds reads the pane's output log (`GET /api/panes/N/tail?from=…&until=OFFSET`, up to 32 MiB before what the TUI has). It replays the log into an *archive* terminal (`GhosttyEngine::archive`, 64 MiB of scrollback) with the output that arrived meanwhile, and searches again there. The pane shows the archive, still fed live output, until copy mode ends; then it's dropped. A snapshot (a resync) drops it too, since its offsets no longer follow.
+  - `tail` takes `until=OFFSET`.
+- **Decisions (2026-10-02):**
+  - **The log, not a bigger snapshot,** for deep search. The daemon's own terminal keeps 16 MiB since M9 step 1, which is about 20k rows at 92 columns. A line 30k rows up isn't in any snapshot it can send, but it is in the 256 MiB log. The first draft re-attached with 200k rows of history and couldn't pass the done-when.
+  - **An archive beside the live engine, not in place of it.** A log replayed from the middle of a stream, at today's width, can differ from the real screen (modes set before it starts, earlier widths). So the live engine is never replaced. The archive is only read, and only while copy mode is on.
+  - **Shift-drag selects when the program takes the mouse.** This is what xterm, Ghostty and iTerm2 do, and #51's wording was ambiguous.
+  - **Search runs over plain text, one row at a time.** A match doesn't cross a soft wrap. libghostty's C API has no text search at the pinned commit, and this is fast enough.
+- **Measured** (release, 92 columns): 32 MiB of log replays into an archive in 53 ms and keeps 84k rows; a search through all of them that finds nothing takes 38 ms.
+- **Tests:**
+  - `crates/vt` unit tests: drag, word and line selections (backwards too, soft wraps joined); a selection staying on its text as output scrolls; command output by its marks; find both ways, wrapping, case and wide characters; an archive holding a line 40k rows up that the daemon's engine has lost.
+  - `crates/cli` unit tests: OSC 52 and its base64; a pane's archive replaying the log and then what came meanwhile, keeping up, and dropped by a snapshot.
+  - `crates/daemon/tests/api.rs`: `tail` with `until`.
+  - `web/e2e/tui-copy.spec.ts`: the TUI in tmux with `set-clipboard on`, so OSC 52 lands in tmux's paste buffer. It drives the mouse with SGR reports and checks:
+    - a drag across a line break, a double-click and a triple-click copy what they should;
+    - a program with mouse reporting gets the click, and Shift-drag still selects;
+    - `V` `y` and `v` `l` `y` from the keyboard; the wheel's ↑ marker, gone when you type;
+    - `?needle-42` finds a line 40k rows up through the log, the view lands on it, and `y` copies it;
+    - `[` `o` `y` on the last command copies exactly what `illogical capture --last-command` prints (spaces inside a line and a blank line kept).
+- **Not covered:**
+  - OSC 52 into a real clipboard: iTerm2, a phone's terminal, and `ssh geek illogical tui` on the laptop (tmux's buffer stands in). Some terminals cap OSC 52's size or ask first.
+  - Output that `capture --last-command` and the screen don't agree on: tabs (the log has a tab, the screen has spaces), trailing spaces a program printed, and output redrawn in place (progress bars). There, `o` copies what the screen shows.
+  - The archive replays at the pane's current width, so output from when it was another width is wrapped as it would be now.
 
 ## Acceptance tests (automated where possible)
 

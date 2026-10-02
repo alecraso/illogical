@@ -262,6 +262,8 @@ export function SwarmView({
       ...(isPresence(p) ? [] : [{ label: "Open", run: () => openKey(key) }]),
       ...(followable(p) ? [{ label: "Follow", run: () => setFollowing(key) }] : []),
       ...(canEdit(fleet, p) ? [{ label: "Open in editor", run: () => void editIn(fleet, p, back) }] : []),
+      // M11: what changed in its project, beside it.
+      ...(p.info.project && fleet.role(p) === "owner" && !p.stale && !isPresence(p) ? [{ label: "Changes", run: () => void changesOf(fleet, p, back) }] : []),
     ]);
   };
 
@@ -404,6 +406,20 @@ async function editIn(fleet: Fleet, p: FleetPane, back: () => void): Promise<str
   }
 }
 
+/** What changed in a pane's project (M11): a diff block beside it, shown. */
+async function changesOf(fleet: Fleet, p: FleetPane, back: () => void): Promise<string | null> {
+  try {
+    const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "diff", config: {}, from_pane: p.id, split: p.id });
+    const v = await res.json<{ block?: number; error?: string }>().catch(() => null);
+    if (!res.ok || v?.block === undefined) return v?.error ?? `couldn't (${res.status})`;
+    back();
+    fleet.open(p.host, v.block);
+    return null;
+  } catch (e) {
+    return String(e);
+  }
+}
+
 /** Act on a bundle: one request per host, naming its panes. */
 async function act(fleet: Fleet, panes: FleetPane[], action: Action, extra: Record<string, unknown> = {}): Promise<string | null> {
   const hosts = new Map<string, FleetPane[]>();
@@ -529,6 +545,11 @@ function Card({
         />
       ) : (
         <div class="ca">
+          {r.actions.includes("rerun") && (
+            <button class="pri" data-rerun disabled={busy} onClick={() => void run("rerun")}>
+              {all("Rerun")}
+            </button>
+          )}
           {r.actions.includes("continue") && (
             <button class="pri" data-continue disabled={busy} onClick={() => void run("continue")}>
               {all("Continue")}

@@ -14,7 +14,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
-import { newRemote, openEditor, openPort, remoteHosts } from "../blocks";
+import { newRemote, openChanges, openEditor, openPort, remoteHosts } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
@@ -261,6 +261,10 @@ function TabItem({
           { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
           { label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) },
           { label: "Go to directory…", run: () => openPicker(client, client.active(tab.id)) },
+          // M11: what changed in the active pane's repository, on its machine.
+          ...(!client.state?.roles && client.active(tab.id) !== undefined
+            ? [{ label: "Changes", run: () => openChanges(client, client.active(tab.id)!) } as MenuItem]
+            : []),
           ...machineItems(client, tab),
           "separator",
           { label: machine ? "Close tab and machine" : "Close tab", danger: true, run: close },
@@ -284,7 +288,7 @@ function TabItem({
       <RemoteTag client={client} tab={tab} />
       <span class="tab-label">{label}</span>
       <TabPeople client={client} tab={tab.id} />
-      <AttentionBadge {...tabAttention(client, tab)} />
+      <AttentionBadge {...tabAttention(client, tab)} client={client} />
       <button
         class="tab-close"
         title="Close tab"
@@ -551,6 +555,8 @@ function PaneSlot({
       // M27: VS Code where this pane runs, in its directory. The owner's,
       // like ports.
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),
+      // M11: what changed in its repository, where it runs.
+      ...(!client.state?.roles ? [{ label: "Changes", run: () => openChanges(client, id) } as MenuItem] : []),
       ...(own && !tabMachine
         ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
         : []),

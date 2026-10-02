@@ -61,7 +61,8 @@ fn failures_and_long_builds_say_what_happened() {
     assert!(r["headline"].as_str().unwrap().starts_with("cargo test failed (exit 101) after 3s"), "{r}");
     assert_eq!(r["bundle"], "failed:here");
     assert!(r["duration_ms"].as_u64().unwrap() >= 3000);
-    assert_eq!(r["actions"], json!(["dismiss"]));
+    // M11: it can be typed again.
+    assert_eq!(r["actions"], json!(["rerun", "dismiss"]));
 
     d.wait_for("the build", || reason_of(&d, build).is_some());
     let r = reason_of(&d, build).unwrap();

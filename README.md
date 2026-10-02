@@ -23,6 +23,11 @@ tabs and splits you drive with the mouse.
 - **VS Code beside your terminals.** *Open in editor* (or `illogical edit
   src/main.rs:42`) opens VS Code on the pane's machine, in its directory,
   as a block: on the phone too, and back with its file after a restart.
+- **What did the agent change?** *Changes* on a pane (or `illogical diff`)
+  lists the files changed in its repository, on its machine, with +/−; tap
+  a file for its hunks and a line to see the file there, both updating
+  while the agent works. Phone first, and a failed build is a *Rerun* tap
+  away.
 - **The swarm.** Every pane on every machine you and your team can see, in
   one live view, clustered by project, machine, kind or person. Whatever
   needs someone (an agent asking, a build failing) lifts out to a rail of
@@ -37,6 +42,8 @@ tabs and splits you drive with the mouse.
 - **In any terminal, too.** `illogical tui` draws the same tabs and splits
   in the terminal you're in (over ssh as well), with a sidebar of what
   needs you: allow an agent's request from there without opening its pane.
+  Select, search a pane's whole history and copy, to your own clipboard
+  over ssh.
 
 ![The swarm: every pane, clustered, with what needs you on the rail](site/img/swarm.png)
 

@@ -11,7 +11,7 @@ mod ghostty;
 
 pub use compat::Capabilities;
 pub use ghostty::{
-    CaptureOpts, CellStyle, CheckpointError, Color, Cursor, CursorShape, GhosttyEngine, Line, engine_tag,
+    CaptureOpts, CellStyle, CheckpointError, Color, Cursor, CursorShape, Found, GhosttyEngine, Line, Unit, engine_tag,
 };
 /// libghostty's key and mouse events, for [`GhosttyEngine::encode_key`] and
 /// [`GhosttyEngine::encode_mouse`].

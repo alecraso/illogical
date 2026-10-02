@@ -149,6 +149,16 @@ impl Conn {
         }
     }
 
+    /// `GET` from the daemon's API in the background: `done` has the body
+    /// (or what went wrong), and the main loop is woken after it.
+    pub fn get(&self, path: String, done: impl FnOnce(anyhow::Result<Vec<u8>>) + Send + 'static) {
+        let (target, waker) = (self.target.clone(), self.waker.clone());
+        thread::spawn(move || {
+            done(request(&target, "GET", &path, None).and_then(|r| r.ok()).and_then(|r| r.bytes()));
+            waker.wake();
+        });
+    }
+
     /// `POST` to the daemon's API in the background; a failure comes back as
     /// a message to show, saying what didn't work (`what`).
     pub fn api(&self, path: String, body: Value, what: &'static str) {

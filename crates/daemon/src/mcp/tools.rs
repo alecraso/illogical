@@ -327,6 +327,36 @@ pub struct ReadFileArgs {
     pub max_chars: Option<usize>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct ShowChangesArgs {
+    /// The pane whose repository it is (its directory, on its machine). An
+    /// agent block's token: default the agent itself.
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+    /// Any directory in the repository, instead (on the pane's machine).
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Compare the working tree with this revision instead of HEAD.
+    #[serde(default)]
+    pub rev_a: Option<String>,
+    /// With rev_a: the range rev_a..rev_b instead of the working tree.
+    #[serde(default)]
+    pub rev_b: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ShowFileArgs {
+    /// The file. Relative paths are from the pane's directory, or home.
+    pub path: String,
+    /// The line to mark and scroll to.
+    #[serde(default)]
+    pub line: Option<u32>,
+    /// On the machine this pane runs on, beside it (an agent block's token:
+    /// default the agent itself).
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
 // ---------------------------------------------------------------- the list
 
 struct Def {
@@ -463,6 +493,26 @@ fn defs() -> Vec<Def> {
             open_world: false,
         },
         Def {
+            name: "show_changes",
+            title: "Show what changed",
+            description: "Open a diff block (M11) beside a pane: what changed in its git repository (the working tree against HEAD, or against rev_a, or rev_a..rev_b), as a file list with +/- the user can open to hunks and files, live while they look. Returns the files; read_output on the block gives the unified diff.",
+            schema: schema_for_type::<ShowChangesArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
+            name: "show_file",
+            title: "Show a file at a line",
+            description: "Open a file block (M11) beside a pane: a file on its machine, read-only, scrolled to a line and followed live, for the user to look at.",
+            schema: schema_for_type::<ShowFileArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
             name: "read_file",
             title: "Read a file",
             description: "A text file on this host or the machine a pane runs on, paged by byte offset.",
@@ -587,6 +637,14 @@ impl<'a> Call<'a> {
             },
             "read_file" => match parse(args) {
                 Ok(a) => self.read_file(a).await,
+                Err(e) => Err(e),
+            },
+            "show_changes" => match parse(args) {
+                Ok(a) => self.show_changes(a).await,
+                Err(e) => Err(e),
+            },
+            "show_file" => match parse(args) {
+                Ok(a) => self.show_file(a).await,
                 Err(e) => Err(e),
             },
             _ => Err(format!("no tool {name}")),
@@ -1267,6 +1325,86 @@ impl<'a> Call<'a> {
         )
     }
 
+    /// Beside `beside`, or the agent itself; on its machine.
+    async fn beside(&self, beside: Option<&PaneArg>) -> Result<(Option<PaneId>, Option<u32>), String> {
+        let beside = match (beside.map(PaneArg::id).transpose()?, self.me()) {
+            (Some(b), _) => Some(b),
+            (None, me) => me,
+        };
+        let host = match beside {
+            Some(b) => self.readable(b).await?.info.host,
+            None => None,
+        };
+        Ok((beside, host))
+    }
+
+    async fn show_changes(&self, a: ShowChangesArgs) -> Out {
+        let (beside, host) = self.beside(a.beside.as_ref()).await?;
+        if beside.is_none() && a.repo.is_none() {
+            return Err("say whose changes: beside (a pane in the repository) or repo (a directory in it)".into());
+        }
+        let req = OpenRequest {
+            kind: BlockType::Diff,
+            config: json!({ "repo": a.repo, "rev_a": a.rev_a, "rev_b": a.rev_b }),
+            session: None,
+            split: beside,
+            from_pane: beside,
+            vm: false,
+            image: None,
+            host,
+            local: host.is_none(),
+        };
+        let block = self.open(req).await?;
+        // It reads in the background: wait for that, briefly.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let state = loop {
+            let b = self.app.mux.api(|r| Api::Block(block, r)).await.flatten().ok_or("the block closed")?;
+            let st = b.state();
+            if st["loading"] != true || Instant::now() > deadline {
+                break st;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        if let Some(e) = state["error"].as_str() {
+            return Err(format!("diff block %{block}: {e}"));
+        }
+        let files: Vec<Value> = state["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|f| json!({ "path": f["path"], "old": f["old"], "status": f["status"], "add": f["add"], "del": f["del"], "binary": f["binary"], "big": f["big"] }))
+            .collect();
+        let n = files.len();
+        done(
+            format!(
+                "Diff block %{block}: {n} file{} changed, +{} -{} ({}); read_output on %{block} has the diff",
+                if n == 1 { "" } else { "s" },
+                state["add"],
+                state["del"],
+                state["against"].as_str().unwrap_or("")
+            ),
+            json!({ "block": block, "repo": state["repo"], "files": files }),
+        )
+    }
+
+    async fn show_file(&self, a: ShowFileArgs) -> Out {
+        let (beside, host) = self.beside(a.beside.as_ref()).await?;
+        let req = OpenRequest {
+            kind: BlockType::File,
+            config: json!({ "path": a.path, "line": a.line }),
+            session: None,
+            split: beside,
+            from_pane: beside,
+            vm: false,
+            image: None,
+            host,
+            local: host.is_none(),
+        };
+        let block = self.open(req).await?;
+        let at = a.line.map(|l| format!(" at line {l}")).unwrap_or_default();
+        done(format!("Showing {}{at} in file block %{block}", a.path), json!({ "block": block }))
+    }
+
     async fn open(&self, req: OpenRequest) -> Result<PaneId, String> {
         match self.app.mux.api(|r| Api::Open(req, None, r)).await {
             Some(Ok(b)) => {
@@ -1628,7 +1766,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 13);
+        assert_eq!(all.len(), 15);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))

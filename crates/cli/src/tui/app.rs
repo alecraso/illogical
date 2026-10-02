@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use super::{
     agent,
     conn::{Conn, In},
+    copy::{Click, Copy, Fetched},
     keys,
     pane::{SCROLLBACK, TermPane, Took},
 };
@@ -36,6 +37,8 @@ pub enum Mode {
     },
     Menu(Menu),
     Prompt(Prompt),
+    /// Moving through a pane's history with the keyboard (M32).
+    Copy,
 }
 
 pub struct Menu {
@@ -65,6 +68,8 @@ pub enum Act {
     /// Show this tab, focused on this pane.
     Go(TabId, Option<PaneId>),
     Sidebar,
+    /// Copy mode in the focused pane.
+    Copy,
     ToggleSidebar,
     Quit,
     /// A heading, not an item.
@@ -78,6 +83,10 @@ pub enum Ask {
     RenameSession(SessionId),
     Hook(PaneId),
     AgentSend(PaneId),
+    /// Copy mode's `/` and `?`.
+    Search {
+        back: bool,
+    },
 }
 
 pub struct Prompt {
@@ -152,6 +161,16 @@ pub struct App {
     pub dirty: bool,
     pub quit: bool,
     pub stats: Stats,
+    /// Copy mode's cursor and search (M32).
+    pub copy: Option<Copy>,
+    /// The last click, for double and triple clicks.
+    pub click: Option<Click>,
+    /// A mouse selection being made, in this pane, there.
+    pub selecting: Option<(PaneId, Rect)>,
+    /// Text for the outer terminal's clipboard, written after the next draw.
+    pub clip: Option<String>,
+    /// Pane logs read for copy mode, as they come back.
+    pub fetched: (mpsc::Sender<Fetched>, mpsc::Receiver<Fetched>),
     /// `--session`: where to start.
     start: Option<String>,
 }
@@ -186,6 +205,11 @@ impl App {
             dirty: true,
             quit: false,
             stats: Stats::default(),
+            copy: None,
+            click: None,
+            selecting: None,
+            clip: None,
+            fetched: mpsc::channel(),
             start,
         };
         app.seen_tabs = state.tabs.iter().map(|t| t.id).collect();
@@ -220,7 +244,7 @@ impl App {
         self.conn.send(&ClientMsg::Intent { id: None, intent });
     }
 
-    fn attach(&mut self, panes: Vec<AttachPane>) {
+    pub(super) fn attach(&mut self, panes: Vec<AttachPane>) {
         if !panes.is_empty() {
             self.conn.send(&ClientMsg::Attach { panes, zstd: true, acks: true, kitty_keys: true });
         }
@@ -247,6 +271,7 @@ impl App {
                 self.sidebar = true;
                 self.mode = Mode::Sidebar { sel: 0 };
             }
+            Act::Copy => self.enter_copy(),
             Act::ToggleSidebar => self.sidebar = !self.sidebar,
             Act::Quit => self.quit = true,
             Act::None => {}
@@ -273,6 +298,7 @@ impl App {
                 },
             ),
             Ask::AgentSend(_) => ("Message the agent", String::new()),
+            Ask::Search { back } => (if *back { "Search up" } else { "Search down" }, String::new()),
         };
         self.mode = Mode::Prompt(Prompt { title: title.into(), text, ask });
     }
@@ -289,6 +315,12 @@ impl App {
             }
             Ask::AgentSend(id) if !text.is_empty() => {
                 self.conn.api(format!("/api/blocks/{id}/call/send"), json!({ "text": text }), "send that")
+            }
+            Ask::Search { back } => {
+                self.mode = Mode::Copy;
+                if !p.text.is_empty() {
+                    self.search(&p.text, back);
+                }
             }
             _ => {}
         }
@@ -321,6 +353,9 @@ impl App {
     }
 
     pub fn set_focus(&mut self, p: PaneId) {
+        if self.in_copy() && self.copy.as_ref().is_some_and(|c| c.pane != p) {
+            self.leave_copy();
+        }
         if self.focus != Some(p) {
             self.focus = Some(p);
             self.conn.send(&ClientMsg::Focus { pane: Some(p) });
@@ -340,6 +375,7 @@ impl App {
                 let Some(p) = self.panes.get_mut(&pane) else { return };
                 match p.take(f) {
                     Took::Nothing => {}
+                    Took::Fresh => self.snapshot_taken(pane),
                     Took::Ack(offset) => self.conn.send(&ClientMsg::Ack { pane, offset }),
                     Took::Gap => self.attach(vec![AttachPane { pane, offset: None, history: Some(SCROLLBACK) }]),
                 }
@@ -440,6 +476,9 @@ impl App {
             attach.push(AttachPane { pane: p, offset: None, history: Some(SCROLLBACK) });
         }
         self.attach(attach);
+        if self.in_copy() && !self.copy.as_ref().is_some_and(|c| self.panes.contains_key(&c.pane)) {
+            self.mode = Mode::Normal;
+        }
         if self.zoom.is_some_and(|z| !in_tab.contains(&z)) {
             self.zoom = None;
         }
@@ -570,7 +609,11 @@ impl App {
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::Prompt(mut p) => match k.code {
                 KeyCode::Enter => self.submit(p),
-                KeyCode::Esc => {}
+                KeyCode::Esc => {
+                    if matches!(p.ask, Ask::Search { .. }) {
+                        self.mode = Mode::Copy;
+                    }
+                }
                 KeyCode::Backspace => {
                     p.text.pop();
                     self.mode = Mode::Prompt(p);
@@ -606,6 +649,7 @@ impl App {
             },
             Mode::Sidebar { sel } => self.sidebar_key(k, sel),
             Mode::Prefix => self.command(k),
+            Mode::Copy => self.copy_key(k),
             Mode::Normal => {
                 if keys::is_menu_key(&k) {
                     self.mode = Mode::Prefix;
@@ -630,6 +674,7 @@ impl App {
                 return;
             }
             t.engine.scroll_to_bottom();
+            t.engine.select_none();
             let Some(ev) = keys::event(&k) else { return };
             let data = t.engine.encode_key(&ev);
             self.conn.input(pane, data);
@@ -702,6 +747,7 @@ impl App {
                 }
             }
             KeyCode::Char('o') => self.cycle_focus(),
+            KeyCode::Char('[') => self.enter_copy(),
             KeyCode::Left => self.focus_toward(Edge::Left),
             KeyCode::Right => self.focus_toward(Edge::Right),
             KeyCode::Up => self.focus_toward(Edge::Top),
@@ -921,6 +967,7 @@ impl App {
                 Action::Continue => m.push(item("Continue", answer(pane, Action::Continue, None))),
                 Action::Accept => m.push(item("Accept the edit", answer(pane, Action::Accept, None))),
                 Action::Reject => m.push(item("Reject the edit", answer(pane, Action::Reject, None))),
+                Action::Rerun => m.push(item("Rerun", answer(pane, Action::Rerun, None))),
                 Action::Answer => {}
             }
         }
@@ -940,6 +987,9 @@ impl App {
             ));
             m.push(item("z  Zoom", Act::Zoom(pane)));
             m.push(item("x  Close pane", Act::Intent(Intent::ClosePane { pane })));
+            if self.panes.contains_key(&pane) {
+                m.push(item("[  Copy mode: select, search, copy", Act::Copy));
+            }
         }
         if let Some(session) = self.tab.and_then(|t| self.session_of_tab(t)) {
             m.push(item("c  New tab", Act::Intent(Intent::NewTab { session, from_pane: self.focus, cwd: None })));
@@ -985,6 +1035,11 @@ impl App {
             return;
         }
         if matches!(self.mode, Mode::Prompt(_)) {
+            return;
+        }
+
+        if self.selecting.is_some() {
+            self.select_mouse(&m);
             return;
         }
 
@@ -1044,6 +1099,11 @@ impl App {
             }
         }
         let reporting = self.panes.get(&pane).is_some_and(|t| t.engine.mouse_reporting());
+        // Drag selects: with Shift when the program takes the mouse, as
+        // terminals do.
+        if (!reporting || m.modifiers.contains(KeyModifiers::SHIFT)) && self.select_press(pane, r, &m) {
+            return;
+        }
         let wheel = matches!(m.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
         if !reporting {
             if let MouseEventKind::Down(MouseButton::Right) = m.kind {
@@ -1083,7 +1143,7 @@ impl App {
                 let data = keys::event(&k).map(|e| t.engine.encode_key(&e)).unwrap_or_default().repeat(3);
                 self.conn.input(pane, data);
             } else {
-                t.engine.scroll(if up { -3 } else { 3 });
+                t.view_mut().scroll(if up { -3 } else { 3 });
             }
             return;
         }
@@ -1205,6 +1265,7 @@ fn answer(pane: PaneId, action: Action, option: Option<&str>) -> Act {
         Action::Continue => "continue",
         Action::Accept => "accept that",
         Action::Reject => "reject that",
+        Action::Rerun => "run that again",
     };
     Act::Api("/api/attention/act".into(), body, what)
 }

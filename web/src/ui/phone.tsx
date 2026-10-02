@@ -8,7 +8,7 @@ import { useSubscribe } from "./hooks";
 import { AttentionBadge } from "./attention";
 import { HostCrumb, HostSection } from "./hosts";
 import { openSwarm } from "../swarm/route";
-import { openPort } from "../blocks";
+import { openChanges, openPort } from "../blocks";
 import { startAgent } from "./agent-dialog";
 import { openSandboxes } from "./sandboxes";
 import { openPicker } from "./picker";
@@ -57,12 +57,22 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
         {wanting.length > 0 && (
           <section class="needs-you">
             <h2>Needs you</h2>
-            {wanting.map((p) => (
-              <button key={p.id} class="sheet-item" onClick={act(() => client.setActive(p.id))}>
-                <AttentionBadge state={p.attention} reason={p.reason} />{" "}
-                {p.reason?.headline || client.title(p.id) || p.current?.text || p.last?.text || p.cwd || `pane %${p.id}`}
-              </button>
-            ))}
+            {wanting.map((p) => {
+              const rerun = p.reason?.actions.includes("rerun") && client.role(client.sessionOfTab(client.tabOfPane(p.id)?.id ?? -1) ?? null) !== "viewer";
+              return (
+                <div key={p.id} class="sheet-row" data-wants={p.id}>
+                  <button class="sheet-item" onClick={act(() => client.setActive(p.id))}>
+                    <AttentionBadge state={p.attention} reason={p.reason} />{" "}
+                    {p.reason?.headline || client.title(p.id) || p.current?.text || p.last?.text || p.cwd || `pane %${p.id}`}
+                  </button>
+                  {rerun && (
+                    <button class="sheet-act" data-rerun={p.id} onClick={act(() => void client.act({ action: "rerun", pane: p.id }))}>
+                      Rerun
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </section>
         )}
         {state.sessions.map((s) => (
@@ -102,6 +112,11 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
           <button onClick={act(() => client.session !== null && startAgent(client, { session: client.session, from: active }))}>New agent</button>
           {active !== undefined && <button onClick={act(() => openPicker(client, active, true))}>Go to directory</button>}
+          {active !== undefined && !state.roles && (
+            <button data-changes onClick={act(() => openChanges(client, active))}>
+              Changes
+            </button>
+          )}
           {active !== undefined && (
             <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right" }))}>Split pane</button>
           )}

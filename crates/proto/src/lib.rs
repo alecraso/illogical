@@ -232,6 +232,9 @@ pub enum Action {
     Accept,
     /// Turn an agent's proposed edit down.
     Reject,
+    /// Type a failed command into its pane again, once its shell is idle
+    /// (M11, M10's remainder).
+    Rerun,
 }
 
 /// A command the shell integration reported.
@@ -578,6 +581,11 @@ pub enum BlockType {
     Agent,
     /// VS Code (code-server) in a folder on the block's machine (M27).
     Editor,
+    /// What changed in a git repository on the block's machine, read-only
+    /// (M11).
+    Diff,
+    /// A file on the block's machine, read-only, followed live (M11).
+    File,
     /// A pane that lives on another daemon in the host list (#17, M4's
     /// option (a)): this layout holds its place, and clients reach its
     /// terminal on that daemon directly. Its config is [`RemoteRef`].

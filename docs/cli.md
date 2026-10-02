@@ -26,6 +26,10 @@ illogical open --split right :5173/about      # a port, beside this pane, on its
 illogical open --host m2 :3000                # a port on machine m2 (--host local: this host)
 illogical edit src/main.rs:42                 # VS Code on this file's project, at line 42 (no path: here)
 illogical edit --machine m2 ~/app             # on machine m2 (--split right beside this pane)
+illogical diff                                # what changed here (a diff block; prints it, then the files)
+illogical diff %4 HEAD~3 HEAD                 # in %4's repository, on its machine: a range (one rev: against it)
+illogical view %4:src/main.rs:42              # a file block there, at line 42, followed live (PATH, mN:PATH)
+illogical rerun %3                            # type %3's failed command again, once its shell is idle
 illogical editors                             # editors in the swarm: VS Code, Cursor, nvim, editor blocks
 illogical editors install                     # illogical's extension into VS Code or Cursor here (--with cursor)
 illogical editors vsix -o illogical.vsix      # ...or its VSIX, to install by hand
@@ -114,6 +118,8 @@ The tools:
 | `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt | no |
 | `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
 | `read_file` | A text file on this host or a pane's machine, paged | yes |
+| `show_changes` | A diff block beside a pane: what changed in its repository (`rev_a`, `rev_b`); returns the files with +/− | no |
+| `show_file` | A file block beside a pane, at a `line`, followed live | no |
 
 Resources: `illogical://history`, and the templates
 `illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and

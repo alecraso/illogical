@@ -162,6 +162,43 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
+    /// What changed in a git repository (M11): opens a diff block, prints
+    /// it, then its files with +/−. No revisions: the working tree (staged,
+    /// unstaged, untracked) against HEAD; one: against that; two: the
+    /// range. `%N` first: the repository pane %N is in, on its machine.
+    Diff {
+        /// `[%N] [REV_A [REV_B]]`.
+        args: Vec<String>,
+        /// The repository (any directory in it) [default: %N's directory,
+        /// or this one].
+        #[arg(long)]
+        repo: Option<String>,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`.
+        #[arg(long)]
+        split: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Show a file in a file block (M11), read-only and followed live:
+    /// `PATH[:LINE]` here, `%N:PATH[:LINE]` on the host pane %N runs on
+    /// (relative to its directory), `mN:PATH[:LINE]` on machine N. Prints
+    /// its block.
+    View {
+        spec: String,
+        /// The line to mark and show.
+        #[arg(long)]
+        line: Option<u32>,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`.
+        #[arg(long)]
+        split: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Type a pane's failed command again (M24's `failed`), once its shell
+    /// is waiting at its prompt.
+    Rerun { pane: Option<Pane> },
     /// Editors in the swarm (M28): VS Code, Cursor or nvim that joined, and
     /// editor blocks. `editors install` adds illogical's extension to VS
     /// Code or Cursor here (in a Remote-SSH window's terminal: there).
@@ -574,6 +611,28 @@ fn absolute(p: &str) -> anyhow::Result<String> {
     let p = std::path::Path::new(p);
     let whole = if p.is_absolute() { p.to_owned() } else { std::env::current_dir()?.join(p) };
     Ok(whole.display().to_string())
+}
+
+/// `--split right` (the pane this runs in) or `--split %N`.
+fn split_of(split: Option<&str>) -> anyhow::Result<Option<u32>> {
+    Ok(match split {
+        None => None,
+        Some("right") => Some(here(None)?),
+        Some(p) => Some(p.parse::<Pane>().map_err(anyhow::Error::msg)?.0),
+    })
+}
+
+/// A block's `describe` once it has read what it shows (M11's views read
+/// in the background; at most 30s).
+fn loaded(sock: &http::Target, block: u64) -> anyhow::Result<Value> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let v = request(sock, "GET", &format!("/api/blocks/{block}"), None)?.json()?;
+        if v["state"]["loading"] != true || std::time::Instant::now() > deadline {
+            return Ok(v);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 fn here(p: Option<Pane>) -> anyhow::Result<u32> {
@@ -998,6 +1057,101 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 print_json(&v);
             } else {
                 println!("%{}", v["block"]);
+            }
+        }
+        Command::Diff { args, repo, split, session } => {
+            let (from, revs) = match args.first().and_then(|a| a.strip_prefix('%')) {
+                Some(n) => (Some(n.parse::<u32>().with_context(|| format!("not a pane: %{n}"))?), &args[1..]),
+                None => (None, &args[..]),
+            };
+            if revs.len() > 2 {
+                bail!("at most two revisions: diff [%N] [REV_A [REV_B]]");
+            }
+            let remote = REMOTE.load(std::sync::atomic::Ordering::Relaxed);
+            let repo = match repo {
+                Some(r) if !remote && from.is_none() => Some(absolute(&r)?),
+                Some(r) => Some(r),
+                None if from.is_none() && !remote => Some(std::env::current_dir()?.display().to_string()),
+                None => None,
+            };
+            let body = json!({
+                "type": "diff",
+                "config": { "repo": repo, "rev_a": revs.first(), "rev_b": revs.get(1) },
+                "split": split_of(split.as_deref())?,
+                "session": session,
+                "from_pane": from.or_else(env_pane),
+            });
+            let block = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?["block"].as_u64().unwrap_or(0);
+            let v = loaded(&sock, block)?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            println!("%{block}");
+            let st = &v["state"];
+            if let Some(e) = st["error"].as_str() {
+                bail!("{e}");
+            }
+            for f in st["files"].as_array().into_iter().flatten() {
+                let counts = match (f["binary"].as_bool(), f["big"].as_bool()) {
+                    (Some(true), _) => "binary".to_owned(),
+                    (_, Some(true)) => "too big".to_owned(),
+                    _ => format!("+{} -{}", f["add"], f["del"]),
+                };
+                let path = match f["old"].as_str() {
+                    Some(old) => format!("{old} -> {}", f["path"].as_str().unwrap_or("")),
+                    None => f["path"].as_str().unwrap_or("").to_owned(),
+                };
+                println!("{:<10} {path}  {counts}", f["status"].as_str().unwrap_or(""));
+            }
+            let n = st["files"].as_array().map_or(0, Vec::len);
+            println!(
+                "{n} file{} changed, +{} -{} ({})",
+                if n == 1 { "" } else { "s" },
+                st["add"],
+                st["del"],
+                st["against"].as_str().unwrap_or("")
+            );
+        }
+        Command::View { spec, line, split, session } => {
+            let remote = REMOTE.load(std::sync::atomic::Ordering::Relaxed);
+            let (on, path) = match spec.split_once(':') {
+                Some((on, p)) if on.starts_with('%') || (on.starts_with('m') && on[1..].parse::<u32>().is_ok()) => {
+                    (Some(on.to_owned()), p.to_owned())
+                }
+                _ => (None, spec.clone()),
+            };
+            let (path, at) = file_line(&path, on.is_none() && !remote);
+            let (from, host) = match on.as_deref() {
+                Some(p) if p.starts_with('%') => {
+                    (Some(p[1..].parse::<u32>().with_context(|| format!("not a pane: {p}"))?), None)
+                }
+                Some(m) => (None, Some(m[1..].parse::<u32>()?)),
+                None => (env_pane(), None),
+            };
+            let path = if on.is_none() && !remote { absolute(&path)? } else { path };
+            let body = json!({
+                "type": "file",
+                "config": { "path": path, "line": line.or(at) },
+                "split": split_of(split.as_deref())?,
+                "host": host,
+                "local": on.is_none() && !remote,
+                "session": session,
+                "from_pane": from,
+            });
+            let v = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("%{}", v["block"]);
+            }
+        }
+        Command::Rerun { pane } => {
+            let pane = here(pane)?;
+            let v = request(&sock, "POST", "/api/attention/act", Some(&json!({ "action": "rerun", "pane": pane })))?;
+            let v = v.json()?;
+            if let Some(e) = v["results"][0]["error"].as_str() {
+                bail!("{e}");
             }
         }
         Command::Agent { acp, fountain, codex, vault, model, mcp, vm, host, cwd, session, split, wait, prompt } => {
