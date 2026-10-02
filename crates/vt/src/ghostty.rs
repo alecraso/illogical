@@ -1,23 +1,14 @@
 //! [`VtEngine`] on libghostty-vt.
 //!
-//! libghostty's formatter does most of the snapshot work. The code here fills
-//! in what it leaves out or gets wrong at the pinned commit (all found in
-//! spike S1, `spikes/s1-ghostty/README.md`):
-//!
-//! - It formats only the active screen, so while a full-screen app runs the
-//!   primary screen and its scrollback are missing. [`GhosttyEngine::snapshot`]
-//!   flips to the primary with mode 47, formats it, and flips back.
-//! - Its tab stops extra moves the cursor and does not restore it.
-//! - It emits neither the title nor the cursor shape.
-//! - It drops textless rows at the bottom of the screen, which shifts the
-//!   screen up on replay and loses backgrounds left by erases.
+//! libghostty's formatter does most of the snapshot work; `wire.rs` fills in
+//! what it leaves out or gets wrong at the pinned commit. Checkpoints are
+//! Ghostty's own snapshot format (GHOSTSNP), which needs no fix-ups.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::OnceLock};
 
 use libghostty_vt::{
-    RenderState, Terminal,
+    Terminal,
     fmt::{Format, Formatter, FormatterOptions},
-    render::CursorVisualStyle,
     screen::{CellContentTag, Screen},
     selection::Selection,
     snapshot::Decoder,
@@ -38,10 +29,42 @@ const CONTINUATION_BYTES: usize = 1024 * 1024;
 const CHECKPOINT_MAGIC: &[u8] = b"ILLOGICAL-CKPT1\n";
 
 /// Which engine wrote a checkpoint. GHOSTSNP has changed incompatibly
-/// without bumping its version, so a checkpoint is only trusted by the
-/// exact libghostty it came from.
+/// without bumping its version, and libghostty's `build_info` says
+/// `0.1.0-dev` in every build, so a checkpoint is only trusted by an engine
+/// that encodes a fixed canary terminal to the same bytes (spike S1/S5
+/// follow-ups). A change that only touches decoding goes unnoticed; such a
+/// checkpoint fails to decode and is discarded like any corrupt one.
 pub fn engine_tag() -> String {
-    format!("libghostty-rs@8953a74 ghostty@{}", libghostty_vt::build_info::version_string().unwrap_or("unknown"))
+    static TAG: OnceLock<String> = OnceLock::new();
+    TAG.get_or_init(|| {
+        format!(
+            "libghostty-rs@8953a74 ghostty@{} snap@{:016x}",
+            libghostty_vt::build_info::version_string().unwrap_or("unknown"),
+            fnv1a(&canary_snapshot())
+        )
+    })
+    .clone()
+}
+
+/// GHOSTSNP of a small terminal that uses most of what the format carries:
+/// both screens, scrollback, styles, a hyperlink, protection, charsets,
+/// modes, margins, the saved cursor, title, pwd, palette and Kitty keyboard
+/// flags, and an unfinished escape sequence.
+fn canary_snapshot() -> Vec<u8> {
+    let Ok(mut t) = Terminal::new(12, 4) else { return Vec::new() };
+    let _ = t.set_continuation_max_bytes(64);
+    t.vt_write(
+        b"\x1b]2;canary\x1b\\\x1b]7;file:///c\x1b\\\x1b]4;1;rgb:12/34/56\x1b\\one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n\
+          \x1b[1;3;4:3;38;5;196;48;2;1;2;3mstyled\x1b[0m \x1b]8;id=a;https://x\x1b\\link\x1b]8;;\x1b\\\r\n\
+          \x1b[1\"qkeep\x1b[0\"q\x1b(0qx\x1b(B\x1b[?2004h\x1b[?1000h\x1b[4h\x1b[2;3r\x1b[?6h\x1b[5 q\x1b[>1u\x1b7\
+          \x1b[?1049h\x1b[2Jalt \xe2\x9c\x93 \xe4\xb8\xad\x1b[=3;1u\x1b[2;5H\x1b7\x1b[1;3",
+    );
+    t.encode_snapshot_alloc(None).ok().flatten().map(|b| b.to_vec()).unwrap_or_default()
+}
+
+/// FNV-1a, 64 bits: stable across Rust releases, unlike `DefaultHasher`.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +105,7 @@ pub struct GhosttyEngine {
     term: Terminal<'static, 'static>,
     replies: Rc<RefCell<Vec<u8>>>,
     caps: Capabilities,
+    wire: wire::Cache,
 }
 
 impl GhosttyEngine {
@@ -130,6 +154,11 @@ impl GhosttyEngine {
         term.set_scrollback_max_bytes(Some(SCROLLBACK_BYTES)).expect("scrollback limit");
         // Lets a checkpoint be taken in the middle of an escape sequence.
         term.set_continuation_max_bytes(CONTINUATION_BYTES).expect("continuation tracking");
+        if !caps.kitty_graphics {
+            // Disables the protocol: queries go unanswered, so programs don't
+            // send images the client can't draw, and none are stored.
+            term.set_kitty_image_storage_limit(0).expect("kitty image limit");
+        }
         let replies = Rc::new(RefCell::new(Vec::new()));
         let sink = replies.clone();
         term.on_pty_write(move |_, data| sink.borrow_mut().extend_from_slice(data)).expect("pty write callback");
@@ -150,7 +179,7 @@ impl GhosttyEngine {
             .and_then(|t| t.set_default_bg_color(Some(DEFAULT_BG)))
             .and_then(|t| t.set_default_cursor_color(Some(DEFAULT_CURSOR)))
             .expect("default colors");
-        Self { term, replies, caps }
+        Self { term, replies, caps, wire: wire::Cache::default() }
     }
 
     fn format(&self, format: Format, extras: bool, modes: bool) -> Vec<u8> {
@@ -160,6 +189,33 @@ impl GhosttyEngine {
     /// [`Self::format`], keeping at most `history` rows of scrollback above
     /// the active area (`None`: all of it).
     fn format_history(&self, format: Format, extras: bool, modes: bool, history: Option<usize>) -> Vec<u8> {
+        let out = self.format_with(history, |o| {
+            let o = o.with_format(format).with_modes(modes);
+            if !extras {
+                return o;
+            }
+            o.with_palette(true)
+                .with_scrolling_region(true)
+                .with_tabstops(true)
+                .with_pwd(true)
+                .with_keyboard(true)
+                .with_cursor(true)
+                .with_style(true)
+                .with_hyperlink(true)
+                .with_protection(true)
+                .with_kitty_keyboard(true)
+                .with_charsets(true)
+        });
+        if extras { wire::move_tabstops_to_end(out) } else { out }
+    }
+
+    /// The formatter's VT output with `opts`, over the active area and at
+    /// most `history` rows of scrollback above it (`None`: all of it).
+    fn format_with(
+        &self,
+        history: Option<usize>,
+        opts: impl for<'t, 's> FnOnce(FormatterOptions<'t, 's>) -> FormatterOptions<'t, 's>,
+    ) -> Vec<u8> {
         // The formatter takes a range as a selection: from `history` rows up
         // to the active area's last cell.
         let have = self.term.scrollback_rows().unwrap_or(0);
@@ -176,27 +232,12 @@ impl GhosttyEngine {
                 .ok()?;
             Some(Selection::new(start, end, false))
         });
-        let mut o = FormatterOptions::new().with_format(format).with_modes(modes);
+        let mut o = opts(FormatterOptions::new().with_format(Format::Vt));
         if let Some(range) = &range {
             o = o.with_selection(range);
         }
-        if extras {
-            o = o
-                .with_palette(true)
-                .with_scrolling_region(true)
-                .with_tabstops(true)
-                .with_pwd(true)
-                .with_keyboard(true)
-                .with_cursor(true)
-                .with_style(true)
-                .with_hyperlink(true)
-                .with_protection(true)
-                .with_kitty_keyboard(true)
-                .with_charsets(true);
-        }
         let mut f = Formatter::new(&self.term, o).expect("formatter");
-        let out = f.format_alloc(None).expect("format").to_vec();
-        if extras { move_tabstops_to_end(out) } else { out }
+        f.format_alloc(None).expect("format").to_vec()
     }
 
     /// Non-default modes as CSI h/l.
@@ -247,89 +288,10 @@ impl GhosttyEngine {
         (n, paint)
     }
 
-    /// Re-add the dropped trailing rows, unless the whole screen is blank.
-    /// `history`: the cap the content was formatted with.
-    fn pad_rows(&self, out: &mut Vec<u8>, history: Option<usize>) -> Vec<u8> {
-        let (pad, paint) = self.trailing_rows();
-        let rows = self.size().1;
-        if pad < rows {
-            // The newlines go from the end of the content. When history
-            // pushed the content to the bottom, the formatter's cursor is
-            // there already; when there's too little for that (a capped
-            // snapshot, a short scrollback), put it there.
-            let have = self.term.scrollback_rows().unwrap_or(0);
-            let written = history.map_or(have, |h| h.min(have)) + (rows - pad) as usize;
-            if written < rows as usize {
-                out.extend_from_slice(format!("\x1b[{written};1H").as_bytes());
-            }
-            for _ in 0..pad {
-                out.extend_from_slice(b"\r\n");
-            }
-        }
-        paint
-    }
-
-    /// Title, cursor shape, dropped trailing rows and cursor position.
-    fn trailer(&self, history: Option<usize>) -> Vec<u8> {
-        let mut out = Vec::new();
-        let title = self.title();
-        if !title.is_empty() {
-            out.extend_from_slice(format!("\x1b]2;{title}\x1b\\").as_bytes());
-        }
-        let mut rs = RenderState::new().expect("render state");
-        if let Ok(snap) = rs.update(&self.term) {
-            let blink = snap.cursor_blinking().unwrap_or(false);
-            let n = match snap.cursor_visual_style() {
-                Ok(CursorVisualStyle::Underline) => 4 - blink as u8,
-                Ok(CursorVisualStyle::Bar) => 6 - blink as u8,
-                Ok(_) => 2 - blink as u8,
-                Err(_) => 0,
-            };
-            out.extend_from_slice(format!("\x1b[{n} q").as_bytes());
-        }
-        let paint = self.pad_rows(&mut out, history);
-        if !paint.is_empty() {
-            // DECSC/DECRC keeps the pen the formatter set up for the cursor.
-            out.extend_from_slice(b"\x1b7");
-            out.extend(paint);
-            out.extend_from_slice(b"\x1b8");
-        }
-        let (x, y) = (self.term.cursor_x().unwrap_or(0), self.term.cursor_y().unwrap_or(0));
-        out.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
-        out
-    }
-
     #[cfg(test)]
     pub(crate) fn terminal(&self) -> &Terminal<'static, 'static> {
         &self.term
     }
-}
-
-/// The formatter writes tab stops (`CSI 3 g`, then `CSI n G` + `ESC H` per
-/// stop) before the screen content and leaves the cursor on the last stop,
-/// so the content starts mid-line and wraps. Move that block to the end;
-/// the trailer positions the cursor afterwards.
-fn move_tabstops_to_end(out: Vec<u8>) -> Vec<u8> {
-    let Some(start) = out.windows(4).position(|w| w == b"\x1b[3g") else {
-        return out;
-    };
-    let mut end = start + 4;
-    loop {
-        let rest = &out[end..];
-        let Some(digits) = rest.strip_prefix(b"\x1b[").map(|r| r.iter().take_while(|c| c.is_ascii_digit()).count())
-        else {
-            break;
-        };
-        if digits == 0 || !rest[2 + digits..].starts_with(b"G\x1bH") {
-            break;
-        }
-        end += 2 + digits + 3;
-    }
-    let mut moved = Vec::with_capacity(out.len());
-    moved.extend_from_slice(&out[..start]);
-    moved.extend_from_slice(&out[end..]);
-    moved.extend_from_slice(&out[start..end]);
-    moved
 }
 
 fn sgr_rgb(c: RgbColor) -> String {
@@ -360,35 +322,7 @@ impl VtEngine for GhosttyEngine {
     }
 
     fn snapshot_history(&mut self, history: Option<usize>) -> Vec<u8> {
-        let mut out = Vec::new();
-        if self.term.active_screen().ok() == Some(Screen::Alternate) {
-            // Where leaving the alternate screen puts the cursor back: the
-            // cursor 1049h below saves.
-            let saved = self.alt_saved_cursor();
-            // Mode 47 switches screens without clearing or saving the cursor.
-            self.term.vt_write(b"\x1b[?47l");
-            out.extend(self.format_history(Format::Vt, false, false, history));
-            self.pad_rows(&mut out, history);
-            if let Some((x, y)) = saved {
-                out.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
-            }
-            self.term.vt_write(b"\x1b[?47h");
-            // Entering through 47 set its flag; the app entered through 1049.
-            let _ = self.term.set_mode(Mode::new(47, ModeKind::Dec), false);
-            // 1049h saves the cursor just left in place but does not home it,
-            // and the formatter assumes alt content starts at 1;1.
-            out.extend_from_slice(b"\x1b[?1049h\x1b[H");
-            out.extend(self.format(Format::Vt, true, false));
-            out.extend(self.modes());
-            // The alternate screen has no history.
-            out.extend(self.trailer(None));
-        } else {
-            out.extend(self.format_history(Format::Vt, true, true, history));
-            out.extend(self.trailer(history));
-        }
-        // The pending replies belong to the live stream, not the snapshot;
-        // the screen flip above never produces any.
-        out
+        self.wire_snapshot(history)
     }
 
     fn screen_snapshot(&mut self) -> Vec<u8> {
@@ -429,6 +363,7 @@ impl VtEngine for GhosttyEngine {
 }
 
 mod inspect;
+mod wire;
 pub use inspect::{CaptureOpts, Line};
 
 #[cfg(test)]

@@ -221,7 +221,9 @@ Each milestone ends with a demo against the acceptance list.
 
     S1's fixtures all left the cursor on their last line of text, so they
     missed this.
-  - **Fix now, in `crates/vt` (not tied to a milestone).** All seven fixes
+  - **Fix now, in `crates/vt` (not tied to a milestone): done 2026-10-02
+    (#1),** in `crates/vt/src/ghostty/wire.rs`: all 18 fixtures exact,
+    0.8–1.8 ms a snapshot (0.03–0.7 ms unchanged). All seven fixes
     are prototyped in the spike's `src/patched.rs`, and with them all 17
     non-image fixtures are exact in both engines:
     1. pad dropped rows straight after the content, not after the cursor
