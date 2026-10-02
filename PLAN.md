@@ -1317,14 +1317,24 @@ new machinery.
   ```
   claude mcp add illogical -- illogical mcp
   ```
-- **Implementation:** the official Rust SDK (`rmcp`) in the daemon. S14
-  checks it covers Streamable HTTP, resource subscriptions and progress
-  notifications.
+- **Implementation:** the official Rust SDK (`rmcp`, pinned; 3.5.0 in S14)
+  in the daemon. One `StreamableHttpService` at `/mcp` serves both the
+  stateless 2026-07-28 protocol (Claude Code) and legacy sessions at
+  2025-06-18 (Codex). `illogical mcp` is rmcp's stdio server in front of
+  its Unix-socket HTTP client (`from_unix_socket`). Three defaults change:
+  - `allowed_hosts` (loopback-only by default) gets the tailnet name and IP;
+  - `allowed_origins` (empty, so unchecked, by default) gets the app's
+    origins;
+  - every resource list or read result sets `ttlMs` and `cacheScope`,
+    which Claude Code rejects results without.
 
 **Tools.** About a dozen, shaped for agents rather than mirroring every
-endpoint. Each returns a short text summary plus `structuredContent`, with
-output capped and pageable by offset, so a chatty pane can't flood the
-agent's context.
+endpoint. Output is capped (about 16KB a page by default, 40,000 chars at
+most, because Claude Code swaps anything over ~50,000 for a 2KB preview and a
+file path) and pageable by offset, so a chatty pane can't flood the agent's
+context. Each result's `structuredContent` carries a `summary` sentence, and
+the text block is the same JSON. Claude Code shows the model only the
+structured part; Codex shows both.
 
 | Tool | What it does | Annotations |
 |---|---|---|
@@ -1341,20 +1351,26 @@ agent's context.
 | `agent_respond` | Approve or deny a pending permission, or answer a pending question (M6c) | not read-only |
 | `read_file` | A file on a pane's host or VM (M7's `fs`), capped | read-only |
 
-- **Long calls:** `run --wait` and `wait` send progress notifications. They
-  also return before the client's MCP tool timeout (S14 measures Claude
-  Code's) with a resumable "still running", so a long build never fails a
-  tool call.
+- **Long calls:** `run --wait` and `wait` send a progress notification
+  with a message every 15s. This is required: over HTTP, Claude Code kills
+  a call that is silent for 60s. They return a resumable "still running"
+  with the offset after 100s by default (`timeout` asks for longer),
+  before interactive Claude Code moves the call into a background task at
+  120s. So a long build never fails a tool call or ends the agent's turn.
+  Claude Code's hard limit (`MCP_TOOL_TIMEOUT`, default ~27.8h) is not
+  extended by progress.
 - **Errors** are tool results (`isError`) with a sentence an agent can act
   on, for example "pane %7 is gone; it exited 2 at 14:03", not protocol
   errors.
 
 **Resources:**
 
-- `illogical://pane/%N/output` (subscribable, so a client can follow a pane
-  live), `illogical://pane/%N/screen`, `illogical://block/%N` (state), and
-  `illogical://history`.
+- `illogical://pane/%N/output`, `illogical://pane/%N/screen`,
+  `illogical://block/%N` (state), and `illogical://history`, read-only.
 - Resource templates, so clients can list them.
+- Not subscribable in v1. S14 found that no client subscribes: Claude Code
+  only listens for resource-list changes, and Codex never lists resources.
+  Agents follow a pane with `wait` and `read_output`.
 
 **Agent blocks get it automatically, scoped to their tab:**
 
@@ -1364,10 +1380,21 @@ agent's context.
   blocks in its own tab (on the tab's machine, in a VM tab), read and drive
   what it created, and read the rest of its tab. It can't touch other tabs
   or hosts.
-- **Local agents** get the stdio bridge with that token.
-- **VM agents** need to reach the daemon from inside the VM. That means an
-  HTTP endpoint on wisp's bridge address, or the bridge running host-side.
-  S14 checks what the guest network allows.
+- **Local agents** get an `http` server: the daemon's loopback `/mcp` with
+  `Authorization: Bearer <block token>` in `headers`, so no bridge process
+  is needed. claude-agent-acp 0.85.1 advertises `mcpCapabilities.http`, and
+  S14 saw the header arrive on every request.
+- **VM agents** get a host-side bridge. A wisp guest can't reach any host
+  address (bridge, LAN or tailnet: wisp's nftables drop them by design),
+  so the daemon opens a non-TTY exec in the VM running a small relay on a
+  guest Unix socket and pipes it into its MCP server under the block's
+  token. The agent's `mcpServers` stdio command connects to that socket
+  (`nc -U …`, or `illogical mcp --socket` if the binary is in the image).
+  The relay accepts again whenever the agent reconnects. In S14 this gave
+  a 1ms tool-call round trip, with progress flowing through.
+- The adapter also hands the agent the user's claude.ai connectors
+  (`mcp__claude_ai_*`) even with `settingSources: []`, so the block's
+  tools aren't only illogical's.
 - **Fountain agents** can't reach the tailnet, so they don't get it.
 
 **Safety.** External clients get full scope, so:
@@ -1379,21 +1406,30 @@ agent's context.
 - every MCP call is logged with the client's name and token. The pane shows
   "started by mcp:<client>", and `history` records it.
 
-**S14: spike before M16 (about half a day):**
+**S14: done 2026-10-02.** See [spikes/s14-mcp](spikes/s14-mcp/README.md).
+The findings are folded in above. It ran against rmcp 3.5.0, Claude Code
+2.1.287, Codex 0.155.1, claude-agent-acp 0.85.1 and a throwaway wisp
+sprite:
 
-- `rmcp` maturity: Streamable HTTP server, resource subscriptions, progress
-  notifications, structured content, and tool annotations.
-- Claude Code as a client:
-  - its MCP tool-call timeout, and whether progress notifications extend it;
-  - its output-size limit (`MAX_MCP_OUTPUT_TOKENS`) and what truncation
-    looks like;
-  - whether it uses resource subscriptions at all.
-- Codex as a client: stdio and HTTP.
-- From inside a wisp VM: can a process reach an HTTP endpoint on the host
-  (the bridge address, given `wisp-netd`'s restricted set), or does the
-  bridge need to run host-side?
-- Does `claude-agent-acp` pass `mcpServers` of type `http` as well as
-  `stdio`?
+- **rmcp:** go. Streamable HTTP (both protocols), stdio, a Unix-socket
+  client, progress, `structuredContent`/`outputSchema`, annotations and
+  `isError` all worked with real clients. Both kinds of resource
+  subscription worked with rmcp's client and curl.
+- **Claude Code:**
+  - over HTTP it kills a tool call after 60s of silence, and progress
+    resets that; the hard limit isn't extended by progress;
+  - interactive Claude Code backgrounds a call still running at 120s;
+  - results over ~50,000 chars become a 2KB preview plus a file, and over
+    `MAX_MCP_OUTPUT_TOKENS` a "saved to file" notice; nothing is cut
+    silently;
+  - with `structuredContent` present, only that reaches the model;
+  - it never subscribes to resources.
+- **Codex:** stdio and HTTP both work. The model sees text and structured
+  content, and its default tool timeout is 300s.
+- **VM:** the guest reaches nothing on the host. The host-opened relay exec
+  works.
+- **claude-agent-acp:** passes `http` servers with headers, and `stdio`
+  with or without `type`.
 
 **Done when:**
 
