@@ -79,7 +79,7 @@ FIXTURE = [
     ("pytest -x", "test"), ("uv run pytest -k slots", "test"), ("go test ./...", "test"), ("pnpm vitest", "test"),
     ("just test", "test"), ("bats tests/", "test"),
     ("claude", "agent"), ("claude --continue", "agent"), ("claude --dangerously-skip-permissions", "agent"),
-    ("codex", "agent"), ("aider --model sonnet", "agent"), ("/home/jake/.local/bin/claude", "agent"),
+    ("codex", "agent"), ("aider --model sonnet", "agent"), ("/home/user/.local/bin/claude", "agent"),
     ("npm run dev", "server"), ("pnpm dev", "server"), ("uvicorn app:main --reload", "server"),
     ("python manage.py runserver", "server"), ("illogicald --foreground", "server"), ("hugo server", "server"),
     ("cargo watch -x check", "server"), ("caddy run", "server"),
