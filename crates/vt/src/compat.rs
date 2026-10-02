@@ -8,6 +8,9 @@
 //! rewritten to the client's capabilities: DECRQM answers for unsupported
 //! modes become "not recognized", and the kitty keyboard reply is dropped
 //! (programs read its absence, before the DA1 reply that follows, as "no").
+//! Kitty graphics are turned off in the engine itself when the client can't
+//! draw them ([`Capabilities::kitty_graphics`]), so a graphics query gets no
+//! answer at all.
 
 /// What the client renderer supports.
 #[derive(Debug, Clone, Copy)]
@@ -15,6 +18,10 @@ pub struct Capabilities {
     pub dec_modes: &'static [u16],
     pub ansi_modes: &'static [u16],
     pub kitty_keyboard: bool,
+    /// The Kitty graphics protocol. Without it the engine neither answers
+    /// graphics queries nor keeps images (libghostty doesn't parse sixel,
+    /// and its DA1 doesn't advertise it, either way).
+    pub kitty_graphics: bool,
 }
 
 impl Capabilities {
@@ -26,10 +33,11 @@ impl Capabilities {
         ],
         ansi_modes: &[4, 12, 20],
         kitty_keyboard: false,
+        kitty_graphics: false,
     };
 
     /// Everything libghostty answers passes through unchanged.
-    pub const ALL: Self = Self { dec_modes: &[], ansi_modes: &[], kitty_keyboard: true };
+    pub const ALL: Self = Self { dec_modes: &[], ansi_modes: &[], kitty_keyboard: true, kitty_graphics: true };
 
     fn unrestricted(&self) -> bool {
         self.dec_modes.is_empty() && self.ansi_modes.is_empty() && self.kitty_keyboard
