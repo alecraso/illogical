@@ -609,8 +609,11 @@ mod tests {
         let sessions = root.join("sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         let me = std::process::id();
-        let stat = std::fs::read_to_string(format!("/proc/{me}/stat")).unwrap();
-        let start = stat.rsplit_once(')').unwrap().1.split_whitespace().nth(19).unwrap().to_owned();
+        // Without /proc (macOS) only the pid is checked.
+        let proc = std::fs::read_to_string(format!("/proc/{me}/stat")).ok();
+        let start = proc
+            .as_deref()
+            .map_or("0".to_owned(), |s| s.rsplit_once(')').unwrap().1.split_whitespace().nth(19).unwrap().to_owned());
         let write = |name: &str, pid: u32, start: &str, sid: &str| {
             std::fs::write(
                 sessions.join(name),
@@ -622,7 +625,14 @@ mod tests {
         write("b.json", me, "1", "reused-pid");
         write("c.json", 999_999_999, &start, "gone");
         let l = live(&sessions);
-        assert_eq!(l.keys().collect::<Vec<_>>(), vec!["live-one"]);
+        let mut want = vec!["live-one"];
+        if proc.is_none() {
+            // A reused pid can't be told apart there.
+            want.push("reused-pid");
+        }
+        let mut got: Vec<&str> = l.keys().map(String::as_str).collect();
+        got.sort();
+        assert_eq!(got, want);
         assert_eq!(l["live-one"].pid, me);
         assert!(l["live-one"].place().contains(&format!("pid {me}")) || l["live-one"].pane.is_some());
         std::fs::remove_dir_all(&root).unwrap();

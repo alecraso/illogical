@@ -5,7 +5,7 @@
 // and Claude Code's adapter is the fake ACP agent, so nothing here costs
 // anything.
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
@@ -37,8 +37,10 @@ function seed(word: string, title: string): { id: string; cwd: string } {
 
 /** This test's process holds the session, as a running Claude Code would. */
 function hold(id: string) {
-  const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
-  const procStart = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[19];
+  // Without /proc (macOS) only the pid is checked.
+  const proc = `/proc/${process.pid}/stat`;
+  const stat = existsSync(proc) ? readFileSync(proc, "utf8") : null;
+  const procStart = stat ? stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[19] : "0";
   writeFileSync(
     join(claude, "sessions", `${process.pid}.json`),
     JSON.stringify({ pid: process.pid, sessionId: id, procStart, kind: "interactive", entrypoint: "cli", status: "idle" }),

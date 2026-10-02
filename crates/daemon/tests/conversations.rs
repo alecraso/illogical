@@ -91,8 +91,9 @@ impl Claude {
     /// This test process holds `id`, as a running Claude Code would.
     fn hold(&self, id: &str) {
         let me = std::process::id();
-        let stat = std::fs::read_to_string(format!("/proc/{me}/stat")).unwrap();
-        let start = stat.rsplit_once(')').unwrap().1.split_whitespace().nth(19).unwrap().to_owned();
+        // Without /proc (macOS) only the pid is checked.
+        let start = std::fs::read_to_string(format!("/proc/{me}/stat"))
+            .map_or("0".to_owned(), |s| s.rsplit_once(')').unwrap().1.split_whitespace().nth(19).unwrap().to_owned());
         std::fs::write(
             self.dir.join(format!("sessions/{me}.json")),
             json!({ "pid": me, "sessionId": id, "procStart": start, "kind": "interactive",
