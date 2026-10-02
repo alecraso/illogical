@@ -1514,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "illogical"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1533,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-control"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1561,7 +1561,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proptest",
  "serde",
@@ -1570,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-e2e"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -1587,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "illogical-core",
  "serde",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-vt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libghostty-vt",
  "serde",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "illogicald"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",

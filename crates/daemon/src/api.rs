@@ -1383,7 +1383,7 @@ async fn push_test(
 mod secret_tests {
     #[test]
     fn token_shapes() {
-        assert_eq!(super::find_secrets("export GH=ghp_0123456789abcdefghijABCDEFGHIJ012345"), ["a GitHub token"]);
+        assert_eq!(super::find_secrets("export GH=ghp_0123456789abcdefghijABCDEFGHIJ012345"), ["a GitHub token"]); // gitleaks:allow (a made-up token)
         assert_eq!(super::find_secrets("key: sk-ant-api03-abcdefghijklmnopqrstuv"), ["an Anthropic key"]);
         assert!(super::find_secrets("AKIAIOSFODNN7EXAMPLE").contains(&"an AWS key"));
         assert!(super::find_secrets("-----BEGIN OPENSSH PRIVATE KEY-----").contains(&"a private key"));
