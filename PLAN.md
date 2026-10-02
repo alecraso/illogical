@@ -84,7 +84,7 @@ terminal, OSC 133 command ranges are *command marks*, never "blocks".
   - After attach, the pane gets one SIGWINCH nudge.
   - **Visible-first attach is gated on measurement (decided 2026-10-01). Measured in S10: don't build it for xterm.js.**
     - **Where the time goes:** on an emulated Pixel 7 at 4x CPU throttling and 10 Mbps / 50 ms, attaching to a 64k-row pane took 3.7 s, of which 3.2 s was download. The snapshot goes out uncompressed (3.9 MB; 183 KB gzipped). The client keeps only 10k lines, so 54k of the 64k rows are downloaded and thrown away. Even a small screen takes about 150 ms to draw at 4x, which is the most visible-first could save. See [spikes/s10-ghostty-web](spikes/s10-ghostty-web/README.md).
-    - **Do instead (small, server-side, fix now):**
+    - **Do instead (small, server-side, fix now; not built yet, #49, where S19 found a client behind a flood resyncing forever):**
       - **compress snapshot frames** (permessage-deflate, or zstd frames);
       - **cap the history in a snapshot at the client's scrollback** (sent in `attach`).
 
@@ -2435,6 +2435,68 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - the web client: the tab and pane badges say failed or done with the headline as their title, the phone's "Needs you" list shows headlines, and Dismiss goes through the act route, so it clears on every client.
 - **Tests:** `crates/daemon/tests/attention.rs` (a failing `cargo test`, a long `make build`, a quick failure that isn't one, Claude Code's question through the hook answered by `act`, three agent approvals allowed and denied as a list, the push's actions, the event stream); `e2e/attention.spec.ts` (a failure's badge and headline, dismissed on one client and gone on the other; a pushed failure offers Dismiss).
 - **Not covered (after the MVP):** prompt detection for `input` (`[sudo] password`, `[y/N]`), and the `rerun`, `restart` and `send` actions. A 10-minute build is tested as a 5-second one. Approvals of Claude Code's tool permission prompts in terminals come with M29.
+
+### TUI track (S19, M31–M32, added 2026-10-02)
+
+illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` draws tabs, splits and a "needs you" sidebar over the same socket and protocol as the web client, locally, over ssh, or against another host. It is one more client, so the daemon doesn't change.
+
+**Order:**
+
+1. **S19** (#48): done, below.
+2. **The resync fix** (#49): a daemon change both clients need. It can go before or beside M31.
+3. **M31** (#50: `illogical tui`), then **M32** (#51: copy mode).
+
+#### S19: TUI spike
+
+**Done 2026-10-02: go** (see [spikes/s19-tui](spikes/s19-tui/README.md)).
+
+- **What was built:** a standalone crate of about 950 lines.
+  - It attaches every pane of a tab, keeps a local libghostty terminal per pane fed with the web client's snapshot and output frames, and copies their cells into a ratatui buffer.
+  - It draws the daemon's own `TabView.layout`. Its one-cell gaps are the dividers, so there is no layout code in the client.
+  - A sidebar shows tabs with attention and *needs you* from `reason`. The mouse focuses, drags dividers and scrolls; Ctrl-] then a key splits, opens tabs and closes panes.
+- **What worked first time:** typing, focus, splits, divider drags, tab switching, a bell under *needs you* (live, through deltas), `top`, `less` and colors.
+- **Drawing is cheap.** At 200x50 with four panes and a full redraw (no dirty rows yet):
+  - frame build p99 0.6–0.7 ms;
+  - with ratatui's diff and the write, p99 1.0–1.2 ms;
+  - one pane flooding at 16 MB/s takes a fifth of a core;
+  - 30–36 MB RSS with every pane's scrollback held locally.
+- **Four flooding panes fall into a resync loop,** and the web client takes the same path. A client whose queue fills is sent `resync`. It re-attaches past the 1 MB replay window, so it gets a full snapshot of up to 64k rows (about 5 MB), which puts it further behind. 84–90% of the bytes received were snapshots. Resuming from the client's offset didn't help. The fix is #49: the capped and compressed snapshots *Attach and resume* already asks for, and the screen only after a resync.
+- **What M31 still needs:**
+  - keys read as events and encoded per pane by libghostty's `key::Encoder` (raw bytes break kitty keys and modifyOtherKeys);
+  - right-click menus;
+  - agent blocks as a transcript with approve and deny;
+  - dismiss;
+  - synchronized output;
+  - bracketed paste.
+
+  Copy mode is the largest piece and is M32.
+
+#### M31: `illogical tui`
+
+In `crates/cli/src/tui/` (ratatui, crossterm), starting from the spike. Everything is in #50:
+
+- a `cells()` walk in `crates/vt`, shared with the daemon;
+- the sidebar with M24's actions;
+- keys and mouse through libghostty's encoders;
+- the web client's menus;
+- agent blocks as transcripts;
+- `--host`.
+
+**Done when:**
+
+- Claude Code, Neovim and htop behave as they do in Ghostty;
+- the TUI and the web client edit one layout at once;
+- an approval is answered from the sidebar;
+- `ssh geek illogical tui` works at 80x24 and at 300x80.
+
+#### M32: copy mode in the TUI
+
+Detail is in #51:
+
+- the wheel and keys scroll the pane's local engine;
+- drag selects within a pane (libghostty selection) and copies through OSC 52, which works over ssh;
+- a keyboard copy mode searches history;
+- command marks select one command's output.
 
 ## Acceptance tests (automated where possible)
 
