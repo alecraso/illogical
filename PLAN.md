@@ -3366,6 +3366,19 @@ A [chant](https://intentius.io/chant) workspace (a repo with a `chant.workspace.
 
 **Done when:** on geek, `illogical workspace ~/dev/intentius/chant` (after `npm install`) shows its members, and a gated op shows as attention within about 5 s. The phone can approve it, and the next `chant run` walks through.
 
+### Studio apps track (S22, added 2026-10-02)
+
+arugula-salad's studio makes a box per app on wisp: the app, hud's proxy and panel in front of it, a door, and a steward that runs releases. The idea is that the box shows up in illogical as a block beside its terminals and agents, and whatever it waits on reaches the swarm's needs-you rail. That covers hud's agent asking a question now. Release gates are chant's (`chant approve release ship`), so they come with M34's workspace attention.
+
+#### S22: studio apps spike
+
+**Done 2026-10-02: go** (see [spikes/s22-apps](spikes/s22-apps/README.md)), against a real studio box cloned from `arugula-box-template` on geek's wispd.
+
+- **Framing:** a block's frame is always third party (illogical's page is on `*.ts.net`, the box on its own site), and hud's `SameSite=Lax` session cookie is refused there: 401 in Chrome and Firefox, in illogical's own client too. The same cookie as `SameSite=None; Secure; Partitioned` works in both (200), including Chrome with third-party cookies blocked, and Chrome keys it to illogical's site. A plain web-page block (`illogical open <entry link>`) is enough: the box is already its own origin. With third-party cookies blocked the frame's `localStorage` is still refused (#69). WebKit wasn't run.
+- **Questions:** hud puts a waiting question in every `hud-chat-queue` frame, and a follower of `/__hud/api/chat/stream` turned each one into an M24 `ask` 11 ms after hud asked. That puts it on the pane's card, the swarm's rail, push and `illogical attention`. Answered on the swarm's rail, it reached hud (`/__hud/api/chat/answer`) in 48–74 ms and the agent's turn went on. Answered in hud's own panel, the card was withdrawn 33 ms later.
+- **What it needs:** studio's door hands out the partitioned cookie; `Api::Ask` takes browser blocks (it's terminal-only, so the spike's follower raised the card on a terminal beside the app, and the swarm filed it under the wrong project); the follower moves into the daemon as an app block; illogical gets a studio token to list apps and mint entry links (passkey-only today); and hud learns who answered in illogical (it records the follower's own player).
+- **Found on the way (arugula-salad):** hud's panel never mounts on the template's page, framed or not (the injected client looks for `<body>` from `<head>`). A clone of the box template on geek gets `widgets.wtf` while the template's `~/box/domain` says `studio.arugula.io`.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
