@@ -61,9 +61,25 @@ fn role_in(r: &Roster, account: &str) -> Option<TeamRole> {
 /// The account's daemons should look at their trust again (a roster
 /// changed, a team locked).
 fn nudge_team(app: &App, team: &str) {
-    if let Ok(ds) = app.db.team_daemons(team) {
-        app.relay.nudge(&ds);
+    let mut ds = app.db.team_daemons(team).unwrap_or_default();
+    // Members' own machines may have shared sessions with the team (M30):
+    // the members of this version and the one before (someone just left).
+    if let Ok(Some(latest)) = app.db.latest_roster(team)
+        && let Ok(r) = parse(&latest)
+    {
+        let mut accounts: Vec<String> = Vec::new();
+        for b in app.db.rosters(team, r.version.saturating_sub(2)).unwrap_or_default() {
+            if let Ok(r) = parse(&b) {
+                accounts.extend(r.members.into_iter().map(|m| m.account));
+            }
+        }
+        accounts.sort();
+        accounts.dedup();
+        for a in accounts {
+            ds.extend(app.db.daemons(&a).unwrap_or_default().into_iter().map(|d| d.id));
+        }
     }
+    app.relay.nudge(&ds);
 }
 
 // ---------------------------------------------------------------- people
@@ -263,6 +279,39 @@ pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Q
     accounts.dedup();
     let certs = certs_for(&app, accounts.iter().map(String::as_str))?;
     Ok(Json(json!({ "team": pin(&t), "locked": t.locked, "rosters": rosters, "certs": certs })))
+}
+
+#[derive(Deserialize)]
+pub struct TeamIds {
+    ids: String,
+}
+
+/// Teams a member's own machine shared sessions with (M30): for each team
+/// its owner is in, every roster from the first (the machine checks the
+/// chain from the founder it pinned in the grant), every member's
+/// certificates, and whether it's locked. Teams its owner isn't in are
+/// left out.
+pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<TeamIds>) -> R {
+    let owner = app.db.daemon_account(&d.cert.device)?.unwrap_or_default();
+    let mut out = serde_json::Map::new();
+    for team in q.ids.split(',').filter(|t| !t.is_empty()).take(50) {
+        let Some(t) = app.db.team(team)? else { continue };
+        let Some(latest) = app.db.latest_roster(team)? else { continue };
+        if role_in(&parse(&latest)?, &owner).is_none() {
+            continue;
+        }
+        let rosters: Vec<Roster> = app.db.rosters(team, 0)?.iter().map(|b| parse(b)).collect::<anyhow::Result<_>>()?;
+        let mut accounts: Vec<String> =
+            rosters.iter().flat_map(|r| r.members.iter().map(|m| m.account.clone())).collect();
+        accounts.sort();
+        accounts.dedup();
+        let certs = certs_for(&app, accounts.iter().map(String::as_str))?;
+        out.insert(
+            team.to_owned(),
+            json!({ "team": pin(&t), "name": t.name, "locked": t.locked, "rosters": rosters, "certs": certs }),
+        );
+    }
+    Ok(Json(Value::Object(out)))
 }
 
 #[derive(Deserialize)]

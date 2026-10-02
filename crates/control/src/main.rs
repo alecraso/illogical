@@ -222,6 +222,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/invites/{team}/{code}/accept", post(teams::accept_invite))
         .route("/api/daemon/team", get(teams::daemon_team))
         .route("/api/daemon/peers", get(teams::daemon_peers))
+        .route("/api/daemon/teams", get(teams::daemon_teams))
         .route("/api/daemon/access", post(teams::daemon_access))
         .route("/api/relay/link/{id}", get(relay::link))
         .route("/api/push/subscribe", post(push::subscribe))

@@ -120,7 +120,7 @@ fn tap(pane: PaneHandle, from: u64) -> Tap {
     let client = NEXT_TAP.fetch_add(1, Ordering::Relaxed);
     let (data, rx) = mpsc::channel(crate::pane::CLIENT_QUEUE);
     let (ctrl, _ctrl) = mpsc::unbounded_channel();
-    pane.attach(Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner }, Some(from));
+    pane.attach(Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner, name: None }, Some(from));
     Tap { pane, client, rx, _ctrl }
 }
 

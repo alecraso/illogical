@@ -95,6 +95,9 @@ pub struct Acl {
     /// A team daemon's members' roles on every session (M19), from the
     /// team's signed roster.
     team: RwLock<std::collections::HashMap<String, Role>>,
+    /// Members of teams sessions were shared with (M30), by team, each with
+    /// their role in it, from rosters this daemon verified.
+    shared_teams: RwLock<std::collections::HashMap<String, std::collections::HashMap<String, Role>>>,
     /// Who wants "needs you" notifications about what (M29), by principal
     /// id; in `notify.json`.
     notify_path: PathBuf,
@@ -129,6 +132,7 @@ impl Acl {
             audit: state_dir.join("audit.jsonl"),
             grants: RwLock::new(grants),
             team: Default::default(),
+            shared_teams: Default::default(),
             notify_path,
             notify: RwLock::new(notify),
         }
@@ -190,7 +194,21 @@ impl Acl {
                     .find(|g| g.session == session && &g.principal == id)
                     .map(|g| g.role);
                 let team = self.team.read().unwrap().get(id).copied();
-                granted.max(team)
+                // Shared with a team they're in: the grant's role, at most
+                // their role in the team.
+                let teams = self.shared_teams.read().unwrap();
+                let via_team = self
+                    .grants
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter(|g| g.session == session)
+                    .filter_map(|g| {
+                        let in_team = teams.get(g.principal.strip_prefix("team:")?)?.get(id)?;
+                        Some(g.role.min(*in_team))
+                    })
+                    .max();
+                granted.max(team).max(via_team)
             }
         }
     }
@@ -198,6 +216,11 @@ impl Acl {
     /// A team daemon's members' roles (from its verified roster).
     pub fn set_team_roles(&self, roles: std::collections::HashMap<String, Role>) {
         *self.team.write().unwrap() = roles;
+    }
+
+    /// Members of the teams sessions were shared with (M30).
+    pub fn set_shared_teams(&self, teams: std::collections::HashMap<String, std::collections::HashMap<String, Role>>) {
+        *self.shared_teams.write().unwrap() = teams;
     }
 
     pub fn team_role(&self, p: &Principal) -> Option<Role> {
@@ -274,7 +297,20 @@ impl Acl {
 
     /// Whether this principal may connect at all.
     pub fn knows(&self, p: &Principal) -> bool {
-        p.is_owner() || self.grants.read().unwrap().iter().any(|g| g.principal == p.id()) || self.team_role(p).is_some()
+        if p.is_owner()
+            || self.grants.read().unwrap().iter().any(|g| g.principal == p.id())
+            || self.team_role(p).is_some()
+        {
+            return true;
+        }
+        // In a team something here was shared with (M30).
+        let teams = self.shared_teams.read().unwrap();
+        self.grants
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|g| g.principal.strip_prefix("team:"))
+            .any(|t| teams.get(t).is_some_and(|m| m.contains_key(p.id())))
     }
 
     pub fn list(&self) -> Vec<Grant> {
@@ -502,7 +538,9 @@ pub mod api {
         #[serde(default = "yes")]
         history: bool,
         /// For `account:<id>` (M19): their root device, as the owner saw it
-        /// (they compare its fingerprint with the person).
+        /// (they compare its fingerprint with the person). For `team:<id>`
+        /// (M30): `<founder device>.<founder's root>`, as the owner's
+        /// browser pinned the team.
         #[serde(default)]
         root: Option<String>,
     }
@@ -514,22 +552,26 @@ pub mod api {
     async fn set(State(app): State<Arc<App>>, Json(b): Json<Set>) -> Response {
         let ok_id = |rest: &str| !rest.is_empty() && rest.len() <= 200 && !rest.chars().any(char::is_control);
         let valid = b.principal.strip_prefix("tailnet:").is_some_and(ok_id)
-            || b.principal.strip_prefix("account:").is_some_and(ok_id);
+            || b.principal.strip_prefix("account:").is_some_and(ok_id)
+            || b.principal.strip_prefix("team:").is_some_and(ok_id);
         if !valid {
-            return (StatusCode::BAD_REQUEST, Json(json!({ "error": "principal is tailnet:<login> or account:<id>" })))
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "principal is tailnet:<login>, account:<id> or team:<id>" })),
+            )
                 .into_response();
         }
         // Account ids are as control made them; logins aren't case-sensitive.
         let principal =
             if b.principal.starts_with("tailnet:") { b.principal.to_ascii_lowercase() } else { b.principal.clone() };
-        if principal.starts_with("account:")
+        if (principal.starts_with("account:") || principal.starts_with("team:"))
             && b.role.is_some()
             && b.root.is_none()
             && app.acl.list().iter().all(|g| g.principal != principal)
         {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "sharing with an account needs its root device" })),
+                Json(json!({ "error": "sharing with an account needs its root device (a team: its founder's)" })),
             )
                 .into_response();
         }
