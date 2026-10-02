@@ -13,12 +13,19 @@ import { join } from "node:path";
 import { certBody, evaluate, joinCode, type Cert } from "./src/e2e/cert.ts";
 import { generateKeys, signText, type DeviceKeys } from "./src/e2e/keys.ts";
 import { E2ESocket } from "./src/e2e/channel.ts";
+import { signRoster } from "./src/e2e/team.ts";
+import { createHmac } from "node:crypto";
 
 const CONTROL = 7791;
 const GITHUB = 7792;
 const DAEMON = 7793;
 const SPY = 7794;
 const PUSH = 7795;
+const STRIPE = 7796;
+const SPRITES = 7798;
+const WHSEC = "whsec_smoke";
+// Who the fake GitHub signs in next.
+let asUser = "stranger";
 const base = `http://127.0.0.1:${CONTROL}`;
 const target = process.env.TARGET_DIR ?? "../target/debug";
 const procs: ChildProcess[] = [];
@@ -46,7 +53,8 @@ const gh = createServer((req, res) => {
   } else if (u.pathname === "/login/oauth/access_token") {
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ access_token: "gho_test" }));
   } else if (u.pathname === "/user") {
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: 4242, login: "stranger" }));
+    const id = [...asUser].reduce((h, c) => h * 31 + c.charCodeAt(0), 7);
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id, login: asUser }));
   } else res.writeHead(404).end();
 }).listen(GITHUB, "127.0.0.1");
 
@@ -107,7 +115,14 @@ try {
       ...["--github-client-id", "id", "--github-client-secret", "secret"],
       ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
       ...["--push-host", `127.0.0.1:${PUSH}`],
-    ], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_LOG: "illogical_control=debug" } }),
+      // Billing against a fake Stripe, with no free relay allowance (M22),
+      // and hosted sandboxes against a fake Sprites API (M20).
+      ...["--stripe-api", `http://127.0.0.1:${STRIPE}`, "--stripe-seat-price", "price_seat", "--stripe-minutes-price", "price_min"],
+      ...["--relay-free-mb", "0", "--sprites-url", `http://127.0.0.1:${SPRITES}`, "--sandbox-binary", "/bin/true"],
+    ], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RUST_LOG: "illogical_control=debug", STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: WHSEC, SPRITES_TOKEN: "t" },
+    }),
   );
   procs.at(-1)!.stdout!.on("data", (d: Buffer) => controlLog.push(d));
   procs.at(-1)!.stderr!.on("data", (d: Buffer) => controlLog.push(d));
@@ -317,6 +332,81 @@ try {
   check("no terminal content in control's logs", logs.length > 0 && !logs.includes("SECRET-MARKER"), `${logs.length} bytes of log`);
   check("no notification text in control's logs", logs.includes("push relayed") && !logs.includes("Needs you"));
   spy.close();
+
+  // 8. Billing (M22). The free account used the relay past its allowance
+  // (none, here): it's told.
+  const bill = await api<{ relay: { warning: boolean; slowed: boolean; bytes: number } }>("/api/billing");
+  check("a free account over its relay allowance sees the warning", bill.relay.warning && bill.relay.bytes > 0, JSON.stringify(bill.relay));
+  // A fake Stripe: records what control asks for.
+  const stripeCalls: { path: string; form: URLSearchParams }[] = [];
+  const fakeStripe = createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      const path = req.url!.split("?")[0];
+      stripeCalls.push({ path, form: new URLSearchParams(body) });
+      const reply = (v: unknown) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(v));
+      if (path === "/v1/customers") reply({ id: "cus_1" });
+      else if (path === "/v1/checkout/sessions") reply({ id: "cs_1", url: "https://checkout.stripe.test/cs_1" });
+      else if (path === "/v1/subscriptions/sub_1")
+        reply({ id: "sub_1", items: { data: [{ id: "si_seat", price: { id: "price_seat" } }, { id: "si_min", price: { id: "price_min" } }] } });
+      else reply({});
+    });
+  }).listen(STRIPE, "127.0.0.1");
+  // A fake Sprites API that can't make anything (a sandbox still counts
+  // from when it's asked for until it's deleted).
+  const fakeSprites = createServer((req, res) => res.writeHead(req.method === "DELETE" ? 204 : 500).end()).listen(SPRITES, "127.0.0.1");
+  // The team: the laptop's account owns it.
+  const team = "0123456789abcdef";
+  const v1 = await signRoster(
+    { v: 1, team, name: "Acme", version: 1, at: Date.now(), members: [{ account: me.account, root: laptop.id, role: "owner", name: "stranger" }] },
+    laptop,
+  );
+  await api("/api/teams", { roster: v1 });
+  // Hosted VMs need a paid plan once billing is on.
+  check("hosted VMs need a paid plan", await api("/api/sandboxes", { device: laptop.id }).then(() => false, (e: Error) => /paid plan/.test(e.message)));
+  const co = await api<{ url: string }>("/api/billing/checkout", { team });
+  const cs = stripeCalls.find((c) => c.path === "/v1/checkout/sessions")!.form;
+  check("checkout for the team: 1 seat, and metered minutes", co.url.includes("checkout") && cs.get("line_items[0][quantity]") === "1" && cs.get("line_items[1][price]") === "price_min");
+  // Stripe says it's done (a signed webhook).
+  const hook = async (event: unknown) => {
+    const body = JSON.stringify(event);
+    const t = Math.floor(Date.now() / 1000);
+    const sig = createHmac("sha256", WHSEC).update(`${t}.${body}`).digest("hex");
+    return fetch(`${base}/api/stripe/webhook`, { method: "POST", headers: { "stripe-signature": `t=${t},v1=${sig}` }, body });
+  };
+  const unsigned = await fetch(`${base}/api/stripe/webhook`, { method: "POST", headers: { "stripe-signature": "t=1,v1=00" }, body: "{}" });
+  check("an unsigned webhook is refused", unsigned.status === 400);
+  const done = await hook({ type: "checkout.session.completed", data: { object: { customer: "cus_1", subscription: "sub_1", metadata: { owner: `team:${team}` } } } });
+  check("the team upgraded", done.ok && (await api<{ teams: { plan: string }[] }>("/api/billing")).teams[0].plan === "team");
+  // A second person joins: the seats follow the roster.
+  const laptopCookie = cookie;
+  asUser = "colleague";
+  await signIn();
+  const them = await api<{ account: string }>("/api/me");
+  const theirs = await generateKeys();
+  await api("/api/devices", { cert: await cert(theirs, theirs, them.account, "browser", "their laptop") });
+  cookie = laptopCookie;
+  const v2 = await signRoster(
+    { ...v1, version: 2, at: Date.now(), members: [...v1.members, { account: them.account, root: theirs.id, role: "editor", name: "colleague" }] },
+    laptop,
+  );
+  await api(`/api/teams/${team}/roster`, { roster: v2 });
+  const seats = stripeCalls.filter((c) => c.path === "/v1/subscription_items/si_seat").at(-1)?.form.get("quantity");
+  check("adding a member adds a seat", seats === "2", `${seats}`);
+  // Sandbox minutes, now on the team's plan: one asked for and deleted.
+  const sbx = await api<{ id: string }>("/api/sandboxes", { device: laptop.id });
+  await sleep(500);
+  await fetch(`${base}/api/sandboxes/${sbx.id}`, { method: "DELETE", headers: { cookie, origin: base } });
+  await api("/api/billing/report", {});
+  const meter = stripeCalls.filter((c) => c.path === "/v1/billing/meter_events");
+  const minutes = meter.reduce((n, c) => n + Number(c.form.get("payload[value]")), 0);
+  check("sandbox minutes reported to Stripe", minutes === 1 && meter[0]?.form.get("payload[stripe_customer_id]") === "cus_1", `${minutes}`);
+  // What Stripe would invoice at $8 a seat and 1¢ a minute.
+  const invoice = Number(seats) * 800 + minutes * 1;
+  check("the invoice adds up: 2 seats and 1 minute", invoice === 1601, `${invoice}¢`);
+  fakeStripe.close();
+  fakeSprites.close();
 } catch (e) {
   console.log("FAIL", e);
   failed++;

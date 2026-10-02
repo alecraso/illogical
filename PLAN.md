@@ -2317,6 +2317,23 @@ Builds on M12 (principals and roles on each daemon) and M13 (presence, driving, 
 
 #### M22: billing and metering (hosted control only)
 
+**Done 2026-10-02, against a fake Stripe. Real test-mode keys come later (decided 2026-10-02).**
+
+- **What landed:**
+  - Stripe Checkout for a personal plan (hosted VM minutes) or a team (per seat, plus minutes);
+  - signed webhooks (checked against `STRIPE_WEBHOOK_SECRET`, within five minutes);
+  - seat counts that follow the signed roster;
+  - hourly meter events for sandbox minutes;
+  - free accounts get `--relay-free-mb` a month: a warning over it, and relayed traffic slowed down past twice it;
+  - with billing on, hosted VMs need a paid plan, and running ones are never stopped;
+  - the Plan and usage panel.
+- **Tested in `just control-smoke`:** the relay warning; Checkout; an unsigned webhook refused; the upgrade; a seat added when a member joins; minutes reported; the invoice arithmetic.
+- **Self-hosted control has none of it** unless `STRIPE_SECRET_KEY` is set.
+- **To go live:**
+  - Stripe test-mode keys, prices and a meter as Fly secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `ILLOGICAL_STRIPE_SEAT_PRICE`, `ILLOGICAL_STRIPE_MINUTES_PRICE`;
+  - the webhook endpoint `https://control.illogical.widgets.wtf/api/stripe/webhook` registered at Stripe.
+
+
 - **Plans:**
   - **Personal:** free; one person, any number of daemons, relay with fair-use caps.
   - **Team:** per seat.

@@ -155,6 +155,8 @@ pub async fn set_roster(
         app.db.drop_request(&team, &m.account)?;
     }
     nudge_team(&app, &team);
+    // A team pays per seat (M22).
+    crate::billing::sync_seats(&app, &team, b.roster.members.len()).await;
     Ok(Json(json!({ "version": b.roster.version })))
 }
 

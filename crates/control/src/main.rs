@@ -9,6 +9,7 @@
 
 mod api;
 mod auth;
+mod billing;
 mod db;
 mod limit;
 mod passkey;
@@ -78,6 +79,26 @@ struct Args {
     #[arg(long, default_value_t = 2, env = "ILLOGICAL_SANDBOX_QUOTA")]
     sandbox_quota: usize,
 
+    /// Billing (M22): a Stripe secret key turns it on (STRIPE_SECRET_KEY);
+    /// webhooks are checked with STRIPE_WEBHOOK_SECRET.
+    #[arg(long, env = "STRIPE_SECRET_KEY", hide_env_values = true)]
+    stripe_secret: Option<String>,
+    #[arg(long, env = "STRIPE_WEBHOOK_SECRET", hide_env_values = true)]
+    stripe_webhook_secret: Option<String>,
+    #[arg(long, default_value = "https://api.stripe.com", env = "ILLOGICAL_STRIPE_API")]
+    stripe_api: String,
+    /// The per-seat price, and the metered price and meter event for
+    /// sandbox minutes.
+    #[arg(long, env = "ILLOGICAL_STRIPE_SEAT_PRICE", default_value = "")]
+    stripe_seat_price: String,
+    #[arg(long, env = "ILLOGICAL_STRIPE_MINUTES_PRICE", default_value = "")]
+    stripe_minutes_price: String,
+    #[arg(long, env = "ILLOGICAL_STRIPE_MINUTES_EVENT", default_value = "sandbox_minutes")]
+    stripe_minutes_event: String,
+    /// Free relay traffic per account per month, in MB (with billing on).
+    #[arg(long, default_value_t = 10_000, env = "ILLOGICAL_RELAY_FREE_MB")]
+    relay_free_mb: u64,
+
     /// Push endpoints allowed besides the browsers' push services, as
     /// host:port (tests).
     #[arg(long = "push-host", hide = true)]
@@ -104,6 +125,7 @@ pub struct Github {
 
 pub struct Config {
     pub push_hosts: Vec<String>,
+    pub relay_free_bytes: u64,
     pub public_url: String,
     /// `public_url`'s origin, as browsers send it.
     pub origin: String,
@@ -120,6 +142,7 @@ pub struct App {
     pub limits: limit::Limits,
     pub vapid: push::Vapid,
     pub hosted: Option<sandboxes::Hosted>,
+    pub stripe: Option<billing::Stripe>,
 }
 
 /// An API error: `{"error": "..."}` with a status.
@@ -208,6 +231,10 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/sandboxes", get(sandboxes::list).post(sandboxes::create))
         .route("/api/sandboxes/{id}", axum::routing::delete(sandboxes::delete))
         .route("/api/daemon/sandbox-done", post(sandboxes::done))
+        .route("/api/billing", get(billing::status))
+        .route("/api/billing/checkout", post(billing::checkout))
+        .route("/api/billing/report", post(billing::report_now))
+        .route("/api/stripe/webhook", post(billing::webhook))
         .route("/api/relay/dial", get(relay::dial))
         .route("/api/relay/c/{id}", get(relay::client))
         .fallback(asset)
@@ -314,9 +341,18 @@ async fn main() -> anyhow::Result<()> {
         }),
         None => None,
     };
+    let stripe = a.stripe_secret.filter(|s| !s.is_empty()).map(|secret| billing::Stripe {
+        api: a.stripe_api.trim_end_matches('/').to_owned(),
+        secret,
+        webhook_secret: a.stripe_webhook_secret.unwrap_or_default(),
+        seat_price: a.stripe_seat_price,
+        minutes_price: a.stripe_minutes_price,
+        minutes_event: a.stripe_minutes_event,
+    });
     let app = Arc::new(App {
         cfg: Config {
             push_hosts: a.push_hosts,
+            relay_free_bytes: a.relay_free_mb * 1_000_000,
             origin: origin_of(&public_url)?,
             public_url,
             github,
@@ -329,7 +365,17 @@ async fn main() -> anyhow::Result<()> {
         limits: limit::Limits::new(a.trust_proxy_header),
         vapid,
         hosted,
+        stripe,
     });
+    if app.stripe.is_some() {
+        let a2 = app.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                billing::report_usage(&a2).await;
+            }
+        });
+    }
     // Nagle off: the relay's mux writes frames back to back (S15).
     let l = tokio::net::TcpListener::bind(a.listen).await?.tap_io(|t| {
         let _ = t.set_nodelay(true);
