@@ -1965,3 +1965,17 @@ button {
   border: 1px solid var(--raised-hover);
   border-radius: 6px;
 }
+
+.pane-private {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 5;
+  color: var(--dim);
+  background: var(--letterbox);
+}
+
+.share-warning {
+  color: var(--danger);
+}

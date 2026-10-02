@@ -1937,6 +1937,21 @@ What it feels like to be in a session with someone.
 
 #### M14: safe write access
 
+**Done 2026-10-02.**
+
+- **What landed:**
+  - A guest's new tab is a VM tab. Their split gets its own VM, or joins the tab's.
+  - VMs record who they're `by`, and a quota (`--guest-machines`, default 3) counts them.
+  - Trust grants for panes on the owner's machine: a guest asks, and the owner gets a prompt and a Web Push, then allows 10 minutes to 2 hours. A grant ends by itself and is checked on the WebSocket and the API.
+  - Private panes.
+  - A token-shape scan (`/api/sessions/{id}/secrets`) behind a warning in the Share dialog.
+  - An editor's agents always run on a VM of theirs.
+  - `e2e/guests.spec.ts` covers the done-when with real wisp VMs.
+- **Not covered:**
+  - Running `claude` in the guest's VM; the tests run a shell command, and Claude's credentials in VMs are M3b's.
+  - Answering from the phone notification itself. The push is sent; the tests answer in the page.
+  - CPU and memory quotas: VM size is wisp's.
+
 Make `editor` something you can hand out.
 
 - **Guest panes run on machines.** A non-owner's new pane or tab defaults to

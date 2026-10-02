@@ -55,24 +55,49 @@ pub enum ClientMsg {
 pub enum PaneOp {
     /// What happens to the pane when the daemon starts again (after a
     /// reboot).
-    SetPolicy { policy: Policy },
+    SetPolicy {
+        policy: Policy,
+    },
     /// Delete the pane's saved history and clear its scrollback.
     Purge,
     /// Shell integration (command marks, exit codes, cwd) for shells started
     /// in this pane from now on.
-    SetIntegration { on: bool },
+    SetIntegration {
+        on: bool,
+    },
     /// Set the pane's attention state (a client dismissing a badge).
-    Attention { state: Attention },
+    Attention {
+        state: Attention,
+    },
     /// Drive it now (M13); whoever drove it is told.
     TakeControl,
     /// Ask whoever drives it to hand over.
     RequestControl,
     /// Hand over to `to` (a principal id).
-    GiveControl { to: String },
+    GiveControl {
+        to: String,
+    },
     /// Stop driving it: the next to type will.
     ReleaseControl,
     /// Pair mode: everyone who may edit types at once.
-    SetPair { on: bool },
+    SetPair {
+        on: bool,
+    },
+    /// A guest asks the owner to let them drive this pane, which runs on
+    /// the owner's machine (M14).
+    RequestTrust,
+    /// The owner lets `to` drive it for `minutes`.
+    GrantTrust {
+        to: String,
+        minutes: u32,
+    },
+    RevokeTrust {
+        to: String,
+    },
+    /// Keep it from everyone but the owner (M14).
+    SetPrivate {
+        on: bool,
+    },
 }
 
 /// Whether a pane wants you: the cheap version of an "agent block".
@@ -211,6 +236,9 @@ pub enum ServerMsg {
     Notice { message: String },
     /// `who` asks to drive `pane`, which this client's person drives.
     ControlRequest { pane: PaneId, who: String, name: String },
+    /// A guest asks the owner to trust them with a pane on the owner's
+    /// machine (M14).
+    TrustRequest { pane: PaneId, who: String, name: String },
 }
 
 /// Everything a client needs to draw: sessions in order, each tab's tree
@@ -265,6 +293,9 @@ pub struct Machine {
     /// deleted by us; closing its owner only ends our sessions on it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub borrowed: bool,
+    /// Made for a guest (M14): their principal id, for their quota.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
 }
 
 /// A machine's owner: one pane (M3b), or a tab whose panes share it (M3c).
@@ -386,6 +417,13 @@ pub struct PaneInfo {
     /// Pair mode: every editor types at once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pair: bool,
+    /// Never shown to anyone but the owner (M14).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private: bool,
+    /// Guests trusted to drive this pane, though it runs on the owner's
+    /// machine (M14): principal id and until when (ms).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted: Vec<(String, u64)>,
 }
 
 /// A pane's driver (M13).

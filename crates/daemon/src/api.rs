@@ -22,7 +22,7 @@ use axum::{
 };
 use futures_util::stream::{self, StreamExt};
 use illogical_proto::{
-    EventKind, Frame, FrameKind, PaneId,
+    EventKind, Frame, FrameKind, PaneId, SessionId,
     api::{AttentionRequest, KeysRequest, MouseRequest, Process, RunRequest, RunResponse, SendRequest, WaitResult},
 };
 use regex::Regex;
@@ -59,6 +59,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
         .route("/api/panes/{id}/drivers", get(drivers))
+        .route("/api/sessions/{id}/secrets", get(secrets))
         .route("/api/blocks", post(open_block))
         .route("/api/blocks/{id}", get(describe))
         .route("/api/blocks/{id}/call/{method}", post(call))
@@ -366,9 +367,11 @@ async fn capture(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<C
 
 async fn open_block(
     State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
     Json(req): Json<illogical_proto::api::OpenRequest>,
 ) -> Res<Json<serde_json::Value>> {
-    match app.mux.api(|r| Api::Open(req, r)).await {
+    let who = who.map(|axum::Extension(w)| w);
+    match app.mux.api(|r| Api::Open(req, who, r)).await {
         Some(Ok(block)) => Ok(Json(serde_json::json!({ "block": block }))),
         Some(Err(e)) => Err(bad(e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
@@ -877,6 +880,57 @@ struct HistoryQuery {
     host: Option<String>,
 }
 
+/// Things that look like credentials, for warning before sharing (M14):
+/// common token shapes. A heuristic; it says so where it's shown.
+fn secret_kinds() -> &'static [(&'static str, Regex)] {
+    static KINDS: std::sync::OnceLock<Vec<(&'static str, Regex)>> = std::sync::OnceLock::new();
+    KINDS.get_or_init(|| {
+        [
+            ("a GitHub token", r"\b(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})"),
+            ("an Anthropic key", r"\bsk-ant-[A-Za-z0-9_-]{20,}"),
+            ("an API key", r"\bsk-[A-Za-z0-9]{32,}"),
+            ("an AWS key", r"\b(AKIA|ASIA)[0-9A-Z]{16}\b"),
+            ("a Slack token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+            ("a private key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+            ("a JWT", r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+            ("a password", r"(?i)\b(password|passwd|secret)\s*[:=]\s*\S{6,}"),
+        ]
+        .into_iter()
+        .map(|(k, re)| (k, Regex::new(re).expect("secret pattern")))
+        .collect()
+    })
+}
+
+pub fn find_secrets(text: &str) -> Vec<&'static str> {
+    secret_kinds().iter().filter(|(_, re)| re.is_match(text)).map(|(k, _)| *k).collect()
+}
+
+/// Panes of a session whose recent output looks like it holds a secret.
+async fn secrets(State(app): AppState, Path(id): Path<SessionId>) -> Res<Response> {
+    let panes = app
+        .mux
+        .api(|r| Api::SessionEnds(id, r))
+        .await
+        .flatten()
+        .ok_or(ApiError(StatusCode::NOT_FOUND, format!("no session ${id}")))?;
+    let mut found = Vec::new();
+    for p in panes.keys() {
+        let Ok(h) = pane(&app, *p).await else { continue };
+        let text = tokio::task::spawn_blocking(move || h.capture(CaptureFormat::Text, CaptureScope::Scrollback))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        // Recent output: the last 300 lines.
+        let recent: Vec<&str> = text.lines().rev().take(300).collect();
+        let kinds = find_secrets(&recent.join("\n"));
+        if !kinds.is_empty() {
+            found.push(serde_json::json!({ "pane": p, "kinds": kinds }));
+        }
+    }
+    Ok(Json(found).into_response())
+}
+
 /// Who typed in a pane, by handoff (M13).
 async fn drivers(State(app): AppState, Path(id): Path<PaneId>) -> Res<Response> {
     let dir = app.mux.store.pane_dir(id);
@@ -965,4 +1019,17 @@ async fn push_test(State(app): AppState) -> Res<Json<serde_json::Value>> {
     let push = app.push.as_ref().ok_or(ApiError(StatusCode::NOT_FOUND, "push is off".into()))?;
     push.send(0, "illogical", "Notifications work.", None);
     Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
+}
+
+#[cfg(test)]
+mod secret_tests {
+    #[test]
+    fn token_shapes() {
+        assert_eq!(super::find_secrets("export GH=ghp_0123456789abcdefghijABCDEFGHIJ012345"), ["a GitHub token"]);
+        assert_eq!(super::find_secrets("key: sk-ant-api03-abcdefghijklmnopqrstuv"), ["an Anthropic key"]);
+        assert!(super::find_secrets("AKIAIOSFODNN7EXAMPLE").contains(&"an AWS key"));
+        assert!(super::find_secrets("-----BEGIN OPENSSH PRIVATE KEY-----").contains(&"a private key"));
+        assert!(super::find_secrets("PASSWORD=hunter22").contains(&"a password"));
+        assert!(super::find_secrets("cargo build --release\n   Compiling foo").is_empty());
+    }
 }

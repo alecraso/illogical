@@ -251,6 +251,27 @@ export class Client {
 
   /** Someone asking to drive a pane this client's person drives. */
   requests: { pane: PaneId; who: string; name: string }[] = [];
+  /** M14: guests asking the owner to trust them with a pane here. */
+  trustRequests: { pane: PaneId; who: string; name: string }[] = [];
+
+  answerTrust(pane: PaneId, who: string, minutes: number | null) {
+    this.trustRequests = this.trustRequests.filter((r) => !(r.pane === pane && r.who === who));
+    if (minutes) this.paneOp(pane, { op: "grant_trust", to: who, minutes });
+    this.emit();
+  }
+
+  /** M14: whether this client's person may type in `pane` (a guest needs
+   * a VM pane, or the owner's trust). */
+  mayType(pane: PaneId): boolean {
+    if (!this.state?.roles) return true;
+    const info = this.info(pane);
+    if (!info) return false;
+    const session = this.sessionOfTab(this.tabOfPane(pane)?.id ?? -1);
+    if (this.role(session ?? null) === "viewer") return false;
+    if (info.host != null || info.type !== "terminal") return true;
+    const me = this.me();
+    return (info.trusted ?? []).some(([w, until]) => w === me && until > Date.now());
+  }
 
   /** This client's principal id (`owner` for the daemon's owner). */
   me(): string {
@@ -595,6 +616,13 @@ export class Client {
         break;
       case "control_request":
         this.requests = [...this.requests.filter((r) => r.pane !== msg.pane), { pane: msg.pane, who: msg.who, name: msg.name }];
+        this.emit();
+        break;
+      case "trust_request":
+        this.trustRequests = [
+          ...this.trustRequests.filter((r) => !(r.pane === msg.pane && r.who === msg.who)),
+          { pane: msg.pane, who: msg.who, name: msg.name },
+        ];
         this.emit();
         break;
       case "block": {

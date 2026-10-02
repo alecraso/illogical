@@ -74,6 +74,9 @@ pub struct PaneMeta {
     /// A non-terminal block's config: what makes it again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<serde_json::Value>,
+    /// Never shown to anyone but the owner (M14).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private: bool,
 }
 
 fn is_terminal(k: &BlockType) -> bool {
