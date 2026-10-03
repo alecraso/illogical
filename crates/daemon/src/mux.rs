@@ -58,6 +58,20 @@ const AGENTS: &[&str] = &["claude", "codex", "aider", "gemini", "opencode", "goo
 const URGENT: Duration = Duration::from_millis(40);
 /// Everything else (activity, directories, commands) at most this often.
 const TICK: Duration = Duration::from_secs(1);
+/// A driver shows as typing this long after their last keystroke (#118).
+const TYPING: Duration = Duration::from_secs(5);
+/// A driver who hasn't typed in a pane this long stops driving it, so the
+/// next to type drives (#118).
+const DRIVER_LAPSE: Duration = Duration::from_secs(10 * 60);
+
+/// [`DRIVER_LAPSE`], or `ILLOGICAL_DRIVER_LAPSE_MS` (for tests).
+fn driver_lapse() -> Duration {
+    std::env::var("ILLOGICAL_DRIVER_LAPSE_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(DRIVER_LAPSE)
+}
 /// What the OS says a pane runs is read again after this.
 const PROC_FRESH: Duration = Duration::from_secs(1);
 /// Pane fields a summary leaves out (M23): a client that needs them reads
@@ -510,6 +524,12 @@ struct Daemon {
     /// Who drives each pane (M13), and panes in pair mode.
     drivers: HashMap<PaneId, Driver>,
     pair: std::collections::HashSet<PaneId>,
+    /// When each driver last typed in their pane, or took it (#118).
+    drove: HashMap<PaneId, Instant>,
+    /// Panes whose driver typed in the last `TYPING`.
+    typing: std::collections::HashSet<PaneId>,
+    /// How long an idle driver keeps a pane.
+    lapse: Duration,
     /// Guests trusted to drive a pane on this machine (M14), until when.
     trust: HashMap<(PaneId, String), u64>,
     /// Size each pane was last given.
@@ -651,6 +671,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         shell_env: shell_env.clone(),
         drivers: HashMap::new(),
         pair: Default::default(),
+        drove: HashMap::new(),
+        typing: Default::default(),
+        lapse: driver_lapse(),
         trust: HashMap::new(),
         sizes: BTreeMap::new(),
         config,
@@ -1046,6 +1069,7 @@ impl Daemon {
                 _ = sleep_until(flush), if self.flush_due.is_some() => self.flush(),
                 _ = tick.tick() => {
                     self.tick_activity();
+                    self.tick_drivers();
                     self.find_ide_panes();
                     self.flush();
                 }
@@ -1695,9 +1719,10 @@ impl Daemon {
                             let why = format!("{} is driving this pane: take control (pane menu) or ask them", d.name);
                             return self.tell_once(c, why);
                         }
-                        Some(_) => {}
+                        Some(_) => self.typed(pane),
                         None if self.panes.contains_key(&pane) => {
-                            self.drivers.insert(pane, self.driver_for(c));
+                            self.drive(pane, self.driver_for(c));
+                            self.typed(pane);
                             self.broadcast();
                         }
                         None => {}
@@ -3076,6 +3101,43 @@ impl Daemon {
         }
     }
 
+    /// `who` drives `pane` from now (M13); they haven't typed in it yet.
+    fn drive(&mut self, pane: PaneId, who: Driver) -> Option<Driver> {
+        self.drove.insert(pane, Instant::now());
+        self.typing.remove(&pane);
+        self.drivers.insert(pane, who)
+    }
+
+    /// Its driver typed in `pane` (#118).
+    fn typed(&mut self, pane: PaneId) {
+        self.drove.insert(pane, Instant::now());
+        if self.typing.insert(pane) {
+            self.touch(pane);
+        }
+    }
+
+    /// Typing stops showing a few seconds after the last keystroke, and a
+    /// driver who has stopped typing for long lets go (#118).
+    fn tick_drivers(&mut self) {
+        let now = Instant::now();
+        self.drove.retain(|p, _| self.drivers.contains_key(p));
+        self.typing.retain(|p| self.drivers.contains_key(p));
+        let panes: Vec<PaneId> = self.drivers.keys().copied().collect();
+        for pane in panes {
+            let idle = now.duration_since(*self.drove.entry(pane).or_insert(now));
+            if idle >= self.lapse {
+                if let Some(d) = self.drivers.remove(&pane) {
+                    info!(pane, who = d.who, "stopped driving: no typing for {}s", idle.as_secs());
+                }
+                self.drove.remove(&pane);
+                self.typing.remove(&pane);
+                self.touch(pane);
+            } else if idle >= TYPING && self.typing.remove(&pane) {
+                self.mark(pane);
+            }
+        }
+    }
+
     /// Send every client what changed since it was last sent anything.
     fn flush(&mut self) {
         self.flush_due = None;
@@ -3376,7 +3438,7 @@ impl Daemon {
         let title = format!("%{pane}");
         match op {
             PaneOp::TakeControl => {
-                if let Some(prev) = self.drivers.insert(pane, me.clone())
+                if let Some(prev) = self.drive(pane, me.clone())
                     && prev.who != me.who
                 {
                     let message = format!("{} took control of {title}", me.name);
@@ -3395,7 +3457,7 @@ impl Daemon {
                 }
                 // Nobody (here) drives it: just take it.
                 _ => {
-                    self.drivers.insert(pane, me);
+                    self.drive(pane, me);
                 }
             },
             PaneOp::GiveControl { to } => {
@@ -3412,7 +3474,7 @@ impl Daemon {
                 };
                 let next = self.driver_for(to_client);
                 let message = format!("{} handed you control of {title}", me.name);
-                self.drivers.insert(pane, next);
+                self.drive(pane, next);
                 self.tell(to, ServerMsg::Notice { message });
             }
             PaneOp::ReleaseControl => {
@@ -3803,6 +3865,7 @@ impl Daemon {
             answered: self.answered.get(&p.id).cloned(),
             inbox: self.inbox.contains_key(&p.id),
             driver: self.drivers.get(&p.id).cloned(),
+            typing: self.typing.contains(&p.id),
             pair: self.pair.contains(&p.id),
             private: meta.private,
             trusted: {
@@ -3844,6 +3907,7 @@ impl Daemon {
             answered: self.answered.get(&id).cloned(),
             inbox: false,
             driver: None,
+            typing: false,
             pair: false,
             private: meta.private,
             trusted: Vec::new(),

@@ -390,11 +390,13 @@ export class Timeline extends Flat {
         cx.arc(x, y, 2.6, 0, 7);
         cx.fill();
         if (m.driving) {
+          cx.globalAlpha = m.typing ? 1 : 0.4;
           cx.strokeStyle = "#80cdc8";
           cx.lineWidth = 1;
           cx.beginPath();
           cx.arc(x, y, 4.6, 0, 7);
           cx.stroke();
+          cx.globalAlpha = 1;
         }
       });
     }

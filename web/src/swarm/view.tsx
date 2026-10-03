@@ -186,8 +186,14 @@ export function SwarmView({
     fed.current = panes.map((p): FieldPane => {
         const r = reasonOf(p);
         const me = fleet.meOn(p.host);
-        const people = (p.watchers ?? []).filter((w) => w.who !== me).map((w) => ({ name: w.name, driving: p.driver?.who === w.who }));
-        if (p.driver && p.driver.who !== me && !people.some((x) => x.name === p.driver!.name)) people.push({ name: p.driver.name, driving: true });
+        const typing = !!(p.driver && p.info.typing);
+        const people = (p.watchers ?? []).filter((w) => w.who !== me).map((w) => {
+          const driving = p.driver?.who === w.who;
+          return { name: w.name, driving, typing: driving && typing };
+        });
+        // #118: a driver who isn't looking shows only while they type.
+        if (typing && p.driver!.who !== me && !people.some((x) => x.name === p.driver!.name)) people.push({ name: p.driver!.name, driving: true, typing: true });
+        people.sort((a, b) => +b.typing - +a.typing || +b.driving - +a.driving);
         return {
           key: p.key,
           kind: kindOf(p),
