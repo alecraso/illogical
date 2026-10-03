@@ -311,7 +311,7 @@ export class Hive extends Flat {
         hex(cx, c.x, c.y, R + 4.5 + i * 3.5);
         cx.lineWidth = 2;
         cx.strokeStyle = "#80cdc8";
-        if (m.driving) {
+        if (m.typing) {
           cx.setLineDash([5, 4]);
           cx.lineDashOffset = reduce ? 0 : -sec * 12;
         }
@@ -322,7 +322,7 @@ export class Hive extends Flat {
       tagged.add(key);
       const m = p.people[0];
       cx.font = FONT.mono(600, 10);
-      const label = `${m.name} · ${m.driving ? "typing" : "watching"}${p.people.length > 1 ? ` +${p.people.length - 1}` : ""}`;
+      const label = `${m.name} · ${m.typing ? "typing" : m.driving ? "driving" : "watching"}${p.people.length > 1 ? ` +${p.people.length - 1}` : ""}`;
       const tw = cx.measureText(label).width;
       cx.fillStyle = "rgba(12,16,25,0.9)";
       cx.fillRect(c.x + R + 2, c.y - R - 12, tw + 10, 15);

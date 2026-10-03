@@ -120,9 +120,10 @@ interface Person {
   g: THREE.Group;
   cone: THREE.Mesh;
   tag: THREE.Sprite;
-  tags: { watching: THREE.Texture; typing: THREE.Texture };
+  tags: { watching: THREE.Texture; driving: THREE.Texture; typing: THREE.Texture };
   key: string | null;
   driving: boolean;
+  typing: boolean;
   from: THREE.Vector3;
   t: number;
   k: number;
@@ -566,11 +567,12 @@ export class City implements SwarmScene {
   }
 
   private syncPeople() {
-    const want = new Map<string, { key: string; driving: boolean }>();
+    const want = new Map<string, { key: string; driving: boolean; typing: boolean }>();
+    const rank = (p: { driving: boolean; typing: boolean }) => +p.typing * 2 + +p.driving;
     for (const b of this.bs.values()) {
       for (const p of b.people ?? []) {
         const had = want.get(p.name);
-        if (!had || (p.driving && !had.driving)) want.set(p.name, { key: b.key, driving: p.driving });
+        if (!had || rank(p) > rank(had)) want.set(p.name, { key: b.key, driving: p.driving, typing: p.typing });
       }
     }
     for (const [name, m] of this.people) {
@@ -590,6 +592,7 @@ export class City implements SwarmScene {
         const cone = new THREE.Mesh(this.coneGeo, this.coneMat);
         const tags = {
           watching: textTexture([[`${name} · watching`, `600 30px ${MONO}`, "#e6ebf4", 14, 43]], 384, 64),
+          driving: textTexture([[`${name} · driving`, `600 30px ${MONO}`, "#e6ebf4", 14, 43]], 384, 64),
           typing: textTexture([[`${name} · typing`, `600 30px ${MONO}`, "#e6ebf4", 14, 43]], 384, 64),
         };
         const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tags.watching, depthTest: false, transparent: true }));
@@ -600,7 +603,7 @@ export class City implements SwarmScene {
         const at = this.bs.get(w.key);
         g.position.set(at?.x ?? 0, 14, at?.z ?? 0);
         this.scene.add(g);
-        m = { name, g, cone, tag, tags, key: null, driving: false, from: g.position.clone(), t: 1, k: k++ };
+        m = { name, g, cone, tag, tags, key: null, typing: false, driving: false, from: g.position.clone(), t: 1, k: k++ };
         this.people.set(name, m);
       }
       if (m.key !== w.key) {
@@ -608,9 +611,10 @@ export class City implements SwarmScene {
         m.from.copy(m.g.position);
         m.t = 0;
       }
-      if (m.driving !== w.driving) {
+      if (m.driving !== w.driving || m.typing !== w.typing) {
         m.driving = w.driving;
-        (m.tag.material as THREE.SpriteMaterial).map = w.driving ? m.tags.typing : m.tags.watching;
+        m.typing = w.typing;
+        (m.tag.material as THREE.SpriteMaterial).map = w.typing ? m.tags.typing : w.driving ? m.tags.driving : m.tags.watching;
       }
     }
   }
@@ -917,7 +921,7 @@ export class City implements SwarmScene {
         const dy = m.g.position.y - (b.h + 0.12);
         m.cone.scale.set(0.85, Math.hypot(dx, dy, dz), 0.85);
         m.cone.quaternion.setFromUnitVectors(down, new THREE.Vector3(dx, -dy, dz).normalize());
-        m.cone.visible = m.driving && m.t > 0.85;
+        m.cone.visible = m.typing && m.t > 0.85;
         (m.g.userData.body as THREE.Object3D).rotation.y = t / 900;
       }
       if (this.fly) {

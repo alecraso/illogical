@@ -30,7 +30,8 @@ test.beforeAll(async () => {
       ...["--listen", ANY, "--state-dir", dir, "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
-    { stdio: "ignore" },
+    // #118: drivers who stop typing let go after 8 s here.
+    { stdio: "ignore", env: { ...process.env, ILLOGICAL_DRIVER_LAPSE_MS: "8000" } },
   );
   base = `http://127.0.0.1:${await daemonPort(dir, daemon)}`;
   for (let i = 0; i < 100; i++) {
@@ -150,4 +151,21 @@ test("a 'from now' viewer can't reach what came before", async ({ browser }) => 
   const screen = await api(`/api/panes/${pane}/capture`, undefined, headers);
   expect(screen.status).toBe(200);
   expect(await screen.text()).not.toContain("BEFORE-42");
+});
+
+test("typing shows for a few seconds; an idle driver lets go (#118)", async () => {
+  const seen = (p: Page) =>
+    p.evaluate((id) => {
+      const i = window.__illogical.client.info(id);
+      return { driver: i?.driver?.who ?? null, typing: !!i?.typing };
+    }, pane);
+  await run(owner, pane, "echo again-$((6*7))", "again-42");
+  await expect.poll(() => seen(friend)).toEqual({ driver: "owner", typing: true });
+  // A few seconds on it still drives, but isn't typing.
+  await expect.poll(() => seen(friend), { timeout: 10_000 }).toEqual({ driver: "owner", typing: false });
+  // Then it lets go, and the friend drives by typing, with no take-over.
+  await expect.poll(() => seen(friend), { timeout: 15_000 }).toEqual({ driver: null, typing: false });
+  await friend.locator(`[data-pane="${pane}"]`).click({ position: { x: 40, y: 40 } });
+  await run(friend, pane, "echo lapsed-$((6*7))", "lapsed-42");
+  await expect.poll(() => seen(owner)).toEqual({ driver: `tailnet:${FRIEND}`, typing: true });
 });

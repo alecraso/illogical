@@ -809,6 +809,9 @@ pub struct PaneInfo {
     /// in pair mode. `None`: nobody yet (the next to type drives).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver: Option<Driver>,
+    /// Its driver typed in it in the last few seconds (#118).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub typing: bool,
     /// Pair mode: every editor types at once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pair: bool,

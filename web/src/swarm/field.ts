@@ -41,8 +41,10 @@ export interface FieldPane {
   lastDur?: number | null;
   lastExit?: number | null;
   lastEnded?: number | null;
-  /** Teammates who have it open; `driving` when they type into it. */
-  people?: { name: string; driving: boolean }[];
+  /** Teammates who have it open, or type in it: `driving` when they hold
+   * its driver claim (M13), `typing` when they typed in the last few
+   * seconds (#118). */
+  people?: { name: string; driving: boolean; typing: boolean }[];
 }
 
 /** What the swarm draws its panes with (M41's themes): the field (blocks)

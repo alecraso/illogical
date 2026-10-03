@@ -174,6 +174,8 @@ export interface PaneInfo {
   inbox?: boolean;
   /** M13: who drives it; absent when nobody does yet. */
   driver?: Driver;
+  /** Its driver typed in it in the last few seconds (#118). */
+  typing?: boolean;
   /** Pair mode: every editor types at once. */
   pair?: boolean;
   /** M14: never shown to anyone but the owner. */
