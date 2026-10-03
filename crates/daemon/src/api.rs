@@ -78,6 +78,9 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/blocks", post(open_block))
         .route("/api/blocks/{id}", get(describe))
         .route("/api/blocks/{id}/call/{method}", post(call))
+        .route("/api/studio", get(studio_status).post(studio_login).delete(studio_logout))
+        .route("/api/studio/apps", get(studio_apps))
+        .route("/api/studio/followers/{app}", axum::routing::put(studio_follower).delete(studio_unfollow))
         .route("/api/machines", get(machines))
         .route("/api/machines/{id}/reset", post(reset_machine))
         .route("/api/panes/{id}/share-machine", post(share_machine))
@@ -385,6 +388,13 @@ struct AskRequest {
     /// same question.
     #[serde(default)]
     id: Option<String>,
+    /// What raised it, when that isn't Claude Code's hook (M35: `hud`, for
+    /// a studio box's agent asking on a browser or app block).
+    #[serde(default)]
+    source: Option<String>,
+    /// Who asks, as the card names it ("hud asks").
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// Withdraws a terminal's question if whoever asked it goes away first.
@@ -404,9 +414,12 @@ impl Drop for AskGuard {
 }
 
 /// `illogical ask`: show AskUserQuestion's questions beside a terminal and
-/// wait for the answer. Answers `{action: accept, content, output}` (the
-/// hook's output for Claude Code), `{action: decline, output}`,
-/// `{action: terminal}` (answer in the terminal) or `{action: withdrawn}`.
+/// wait for the answer. Answers `{action: accept, content, output, by}`
+/// (the hook's output for Claude Code, and who answered), `{action:
+/// decline, output, by}`, `{action: terminal}` (answer in the terminal) or
+/// `{action: withdrawn}`. A browser or app block takes questions too
+/// (M35), from whatever follows a page's agent: `source` and `agent` say
+/// who asks.
 async fn ask(
     State(app): AppState,
     Path(id): Path<PaneId>,
@@ -427,7 +440,8 @@ async fn ask(
         url: None,
         accepted: false,
         tool_call_id: req.id,
-        source: "hook".into(),
+        source: req.source.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "hook".into()),
+        agent: req.agent.filter(|s| !s.trim().is_empty()),
         at_ms: now_ms(),
         tool: None,
         input: None,
@@ -443,14 +457,16 @@ async fn ask(
     let reply = rx.await;
     guard.armed = false;
     Ok(Json(match reply {
-        Ok(AskReply::Answer(content)) => {
+        Ok((AskReply::Answer(content), by)) => {
             let output = ask::hook_output(&req.questions, &content);
-            serde_json::json!({ "action": "accept", "content": content, "output": output })
+            serde_json::json!({ "action": "accept", "content": content, "output": output, "by": by })
         }
-        Ok(AskReply::Decline) => serde_json::json!({ "action": "decline", "output": ask::hook_declined() }),
-        Ok(AskReply::Terminal) => serde_json::json!({ "action": "terminal" }),
+        Ok((AskReply::Decline, by)) => {
+            serde_json::json!({ "action": "decline", "output": ask::hook_declined(), "by": by })
+        }
+        Ok((AskReply::Terminal, _)) => serde_json::json!({ "action": "terminal" }),
         // A question is never allowed or denied (the mux refuses that).
-        Ok(AskReply::Withdrawn | AskReply::Allow { .. } | AskReply::Deny { .. }) => {
+        Ok((AskReply::Withdrawn | AskReply::Allow { .. } | AskReply::Deny { .. }, _)) => {
             serde_json::json!({ "action": "withdrawn" })
         }
         // The daemon is going away; the asker asks the next one.
@@ -481,6 +497,7 @@ async fn permit(
         accepted: false,
         tool_call_id: None,
         source: "hook".into(),
+        agent: None,
         at_ms: now_ms(),
         tool: Some(tool),
         input: Some(input),
@@ -496,10 +513,12 @@ async fn permit(
     let reply = rx.await;
     guard.armed = false;
     Ok(Json(match reply {
-        Ok(AskReply::Allow { always }) => {
+        Ok((AskReply::Allow { always }, _)) => {
             serde_json::json!({ "action": "allow", "output": ask::permit_allow(always.as_ref()) })
         }
-        Ok(AskReply::Deny { message }) => serde_json::json!({ "action": "deny", "output": ask::permit_deny(&message) }),
+        Ok((AskReply::Deny { message }, _)) => {
+            serde_json::json!({ "action": "deny", "output": ask::permit_deny(&message) })
+        }
         Ok(_) => serde_json::json!({ "action": "withdrawn" }),
         Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }))
@@ -615,7 +634,7 @@ async fn block_call(
     // The transcript names whoever isn't its owner (the owner's own
     // answers go unremarked, as before M29). A gate's ledger names whoever
     // approved it, the owner too, by their illogical name (#75).
-    let gate = b.kind() == illogical_proto::BlockType::Workspace;
+    let gate = matches!(b.kind(), illogical_proto::BlockType::Workspace | illogical_proto::BlockType::App);
     let name = by.as_ref().filter(|d| gate || d.who != "owner").map(|d| d.name.as_str());
     let out = b.call_by(method, args.clone(), name).await?;
     if gate && method == "approve" {
@@ -731,9 +750,13 @@ async fn capture(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<C
 async fn open_block(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-    Json(req): Json<illogical_proto::api::OpenRequest>,
+    Json(mut req): Json<illogical_proto::api::OpenRequest>,
 ) -> Res<Json<serde_json::Value>> {
     let who = who.map(|axum::Extension(w)| w);
+    // A studio box (M35), by its app's name: where it is, from studio.
+    if req.kind == illogical_proto::BlockType::App {
+        req.config = app_config(&req.config).await.map_err(bad)?;
+    }
     // A pane on another daemon (#17) names a host in our list: that's
     // where clients look it up.
     if req.kind == illogical_proto::BlockType::Remote {
@@ -975,7 +998,14 @@ async fn call(
         _ => None,
     };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
-        return block_call(&app, id, &b, &method, args, by).await.map(Json).map_err(bad);
+        // A question raised on the block (M35) is answered where it waits.
+        // (A studio box's gate is approved by the block: `{key}`.)
+        let gate = method == "approve" && ["key", "member"].iter().any(|k| args.get(*k).is_some());
+        let answering = !gate && matches!(method.as_str(), "answer" | "decline" | "terminal" | "approve" | "deny");
+        if !(answering && app.mux.api(|r| Api::Holds(id, r)).await.unwrap_or(false)) {
+            return block_call(&app, id, &b, &method, args, by).await.map(Json).map_err(bad);
+        }
+        return answer_terminal(&app, id, &method, args, by).await;
     }
     let p = pane(&app, id).await?;
     match method.as_str() {
@@ -1831,4 +1861,103 @@ async fn vsix() -> Response {
         crate::editor::vsix::build(),
     )
         .into_response()
+}
+
+/// A studio app block's config (M35) from `{app}` (and optionally `to`,
+/// dropped: a deep link is the frame's, never kept): the box and studio
+/// filled in from studio's list when not given.
+pub async fn app_config(c: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let name = c["app"].as_str().filter(|n| !n.is_empty()).ok_or("an app block needs {\"app\": NAME}")?;
+    let studio = crate::apps::studio::get().ok_or("no studio here")?;
+    // With a follower link kept for the app, hud is told who answered,
+    // wherever the block was opened from (the picker passes nothing).
+    let follower = c["follower"].as_bool().unwrap_or_else(|| studio.follower(name).is_some());
+    let mut out = serde_json::json!({ "app": name, "follower": follower });
+    match (c["box_url"].as_str(), c["studio"].as_str()) {
+        (Some(b), Some(s)) => {
+            out["box_url"] = b.into();
+            out["studio"] = s.into();
+            if let Some(t) = c["title"].as_str() {
+                out["title"] = t.into();
+            }
+        }
+        _ => {
+            let a = studio.app(name).await?;
+            out["box_url"] = a.url.into();
+            out["studio"] = studio.url().ok_or("not logged in to a studio")?.into();
+            if let Some(t) = a.title {
+                out["title"] = t.into();
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn studio() -> Res<Arc<crate::apps::studio::Studio>> {
+    crate::apps::studio::get().ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "no studio here".into()))
+}
+
+/// `GET /api/studio` (M35): which studio, and whether there's a token.
+/// Never the token.
+async fn studio_status() -> Res<Json<serde_json::Value>> {
+    Ok(Json(studio()?.status()))
+}
+
+#[derive(Deserialize)]
+struct StudioLogin {
+    url: String,
+    token: String,
+}
+
+/// `illogical studio login`: keep a studio token, once studio takes it.
+async fn studio_login(Json(req): Json<StudioLogin>) -> Res<Json<serde_json::Value>> {
+    let apps = studio()?.login(&req.url, &req.token).await.map_err(bad)?;
+    Ok(Json(serde_json::json!({ "apps": apps })))
+}
+
+async fn studio_logout() -> Res<Json<serde_json::Value>> {
+    studio()?.logout().map_err(bad)?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// The person's apps, from studio, with the app blocks that show them.
+async fn studio_apps(State(app): AppState) -> Res<Json<serde_json::Value>> {
+    let s = studio()?;
+    let apps = s.apps().await.map_err(bad)?;
+    let mut blocks: HashMap<String, Vec<PaneId>> = HashMap::new();
+    for p in app.mux.api(Api::Panes).await.unwrap_or_default() {
+        if p.info.kind == illogical_proto::BlockType::App
+            && let Some(b) = app.mux.api(|r| Api::Block(p.info.id, r)).await.flatten()
+            && let Some(name) = b.config()["app"].as_str()
+        {
+            blocks.entry(name.to_owned()).or_default().push(p.info.id);
+        }
+    }
+    let list: Vec<serde_json::Value> = apps
+        .into_iter()
+        .map(|a| {
+            let mut v = serde_json::to_value(&a).unwrap_or_default();
+            v["blocks"] = serde_json::json!(blocks.get(&a.name).cloned().unwrap_or_default());
+            v
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "studio": s.url(), "apps": list })))
+}
+
+#[derive(Deserialize)]
+struct FollowerLink {
+    link: String,
+}
+
+/// Keep a hud follower link for an app (`hud share --role follower` in
+/// its box): app blocks with `follower` enter with it and name who
+/// answered.
+async fn studio_follower(Path(name): Path<String>, Json(req): Json<FollowerLink>) -> Res<Json<serde_json::Value>> {
+    studio()?.set_follower(&name, Some(&req.link)).map_err(bad)?;
+    Ok(Json(serde_json::json!({})))
+}
+
+async fn studio_unfollow(Path(name): Path<String>) -> Res<Json<serde_json::Value>> {
+    studio()?.set_follower(&name, None).map_err(bad)?;
+    Ok(Json(serde_json::json!({})))
 }

@@ -57,6 +57,8 @@ fn policy(method: &Method, path: &str) -> Policy {
         ["api", "panes", id, "ask", "withdraw"] if !get => {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
         }
+        // M35: a way into a studio box is the owner's (it signs in as them).
+        ["api", "blocks", _, "call", "enter"] => Policy::Owner,
         ["api", "blocks", id, "call", _] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         // M24: the handler shows each person what they may read, and checks
         // each pane acted on.
@@ -155,6 +157,10 @@ mod tests {
         assert_eq!(policy(&g, "/api/editors/vsix"), Policy::Owner);
         assert_eq!(policy(&g, "/api/hosts/self/shell-env"), Policy::Owner);
         assert_eq!(policy(&p, "/api/hosts/self/shell-env/refresh"), Policy::Owner);
+        assert_eq!(policy(&p, "/api/blocks/7/call/enter"), Policy::Owner);
+        assert_eq!(policy(&p, "/api/blocks/7/call/answer"), Policy::On(7, Role::Editor));
+        assert_eq!(policy(&p, "/api/studio"), Policy::Owner);
+        assert_eq!(policy(&g, "/api/studio/apps"), Policy::Owner);
     }
 
     #[test]

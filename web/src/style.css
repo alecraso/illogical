@@ -3283,3 +3283,28 @@ button {
   padding: 8px 14px;
   font-size: 14px;
 }
+
+/* M35: a studio box's gates, above its frame. */
+.app-gates {
+  border-bottom: 1px solid var(--accent);
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 13px;
+}
+
+.app-gate {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+
+.app-gate > span:first-child {
+  flex: 1;
+  min-width: 180px;
+}
+
+.app-gate-error {
+  font-size: 12px;
+}

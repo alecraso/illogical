@@ -44,7 +44,11 @@ export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: 
   const [hidden, setHidden] = useState(false);
   const call = (method: string, args: unknown) => void client.api(`/api/blocks/${id}/call/${method}`, args, `couldn't ${method}`);
   const can = mayAnswer(client, id);
-  const what = ask.kind === "permission" ? "Claude Code wants to use a tool" : "Claude Code asks";
+  // M35: a question raised on a block names who asks ("hud asks").
+  const who = ask.agent ?? "Claude Code";
+  const what = ask.kind === "permission" ? `${who} wants to use a tool` : `${who} asks`;
+  // Only Claude Code in a terminal has a picker of its own to fall back to.
+  const terminal = ask.source === "hook";
   if (hidden) {
     return (
       <button class="pane-ask-pill" onPointerDown={(e) => e.stopPropagation()} onClick={() => setHidden(false)}>
@@ -57,7 +61,7 @@ export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: 
       <div class="pane-ask-bar">
         <span>{what}</span>
         <Watching client={client} id={id} />
-        <button class="link" title="Look at the terminal; the question stays open" onClick={() => setHidden(true)}>
+        <button class="link" title={terminal ? "Look at the terminal; the question stays open" : "Look at the page; the question stays open"} onClick={() => setHidden(true)}>
           Hide
         </button>
       </div>
@@ -75,7 +79,7 @@ export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: 
           actions={{
             answer: (content) => call("answer", { id: ask.id, content }),
             decline: () => call("decline", { id: ask.id }),
-            terminal: () => call("terminal", { id: ask.id }),
+            ...(terminal ? { terminal: () => call("terminal", { id: ask.id }) } : {}),
           }}
         />
       )}

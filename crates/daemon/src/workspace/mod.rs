@@ -151,8 +151,9 @@ impl Workspace {
         st.env = self.config.env.clone();
         st.updated_ms = now_ms();
         for g in &mut st.gates {
-            let GateSource::Chant { machine, .. } = &mut g.source;
-            machine.clone_from(&self.ctx.sprite);
+            if let GateSource::Chant { machine, .. } = &mut g.source {
+                machine.clone_from(&self.ctx.sprite);
+            }
         }
         self.raise(&st.gates);
         *self.state.lock().unwrap() = st;
@@ -251,7 +252,10 @@ impl Workspace {
         // The block's history says who approved what (`illogical history`).
         if let Ok(mut l) = self.ctx.log() {
             let at = l.end();
-            let GateSource::Chant { dir, .. } = &gate.source;
+            let dir = match &gate.source {
+                GateSource::Chant { dir, .. } => dir,
+                GateSource::Hud { box_url, .. } => box_url,
+            };
             let text = format!("approved {}: {} at gate {}", gate.member, gate.op, gate.gate);
             let _ = l.record(
                 at,

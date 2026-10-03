@@ -46,6 +46,11 @@ illogical agent "fix the failing test"        # Claude Code here; prints %N (--c
                                               #   --cwd d, --wait)
 illogical claude ls [--live] [--all] [words]  # Claude Code conversations here: terminal and desktop app
 illogical claude open 3fa9c1                  # one as a stopped agent block, following it; prints %N
+illogical studio login https://studio.example # keep a studio token in the daemon (read from stdin)
+illogical studio                              # which studio, logged in or not (studio logout: forget it)
+illogical app                                 # your studio's apps, and the blocks that show them
+illogical app pinboard                        # one as an app block; its agent's questions come here
+illogical studio follower pinboard            # keep its box's hud follower link (from stdin; --forget)
 illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused while it's open elsewhere)
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
@@ -125,6 +130,7 @@ The tools:
 | `history` | Commands across panes: `failed`, `since` and `before` (`2d`, `36h`), `cwd`, `match` | yes |
 | `search` | Lines of output matching a regex | yes |
 | `open_port` | A browser block on a port of a pane's machine, beside it | no |
+| `open_app` | One of the user's studio apps as an app block, beside a pane; without `app`, their apps | no |
 | `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt | no |
 | `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
 | `list_conversations` | Claude Code conversations here (a terminal's, the desktop app's): `query`, `cwd`, `live`, `all` | yes |

@@ -90,7 +90,7 @@ export interface Gate {
   needed: number;
   /** The source's own command, to show. */
   command?: string;
-  source: { kind: "chant"; root: string; dir: string; machine?: string };
+  source: { kind: "chant"; root: string; dir: string; machine?: string } | { kind: "hud"; box_url: string; app: string };
 }
 
 /** What names a gate among its block's: `member/op/gate`. */
@@ -238,7 +238,7 @@ export interface StartedBy {
   block?: PaneId;
 }
 
-export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor";
+export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor" | "app";
 
 export interface Project {
   root: string;
@@ -263,7 +263,7 @@ export interface Delta {
   presence?: Presence[];
 }
 
-export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "workspace";
+export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "workspace" | "app";
 
 /** A remote block's config and state (#17): a pane on another host in the
  * home daemon's list, shown in this layout. */

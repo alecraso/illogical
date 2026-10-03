@@ -149,6 +149,8 @@ pub struct BlockEnv {
     /// The user's shell environment (#74), for blocks that run the user's
     /// tools: see [`crate::review::Runner::user`].
     pub shell_env: Arc<crate::shellenv::ShellEnv>,
+    /// The multiplexer, for a block that raises questions on itself (M35).
+    pub cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
 }
 
 /// What a block gets from the daemon.
@@ -177,6 +179,7 @@ pub struct BlockCtx {
     pub mcp: Option<crate::mcp::Link>,
     pub fs: Arc<crate::fs::Scope>,
     pub shell_env: Arc<crate::shellenv::ShellEnv>,
+    cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
 }
 
 impl BlockCtx {
@@ -206,6 +209,32 @@ impl BlockCtx {
             mcp: base.mcp,
             fs: base.fs,
             shell_env: base.shell_env,
+            cmds: base.cmds,
+        }
+    }
+
+    /// Raise a question on this block (M35), drawn and answered as a
+    /// terminal's is: the token withdraws exactly this one, and the
+    /// receiver gets the answer and who gave it.
+    pub async fn ask(
+        &self,
+        ask: illogical_proto::ask::Ask,
+    ) -> Result<(u64, tokio::sync::oneshot::Receiver<crate::mux::Replied>), String> {
+        let cmds = self.cmds.as_ref().ok_or("this block can't ask")?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        cmds.send(crate::mux::Cmd::Api(crate::mux::Api::Ask(self.id, Box::new(ask), tx)))
+            .map_err(|_| "the daemon is stopping".to_owned())?;
+        rx.await.map_err(|_| "the daemon is stopping".to_owned())?
+    }
+
+    /// ...and take it back, if it's still that one.
+    pub fn withdraw(&self, id: &str, token: u64) {
+        if let Some(cmds) = &self.cmds {
+            let _ = cmds.send(crate::mux::Cmd::Api(crate::mux::Api::AskWithdraw(
+                self.id,
+                Some(id.to_owned()),
+                Some(token),
+            )));
         }
     }
 
@@ -272,6 +301,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::Diff => crate::review::diff::Diff::create(ctx, config),
         BlockType::File => crate::review::file::FileView::create(ctx, config),
         BlockType::Workspace => crate::workspace::Workspace::create(ctx, config),
+        BlockType::App => crate::apps::AppBlock::create(ctx, config),
     }
 }
 

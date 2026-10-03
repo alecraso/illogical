@@ -84,7 +84,7 @@ test("clusters by project (with fallback groups), machine, kind, session and per
   await expect.poll(() => clusters(page)).toEqual(["sam", "team infra", "you"]);
   await stop.evaluate((f) => f());
     // Tiles are coloured by kind: the legend has every kind.
-  await expect(page.locator(".swarm-legend span")).toHaveCount(7);
+  await expect(page.locator(".swarm-legend span")).toHaveCount(8);
 });
 
 test("failures on one machine bundle into one card, dismissed together", async ({ page }) => {

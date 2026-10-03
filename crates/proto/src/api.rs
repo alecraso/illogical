@@ -9,7 +9,7 @@
 //! | POST | `/api/panes/N/keys` | `KeysRequest` | `{}` |
 //! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
-//! | POST | `/api/panes/N/ask` | `{questions, id}` (AskUserQuestion's, from `illogical ask`) | when answered: `{action: accept\|decline\|terminal\|withdrawn, content?, output?}` |
+//! | POST | `/api/panes/N/ask` | `{questions, id, source?, agent?}` (AskUserQuestion's, from `illogical ask`; on a browser or app block, whatever follows its page's agent, M35) | when answered: `{action: accept\|decline\|terminal\|withdrawn, content?, output?, by?}` |
 //! | POST | `/api/panes/N/ask/withdraw` | `{id}` | `{}`: the asker gave up |
 //! | GET | `/api/attention` | | `[AttentionItem]`: every pane that wants you, and why (M24) |
 //! | POST | `/api/attention/act` | `ActRequest` | `ActResponse`: one result per pane |
@@ -22,6 +22,9 @@
 //! | POST | `/api/blocks` | `OpenRequest` | `{"block": N}` |
 //! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |
 //! | POST | `/api/blocks/N/call/METHOD` | JSON args | the method's answer |
+//! | GET, POST, DELETE | `/api/studio` | POST `{url, token}` | the studio and whether there's a token (never the token); POST logs in (`{apps}`), DELETE forgets it (M35) |
+//! | GET | `/api/studio/apps` | | `{studio, apps: [{name, title, url, status, blocks}]}` |
+//! | PUT, DELETE | `/api/studio/followers/APP` | PUT `{link}` | `{}`: a hud follower link for the app's box |
 //! | GET | `/api/machines` | | `[Machine]` |
 //! | POST | `/api/machines/N/reset` | | `{}`: delete and recreate it; its panes restart by policy |
 //! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |

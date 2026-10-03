@@ -6,6 +6,7 @@ import "./remote";
 import "./diff";
 import "./file";
 import "./workspace";
+import "./app";
 
 export { makeBlockView, type BlockView } from "./view";
 export { openPort } from "./browser";

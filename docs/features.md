@@ -338,6 +338,56 @@ the daemon stopping, crashing, or the machine rebooting:
     comes back empty if you continue). *All* shows everything.
   - Claude Desktop's chats aren't here: they live on claude.ai.
 
+- **Studio apps** (M35). An app box from your studio (arugula-salad's) as
+  a block: the app in a frame, and its agent's questions as asks you
+  answer in illogical.
+  - **Your studio.** `illogical studio login https://studio.example` keeps
+    a studio token in the daemon (read from stdin; in `studio.json` in the
+    state directory, mode 0600, or `--studio-file`). It's never sent to a
+    client. `illogical studio logout` forgets it.
+  - **Opening one.** *Open a studio app…* (a pane's menu, the `+` button's
+    menu; *Studio apps* in the phone's sheet), `illogical app NAME`
+    (`illogical app` lists them) or MCP's `open_app`. The block keeps the
+    box's address, the app's name and the studio, nothing else.
+  - **Getting in.** Each time a client draws the block, the daemon mints a
+    fresh ten-minute entry link from studio and the frame goes through it.
+    After that the box's own cookie carries the frame. The link is never
+    kept: not in the block's config, its log, the frame's address or the
+    page's storage. ↻ gets a new one; *Records* opens hud's Decisions,
+    Work, Intent or Sessions in the frame the same way. Only the owner may
+    get in: a link signs in as them. It needs the box's door to hand out
+    hud's session as a partitioned cookie (`SameSite=None; Secure;
+    Partitioned`), or the framed box says "You need a link".
+  - **Questions.** The daemon follows hud in the box itself (its own
+    session, minted the same way, kept in memory only). When the box's
+    agent waits on a question, it's a card on the block ("hud asks") and
+    an `ask` on the swarm's rail, bundled by the app. The answer goes back
+    to hud as the option picked. Answered in hud's own panel, interrupted
+    or expired, the card goes. With several tabs asking, one card shows at
+    a time. *Skip* closes the card and leaves the question to hud.
+  - **Gates.** A release or op waiting at a chant gate in the box is
+    attention, the same as a workspace block's: the block lists it with
+    *Approve*, and it's a `gate` card on the swarm's rail and in the
+    phone's sheet. They come from hud's work board, read again each time
+    hud's live feed says something changed, never on a timer. *Approve*
+    goes to hud, which approves it only if `workspace status` still lists
+    it as pending. The card stays until hud's board drops the gate; if hud
+    refuses, the card says why.
+  - **Who answered.** Viewers can't answer or approve; editors and the
+    owner can. hud records whoever its session belongs to (the box's
+    owner). With a follower credential (`hud share --role follower` in the
+    box, kept with `illogical studio follower APP`; every block of that app
+    then uses it), answers and approvals also name who clicked
+    (`onBehalfOf`), and chant's ledger gets that name. hud takes names of
+    at most 32 letters, digits, spaces and `-_.'`: an email address goes
+    as its local part, other characters as `-`, and `owner` isn't sent.
+    That needs hud's trusted-follower change.
+  - **After a restart** the block comes back and mints again.
+  - **Not yet:** an "Other" answer (hud only takes one of its options).
+  - Any browser block takes questions too: `POST /api/panes/%N/ask` with
+    `source` and `agent` (who asks), for something that follows a page's
+    agent from outside.
+
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's

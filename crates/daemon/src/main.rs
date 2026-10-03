@@ -4,6 +4,7 @@ mod access;
 mod acl;
 mod agent;
 mod api;
+mod apps;
 mod authz;
 mod block;
 mod browser;
@@ -258,6 +259,11 @@ struct RunArgs {
     /// ~/.config/illogical/claude-oauth-token].
     #[arg(long, env = "ILLOGICAL_CLAUDE_TOKEN_FILE")]
     claude_token_file: Option<PathBuf>,
+    /// Where the studio token is kept (M35: `illogical studio login`),
+    /// mode 0600, never sent to a client [default: studio.json in the
+    /// state directory].
+    #[arg(long, env = "ILLOGICAL_STUDIO_FILE")]
+    studio_file: Option<PathBuf>,
     /// Don't be Claude Code's IDE (M28). By default Claude Code in a pane
     /// connects to illogicald (`CLAUDE_CODE_SSE_PORT`) and its edits wait
     /// as diff cards beside the terminal's own prompt.
@@ -794,8 +800,12 @@ async fn run(
             claude_token: args.claude_token_file.clone().unwrap_or_else(|| config.join("claude-oauth-token")),
         }
     };
+    // Studio apps (M35): the token that lists them and mints ways in.
+    let studio_file = args.studio_file.clone().unwrap_or_else(|| state_dir.join("studio.json"));
+    apps::studio::install(studio_file.clone());
     // What `fs` never serves, besides the state directory.
-    let private = vec![token_file.clone(), secrets.anthropic_key.clone(), secrets.claude_token.clone()];
+    let private =
+        vec![token_file.clone(), secrets.anthropic_key.clone(), secrets.claude_token.clone(), studio_file.clone()];
     let acl = std::sync::Arc::new(acl::Acl::open(&state_dir));
     let mcp_tokens = mcp::Tokens::open(&state_dir);
     // Agent blocks reach MCP on loopback (M16); not where loopback needs

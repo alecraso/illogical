@@ -41,8 +41,14 @@ pub struct Ask {
     pub accepted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-    /// `agent` (an agent block) or `hook` (Claude Code in a terminal).
+    /// `agent` (an agent block), `hook` (Claude Code in a terminal), or
+    /// whatever raised it on a block through `/ask` (M35: `hud`, a studio
+    /// box's agent).
     pub source: String,
+    /// Who asks, as the card and the swarm's rail name it ("hud asks"),
+    /// when that isn't the terminal's own agent (M35).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     pub at_ms: u64,
     /// `permission` (M29): the tool Claude Code asks to use, its input
     /// (`command`, `file_path`, `old_string`/`new_string`, …) and Claude's
@@ -338,6 +344,7 @@ mod tests {
             accepted: false,
             tool_call_id: None,
             source: "agent".into(),
+            agent: None,
             at_ms: 0,
             tool: None,
             input: None,
