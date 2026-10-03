@@ -90,6 +90,7 @@ async function person(browser: Browser, login: string, before?: (page: Page) => 
   if (before) await before(page);
   else await page.goto("/");
   await page.locator("[data-signin=github]").click();
+  await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
   await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
   return page;

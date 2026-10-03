@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS devices (
     created INTEGER NOT NULL,
     PRIMARY KEY (account, id)
 );
+CREATE TABLE IF NOT EXISTS turned_down (
+    account TEXT NOT NULL,
+    device TEXT NOT NULL,
+    by_name TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (account, device)
+);
 CREATE TABLE IF NOT EXISTS revocations (
     account TEXT NOT NULL,
     device TEXT NOT NULL,
@@ -418,6 +425,8 @@ impl Db {
              ON CONFLICT (account, id) DO UPDATE SET cert = excluded.cert, approved = excluded.approved",
             params![cert.account, cert.device, cert.kind.as_str(), serde_json::to_string(cert)?, approved, now],
         )?;
+        // Asking again (or being approved) clears a turn-down.
+        tx.execute("DELETE FROM turned_down WHERE account = ?1 AND device = ?2", params![cert.account, cert.device])?;
         if approved && cert.approver == cert.device {
             tx.execute(
                 "UPDATE accounts SET root = ?2 WHERE id = ?1 AND root IS NULL",
@@ -463,10 +472,34 @@ impl Db {
         Ok((yes, no))
     }
 
-    pub fn drop_pending(&self, account: &str, id: &str) -> anyhow::Result<()> {
-        self.c()
-            .execute("DELETE FROM devices WHERE account = ?1 AND id = ?2 AND approved = 0", params![account, id])?;
+    /// Turn a pending device down, remembering which device did (by name)
+    /// so the one waiting can say so.
+    pub fn turn_down(&self, account: &str, id: &str, by_name: &str, now: u64) -> anyhow::Result<()> {
+        let mut c = self.c();
+        let tx = c.transaction()?;
+        let n =
+            tx.execute("DELETE FROM devices WHERE account = ?1 AND id = ?2 AND approved = 0", params![account, id])?;
+        if n > 0 {
+            tx.execute(
+                "INSERT INTO turned_down (account, device, by_name, at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (account, device) DO UPDATE SET by_name = excluded.by_name, at = excluded.at",
+                params![account, id, by_name, now],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
+    }
+
+    /// Who turned this device down (a device's name, maybe empty), if it was.
+    pub fn turned_down(&self, account: &str, id: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT by_name FROM turned_down WHERE account = ?1 AND device = ?2",
+                params![account, id],
+                |r| r.get(0),
+            )
+            .optional()?)
     }
 
     pub fn add_revocation(&self, r: &Revocation) -> anyhow::Result<()> {
@@ -1140,6 +1173,8 @@ pub const JOIN_TTL_MS: u64 = 15 * 60 * 1000;
 
 #[cfg(test)]
 mod tests {
+    use illogical_e2e::{Cert, Kind};
+
     use super::*;
 
     /// #102: a GitHub account goes by its login, a passkey one by the name
@@ -1168,5 +1203,35 @@ mod tests {
         assert_eq!(crate::api::display_name("  Ada \n Lovelace ").unwrap(), "Ada Lovelace");
         assert!(crate::api::display_name("   ").is_err());
         assert!(crate::api::display_name(&"x".repeat(65)).is_err());
+    }
+
+    fn pending(device: &str) -> Cert {
+        Cert {
+            v: 1,
+            account: "a1".into(),
+            device: device.into(),
+            kind: Kind::Browser,
+            name: "phone".into(),
+            noise: String::new(),
+            sign: String::new(),
+            created: 1,
+            approver: String::new(),
+            sig: String::new(),
+        }
+    }
+
+    #[test]
+    fn turned_down_until_it_asks_again() {
+        let db = Db::memory();
+        db.put_device(&pending("d1"), false, 1).unwrap();
+        db.turn_down("a1", "d1", "Chrome on Mac", 2).unwrap();
+        assert!(db.device("a1", "d1").unwrap().is_none());
+        assert_eq!(db.turned_down("a1", "d1").unwrap().as_deref(), Some("Chrome on Mac"));
+        // Nothing pending: nothing to turn down, nothing remembered.
+        db.turn_down("a1", "d2", "x", 3).unwrap();
+        assert_eq!(db.turned_down("a1", "d2").unwrap(), None);
+        // Asking again forgets the turn-down.
+        db.put_device(&pending("d1"), false, 4).unwrap();
+        assert_eq!(db.turned_down("a1", "d1").unwrap(), None);
     }
 }

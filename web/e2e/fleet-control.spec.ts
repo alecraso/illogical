@@ -154,6 +154,7 @@ let laptop: Page;
 test("the laptop sees every machine at once; relayed ones share one socket to control", async ({ browser }) => {
   laptop = await (await browser.newContext()).newPage();
   await signIn(laptop);
+  await laptop.locator("[data-stored-codes]").check();
   await laptop.locator("[data-saved-codes]").click();
   const box = await addMachine(laptop, "box", true);
   await addMachine(laptop, "mac", false);

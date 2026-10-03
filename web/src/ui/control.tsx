@@ -12,6 +12,7 @@ import { ROLE_HELP, roleAs, roleLabel } from "./roles";
 import type { MenuItem } from "./menu";
 import type { Team } from "../control";
 import type { TeamRole } from "../e2e/team.ts";
+import { qr, qrPath } from "./qr";
 
 export function useControl(s: ControlSession) {
   useSubscribe((fn) => s.subscribe(fn));
@@ -59,15 +60,34 @@ export function ControlGate({ s }: { s: ControlSession }) {
       <Center>
         <h1>Approve this browser</h1>
         <p>
-          You're signed in as <b>{s.login}</b>. Before this browser can reach your machines, approve it from a device you already use: open
-          illogical there and it will ask.
+          You're signed in as <b>{s.login}</b>. Before this browser can reach your machines, a device you already use approves it. Open{" "}
+          <CopyText inline text={s.info.url} data-control-url /> on that device; it asks there.
         </p>
-        <p>It will show this fingerprint; check it matches:</p>
+        <p>It shows this fingerprint; check it matches:</p>
         <p class="fingerprint" data-fingerprint={s.keys.id}>
           {fingerprint(s.keys.id)}
         </p>
         <p class="dim">Waiting…</p>
         <RecoveryForm s={s} />
+        <button class="control-linkish" data-sign-out onClick={() => void s.signOut(false)}>
+          Sign out
+        </button>
+      </Center>
+    );
+  if (s.phase === "turned-down")
+    return (
+      <Center>
+        <h1>Turned down</h1>
+        <p data-turned-down>
+          <b>{s.turnedDownBy || "Another device"}</b> turned this browser down. If that was a mistake, ask again and approve it there.
+        </p>
+        <button class="primary" data-try-again onClick={() => s.tryAgain()}>
+          Try again
+        </button>
+        <RecoveryForm s={s} label="Use a recovery code" />
+        <button class="control-linkish" data-sign-out onClick={() => void s.signOut(false)}>
+          Sign out
+        </button>
       </Center>
     );
   return null;
@@ -198,14 +218,14 @@ function NameLine({ s }: { s: ControlSession }) {
   );
 }
 
-function RecoveryForm({ s }: { s: ControlSession }) {
+function RecoveryForm({ s, label = "Lost your other devices? Use a recovery code" }: { s: ControlSession; label?: string }) {
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
   if (!open)
     return (
       <button class="control-linkish" data-use-recovery onClick={() => setOpen(true)}>
-        Lost your other devices? Use a recovery code
+        {label}
       </button>
     );
   return (
@@ -223,9 +243,10 @@ function RecoveryForm({ s }: { s: ControlSession }) {
   );
 }
 
-/** Once, after the account's first device: the codes to keep. */
+/** Once, after the account's first device (or new codes): the codes to keep. */
 function RecoveryCodes({ s }: { s: ControlSession }) {
   const all = s.recoveryCodes!.join("\n") + "\n";
+  const [stored, setStored] = useState(false);
   return (
     <Modal>
       <h2>Your recovery codes</h2>
@@ -240,8 +261,15 @@ function RecoveryCodes({ s }: { s: ControlSession }) {
         <button data-download-codes onClick={() => download("illogical-recovery-codes.txt", all)}>
           Download .txt
         </button>
-        <button class="primary" data-saved-codes onClick={() => s.savedRecoveryCodes()}>
-          I've saved them
+      </div>
+      <label class="control-check">
+        <input type="checkbox" data-stored-codes checked={stored} onChange={(e) => setStored((e.target as HTMLInputElement).checked)} />
+        I've stored these somewhere safe
+      </label>
+      <PasskeyNudge s={s} />
+      <div class="prompt-buttons">
+        <button class="primary" data-saved-codes disabled={!stored} onClick={() => s.savedRecoveryCodes()}>
+          Continue
         </button>
       </div>
     </Modal>
@@ -348,14 +376,18 @@ function JoinCodeForm({ s }: { s: ControlSession }) {
   );
 }
 
+type Panel = "devices" | "add" | "add-device" | "teams" | "plan";
+
+const openPanel = (p: Panel) => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+
 /** Over the app: approval prompts, a daemon's join, the device list. */
 export function ControlOverlay({ s }: { s: ControlSession }) {
   useControl(s);
   const [hash, setHash] = useState(location.hash);
-  const [panel, setPanel] = useState<null | "devices" | "add" | "teams" | "plan">(null);
+  const [panel, setPanel] = useState<null | Panel>(null);
   useEffect(() => {
     const on = () => setHash(location.hash);
-    const open = (e: Event) => setPanel((e as CustomEvent<"devices" | "add" | "teams" | "plan">).detail);
+    const open = (e: Event) => setPanel((e as CustomEvent<Panel>).detail);
     addEventListener("hashchange", on);
     addEventListener("illogical:control-panel", open);
     return () => {
@@ -378,6 +410,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   if (panel === "devices") return <Devices s={s} close={() => setPanel(null)} />;
   if (panel === "teams") return <Teams s={s} close={() => setPanel(null)} />;
   if (panel === "plan") return <Plan s={s} close={() => setPanel(null)} />;
+  if (panel === "add-device") return <AddDevice s={s} close={() => setPanel(null)} />;
   if (panel === "add")
     return (
       <Modal close={() => setPanel(null)}>
@@ -500,7 +533,7 @@ function DevicePrompt({ s, c }: { s: ControlSession; c: Cert }) {
   const act = (f: () => Promise<void>) => f().catch((e: Error) => setErr(e.message));
   return (
     <Modal>
-      <h2>New device</h2>
+      <h2>New device?</h2>
       <p>
         <b>{c.name}</b> wants to reach your machines. Approve it only if it's yours and shows this fingerprint:
       </p>
@@ -508,6 +541,7 @@ function DevicePrompt({ s, c }: { s: ControlSession; c: Cert }) {
         {fingerprint(c.device)}
       </p>
       {err ? <p class="control-error">{err}</p> : null}
+      <p class="dim">If you didn't just sign in on it, turn it down.</p>
       <div class="prompt-buttons">
         <button data-reject onClick={() => act(() => s.reject(c))}>
           Turn down
@@ -520,63 +554,167 @@ function DevicePrompt({ s, c }: { s: ControlSession; c: Cert }) {
   );
 }
 
+/** The control URL as a QR code, a link to copy, and what to do (#105).
+ * When the new device asks, DevicePrompt comes up over this. */
+function AddDevice({ s, close }: { s: ControlSession; close: () => void }) {
+  const code = qrPath(qr(s.info.url));
+  return (
+    <Modal close={close}>
+      <h2>Add a phone or browser</h2>
+      <svg class="control-qr" viewBox={`0 0 ${code.n} ${code.n}`} role="img" aria-label={`QR code for ${s.info.url}`} data-qr={s.info.url}>
+        <rect width={code.n} height={code.n} fill="#fff" />
+        <path d={code.d} fill="#000" />
+      </svg>
+      <CopyText text={s.info.url} share data-control-url />
+      <ol class="control-steps">
+        <li>Open it on the phone or browser (scan the code, or send the link).</li>
+        <li>Sign in the way you did here{s.login && s.login !== "you" ? `, as ${s.login}` : ""}.</li>
+        <li>Approve it here: this browser asks. Check the fingerprints match.</li>
+      </ol>
+      <div class="prompt-buttons">
+        <button onClick={close}>Done</button>
+      </div>
+    </Modal>
+  );
+}
+
+/** For a GitHub-only account: a passkey, so it isn't tied to GitHub. */
+function PasskeyNudge({ s }: { s: ControlSession }) {
+  const [err, setErr] = useState("");
+  if (!s.info.passkeys || s.passkeys > 0) return null;
+  return (
+    <p class="dim" data-passkey-nudge>
+      Add a passkey so this account isn't tied to GitHub.{" "}
+      <button class="control-linkish" data-add-passkey onClick={() => s.addPasskey().catch((e: Error) => setErr(e.name === "NotAllowedError" ? "Cancelled." : e.message))}>
+        Add a passkey
+      </button>
+      {err ? <span class="control-error"> {err}</span> : null}
+    </p>
+  );
+}
+
+const since = (ms: number) => {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+};
+
 function Devices({ s, close }: { s: ControlSession; close: () => void }) {
   const [err, setErr] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [renewing, setRenewing] = useState(false);
   const devices = [...s.trusted.values()].filter((c) => c.kind !== "recovery");
+  const machines = devices.filter((c) => c.kind === "daemon");
+  const browsers = devices.filter((c) => c.kind !== "daemon");
+  const remove = (c: Cert) => (
+    <button
+      class={confirming === c.device ? "control-revoke danger" : "control-revoke"}
+      data-remove={c.device}
+      onClick={() => {
+        if (confirming !== c.device) return setConfirming(c.device);
+        setConfirming(null);
+        s.revoke(c.device).catch((e: Error) => setErr(e.message));
+      }}
+    >
+      {confirming === c.device ? "Really remove?" : "Remove"}
+    </button>
+  );
+  const left = s.recoveryLeft;
   return (
     <Modal close={close}>
       <h2>Devices and machines</h2>
+      <p class="dim">
+        Signed in as <b data-account={s.account}>{s.login}</b>.
+      </p>
       {s.rootMismatch ? (
         <p class="control-error">Control reports a different first device for this account than this browser pinned. New devices and machines won't be trusted here.</p>
       ) : null}
-      <ul class="control-devices">
-        {devices.map((c) => (
+      <h3 class="control-group">Machines</h3>
+      <p class="dim">They run your terminals.</p>
+      {machines.length === 0 ? <p class="dim">None yet.</p> : null}
+      <ul class="control-devices" data-machines>
+        {machines.map((c) => {
+          const d = s.daemons.find((x) => x.id === c.device);
+          const team = d?.team ? s.teams.find((t) => t.team === d.team)?.roster.name ?? "a team" : null;
+          const path = d?.name === directory.current && directory.path ? directory.path : d?.urls.length ? "direct" : "relayed";
+          return (
+            <li key={c.device} data-device={c.device}>
+              <span>
+                {c.name}
+                {team ? (
+                  <span class="control-badge" data-team-badge>
+                    {team}
+                  </span>
+                ) : null}
+                <span class="dim" data-status>
+                  {" · "}
+                  {d?.online ? "online" : d?.last_seen ? `seen ${since(d.last_seen)}` : "offline"}
+                  {d?.online ? ` · ${path}` : ""}
+                </span>
+              </span>
+              <span class="dim">{fingerprint(c.device)}</span>
+              {remove(c)}
+              {confirming === c.device ? (
+                <p class="dim control-explain" data-remove-explain>
+                  It's taken off your account at once; illogical keeps running on it, reachable only locally. <code>illogicald join</code> adds it back.
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <button data-add-machine onClick={openPanel("add")}>
+        Add a machine…
+      </button>
+      <h3 class="control-group">Browsers and phones</h3>
+      <p class="dim">They reach your machines.</p>
+      <ul class="control-devices" data-browsers>
+        {browsers.map((c) => (
           <li key={c.device} data-device={c.device}>
             <span>
-              {c.kind === "daemon" ? "▣" : "◉"} {c.name}
+              {c.name}
               {c.device === s.keys.id ? " (this browser)" : ""}
               {c.device === s.enrollment?.root ? " · first device" : ""}
+              <span class="dim"> · added {since(c.created)}</span>
             </span>
             <span class="dim">{fingerprint(c.device)}</span>
-            {c.device !== s.keys.id ? (
-              <button
-                class={confirming === c.device ? "control-revoke danger" : "control-revoke"}
-                title="It loses access at once"
-                onClick={() => {
-                  if (confirming !== c.device) return setConfirming(c.device);
-                  setConfirming(null);
-                  s.revoke(c.device).catch((e: Error) => setErr(e.message));
-                }}
-              >
-                {confirming === c.device ? "Really remove?" : "Remove"}
-              </button>
-            ) : null}
+            {c.device !== s.keys.id ? remove(c) : <span />}
+            {confirming === c.device ? <p class="dim control-explain">It loses access at once.</p> : null}
           </li>
         ))}
       </ul>
-      {err ? <p class="control-error">{err}</p> : null}
+      <button data-add-device onClick={openPanel("add-device")}>
+        Add a phone or browser…
+      </button>
+      <h3 class="control-group">Recovery codes</h3>
       <p class="dim">
-        Account <CopyText inline text={s.account} data-account />
+        <span data-recovery-left={left}>
+          {left === 0 ? "No recovery codes left." : `${left} recovery code${left === 1 ? "" : "s"} left.`}
+        </span>{" "}
+        {renewing ? "New codes replace these: the old ones stop working. " : ""}
+        <button
+          class={renewing ? "control-linkish danger" : "control-linkish"}
+          data-new-codes
+          onClick={() => {
+            if (!renewing) return setRenewing(true);
+            setRenewing(false);
+            s.newRecoveryCodes().catch((e: Error) => setErr(e.message));
+          }}
+        >
+          {renewing ? "Make new ones" : "Make new codes"}
+        </button>
       </p>
       <NameLine s={s} />
-      {s.info.passkeys ? (
+      {s.info.passkeys && s.passkeys ? (
         <p class="dim">
-          {s.passkeys ? `${s.passkeys} passkey${s.passkeys === 1 ? "" : "s"} can sign in to this account. ` : "No passkey signs in to this account yet. "}
-          <button
-            class="control-linkish"
-            data-add-passkey
-            onClick={() =>
-              passkeyRegister().then(
-                () => void s.boot(),
-                (e: Error) => setErr(e.message),
-              )
-            }
-          >
+          {`${s.passkeys} passkey${s.passkeys === 1 ? "" : "s"} can sign in to this account. `}
+          <button class="control-linkish" data-add-passkey onClick={() => s.addPasskey().catch((e: Error) => setErr(e.message))}>
             Add one
           </button>
         </p>
-      ) : null}
+      ) : (
+        <PasskeyNudge s={s} />
+      )}
+      {err ? <p class="control-error">{err}</p> : null}
       <div class="prompt-buttons">
         <button onClick={() => s.signOut(false)}>Sign out</button>
         <button onClick={close}>Done</button>
@@ -585,7 +723,7 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
   );
 }
 
-const panel = (p: "devices" | "add" | "teams" | "plan") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+const panel = openPanel;
 
 /** For the host menu. */
 export function controlMenuItems(s: ControlSession): MenuItem[] {
@@ -596,6 +734,7 @@ export function controlMenuItems(s: ControlSession): MenuItem[] {
     ...(s.sandboxesOpen ? [{ label: "New hosted VM", run: () => void s.startSandbox() }] : []),
     ...(shown?.sandbox ? [{ label: "Delete this VM", run: () => void s.deleteSandbox(shown.sandbox!) }] : []),
     { label: "Add a machine…", run: panel("add") },
+    { label: "Add a phone or browser…", run: openPanel("add-device") },
     ...accountItems(s),
   ];
 }

@@ -96,6 +96,7 @@ test("someone with only a browser starts a hosted VM and works in it", async ({ 
   page = await (await browser.newContext()).newPage();
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
+  await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
   await page.locator("[data-start-vm]").click();
   // It joins, this browser approves it, and the page switches to it.

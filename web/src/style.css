@@ -1970,6 +1970,67 @@ button {
   }
 }
 
+/* Devices and machines (#106): two groups, a team badge, what Remove does. */
+.control-prompt h3.control-group {
+  margin: 14px 0 0;
+  font-size: 14px;
+}
+
+.control-devices li .control-explain {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.control-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--raised);
+}
+
+.control-linkish.danger {
+  color: var(--danger);
+}
+
+.prompt label.control-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.prompt .control-check input {
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.prompt-buttons button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Taller than the window (the device list): it scrolls. */
+.prompt.control-prompt {
+  max-height: calc(85vh - 16px);
+  overflow-y: auto;
+}
+
+/* Add a phone or browser (#105): the control URL as a QR code. */
+.control-qr {
+  display: block;
+  width: min(220px, 60vw);
+  height: auto;
+  margin: 8px 0;
+  border-radius: 6px;
+}
+
+.control-steps {
+  margin: 8px 0;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
 .control-signins {
   display: grid;
   gap: 8px;

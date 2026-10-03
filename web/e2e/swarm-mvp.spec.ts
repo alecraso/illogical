@@ -103,6 +103,7 @@ async function laptop(browser: Browser, login: string, opts: BrowserContextOptio
   const page = await ctx.newPage();
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
+  await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
   await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
   return page;

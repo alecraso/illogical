@@ -156,6 +156,9 @@ test("a stranger signs up and becomes the first device", async ({ browser }) => 
   const saved = laptop.waitForEvent("download");
   await laptop.locator("[data-download-codes]").click();
   expect((await saved).suggestedFilename()).toBe("illogical-recovery-codes.txt");
+  // Continue only once they're stored (#106).
+  await expect(laptop.locator("[data-saved-codes]")).toBeDisabled();
+  await laptop.locator("[data-stored-codes]").check();
   await laptop.locator("[data-saved-codes]").click();
   // No machine yet (#98): install, join (by full path) and approve, as
   // numbered steps, each command with Copy.
@@ -246,6 +249,9 @@ test("a phone needs the laptop's approval", async ({ browser }) => {
   phone = await (await phoneContext(browser)).newPage();
   await signIn(phone);
   await expect(phone.getByText("Approve this browser")).toBeVisible();
+  // It says where to approve it (#105).
+  await expect(phone.locator("[data-control-url]")).toHaveText(base);
+  await expect(phone.locator("[data-sign-out]")).toBeVisible();
   const fp = await phone.locator("[data-fingerprint]").getAttribute("data-fingerprint");
   // The laptop is asked, and shows the same fingerprint.
   await expect(laptop.locator(`[data-pending="${fp}"]`)).toBeVisible({ timeout: 20_000 });
@@ -270,8 +276,65 @@ test("with every device lost, a recovery code lets a new browser in, once", asyn
   await again.getByLabel("Recovery code").fill(recoveryCodes[0]);
   await again.getByRole("button", { name: "Use it" }).click();
   await expect(again.locator(".control-error")).toContainText("isn't one of this account's recovery codes");
-  // The laptop (still enrolled) turns the second browser down.
+  // The laptop (still enrolled) turns the second browser down, and the
+  // browser hears which device did (#105). It can ask again.
+  const laptopName = await laptop.evaluate(() => window.__illogical.control!.enrollment!.cert.name);
   await laptop.locator("[data-reject]").click();
+  await expect(again.locator("[data-turned-down]")).toContainText(`${laptopName} turned this browser down`, { timeout: 10_000 });
+  await again.locator("[data-try-again]").click();
+  await expect(again.getByText("Approve this browser")).toBeVisible();
+  await expect(laptop.locator("[data-pending]")).toBeVisible({ timeout: 20_000 });
+  await laptop.locator("[data-reject]").click();
+  await expect(again.locator("[data-turned-down]")).toBeVisible({ timeout: 10_000 });
+});
+
+const panel = (page: Page, p: string) => page.evaluate((p) => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p })), p);
+
+test("add a phone or browser: the control URL as a QR code and a link", async () => {
+  await panel(laptop, "add-device");
+  await expect(laptop.getByRole("heading", { name: "Add a phone or browser" })).toBeVisible();
+  await expect(laptop.locator("svg[data-qr]")).toHaveAttribute("data-qr", base);
+  expect((await laptop.locator("svg[data-qr] path").getAttribute("d"))!.length).toBeGreaterThan(100);
+  await expect(laptop.locator(".prompt [data-control-url]")).toHaveText(base);
+  await expect(laptop.locator(".control-steps li")).toHaveCount(3);
+  await laptop.getByRole("button", { name: "Done" }).click();
+});
+
+test("devices and machines, grouped; new recovery codes retire the old", async ({ browser }) => {
+  await panel(laptop, "devices");
+  await expect(laptop.locator("[data-account]")).toHaveText("stranger");
+  const machines = laptop.locator("[data-machines] li");
+  await expect(machines).toHaveCount(2);
+  await expect(machines.filter({ hasText: "box" }).locator("[data-status]")).toContainText("online · direct");
+  await expect(machines.filter({ hasText: "mac" }).locator("[data-status]")).toContainText("online · relayed");
+  // Removing a machine says what happens to it (not confirmed here).
+  await machines.filter({ hasText: "mac" }).locator("[data-remove]").click();
+  await expect(laptop.locator("[data-remove-explain]")).toContainText("keeps running on it, reachable only locally");
+  // The laptop, the phone and the browser the recovery code let in.
+  await expect(laptop.locator("[data-browsers] li")).toHaveCount(3);
+  await expect(laptop.locator("[data-browsers] li").filter({ hasText: "(this browser)" })).toHaveCount(1);
+  // One code was spent.
+  await expect(laptop.locator("[data-recovery-left]")).toHaveAttribute("data-recovery-left", "1");
+  await laptop.locator("[data-new-codes]").click();
+  await laptop.locator("[data-new-codes]").click();
+  await expect(laptop.locator("[data-recovery-code]")).toHaveCount(2);
+  const fresh = await laptop.locator("[data-recovery-code]").allTextContents();
+  expect(fresh).not.toContain(recoveryCodes[1]);
+  await laptop.locator("[data-stored-codes]").check();
+  await laptop.locator("[data-saved-codes]").click();
+  await expect(laptop.locator("[data-recovery-left]")).toHaveAttribute("data-recovery-left", "2");
+  await laptop.getByRole("button", { name: "Done" }).click();
+
+  // The old code (never used) no longer works; a new one does.
+  const other = await (await browser.newContext()).newPage();
+  await signIn(other);
+  await other.locator("[data-use-recovery]").click();
+  await other.getByLabel("Recovery code").fill(recoveryCodes[1]);
+  await other.getByRole("button", { name: "Use it" }).click();
+  await expect(other.locator(".control-error")).toContainText("isn't one of this account's recovery codes");
+  await other.getByLabel("Recovery code").fill(fresh[0]);
+  await other.getByRole("button", { name: "Use it" }).click();
+  await expect.poll(() => hostNames(other), { timeout: 20_000 }).toEqual(["box", "mac"]);
 });
 
 test("removing the phone cuts it off", async () => {
