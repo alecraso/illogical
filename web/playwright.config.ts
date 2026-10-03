@@ -32,6 +32,22 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   chmodSync(join(bin, "claude-agent-acp"), 0o755);
 }
 
+// #111: *Install* runs this stand-in npm, which "installs" an adapter as
+// the fake ACP agent, so no test downloads one.
+{
+  const dir = runDir("ILLOGICAL_E2E_NPM_DIR", "illogical-e2e-npm-");
+  const fake = fileURLToPath(new URL("../crates/daemon/tests/fake_acp.py", import.meta.url));
+  writeFileSync(
+    join(dir, "npm"),
+    `#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in --prefix) p=$2; shift 2 ;; install|--*) shift ;; *) pkg=$1; shift ;; esac; done\n` +
+      `name=\${pkg%@*}; bin=\${name##*/}\nmkdir -p "$p/node_modules/.bin" "$p/node_modules/$name"\n` +
+      `printf '{"version": "%s"}\\n' "\${pkg##*@}" >"$p/node_modules/$name/package.json"\n` +
+      `printf '#!/bin/sh\\nexec python3 ${fake} "$@"\\n' >"$p/node_modules/.bin/$bin"\nchmod +x "$p/node_modules/.bin/$bin"\necho "added 1 package"\n`,
+  );
+  chmodSync(join(dir, "npm"), 0o755);
+  process.env.ILLOGICAL_NPM = join(dir, "npm");
+}
+
 // M36: forge blocks read through a stand-in `tea` (and, M38, `gh`) on the daemon's PATH,
 // never the person's own: its logins are whatever forge.spec.ts writes
 // (its fake Forgejo), and its credential helper hands out a fixed token.

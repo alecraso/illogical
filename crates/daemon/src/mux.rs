@@ -186,6 +186,9 @@ pub enum Api {
     /// it): taken out of the tab it shares, next to it, and named if the
     /// tab has no name.
     OwnTab(PaneId, Option<String>, oneshot::Sender<Result<(), String>>),
+    /// Home and the environment an agent block gets (#111: whether its
+    /// adapter can start).
+    AgentEnv(oneshot::Sender<(PathBuf, Vec<(String, String)>)>),
 }
 
 /// An edit Claude Code proposes through its IDE connection (M28).
@@ -1818,6 +1821,9 @@ impl Daemon {
             }
             Api::Run(req, reply) => {
                 let _ = reply.send(self.run_command(req));
+            }
+            Api::AgentEnv(reply) => {
+                let _ = reply.send((self.config.home.clone(), self.config.env(0)));
             }
             Api::InputBy(pane, data, by) => self.input(pane, data, Some(by)),
             Api::Ide(ev) => self.ide_event(ev),

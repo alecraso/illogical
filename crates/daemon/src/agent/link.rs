@@ -164,12 +164,12 @@ pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
         if Instant::now() > deadline || exited.is_some() {
             let _ = child.kill();
             let why = match exited {
-                Some(status) => format!("{status}"),
-                None => "it took too long".into(),
+                Some(status) => format!("ended at once ({status})"),
+                None => "took too long to start".into(),
             };
             let said = said_since(&s.dir.join("agent.err"), err_from);
             let said = if said.is_empty() { String::new() } else { format!(": {said}") };
-            return Err(std::io::Error::other(format!("couldn't start {} ({why}){said}", s.argv.join(" "))));
+            return Err(std::io::Error::other(format!("{} {why}{said}", s.argv.join(" "))));
         }
         std::thread::sleep(Duration::from_millis(5));
     };

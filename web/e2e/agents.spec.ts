@@ -3,9 +3,11 @@
 // a read-only terminal, and the composer. The agent is the scripted fake
 // ACP server the daemon's tests use, so nothing here costs anything.
 
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
-import { menu, paneEl, panes, reset } from "./helpers";
+import { menu, paneEl, panes, reset, text } from "./helpers";
 
 const fake = fileURLToPath(new URL("../../crates/daemon/tests/fake_acp.py", import.meta.url));
 
@@ -69,6 +71,67 @@ test.describe("desktop", () => {
     await page.evaluate((b) => window.__illogical.client.intent({ op: "close_pane", pane: b }), id);
     await expect.poll(() => panes(page)).toEqual([term]);
   });
+});
+
+// #111: Codex's adapter isn't in the run's agents directory (Claude Code's
+// is the fake), and Install runs a stand-in npm (playwright.config.ts).
+test("an adapter that isn't installed: its command to copy, and Install in a pane", async ({ page }) => {
+  rmSync(join(process.env.ILLOGICAL_AGENTS_DIR!, "codex"), { recursive: true, force: true });
+  await reset(page);
+  const status = () =>
+    page.evaluate(async () => {
+      const r = await window.__illogical.client.request("GET", "/api/agents/adapters");
+      return (await r.json<{ adapters: { kind: string; state: string; on_path?: boolean; npm: string }[] }>()).adapters.find((a) => a.kind === "codex")!;
+    });
+  const before = await status();
+  test.skip(before.state === "installed", "codex-acp is on this machine's PATH");
+  expect(before.state).toBe("missing");
+  const pinned = /^npm install --omit=optional --prefix \S+\/codex @agentclientprotocol\/codex-acp@\d+\.\d+\.\d+$/;
+  expect(before.npm).toMatch(pinned);
+  const [term] = await panes(page);
+
+  // A block started anyway says why once, with the command and Install.
+  await page.evaluate((t) => window.__illogical.client.newAgent({ config: { agent: "codex" }, vm: false, split: t, from: t }), term);
+  await expect.poll(() => agentBlock(page)).not.toBeNull();
+  const id = (await agentBlock(page))!;
+  const block = paneEl(page, id);
+  await expect(block.locator(".agent-error")).toHaveText("the agent couldn't start: Codex's adapter isn't installed");
+  await expect(block.locator("[data-adapter-npm]")).toHaveText(pinned);
+  await expect(block.getByRole("button", { name: "Install" })).toBeVisible();
+  await expect(block.getByRole("button", { name: "Copy" })).toBeVisible();
+
+  // The dialog says so before Start, which waits for it.
+  await menu(page, paneEl(page, term), "Start an agent…");
+  const dialog = page.getByRole("dialog", { name: "Start an agent" });
+  await dialog.locator("select[name=agent]").selectOption("codex");
+  await expect(dialog.locator(".adapter-help")).toContainText("Codex's adapter isn't installed");
+  await expect(dialog.locator("[data-adapter-npm]")).toHaveText(pinned);
+  await expect(dialog.getByRole("button", { name: "Start" })).toBeDisabled();
+  // Claude Code's is installed: nothing to say.
+  await dialog.locator("select[name=agent]").selectOption("claude");
+  await expect(dialog.locator(".adapter-help")).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Start" })).toBeEnabled();
+  // On a VM it installs its own.
+  await dialog.locator("select[name=agent]").selectOption("codex");
+  await dialog.locator("input[name=vm]").check();
+  await expect(dialog.locator(".adapter-help")).toBeHidden();
+  await dialog.locator("input[name=vm]").uncheck();
+
+  // Install: the command runs in a new pane to watch.
+  await dialog.getByRole("button", { name: "Install" }).click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => panes(page)).toHaveLength(3);
+  const pane = (await panes(page)).find((p) => p !== term && p !== id)!;
+  // (The pane is narrow: its lines wrap.)
+  await expect.poll(async () => (await text(page, pane)).replace(/\s/g, ""), { timeout: 15_000 }).toContain("Installed@agentclientprotocol/codex-acp@");
+  await expect.poll(() => text(page, pane)).toContain("exited with code 0");
+  expect((await status()).state).toBe("installed");
+
+  // Then the block starts.
+  await block.getByRole("button", { name: "Resume" }).click();
+  await expect(block.locator(".agent-status")).toHaveText("Ready");
+  await expect(block.locator(".agent-error")).toBeHidden();
+  await expect(block.locator(".adapter-help")).toBeHidden();
 });
 
 test.describe("phone", () => {

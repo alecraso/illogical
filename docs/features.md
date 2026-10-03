@@ -273,11 +273,15 @@ the daemon stopping, crashing, or the machine rebooting:
     `session/resume` (or `session/load`), unless the policy is `none` or
     `rerun-ask` (then *Resume*). A Fountain turn that ran on while nothing
     followed it shows "running on Fountain" and appears when it ends.
-  - The adapters, pinned, go in `~/.local/share/illogical/agents/`:
+  - The adapters, pinned, go in `~/.local/share/illogical/agents/`. When
+    one isn't installed (or there's no Node 20+), *Start an agent…* and
+    the block say so, with the command to copy and *Install*, which runs
+    it in a new pane:
     `npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0`
     and `npm install --omit=optional --prefix ~/.local/share/illogical/agents/codex @agentclientprotocol/codex-acp@2.1.0`
-    (Codex uses `~/.local/bin/codex`). They need Node on PATH (mise's
-    shims are added if present).
+    (Codex uses `~/.local/bin/codex`). They need Node on PATH (a Node
+    mise installed is used if there's none). A test keeps these in step
+    with the pins in `defs.rs`.
   - **Questions and forms** (M6c). Claude Code's AskUserQuestion is a
     question card: buttons for one answer, checkboxes for several, each
     option's description, an "Other" box (on its own it's the answer; next

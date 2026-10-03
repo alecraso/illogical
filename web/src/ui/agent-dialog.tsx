@@ -4,6 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
+import { AdapterHelp, installAdapter, loadAdapters, type Adapter } from "./adapter";
 import { pickConversation } from "./conversations";
 
 type Kind = "claude" | "codex" | "fountain" | "acp";
@@ -69,13 +70,26 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
   const promptRef = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => promptRef.current?.focus(), []);
   const canVm = kind !== "fountain";
+  // #111: whether this agent's adapter is installed here (a VM installs
+  // its own).
+  const [adapters, setAdapters] = useState<Adapter[] | null>(null);
+  useEffect(() => {
+    void loadAdapters(client).then(setAdapters);
+  }, [client]);
+  const adapter = vm && canVm ? undefined : adapters?.find((a) => a.kind === kind);
+  const blocked = !!adapter && adapter.state !== "installed";
 
-  const submit = async () => {
+  const remember = () => {
     try {
       localStorage.setItem("illogical.agent", JSON.stringify({ kind, fountain, acp, model }));
     } catch {
       // private mode: nothing remembered
     }
+  };
+
+  const submit = async () => {
+    if (blocked) return;
+    remember();
     const config: Record<string, unknown> = { agent: kind };
     if (kind === "fountain") config.fountain_agent = fountain.trim();
     if (kind === "acp") config.command = acp.trim();
@@ -142,6 +156,18 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
         {vm && kind === "claude" && (
           <p class="hint">Claude Code in a VM uses the token in ~/.config/illogical/claude-oauth-token (from `claude setup-token`).</p>
         )}
+        {adapter && (
+          <AdapterHelp
+            client={client}
+            a={adapter}
+            then="start the agent once it's done."
+            install={() => {
+              remember();
+              close();
+              void installAdapter(client, adapter.kind, where);
+            }}
+          />
+        )}
         {!(vm && canVm) && kind !== "fountain" && (
           <label>
             Working directory
@@ -162,7 +188,7 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
           <button type="button" onClick={close}>
             Cancel
           </button>
-          <button type="submit" class="primary">
+          <button type="submit" class="primary" disabled={blocked}>
             Start
           </button>
         </div>
