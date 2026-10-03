@@ -617,7 +617,7 @@ just bootstrap && just install</pre>
     }
     offs.sort((a, b) => a[2] - b[2]);
 
-    const SPOTS = [[0.14, 0.26], [0.48, 0.20], [0.82, 0.28], [0.30, 0.68], [0.64, 0.66], [0.10, 0.96], [0.90, 0.92]];
+    const SPOTS = [[0.14, 0.26], [0.48, 0.20], [0.82, 0.28], [0.30, 0.68], [0.64, 0.66], [0.10, 0.96], [0.84, 0.94]];
     const NARROW = [[0.22, 0.06], [0.74, 0.12], [0.30, 0.45], [0.80, 0.50], [0.16, 0.88], [0.52, 0.92], [0.86, 0.90]];
     let by = "proj", clusters = [], W = 0, H = 0, u = 1, wide = true, railW = 0;
     const cam = { x: 0, y: 0, z: 1 }, sc = { x: 0, y: 0 };
@@ -709,7 +709,7 @@ just bootstrap && just install</pre>
       const c = heroCluster();
       const tw = 12.6 * u, th = 8.4 * u, aw = W - railW;
       let z1 = Math.max(2.2, Math.min(6, (Math.min(aw, H * 0.7) * 0.5) / (c.rad + 20)));
-      if (!wide) z1 = Math.max(z1, 70 / tw);
+      z1 = Math.max(z1, 72 / tw);
       const z2 = Math.max(z1 * 1.8, 96 / tw);
       const z3 = Math.min((aw * 0.86) / tw, (wide ? H * 0.6 : H * 0.36) / th);
       const lift = (wide ? H * 0.07 : H * 0.1) / z3;
