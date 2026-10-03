@@ -3,122 +3,275 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>illogical</title>
-<meta name="description" content="Every terminal on every machine you and your team can see, in one live view, and any agent that asks can be answered by anyone on the team. Mouse-first tabs and splits that outlive the window, the daemon and the reboot.">
-<meta property="og:title" content="illogical">
-<meta property="og:description" content="Every pane on every machine your team can see, in one live view. Anyone on the team can answer an agent, from any screen.">
+<title>illogical — Keep track of your agents without checking every session.</title>
+<meta name="description" content="See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.">
+<meta property="og:title" content="illogical — Keep track of your agents without checking every session.">
+<meta property="og:description" content="See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.">
 <meta property="og:image" content="https://illogical.widgets.wtf/img/swarm.png">
 <meta property="og:url" content="https://illogical.widgets.wtf/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Antonio:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #1e1e2e;
-    --surface: #181825;
-    --deep: #11111b;
-    --raised: #313244;
+    --void: #05060b;
+    --bg: #090a12;
+    --surface: #10111c;
+    --deep: #0b0c15;
+    --raised: #232539;
+    --line: #1a1c2c;
     --fg: #cdd6f4;
     --dim: #a6adc8;
     --faint: #7f849c;
     --accent: #cba6f7;
+    --hud: #89dceb;
+    --amber: #f5b971;
+    --peach: #fab387;
+    --blue: #8aa8f8;
     --green: #a6e3a1;
+    --red: #f38ba8;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --display: Antonio, "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
   body {
-    margin: 0;
-    background: var(--bg);
+    margin: 0; overflow-x: hidden;
+    background:
+      radial-gradient(1200px 700px at 50% -10%, rgba(137,220,235,0.07), transparent 60%),
+      radial-gradient(900px 600px at 100% 30%, rgba(203,166,247,0.05), transparent 60%),
+      var(--void);
     color: var(--fg);
     font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-  a { color: var(--accent); }
+  /* Faint scanlines over everything, like glass in front of a display. */
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.018) 0 1px, transparent 1px 3px);
+  }
+  a { color: var(--hud); }
   code, pre { font-family: var(--mono); }
-  code { font-size: 0.92em; background: var(--raised); padding: 0.1em 0.35em; border-radius: 5px; }
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
-  header.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--fg); text-decoration: none; }
-  .brand img { width: 30px; height: 30px; }
-  nav a { color: var(--dim); text-decoration: none; margin-left: 22px; font-size: 15px; }
-  nav a:hover { color: var(--fg); }
+  code { font-size: 0.9em; background: var(--raised); padding: 0.1em 0.35em; border-radius: 5px; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+  .mono { font-family: var(--mono); }
 
-  .hero { text-align: center; padding: 56px 0 36px; }
-  .hero h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.1; margin: 0 0 18px; letter-spacing: -0.02em; }
-  .hero h1 span { color: var(--accent); }
-  .hero p.lede { font-size: clamp(18px, 2.4vw, 21px); color: var(--dim); max-width: 720px; margin: 0 auto 32px; }
+  /* ── Header: a control-panel bar ───────────────────────────── */
+  header.top { display: flex; align-items: center; gap: 14px; padding: 18px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 26px/1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg); text-decoration: none; }
+  .brand img { width: 30px; height: 30px; }
+  .bar { flex: 1; display: flex; gap: 6px; align-items: center; min-width: 0; }
+  .bar .seg { height: 22px; border-radius: 0 11px 11px 0; background: var(--amber); }
+  .bar .seg.grow { flex: 1; background: linear-gradient(90deg, var(--amber), #d9965a); border-radius: 11px 0 0 11px; }
+  .bar .seg.s2 { width: 42px; background: var(--accent); border-radius: 0; }
+  .bar .seg.s3 { width: 18px; background: var(--blue); }
+  nav { display: flex; gap: 6px; }
+  nav a {
+    font: 700 15px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; text-decoration: none;
+    color: var(--void); background: var(--accent); padding: 4px 14px 3px 22px; height: 22px; border-radius: 11px;
+    display: flex; align-items: center; justify-content: flex-end; min-width: 84px; transition: filter .15s, transform .15s;
+  }
+  nav a:nth-child(2) { background: var(--blue); }
+  nav a:nth-child(3) { background: var(--peach); }
+  nav a:hover { filter: brightness(1.15); transform: translateY(-1px); }
+
+  /* ── Hero ──────────────────────────────────────────────────── */
+  .hero { text-align: center; padding: 48px 0 28px; }
+  .status { display: inline-flex; align-items: center; gap: 10px; font: 12px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--hud); border: 1px solid rgba(137,220,235,0.25); border-radius: 999px; padding: 7px 14px; margin-bottom: 22px; background: rgba(137,220,235,0.04); }
+  .status i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: blink 2.4s infinite; }
+  @keyframes blink { 50% { opacity: 0.35; } }
+  .hero h1 { font: 700 clamp(44px, 8vw, 92px)/0.98 var(--display); text-transform: uppercase; letter-spacing: 0.01em; margin: 0 0 20px; }
+  .hero h1 span { color: transparent; background: linear-gradient(90deg, var(--hud), var(--accent) 60%, var(--red)); -webkit-background-clip: text; background-clip: text; }
+  .hero p.lede { font-size: clamp(18px, 2.3vw, 21px); color: var(--dim); max-width: 700px; margin: 0 auto 30px; }
 
   .install {
-    display: flex; align-items: center; gap: 12px;
-    max-width: 640px; margin: 0 auto;
-    background: var(--deep); border: 1px solid var(--raised); border-radius: 12px;
+    display: flex; align-items: center; gap: 12px; max-width: 640px; margin: 0 auto;
+    background: var(--deep); border: 1px solid rgba(137,220,235,0.3); border-radius: 12px;
     padding: 12px 12px 12px 18px; text-align: left;
+    box-shadow: 0 0 0 4px rgba(137,220,235,0.04), 0 0 40px rgba(137,220,235,0.08);
   }
-  .install code { flex: 1; background: none; padding: 0; font-size: 15px; overflow-x: auto; white-space: nowrap; }
+  .install code { min-width: 0; flex: 1; background: none; padding: 0; font-size: 15px; overflow-x: auto; white-space: nowrap; }
   .install code::before { content: "$ "; color: var(--faint); }
   button.copy {
     flex: none; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer;
-    background: var(--accent); color: var(--deep); font: 600 14px system-ui, sans-serif;
+    background: var(--hud); color: var(--void); font: 700 15px/1 var(--display); letter-spacing: 0.1em; text-transform: uppercase;
   }
   .hero .small { color: var(--faint); font-size: 14px; margin-top: 14px; }
 
-  .shot { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--raised); box-shadow: 0 24px 60px rgba(0,0,0,0.45); }
-  .hero-shot { margin: 48px 0 24px; }
+  /* ── The live console ──────────────────────────────────────── */
+  .console {
+    position: relative; margin: 44px 0 10px; height: 600px; text-align: left;
+    background:
+      linear-gradient(rgba(137,220,235,0.035) 1px, transparent 1px) 0 0 / 40px 40px,
+      linear-gradient(90deg, rgba(137,220,235,0.035) 1px, transparent 1px) 0 0 / 40px 40px,
+      radial-gradient(ellipse at 40% 50%, #0d0f1c, var(--void) 75%);
+    border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 40px 120px rgba(0,0,0,0.6), inset 0 0 120px rgba(0,0,0,0.6);
+  }
+  .console canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: pan-y; }
+  .console .head { position: absolute; left: 22px; top: 18px; right: 360px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 22px; pointer-events: none; }
+  .console .head h2 { margin: 0; font: 700 34px/1 var(--display); letter-spacing: 0.03em; text-transform: uppercase; }
+  .console .head h2 span { color: var(--faint); font-weight: 500; }
+  .stat { font: 600 22px/1 var(--mono); }
+  .stat small { display: block; font-size: 11px; font-weight: 400; color: var(--faint); margin-top: 4px; letter-spacing: 0.06em; }
+  .stat.alert { color: var(--red); }
+  .group { position: absolute; left: 22px; top: 76px; display: flex; gap: 4px; padding: 4px; border: 1px solid var(--raised); border-radius: 999px; background: rgba(5,6,11,0.7); }
+  .group button { border: 0; background: none; color: var(--dim); font: 12px/1 var(--mono); padding: 7px 12px; border-radius: 999px; cursor: pointer; }
+  .group button[aria-pressed="true"] { background: var(--fg); color: var(--void); }
+  .group button:hover:not([aria-pressed="true"]) { color: var(--fg); }
+  .hint { position: absolute; left: 22px; bottom: 14px; font: 11px/1.4 var(--mono); color: var(--faint); pointer-events: none; }
 
-  section.feature { display: grid; grid-template-columns: 1fr 1.35fr; gap: 48px; align-items: center; padding: 64px 0; border-top: 1px solid var(--raised); }
+  .rail { position: absolute; top: 0; right: 0; bottom: 0; width: 340px; padding: 18px 16px; border-left: 1px solid var(--line); background: linear-gradient(90deg, rgba(5,6,11,0.55), rgba(5,6,11,0.9)); backdrop-filter: blur(6px); }
+  .rail-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .rail-h b { font: 700 28px/1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; }
+  .rail-h small { font: 11px var(--mono); color: var(--faint); }
+  .cards { display: flex; flex-direction: column; gap: 10px; }
+  .card {
+    --c: var(--accent);
+    position: relative; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); border-left: 3px solid var(--c);
+    border-radius: 10px; padding: 11px 13px; background: color-mix(in srgb, var(--c) 7%, var(--deep));
+    animation: cardin .45s cubic-bezier(.2,.9,.3,1.2) both; overflow: hidden;
+    transition: opacity .5s, max-height .6s ease .1s, padding .6s ease .1s, margin .6s, border-width .6s; max-height: 260px;
+  }
+  .card.c-fail { --c: var(--red); }
+  .card.c-done { --c: var(--green); }
+  .card.c-q { --c: var(--hud); }
+  .card.gone { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin-top: -10px; border-width: 0; }
+  @keyframes cardin { from { opacity: 0; transform: translateX(40px) scale(0.96); } }
+  .card .t { font: 700 19px/1.1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--c); }
+  .card .m { font: 11px/1.5 var(--mono); color: var(--faint); margin: 3px 0 6px; }
+  .card .b { font-size: 14px; line-height: 1.35; }
+  .card code { display: block; margin-top: 6px; background: var(--void); font-size: 12px; padding: 6px 8px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .a { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .card .a button { font: 600 12px/1 system-ui, sans-serif; padding: 7px 11px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--c) 60%, transparent); background: none; color: var(--fg); cursor: pointer; }
+  .card .a button.pri { background: var(--c); color: var(--void); border-color: var(--c); }
+  .card .a button:hover { filter: brightness(1.15); }
+  .card .who { margin-top: 9px; font: 12px var(--mono); color: var(--green); display: none; }
+  .card.done .a { display: none; }
+  .card.done .who { display: block; animation: cardin .3s both; }
+  .card.done { --c: var(--green); }
+  .demo-note { text-align: center; font: 12px var(--mono); color: var(--faint); letter-spacing: 0.06em; }
+  .demo-note a { color: var(--faint); }
+
+  /* ── Ticker ────────────────────────────────────────────────── */
+  .ticker { margin: 40px 0 0; border-block: 1px solid var(--line); overflow: hidden; white-space: nowrap; font: 12px/1 var(--mono); color: var(--faint); background: rgba(10,11,20,0.7); }
+  .ticker div { display: inline-block; padding: 12px 0; animation: tick 70s linear infinite; }
+  .ticker span { margin-right: 36px; }
+  .ticker b { font-weight: 400; color: var(--hud); }
+  .ticker em { font-style: normal; color: var(--red); }
+  .ticker strong { font-weight: 400; color: var(--green); }
+  @keyframes tick { to { transform: translateX(-50%); } }
+
+  /* ── Section kicker: the elbow ─────────────────────────────── */
+  .kicker { --k: var(--amber); display: flex; align-items: stretch; gap: 8px; margin: 0 0 18px; }
+  .kicker .elbow { width: 58px; height: 34px; border-radius: 18px 0 0 0; border-top: 12px solid var(--k); border-left: 22px solid var(--k); }
+  .kicker .tag { align-self: flex-start; margin-top: -3px; font: 700 15px/1 var(--display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--k); }
+  .k-purple { --k: var(--accent); } .k-blue { --k: var(--blue); } .k-cyan { --k: var(--hud); } .k-peach { --k: var(--peach); } .k-red { --k: var(--red); }
+
+  section h2 { font: 700 clamp(34px, 4.2vw, 50px)/1.02 var(--display); text-transform: uppercase; letter-spacing: 0.01em; margin: 0 0 16px; }
+
+  /* ── Framed screenshots: corner brackets and a scan sweep ──── */
+  .frame { --b: var(--hud); position: relative; margin: 0; padding: 12px; }
+  .frame::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.8;
+    background:
+      linear-gradient(var(--b), var(--b)) 0 0 / 22px 2px, linear-gradient(var(--b), var(--b)) 0 0 / 2px 22px,
+      linear-gradient(var(--b), var(--b)) 100% 0 / 22px 2px, linear-gradient(var(--b), var(--b)) 100% 0 / 2px 22px,
+      linear-gradient(var(--b), var(--b)) 0 100% / 22px 2px, linear-gradient(var(--b), var(--b)) 0 100% / 2px 22px,
+      linear-gradient(var(--b), var(--b)) 100% 100% / 22px 2px, linear-gradient(var(--b), var(--b)) 100% 100% / 2px 22px;
+    background-repeat: no-repeat;
+  }
+  .frame figcaption { position: absolute; left: 34px; top: -2px; transform: translateY(-50%); font: 11px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--b); background: var(--void); padding: 0 8px; }
+  .frame .glass { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--raised); box-shadow: 0 24px 60px rgba(0,0,0,0.55); }
+  .frame .glass::after {
+    content: ""; position: absolute; left: 0; right: 0; top: -30%; height: 30%; pointer-events: none; opacity: 0;
+    background: linear-gradient(to bottom, transparent, rgba(137,220,235,0.16) 85%, rgba(137,220,235,0.5) 100%);
+  }
+  .frame.in .glass::after { animation: sweep 1.6s ease-out .2s 1; }
+  @keyframes sweep { 0% { top: -30%; opacity: 1; } 100% { top: 100%; opacity: 0.6; } }
+  .frame img { display: block; width: 100%; height: auto; }
+  .frame.phone { padding: 10px; }
+
+  /* ── Sections ──────────────────────────────────────────────── */
+  section.feature { display: grid; grid-template-columns: 1fr 1.35fr; gap: 56px; align-items: center; padding: 80px 0; }
+  section.feature > * { min-width: 0; }
   section.feature.flip { grid-template-columns: 1.35fr 1fr; }
   section.feature.flip .text { order: 2; }
-  section.feature h2 { font-size: 30px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -0.01em; }
   section.feature p { color: var(--dim); margin: 0 0 12px; }
-  section.feature ul { color: var(--dim); padding-left: 20px; margin: 0; }
-  section.feature li { margin: 6px 0; }
-  .phones { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  section.feature.wide { grid-template-columns: 1fr; gap: 20px; }
+  section.feature.wide { grid-template-columns: 1fr; gap: 28px; }
   section.feature.wide .text { max-width: 760px; }
-  section.feature.wide ul { columns: 2; column-gap: 40px; }
-  section.feature.wide li { break-inside: avoid; margin: 0 0 12px; }
-  section.feature li strong { color: var(--fg); }
+  .phones { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
-  section.blocks { padding: 64px 0; border-top: 1px solid var(--raised); }
-  section.blocks > .text { max-width: 760px; margin-bottom: 32px; }
-  section.blocks h2 { font-size: 30px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -0.01em; }
+  .readout { margin-top: 22px; display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 4px 28px; font: 12px var(--mono); color: var(--faint); }
+  .readout b { display: block; font: 700 28px/1 var(--display); color: var(--fg); letter-spacing: 0.04em; }
+
+  section.blocks { padding: 80px 0; }
+  section.blocks > .text { max-width: 760px; margin-bottom: 36px; }
   section.blocks p { color: var(--dim); margin: 0 0 12px; }
-  .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 36px 32px; }
-  .kind h3 { font-size: 19px; margin: 18px 0 6px; }
+  .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 44px 36px; }
+  .kind h3 { font: 700 24px/1.1 var(--display); text-transform: uppercase; letter-spacing: 0.04em; margin: 14px 0 8px; }
   .kind p { font-size: 15.5px; margin: 0; }
-  .also { margin-top: 36px; color: var(--dim); }
+  .also { margin-top: 40px; color: var(--dim); }
   .also strong { color: var(--fg); }
 
-  .cli { background: var(--deep); border: 1px solid var(--raised); border-radius: 12px; padding: 18px 20px; overflow-x: auto; font-size: 14px; line-height: 1.7; margin: 0; }
-  .cli .c { color: var(--faint); }
-  .cli .p { color: var(--green); }
+  .details { padding: 56px 0; }
+  .details .panel { position: relative; border: 1px solid var(--line); border-radius: 14px; padding: 28px 30px; background: linear-gradient(135deg, rgba(137,220,235,0.05), rgba(203,166,247,0.03) 60%, transparent); display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
+  .details h2 { font-size: clamp(28px, 3.4vw, 38px); margin: 0 0 10px; }
+  .details p { max-width: 720px; color: var(--dim); margin: 0; }
+  .details a.go { font: 700 16px/1 var(--display); letter-spacing: 0.1em; text-transform: uppercase; text-decoration: none; color: var(--void); background: var(--hud); padding: 12px 18px; border-radius: 22px 6px 6px 22px; white-space: nowrap; }
 
-  section.get { padding: 64px 0; border-top: 1px solid var(--raised); }
-  section.get h2 { font-size: 30px; margin: 0 0 24px; }
-  .ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-  .way { background: var(--surface); border: 1px solid var(--raised); border-radius: 12px; padding: 20px; min-width: 0; }
-  .way h3 { margin: 0 0 10px; font-size: 18px; }
-  .way p { color: var(--dim); font-size: 15px; margin: 10px 0 0; }
-  .way pre { background: var(--deep); border-radius: 8px; padding: 12px; font-size: 13px; overflow-x: auto; margin: 0; }
+  section.get { padding: 80px 0; }
+  .ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .way { position: relative; background: var(--surface); border: 1px solid var(--raised); border-radius: 12px; padding: 22px 20px 20px; min-width: 0; overflow: hidden; }
+  .way::before { content: ""; position: absolute; left: 0; top: 0; right: 0; height: 4px; background: var(--k, var(--amber)); }
+  .way:nth-child(2) { --k: var(--accent); } .way:nth-child(3) { --k: var(--blue); }
+  .way h3 { margin: 0 0 12px; font: 700 21px/1.1 var(--display); text-transform: uppercase; letter-spacing: 0.05em; }
+  .way p { color: var(--dim); font-size: 15px; margin: 12px 0 0; }
+  .way pre { background: var(--void); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 13px; overflow-x: auto; margin: 0; }
   .needs { margin-top: 28px; color: var(--dim); }
-  .needs strong { color: var(--fg); }
 
-  footer { border-top: 1px solid var(--raised); padding: 32px 0 48px; color: var(--faint); font-size: 14px; }
+  footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--faint); font-size: 14px; }
   footer p { margin: 6px 0; }
+  footer a { color: var(--dim); }
 
-  @media (max-width: 820px) {
+  /* Reveal on scroll. Only when scripting is on and motion is allowed. */
+  .js .reveal { opacity: 0; transform: translateY(24px); transition: opacity .8s ease, transform .8s cubic-bezier(.2,.8,.2,1); }
+  .js .reveal.in { opacity: 1; transform: none; }
+
+  @media (max-width: 900px) {
     body { font-size: 16px; }
     .wrap { padding: 0 16px; }
-    nav a { margin-left: 14px; }
+    .bar .seg.s2, .bar .seg.s3 { display: none; }
+    nav a { min-width: 0; padding: 4px 10px 3px 14px; font-size: 14px; }
     nav a.hide-sm { display: none; }
-    .hero { padding-top: 32px; }
-    section.feature, section.feature.flip { grid-template-columns: 1fr; gap: 24px; padding: 44px 0; }
+    .hero { padding-top: 28px; }
+    .console { height: auto; display: flex; flex-direction: column; }
+    .console .stage { position: relative; height: 520px; }
+    .console .head { right: 16px; left: 16px; gap: 14px; }
+    .console .head h2 { font-size: 26px; flex-basis: 100%; }
+    .stat { font-size: 17px; }
+    .group { left: 16px; top: 112px; }
+    .group button { padding: 6px 9px; font-size: 11px; }
+    .hint { display: none; }
+    .rail { position: relative; width: auto; border-left: 0; border-top: 1px solid var(--line); min-height: 236px; }
+    .rail-h b { font-size: 24px; }
+    section.feature, section.feature.flip { grid-template-columns: 1fr; gap: 26px; padding: 52px 0; }
     section.feature.flip .text { order: 0; }
-    section.feature.wide ul { columns: 1; }
+    .kinds { grid-template-columns: 1fr; gap: 36px; }
+    section.blocks, section.get { padding: 52px 0; }
+    .details .panel { grid-template-columns: 1fr; padding: 22px; }
+    .details a.go { justify-self: start; }
     .ways { grid-template-columns: 1fr; }
-    section.blocks { padding: 44px 0; }
-    .kinds { grid-template-columns: 1fr; gap: 32px; }
     .install code { font-size: 13px; }
+  }
+  @media (min-width: 901px) { .console .stage { position: absolute; inset: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .ticker div, .status i { animation: none; }
+    .frame.in .glass::after { animation: none; }
+    .card { animation: none; }
+    html { scroll-behavior: auto; }
   }
 </style>
 </head>
@@ -126,6 +279,7 @@
 <div class="wrap">
   <header class="top">
     <a class="brand" href="/"><img src="icon.svg" alt="">illogical</a>
+    <div class="bar" aria-hidden="true"><span class="seg grow"></span><span class="seg s2"></span><span class="seg s3"></span></div>
     <nav>
       <a href="#install">Install</a>
       <a class="hide-sm" href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/features.md">Docs</a>
@@ -134,160 +288,208 @@
   </header>
 
   <div class="hero">
-    <h1>Every pane on every machine,<br><span>and anyone on the team can answer.</span></h1>
-    <p class="lede">illogical is a terminal multiplexer for you and your team. Daemons own the terminals, on your laptop, your servers and the team's build box, and they outlive the window, the daemon and the reboot. The browser draws them as tabs and splits you drive with the mouse, or all at once in the swarm, where a failed build or an agent's question lifts out to a card that anyone who may answer can answer, from any screen.</p>
+    <div class="status"><i></i>Every session · one view</div>
+    <h1>Keep track of your agents<br><span>without checking every session.</span></h1>
+    <p class="lede">See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.</p>
     <div class="install">
       <code id="oneliner">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</code>
       <button class="copy" type="button" data-copy="oneliner">Copy</button>
     </div>
-    <p class="small">Linux (x86_64, arm64) and macOS (Apple silicon). Free and open source, MIT or Apache-2.0.</p>
-    <picture>
-      <source srcset="img/swarm.webp" type="image/webp">
-      <img class="shot hero-shot" src="img/swarm.png" width="2880" height="1800" alt="The swarm: 374 panes on six machines clustered by project, with two agents asking, a third asking to run terraform plan, four failed test runs on build-02 and a finished build on the needs-you rail">
-    </picture>
-  </div>
+    <p class="small">Free and open source. Linux (x86_64, arm64) · macOS (Apple silicon).</p>
 
-  <section class="feature wide">
-    <div class="text">
-      <h2>Whoever is free answers it.</h2>
-      <p>The swarm is one live view of every pane on every machine you and your team can see. Panes cluster by project, machine, kind or person, and the busy ones drift to the middle. Whatever needs someone lifts out to a rail of cards, bundled by cause: "4 failed on build-02", "2 agents ask".</p>
-      <p>When an agent on any of the team's machines wants to run something or has a question, its card reaches everyone who may answer: on the rail, beside the pane, or as a push notification. The first answer wins, and every card says who gave it ("Allowed by Sam, 14:02"). Then send the agent its next instruction from the same card.</p>
+    <div class="console" id="console" role="region" aria-label="A live simulation of the swarm: sessions clustered by project, with questions and approvals lifting out to the Needs You rail">
+      <div class="stage">
+        <canvas id="swarm" aria-hidden="true"></canvas>
+        <div class="head">
+          <h2>Swarm <span>/ illogical</span></h2>
+          <div class="stat"><span id="n-panes">0</span><small>panes</small></div>
+          <div class="stat"><span id="n-mach">6</span><small>machines</small></div>
+          <div class="stat"><span id="n-busy">0</span><small>busy</small></div>
+          <div class="stat alert"><span id="n-need">0</span><small>need you</small></div>
+        </div>
+        <div class="group" role="group" aria-label="Cluster by">
+          <button type="button" data-by="proj" aria-pressed="true">project</button>
+          <button type="button" data-by="mach" aria-pressed="false">machine</button>
+          <button type="button" data-by="kind" aria-pressed="false">kind</button>
+          <button type="button" data-by="who" aria-pressed="false">person</button>
+        </div>
+        <div class="hint">Regroup the swarm above. Answer a card yourself, or a teammate will.</div>
+      </div>
+      <aside class="rail">
+        <div class="rail-h"><b>Needs you</b><small>bundled by cause</small></div>
+        <div class="cards" id="cards"></div>
+      </aside>
+      <noscript>
+        <img src="img/swarm.png" alt="The swarm: agent sessions grouped by project, with questions and approvals collected in the Needs You rail" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+      </noscript>
     </div>
-    <ul>
-      <li><strong>Share a session</strong> with a person or the whole team, as a viewer or an editor. Revoke it and they're out within a second.</li>
-      <li><strong>Team machines</strong> belong to the team: members drive them by their role. A pane on your own machine needs your OK first, for a set time.</li>
-      <li><strong>Claude Code in a plain terminal</strong> works too, through its hooks: tool approvals, questions and follow-ups, without typing over whoever is driving.</li>
-      <li><strong>Who did what</strong> is kept: every approval, answer and follow-up is in the pane's history under the name of the person who sent it.</li>
-      <li><strong>Private panes</strong> never leave your screen, not even as a tile.</li>
-      <li><strong>End to end:</strong> illogical control lists your machines and relays them, but never sees what's in them.</li>
-    </ul>
+    <p class="demo-note">Simulated above · <a href="#swarm-real">the real one below</a></p>
+  </div>
+</div>
+
+<div class="ticker" aria-hidden="true"><div id="ticker"></div></div>
+
+<div class="wrap">
+  <section class="feature wide" id="swarm-real">
+    <div class="text reveal">
+      <div class="kicker k-cyan"><span class="elbow"></span><span class="tag">01 · The swarm</span></div>
+      <h2>Every session, one view.</h2>
+      <p>The swarm shows every session on every machine you can see, grouped by project, machine or person. Busy sessions drift to the middle. Anything waiting on a person lifts out to the Needs You rail, and whoever answers first is shown on the card.</p>
+    </div>
+    <figure class="frame reveal">
+      <figcaption>Fig. 01 // swarm · 374 panes · 6 machines</figcaption>
+      <div class="glass"><picture>
+        <source srcset="img/swarm.webp" type="image/webp">
+        <img src="img/swarm.png" width="2880" height="1800" loading="lazy" alt="Agent sessions grouped by project, with questions and approvals collected in the Needs You rail">
+      </picture></div>
+    </figure>
   </section>
 
   <section class="feature">
-    <div class="text">
-      <h2>Mouse first. No prefix key.</h2>
-      <p>Tabs and splits are ordinary things you click, drag and right-click. Drag a tab onto a pane's edge to split it there, drag a divider to resize, right-click for everything else.</p>
-      <p>Each finished command gets a mark in the gutter, green or red. Click one to select its output, right-click to copy it or run it again.</p>
+    <div class="text reveal">
+      <div class="kicker"><span class="elbow"></span><span class="tag">02 · Sessions</span></div>
+      <h2>Leave sessions open.</h2>
+      <p>Start a task with Claude Code or Codex and come back to it later. The session stays open, with its output available when you return.</p>
     </div>
-    <picture>
-      <source srcset="img/menu.webp" type="image/webp">
-      <img class="shot" src="img/menu.png" width="2880" height="1800" loading="lazy" alt="The right-click menu on a pane: split, move, restart policy and more">
-    </picture>
+    <figure class="frame reveal">
+      <figcaption>Fig. 02 // agent at work</figcaption>
+      <div class="glass"><picture>
+        <source srcset="img/agent.webp" type="image/webp">
+        <img src="img/agent.png" width="2880" height="1800" loading="lazy" alt="An agent working through a failing test beside a shell, with its commands and results visible">
+      </picture></div>
+    </figure>
   </section>
 
   <section class="feature flip">
-    <div class="text">
-      <h2>Durable, honestly.</h2>
-      <p>Processes don't survive a reboot. Everything else does:</p>
-      <ul>
-        <li>Every pane's output is on disk as it happens, and its screen is checkpointed. The layout is saved on every change.</li>
-        <li>After a crash or a reboot each pane comes back with its scrollback and does what you told it: a shell where it was, re-run its command, or run <code>claude --continue</code>.</li>
-        <li>On Linux, restarting or upgrading the daemon doesn't touch running programs at all. vim keeps its screen; a build keeps building.</li>
-      </ul>
+    <div class="text reveal">
+      <div class="kicker k-red"><span class="elbow"></span><span class="tag">03 · Needs you</span></div>
+      <h2>See who needs input.</h2>
+      <p>Questions and approval requests appear in one view. See which agents are waiting and answer from your laptop or phone.</p>
     </div>
-    <picture>
-      <source srcset="img/restored.webp" type="image/webp">
-      <img class="shot" src="img/restored.png" width="2880" height="1800" loading="lazy" alt="Panes after the daemon was killed: their scrollback is back, marked restored, with a fresh prompt">
-    </picture>
+    <div class="phones">
+      <figure class="frame phone reveal" style="--b: var(--red)">
+        <figcaption>Fig. 03a</figcaption>
+        <div class="glass"><picture>
+          <source srcset="img/phone.webp" type="image/webp">
+          <img src="img/phone.png" width="1082" height="2202" loading="lazy" alt="An agent’s question on a phone, with three approaches to choose from">
+        </picture></div>
+      </figure>
+      <figure class="frame phone reveal" style="--b: var(--red)">
+        <figcaption>Fig. 03b</figcaption>
+        <div class="glass"><picture>
+          <source srcset="img/phone-terminal.webp" type="image/webp">
+          <img src="img/phone-terminal.png" width="1082" height="2202" loading="lazy" alt="A terminal workspace open on a phone">
+        </picture></div>
+      </figure>
+    </div>
   </section>
 
   <section class="feature">
-    <div class="text">
-      <h2>Agents as blocks, beside your terminals.</h2>
-      <p>Run Claude Code, Codex or any <a href="https://agentclientprotocol.com">ACP</a> agent as a UI instead of a TUI: its messages, every command it runs with the output, and the cost of each turn.</p>
-      <p>When it wants to run something, or has a question, you get a card: Approve, Always, Deny, or pick an answer. It waits as long as it takes, survives a daemon restart, and the first answer from any screen wins.</p>
+    <div class="text reveal">
+      <div class="kicker k-blue"><span class="elbow"></span><span class="tag">04 · Persistence</span></div>
+      <h2>Close the browser. Keep sessions running.</h2>
+      <p>Your sessions run on the host machine, independently of your browser. Reopen the workspace to see your terminals and their output.</p>
     </div>
-    <picture>
-      <source srcset="img/agent.webp" type="image/webp">
-      <img class="shot" src="img/agent.png" width="2880" height="1800" loading="lazy" alt="An agent block beside a shell: a failing test run, an edit, a passing run, and a card asking to approve a git commit">
-    </picture>
+    <figure class="frame reveal" style="--b: var(--blue)">
+      <figcaption>Fig. 04 // workspace restored</figcaption>
+      <div class="glass"><picture>
+        <source srcset="img/restored.webp" type="image/webp">
+        <img src="img/restored.png" width="2880" height="1800" loading="lazy" alt="A restored workspace with earlier terminal output preserved above fresh prompts">
+      </picture></div>
+    </figure>
+  </section>
+
+  <section class="feature wide">
+    <div class="text reveal">
+      <div class="kicker k-purple"><span class="elbow"></span><span class="tag">05 · Together</span></div>
+      <h2>Work in the same session.</h2>
+      <p>See what your teammates are working on and join a shared session to pair, answer an agent or help with a stuck task. You control who can view or interact with your sessions.</p>
+    </div>
+    <figure class="frame reveal" style="--b: var(--accent)">
+      <figcaption>Fig. 05 // shared workspace</figcaption>
+      <div class="glass"><picture>
+        <source srcset="img/desktop.webp" type="image/webp">
+        <img src="img/desktop.png" width="2880" height="1800" loading="lazy" alt="A terminal workspace with tabs and splits that can be shared with a teammate">
+      </picture></div>
+    </figure>
   </section>
 
   <section class="blocks">
-    <div class="text">
+    <div class="text reveal">
+      <div class="kicker k-peach"><span class="elbow"></span><span class="tag">06 · Blocks</span></div>
       <h2>Not just terminals.</h2>
       <p>A terminal is one kind of block. The things you'd switch windows for open beside the pane they're about, in the same tabs and splits, on the same machine, a VM tab's too. They come back after a restart and show on every screen you open, your phone included.</p>
     </div>
     <div class="kinds">
-      <div class="kind">
-        <picture>
-          <source srcset="img/changes.webp" type="image/webp">
-          <img class="shot" src="img/changes.png" width="2880" height="1800" loading="lazy" alt="A failing test run beside a diff block listing the changed files with their hunks, and a file block open at the new sweep function">
-        </picture>
+      <div class="kind reveal">
+        <figure class="frame" style="--b: var(--peach)">
+          <figcaption>Block // changes</figcaption>
+          <div class="glass"><picture>
+            <source srcset="img/changes.webp" type="image/webp">
+            <img src="img/changes.png" width="2880" height="1800" loading="lazy" alt="A failing test run beside a diff block listing the changed files with their hunks, and a file block open at the new sweep function">
+          </picture></div>
+        </figure>
         <h3>What changed</h3>
         <p><em>Changes</em> opens a diff block for the pane's repository: each file with its <span style="white-space:nowrap">+/−</span>, its hunks a tap away. Tap a line for the file, marked there. Both follow the edits as they land, and nothing in them can write, so checking an agent's work from your phone is safe.</p>
       </div>
-      <div class="kind">
-        <picture>
-          <source srcset="img/port.webp" type="image/webp">
-          <img class="shot" src="img/port.png" width="2880" height="1800" loading="lazy" alt="npm run dev in a terminal, and the app it serves in a browser block beside it">
-        </picture>
+      <div class="kind reveal">
+        <figure class="frame" style="--b: var(--peach)">
+          <figcaption>Block // port</figcaption>
+          <div class="glass"><picture>
+            <source srcset="img/port.webp" type="image/webp">
+            <img src="img/port.png" width="2880" height="1800" loading="lazy" alt="npm run dev in a terminal, and the app it serves in a browser block beside it">
+          </picture></div>
+        </figure>
         <h3>Your dev server, beside it</h3>
         <p><code>npm run dev</code> in a pane, then open its port: the app sits next to the terminal, hot reload and all, even from a VM or your phone. Each block is its own origin, so the page can't reach illogical. When the server dies the block says so, and the page comes back with it.</p>
       </div>
-      <div class="kind">
-        <picture>
-          <source srcset="img/editor.webp" type="image/webp">
-          <img class="shot" src="img/editor.png" width="2880" height="1800" loading="lazy" alt="A passing test run beside VS Code, open on the same repository at the changed function">
-        </picture>
+      <div class="kind reveal">
+        <figure class="frame" style="--b: var(--peach)">
+          <figcaption>Block // editor</figcaption>
+          <div class="glass"><picture>
+            <source srcset="img/editor.webp" type="image/webp">
+            <img src="img/editor.png" width="2880" height="1800" loading="lazy" alt="A passing test run beside VS Code, open on the same repository at the changed function">
+          </picture></div>
+        </figure>
         <h3>VS Code where the pane runs</h3>
         <p><em>Open in editor</em> starts VS Code on the pane's machine, at the file and line, with your settings and extensions kept. No ports, no SSH config, and it sleeps when nobody has it open.</p>
       </div>
-      <div class="kind">
-        <picture>
-          <source srcset="img/conversation.webp" type="image/webp">
-          <img class="shot" src="img/conversation.png" width="2880" height="1800" loading="lazy" alt="A Claude Code session from a terminal opened as a block: its prompts, replies and tool calls, with Continue and Fork">
-        </picture>
+      <div class="kind reveal">
+        <figure class="frame" style="--b: var(--peach)">
+          <figcaption>Block // conversation</figcaption>
+          <div class="glass"><picture>
+            <source srcset="img/conversation.webp" type="image/webp">
+            <img src="img/conversation.png" width="2880" height="1800" loading="lazy" alt="A Claude Code session from a terminal opened as a block: its prompts, replies and tool calls, with Continue and Fork">
+          </picture></div>
+        </figure>
         <h3>Claude Code conversations</h3>
         <p>Any Claude Code session on the machine, from a terminal or the desktop app, opens as a block: prompts, replies, every tool call and its output. Follow one from your phone as it runs, then <em>Continue</em> it right there, with your settings and skills, or <em>Fork</em> it if it's still open somewhere else.</p>
       </div>
     </div>
-    <p class="also">And more: <strong>web pages</strong> (<code>illogical open example.com</code>), <strong>panes from your other machines</strong> in this layout, drawn straight from their host, and <strong>your own VS Code, Cursor or nvim</strong> as tiles in the swarm, with the debugger's stops as cards. Every kind shares the layout, the <code>illogical</code> CLI and the rail of what needs you.</p>
+    <p class="also reveal">And more: <strong>web pages</strong> (<code>illogical open example.com</code>), <strong>panes from your other machines</strong> in this layout, drawn straight from their host, and <strong>your own VS Code, Cursor or nvim</strong> as tiles in the swarm, with the debugger's stops as cards. Every kind shares the layout, the <code>illogical</code> CLI and the rail of what needs you.</p>
   </section>
 
-  <section class="feature flip">
-    <div class="text">
-      <h2>On your phone, from anywhere.</h2>
-      <p>The same live layout on every window you open and on your phone: over your <a href="https://tailscale.com">tailnet</a>, or from anywhere through illogical control's relay, encrypted end to end. You get in, and so do the teammates you gave a role. Nobody else does.</p>
-      <p>A failed build, a long command that finishes, an agent that needs you: you get a push notification. Answer from its buttons where your phone shows them, or tap it to open the card. On a phone the swarm's rail is a strip of cards along the bottom.</p>
+  <section class="details" aria-labelledby="details-heading">
+    <div class="panel reveal">
+      <div>
+        <div class="kicker k-cyan"><span class="elbow"></span><span class="tag">07 · Your hardware</span></div>
+        <h2 id="details-heading">Run it on your own machines.</h2>
+        <p>Connect through Tailscale or an encrypted relay. Layout and scrollback survive reboots; running processes don’t.</p>
+      </div>
+      <a class="go" href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/features.md">Features &amp; restart behavior →</a>
     </div>
-    <div class="phones">
-      <picture>
-        <source srcset="img/phone.webp" type="image/webp">
-        <img class="shot" src="img/phone.png" width="1082" height="2202" loading="lazy" alt="The phone view of an agent asking which approach to take, with three answers as buttons">
-      </picture>
-      <picture>
-        <source srcset="img/swarm-phone.webp" type="image/webp">
-        <img class="shot" src="img/swarm-phone.png" width="1082" height="2202" loading="lazy" alt="The swarm on a phone: panes clustered by project, and what needs you as a strip of cards along the bottom">
-      </picture>
-    </div>
-  </section>
-
-  <section class="feature flip">
-    <div class="text">
-      <h2>A CLI for scripts and agents.</h2>
-      <p><code>illogical</code> works from any shell and inside every pane. Run things, type into panes, wait for a command or a line of output, tail, and search every pane's history.</p>
-      <p>The same calls are an HTTP API on a Unix socket.</p>
-    </div>
-<pre class="cli"><span class="p">$</span> illogical run --wait -- cargo build     <span class="c"># a new tab; exits with its code</span>
-<span class="p">$</span> illogical send %3 'git status' -e       <span class="c"># type a line, press Enter</span>
-<span class="p">$</span> illogical wait %3 --match 'listening on'
-<span class="p">$</span> illogical tail %3 -f --text
-<span class="p">$</span> illogical search 'panic|Traceback' --since 1d
-<span class="p">$</span> illogical agent "fix the failing test"
-<span class="p">$</span> illogical wait %5 --needs-input        <span class="c"># it asks…</span>
-<span class="p">$</span> illogical call %5 approve               <span class="c"># …you answer</span></pre>
   </section>
 
   <section class="get" id="install">
-    <h2>Install</h2>
+    <div class="kicker"><span class="elbow"></span><span class="tag">08 · Engage</span></div>
+    <h2>Install illogical.</h2>
     <div class="ways">
-      <div class="way">
-        <h3>One line</h3>
+      <div class="way reveal">
+        <h3>One command</h3>
         <pre>curl -fsSL https://illogical.widgets.wtf/install.sh | sh</pre>
-        <p>Downloads the release for your machine, checks it, and starts the daemon as a service (systemd on Linux, launchd on macOS). Run it again to upgrade.</p>
+        <p>Installs illogical and starts its background service. Run again to upgrade.</p>
       </div>
-      <div class="way">
+      <div class="way reveal">
         <h3>Homebrew</h3>
         <pre>brew tap jhgaylor/tap \
   https://git.inevitable.fyi/jhgaylor/homebrew-tap
@@ -295,7 +497,7 @@ brew install illogical
 illogicald install</pre>
         <p>macOS and Linux.</p>
       </div>
-      <div class="way">
+      <div class="way reveal">
         <h3>From source</h3>
         <pre>git clone https://git.inevitable.fyi/jhgaylor/illogical
 cd illogical
@@ -303,11 +505,12 @@ just bootstrap && just install</pre>
         <p>Needs Rust, mise, just and pnpm. <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/development.md#build-from-source">Details</a>.</p>
       </div>
     </div>
-    <p class="needs">Then open <code>http://127.0.0.1:7681</code>. <strong>From your phone and other machines</strong>, put it behind Tailscale (<code>tailscale serve --bg --https=443 http://127.0.0.1:7681</code>), or join it to illogical control to reach it from anywhere and share it with your team (<code>illogicald join https://control.illogical.widgets.wtf</code>). The <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
+    <p class="needs">After installing, open <a href="http://127.0.0.1:7681"><code>http://127.0.0.1:7681</code></a> to start your first session.</p>
+    <p class="needs">For phone access and shared machines, follow the <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">quickstart</a>.</p>
   </section>
 
   <footer>
-    <p>illogical is a personal project by <a href="https://jakegaylor.com">Jake Gaylor</a>, for your own machines and the people you share them with.</p>
+    <p>Built by <a href="https://jakegaylor.com">Jake Gaylor</a> for your machines and the people you share them with.</p>
     <p>Terminal emulation by <a href="https://ghostty.org">libghostty</a> and <a href="https://xtermjs.org">xterm.js</a>. <a href="https://git.inevitable.fyi/jhgaylor/illogical">Source</a> · <a href="https://git.inevitable.fyi/jhgaylor/illogical/releases">Releases</a> · MIT or Apache-2.0.</p>
   </footer>
 </div>
@@ -324,6 +527,318 @@ just bootstrap && just install</pre>
       setTimeout(() => (b.textContent = "Copy"), 1600);
     });
   }
+
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Reveal sections, and sweep a scan line down each screenshot, as they arrive.
+  if (!still && "IntersectionObserver" in window) {
+    document.documentElement.classList.add("js");
+    const io = new IntersectionObserver((es) => {
+      for (const e of es) if (e.isIntersecting) {
+        e.target.classList.add("in");
+        for (const f of e.target.querySelectorAll(".frame")) f.classList.add("in");
+        io.unobserve(e.target);
+      }
+    }, { rootMargin: "0px 0px -12% 0px" });
+    for (const el of document.querySelectorAll(".reveal, .frame")) io.observe(el);
+  }
+
+  // The ticker: a feed of what happened across the team's machines.
+  {
+    const ev = [
+      ["14:02:11", "team-box", "terraform plan", "<strong>allowed by Sam</strong>"],
+      ["14:02:40", "build-02", "cargo test -p relay", "<em>failed, exit 101</em>"],
+      ["14:03:05", "jake-mini", "claude · api", "<b>asks: which retry strategy?</b>"],
+      ["14:03:19", "build-01", "cargo build --release", "<strong>finished in 5s</strong>"],
+      ["14:03:52", "geek", "codex · web", "<strong>answered by Priya</strong>"],
+      ["14:04:30", "build-02", "pnpm test", "<em>4 failed</em>"],
+      ["14:05:02", "team-box", "kubectl rollout status", "<strong>allowed by Ana</strong>"],
+      ["14:05:44", "sam-laptop", "npm run dev :5173", "<b>port opened beside the pane</b>"],
+      ["14:06:10", "jake-mini", "reboot", "<strong>layout and scrollback restored</strong>"],
+    ];
+    const one = ev.map(([t, m, c, r]) => `<span>${t} ▸ ${m} ▸ ${c} ▸ ${r}</span>`).join("");
+    document.getElementById("ticker").innerHTML = one + one;
+  }
+
+  // ── The swarm simulation ──────────────────────────────────────
+  (() => {
+    const con = document.getElementById("console");
+    const cv = document.getElementById("swarm");
+    const ctx = cv.getContext("2d");
+    const cardsEl = document.getElementById("cards");
+    const rail = con.querySelector(".rail");
+
+    let seed = 7;
+    const rnd = () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const pick = (a) => a[Math.floor(Math.random() * a.length)];
+    const weighted = (pairs) => { let r = rnd() * pairs.reduce((s, p) => s + p[1], 0); for (const [v, w] of pairs) if ((r -= w) <= 0) return v; return pairs[0][0]; };
+
+    const KIND = { shell: "#8c95b8", build: "#e5a54a", test: "#74c68a", agent: "#b48cf0", server: "#4fc7c0", logs: "#5a6a9c", editor: "#e57aa0" };
+    const PROJ = [["api", 40], ["infra", 34], ["docs", 44], ["web", 30], ["mobile", 32], ["~/scratch", 26], ["/tmp", 22]];
+    const MACH = [["jake-mini", 3], ["build-01", 2], ["build-02", 2], ["team-box", 3], ["geek", 2], ["sam-laptop", 2]];
+    const WHO = [["jake", 4], ["sam", 3], ["priya", 3], ["ana", 2], ["devon", 2]];
+    const KINDW = [["shell", 22], ["build", 18], ["test", 20], ["agent", 16], ["server", 10], ["logs", 7], ["editor", 7]];
+
+    const tiles = [];
+    let id = 40;
+    for (const [p, n] of PROJ) for (let i = 0; i < n; i++) {
+      tiles.push({ id: id++, proj: p, mach: weighted(MACH), who: weighted(WHO), kind: weighted(KINDW), busy: rnd() < 0.76,
+        x: 0, y: 0, tx: 0, ty: 0, jx: (rnd() - 0.5) * 1.6, jy: (rnd() - 0.5) * 1.2, ph: rnd() * 6.28, need: null });
+    }
+    document.getElementById("n-panes").textContent = tiles.length;
+
+    // Brick offsets nearest the centre first, so a cluster grows as a blob.
+    const offs = [];
+    for (let r = -10; r <= 10; r++) for (let c = -12; c <= 12; c++) {
+      const x = c * 11 + (r & 1 ? 5.5 : 0), y = r * 8;
+      offs.push([x, y, Math.hypot(x / 1.2, y) + rnd() * 6]);
+    }
+    offs.sort((a, b) => a[2] - b[2]);
+
+    const SPOTS = [[0.14, 0.26], [0.48, 0.20], [0.82, 0.28], [0.30, 0.68], [0.64, 0.66], [0.10, 0.96], [0.90, 0.92]];
+    const NARROW = [[0.22, 0.06], [0.74, 0.12], [0.30, 0.45], [0.80, 0.50], [0.16, 0.88], [0.52, 0.92], [0.86, 0.90]];
+    let by = "proj", clusters = [], W = 0, H = 0, u = 1, dpr = 1, wide = true;
+    let px = -1, py = -1, panX = 0, panY = 0;
+
+    function layout() {
+      const groups = new Map();
+      for (const t of tiles) { const k = t[by]; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); }
+      const names = [...groups.keys()].sort((a, b) => groups.get(b).length - groups.get(a).length);
+      const ax = 24, aw = (wide ? W - rail.offsetWidth : W) - 48;
+      const g = con.querySelector(".group");
+      const ay = wide ? 150 : g.offsetTop + g.offsetHeight + 56, ah = H - ay - (wide ? 70 : 34);
+      u = Math.max(0.5, Math.min(1.25, Math.min(aw / 760, ah / 400)));
+      clusters = names.map((name, i) => {
+        const [sx, sy] = (wide ? SPOTS : NARROW)[i % SPOTS.length];
+        const members = groups.get(name).sort((a, b) => b.busy - a.busy || a.id - b.id);
+        const cx = ax + sx * aw, cy = ay + sy * ah;
+        let rad = 0;
+        members.forEach((t, j) => { t.tx = cx + offs[j][0] * u * 1.25; t.ty = cy + offs[j][1] * u * 1.25; rad = Math.max(rad, Math.abs(offs[j][1]) * u * 1.25); });
+        return { name, members, cx, cy, rad };
+      });
+    }
+
+    function size() {
+      const st = cv.parentElement;
+      W = st.clientWidth; H = st.clientHeight; wide = innerWidth > 900;
+      dpr = Math.min(2, devicePixelRatio || 1);
+      cv.width = W * dpr; cv.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const first = !clusters.length;
+      layout();
+      if (first) for (const t of tiles) { t.x = t.tx; t.y = t.ty; }
+    }
+
+    // ── Alerts: a tile asks, a reticle locks on, a card lifts out ──
+    const alerts = [];
+    const NAMES = ["Sam", "Priya", "Ana", "Devon", "Jake"];
+    const hhmm = () => new Date().toTimeString().slice(0, 5);
+    const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+    const TEMPLATES = [
+      { kinds: ["agent"], cls: "", title: () => "Claude Code asks", body: "Bash wants to run",
+        cmd: () => pick(["terraform plan -out=tfplan", "cargo test -p api-server", "kubectl rollout status deploy/web", "pnpm build", "git push origin fix/retry"]),
+        acts: ["Allow", "Deny"], verb: "Allowed by" },
+      { kinds: ["agent"], cls: "c-q", title: () => "Codex asks", body: () => pick(["Which approach for the retry queue?", "Keep the old endpoint for a release?", "Split this migration in two?"]),
+        acts: () => pick([["Backoff", "Dead-letter"], ["Keep it", "Remove it"], ["Split", "One step"]]), verb: "Answered by" },
+      { kinds: ["test", "build"], cls: "c-fail", title: (t) => `Failed on ${t.mach}`, body: () => pick(["cargo test -p relay failed (exit 101) after 3s", "pnpm test: 4 failed, 212 passed", "go test ./... failed after 41s"]),
+        acts: ["Open", "Dismiss"], verb: "Picked up by" },
+      { kinds: ["build", "server"], cls: "c-done", title: () => "Finished", body: () => pick(["cargo build --release finished after 5s", "docker build finished after 1m 12s", "terraform apply finished after 38s"]),
+        acts: ["Open", "Dismiss"], verb: "Seen by" },
+    ];
+    const val = (v, t) => (typeof v === "function" ? v(t) : v);
+    const maxCards = () => (wide ? 4 : 2);
+
+    function spawn(now) {
+      if (alerts.filter((a) => !a.leaving).length >= maxCards()) return;
+      const tpl = pick([TEMPLATES[0], TEMPLATES[0], TEMPLATES[1], TEMPLATES[2], TEMPLATES[2], TEMPLATES[3]]);
+      const pool = tiles.filter((t) => !t.need && tpl.kinds.includes(t.kind));
+      if (!pool.length) return;
+      const t = pick(pool);
+      const a = { t, tpl, t0: now, card: null, leaving: 0, life: 5200 + Math.random() * 2600, cls: tpl.cls };
+      t.need = a; t.busy = true;
+      alerts.push(a);
+    }
+
+    function makeCard(a) {
+      const { t, tpl } = a;
+      const el = document.createElement("div");
+      el.className = `card ${tpl.cls}`;
+      const cmd = tpl.cmd ? `<code>${esc(val(tpl.cmd, t))}</code>` : "";
+      const acts = val(tpl.acts, t);
+      el.innerHTML = `<div class="t">${esc(val(tpl.title, t))}</div>
+        <div class="m">%${t.id} · ${t.mach} · ${t.proj}</div>
+        <div class="b">${esc(val(tpl.body, t))}</div>${cmd}
+        <div class="a">${acts.map((s, i) => `<button type="button" class="${i ? "" : "pri"}">${s}</button>`).join("")}</div>
+        <div class="who"></div>`;
+      for (const b of el.querySelectorAll(".a button")) b.addEventListener("click", () => resolve(a, "you"));
+      cardsEl.appendChild(el);
+      a.card = el;
+    }
+
+    function resolve(a, who) {
+      if (a.leaving || !a.card) return;
+      a.leaving = performance.now();
+      a.card.querySelector(".who").textContent = `✓ ${a.tpl.verb} ${who}, ${hhmm()}`;
+      a.card.classList.add("done");
+      setTimeout(() => a.card.classList.add("gone"), 1500);
+      setTimeout(() => { a.card.remove(); a.t.need = null; alerts.splice(alerts.indexOf(a), 1); }, 2200);
+    }
+
+    // ── Drawing ──
+    function label(c, hot) {
+      const need = c.members.filter((t) => t.need).length;
+      const busy = c.members.filter((t) => t.busy).length;
+      const top = c.cy - c.rad - 12 * u;
+      ctx.textAlign = "center";
+      ctx.fillStyle = need ? "#ffd6e0" : hot ? "#ffffff" : "#cdd6f4";
+      ctx.font = `700 ${Math.round(22 * u + 4)}px Antonio, "Arial Narrow", system-ui, sans-serif`;
+      ctx.fillText(c.name.toUpperCase(), c.cx, top - 16);
+      ctx.font = `${Math.max(10, Math.round(11 * u))}px ui-monospace, Menlo, monospace`;
+      const base = wide ? `${c.members.length} panes · ${busy} busy` : "", tail = need ? `${wide ? " · " : ""}${need} need you` : "";
+      const w1 = ctx.measureText(base).width, w2 = ctx.measureText(tail).width, x0 = c.cx - (w1 + w2) / 2;
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#7f849c"; ctx.fillText(base, x0, top);
+      if (need) { ctx.fillStyle = "#f38ba8"; ctx.fillText(tail, x0 + w1, top); }
+    }
+
+    function bezierTo(x0, y0, x1, y1, prog) {
+      const c1x = x0 + (x1 - x0) * 0.45, c1y = y0, c2x = x1 - 70, c2y = y1;
+      const at = (s) => { const m = 1 - s; return [m*m*m*x0 + 3*m*m*s*c1x + 3*m*s*s*c2x + s*s*s*x1, m*m*m*y0 + 3*m*m*s*c1y + 3*m*s*s*c2y + s*s*s*y1]; };
+      ctx.beginPath(); ctx.moveTo(x0, y0);
+      for (let i = 1; i <= 40; i++) { const [x, y] = at((i / 40) * prog); ctx.lineTo(x, y); }
+      ctx.stroke();
+      return at;
+    }
+
+    function colorOf(a) { return a.cls === "c-fail" ? "#f38ba8" : a.cls === "c-done" ? "#a6e3a1" : a.cls === "c-q" ? "#89dceb" : "#cba6f7"; }
+
+    function frame(now) {
+      ctx.clearRect(0, 0, W, H);
+      const ease = still ? 1 : 0.075;
+      // A gentle parallax toward the pointer.
+      const tx = px < 0 ? 0 : (px - W / 2) * -0.015, ty = py < 0 ? 0 : (py - H / 2) * -0.015;
+      panX += (tx - panX) * 0.06; panY += (ty - panY) * 0.06;
+      ctx.save(); ctx.translate(panX, panY);
+
+      let hot = null;
+      for (const c of clusters) {
+        const need = c.members.some((t) => t.need);
+        const g = ctx.createRadialGradient(c.cx, c.cy, 0, c.cx, c.cy, c.rad * 2.4);
+        g.addColorStop(0, need ? "rgba(243,139,168,0.10)" : "rgba(138,168,248,0.06)"); g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g; ctx.fillRect(c.cx - c.rad * 2.4, c.cy - c.rad * 2.4, c.rad * 4.8, c.rad * 4.8);
+        if (px >= 0 && Math.hypot(px - panX - c.cx, py - panY - c.cy) < c.rad + 30) hot = c;
+      }
+
+      const tw = 12.6 * u, th = 8.4 * u;
+      for (const t of tiles) {
+        t.x += (t.tx - t.x) * ease; t.y += (t.ty - t.y) * ease;
+        const x = t.x + t.jx * u, y = t.y + t.jy * u;
+        if (t.need) {
+          const pulse = 0.6 + 0.4 * Math.sin(now / 180);
+          ctx.fillStyle = colorOf(t.need); ctx.globalAlpha = 1;
+          ctx.shadowColor = colorOf(t.need); ctx.shadowBlur = 12 * pulse;
+          ctx.fillRect(x - tw / 2, y - th / 2, tw, th); ctx.shadowBlur = 0;
+        } else if (t.busy) {
+          ctx.fillStyle = KIND[t.kind];
+          ctx.globalAlpha = still ? 0.85 : 0.62 + 0.38 * (0.5 + 0.5 * Math.sin(now / 900 + t.ph * 3));
+          ctx.fillRect(x - tw / 2, y - th / 2, tw, th);
+        } else {
+          ctx.globalAlpha = 1; ctx.fillStyle = "#262a3d";
+          ctx.fillRect(x - tw / 2, y - th / 2, tw, th);
+        }
+      }
+      ctx.globalAlpha = 1;
+      for (const c of clusters) label(c, c === hot);
+      ctx.restore();
+
+      // Reticles and the lines out to the rail.
+      const cr = con.getBoundingClientRect();
+      for (const a of alerts) {
+        const col = colorOf(a);
+        const x = a.t.x + a.t.jx * u + panX, y = a.t.y + a.t.jy * u + panY;
+        const age = now - a.t0, lock = still ? 1 : Math.min(1, age / 700);
+        const fade = a.leaving ? Math.max(0, 1 - (now - a.leaving) / 1400) : 1;
+        const k = 1 - Math.pow(1 - lock, 3);
+        const r = 64 - (64 - 13) * k;
+        ctx.save(); ctx.translate(x, y); ctx.globalAlpha = fade * (0.35 + 0.65 * k);
+        ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+        ctx.rotate(now / (lock < 1 ? 160 : 900));
+        ctx.setLineDash([r * 0.5, r * 0.28]);
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+        for (let i = 0; i < 4; i++) { ctx.rotate(Math.PI / 2); ctx.beginPath(); ctx.moveTo(r + 3, 0); ctx.lineTo(r + 9, 0); ctx.stroke(); }
+        ctx.restore();
+        if (lock >= 1) {
+          ctx.globalAlpha = fade;
+          ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.textAlign = "left"; ctx.fillStyle = col;
+          if (wide) ctx.fillText(`LOCK %${a.t.id} · ${a.t.mach}`, x + 20, y + 26);
+          if (!a.card) makeCard(a);
+          if (wide && a.card) {
+            const b = a.card.getBoundingClientRect();
+            const ex = b.left - cr.left - 2, ey = b.top - cr.top + 22;
+            const prog = still ? 1 : Math.min(1, (age - 700) / 420);
+            ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.globalAlpha = fade * 0.55;
+            const at = bezierTo(x, y, ex, ey, prog);
+            if (prog >= 1 && !still) {
+              const [dx, dy] = at(((now - a.t0) / 1300) % 1);
+              ctx.globalAlpha = fade; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(dx, dy, 2.4, 0, 7); ctx.fill();
+            }
+          }
+          ctx.globalAlpha = 1;
+          if (!still && !a.leaving && age > a.life) resolve(a, pick(NAMES));
+        }
+      }
+
+      // The pointer's crosshair, with its readout.
+      if (px >= 0 && !still) {
+        ctx.strokeStyle = "rgba(137,220,235,0.35)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(px - 18, py); ctx.lineTo(px - 6, py); ctx.moveTo(px + 6, py); ctx.lineTo(px + 18, py);
+        ctx.moveTo(px, py - 18); ctx.lineTo(px, py - 6); ctx.moveTo(px, py + 6); ctx.lineTo(px, py + 18); ctx.stroke();
+        ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.fillStyle = "rgba(137,220,235,0.7)"; ctx.textAlign = "left";
+        ctx.fillText(hot ? `${hot.name.toUpperCase()} · ${hot.members.length}` : `${Math.round(px)}, ${Math.round(py)}`, px + 12, py + 22);
+      }
+    }
+
+    // ── Loop, stats, and pausing when nobody is looking ──
+    let visible = true, last = 0, nextSpawn = 600, raf = 0;
+    const nBusy = document.getElementById("n-busy"), nNeed = document.getElementById("n-need");
+    function stats() {
+      nBusy.textContent = tiles.filter((t) => t.busy).length;
+      nNeed.textContent = alerts.filter((a) => !a.leaving).length;
+    }
+    function loop(now) {
+      raf = 0;
+      if (!visible || document.hidden) return;
+      if (!last) last = now;
+      nextSpawn -= now - last; last = now;
+      if (nextSpawn <= 0) { spawn(now); nextSpawn = 1800 + Math.random() * 1800; }
+      if (Math.random() < 0.02) { const t = pick(tiles); if (!t.need) t.busy = !t.busy; }
+      frame(now);
+      if (Math.floor(now / 400) !== Math.floor((now - 16) / 400)) stats();
+      raf = requestAnimationFrame(loop);
+    }
+    const kick = () => { if (!raf && !still) { last = 0; raf = requestAnimationFrame(loop); } };
+
+    size();
+    if (still) {
+      const now = performance.now();
+      for (let i = 0; i < 3; i++) spawn(now - 2000);
+      frame(now); requestAnimationFrame(() => { frame(performance.now()); stats(); });
+    } else {
+      new IntersectionObserver((es) => { visible = es[0].isIntersecting; kick(); }).observe(con);
+      document.addEventListener("visibilitychange", kick);
+    }
+
+    addEventListener("resize", () => { size(); if (still) frame(performance.now()); });
+    cv.addEventListener("pointermove", (e) => { const r = cv.getBoundingClientRect(); px = e.clientX - r.left; py = e.clientY - r.top; });
+    cv.addEventListener("pointerleave", () => { px = py = -1; });
+    for (const b of con.querySelectorAll(".group button")) b.addEventListener("click", () => {
+      by = b.dataset.by;
+      for (const o of con.querySelectorAll(".group button")) o.setAttribute("aria-pressed", String(o === b));
+      layout();
+      if (still) { for (const t of tiles) { t.x = t.tx; t.y = t.ty; } frame(performance.now()); }
+    });
+    document.fonts && document.fonts.ready.then(() => still && frame(performance.now()));
+  })();
 </script>
 </body>
 </html>
