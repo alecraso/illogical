@@ -73,6 +73,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/editors/vsix", get(vsix))
         .route("/api/ide/mention", post(ide_mention))
         .route("/api/sessions/{id}/secrets", get(secrets))
+        .route("/api/agents/adapters", get(adapters))
+        .route("/api/agents/adapters/{kind}/install", post(install_adapter))
         .route("/api/conversations", get(conversations))
         .route("/api/conversations/open", post(open_conversation))
         .route("/api/blocks", post(open_block))
@@ -1765,6 +1767,66 @@ async fn diff_of(
         .flatten()
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, format!("%{id} has no edit waiting")))?;
     Ok(Json(serde_json::json!({ "diff": info, "old": old, "new": new })))
+}
+
+/// Home and the environment an agent block gets.
+async fn agent_env(app: &App) -> Res<(std::path::PathBuf, Vec<(String, String)>)> {
+    app.mux
+        .api(Api::AgentEnv)
+        .await
+        .ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into()))
+}
+
+/// `GET /api/agents/adapters` (#111): whether Claude Code's and Codex's
+/// adapters can start here, and the command that installs each.
+async fn adapters(State(app): AppState) -> Res<Json<serde_json::Value>> {
+    let (home, env) = agent_env(&app).await?;
+    let list = tokio::task::spawn_blocking(move || crate::agent::adapters::all(&home, &env))
+        .await
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(serde_json::json!({ "adapters": list })))
+}
+
+#[derive(serde::Deserialize, Default)]
+struct InstallAdapter {
+    #[serde(default)]
+    split: Option<PaneId>,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    from_pane: Option<PaneId>,
+}
+
+/// `POST /api/agents/adapters/{kind}/install` (#111): its `npm install`, in
+/// a new pane (beside `split`, else a tab) to watch.
+async fn install_adapter(
+    State(app): AppState,
+    Path(kind): Path<String>,
+    body: Option<Json<InstallAdapter>>,
+) -> Res<Json<RunResponse>> {
+    let req = body.map(|b| b.0).unwrap_or_default();
+    let kind: crate::agent::defs::Kind =
+        serde_json::from_value(serde_json::json!(kind)).map_err(|_| bad(format!("no agent {kind}")))?;
+    let a = crate::agent::adapters::of(kind).ok_or_else(|| bad("that agent has no adapter to install"))?;
+    let (home, env) = agent_env(&app).await?;
+    let (st, home) = tokio::task::spawn_blocking(move || (crate::agent::adapters::status(a, &home, &env), home))
+        .await
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if let crate::agent::adapters::State::NoNode { .. } = st.state {
+        return Err(bad(st.why()));
+    }
+    let run = RunRequest {
+        command: Some(crate::agent::adapters::install_command(&st, &home)),
+        session: req.session,
+        split: req.split,
+        from_pane: req.from_pane.or(req.split),
+        ..Default::default()
+    };
+    match app.mux.api(|r| Api::Run(run, r)).await {
+        Some(Ok(pane)) => Ok(Json(RunResponse { pane })),
+        Some(Err(e)) => Err(bad(e)),
+        None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
+    }
 }
 
 /// `GET /api/ide` (M28): illogicald as Claude Code's IDE, and the other

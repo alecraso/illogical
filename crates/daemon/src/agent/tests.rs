@@ -123,6 +123,24 @@ fn a_new_server_drops_what_the_old_one_had_open() {
 }
 
 #[test]
+fn a_missing_adapter_is_said_once_and_kept_until_it_starts() {
+    let mut g = rebuilt();
+    let adapter = json!({ "kind": "claude", "state": "missing", "npm": "npm install --prefix ~/x/claude p@1" });
+    g.rebuild_line(&frame(
+        "note",
+        json!({ "e": "exit", "why": "couldn't start: Claude Code's adapter isn't installed", "adapter": adapter }),
+    ));
+    assert_eq!(g.error.as_deref(), Some("the agent couldn't start: Claude Code's adapter isn't installed"));
+    assert_eq!(g.adapter.as_ref(), Some(&adapter));
+    assert_eq!(g.t.markdown().matches("couldn't start").count(), 1);
+    g.rebuild_line(&frame("note", json!({ "e": "spawn", "resume": true })));
+    assert!(g.adapter.is_none() && g.error.is_none());
+    // Any other exit has none.
+    g.rebuild_line(&frame("note", json!({ "e": "exit", "why": "exited with code 1", "adapter": null })));
+    assert!(g.adapter.is_none());
+}
+
+#[test]
 fn a_load_replay_is_merged_not_duplicated() {
     let mut g = rebuilt();
     g.rebuild_line(&frame("note", json!({ "e": "spawn", "resume": true })));

@@ -10,8 +10,8 @@
 //! - **acp**: any other ACP agent server, by its command line.
 //!
 //! The npm adapters are looked for in `~/.local/share/illogical/agents/`
-//! (`npm install --prefix …/claude @agentclientprotocol/claude-agent-acp@0.85.0`),
-//! then on `PATH`.
+//! (`npm install --prefix …/claude` the pin below: see `adapters.rs`), then
+//! on `PATH`.
 
 use std::path::{Path, PathBuf};
 

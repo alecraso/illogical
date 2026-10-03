@@ -45,6 +45,7 @@
 //! (whose replay is merged in). The restart policy decides whether that
 //! happens by itself (`none` and `rerun-ask` wait for "Resume").
 
+pub mod adapters;
 pub mod defs;
 mod link;
 pub mod transcript;
@@ -300,6 +301,9 @@ struct Inner {
     import_stamp: Option<(u64, std::time::SystemTime)>,
     /// The session's `configOptions` (for choosing a model).
     config_options: Value,
+    /// Its adapter isn't installed, or has no Node (#111): what to show
+    /// (`adapters::Status::json`), until it starts.
+    adapter: Option<Value>,
 }
 
 enum Msg {
@@ -360,6 +364,7 @@ impl Inner {
             held: None,
             import_stamp: None,
             config_options: Value::Null,
+            adapter: None,
         }
     }
 
@@ -467,6 +472,7 @@ impl Inner {
                 self.replay = None;
                 self.status = Status::Starting;
                 self.error = None;
+                self.adapter = None;
                 let just_continued =
                     matches!(self.t.entries.last(), Some(Entry::Note { text, .. }) if text == "Continued in illogical");
                 if e["resume"].as_bool() == Some(true) && !just_continued {
@@ -487,6 +493,7 @@ impl Inner {
                     self.t.note(format!("The agent {why}"), at);
                     self.status = Status::Exited;
                     self.error = Some(format!("the agent {why}"));
+                    self.adapter = e.get("adapter").filter(|a| !a.is_null()).cloned();
                 } else {
                     self.status = Status::Stopped;
                 }
@@ -953,6 +960,7 @@ impl Inner {
             "pid": self.pid,
             "attention": attention,
             "error": self.error,
+            "adapter": self.adapter,
             "last_stop": self.last_stop,
             "current_tool": self.t.current_tool().map(|t| json!({ "id": t.id, "title": t.title, "kind": t.kind })),
             "pending": self.pending,
@@ -1160,6 +1168,16 @@ impl Agent {
                 let cwd = inner.cfg.cwd.clone().map(PathBuf::from).unwrap_or_else(|| self.ctx.home.clone());
                 let mut env = self.ctx.env.clone();
                 env.extend(launch.env.iter().cloned());
+                // Claude Code's and Codex's adapters: say what's missing,
+                // and how to install it, rather than fail to run it (#111).
+                if inner.cfg.def.command.is_empty()
+                    && let Some(a) = adapters::of(inner.cfg.def.agent)
+                {
+                    let st = adapters::status(a, &self.ctx.home, &env);
+                    if !st.ok() {
+                        return self.failed_with(inner, st.why(), Some(st.json()));
+                    }
+                }
                 with_node_on_path(&mut env, &self.ctx.home);
                 let spawn = link::LocalSpawn {
                     id: self.ctx.id,
@@ -1175,7 +1193,7 @@ impl Agent {
                         inner.link = Some(l);
                         inner.pid = Some(pid);
                     }
-                    Err(e) => return self.failed(inner, format!("couldn't start the agent: {e}")),
+                    Err(e) => return self.failed(inner, e.to_string()),
                 }
             }
             Some(sprite) => {
@@ -1228,10 +1246,14 @@ impl Agent {
         );
     }
 
+    /// It couldn't start: said once, as "the agent couldn't start: …".
     fn failed(&self, inner: &mut Inner, why: String) {
+        self.failed_with(inner, why, None)
+    }
+
+    fn failed_with(&self, inner: &mut Inner, why: String, adapter: Option<Value>) {
         warn!(block = self.ctx.id, why, "agent failed to start");
-        inner.note(json!({ "e": "exit", "why": format!("couldn't start: {why}") }));
-        inner.error = Some(why);
+        inner.note(json!({ "e": "exit", "why": format!("couldn't start: {why}"), "adapter": adapter }));
     }
 }
 
