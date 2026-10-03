@@ -191,7 +191,7 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
     [sam, "editor"],
     [val, "viewer"],
   ] as const) {
-    const link = await jake.evaluate(([t, r]) => window.__illogical.control!.invite(t, r), [team, role] as const);
+    const link = await jake.evaluate(([t, r]) => window.__illogical.control!.invite(t, r, true), [team, role] as const);
     await p.goto(link);
     await p.locator("[data-accept-invite]").click();
     await jake.evaluate(() => window.__illogical.control!.refresh());

@@ -43,13 +43,22 @@ A team shares its machines with its members.
 
 1. **Make one:** *Teams…* in the host menu, a name, *Make a team*. You're
    its owner.
-2. **Invite someone:** in the team, pick their role and make an *Invite
-   link*. Send it to them. It lasts a week, and anyone with it can ask to
-   join, so each request waits for an owner.
-3. **Admit them:** an owner sees *Add to {team}?* with the fingerprint of
-   the person's first device. Check it with them if you can (a call, a
-   message), then *Add them*. Adding someone signs the team's new member
-   list on your device; control can't add anyone by itself.
+2. **Invite someone:** in the team, pick their role and *Make a link*.
+   Send it to that one person. They open it, press *Join {team}*, and
+   they're in: no second step from you. You get a notification saying who
+   joined, with their fingerprint and *Remove*. The link works once,
+   for a day, and never as an owner.
+   - Your device signs the invite when you make the link, and the link
+     carries a one-time key that never reaches control. The person's own
+     device adds them to the member list with that key, so control still
+     can't add anyone by itself ([control-e2e.md](control-e2e.md)).
+   - **Ask me first** (and every owner invite) makes the old kind of link:
+     it lasts a week, anyone with it can ask to join, and each request
+     waits for an owner.
+3. **Admit them (Ask me first only):** an owner sees *Add to {team}?* with
+   the fingerprint of the person's first device. Check it with them if you
+   can (a call, a message), then *Add them*. Adding someone signs the
+   team's new member list on your device.
 4. **Add team machines:** on the machine, `illogicald join` as above.
    When you approve, pick the team under *Join to*: the list is the teams
    you own. To have it picked already, join with the team's id (it's in

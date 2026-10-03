@@ -13,8 +13,8 @@ use axum::{
     http::StatusCode,
 };
 use illogical_e2e::{
-    Cert, Revocation,
-    team::{AccountCerts, Roster, TeamPin, TeamRole},
+    Cert, Revocation, Trust,
+    team::{AccountCerts, Invite, Roster, TeamPin, TeamRole},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -183,19 +183,56 @@ pub struct NewRoster {
 
 pub async fn set_roster(
     State(app): State<Arc<App>>,
-    _s: Session,
+    s: Session,
     Path(team): Path<String>,
     Json(b): Json<NewRoster>,
 ) -> R {
     let t = app.db.team(&team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
     let prev = latest(&app, &team)?;
+    if b.roster.version != prev.version + 1 {
+        // Someone else's change landed first: build on theirs and resend.
+        return Err(err(StatusCode::CONFLICT, "the team changed while you were at it; try again"));
+    }
     let accounts: Vec<&str> = prev.members.iter().chain(&b.roster.members).map(|m| m.account.as_str()).collect();
-    if b.roster.version != prev.version + 1
-        || !b.roster.follows(Some(&prev), &pin(&t), &certs_for(&app, accounts.into_iter())?)
-    {
+    if !b.roster.follows(Some(&prev), &pin(&t), &certs_for(&app, accounts.into_iter())?) {
         return Err(err(StatusCode::FORBIDDEN, "a new roster is the next version, signed by an owner's device"));
     }
-    app.db.add_roster(&team, b.roster.version, &serde_json::to_string(&b.roster)?)?;
+    // A presigned invite: one control still holds (so it works once, and
+    // not after a lock), redeemed by whoever is signed in here.
+    let joined = match &b.roster.redeem {
+        None => None,
+        Some(r) => {
+            let now = illogical_e2e::now_ms();
+            let stored = app.db.presigned(&r.invite.key, now)?.filter(|(t, _, _)| *t == team);
+            let Some((_, body, _)) = stored else {
+                return Err(err(StatusCode::GONE, "that invite expired, was used, or the team was locked"));
+            };
+            if serde_json::from_str::<Invite>(&body).ok().as_ref() != Some(&r.invite) || t.locked {
+                return Err(err(StatusCode::GONE, "that invite expired, was used, or the team was locked"));
+            }
+            let me = b.roster.members.last().filter(|m| m.account == s.account);
+            let Some(me) = me else {
+                return Err(err(StatusCode::FORBIDDEN, "an invite adds the account that's signed in"));
+            };
+            Some(me.clone())
+        }
+    };
+    app.db
+        .add_roster(&team, b.roster.version, &serde_json::to_string(&b.roster)?)
+        .map_err(|_| err(StatusCode::CONFLICT, "the team changed while you were at it; try again"))?;
+    if let (Some(me), Some(r)) = (&joined, &b.roster.redeem) {
+        app.db.drop_presigned(&r.invite.key)?;
+        // Owners hear who came in on their invite, after the fact.
+        let owners: Vec<String> =
+            prev.members.iter().filter(|m| m.role == TeamRole::Owner).map(|m| m.account.clone()).collect();
+        crate::push::notify(
+            &app,
+            owners,
+            &format!("control-team-{team}"),
+            format!("{} joined {} with your invite", me.name, t.name),
+            format!("As {}. Open illogical to check their fingerprint, or remove them.", me.role.as_str()),
+        );
+    }
     for m in &b.roster.members {
         app.db.drop_request(&team, &m.account)?;
     }
@@ -210,6 +247,11 @@ pub struct NewInvite {
     role: TeamRole,
     #[serde(default = "week")]
     ttl_secs: u64,
+    /// An invite the owner's device signed: accepting it adds the invitee
+    /// with no owner's yes. Its one-time key's private half stays in the
+    /// link and never comes here.
+    #[serde(default)]
+    presigned: Option<Invite>,
 }
 
 fn week() -> u64 {
@@ -220,6 +262,28 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
     let r = latest(&app, &team)?;
     if role_in(&r, &s.account) != Some(TeamRole::Owner) {
         return Err(err(StatusCode::FORBIDDEN, "owners invite"));
+    }
+    if let Some(inv) = b.presigned {
+        let now = illogical_e2e::now_ms();
+        let me = r.member(&s.account).ok_or_else(|| err(StatusCode::FORBIDDEN, "owners invite"))?;
+        let (c, rv) = certs_of(&app, &s.account)?;
+        let signed =
+            Trust { account: s.account.clone(), root: me.root.clone() }.evaluate(&c, &rv).get(&inv.by).is_some_and(
+                |d| d.kind.approves() && illogical_e2e::cert::verify_hex(&d.sign, inv.body().as_bytes(), &inv.sig),
+            );
+        if inv.team != team
+            || inv.role == TeamRole::Owner
+            || inv.expires <= now
+            || inv.expires > now + 30 * 86_400 * 1000
+            || !signed
+        {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "a presigned invite is for this team, not as an owner, at most 30 days, and signed by your device",
+            ));
+        }
+        app.db.add_presigned(&inv.key, &team, &serde_json::to_string(&inv)?, inv.expires, &s.account)?;
+        return Ok(Json(json!({ "key": inv.key, "expires": inv.expires })));
     }
     let code = token()[..20].to_owned();
     let expires = illogical_e2e::now_ms() + b.ttl_secs.min(30 * 86_400) * 1000;
@@ -254,6 +318,40 @@ pub async fn preview_invite(
         .filter(|(t, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
     let name = app.db.team(&t)?.map(|t| t.name).unwrap_or_default();
+    let by = app.db.account(&by)?.map(|a| a.name).unwrap_or_default();
+    Ok(Json(json!({ "name": name, "by": by })))
+}
+
+/// A presigned invite, for the page that redeems it: the invite, and the
+/// team's latest roster with its members' certificates to build on.
+pub async fn show_presigned(State(app): State<Arc<App>>, _s: Session, Path((team, key)): Path<(String, String)>) -> R {
+    let (_, body, _) = app
+        .db
+        .presigned(&key, illogical_e2e::now_ms())?
+        .filter(|(t, _, _)| *t == team)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, was used, or never was"))?;
+    let t = app.db.team(&team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+    let r = latest(&app, &team)?;
+    let invite: Invite = serde_json::from_str(&body)?;
+    let certs = certs_for(&app, r.members.iter().map(|m| m.account.as_str()))?;
+    Ok(Json(json!({ "invite": invite, "name": t.name, "pin": pin(&t), "roster": r, "certs": certs })))
+}
+
+/// What a signed-out page may say about a presigned invite: the team's
+/// name and who made it.
+pub async fn preview_presigned(
+    State(app): State<Arc<App>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Path((team, key)): Path<(String, String)>,
+) -> R {
+    app.limits.check(crate::limit::INVITES, app.limits.client_ip(peer, &headers))?;
+    let (_, _, by) = app
+        .db
+        .presigned(&key, illogical_e2e::now_ms())?
+        .filter(|(t, _, _)| *t == team)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, was used, or never was"))?;
+    let name = app.db.team(&team)?.map(|t| t.name).unwrap_or_default();
     let by = app.db.account(&by)?.map(|a| a.name).unwrap_or_default();
     Ok(Json(json!({ "name": name, "by": by })))
 }

@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS invites (
     expires INTEGER NOT NULL,
     by_account TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS presigned_invites (
+    key TEXT PRIMARY KEY,
+    team TEXT NOT NULL,
+    body TEXT NOT NULL,
+    expires INTEGER NOT NULL,
+    by_account TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS team_requests (
     team TEXT NOT NULL,
     account TEXT NOT NULL,
@@ -778,9 +785,37 @@ impl Db {
             .optional()?)
     }
 
+    /// A presigned invite (its one-time key's public half names it), as the
+    /// owner's device signed it.
+    pub fn add_presigned(&self, key: &str, team: &str, body: &str, expires: u64, by: &str) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO presigned_invites (key, team, body, expires, by_account) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![key, team, body, expires, by],
+        )?;
+        Ok(())
+    }
+
+    /// (team, invite JSON, who made it) for a live presigned invite.
+    pub fn presigned(&self, key: &str, now: u64) -> anyhow::Result<Option<(String, String, String)>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT team, body, by_account FROM presigned_invites WHERE key = ?1 AND expires > ?2",
+                params![key, now],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn drop_presigned(&self, key: &str) -> anyhow::Result<()> {
+        self.c().execute("DELETE FROM presigned_invites WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
     pub fn drop_invites(&self, team: &str) -> anyhow::Result<()> {
         let c = self.c();
         c.execute("DELETE FROM invites WHERE team = ?1", params![team])?;
+        c.execute("DELETE FROM presigned_invites WHERE team = ?1", params![team])?;
         c.execute("DELETE FROM team_requests WHERE team = ?1", params![team])?;
         Ok(())
     }

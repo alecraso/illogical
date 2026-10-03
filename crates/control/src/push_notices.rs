@@ -187,6 +187,8 @@ async fn waiting_devices_and_requests_push_their_owners() {
             role: TeamRole::Owner,
             name: "jhgaylor".into(),
         }],
+        spent: vec![],
+        redeem: None,
         by: jake_root.clone(),
         sig: String::new(),
     };

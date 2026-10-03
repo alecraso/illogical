@@ -16,6 +16,13 @@
 //! member <account> <root device> <owner|editor|viewer> <name>
 //! by <device id>
 //! ```
+//!
+//! A presigned invite lets the invitee write the next version themselves:
+//! an owner's device signs an [`Invite`] naming a one-time key whose
+//! private half lives only in the invite link, and the invitee's roster
+//! (`v: 2`) adds them, carries that key's signature over who they are, and
+//! marks the invite spent. Control never holds the one-time key, so it
+//! can't redeem an invite for an account of its own.
 
 use std::collections::HashMap;
 
@@ -62,9 +69,95 @@ pub struct Roster {
     pub version: u64,
     pub at: u64,
     pub members: Vec<Member>,
+    /// Invites already redeemed (v2), so each works once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spent: Vec<Spent>,
+    /// The presigned invite this version redeems (v2), when an invitee
+    /// rather than an owner signs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redeem: Option<Redeem>,
     /// The signing device.
     pub by: String,
     pub sig: String,
+}
+
+/// An invite an owner's device signed ahead of time: whoever holds the
+/// private half of `key` may add themselves, once, as `role`, until
+/// `expires`.
+///
+/// ```text
+/// illogical team invite v1
+/// team <id>
+/// role <editor|viewer>
+/// expires <ms>
+/// key <ed25519 public key, hex>
+/// by <device id>
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invite {
+    pub team: String,
+    pub role: TeamRole,
+    pub expires: u64,
+    /// The one-time key; it also names the invite.
+    pub key: String,
+    /// The owner's signing device.
+    pub by: String,
+    pub sig: String,
+}
+
+impl Invite {
+    pub fn body(&self) -> String {
+        format!(
+            "illogical team invite v1\nteam {}\nrole {}\nexpires {}\nkey {}\nby {}\n",
+            self.team,
+            self.role.as_str(),
+            self.expires,
+            self.key,
+            self.by
+        )
+    }
+
+    pub fn sign_with(&mut self, keys: &DeviceKeys) {
+        self.by = keys.id();
+        self.sig = hex::encode(keys.signature(self.body().as_bytes()));
+    }
+
+    /// What the one-time key signs: this member, at this version, so the
+    /// proof can't be moved to another account or replayed later.
+    ///
+    /// ```text
+    /// illogical team redeem v1
+    /// team <id>
+    /// version <n>
+    /// member <account> <root device> <role> <name>
+    /// key <one-time key>
+    /// ```
+    pub fn redeem_body(&self, version: u64, m: &Member) -> String {
+        format!(
+            "illogical team redeem v1\nteam {}\nversion {version}\nmember {} {} {} {}\nkey {}\n",
+            self.team,
+            m.account,
+            m.root,
+            m.role.as_str(),
+            m.name,
+            self.key
+        )
+    }
+}
+
+/// An invite that's been used, kept until it would have expired anyway.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Spent {
+    pub key: String,
+    pub expires: u64,
+}
+
+/// A roster version written by an invitee: the invite, and the one-time
+/// key's signature over [`Invite::redeem_body`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Redeem {
+    pub invite: Invite,
+    pub proof: String,
 }
 
 /// What a team daemon pins when it joins: the team and its founder.
@@ -149,18 +242,30 @@ fn word(s: &str) -> bool {
 impl Roster {
     pub fn body(&self) -> String {
         let mut b = format!(
-            "illogical team v1\nteam {}\nname {}\nversion {}\nat {}\n",
-            self.team, self.name, self.version, self.at
+            "illogical team v{}\nteam {}\nname {}\nversion {}\nat {}\n",
+            self.v, self.team, self.name, self.version, self.at
         );
         for m in &self.members {
             b.push_str(&format!("member {} {} {} {}\n", m.account, m.root, m.role.as_str(), m.name));
+        }
+        // v1 bodies stay as they were, so older daemons check them.
+        for s in &self.spent {
+            b.push_str(&format!("spent {} {}\n", s.key, s.expires));
+        }
+        if let Some(r) = &self.redeem {
+            b.push_str(&format!("redeem {} {}\n", r.invite.key, r.proof));
         }
         b.push_str(&format!("by {}\n", self.by));
         b
     }
 
     pub fn well_formed(&self) -> bool {
-        self.v == 1
+        let shape = match self.v {
+            1 => self.spent.is_empty() && self.redeem.is_none(),
+            2 => self.spent.iter().all(|s| word(&s.key)),
+            _ => false,
+        };
+        shape
             && word(&self.team)
             && !self.name.is_empty()
             && self.name.len() <= 80
@@ -212,13 +317,47 @@ impl Roster {
                 vec![&founder]
             }
         };
-        signers.iter().any(|m| {
-            let (c, r) = certs.get(&m.account).map(|(c, r)| (c.as_slice(), r.as_slice())).unwrap_or((&[], &[]));
-            let trusted = Trust { account: m.account.clone(), root: m.root.clone() }.evaluate(c, r);
-            trusted
-                .get(&self.by)
-                .is_some_and(|d| d.kind.approves() && verify_hex(&d.sign, self.body().as_bytes(), &self.sig))
-        })
+        let signed_by = |account: &str, root: &str, device: &str, body: &str, sig: &str| {
+            let (c, r) = certs.get(account).map(|(c, r)| (c.as_slice(), r.as_slice())).unwrap_or((&[], &[]));
+            let trusted = Trust { account: account.to_owned(), root: root.to_owned() }.evaluate(c, r);
+            trusted.get(device).is_some_and(|d| d.kind.approves() && verify_hex(&d.sign, body.as_bytes(), sig))
+        };
+        let body = self.body();
+        if signers.iter().any(|m| signed_by(&m.account, &m.root, &self.by, &body, &self.sig)) {
+            // Owners write the roster outright; an invite is only for
+            // someone who isn't one.
+            return self.redeem.is_none();
+        }
+        let (Some(prev), Some(r)) = (prev, &self.redeem) else { return false };
+        let inv = &r.invite;
+        let n = prev.members.len();
+        // Exactly the version before, plus the invitee at the end, with
+        // the invite marked spent; nothing else changes.
+        let Some(new) = self.members.get(n) else { return false };
+        let mut spent = prev.spent.clone();
+        spent.push(Spent { key: inv.key.clone(), expires: inv.expires });
+        self.version == prev.version + 1
+            && self.name == prev.name
+            && self.members.len() == n + 1
+            && self.members[..n] == prev.members[..]
+            && prev.member(&new.account).is_none()
+            && self.spent == spent
+            && !prev.spent.iter().any(|s| s.key == inv.key)
+            // The invite: this team, not an owner's role, still good, and
+            // signed by a device of someone who was an owner.
+            && inv.team == self.team
+            && inv.role != TeamRole::Owner
+            && new.role == inv.role
+            && self.at <= inv.expires
+            && prev
+                .members
+                .iter()
+                .filter(|m| m.role == TeamRole::Owner)
+                .any(|m| signed_by(&m.account, &m.root, &inv.by, &inv.body(), &inv.sig))
+            // The one-time key vouches for exactly this member here, and
+            // one of the member's own devices signed the version.
+            && verify_hex(&inv.key, inv.redeem_body(self.version, new).as_bytes(), &r.proof)
+            && signed_by(&new.account, &new.root, &self.by, &body, &self.sig)
     }
 }
 
@@ -256,11 +395,132 @@ mod tests {
             version,
             at: 1,
             members,
+            spent: vec![],
+            redeem: None,
             by: String::new(),
             sig: String::new(),
         };
         r.sign_with(&by.keys);
         r
+    }
+
+    /// An invite `owner` signs, and its one-time key.
+    fn invite(owner: &Person, role: TeamRole, expires: u64) -> (Invite, DeviceKeys) {
+        let k = DeviceKeys::generate();
+        let mut inv = Invite {
+            team: "t1".into(),
+            role,
+            expires,
+            key: hex::encode(k.sign_public()),
+            by: String::new(),
+            sig: String::new(),
+        };
+        inv.sign_with(&owner.keys);
+        (inv, k)
+    }
+
+    /// `who` redeems `inv` with `k`, writing the version after `prev`.
+    fn redeem(prev: &Roster, inv: &Invite, k: &DeviceKeys, who: &Person) -> Roster {
+        let new = member(who, inv.role);
+        let mut members = prev.members.clone();
+        members.push(new.clone());
+        let mut spent = prev.spent.clone();
+        spent.push(Spent { key: inv.key.clone(), expires: inv.expires });
+        let version = prev.version + 1;
+        let proof = hex::encode(k.signature(inv.redeem_body(version, &new).as_bytes()));
+        let mut r = Roster {
+            v: 2,
+            version,
+            at: 1,
+            members,
+            spent,
+            redeem: Some(Redeem { invite: inv.clone(), proof }),
+            ..prev.clone()
+        };
+        r.sign_with(&who.keys);
+        r
+    }
+
+    #[test]
+    fn a_presigned_invite_admits_its_holder_once() {
+        let (alice, bob, carol) = (person("alice"), person("bob"), person("carol"));
+        let pin = TeamPin { team: "t1".into(), founder: "alice".into(), founder_root: alice.cert.device.clone() };
+        let all = certs(&[&alice, &bob, &carol]);
+        let v1 = roster(1, vec![member(&alice, TeamRole::Owner)], &alice);
+        let (inv, k) = invite(&alice, TeamRole::Editor, 10);
+        // Bob adds himself with the invite: no owner signs this version.
+        let v2 = redeem(&v1, &inv, &k, &bob);
+        assert!(v2.follows(Some(&v1), &pin, &all));
+        assert_eq!(v2.member("bob").map(|m| m.role), Some(TeamRole::Editor));
+        // Once: Carol can't use the same invite after him.
+        let again = redeem(&v2, &inv, &k, &carol);
+        assert!(!again.follows(Some(&v2), &pin, &all));
+        // Owners carry what's spent on; their versions still check.
+        let mut v3 = v2.clone();
+        v3.version = 3;
+        v3.redeem = None;
+        v3.sign_with(&alice.keys);
+        assert!(v3.follows(Some(&v2), &pin, &all));
+        // A second, separate invite works the same way.
+        let (inv2, k2) = invite(&alice, TeamRole::Viewer, 10);
+        assert!(redeem(&v3, &inv2, &k2, &carol).follows(Some(&v3), &pin, &all));
+    }
+
+    #[test]
+    fn a_presigned_invite_cant_be_bent() {
+        let (alice, bob, mallory) = (person("alice"), person("bob"), person("mallory"));
+        let pin = TeamPin { team: "t1".into(), founder: "alice".into(), founder_root: alice.cert.device.clone() };
+        let all = certs(&[&alice, &bob, &mallory]);
+        let v1 = roster(1, vec![member(&alice, TeamRole::Owner)], &alice);
+        let (inv, k) = invite(&alice, TeamRole::Viewer, 10);
+        let good = redeem(&v1, &inv, &k, &bob);
+        assert!(good.follows(Some(&v1), &pin, &all));
+
+        // Control saw Bob's proof but can't move it to Mallory: the proof
+        // names Bob, and Mallory's device can't sign as Bob.
+        let mut stolen = good.clone();
+        stolen.members[1] = member(&mallory, TeamRole::Viewer);
+        stolen.sign_with(&mallory.keys);
+        assert!(!stolen.follows(Some(&v1), &pin, &all));
+        // Without the one-time key, no proof.
+        let forged = redeem(&v1, &inv, &DeviceKeys::generate(), &mallory);
+        assert!(!forged.follows(Some(&v1), &pin, &all));
+        // A higher role than the invite's.
+        let mut raised = good.clone();
+        raised.members[1].role = TeamRole::Editor;
+        raised.sign_with(&bob.keys);
+        assert!(!raised.follows(Some(&v1), &pin, &all));
+        // Anything else changed on the way in: another member's role.
+        let v2 = roster(2, vec![member(&alice, TeamRole::Owner), member(&mallory, TeamRole::Viewer)], &alice);
+        let mut demoted = redeem(&v2, &inv, &k, &bob);
+        demoted.members[1].role = TeamRole::Editor;
+        demoted.sign_with(&bob.keys);
+        assert!(!demoted.follows(Some(&v2), &pin, &all));
+        // Past its expiry.
+        let mut late = good.clone();
+        late.at = 11;
+        late.sign_with(&bob.keys);
+        assert!(!late.follows(Some(&v1), &pin, &all));
+        // An invite signed by someone who isn't an owner.
+        let (by_bob, kb) = invite(&bob, TeamRole::Viewer, 10);
+        assert!(!redeem(&v1, &by_bob, &kb, &mallory).follows(Some(&v1), &pin, &all));
+        // An invite to be an owner is never presigned.
+        let (own, ko) = invite(&alice, TeamRole::Owner, 10);
+        assert!(!redeem(&v1, &own, &ko, &bob).follows(Some(&v1), &pin, &all));
+        // Not marking it spent.
+        let mut unspent = good.clone();
+        unspent.spent.clear();
+        unspent.sign_with(&bob.keys);
+        assert!(!unspent.follows(Some(&v1), &pin, &all));
+        // An owner's version can't carry a redeem.
+        let mut owner_redeem = good.clone();
+        owner_redeem.sign_with(&alice.keys);
+        assert!(!owner_redeem.follows(Some(&v1), &pin, &all));
+        // A v1 roster can't carry v2's fields.
+        let mut old = good.clone();
+        old.v = 1;
+        old.sign_with(&bob.keys);
+        assert!(!old.follows(Some(&v1), &pin, &all));
     }
 
     #[test]
