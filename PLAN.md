@@ -3853,6 +3853,7 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
 - **The catalog shows every agent, with a filter**, not only the curated ones.
 - **Local `${VAR}`s come from Infisical first** (agent-specs keeps its secrets there), then the host's shell environment (#74), then known helpers (`GITHUB_TOKEN` from `gh auth token`). Fountain never returns a secret's value, so they can't come from Fountain.
 - **The three agents on `sandbox_provider: runner` today move to geek:** `hud-playground`, `fireball-smoke` and `home-cloud-steward` (the last is `managed-by: chant`, so it changes in agent-specs).
+- **Also decided (2026-10-03):** geek's runner is a systemd unit, not a pane, because M2's real reboot check is still pending. *Run here* covers `claude` agents only. M44 adds `metadata.illogical.local: false` to the orchestrators in agent-specs itself. A sandbox shell goes through a sudoers rule (bash as `fountain`). M45's setup creates the runner's key (`fountain keys create geek-runner`), written straight to the `fountain` user's credentials, never printed.
 - **The catalog is read-only.** agent-specs (chant's fountain lexicon) stays the one place a curated agent is edited, so illogical never fights chant's converge. *Spec* opens the file.
 
 **Order:** S24 (#120), done; then M43 (#121) and M45 (#123), which don't depend on each other; then M44 (#122), which needs M43's reads and starts by re-running S24's q1.
@@ -3911,7 +3912,7 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
   - then helpers (`GITHUB_TOKEN` ← `gh auth token`).
 
   Values are held in memory and passed in `session/new`. A terminal `claude` gets a 0600 `--mcp-config` file in the daemon's runtime directory, deleted when the pane closes. A server with an unresolved `${VAR}` is left out, and the block's header says which server and which variable.
-- **Not wearable:** an agent with `metadata.illogical.local: false` is refused with the reason. The orchestrators get it in agent-specs, a change Jake makes there. `codex`, `gemini`, `opencode` and `acp` agents say "Run on Fountain" for now.
+- **Not wearable:** an agent with `metadata.illogical.local: false` is refused with the reason. M44 adds it to the orchestrators (`captain-picard`, `team-lead`, `tech-lead`) in agent-specs and applies it. `codex`, `gemini`, `opencode` and `acp` agents say "Run on Fountain" for now.
 - **The header** says "as <agent>" with the bundle's skills and servers, and what didn't carry over.
 
 **Tests:**
@@ -3926,7 +3927,7 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
 - **Set up (once, with Jake):**
   - Jake stops the runner on jake-air. Then `DELETE /api/runners/:id` for `jake-air`, `jake-mbair` and `fireball`.
   - Create a `fountain` user on geek, with Jake in its group. Sandboxes go under `/home/fountain/sandboxes` (group-readable).
-  - Give that user its own Fountain login, a full-scope key, in `/home/fountain/.fountain/credentials`.
+  - Create its key from Jake's login (`fountain keys create`, named `geek-runner`, full scope), written straight to `/home/fountain/.fountain/credentials` (0600) and never printed.
   - Run `fountain runner --name geek --root /home/fountain/sandboxes` as a systemd unit (`User=fountain`, `Restart=always`). Then move `hud-playground` and `fireball-smoke` to the runner provider through the API, and `home-cloud-steward` in agent-specs.
   - `illogical fountain runner install` does the steps that don't need Jake, so it's written down and can be done again. It refuses on a host without `sudo`.
 - **Runner status on the machine:** the machine panel and the swarm's machine show *Fountain runner*: online or offline, version against the installed `fountain` CLI, last seen, and how many sandboxes it holds. `/api/runners` is polled every minute while drawn. Attention (`failed`) when geek's runner has been offline for 5 minutes while the unit says it's running, and for any other runner on the account (one would win placement).
