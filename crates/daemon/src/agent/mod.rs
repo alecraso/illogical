@@ -299,6 +299,8 @@ struct Inner {
     held: Option<crate::conversations::Live>,
     /// The transcript's size and mtime when last read.
     import_stamp: Option<(u64, std::time::SystemTime)>,
+    /// The transcript as read so far (#80).
+    follow: crate::conversations::convert::Follow,
     /// The session's `configOptions` (for choosing a model).
     config_options: Value,
     /// Its adapter isn't installed, or has no Node (#111): what to show
@@ -363,6 +365,7 @@ impl Inner {
             frozen: false,
             held: None,
             import_stamp: None,
+            follow: Default::default(),
             config_options: Value::Null,
             adapter: None,
         }
@@ -558,6 +561,7 @@ impl Inner {
                 self.frozen = true;
                 // No longer following whoever else has it.
                 self.held = None;
+                self.follow = Default::default();
                 self.status = Status::Stopped;
                 self.t.note("Continued in illogical", at);
             }
@@ -1464,11 +1468,13 @@ fn refresh_import(ctx: &BlockCtx, g: &mut Inner) -> bool {
     g.held = held;
     let stamp = std::fs::metadata(&imp.path).ok().and_then(|m| Some((m.len(), m.modified().ok()?)));
     if stamp.is_some() && stamp != g.import_stamp {
-        if let Ok(bytes) = std::fs::read(&imp.path) {
-            let entries = crate::conversations::convert::entries(&bytes, g.held.is_none());
-            g.t = Transcript::from_entries(entries);
+        // Only what was appended since (#80); a held change rereads none.
+        if let Ok(new) = g.follow.read(Path::new(&imp.path)) {
+            if new || g.import_stamp.is_none() {
+                g.t = Transcript::from_entries(g.follow.entries(g.held.is_none()));
+                changed = true;
+            }
             g.import_stamp = stamp;
-            changed = true;
         }
     } else if stamp.is_none() && g.t.entries.is_empty() {
         g.t.note(format!("Its transcript ({}) is gone", imp.path), now_ms());

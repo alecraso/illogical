@@ -3397,6 +3397,23 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
   - the Mac (`~/Library/Application Support/Claude` for the desktop app's records);
   - inotify: a listing finds new sessions, but an open picker doesn't update by itself.
 
+#### #77 and #80: as built
+
+**Done 2026-10-03.**
+
+- **#77: the block's holder is only ever this daemon's pane.** The block's 1-second follow kept the pane id from the holder's systemd scope as it was, so a scope from another daemon on the machine showed as "open in pane %76". The multiplexer now shares its pane and block ids with blocks, and the list and the block both filter through `Live::ours`; anything else is "open in a terminal (pid N)".
+- **#80: following converts only what was appended.** `convert::Follow` keeps the converter's state (the entries, open tool calls, the rewind set) and the offset of the last whole line, and reads from there. It converts again from the start when the file is shorter than what was read, is another file (device and inode), or its last 4 KiB before that offset differ. A last line without its newline is converted on a copy until the newline comes, so the entries always match converting the whole file.
+- **Measured on geek** (release build, `follow_cost` in `convert.rs`; the transcript's last 100 lines appended to a copy one at a time):
+
+  | transcript | entries | whole file, each change (before) | an appended line (after) |
+  |---|---|---|---|
+  | 30.6 MiB (hud demo session) | 744 | 39 ms, 31 MiB peak | 0.21 ms median, 1.1 ms max (a 762 KiB line); under 0.5 MiB peak |
+  | 23.6 MiB (ravix session) | 1,897 | 55 ms, 25 MiB peak | 0.43 ms median, 0.9 ms max; no measurable peak |
+
+  The first read when a block opens costs what a whole conversion did. What's left per change is mostly copying the entries into the block's transcript, which grows with the entries, not the bytes (744 entries from 30 MiB).
+- **Tests:** following gives exactly what a whole conversion gives, for S20's fixtures appended a line at a time and in pieces that split lines (finished and not); a rewind whose earlier prompt was read before its new one; a file truncated, rewritten in place at the same length, replaced by a rename, and emptied.
+- **Not covered:** a rewrite in place that leaves the file at least as long and the 4 KiB before the offset as they were, but changes something earlier. Claude Code only appends.
+
 ### Workspaces track (S21, M34, added 2026-10-02)
 
 A [chant](https://intentius.io/chant) workspace (a repo with a `chant.workspace.json`, such as `~/dev/intentius/chant`) as a block you work in. Its members are cards you open shells, agents and diffs on. Its records show with their state. A gate waiting in any member is illogical attention you can approve. illogical reads the workspace only through chant's read contract (chant `ws-017`), as one more reader beside hud and behold. Review actions on records stay hud's (`ws-052`).
