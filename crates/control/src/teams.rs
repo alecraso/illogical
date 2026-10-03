@@ -254,7 +254,7 @@ pub async fn preview_invite(
         .filter(|(t, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
     let name = app.db.team(&t)?.map(|t| t.name).unwrap_or_default();
-    let by = app.db.account(&by)?.map(|a| a.login).unwrap_or_default();
+    let by = app.db.account(&by)?.map(|a| a.name).unwrap_or_default();
     Ok(Json(json!({ "name": name, "by": by })))
 }
 
