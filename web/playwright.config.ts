@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,21 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   const fake = fileURLToPath(new URL("../crates/daemon/tests/fake_acp.py", import.meta.url));
   writeFileSync(join(bin, "claude-agent-acp"), `#!/bin/sh\nexec python3 ${fake} "$@"\n`);
   chmodSync(join(bin, "claude-agent-acp"), 0o755);
+}
+
+// M36: forge blocks read through a stand-in `tea` on the daemon's PATH,
+// never the person's own: its logins are whatever forge.spec.ts writes
+// (its fake Forgejo), and its credential helper hands out a fixed token.
+{
+  const tea = runDir("ILLOGICAL_E2E_TEA_DIR", "illogical-e2e-tea-");
+  if (!existsSync(join(tea, "logins.json"))) writeFileSync(join(tea, "logins.json"), "[]");
+  writeFileSync(
+    join(tea, "tea"),
+    `#!/bin/sh\nd='${tea}'\ncase "$1 $2" in\n  "logins list") cat "$d/logins.json" ;;\n  "login helper") cat >/dev/null; echo username=jhgaylor; echo password=e2e-forge-token ;;\n  *) exit 2 ;;\nesac\n`,
+  );
+  chmodSync(join(tea, "tea"), 0o755);
+  if (!process.env.PATH?.startsWith(`${tea}:`)) process.env.PATH = `${tea}:${process.env.PATH}`;
+  process.env.ILLOGICAL_FORGE_POLL_MS ??= "300,1500";
 }
 
 // By default runs against a throwaway debug daemon on 7683 (which serves

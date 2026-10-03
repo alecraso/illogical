@@ -29,6 +29,7 @@ const CMDS: Record<WorkKind, string[]> = {
   logs: ["journalctl -fu illogicald", "tail -f /var/log/caddy.log"],
   editor: ["nvim src/main.rs", "nvim README.md"],
   app: [""],
+  pr: [""],
 };
 
 /** `n` made-up panes, refreshed every second, alongside the real ones. */

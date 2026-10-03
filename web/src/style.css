@@ -1705,7 +1705,8 @@ button {
 
 .ask-other,
 .ask-field input[type="text"],
-.ask-field input[type="number"] {
+.ask-field input[type="number"],
+.ask-field textarea {
   width: 100%;
   box-sizing: border-box;
   margin-top: 6px;
@@ -1716,6 +1717,11 @@ button {
   background: var(--bg);
   color: inherit;
   font: inherit;
+}
+
+.ask-field textarea {
+  resize: vertical;
+  font: 13px/1.4 ui-monospace, monospace;
 }
 
 .ask-field {
@@ -3307,4 +3313,113 @@ button {
 
 .app-gate-error {
   font-size: 12px;
+}
+
+/* M36: forge (pull request) blocks, on the workspace block's layout. */
+.forge-meta {
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.forge-link {
+  font-size: 12px;
+}
+
+.forge-state.open {
+  background: #a6e3a1;
+  color: var(--letterbox);
+}
+
+.forge-state.merged {
+  background: #cba6f7;
+  color: var(--letterbox);
+}
+
+.forge-state.closed {
+  background: var(--danger);
+  color: var(--letterbox);
+}
+
+.forge-row {
+  padding: 3px 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.forge-body {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 3px 0 0 12px;
+  padding-left: 8px;
+  border-left: 2px solid var(--divider);
+  max-height: 12em;
+  overflow: auto;
+}
+
+.forge-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--dim);
+}
+
+.forge-dot.success {
+  background: #a6e3a1;
+}
+
+.forge-dot.failure,
+.forge-dot.cancelled,
+.forge-dot.action_required {
+  background: var(--danger);
+}
+
+.forge-dot.running,
+.forge-dot.queued {
+  background: var(--accent);
+}
+
+.forge-check.failure {
+  background: var(--danger);
+  color: var(--letterbox);
+}
+
+.forge-check.success {
+  background: #a6e3a1;
+  color: var(--letterbox);
+}
+
+.forge-review.changes_requested {
+  background: var(--danger);
+  color: var(--letterbox);
+}
+
+.forge-review.approved {
+  background: #a6e3a1;
+  color: var(--letterbox);
+}
+
+.forge-draft {
+  padding: 4px 0;
+}
+
+.forge-draft.waiting {
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+
+.forge-draft + .forge-draft {
+  border-top: 1px solid var(--divider);
+}
+
+.forge-want {
+  margin: 0 0 4px;
+}
+
+.forge-actions {
+  margin-top: 6px;
 }

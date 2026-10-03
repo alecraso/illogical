@@ -14,7 +14,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
-import { newRemote, openChanges, openEditor, openPort, openWorkspace, remoteHosts, useWorkspaceDir } from "../blocks";
+import { newRemote, openChanges, openEditor, openPort, openPr, openWorkspace, remoteHosts, useWorkspaceDir } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { ConversationsLayer, pickConversation } from "./conversations";
 import { AppsLayer, pickApp } from "./apps";
@@ -200,6 +200,8 @@ function TopBar({
               { label: "In a directory…", disabled: client.active() === undefined, run: () => openPicker(client, client.active()) },
               // M35: a studio app's box, in a tab of its own. The owner's.
               ...(!client.state?.roles ? [{ label: "Open a studio app…", run: () => pickApp(client, { session: session.id }) } as MenuItem] : []),
+              // M36: a pull request, in a tab of its own.
+              ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { session: session.id }) } as MenuItem] : []),
               // #17: a tab here whose shell runs on another host.
               ...remoteHosts().map((h): MenuItem => ({ label: `New tab on ${h}`, run: () => void newRemote(client, h, { session: session.id }) })),
             ])
@@ -567,6 +569,8 @@ function PaneSlot({
         : []),
       // M35: a studio app's box beside this pane.
       ...(!client.state?.roles ? [{ label: "Open a studio app…", run: () => pickApp(client, { split: id }) } as MenuItem] : []),
+      // M36: a pull request beside it (N: in its repository).
+      ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { split: id, dir: cwd }) } as MenuItem] : []),
       // M27: VS Code where this pane runs, in its directory. The owner's,
       // like ports.
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),
