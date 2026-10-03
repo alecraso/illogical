@@ -1981,6 +1981,39 @@ button {
   overflow-wrap: normal;
 }
 
+/* A value with its Copy button (#99): a block on its own line, or inline. */
+.copy-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.copy-text > .control-cmd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.copy-text.inline {
+  display: inline-flex;
+  margin: 0;
+  vertical-align: baseline;
+}
+
+.copy-button {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--raised-hover);
+  font-size: 12px;
+}
+
+.copy-text.inline .copy-button {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
 /* ---- other people (M13) */
 
 .avatar {

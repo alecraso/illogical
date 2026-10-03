@@ -7,6 +7,7 @@ import { passkeyRegister, passkeySignIn, type ControlSession } from "../control"
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 import { directory } from "../hosts";
+import { CopyButton, CopyText, download } from "./copy";
 
 export function useControl(s: ControlSession) {
   useSubscribe((fn) => s.subscribe(fn));
@@ -114,16 +115,21 @@ function RecoveryForm({ s }: { s: ControlSession }) {
 
 /** Once, after the account's first device: the codes to keep. */
 function RecoveryCodes({ s }: { s: ControlSession }) {
+  const all = s.recoveryCodes!.join("\n") + "\n";
   return (
     <Modal>
       <h2>Your recovery codes</h2>
       <p>If you lose every device that can approve new ones, one of these lets a new browser in. Each works once. Keep them somewhere safe and offline: they're shown only now, and this service never had them.</p>
       {s.recoveryCodes!.map((c) => (
-        <p key={c} class="control-cmd" data-recovery-code>
-          {c}
+        <p key={c}>
+          <CopyText text={c} data-recovery-code />
         </p>
       ))}
       <div class="prompt-buttons">
+        <CopyButton text={all} label="Copy both" />
+        <button data-download-codes onClick={() => download("illogical-recovery-codes.txt", all)}>
+          Download .txt
+        </button>
         <button class="primary" data-saved-codes onClick={() => s.savedRecoveryCodes()}>
           I've saved them
         </button>
@@ -147,7 +153,7 @@ function AddMachine({ s }: { s: ControlSession }) {
     <div class="control-add">
       {s.sandboxesOpen ? <HostedVm s={s} /> : null}
       <p>Install illogical on it, then run:</p>
-      <pre class="control-cmd">illogicald join {s.info.url}</pre>
+      <CopyText text={`illogicald join ${s.info.url}`} />
       <p>It prints a link with a code. Open the link here (or type the code below) and approve it.</p>
       <JoinCodeForm s={s} />
     </div>
@@ -349,7 +355,7 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
       </ul>
       {err ? <p class="control-error">{err}</p> : null}
       <p class="dim">
-        Account <span class="control-cmd-inline" data-account>{s.account}</span>
+        Account <CopyText inline text={s.account} data-account />
       </p>
       {s.info.passkeys ? (
         <p class="dim">
@@ -507,8 +513,9 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
             {t.roster.name} {t.locked ? <span class="control-error">· locked</span> : null}
           </h3>
           <p class="dim">
-            Team id <span class="control-cmd-inline">{t.team}</span>: add a machine with <code>illogicald join {s.info.url} --team {t.team}</code>
+            Team id <CopyText inline text={t.team} data-team-id />. Add a machine to it with:
           </p>
+          <CopyText text={`illogicald join ${s.info.url} --team ${t.team}`} data-team-join />
           <ul class="control-devices">
             {t.roster.members.map((m) => (
               <li key={m.account} data-member={m.account}>
@@ -556,9 +563,7 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
       {link ? (
         <p>
           Anyone with this link can ask to join (for a week); you approve each:
-          <span class="control-cmd" data-invite-link>
-            {link}
-          </span>
+          <CopyText text={link} share data-invite-link />
         </p>
       ) : null}
       <form

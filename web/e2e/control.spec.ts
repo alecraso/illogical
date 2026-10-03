@@ -141,14 +141,34 @@ let phone: Page;
 let recoveryCodes: string[] = [];
 
 test("a stranger signs up and becomes the first device", async ({ browser }) => {
-  laptop = await (await browser.newContext()).newPage();
+  laptop = await (await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] })).newPage();
   await signIn(laptop);
-  // Recovery codes, once.
+  // Recovery codes, once, each with Copy, and both to copy or download (#99).
   await expect(laptop.locator("[data-recovery-code]")).toHaveCount(2);
   recoveryCodes = await laptop.locator("[data-recovery-code]").allTextContents();
+  const clipboard = () => laptop.evaluate(() => navigator.clipboard.readText());
+  // (The Add a machine screen waits under the codes, with its own Copy.)
+  await laptop.locator(".prompt .copy-text [data-copy]").first().click();
+  await expect(laptop.locator(".prompt .copy-text [data-copy]").first()).toHaveText("Copied");
+  expect(await clipboard()).toBe(recoveryCodes[0]);
+  await laptop.getByRole("button", { name: "Copy both" }).click();
+  expect(await clipboard()).toBe(recoveryCodes.join("\n") + "\n");
+  const saved = laptop.waitForEvent("download");
+  await laptop.locator("[data-download-codes]").click();
+  expect((await saved).suggestedFilename()).toBe("illogical-recovery-codes.txt");
   await laptop.locator("[data-saved-codes]").click();
   await expect(laptop.getByRole("heading", { name: "Add a machine" })).toBeVisible();
-  await expect(laptop.locator(".control-cmd")).toContainText(`illogicald join ${base}`);
+  await expect(laptop.locator(".control-cmd")).toHaveText(`illogicald join ${base}`);
+  await laptop.locator(".copy-text [data-copy]").click();
+  expect(await clipboard()).toBe(`illogicald join ${base}`);
+  // With the clipboard blocked, Copy selects the command instead.
+  await laptop.evaluate(() => {
+    navigator.clipboard.writeText = () => Promise.reject(new DOMException("blocked", "NotAllowedError"));
+    document.execCommand = () => false;
+  });
+  await laptop.locator(".copy-text [data-copy]").click();
+  await expect(laptop.locator(".copy-text [data-copy]")).toHaveText("Selected");
+  expect(await laptop.evaluate(() => getSelection()!.toString())).toBe(`illogicald join ${base}`);
 });
 
 test("two machines join by code; one direct, one only through the relay", async () => {
