@@ -80,6 +80,20 @@ pub struct AddHost {
 pub struct HostInfo {
     pub name: String,
     pub version: String,
+    /// Where `tailscale serve` puts the app, when tailscaled told us this
+    /// node's name (#109): `https://NAME.TAILNET.ts.net`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tailnet_url: Option<String>,
+    /// The owner has come in over the tailnet since the daemon started:
+    /// serve works (#110).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tailnet_seen: bool,
+    /// The control this daemon joined, if any (#110).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<String>,
+    /// The team it joined as, if one (#110).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
 }
 
 /// `POST /api/hosts/invite`: a one-time token that lets a sandbox add itself.

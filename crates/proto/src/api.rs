@@ -37,7 +37,7 @@
 //! | GET | `/api/history` | `pane=`, `failed=1`, `since=` secs, `cwd=`, `match=` | `[HistoryEntry]` |
 //! | GET | `/api/search` | `re=`, `since=` secs | `[SearchHit]` |
 //! | GET | `/api/fs/…`, POST `/api/panes/N/cd` | | files on a host: see [`crate::fs`] |
-//! | GET | `/api/host` | | `HostInfo`: this daemon's name and version |
+//! | GET | `/api/host` | | `HostInfo`: this daemon's name and version, its tailnet URL, whether the tailnet has reached it, the control it joined |
 //! | GET | `/api/hosts/self/shell-env` | | `{shell, ok, error, ms, path, vars}`: the shell environment blocks that run your tools get (#74) |
 //! | POST | `/api/hosts/self/shell-env/refresh` | | the same, resolved again |
 //! | GET | `/api/hosts` | | `HostList`: the daemons a client can switch between |
