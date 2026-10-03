@@ -62,7 +62,7 @@ curl -fsSL https://illogical.widgets.wtf/install.sh | sh
 
 This puts `illogicald` and `illogical` in `~/.local/bin` and starts the
 daemon as a service (systemd user unit on Linux, launchd agent on macOS).
-Run it again to upgrade. `ILLOGICAL_VERSION=v0.1.0` picks a version.
+Run it again to upgrade. `ILLOGICAL_VERSION=vX.Y.Z` picks a version.
 
 **Homebrew** (macOS, Linux):
 
@@ -146,13 +146,16 @@ loginctl enable-linger $USER
        "allow": [
          "mcp__illogical__read_output", "mcp__illogical__capture_screen", "mcp__illogical__wait",
          "mcp__illogical__list", "mcp__illogical__history", "mcp__illogical__search",
-         "mcp__illogical__read_file", "mcp__illogical__list_conversations"
+         "mcp__illogical__list_conversations", "mcp__illogical__read_pr", "mcp__illogical__read_issue",
+         "mcp__illogical__read_file"
        ],
        "ask": [
          "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__close",
-         "mcp__illogical__open_port", "mcp__illogical__start_agent", "mcp__illogical__agent_respond",
-         "mcp__illogical__show_changes", "mcp__illogical__show_file", "mcp__illogical__open_conversation",
-         "mcp__illogical__open_workspace"
+         "mcp__illogical__open_port", "mcp__illogical__open_app", "mcp__illogical__start_agent",
+         "mcp__illogical__open_conversation", "mcp__illogical__agent_respond", "mcp__illogical__show_changes",
+         "mcp__illogical__show_file", "mcp__illogical__open_workspace", "mcp__illogical__open_pr",
+         "mcp__illogical__pr_comment", "mcp__illogical__pr_review", "mcp__illogical__pr_merge",
+         "mcp__illogical__open_issue", "mcp__illogical__issue_comment", "mcp__illogical__issue_new"
        ]
      }
    }

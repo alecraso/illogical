@@ -2380,4 +2380,22 @@ mod tests {
         let close = all.iter().find(|t| t.name == "close").unwrap();
         assert_eq!(close.annotations.as_ref().unwrap().destructive_hint, Some(true));
     }
+
+    /// The README's permissions snippet allows the read-only tools and asks
+    /// for the rest, every one of them: a new tool fails this until it's
+    /// listed there (#114).
+    #[test]
+    fn readme_allowlist_is_every_tool() {
+        const README: &str = include_str!("../../../../README.md");
+        let list = |key: &str| -> Vec<&str> {
+            let at = README.find(&format!("\"{key}\": [")).unwrap_or_else(|| panic!("no {key} list in README.md"));
+            let body = &README[at..];
+            let body = &body[..body.find(']').unwrap()];
+            body.split('"').filter_map(|s| s.strip_prefix("mcp__illogical__")).collect()
+        };
+        let defs = defs();
+        let want = |ro: bool| -> Vec<&str> { defs.iter().filter(|d| d.read_only == ro).map(|d| d.name).collect() };
+        assert_eq!(list("allow"), want(true), "README.md's allow list: the read-only tools, in defs() order");
+        assert_eq!(list("ask"), want(false), "README.md's ask list: every other tool, in defs() order");
+    }
 }
