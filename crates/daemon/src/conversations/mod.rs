@@ -7,8 +7,9 @@
 //!   mtime changed. It's kept in memory: a cold scan is cheap enough that a
 //!   file in the state directory isn't worth its staleness.
 //! - **Liveness** is `~/.claude/sessions/<pid>.json`, one per running Claude
-//!   Code process, checked against `/proc` so a reused pid doesn't count.
-//!   Its cgroup says whether it runs in one of our panes or agent blocks.
+//!   Code process, checked against the process's start time so a reused pid
+//!   doesn't count. Its ancestors (our panes' and agent blocks' processes),
+//!   else its systemd scope, say whether it runs in one of ours.
 //! - **The desktop app** also keeps `claude-code-sessions/<account>/<org>/
 //!   local_<uuid>.json` per session: its title and whether it's archived.
 //!
@@ -170,15 +171,49 @@ struct DesktopRecord {
     archived: bool,
 }
 
+/// Our terminals' and agent blocks' processes, by pid: a Claude Code
+/// process under one of them runs there. Needed where there are no systemd
+/// scopes to say so (macOS, #81).
+#[derive(Debug, Clone, Default)]
+pub struct Ours {
+    pub panes: HashMap<u32, PaneId>,
+    pub blocks: HashMap<u32, PaneId>,
+}
+
+impl Ours {
+    /// The pane or agent block `pid` runs under, by its ancestors.
+    fn holder(&self, pid: u32) -> Option<(Option<PaneId>, Option<PaneId>)> {
+        let mut p = pid;
+        for _ in 0..64 {
+            if let Some(id) = self.panes.get(&p) {
+                return Some((Some(*id), None));
+            }
+            if let Some(id) = self.blocks.get(&p) {
+                return Some((None, Some(*id)));
+            }
+            p = crate::procinfo::ppid(p).filter(|p| *p > 1)?;
+        }
+        None
+    }
+}
+
 pub struct Index {
     dirs: Dirs,
     /// By transcript path: its size and mtime when read, and what it said.
     cache: HashMap<PathBuf, (u64, u64, Head)>,
+    /// As last told ([`Index::set_ours`]).
+    ours: Ours,
 }
 
 impl Index {
     pub fn new(dirs: Dirs) -> Self {
-        Self { dirs, cache: HashMap::new() }
+        Self { dirs, cache: HashMap::new(), ours: Ours::default() }
+    }
+
+    /// Our panes' and agent blocks' processes now. A listing passes them;
+    /// a block that checks who holds its session uses the last ones.
+    pub fn set_ours(&mut self, ours: Ours) {
+        self.ours = ours;
     }
 
     /// This daemon's, for its user.
@@ -189,7 +224,7 @@ impl Index {
 
     /// Every conversation, newest first, with what's live now.
     pub fn scan(&mut self) -> Vec<Conversation> {
-        let live = live(&self.dirs.claude.join("sessions"));
+        let live = live(&self.dirs.claude.join("sessions"), &self.ours);
         let desktop = desktop_records(&self.dirs.desktop.join("claude-code-sessions"));
         let mut seen = HashMap::new();
         let projects = self.dirs.claude.join("projects");
@@ -274,7 +309,7 @@ impl Index {
 
     /// Who holds this session now, if anyone.
     pub fn live_for(&self, session: &str) -> Option<Live> {
-        live(&self.dirs.claude.join("sessions")).remove(session)
+        live(&self.dirs.claude.join("sessions"), &self.ours).remove(session)
     }
 }
 
@@ -390,7 +425,7 @@ fn prompt_text(content: &Value) -> Option<String> {
 }
 
 /// The running Claude Code processes, by session.
-fn live(dir: &Path) -> HashMap<String, Live> {
+fn live(dir: &Path, ours: &Ours) -> HashMap<String, Live> {
     let mut out = HashMap::new();
     for f in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = f.path();
@@ -405,7 +440,7 @@ fn live(dir: &Path) -> HashMap<String, Live> {
         if !alive(pid, v["procStart"].as_str()) {
             continue;
         }
-        let (pane, block) = scope_of(pid);
+        let (pane, block) = ours.holder(pid).unwrap_or_else(|| scope_of(pid));
         let s = |k: &str| v[k].as_str().unwrap_or_default().to_owned();
         let mut l = Live {
             pid,
@@ -422,21 +457,34 @@ fn live(dir: &Path) -> HashMap<String, Live> {
     out
 }
 
-/// The process is running, and is the one that wrote the file: its start
-/// time (field 22 of `/proc/<pid>/stat`, in clock ticks) is `procStart`.
+/// The process is running, and is the one that wrote the file: it started
+/// when `procStart` says.
 fn alive(pid: u32, proc_start: Option<&str>) -> bool {
     // EPERM is someone's process all the same; only ESRCH means it's gone.
     if nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None) == Err(nix::errno::Errno::ESRCH) {
         return false;
     }
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-        // No /proc (macOS): the pid alone.
-        return true;
-    };
     let Some(want) = proc_start else { return true };
-    // The command name is in parentheses and may hold spaces.
-    let after = stat.rsplit_once(')').map_or("", |x| x.1);
-    after.split_whitespace().nth(19) == Some(want)
+    // Not readable (a sandbox): the pid alone.
+    crate::procinfo::start_time(pid).is_none_or(|have| same_start(have, want))
+}
+
+/// Is `procStart` this start time ([`crate::procinfo::start_time`])?
+/// Claude Code writes field 22 of `/proc/<pid>/stat` (clock ticks since
+/// boot) on Linux, and `LC_ALL=C TZ=UTC ps -o lstart=` (`Sat Oct  3
+/// 10:17:50 2026`, to the second) elsewhere.
+fn same_start(have: u64, want: &str) -> bool {
+    if cfg!(target_os = "macos") { lstart_secs(want) == Some(have / 1_000_000) } else { want.parse() == Ok(have) }
+}
+
+/// `ps -o lstart=` in the C locale and UTC, in seconds since the epoch.
+fn lstart_secs(s: &str) -> Option<u64> {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let [_, mon, day, time, year] = s.split_whitespace().collect::<Vec<_>>().try_into().ok()?;
+    let mon = MONTHS.iter().position(|m| *m == mon)? + 1;
+    let at = format!("{year}-{mon:02}-{:02}T{time}Z", day.parse::<u8>().ok()?);
+    let ms = convert::at_ms(&at);
+    (ms > 0).then_some(ms / 1000)
 }
 
 /// Our pane or agent block a process runs in, from its systemd scope
@@ -603,38 +651,95 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// A process's `procStart`, as Claude Code writes it on this OS.
+    fn proc_start(pid: u32) -> String {
+        if cfg!(target_os = "macos") {
+            let out = std::process::Command::new("ps")
+                .args(["-o", "lstart=", "-p", &pid.to_string()])
+                .env("LC_ALL", "C")
+                .env("TZ", "UTC")
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        } else {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+            stat.rsplit_once(')').unwrap().1.split_whitespace().nth(19).unwrap().to_owned()
+        }
+    }
+
+    fn write_session(dir: &Path, name: &str, pid: u32, start: &str, sid: &str) {
+        std::fs::write(
+            dir.join(name),
+            json!({"pid": pid, "sessionId": sid, "procStart": start, "kind": "interactive", "entrypoint": "cli", "status": "idle"}).to_string(),
+        )
+        .unwrap();
+    }
+
     #[test]
-    fn live_sessions_are_checked_against_proc() {
+    fn live_sessions_are_checked_against_their_start_time() {
         let root = tmp("live");
         let sessions = root.join("sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         let me = std::process::id();
-        // Without /proc (macOS) only the pid is checked.
-        let proc = std::fs::read_to_string(format!("/proc/{me}/stat")).ok();
-        let start = proc
-            .as_deref()
-            .map_or("0".to_owned(), |s| s.rsplit_once(')').unwrap().1.split_whitespace().nth(19).unwrap().to_owned());
-        let write = |name: &str, pid: u32, start: &str, sid: &str| {
-            std::fs::write(
-                sessions.join(name),
-                json!({"pid": pid, "sessionId": sid, "procStart": start, "kind": "interactive", "entrypoint": "cli", "status": "idle"}).to_string(),
-            )
-            .unwrap();
-        };
-        write("a.json", me, &start, "live-one");
-        write("b.json", me, "1", "reused-pid");
-        write("c.json", 999_999_999, &start, "gone");
-        let l = live(&sessions);
-        let mut want = vec!["live-one"];
-        if proc.is_none() {
-            // A reused pid can't be told apart there.
-            want.push("reused-pid");
-        }
+        let start = proc_start(me);
+        write_session(&sessions, "a.json", me, &start, "live-one");
+        // The same pid, started at another time: someone else's now.
+        let other = if cfg!(target_os = "macos") { "Thu Jan  1 00:00:01 1970" } else { "1" };
+        write_session(&sessions, "b.json", me, other, "reused-pid");
+        write_session(&sessions, "c.json", 999_999_999, &start, "gone");
+        let l = live(&sessions, &Ours::default());
         let mut got: Vec<&str> = l.keys().map(String::as_str).collect();
         got.sort();
-        assert_eq!(got, want);
+        assert_eq!(got, ["live-one"]);
         assert_eq!(l["live-one"].pid, me);
         assert!(l["live-one"].place().contains(&format!("pid {me}")) || l["live-one"].pane.is_some());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn ps_start_times() {
+        assert_eq!(lstart_secs("Sat Oct  3 10:17:50 2026"), Some(1_791_022_670));
+        assert_eq!(lstart_secs("Thu Jan  1 00:00:01 1970"), Some(1));
+        assert_eq!(lstart_secs("Fri May 15 21:23:28 2026  "), Some(1_778_880_208));
+        assert_eq!(lstart_secs("17819758"), None);
+        assert_eq!(lstart_secs("Sat Foo  3 10:17:50 2026"), None);
+        if cfg!(target_os = "macos") {
+            assert!(same_start(1_791_022_670_123_456, "Sat Oct  3 10:17:50 2026"));
+            assert!(!same_start(1_791_022_671_000_000, "Sat Oct  3 10:17:50 2026"));
+        } else {
+            assert!(same_start(17_819_758, "17819758"));
+            assert!(!same_start(17_819_759, "17819758"));
+        }
+    }
+
+    #[test]
+    fn a_holder_is_placed_by_its_ancestors() {
+        let root = tmp("ours");
+        let sessions = root.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        // A "pane" shell running a "Claude Code" (sleep) under it.
+        let mut shell = std::process::Command::new("sh")
+            .args(["-c", "sleep 30 & echo $!; wait"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(shell.stdout.take().unwrap()), &mut line).unwrap();
+        let claude: u32 = line.trim().parse().unwrap();
+        write_session(&sessions, "a.json", claude, &proc_start(claude), "in-pane");
+        let me = std::process::id();
+        write_session(&sessions, "b.json", me, &proc_start(me), "in-block");
+        let ours = Ours { panes: [(shell.id(), 7)].into(), blocks: [(me, 9)].into() };
+        let l = live(&sessions, &ours);
+        assert_eq!((l["in-pane"].pane, l["in-pane"].block), (Some(7), None));
+        assert_eq!(l["in-pane"].place, "open in pane %7");
+        assert_eq!((l["in-block"].pane, l["in-block"].block), (None, Some(9)));
+        // Not under any of ours.
+        let l = live(&sessions, &Ours { panes: [(1, 7)].into(), ..Ours::default() });
+        assert_eq!(l["in-pane"].pane.filter(|p| *p == 7), None);
+        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(claude as i32), nix::sys::signal::SIGKILL);
+        shell.wait().unwrap();
         std::fs::remove_dir_all(&root).unwrap();
     }
 

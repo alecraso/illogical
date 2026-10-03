@@ -3,7 +3,8 @@
 //! `claude-agent-acp` (through `$ILLOGICAL_AGENTS_DIR`). Listing, opening
 //! (no process), following the transcript, continuing (`session/resume`
 //! with the imported session's settings and model), a restart, and a
-//! session held by another process: continuing refused, forking allowed.
+//! session held by another process: continuing refused, forking allowed;
+//! and one held in a pane, placed there by its parent processes (#81).
 
 mod agentd;
 
@@ -91,9 +92,8 @@ impl Claude {
     /// This test process holds `id`, as a running Claude Code would.
     fn hold(&self, id: &str) {
         let me = std::process::id();
-        // Without /proc (macOS) only the pid is checked.
-        let start = std::fs::read_to_string(format!("/proc/{me}/stat"))
-            .map_or("0".to_owned(), |s| s.rsplit_once(')').unwrap().1.split_whitespace().nth(19).unwrap().to_owned());
+        let out = std::process::Command::new("sh").args(["-c", PROC_START, "sh", &me.to_string()]).output().unwrap();
+        let start = String::from_utf8_lossy(&out.stdout).trim().to_owned();
         std::fs::write(
             self.dir.join(format!("sessions/{me}.json")),
             json!({ "pid": me, "sessionId": id, "procStart": start, "kind": "interactive",
@@ -103,6 +103,12 @@ impl Claude {
         .unwrap();
     }
 }
+
+/// A process's start time (`$1`) as Claude Code writes it in
+/// `~/.claude/sessions`: field 22 of its stat on Linux, `ps -o lstart` in
+/// UTC on macOS.
+const PROC_START: &str =
+    r#"if [ -r /proc/$1/stat ]; then cut -d' ' -f22 /proc/$1/stat; else LC_ALL=C TZ=UTC ps -o lstart= -p $1; fi"#;
 
 fn daemon(c: &Claude) -> Daemon {
     let env = c.env();
@@ -249,4 +255,30 @@ fn a_held_conversation_is_forked_not_shared() {
     std::fs::remove_file(c.dir.join(format!("sessions/{}.json", std::process::id()))).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert!(conversations(&d, "live=1").is_empty());
+}
+
+#[test]
+fn a_conversation_in_a_pane_says_which() {
+    let c = Claude::new("pane");
+    c.seed(HELD, "wren", "cli");
+    let d = daemon(&c);
+    // The pane's process registers as a Claude Code holding the session, as
+    // the real one would. No systemd scope says where it is (test daemons
+    // have none, nor does macOS): its parents do.
+    let start = PROC_START.replace("$1", "$$");
+    let file = c.dir.join("sessions/held.json");
+    let cmd = format!(
+        r#"s=$({start}); printf '{{"pid":%s,"sessionId":"{HELD}","procStart":"%s","kind":"interactive","entrypoint":"cli","status":"idle"}}' $$ "$s" > {f}.tmp && mv {f}.tmp {f} && exec sleep 60"#,
+        f = file.display()
+    );
+    let pane = d.post("/api/run", json!({ "command": cmd }))["pane"].as_u64().unwrap();
+    d.wait_for("the holder", || file.exists());
+    let list = conversations(&d, "live=1");
+    assert_eq!(list.len(), 1, "{list:#?}");
+    assert_eq!(list[0]["live"]["pane"], pane, "{}", list[0]);
+    assert_eq!(list[0]["live"]["place"], format!("open in pane %{pane}"));
+
+    // Opened, its block says the same.
+    let v = d.post("/api/conversations/open", json!({ "id": HELD, "then": "continue" }));
+    assert!(v["error"].as_str().unwrap().contains(&format!("pane %{pane}")), "{v}");
 }

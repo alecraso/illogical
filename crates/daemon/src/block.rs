@@ -70,6 +70,11 @@ pub trait Block: Send + Sync {
     fn waiting(&self) -> Option<Waiting> {
         None
     }
+    /// The process it runs on this host, if any (an agent's server: a
+    /// Claude Code under it is this block's, #81).
+    fn pid(&self) -> Option<u32> {
+        None
+    }
     /// What it says about itself in summaries (M23), beyond its type.
     fn summary(&self) -> Summary {
         Summary::default()

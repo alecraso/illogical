@@ -849,13 +849,40 @@ async fn conversations(State(app): AppState, Query(q): Query<ConversationsQuery>
     list_conversations(&app, q).await.map(Json).map_err(bad)
 }
 
+/// Our terminals' and agent blocks' processes on this host (#81): a
+/// Claude Code under one of them runs there.
+async fn our_pids(app: &App) -> crate::conversations::Ours {
+    let mut ours = crate::conversations::Ours::default();
+    for p in app.mux.api(Api::Panes).await.unwrap_or_default() {
+        let id = p.info.id;
+        match p.info.kind {
+            illogical_proto::BlockType::Terminal => {
+                if let Some(pid) = app.mux.api(|r| Api::Pane(id, r)).await.flatten().and_then(|h| h.pid_now()) {
+                    ours.panes.insert(pid, id);
+                }
+            }
+            _ => {
+                if let Some(pid) = app.mux.api(|r| Api::Block(id, r)).await.flatten().and_then(|b| b.pid()) {
+                    ours.blocks.insert(pid, id);
+                }
+            }
+        }
+    }
+    ours
+}
+
 pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<serde_json::Value, String> {
     let blocks = blocks_by_session(app).await;
     let ours: std::collections::HashSet<PaneId> =
         app.mux.api(Api::Panes).await.unwrap_or_default().into_iter().map(|p| p.info.id).collect();
-    let list = tokio::task::spawn_blocking(|| crate::conversations::Index::global().lock().unwrap().scan())
-        .await
-        .map_err(|e| e.to_string())?;
+    let pids = our_pids(app).await;
+    let list = tokio::task::spawn_blocking(move || {
+        let mut ix = crate::conversations::Index::global().lock().unwrap();
+        ix.set_ours(pids);
+        ix.scan()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     let words: Vec<String> = q.q.as_deref().unwrap_or("").split_whitespace().map(str::to_lowercase).collect();
     let total = list.len();
     let out: Vec<serde_json::Value> = list

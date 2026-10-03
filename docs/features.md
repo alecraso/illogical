@@ -349,6 +349,19 @@ the daemon stopping, crashing, or the machine rebooting:
     `illogical claude ls --host all` does the same in a terminal;
     `illogical --host NAME claude open ID` opens one there.
   - Claude Desktop's chats aren't here: they live on claude.ai.
+  - **On a Mac** (#81) it works the same way. Whether a session is open
+    comes from `~/.claude/sessions` checked against the process's start
+    time, which Claude Code writes there as `ps -o lstart` (`/proc` on
+    Linux), so a reused pid doesn't count. A Claude Code started from one
+    of the daemon's panes or agent blocks is placed by its parent
+    processes, with no systemd scopes needed. The desktop app's own
+    records (title, archived) are read from `~/Library/Application
+    Support/Claude/claude-code-sessions/` (`~/.config/Claude/` on Linux).
+    Not yet checked on a Mac: that folder and its fields (jake-mini's app
+    hadn't run a Code tab session, so there's none), and whether the app
+    deletes a scratch workspace with its session there as on Linux. Its
+    Cowork sessions (`local-agent-mode-sessions/`) keep their transcripts
+    inside their VM, not in `~/.claude/projects`, so they aren't listed.
 
 - **Studio apps** (M35). An app box from your studio (arugula-salad's) as
   a block: the app in a frame, and its agent's questions as asks you
