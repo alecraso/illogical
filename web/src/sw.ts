@@ -9,7 +9,8 @@
 // directory the page checked (S18). It also keeps the last copy of the page
 // itself, used only when the daemon that serves it doesn't answer: the page
 // can then still reach the other hosts on its saved list (M4a). Nothing else
-// is cached.
+// is cached. Control's own notices (a new device or a team request
+// waiting, #104) open its page, which shows the prompt.
 //
 // Built by itself into dist/sw.js as a classic worker (vite.sw.config.ts).
 
@@ -86,6 +87,8 @@ interface Msg {
   approve?: { id: string; title?: string };
   ask?: { id: string; field: string; options: string[] };
   reason?: { kind: string; actions: string[] };
+  /** Control's own (#104): a device or a person waits for approval. */
+  control?: boolean;
 }
 
 sw.addEventListener("push", (event: PushEvent) => {
@@ -122,7 +125,7 @@ sw.addEventListener("push", (event: PushEvent) => {
       icon: "/icon.svg",
       requireInteraction: !!(approve || ask),
       actions,
-      data: { pane: msg.pane, daemon: msg.daemon, approve, ask, reason },
+      data: { pane: msg.pane, daemon: msg.daemon, approve, ask, reason, control: msg.control === true },
     } as NotificationOptions),
   );
 });
@@ -202,6 +205,23 @@ sw.addEventListener("notificationclick", (event: ClickEvent) => {
   }
   if (event.action === "dismiss" && pane) {
     event.waitUntil(act(data.daemon, { action: "dismiss", pane }));
+    return;
+  }
+  // Control's notice (#104): its page shows the prompt, with the
+  // fingerprint, once it looks again.
+  if (data.control) {
+    event.waitUntil(
+      (async () => {
+        const wins = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
+        for (const w of wins) {
+          if (w.focus) {
+            w.postMessage({ type: "control-refresh" });
+            return w.focus();
+          }
+        }
+        return sw.clients.openWindow("/");
+      })(),
+    );
     return;
   }
   // A tap: open the pane (its card shows over it). Through control (M21)

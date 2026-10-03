@@ -117,7 +117,19 @@ pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enrol
             Ok(Json(json!({ "approved": true, "cert": c, "root": c.device })))
         }
         Some(root) => {
+            let new = app.db.device(&s.account, &c.device)?.is_none();
             app.db.put_device(&Cert { approver: String::new(), sig: String::new(), ..c.clone() }, false, now_ms())?;
+            // The account's other devices hear of it once (#104), not on
+            // every reload of the waiting page.
+            if new {
+                crate::push::notify(
+                    &app,
+                    vec![s.account.clone()],
+                    "control-device",
+                    "A new browser wants into your account".into(),
+                    "Open illogical to check its fingerprint and approve it.".into(),
+                );
+            }
             Ok(Json(json!({ "approved": false, "root": root })))
         }
     }

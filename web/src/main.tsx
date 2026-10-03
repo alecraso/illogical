@@ -42,6 +42,8 @@ if (info && linkMatch) {
 }
 if (session) {
   setHostMenuExtras(() => controlMenuItems(session));
+  // A tapped notice from control (#104): what waits shows now.
+  addEventListener("illogical:control-refresh", () => void session.refresh());
   setPushBackend({
     enable: () => enableControlPush(session.info.vapid, (sub) => session.subscribePush(sub)),
     disable: async () => {

@@ -8,6 +8,11 @@
 //! control only ciphertext: control signs the VAPID token and posts it.
 //! Control sees that daemon X notified device Y, and how big; never what.
 //!
+//! Control sends notices of its own too (#104): a device or a person
+//! waiting for the account's owners. Those it encrypts itself, and they
+//! say only that something waits; approving happens on the page, with
+//! the fingerprint.
+//!
 //! Endpoints are only the browsers' push services (so control can't be
 //! made to post anywhere else), plus `--push-host` for tests.
 
@@ -157,31 +162,19 @@ fn hour() -> u32 {
     3600
 }
 
-pub async fn daemon_send(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Json<Send>) -> R {
-    let Some(account) = app.db.push_sub_account(&b.endpoint)? else {
-        return Err(err(StatusCode::NOT_FOUND, "no such subscription"));
-    };
-    if !served(&app, &d.cert.device, &d.cert.account)?.contains(&account) {
-        return Err(err(StatusCode::FORBIDDEN, "not someone this daemon serves"));
-    }
-    // A global brake on how much control relays.
-    app.limits.check(crate::limit::PUSHES, std::net::IpAddr::from([0, 0, 0, 0]))?;
-    let body = base64::engine::general_purpose::STANDARD
-        .decode(&b.body)
-        .map_err(|_| err(StatusCode::BAD_REQUEST, "body: base64"))?;
-    if body.len() > 4096 {
-        return Err(err(StatusCode::BAD_REQUEST, "a notification is at most 4 KB"));
-    }
-    let url = url::Url::parse(&b.endpoint).map_err(|_| err(StatusCode::BAD_REQUEST, "endpoint"))?;
+/// Post an encrypted notification with control's VAPID signature; its
+/// push service's status. A subscription that's gone is forgotten.
+async fn post(app: &App, endpoint: &str, body: Vec<u8>, ttl: u32, urgency: Option<&str>) -> Result<u16, ApiError> {
+    let url = url::Url::parse(endpoint).map_err(|_| err(StatusCode::BAD_REQUEST, "endpoint"))?;
     let audience = format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default());
-    let urgency = match b.urgency.as_deref() {
+    let urgency = match urgency {
         Some(u @ ("very-low" | "low" | "normal" | "high")) => u.to_owned(),
         _ => "high".to_owned(),
     };
     let res = app
         .http
         .post(url)
-        .header("TTL", b.ttl.min(86_400).to_string())
+        .header("TTL", ttl.min(86_400).to_string())
         .header("Urgency", urgency)
         .header("Content-Encoding", "aes128gcm")
         .header("Content-Type", "application/octet-stream")
@@ -197,11 +190,67 @@ pub async fn daemon_send(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Js
             err(StatusCode::BAD_GATEWAY, "the push service didn't answer")
         })?;
     let status = res.status().as_u16();
+    if status == 404 || status == 410 {
+        app.db.drop_push_sub(endpoint, None)?;
+    }
+    Ok(status)
+}
+
+/// Tell these accounts' devices (those with push on) that something waits
+/// for them (#104): `title`, `body`, and a tap that opens control's page,
+/// where the prompt is. In the background; a failure is only logged.
+pub fn notify(app: &Arc<App>, accounts: Vec<String>, tag: &str, title: String, body: String) {
+    let app = app.clone();
+    let msg = json!({ "title": title, "body": body, "tag": tag, "control": true }).to_string();
+    tokio::spawn(async move {
+        for account in accounts {
+            let subs = match app.db.push_subs(&account) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, "push subscriptions");
+                    continue;
+                }
+            };
+            for sub in subs {
+                let Ok(sub) = serde_json::from_value::<PushSub>(sub) else { continue };
+                if let Err(e) = send_own(&app, &sub, msg.as_bytes()).await {
+                    warn!(error = e.1, %account, "control's notice didn't go");
+                }
+            }
+        }
+    });
+}
+
+async fn send_own(app: &App, sub: &PushSub, msg: &[u8]) -> Result<(), ApiError> {
+    app.limits.check(crate::limit::PUSHES, std::net::IpAddr::from([0, 0, 0, 0]))?;
+    let bad = |_| err(StatusCode::BAD_REQUEST, "subscription keys");
+    let (ua, auth) = (B64.decode(&sub.p256dh).map_err(bad)?, B64.decode(&sub.auth).map_err(bad)?);
+    let body =
+        illogical_e2e::push::encrypt(msg, &ua, &auth, &illogical_e2e::push::ephemeral(), &illogical_e2e::random())
+            .map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    let status = post(app, &sub.endpoint, body, 3600, Some("high")).await?;
+    info!(account = sub.account, status, "control's notice sent");
+    Ok(())
+}
+
+pub async fn daemon_send(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Json<Send>) -> R {
+    let Some(account) = app.db.push_sub_account(&b.endpoint)? else {
+        return Err(err(StatusCode::NOT_FOUND, "no such subscription"));
+    };
+    if !served(&app, &d.cert.device, &d.cert.account)?.contains(&account) {
+        return Err(err(StatusCode::FORBIDDEN, "not someone this daemon serves"));
+    }
+    // A global brake on how much control relays.
+    app.limits.check(crate::limit::PUSHES, std::net::IpAddr::from([0, 0, 0, 0]))?;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(&b.body)
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "body: base64"))?;
+    if body.len() > 4096 {
+        return Err(err(StatusCode::BAD_REQUEST, "a notification is at most 4 KB"));
+    }
+    let status = post(&app, &b.endpoint, body, b.ttl, b.urgency.as_deref()).await?;
     // Only who and how it went; never what (we couldn't read it anyway).
     info!(daemon = d.cert.device, %account, status, "push relayed");
-    if status == 404 || status == 410 {
-        app.db.drop_push_sub(&b.endpoint, None)?;
-    }
     Ok(Json(json!({ "status": status })))
 }
 

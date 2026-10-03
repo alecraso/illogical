@@ -17,6 +17,8 @@ mod forge_wire;
 mod limit;
 mod passkey;
 mod push;
+#[cfg(test)]
+mod push_notices;
 mod relay;
 mod sandboxes;
 mod sprites;

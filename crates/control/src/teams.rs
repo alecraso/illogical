@@ -99,7 +99,12 @@ pub async fn person(State(app): State<Arc<App>>, _s: Session, Query(q): Query<Lo
         None => match app.db.accounts_named(&asked)?.as_slice() {
             [one] => app.db.account(one)?,
             [] => None,
-            _ => return Err(err(StatusCode::CONFLICT, "more than one person goes by that name; ask them for their login")),
+            _ => {
+                return Err(err(
+                    StatusCode::CONFLICT,
+                    "more than one person goes by that name; ask them for their login",
+                ));
+            }
         },
     };
     let a = a
@@ -110,7 +115,8 @@ pub async fn person(State(app): State<Arc<App>>, _s: Session, Query(q): Query<Lo
 
 /// A name for a roster or a request: one word (rosters are signed text).
 pub fn member_name(a: &crate::db::Account) -> String {
-    let words: Vec<&str> = a.name.split(|c: char| c.is_whitespace() || c.is_control()).filter(|w| !w.is_empty()).collect();
+    let words: Vec<&str> =
+        a.name.split(|c: char| c.is_whitespace() || c.is_control()).filter(|w| !w.is_empty()).collect();
     let name: String = words.join("-").chars().take(120).collect();
     if name.is_empty() { format!("account-{}", &a.id[..6.min(a.id.len())]) } else { name }
 }
@@ -234,10 +240,24 @@ pub async fn accept_invite(State(app): State<Arc<App>>, s: Session, Path((team, 
     let me = app.db.account(&s.account)?.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "no account"))?;
     let root = me.root.clone().ok_or_else(|| err(StatusCode::CONFLICT, "enroll a device first"))?;
     let name = member_name(&me);
+    let new = !app.db.requests(&t)?.iter().any(|r| r.account == s.account);
     app.db.add_request(
         &t,
         &TeamRequest { account: s.account.clone(), root, name, role, created: illogical_e2e::now_ms() },
     )?;
+    // The team's owners hear of it (#104), once.
+    if new && let Some(team) = app.db.team(&t)? {
+        let owners: Vec<String> =
+            latest(&app, &t)?.members.into_iter().filter(|m| m.role == TeamRole::Owner).map(|m| m.account).collect();
+        let who = if me.name.is_empty() { "Someone" } else { me.name.as_str() };
+        crate::push::notify(
+            &app,
+            owners,
+            &format!("control-team-{t}"),
+            format!("{who} asks to join {}", team.name),
+            "Open illogical to add them.".into(),
+        );
+    }
     Ok(Json(json!({ "team": t, "pending": true })))
 }
 

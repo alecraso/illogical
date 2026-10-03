@@ -12,15 +12,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use aes_gcm::{Aes128Gcm, KeyInit, aead::Aead};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
-use hkdf::Hkdf;
 use p256::{
-    PublicKey, SecretKey,
+    SecretKey,
     ecdsa::{Signature, SigningKey, signature::Signer},
 };
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use tracing::{info, warn};
 
 use crate::store::{now_ms, write_atomic};
@@ -179,47 +176,8 @@ impl Push {
     }
 }
 
-/// RFC 8291: encrypt `plaintext` for a browser whose subscription keys are
-/// `ua_public` (P-256, uncompressed) and `auth` (16 bytes), using our
-/// ephemeral key `local` and a random `salt`. One record, aes128gcm.
-pub fn encrypt(
-    plaintext: &[u8],
-    ua_public: &[u8],
-    auth: &[u8],
-    local: &SecretKey,
-    salt: &[u8; 16],
-) -> anyhow::Result<Vec<u8>> {
-    let ua = PublicKey::from_sec1_bytes(ua_public).map_err(|_| anyhow::anyhow!("bad p256dh key"))?;
-    let as_public = public_bytes(local);
-    let shared = p256::ecdh::diffie_hellman(local.to_nonzero_scalar(), ua.as_affine());
-
-    let mut key_info = b"WebPush: info\0".to_vec();
-    key_info.extend_from_slice(ua_public);
-    key_info.extend_from_slice(&as_public);
-    let mut ikm = [0u8; 32];
-    Hkdf::<Sha256>::new(Some(auth), shared.raw_secret_bytes().as_ref())
-        .expand(&key_info, &mut ikm)
-        .map_err(|_| anyhow::anyhow!("hkdf"))?;
-
-    let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
-    let mut cek = [0u8; 16];
-    let mut nonce = [0u8; 12];
-    prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).map_err(|_| anyhow::anyhow!("hkdf"))?;
-    prk.expand(b"Content-Encoding: nonce\0", &mut nonce).map_err(|_| anyhow::anyhow!("hkdf"))?;
-
-    let mut padded = plaintext.to_vec();
-    padded.push(0x02); // the last (and only) record
-    let cipher = Aes128Gcm::new_from_slice(&cek).map_err(|_| anyhow::anyhow!("aes key"))?;
-    let sealed = cipher.encrypt(&nonce.into(), padded.as_slice()).map_err(|_| anyhow::anyhow!("aes-gcm"))?;
-
-    let mut out = Vec::with_capacity(16 + 4 + 1 + as_public.len() + sealed.len());
-    out.extend_from_slice(salt);
-    out.extend_from_slice(&4096u32.to_be_bytes());
-    out.push(as_public.len() as u8);
-    out.extend_from_slice(&as_public);
-    out.extend_from_slice(&sealed);
-    Ok(out)
-}
+/// RFC 8291, shared with control (which encrypts its own notices).
+pub use illogical_e2e::push::encrypt;
 
 /// RFC 8292: a short-lived ES256 token naming the push service and us.
 fn vapid_jwt(key: &SecretKey, audience: &str, subject: &str, exp: u64) -> String {

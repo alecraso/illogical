@@ -1622,6 +1622,7 @@ dependencies = [
 name = "illogical-control"
 version = "0.8.0"
 dependencies = [
+ "aes-gcm 0.11.1",
  "anyhow",
  "aws-lc-rs",
  "axum",
@@ -1631,6 +1632,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "hex",
+ "hkdf",
  "hmac",
  "illogical-e2e",
  "p256",
@@ -1660,11 +1662,14 @@ dependencies = [
 name = "illogical-e2e"
 version = "0.8.0"
 dependencies = [
+ "aes-gcm 0.11.1",
  "anyhow",
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.4.3",
  "hex",
+ "hkdf",
+ "p256",
  "serde",
  "serde_json",
  "sha2 0.11.0",
