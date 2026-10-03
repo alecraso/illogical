@@ -714,8 +714,9 @@ fn iterm2s_conversation_gets_tmuxs_answers() {
     // ---- typing, key by key
     type_keys(&mut c, p1, "echo hi there\r");
     c.wait_idle();
-    let typed =
-        c.notes.iter().filter(|n| n.starts_with(&format!("%extended-output %{p1} 0 : "))).cloned().collect::<String>();
+    // Output comes in however many notes the pane's reads made: join their
+    // payloads, not the notes, or a line split across two never matches.
+    let typed = output(&c.notes, p1);
     assert!(typed.contains("hi there\\015\\012"), "{typed}");
 
     // ---- pause and continue by hand
@@ -801,7 +802,7 @@ fn iterm2s_conversation_gets_tmuxs_answers() {
     paste(&mut c, p0, "\x1b:q!\r");
     c.wait_idle();
     c.pump(Duration::from_millis(500));
-    let out: String = c.notes.iter().filter(|n| n.starts_with(&format!("%extended-output %{p0} "))).cloned().collect();
+    let out = output(&c.notes, p0);
     assert!(out.contains("\\033[?1049l"), "vi left the alternate screen: {out}");
     paste(&mut c, p0, "exit\r");
     c.pump(Duration::from_secs(1));
@@ -1227,4 +1228,10 @@ fn a_browser_block_is_a_read_only_pane() {
     let (_, shown) = c.answer("capture-pane");
     assert!(shown.iter().any(|l| l.contains(&format!("%{block} is a block"))), "{shown:#?}");
     c.close();
+}
+
+/// What `%extended-output` notes for a pane carried, joined.
+fn output(notes: &[String], pane: u32) -> String {
+    let prefix = format!("%extended-output %{pane} ");
+    notes.iter().filter_map(|n| n.strip_prefix(&prefix)?.split_once(" : ").map(|(_, data)| data)).collect()
 }
