@@ -15,6 +15,7 @@
 //!
 //! [`convert`] turns a transcript into an agent block's entries.
 
+pub mod branch;
 pub mod convert;
 
 use std::{

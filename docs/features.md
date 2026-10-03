@@ -326,6 +326,12 @@ the daemon stopping, crashing, or the machine rebooting:
     grows, so a terminal session can be followed from the phone. Picking
     one a block already has goes to that block; one running in an
     illogical pane goes to the pane.
+  - **What Continue won't remember** is folded away and dimmed, under a
+    note: *Not in what it remembers*. A resume follows one branch of the
+    transcript (the newest `last-prompt` leaf, walked back by
+    `parentUuid`), so a rewind's abandoned turns, another writer's turns,
+    or an exchange an away summary cut off aren't in it, though the block
+    shows them (#79).
   - **Continue** (or just send a message) freezes what it had into the
     block and resumes the session through `claude-agent-acp`, with your
     settings, skills and `CLAUDE.md` as in the terminal, every hook off,

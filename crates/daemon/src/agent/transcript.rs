@@ -20,17 +20,23 @@ pub enum Entry {
     User {
         text: String,
         at_ms: u64,
+        #[serde(default, skip_serializing_if = "is_false")]
+        forgotten: bool,
     },
     /// The agent's reply, streamed in chunks.
     Agent {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        forgotten: bool,
     },
     Thought {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        forgotten: bool,
     },
     Tool(Tool),
     /// Something the block itself says: the agent stopped, a request was
@@ -38,7 +44,13 @@ pub enum Entry {
     Note {
         text: String,
         at_ms: u64,
+        #[serde(default, skip_serializing_if = "is_false")]
+        forgotten: bool,
     },
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -70,6 +82,34 @@ pub struct Tool {
     pub started_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ended_ms: Option<u64>,
+    /// An opened conversation's entry that isn't on the branch Continue
+    /// resumes (#79): the agent doesn't remember it.
+    #[serde(skip_serializing_if = "is_false")]
+    pub forgotten: bool,
+}
+
+impl Entry {
+    /// Not on the branch a resume follows (#79).
+    #[cfg(test)]
+    pub fn forgotten(&self) -> bool {
+        match self {
+            Entry::User { forgotten, .. }
+            | Entry::Agent { forgotten, .. }
+            | Entry::Thought { forgotten, .. }
+            | Entry::Note { forgotten, .. } => *forgotten,
+            Entry::Tool(t) => t.forgotten,
+        }
+    }
+
+    pub fn forget(&mut self) {
+        match self {
+            Entry::User { forgotten, .. }
+            | Entry::Agent { forgotten, .. }
+            | Entry::Thought { forgotten, .. }
+            | Entry::Note { forgotten, .. } => *forgotten = true,
+            Entry::Tool(t) => t.forgotten = true,
+        }
+    }
 }
 
 impl Tool {
@@ -131,11 +171,11 @@ impl Transcript {
     }
 
     pub fn user(&mut self, text: &str, at_ms: u64) {
-        self.entries.push(Entry::User { text: text.to_owned(), at_ms });
+        self.entries.push(Entry::User { text: text.to_owned(), at_ms, forgotten: false });
     }
 
     pub fn note(&mut self, text: impl Into<String>, at_ms: u64) {
-        self.entries.push(Entry::Note { text: text.into(), at_ms });
+        self.entries.push(Entry::Note { text: text.into(), at_ms, forgotten: false });
     }
 
     pub fn tool(&self, id: &str) -> Option<&Tool> {
@@ -177,10 +217,10 @@ impl Transcript {
         let id = u["messageId"].as_str().map(str::to_owned);
         let same = |eid: &Option<String>| id.is_none() || *eid == id;
         match self.entries.last_mut() {
-            Some(Entry::Agent { text, id: eid }) if !thought && same(eid) => text.push_str(t),
-            Some(Entry::Thought { text, id: eid }) if thought && same(eid) => text.push_str(t),
-            _ if thought => self.entries.push(Entry::Thought { text: t.to_owned(), id }),
-            _ => self.entries.push(Entry::Agent { text: t.to_owned(), id }),
+            Some(Entry::Agent { text, id: eid, .. }) if !thought && same(eid) => text.push_str(t),
+            Some(Entry::Thought { text, id: eid, .. }) if thought && same(eid) => text.push_str(t),
+            _ if thought => self.entries.push(Entry::Thought { text: t.to_owned(), id, forgotten: false }),
+            _ => self.entries.push(Entry::Agent { text: t.to_owned(), id, forgotten: false }),
         }
         Applied::Nothing
     }
@@ -225,10 +265,11 @@ impl Transcript {
                         self.entries.push(Entry::Tool(t));
                     }
                 },
-                Entry::Agent { ref id, ref text } | Entry::Thought { ref id, ref text } => {
+                Entry::Agent { ref id, ref text, .. } | Entry::Thought { ref id, ref text, .. } => {
                     let thought = matches!(e, Entry::Thought { .. });
                     let found = self.entries.iter_mut().find(|x| match (x, thought) {
-                        (Entry::Agent { id: xi, text: xt }, false) | (Entry::Thought { id: xi, text: xt }, true) => {
+                        (Entry::Agent { id: xi, text: xt, .. }, false)
+                        | (Entry::Thought { id: xi, text: xt, .. }, true) => {
                             if id.is_some() {
                                 xi == id
                             } else {

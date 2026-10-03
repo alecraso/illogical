@@ -5,7 +5,8 @@
 //! tree (compactions re-link their preserved tail, `away_summary` lines
 //! parent the next prompt, parallel tool calls branch), and walking it drops
 //! real exchanges. In file order a tool result never comes before its call.
-//! A prompt sent again from an earlier point (a rewind) gets a note.
+//! A prompt sent again from an earlier point (a rewind) gets a note, and
+//! what a resume wouldn't follow is marked ([`super::branch`], #79).
 //!
 //! Lines and blocks this doesn't know are skipped, so a newer Claude Code
 //! shows less rather than breaking.
@@ -14,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
+use super::branch;
 use crate::agent::transcript::{Entry, Tool};
 
 /// The entries of a transcript. `finished`: nothing is running it, so a tool
@@ -40,12 +42,16 @@ pub fn entries(jsonl: &[u8], finished: bool) -> Vec<Entry> {
             }
         }
     }
-    c.out
+    let remembered = c.chain.remembered();
+    branch::mark(c.out, &c.from, remembered.as_ref())
 }
 
 #[derive(Default)]
 struct Converter {
     out: Vec<Entry>,
+    /// The line each entry came from.
+    from: Vec<String>,
+    chain: branch::Chain,
     tools: HashMap<String, usize>,
     /// Lines that already have a user/assistant child: a prompt under one
     /// of these was sent again from an earlier point.
@@ -54,6 +60,12 @@ struct Converter {
 
 impl Converter {
     fn line(&mut self, v: &Value) {
+        self.chain.line(v);
+        self.convert(v);
+        self.from.resize(self.out.len(), v["uuid"].as_str().unwrap_or_default().to_owned());
+    }
+
+    fn convert(&mut self, v: &Value) {
         if v["isSidechain"] == true {
             return;
         }
@@ -72,14 +84,14 @@ impl Converter {
     }
 
     fn note(&mut self, text: impl Into<String>, at_ms: u64) {
-        self.out.push(Entry::Note { text: text.into(), at_ms });
+        self.out.push(Entry::Note { text: text.into(), at_ms, forgotten: false });
     }
 
     fn prompt(&mut self, v: &Value, text: String, at: u64) {
         if v["parentUuid"].as_str().is_some_and(|p| self.parents.contains(p)) {
             self.note("Rewound: the prompt below was sent again from an earlier point", at);
         }
-        self.out.push(Entry::User { text, at_ms: at });
+        self.out.push(Entry::User { text, at_ms: at, forgotten: false });
     }
 
     fn user(&mut self, v: &Value, at: u64) {
@@ -173,18 +185,18 @@ impl Converter {
                         continue;
                     }
                     match self.out.last_mut() {
-                        Some(Entry::Agent { text, id: last }) if *last == id && id.is_some() => {
+                        Some(Entry::Agent { text, id: last, .. }) if *last == id && id.is_some() => {
                             text.push_str("\n\n");
                             text.push_str(t);
                         }
-                        _ => self.out.push(Entry::Agent { text: t.to_owned(), id: id.clone() }),
+                        _ => self.out.push(Entry::Agent { text: t.to_owned(), id: id.clone(), forgotten: false }),
                     }
                 }
                 // Often only a signature: nothing to show.
                 Some("thinking") => {
                     let t = b["thinking"].as_str().unwrap_or("").trim();
                     if !t.is_empty() {
-                        self.out.push(Entry::Thought { text: t.to_owned(), id: id.clone() });
+                        self.out.push(Entry::Thought { text: t.to_owned(), id: id.clone(), forgotten: false });
                     }
                 }
                 Some("tool_use") => {
