@@ -32,6 +32,8 @@ const feeds = new Set<ServerResponse>();
 let gates: Record<string, unknown>[] = [];
 const approvals: Record<string, unknown>[] = [];
 let failNext: string | null = null;
+/** Requests a hung box took and hasn't answered, to answer when it's back. */
+let hung: (() => void)[] | null = null;
 
 function moved() {
   for (const s of feeds) s.write("event: live-state\ndata: {}\n\n");
@@ -71,7 +73,8 @@ function json(res: ServerResponse, status: number, v: unknown) {
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
-  const boxServer = createServer((req, res) => {
+  const boxServer = createServer(function serve(req, res) {
+    if (hung) return void hung.push(() => serve(req, res));
     const u = new URL(req.url!, "http://box");
     const authed = sessions.has(cookieOf(req) ?? "");
     if (u.pathname === "/__enter") {
@@ -266,4 +269,30 @@ test("a studio app opens framed from another site; its agent's question is answe
       for (const k of keys) expect(text.includes(k), f).toBe(false);
     }
   }
+});
+
+test("a box that takes the connection and never answers says so, then comes in", async ({ page }) => {
+  test.setTimeout(60_000);
+  await reset(page);
+  const term = (await panes(page))[0];
+  await page.evaluate(([url, token]) => window.__illogical.client.request("POST", "/api/studio", { url, token }), [studio, TOKEN]);
+  hung = [];
+  await menu(page, paneEl(page, term), "Open a studio app…");
+  await page.locator('.picker.apps [data-app="pinboard"]').click();
+  const b = await blockOf(page);
+  const el = paneEl(page, b);
+
+  // Not a blank white frame: a card that says why.
+  await expect(el.getByText("Opening Pinboard…")).toBeVisible();
+  const stuck = el.locator("[data-app-stuck]");
+  await expect(stuck).toContainText("Pinboard isn't answering", { timeout: 25_000 });
+  await expect(el.locator("iframe")).toBeHidden();
+
+  // The box answers: the frame comes in.
+  const held = hung;
+  hung = null;
+  for (const go of held) go();
+  await expect(page.frameLocator(`[data-pane="${b}"] iframe`).locator("#app")).toHaveText("Hello from the box");
+  await expect(stuck).toHaveCount(0);
+  await expect(el.locator("iframe")).toBeVisible();
 });
