@@ -504,7 +504,7 @@ fn agent_on_this_makes_a_branch_an_agent_and_a_tab_and_its_pr_joins_them() {
     let branch = "i14556-add-a-frobnicator-to-the";
     assert_eq!(out["branch"], branch, "{out}");
     assert_eq!(out["base"], "main", "the forge's default branch");
-    let wt = clone.join(".illogical/worktrees").join(branch);
+    let wt = clone.canonicalize().unwrap().join(".illogical/worktrees").join(branch);
     assert_eq!(out["worktree"], wt.display().to_string());
     assert_eq!(git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]), branch);
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), main, "from the remote's main");

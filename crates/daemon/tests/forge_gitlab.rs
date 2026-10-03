@@ -677,7 +677,7 @@ fn the_mrs_code_from_its_merge_request_ref_on_the_merge_base() {
         .unwrap();
     read(&d, block);
     let out = d.call(block, "diff", json!({ "dir": clone }));
-    let wt = clone.join(format!(".illogical/worktrees/pr-{N}"));
+    let wt = clone.canonicalize().unwrap().join(format!(".illogical/worktrees/pr-{N}"));
     assert_eq!(out["worktree"], wt.display().to_string(), "{out}");
     assert_eq!(out["rev_a"], base, "diff_refs.base_sha, not start_sha");
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head);

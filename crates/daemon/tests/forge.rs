@@ -726,7 +726,8 @@ fn the_prs_code_as_a_worktree_a_diff_and_a_terminal() {
     let block = open(&d, json!({ "pr": format!("{}/{REPO}/pulls/84", forge.origin), "dir": clone }));
     read(&d, block);
     let out = d.call(block, "diff", json!({ "dir": clone }));
-    let wt = clone.join(".illogical/worktrees/pr-84");
+    // git reports the clone by its real path (/private/var on macOS).
+    let wt = clone.canonicalize().unwrap().join(".illogical/worktrees/pr-84");
     assert_eq!(out["worktree"], wt.display().to_string(), "{out}");
     assert_eq!(out["rev_a"], base);
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head);

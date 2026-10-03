@@ -747,7 +747,7 @@ fn a_forks_pr_from_its_pull_ref_and_owner_repo_from_a_github_clone() {
     // doesn't say), and the diff is the fork's change only.
     git(&clone, &["remote", "set-url", "origin", bare.to_str().unwrap()]);
     let out = d.call(block, "diff", json!({}));
-    let wt = clone.join(format!(".illogical/worktrees/pr-{N}"));
+    let wt = clone.canonicalize().unwrap().join(format!(".illogical/worktrees/pr-{N}"));
     assert_eq!(out["worktree"], wt.display().to_string(), "{out}");
     assert_eq!(out["rev_a"], base, "the merge base, not trunk's tip");
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head);
