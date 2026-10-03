@@ -949,8 +949,9 @@ export class Client {
   }
 
   private newPane(id: PaneId, epoch: number): PaneEntry {
-    // M36: a Forgejo pull request's link opens as a PR block beside the
-    // terminal (Shift: in the browser, as any other link).
+    // M36: a Forgejo pull request's link (M39: or a GitLab merge
+    // request's) opens as a PR block beside the terminal (Shift: in the
+    // browser, as any other link).
     const view = new TerminalView((uri, e) => {
       if (e.shiftKey || this.state?.roles || !forgePr(uri)) return false;
       void this.openBlock({ type: "forge", config: { pr: uri, dir: this.cwd(id) ?? undefined }, split: id, from_pane: id }, "couldn't open the pull request");
@@ -1051,11 +1052,14 @@ export function tabLabel(client: Client, tab: TabView): string {
 }
 
 /** A link to a Forgejo pull request (`…/OWNER/REPO/pulls/N`: GitHub's are
- * `/pull/N`, and wait for M38). */
+ * `/pull/N`, and wait for M38), or a GitLab merge request
+ * (`…/GROUP/[SUB/…]PROJECT/-/merge_requests/N`, M39). */
 export function forgePr(uri: string): boolean {
   try {
     const u = new URL(uri);
-    return /^https?:$/.test(u.protocol) && /^\/(?:[^/]+\/)*[^/]+\/[^/]+\/pulls\/\d+(?:\/|$|[?#])/.test(u.pathname + (u.search || ""));
+    if (!/^https?:$/.test(u.protocol)) return false;
+    if (/^\/(?:[^/]+\/){2,}-\/merge_requests\/\d+(?:\/|$)/.test(u.pathname)) return true;
+    return /^\/(?:[^/]+\/)*[^/]+\/[^/]+\/pulls\/\d+(?:\/|$|[?#])/.test(u.pathname + (u.search || ""));
   } catch {
     return false;
   }
