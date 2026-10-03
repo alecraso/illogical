@@ -53,6 +53,7 @@
 pub mod forgejo;
 pub mod github;
 pub mod gitlab;
+pub mod issue;
 pub mod login;
 pub mod model;
 
@@ -73,8 +74,9 @@ use serde_json::{Value, json};
 use tracing::{info, warn};
 
 use self::{
+    issue::{AgentLink, NewIssue},
     login::{Login, Tea, TokenSource},
-    model::{Check, Event, Item, ItemKind, Me, Pr, Provider, Review, Reviewer, Want},
+    model::{Check, Event, Issue, Item, ItemKind, Me, Pr, Provider, Review, Reviewer, Want},
 };
 use crate::{
     block::{Block, BlockCtx, Summary, no_method},
@@ -101,6 +103,8 @@ const FAST: Duration = Duration::from_secs(5);
 const SLOW: Duration = Duration::from_secs(180);
 /// Settled drafts kept in the state.
 const SETTLED: usize = 20;
+/// How often an issue an agent works on looks for its PR (M37).
+const LINKED: Duration = Duration::from_secs(30);
 
 // ---------------------------------------------------------------- adapters
 
@@ -244,6 +248,45 @@ pub trait Adapter: Send + Sync {
     fn write<'a>(&'a self, repo: &'a str, number: u64, w: &'a Write) -> BoxFuture<'a, Result<Sent, Error>>;
     /// The repository's clone URLs, for matching a remote to a login.
     fn repo_urls<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<Vec<String>, Error>>;
+
+    // M37: issues. Defaults say the forge can't yet, so an adapter that
+    // doesn't read issues needs nothing more.
+
+    /// An issue (not a PR), and what changes when its timeline might have.
+    fn issue<'a>(&'a self, repo: &'a str, number: u64) -> BoxFuture<'a, Result<(Item, String), Error>> {
+        let _ = (repo, number);
+        Box::pin(async { Err(Error::Http("issues aren't read from this forge yet".into())) })
+    }
+    /// An issue's newest events, and the pull requests that refer to it.
+    #[allow(clippy::type_complexity)]
+    fn issue_events<'a>(
+        &'a self,
+        repo: &'a str,
+        number: u64,
+    ) -> BoxFuture<'a, Result<(Vec<Event>, Vec<model::Linked>), Error>> {
+        let _ = (repo, number);
+        Box::pin(async { Err(Error::Http("issues aren't read from this forge yet".into())) })
+    }
+    /// The newest pull request from `branch` in the repository itself.
+    fn pr_by_head<'a>(&'a self, repo: &'a str, branch: &'a str) -> BoxFuture<'a, Result<Option<model::Linked>, Error>> {
+        let _ = (repo, branch);
+        Box::pin(async { Err(Error::Http("this forge can't look a pull request up by branch yet".into())) })
+    }
+    /// Open an issue: its number, and where it is.
+    fn new_issue<'a>(
+        &'a self,
+        repo: &'a str,
+        title: &'a str,
+        body: &'a str,
+    ) -> BoxFuture<'a, Result<(u64, Sent), Error>> {
+        let _ = (repo, title, body);
+        Box::pin(async { Err(Error::Http("issues can't be opened on this forge yet".into())) })
+    }
+    /// The branch work starts from.
+    fn default_branch<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<String, Error>> {
+        let _ = repo;
+        Box::pin(async { Err(Error::Http("this forge doesn't say its default branch yet".into())) })
+    }
     /// Why it can only read (GitLab with no glab login), if it can't write.
     fn read_only(&self) -> Option<String> {
         None
@@ -355,6 +398,12 @@ struct Config {
     log_mark: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drafts: Vec<Draft>,
+    /// M37: the agent working on this issue, its branch, and its PR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    link: Option<AgentLink>,
+    /// M37: a new issue (`number` 0 until it's on the forge).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    new: Option<NewIssue>,
 }
 
 /// What it wants of you, as the client draws it.
@@ -367,6 +416,8 @@ struct WantView {
 #[derive(Debug, Clone, Default, Serialize)]
 struct State {
     provider: Provider,
+    /// M37: `pr` or `issue`.
+    kind: ItemKind,
     repo: String,
     number: u64,
     api: Option<String>,
@@ -382,6 +433,12 @@ struct State {
     /// "You", on the forge.
     me: Option<String>,
     pr: Option<Pr>,
+    /// M37: the issue, for `kind: issue`.
+    issue: Option<Issue>,
+    /// M37: the agent on it.
+    link: Option<AgentLink>,
+    /// M37: a new issue, before (and after) it went out.
+    new: Option<NewIssue>,
     wants: Vec<WantView>,
     /// Whether *Rerun checks* is possible here, and where the failed run
     /// is when it isn't (Forgejo).
@@ -438,18 +495,31 @@ impl ForgeBlock {
         if !fits || config.repo.split('/').any(str::is_empty) {
             return Err(format!("not a repository: {:?} (owner/name)", config.repo));
         }
-        if config.number == 0 {
-            return Err("a forge block needs the PR's number".into());
+        if config.number == 0 && !(config.kind == ItemKind::Issue && config.new.is_some()) {
+            return Err("a forge block needs the PR's (or issue's) number".into());
+        }
+        if config.kind == ItemKind::Issue
+            && let Some(n) = &config.new
+            && config.number == 0
+            && n.title.trim().is_empty()
+        {
+            return Err("a new issue needs a title".into());
         }
         let state = State {
             provider: config.provider,
+            kind: config.kind,
+            link: config.link.clone(),
+            new: config.new.clone(),
             repo: config.repo.clone(),
             number: config.number,
             api: config.api.clone(),
             login: config.login.clone(),
             host: config.host.clone(),
             dir: config.dir.clone(),
-            loading: true,
+            // A new issue an agent drafted has nothing to read until it's
+            // sent; a person's is read once it's opened.
+            loading: config.number != 0
+                || config.new.as_ref().is_some_and(|n| !n.agent && n.status == DraftStatus::Waiting),
             ..State::default()
         };
         crate::review::log(
@@ -647,12 +717,20 @@ impl ForgeBlock {
     }
 
     async fn run(self: Arc<Self>) {
+        self.start_new().await;
         self.read(true).await;
         self.raise_draft().await;
         loop {
             let (fast, slow) = intervals();
             let wants = self.raised.lock().unwrap().as_ref().is_some_and(|(_, h)| !h.is_empty());
-            let wait = if self.live.drawn() || wants { fast } else { slow };
+            let wait = if self.live.drawn() || wants {
+                fast
+            } else if self.waits_for_pr() {
+                // M37: an agent works on it; its PR shows within a minute.
+                slow.min(LINKED)
+            } else {
+                slow
+            };
             tokio::select! {
                 _ = tokio::time::sleep(wait) => {}
                 _ = self.wake.notified() => {}
@@ -680,11 +758,15 @@ impl ForgeBlock {
         if self.live.closed() {
             return;
         }
+        let (repo, number) = self.repo();
+        // M37: a new issue isn't on the forge yet: nothing to read.
+        if number == 0 {
+            return;
+        }
         let a = match self.connect().await {
             Ok(a) => a,
             Err(e) => return self.fail(e),
         };
-        let (repo, number) = self.repo();
         if self.you.lock().unwrap().is_none() {
             match a.me().await {
                 Ok(m) => {
@@ -693,6 +775,9 @@ impl ForgeBlock {
                 }
                 Err(e) => warn!(pane = self.ctx.id, error = %e, "who am I on the forge"),
             }
+        }
+        if self.config.lock().unwrap().kind == ItemKind::Issue {
+            return self.read_issue(a, force).await;
         }
         let polled = match a.poll(&repo, number).await {
             Ok(p) => p,
@@ -733,9 +818,14 @@ impl ForgeBlock {
             st.rate = a.rate();
             st.pr = Some(pr);
         }
+        self.after_read(had.is_none());
+    }
+
+    /// What every read ends with: what's seen, and what's raised.
+    fn after_read(&self, first: bool) {
         if self.live.drawn() {
             self.look();
-        } else if had.is_none() && !self.ctx.restoring {
+        } else if first && !self.ctx.restoring {
             // `done` is for a change: a PR opened already merged (or
             // green) is seen as it is. After a restart, what changed while
             // the daemon was down still is one.
@@ -783,8 +873,23 @@ impl ForgeBlock {
 
     fn wants(&self) -> Vec<Want> {
         let st = self.state.lock().unwrap();
-        let (Some(pr), Some(me)) = (st.pr.as_ref(), self.you.lock().unwrap().clone()) else { return vec![] };
-        model::attention(pr, &me, self.config.lock().unwrap().seen_ms)
+        let Some(me) = self.you.lock().unwrap().clone() else { return vec![] };
+        let seen = self.config.lock().unwrap().seen_ms;
+        if let Some(issue) = st.issue.as_ref() {
+            return model::issue_attention(issue, &me, seen);
+        }
+        let Some(pr) = st.pr.as_ref() else { return vec![] };
+        model::attention(pr, &me, seen)
+    }
+
+    /// The item's link and title (a PR's or an issue's).
+    fn headline(&self) -> (String, String) {
+        let st = self.state.lock().unwrap();
+        match (st.pr.as_ref(), st.issue.as_ref()) {
+            (Some(p), _) => (p.item.url.clone(), p.item.title.clone()),
+            (None, Some(i)) => (i.item.url.clone(), i.item.title.clone()),
+            (None, None) => (String::new(), String::new()),
+        }
     }
 
     /// The reason for the most pressing want, as `(state, reason)`.
@@ -793,8 +898,7 @@ impl ForgeBlock {
             let c = self.config.lock().unwrap();
             (c.repo.clone(), c.number, c.api.clone().unwrap_or_default(), c.done_ack.clone())
         };
-        let url = self.state.lock().unwrap().pr.as_ref().map(|p| p.item.url.clone()).unwrap_or_default();
-        let title = self.state.lock().unwrap().pr.as_ref().map(|p| p.item.title.clone()).unwrap_or_default();
+        let (url, title) = self.headline();
         let bundle = format!("forge:{}/{repo}", illogical_proto::host_of(&api));
         let plain = |kind: ReasonKind, why: &str| Reason {
             kind,
@@ -839,7 +943,9 @@ impl ForgeBlock {
                 }
                 (Attention::Done, r)
             }
-            Want::Changes { why } | Want::Mention { why, .. } => (Attention::NeedsInput, plain(ReasonKind::Input, why)),
+            Want::Changes { why } | Want::Mention { why, .. } | Want::Assigned { why } => {
+                (Attention::NeedsInput, plain(ReasonKind::Input, why))
+            }
             Want::Done { why, .. } => (Attention::Done, plain(ReasonKind::Done, why)),
         })
     }
@@ -858,6 +964,7 @@ impl ForgeBlock {
                         Want::Changes { .. } => "changes",
                         Want::Mention { .. } => "mention",
                         Want::Done { .. } => "done",
+                        Want::Assigned { .. } => "assigned",
                     },
                     why: w.why().to_owned(),
                 })
@@ -1313,11 +1420,14 @@ impl Block for ForgeBlock {
 
     fn text(&self) -> String {
         let st = self.state.lock().unwrap();
-        let mut out = match (&st.pr, &st.error) {
-            (Some(pr), _) => pr.text(&st.repo),
-            (None, Some(e)) => format!("{}#{}\n{e}\n", st.repo, st.number),
-            (None, None) => format!("{}#{}\nreading…\n", st.repo, st.number),
+        let mut out = match (&st.pr, &st.issue, &st.error) {
+            (Some(pr), _, _) => pr.text(&st.repo),
+            (None, Some(i), _) => i.text(&st.repo),
+            (None, None, Some(e)) => format!("{}#{}\n{e}\n", st.repo, st.number),
+            (None, None, None) if st.number == 0 => String::new(),
+            (None, None, None) => format!("{}#{}\nreading…\n", st.repo, st.number),
         };
+        out.push_str(&issue::text(&st));
         if let Some(r) = &st.read_only {
             out.push_str(&format!("{r}\n"));
         }
@@ -1379,10 +1489,19 @@ impl Block for ForgeBlock {
                 me.ctx.changed();
                 Ok(json!({ "login": name }))
             }),
+            "review" | "merge" | "rerun_checks" if self.config.lock().unwrap().kind == ItemKind::Issue => {
+                let e = format!("an issue has no {method}: comment on it, or open its pull request");
+                Box::pin(async move { Err(e) })
+            }
+            "comment" | "review" | "merge" | "rerun_checks" if self.config.lock().unwrap().number == 0 => {
+                Box::pin(async move { Err("this issue isn't on the forge yet".into()) })
+            }
             "comment" | "review" | "merge" | "rerun_checks" => {
                 let method = method.to_owned();
                 Box::pin(async move { me.ok_or("closed")?.write(&method, args, by).await })
             }
+            // M37: an agent on this issue, in a worktree and a tab.
+            "agent" => Box::pin(async move { me.ok_or("closed")?.agent_on(args).await }),
             "diff" => Box::pin(async move { me.ok_or("closed")?.diff(args).await }),
             "checkout" => Box::pin(async move { me.ok_or("closed")?.checkout(args).await }),
             "drafts" => {
@@ -1423,12 +1542,18 @@ impl Block for ForgeBlock {
         let c = self.config.lock().unwrap();
         let name = c.repo.rsplit('/').next().unwrap_or(&c.repo).to_owned();
         let root = c.dir.clone().unwrap_or_else(|| st.pr.as_ref().map(|p| p.item.url.clone()).unwrap_or_default());
-        let title = match &st.pr {
-            Some(p) => format!("{}#{} {}", c.repo, c.number, p.item.title),
-            None => format!("{}#{}", c.repo, c.number),
+        let title = match (&st.pr, &st.issue, &st.new) {
+            (Some(p), _, _) => format!("{}#{} {}", c.repo, c.number, p.item.title),
+            (None, Some(i), _) => format!("{}#{} {}", c.repo, c.number, i.item.title),
+            (None, None, Some(n)) if c.number == 0 => format!("{} new issue: {}", c.repo, n.title),
+            _ => format!("{}#{}", c.repo, c.number),
+        };
+        let root = match &st.issue {
+            Some(i) if c.dir.is_none() => i.item.url.clone(),
+            _ => root,
         };
         Summary {
-            work: Some(WorkKind::Pr),
+            work: Some(if c.kind == ItemKind::Issue { WorkKind::Issue } else { WorkKind::Pr }),
             project: Some(
                 c.dir
                     .as_deref()
@@ -1444,15 +1569,22 @@ impl Block for ForgeBlock {
 // ---------------------------------------------------------------- opening
 
 /// A forge block's config from what a person or agent gave: `{pr: URL |
-/// OWNER/REPO#N | N, dir?}` (N: the PR in `dir`'s repository), or a config
-/// already whole (`{repo, number}`).
+/// OWNER/REPO#N | N, dir?}` (N: the PR in `dir`'s repository), `{issue:
+/// URL | OWNER/REPO#N | N, dir?}` (M37; a link to either opens what it
+/// links to), `{issue: "new", title, body?, repo? | dir?, by?, agent?}`
+/// (M37: a new issue, an agent's a draft), or a config already whole
+/// (`{repo, number}`).
 pub async fn open_config(c: &Value) -> Result<Value, String> {
     let dir = c["dir"].as_str().filter(|d| !d.is_empty()).map(str::to_owned);
-    let mut out = json!({ "provider": "forgejo", "kind": "pr" });
+    let issue = c["issue"].is_string();
+    let mut out = json!({ "provider": "forgejo", "kind": if issue { "issue" } else { "pr" } });
     for k in ["provider", "api", "login", "host"] {
         if let Some(v) = c[k].as_str() {
             out[k] = json!(v);
         }
+    }
+    if let Some(k) = c["kind"].as_str().filter(|k| ["pr", "issue"].contains(k)) {
+        out["kind"] = json!(k);
     }
     if let (Some(repo), Some(n)) = (c["repo"].as_str(), c["number"].as_u64()) {
         out["repo"] = json!(repo);
@@ -1462,15 +1594,35 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
         }
         return Ok(out);
     }
-    let what = c["pr"]
+    let what = c[if issue { "issue" } else { "pr" }]
         .as_str()
         .or(c["ref"].as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or("say which pull request: {\"pr\": URL | OWNER/REPO#N | N}")?;
+        .ok_or("say which pull request or issue: {\"pr\" | \"issue\": URL | OWNER/REPO#N | N}")?;
+    if issue && what == "new" {
+        return issue::new_config(c, out, dir).await;
+    }
     // M38: a GitHub link (`…/pull/N`), on github.com or an Enterprise host.
     if let Some((host, repo, n)) = github::pr_url(what) {
         out["provider"] = json!("github");
+        if c["api"].as_str().is_none() {
+            out["api"] = json!(github::api_for(&host));
+        }
+        out["host"] = json!(host);
+        out["repo"] = json!(repo);
+        out["number"] = json!(n);
+        if let Some(d) = &dir
+            && let Some((top, _)) = clone_of(d, Some(&repo)).await
+        {
+            out["dir"] = json!(top);
+        }
+        return Ok(out);
+    }
+    // M37: a GitHub issue's link.
+    if let Some((host, repo, n)) = github::issue_url(what) {
+        out["provider"] = json!("github");
+        out["kind"] = json!("issue");
         if c["api"].as_str().is_none() {
             out["api"] = json!(github::api_for(&host));
         }
@@ -1501,7 +1653,8 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
         return Ok(out);
     }
     if what.starts_with("http://") || what.starts_with("https://") {
-        let (host, repo, n, api) = parse_pr_url(what)?;
+        let (host, repo, n, api, kind) = parse_item_url(what)?;
+        out["kind"] = json!(kind);
         out["host"] = json!(host);
         out["repo"] = json!(repo);
         out["number"] = json!(n);
@@ -1525,7 +1678,8 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
         Some((_, n)) => (None, n),
         None => (None, what),
     };
-    let n: u64 = n.parse().map_err(|_| format!("{what}: not a PR (URL, OWNER/REPO#N or N)"))?;
+    let thing = if issue { "an issue" } else { "a PR" };
+    let n: u64 = n.parse().map_err(|_| format!("{what}: not {thing} (URL, OWNER/REPO#N or N)"))?;
     out["number"] = json!(n);
     match (repo, dir) {
         (Some(repo), dir) => {
@@ -1577,19 +1731,30 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
 }
 
 /// `https://host/owner/name/pulls/N` → (host, owner/name, N, API base).
+#[allow(dead_code)] // M37's callers take issues too: `parse_item_url`.
 pub fn parse_pr_url(u: &str) -> Result<(String, String, u64, String), String> {
+    match parse_item_url(u)? {
+        (host, repo, n, api, ItemKind::Pr) => Ok((host, repo, n, api)),
+        _ => Err(format!("{u}: not a pull request's address (…/OWNER/REPO/pulls/N)")),
+    }
+}
+
+/// A PR's or (M37) an issue's address (`…/OWNER/REPO/pulls/N`,
+/// `…/issues/N`) → (host, owner/name, N, API base, which).
+pub fn parse_item_url(u: &str) -> Result<(String, String, u64, String, ItemKind), String> {
     let url = url::Url::parse(u).map_err(|e| format!("{u}: {e}"))?;
     let host = login::url_host(u).ok_or_else(|| format!("{u}: no host"))?;
     let segs: Vec<&str> = url.path_segments().map(|s| s.filter(|x| !x.is_empty()).collect()).unwrap_or_default();
-    let at = segs.iter().position(|s| matches!(*s, "pulls" | "pull")).filter(|i| *i >= 2);
+    let at = segs.iter().position(|s| matches!(*s, "pulls" | "pull" | "issues")).filter(|i| *i >= 2);
     let (Some(i), Some(n)) = (at, at.and_then(|i| segs.get(i + 1)).and_then(|n| n.parse::<u64>().ok())) else {
-        return Err(format!("{u}: not a pull request's address (…/OWNER/REPO/pulls/N)"));
+        return Err(format!("{u}: not a pull request's or issue's address (…/OWNER/REPO/pulls/N, …/issues/N)"));
     };
+    let kind = if segs[i] == "issues" { ItemKind::Issue } else { ItemKind::Pr };
     let base = segs[..i - 2].join("/");
     let repo = format!("{}/{}", segs[i - 2], segs[i - 1]);
     let prefix = if base.is_empty() { String::new() } else { format!("/{base}") };
     let api = format!("{}://{host}{prefix}/api/v1", url.scheme());
-    Ok((host, repo, n, api))
+    Ok((host, repo, n, api, kind))
 }
 
 /// `git remote -v` in a local directory: (its top, url) per remote.

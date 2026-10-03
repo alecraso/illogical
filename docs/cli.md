@@ -50,10 +50,15 @@ illogical studio login https://studio.example # keep a studio token in the daemo
 illogical studio                              # which studio, logged in or not (studio logout: forget it)
 illogical app                                 # your studio's apps, and the blocks that show them
 illogical app pinboard                        # one as an app block; its agent's questions come here
+illogical call %9 send '{"text":"Pick a header colour"}'  # prompt its agent (its first tab; "tab": another)
 illogical studio follower pinboard            # keep its box's hud follower link (from stdin; --forget)
 illogical pr 84                               # a pull request as a block (in this repo; or a URL, OWNER/REPO#N)
 illogical pr comment %7 "LGTM"                # comment; review %7 approve|request_changes|comment [TEXT]; merge %7
                                               #   (under CLAUDECODE or AI_AGENT: a draft a person sends)
+illogical issue 89                            # an issue as a block (or a URL, OWNER/REPO#N)
+illogical issue agent %8                      # an agent on it: worktree + branch i89-…, the two in a tab
+illogical issue new -t "Frobs leak" -b "…"    # open one here (under an agent: a draft a person sends)
+illogical issue comment %8 "On it"            # comment (under an agent: a draft)
 illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused while it's open elsewhere)
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
@@ -124,7 +129,7 @@ The tools:
 | Tool | What it does | Reads only |
 |---|---|---|
 | `run` | A command in a new tab or split (`cwd`, `split`, `vm`, `vm_tab`, `machine`, `session`, `policy`), typed into a shell so it's in history and you can take over. With `wait`, its exit code and last lines. | no |
-| `send_input` | Text (Enter after it unless `enter: false`) and named keys (`C-c`, `Up`) to a pane; to an agent block, its next prompt | no |
+| `send_input` | Text (Enter after it unless `enter: false`) and named keys (`C-c`, `Up`) to a pane; to an agent block, its next prompt; to an app block, a prompt to its box's agent (`tab`: which) | no |
 | `read_output` | A pane's output as text: the latest, from an `offset`, or its `last_command`'s. Paged (16,000 characters by default): pass `next_offset` back | yes |
 | `capture_screen` | What a pane shows now | yes |
 | `wait` | Until `command_end`, `exit`, `match` (a `pattern`), `idle` or `needs_input`. After `timeout` seconds (100 by default) it answers "still running" with the offset: call it again | yes |
@@ -144,6 +149,9 @@ The tools:
 | `open_workspace` | A chant workspace block beside a pane (`dir`, `env`); returns its members and the gates waiting | no |
 | `open_pr` | A pull request (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
 | `read_pr` | A PR block as text, what it waits on the user for, and your drafts (waiting, sent with who and a link, dropped) | yes |
+| `open_issue` | An issue (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
+| `read_issue` | An issue block as text: linked PRs, the agent on it and its PR, what it waits on the user for, your drafts | yes |
+| `issue_comment`, `issue_new` | Draft a comment on an issue block, or a new issue (a block beside you holding the draft): a card the user sends, edits or drops | no |
 | `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
 
 Resources: `illogical://history`, and the templates

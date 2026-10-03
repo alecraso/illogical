@@ -182,6 +182,10 @@ pub enum Api {
     IdeConns(PaneId, oneshot::Sender<Vec<u64>>),
     /// The edit a pane's diff card shows: before and after.
     DiffOf(PaneId, oneshot::Sender<Option<(illogical_proto::DiffInfo, String, String)>>),
+    /// A pane in a tab of its own (M37: an issue, before its agent joins
+    /// it): taken out of the tab it shares, next to it, and named if the
+    /// tab has no name.
+    OwnTab(PaneId, Option<String>, oneshot::Sender<Result<(), String>>),
 }
 
 /// An edit Claude Code proposes through its IDE connection (M28).
@@ -1802,6 +1806,9 @@ impl Daemon {
             Api::Block(id, reply) => {
                 let _ = reply.send(self.blocks.get(&id).cloned());
             }
+            Api::OwnTab(pane, name, reply) => {
+                let _ = reply.send(self.own_tab(pane, name));
+            }
             Api::Close(pane, reply) => {
                 let known = self.panes.contains_key(&pane) || self.blocks.contains_key(&pane);
                 if known {
@@ -2386,6 +2393,25 @@ impl Daemon {
             return Err(self.last_block_error.take().unwrap_or_else(|| "the block couldn't start".into()));
         }
         Ok(id)
+    }
+
+    /// `pane` alone in a tab, right after the one it was in; that tab
+    /// named `name` unless it has a name.
+    fn own_tab(&mut self, pane: PaneId, name: Option<String>) -> Result<(), String> {
+        let tab = self.mux.tab_of(pane).map_err(|e| e.to_string())?;
+        let session = self.mux.session_of_tab(tab).map_err(|e| e.to_string())?;
+        if self.mux.tab(tab).map_err(|e| e.to_string())?.root != illogical_core::Node::pane(pane) {
+            let index =
+                self.mux.session(session).ok().and_then(|s| s.tabs.iter().position(|t| *t == tab)).map(|i| i + 1);
+            self.intent(None, Intent::BreakPane { pane, session, index })?;
+        }
+        let tab = self.mux.tab_of(pane).map_err(|e| e.to_string())?;
+        if let Some(name) = name
+            && self.mux.tab(tab).is_ok_and(|t| t.name.is_none())
+        {
+            self.intent(None, Intent::RenameTab { tab, name: Some(name) })?;
+        }
+        Ok(())
     }
 
     /// An editor opens on the machine of the pane it's opened from, in

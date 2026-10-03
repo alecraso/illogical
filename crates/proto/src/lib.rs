@@ -552,6 +552,8 @@ pub enum WorkKind {
     App,
     /// A pull request on a forge (M36).
     Pr,
+    /// An issue on a forge (M37).
+    Issue,
 }
 
 /// The git repository a pane's working directory is in (M23).
@@ -704,7 +706,8 @@ pub enum BlockType {
     App,
     /// A pull request on a git forge (M36: Forgejo): its reviews, checks
     /// and timeline, and what it waits on you for. Config `{provider, api?,
-    /// login?, repo, kind: pr, number, host?, dir?}`.
+    /// login?, repo, kind: pr | issue, number, host?, dir?}` (M37: an
+    /// issue, and the agent working on it).
     Forge,
 }
 

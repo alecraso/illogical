@@ -242,7 +242,7 @@ export interface StartedBy {
   block?: PaneId;
 }
 
-export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor" | "app" | "pr";
+export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor" | "app" | "pr" | "issue";
 
 export interface Project {
   root: string;

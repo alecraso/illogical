@@ -45,8 +45,8 @@ use super::{
     Adapter, Error, Polled, ReviewEvent, Sent, Write,
     forgejo::time,
     model::{
-        Branch, Check, CheckSource, CheckState, Event, EventKind, Item, ItemKind, ItemState, Me, Review, ReviewState,
-        Reviewer, RunRef,
+        Branch, Check, CheckSource, CheckState, Event, EventKind, Item, ItemKind, ItemState, Linked, Me, Review,
+        ReviewState, Reviewer, RunRef,
     },
 };
 use crate::review::Runner;
@@ -106,6 +106,63 @@ pub fn pr_url(u: &str) -> Option<(String, String, u64)> {
         [o, r, "pulls", n, ..] if is_github_host(&host) => Some((host, format!("{o}/{r}"), n.parse().ok()?)),
         _ => None,
     }
+}
+
+/// M37: `https://github.com/OWNER/REPO/issues/N` → (host, owner/name, N).
+pub fn issue_url(u: &str) -> Option<(String, String, u64)> {
+    let url = url::Url::parse(u).ok()?;
+    let host = super::login::url_host(u)?;
+    if !matches!(url.scheme(), "http" | "https") || !is_github_host(&host) {
+        return None;
+    }
+    let segs: Vec<&str> = url.path_segments()?.filter(|x| !x.is_empty()).collect();
+    match segs.as_slice() {
+        [o, r, "issues", n, ..] => Some(("github.com".into(), format!("{o}/{r}"), n.parse().ok()?)),
+        _ => None,
+    }
+}
+
+/// M37: `GET repos/O/R/issues/N` as an item (no branches).
+pub fn issue_item(it: &Value) -> Item {
+    Item {
+        kind: ItemKind::Issue,
+        number: it["number"].as_u64().unwrap_or(0),
+        url: s(&it["html_url"]),
+        title: s(&it["title"]),
+        body: s(&it["body"]),
+        author: login(&it["user"]).unwrap_or_default(),
+        state: if it["state"] == "closed" { ItemState::Closed } else { ItemState::Open },
+        labels: it["labels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|l| l["name"].as_str().map(str::to_owned))
+            .collect(),
+        assignees: it["assignees"].as_array().into_iter().flatten().filter_map(login).collect(),
+        comments: it["comments"].as_u64().unwrap_or(0),
+        updated_at: t(&it["updated_at"]).unwrap_or(0),
+        ..Item::default()
+    }
+}
+
+/// M37: the pull requests an issue's timeline says refer to it
+/// (`cross-referenced` from a PR), the newest word on each.
+pub fn linked(list: &Value) -> Vec<Linked> {
+    let mut out: Vec<Linked> = Vec::new();
+    for e in list.as_array().into_iter().flatten() {
+        let i = &e["source"]["issue"];
+        let (Some(n), true) = (i["number"].as_u64(), i["pull_request"].is_object()) else { continue };
+        let state = if !i["pull_request"]["merged_at"].is_null() {
+            ItemState::Merged
+        } else if i["state"] == "closed" {
+            ItemState::Closed
+        } else {
+            ItemState::Open
+        };
+        out.retain(|l| l.number != n);
+        out.push(Linked { number: n, title: s(&i["title"]), state, url: s(&i["html_url"]), head: None });
+    }
+    out
 }
 
 /// A team in a request: `org/slug` (the org from its page, else the
@@ -339,6 +396,8 @@ pub fn events(list: &Value, repo: &str) -> Vec<Event> {
                     None => team(&e["requested_team"], owner).map(Reviewer::Team),
                 },
                 "mentioned" => login(&e["actor"]).map(Reviewer::User),
+                // M37: who an issue was given to.
+                "assigned" => login(&e["assignee"]).map(Reviewer::User),
                 _ => None,
             };
             let actor = match ty {
@@ -856,6 +915,76 @@ impl Adapter for Github {
         true
     }
 
+    fn issue<'a>(&'a self, repo: &'a str, number: u64) -> BoxFuture<'a, Result<(Item, String), Error>> {
+        Box::pin(async move {
+            let raw = self.get(&format!("repos/{repo}/issues/{number}")).await?;
+            if raw["pull_request"].is_object() {
+                return Err(Error::NotFound(format!("{repo}#{number} is a pull request: open it as one")));
+            }
+            let who: Vec<&str> =
+                raw["assignees"].as_array().into_iter().flatten().filter_map(|u| u["login"].as_str()).collect();
+            let fp = json!([raw["updated_at"], raw["comments"], raw["state"], who]).to_string();
+            Ok((issue_item(&raw), fp))
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn issue_events<'a>(
+        &'a self,
+        repo: &'a str,
+        number: u64,
+    ) -> BoxFuture<'a, Result<(Vec<Event>, Vec<Linked>), Error>> {
+        Box::pin(async move {
+            let tl = Value::Array(
+                self.newest(&format!("repos/{repo}/issues/{number}/timeline?per_page=100"), EVENTS).await?,
+            );
+            Ok((events(&tl, repo), linked(&tl)))
+        })
+    }
+
+    fn pr_by_head<'a>(&'a self, repo: &'a str, branch: &'a str) -> BoxFuture<'a, Result<Option<Linked>, Error>> {
+        Box::pin(async move {
+            // GitHub filters by `owner:branch`, so a fork's isn't listed.
+            let owner = repo.split('/').next().unwrap_or_default();
+            let list = self.get(&format!("repos/{repo}/pulls?state=all&head={owner}:{branch}&per_page=10")).await?;
+            Ok(list.as_array().into_iter().flatten().find(|p| p["head"]["ref"] == branch).map(|p| {
+                let it = item(p, repo);
+                Linked {
+                    number: it.number,
+                    title: it.title,
+                    state: it.state,
+                    url: it.url,
+                    head: Some(branch.to_owned()),
+                }
+            }))
+        })
+    }
+
+    fn new_issue<'a>(
+        &'a self,
+        repo: &'a str,
+        title: &'a str,
+        body: &'a str,
+    ) -> BoxFuture<'a, Result<(u64, Sent), Error>> {
+        Box::pin(async move {
+            let req = json!({ "title": title, "body": body });
+            let (v, _) = self.send(reqwest::Method::POST, &format!("repos/{repo}/issues"), Some(&req)).await?;
+            let n = v["number"].as_u64().ok_or_else(|| Error::Http("GitHub didn't say the issue's number".into()))?;
+            Ok((n, Sent { url: v["html_url"].as_str().map(str::to_owned), said: format!("opened #{n}") }))
+        })
+    }
+
+    fn default_branch<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<String, Error>> {
+        Box::pin(async move {
+            let v = self.get(&format!("repos/{repo}")).await?;
+            v["default_branch"]
+                .as_str()
+                .filter(|b| !b.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| Error::Http(format!("{repo} has no default branch")))
+        })
+    }
+
     fn rate(&self) -> Option<Value> {
         let why = self.holding();
         let l = self.limits.lock().unwrap();
@@ -1105,6 +1234,42 @@ mod tests {
         );
         assert_eq!(actions_run("https://github.com/o/r/actions/runs/12"), Some(RunRef { id: "12".into(), job: None }));
         assert_eq!(actions_run("https://example.com/x"), None);
+    }
+
+    #[test]
+    fn issues_in_githubs_shapes() {
+        assert_eq!(
+            issue_url("https://github.com/cli/cli/issues/12"),
+            Some(("github.com".into(), "cli/cli".into(), 12))
+        );
+        assert_eq!(issue_url("https://git.example/o/r/issues/12"), None, "only GitHub's own host");
+        let it = issue_item(
+            &json!({ "number": 12, "state": "open", "title": "T", "html_url": "https://github.com/o/r/issues/12",
+            "user": { "login": "sam" }, "assignees": [{ "login": "me" }], "labels": [{ "name": "bug" }] }),
+        );
+        assert_eq!(
+            (it.kind, it.state, it.assignees.as_slice()),
+            (ItemKind::Issue, ItemState::Open, &["me".to_owned()][..])
+        );
+        let tl = json!([
+            { "event": "assigned", "id": 1, "actor": { "login": "sam" }, "assignee": { "login": "me" }, "created_at": "2026-10-01T00:00:00Z" },
+            { "event": "cross-referenced", "actor": { "login": "me" }, "created_at": "2026-10-02T00:00:00Z",
+              "source": { "type": "issue", "issue": { "number": 13, "title": "Fix it", "state": "closed",
+                "html_url": "https://github.com/o/r/pull/13", "pull_request": { "merged_at": "2026-10-02T01:00:00Z" } } } },
+            { "event": "cross-referenced", "actor": { "login": "x" }, "created_at": "2026-10-02T00:00:00Z",
+              "source": { "type": "issue", "issue": { "number": 9, "title": "Another issue", "state": "open" } } },
+        ]);
+        let ev = events(&tl, "o/r");
+        assert_eq!(ev[0].target, Some(Reviewer::User("me".into())));
+        let l = linked(&tl);
+        assert_eq!(l.iter().map(|l| (l.number, l.state)).collect::<Vec<_>>(), [(13, ItemState::Merged)]);
+        let issue = crate::forge::model::Issue { item: it, events: ev, linked: l };
+        let w = crate::forge::model::issue_attention(&issue, &me_as("me", &[]), 0);
+        assert!(
+            w.iter()
+                .any(|w| matches!(w, crate::forge::model::Want::Assigned { why } if why == "assigned to you by sam")),
+            "{w:?}"
+        );
     }
 
     #[test]

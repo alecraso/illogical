@@ -62,7 +62,8 @@ fn policy(method: &Method, path: &str) -> Policy {
         // M36: a forge block's login, and fetching its code into the
         // owner's clone and opening panes there, are the owner's. Writes
         // (comment, review, merge) are the owner's and editors'.
-        ["api", "blocks", _, "call", "login" | "diff" | "checkout"] => Policy::Owner,
+        // M37: an agent on an issue works in the owner's clone, as them.
+        ["api", "blocks", _, "call", "login" | "diff" | "checkout" | "agent"] => Policy::Owner,
         ["api", "blocks", id, "call", _] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         // M24: the handler shows each person what they may read, and checks
         // each pane acted on.
@@ -163,6 +164,7 @@ mod tests {
         assert_eq!(policy(&p, "/api/hosts/self/shell-env/refresh"), Policy::Owner);
         assert_eq!(policy(&p, "/api/blocks/7/call/enter"), Policy::Owner);
         assert_eq!(policy(&p, "/api/blocks/7/call/checkout"), Policy::Owner);
+        assert_eq!(policy(&p, "/api/blocks/7/call/agent"), Policy::Owner);
         assert_eq!(policy(&p, "/api/blocks/7/call/comment"), Policy::On(7, Role::Editor));
         assert_eq!(policy(&p, "/api/blocks/7/call/answer"), Policy::On(7, Role::Editor));
         assert_eq!(policy(&p, "/api/studio"), Policy::Owner);

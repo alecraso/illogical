@@ -27,6 +27,11 @@
 //!   via: "illogical"}`, naming whoever answered in illogical; that needs
 //!   hud's trusted-follower change (arugula-salad track A5). Without one,
 //!   hud records the session's own player, the box's owner.
+//! - `POST /__hud/api/chat/prompt {chatKey, text}`, for the block's
+//!   `send`: a prompt to the box's agent in one of `/api/tabs`' tabs
+//!   (`{chatKey, title}`, oldest first), queued behind a running turn.
+//!   hud takes no `onBehalfOf` here, so the prompt is the session's
+//!   (the owner's, or the follower's); the block's log says who sent it.
 //!
 //! A block shows one question at a time: with several tabs asking, the
 //! oldest is on the card and the next follows when it's answered.
@@ -35,6 +40,12 @@
 //! group's items, each with `gate: {member, component, name, env, needed,
 //! approvals, approve}`), read again whenever hud's live feed
 //! (`/__hud/api/live/stream`) says something changed, never on a timer.
+//! Each read is a `chant workspace status` in the box (a few hundred MB,
+//! tens of seconds on a busy one), and the feed moves all through an
+//! agent's turn, so reads are paced: one at a time, the next no sooner
+//! than the last took (at least `BOARD_GAP`), except after an approve.
+//! A read waits longer than hud gives chant, so hud is never left running
+//! one we gave up on while we start the next.
 //! Approving one is hud's `POST /__hud/api/work/gates/approve {member,
 //! component, gate, env}` (arugula-salad/hud#735), which approves only a
 //! gate `workspace status` lists as pending; with a follower credential it
@@ -65,6 +76,10 @@ const TABS_EVERY: Duration = Duration::from_secs(30);
 /// Backoff for a dropped stream or a session that can't be made.
 const BACKOFF_MIN: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// The least time between work board reads the live feed asks for.
+const BOARD_GAP: Duration = Duration::from_secs(5);
+/// How long a work board read may take: past hud's own 120s for chant.
+const BOARD_TIMEOUT: Duration = Duration::from_secs(150);
 /// Redirects followed into a box.
 const MAX_HOPS: usize = 10;
 
@@ -162,18 +177,36 @@ impl Session {
         }
     }
 
-    /// The box's chat tabs.
+    /// The box's chat tabs' keys.
     pub async fn tabs(&self) -> Result<Vec<String>, HudError> {
+        Ok(self.tab_list().await?.into_iter().map(|t| t.chat).collect())
+    }
+
+    /// The box's chat tabs, oldest first (hud always has one).
+    pub async fn tab_list(&self) -> Result<Vec<Tab>, HudError> {
         let res =
             Self::checked(self.req(reqwest::Method::GET, "/api/tabs").timeout(Duration::from_secs(15)).send().await)
                 .await?;
         let v: Value = res.json().await.map_err(|e| HudError::Other(format!("tabs: {}", e.without_url())))?;
-        Ok(v["tabs"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|t| t["chatKey"].as_str().map(str::to_owned))
-            .collect())
+        Ok(parse_tabs(&v))
+    }
+
+    /// Prompt the box's agent in a tab (hud queues it behind a running
+    /// turn). hud's answer (`{promptId, position, queued}`), or why not.
+    pub async fn prompt(&self, chat: &str, text: &str) -> Result<Value, String> {
+        let res = self
+            .req(reqwest::Method::POST, "/api/chat/prompt")
+            .timeout(Duration::from_secs(30))
+            .json(&json!({ "chatKey": chat, "text": text }))
+            .send()
+            .await
+            .map_err(|e| format!("hud: {}", e.without_url()))?;
+        let status = res.status();
+        let v: Value = res.json().await.unwrap_or_default();
+        if status.is_success() {
+            return Ok(v);
+        }
+        Err(prompt_refused(status.as_u16(), &v))
     }
 
     /// A tab's chat stream (server-sent events), from now.
@@ -185,8 +218,7 @@ impl Session {
     /// The gates hud's work board lists as pending.
     pub async fn work(&self, app: &str) -> Result<Vec<illogical_proto::Gate>, HudError> {
         let res =
-            Self::checked(self.req(reqwest::Method::GET, "/api/work").timeout(Duration::from_secs(60)).send().await)
-                .await?;
+            Self::checked(self.req(reqwest::Method::GET, "/api/work").timeout(BOARD_TIMEOUT).send().await).await?;
         let v: Value = res.json().await.map_err(|e| HudError::Other(format!("work: {}", e.without_url())))?;
         if let Some(e) = v["error"]["message"].as_str() {
             return Err(HudError::Other(format!("hud couldn't read the board: {e}")));
@@ -232,6 +264,50 @@ impl Session {
         )
         .await?;
         Ok(res.json().await.unwrap_or_default())
+    }
+}
+
+/// One of the box's chat tabs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tab {
+    pub chat: String,
+    pub title: String,
+}
+
+fn parse_tabs(v: &Value) -> Vec<Tab> {
+    v["tabs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| {
+            let chat = t["chatKey"].as_str()?.to_owned();
+            Some(Tab { title: t["title"].as_str().unwrap_or(&chat).to_owned(), chat })
+        })
+        .collect()
+}
+
+/// The tab `want` names (its key, or its title in any case); none named,
+/// the box's first.
+pub fn pick_tab<'a>(tabs: &'a [Tab], want: Option<&str>) -> Result<&'a Tab, String> {
+    let Some(w) = want else { return tabs.first().ok_or_else(|| "hud listed no tabs".into()) };
+    tabs.iter().find(|t| t.chat == w).or_else(|| tabs.iter().find(|t| t.title.eq_ignore_ascii_case(w))).ok_or_else(
+        || {
+            let names: Vec<_> = tabs.iter().map(|t| t.title.as_str()).collect();
+            format!("no tab {w:?} in the box (it has: {})", names.join(", "))
+        },
+    )
+}
+
+/// Why hud refused a prompt, for whoever sent it.
+fn prompt_refused(status: u16, v: &Value) -> String {
+    let said = v["error"].as_str().unwrap_or("");
+    match (status, v["reason"].as_str()) {
+        (401, _) => "hud wants a new session: try again in a moment".into(),
+        (403, _) => format!("hud refused: {}", if said.is_empty() { "this session may only watch" } else { said }),
+        (429, Some("queue-full")) => "the tab's queue is full: wait for its turn to finish".into(),
+        (_, Some(r)) if !said.is_empty() => format!("hud: {said} ({r})"),
+        (s, _) if said.is_empty() => format!("hud answered {s}"),
+        _ => format!("hud: {said}"),
     }
 }
 
@@ -394,6 +470,9 @@ enum Ev {
     Answered(Value),
     /// hud's live feed moved (or the work board should be read anyway).
     Live,
+    /// Read the work board as soon as the read in flight is done (after an
+    /// approve).
+    Reread,
     /// The work board, read.
     Board(Result<Vec<illogical_proto::Gate>, HudError>),
 }
@@ -407,7 +486,7 @@ pub struct Follower {
 impl Follower {
     /// Read the work board again (after an approve).
     pub fn reread(&self) {
-        let _ = self.tx.send(Ev::Live);
+        let _ = self.tx.send(Ev::Reread);
     }
 }
 
@@ -498,7 +577,7 @@ impl Run {
         // The live feed: each change reads the work board again (one read
         // at a time; a change meanwhile reads once more after it).
         let feed = self.s.ctx.rt.spawn(live_feed(session.clone(), self.tx.clone()));
-        let (mut reading, mut again) = (false, false);
+        let mut board = Board::default();
         let out = loop {
             if tokio::time::Instant::now() >= tabs_due {
                 match session.tabs().await {
@@ -537,6 +616,7 @@ impl Run {
             let expiry = self.next_expiry();
             let ev = tokio::select! {
                 ev = rx.recv() => ev,
+                _ = tokio::time::sleep_until(board.next), if board.again && !board.reading => Some(Ev::Reread),
                 _ = tokio::time::sleep_until(tabs_due) => continue,
                 _ = sleep_until_ms(expiry) => {
                     self.reconcile().await;
@@ -575,16 +655,21 @@ impl Run {
                     self.status.last_answer = Some(v);
                     self.report();
                 }
-                Ev::Live if reading => again = true,
-                Ev::Live => {
-                    reading = true;
+                Ev::Live | Ev::Reread
+                    if board.reading || (matches!(ev, Ev::Live) && tokio::time::Instant::now() < board.next) =>
+                {
+                    board.again = true;
+                    board.now |= matches!(ev, Ev::Reread);
+                }
+                Ev::Live | Ev::Reread => {
+                    board.start();
                     let (session, tx, app) = (session.clone(), self.tx.clone(), self.s.app.clone());
                     self.s.ctx.rt.spawn(async move {
                         let _ = tx.send(Ev::Board(session.work(&app).await));
                     });
                 }
                 Ev::Board(r) => {
-                    reading = false;
+                    board.done();
                     match r {
                         Ok(gates) => (self.s.gates)(gates),
                         Err(HudError::Unauthorized) => break true,
@@ -593,8 +678,10 @@ impl Run {
                             (self.s.log)(json!({ "e": "work_board", "error": e }));
                         }
                     }
-                    if std::mem::take(&mut again) {
-                        let _ = self.tx.send(Ev::Live);
+                    if board.again && board.now {
+                        // Not again at `next` too.
+                        (board.again, board.now) = (false, false);
+                        let _ = self.tx.send(Ev::Reread);
                     }
                 }
             }
@@ -782,6 +869,38 @@ async fn stream(session: Arc<Session>, chat: String, tx: mpsc::UnboundedSender<E
         }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// Pacing for the work board's reads.
+struct Board {
+    reading: bool,
+    /// Another read is wanted after this one ...
+    again: bool,
+    /// ... at once (an approve), not at `next`.
+    now: bool,
+    started: tokio::time::Instant,
+    /// The soonest the live feed may start the next read.
+    next: tokio::time::Instant,
+}
+
+impl Default for Board {
+    fn default() -> Self {
+        let now = tokio::time::Instant::now();
+        Self { reading: false, again: false, now: false, started: now, next: now }
+    }
+}
+
+impl Board {
+    fn start(&mut self) {
+        (self.reading, self.again, self.now) = (true, false, false);
+        self.started = tokio::time::Instant::now();
+    }
+
+    /// A read done: the next waits as long as this one took.
+    fn done(&mut self) {
+        self.reading = false;
+        self.next = tokio::time::Instant::now() + self.started.elapsed().max(BOARD_GAP);
     }
 }
 
@@ -993,5 +1112,26 @@ mod tests {
         assert_eq!(q.picked(&json!({ "question_0": "Blue" })), Some("o1"));
         assert_eq!(q.picked(&json!({ "question_0_custom": "Red" })), None);
         assert_eq!(q.expires_at, Some(300005));
+    }
+
+    #[test]
+    fn a_prompt_goes_to_the_tab_named_or_the_first() {
+        let tabs = parse_tabs(&json!({ "tabs": [{ "chatKey": "k1", "title": "Main" }, { "chatKey": "k2" }] }));
+        assert_eq!(tabs[1], Tab { chat: "k2".into(), title: "k2".into() }, "untitled: its key");
+        assert_eq!(pick_tab(&tabs, None).unwrap().chat, "k1");
+        assert_eq!(pick_tab(&tabs, Some("k2")).unwrap().chat, "k2");
+        assert_eq!(pick_tab(&tabs, Some("main")).unwrap().chat, "k1");
+        assert_eq!(pick_tab(&tabs, Some("nope")).unwrap_err(), "no tab \"nope\" in the box (it has: Main, k2)");
+        assert!(pick_tab(&[], None).is_err());
+    }
+
+    #[test]
+    fn why_hud_refused_a_prompt() {
+        let full = json!({ "error": "queue is full", "reason": "queue-full", "queued": 5 });
+        assert_eq!(prompt_refused(429, &full), "the tab's queue is full: wait for its turn to finish");
+        let budget = json!({ "error": "out of turns today", "reason": "turn-budget" });
+        assert_eq!(prompt_refused(429, &budget), "hud: out of turns today (turn-budget)");
+        assert_eq!(prompt_refused(403, &json!({})), "hud refused: this session may only watch");
+        assert_eq!(prompt_refused(502, &json!({})), "hud answered 502");
     }
 }

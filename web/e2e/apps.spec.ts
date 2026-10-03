@@ -32,6 +32,8 @@ const feeds = new Set<ServerResponse>();
 let gates: Record<string, unknown>[] = [];
 const approvals: Record<string, unknown>[] = [];
 let failNext: string | null = null;
+/** Reads of hud's work board (each one a `chant workspace status` in a real box). */
+let boardReads = 0;
 /** Requests a hung box took and hasn't answered, to answer when it's back. */
 let hung: (() => void)[] | null = null;
 
@@ -100,6 +102,7 @@ test.beforeAll(async () => {
         return;
       }
       if (u.pathname === "/__hud/api/work") {
+        boardReads++;
         return json(res, 200, { v: 1, groups: [{ id: "approve", items: gates.map((gate) => ({ key: `gate:${gate.name}`, gate })) }] });
       }
       if (u.pathname === "/__hud/api/live/stream") {
@@ -236,10 +239,17 @@ test("a studio app opens framed from another site; its agent's question is answe
 
   // A release waits at ship: a gate on the block and the phone's sheet's
   // reason. hud refusing puts its error on the card; then it's approved.
+  // The live feed moving all through a turn doesn't read the board each
+  // time: reads are paced (at least 5s apart), so the gate may wait that.
+  const before = boardReads;
   gates = [{ member: "delivery", component: "release", name: "ship", env: "prod", needed: 1, approvals: 0, approve: "chant approve release ship --env prod" }];
-  moved();
+  for (let i = 0; i < 15; i++) {
+    moved();
+    await page.waitForTimeout(200);
+  }
   const gate = el.locator('[data-gate="delivery/release/ship"]');
-  await expect(gate).toContainText("release waits at gate ship in prod");
+  await expect(gate).toContainText("release waits at gate ship in prod", { timeout: 15_000 });
+  expect(boardReads - before).toBeLessThanOrEqual(2);
   await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.reason?.kind, b)).toBe("gate");
   failNext = "chant approve exited 1";
   await gate.getByRole("button", { name: "Approve" }).click();

@@ -15,4 +15,4 @@ export { openEditor } from "./editor";
 export { newRemote, remoteHosts, remotes } from "./remote";
 export { openChanges, openFile } from "./diff";
 export { isWorkspace, openWorkspace, useWorkspaceDir } from "./workspace";
-export { openPr } from "./forge";
+export { openIssue, openPr } from "./forge";
