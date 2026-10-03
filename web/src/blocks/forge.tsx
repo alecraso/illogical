@@ -1,5 +1,5 @@
-// Forge blocks (M36): a pull request on the person's Forgejo, read by the
-// daemon with their own `tea` login. What waits on you comes first (a
+// Forge blocks (M36): a pull request on the person's Forgejo (or GitHub,
+// M38), read by the daemon with their own `tea` (or `gh`) login. What waits on you comes first (a
 // review asked of you, red checks, changes asked for, a mention), then an
 // agent's drafts, the checks, the reviews and the timeline. An agent's
 // draft is answered on the card over the block (the daemon's ask): edit
@@ -24,14 +24,16 @@ interface Check { name: string; source: string; state: string; url: string | nul
 interface Event { id: string; at: number; actor: string | null; kind: string; what?: string; target?: { user: string } | { team: string }; body?: string; commits?: number; force?: boolean }
 interface Pr { item: Item; reviews: Review[]; checks: Check[]; rollup: string | null; events: Event[] }
 interface Draft {
-  id: string; method: "comment" | "review" | "merge"; body?: string; event?: string; style?: string; by: string; at_ms: number;
+  id: string; method: "comment" | "review" | "merge" | "rerun_checks"; body?: string; event?: string; style?: string; by: string; at_ms: number;
   status: "waiting" | "sent" | "dropped"; settled_by?: string; settled_ms?: number; url?: string; error?: string;
 }
 export interface ForgeState {
   provider: string; repo: string; number: number; api: string | null; login: string | null; host: string | null; dir: string | null;
   loading: boolean; error: string | null; logins: { name: string; url: string; user: string }[]; me: string | null; pr: Pr | null;
   wants: { kind: "review" | "failed" | "changes" | "mention" | "done"; why: string }[];
-  rerun: { api: boolean; url: string | null; note: string } | null; drafts: Draft[];
+  rerun: { api: boolean; url: string | null; note: string; runs?: number } | null; drafts: Draft[];
+  /** M38: GitHub's rate limit, and why it's backing off. */
+  rate?: { remaining: number | null; limit: number | null; backoff: string | null } | null;
   updated_ms: number; polls: number; reads: number; watching?: boolean; said: string | null;
 }
 
@@ -75,6 +77,7 @@ function eventLine(e: Event): string {
 function draftWhat(d: Draft): string {
   if (d.method === "comment") return "a comment";
   if (d.method === "merge") return `a merge (${d.style ?? "merge"})`;
+  if (d.method === "rerun_checks") return "a rerun of the failed checks";
   return d.event === "approve" ? "an approval" : d.event === "request_changes" ? "a review asking for changes" : "a review";
 }
 
@@ -105,7 +108,8 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
     await call("review", { event, body: body || undefined }, "couldn't review");
   };
   const merge = async () => {
-    const style = await askText("Merge: how?", "merge", "merge, rebase, rebase-merge, squash or fast-forward-only");
+    const how = s?.provider === "github" ? "merge, squash or rebase" : "merge, rebase, rebase-merge, squash or fast-forward-only";
+    const style = await askText("Merge: how?", "merge", how);
     if (style?.trim()) await call("merge", { style: style.trim() }, "couldn't merge");
   };
   const refresh = () => void call("refresh", {}, "couldn't read the pull request");
@@ -145,6 +149,11 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
         )}
         <span class={`review-live ${s.watching ? "on" : ""}`}>{s.watching ? "live" : "paused"}</span>
       </div>
+      {s.rate?.backoff && (
+        <p class="dim ws-note" data-forge-rate>
+          {s.rate.backoff}
+        </p>
+      )}
       {s.error && (
         <div class="browser-card" data-forge-error>
           <p>Can't read this pull request</p>
@@ -166,7 +175,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
           <div class="dim forge-meta">
             {it.author} wants to merge <code>{it.head.repo && it.head.repo !== s.repo ? `${it.head.repo}:` : ""}{it.head.branch}</code> into <code>{it.base.branch}</code>
             {" · "}
-            {s.login && `as ${s.me ?? "?"} (tea login ${s.login})`}
+            {s.login && `as ${s.me ?? "?"} (${s.provider === "github" ? "gh on" : "tea login"} ${s.login})`}
             {it.labels.length > 0 && " · "}
             {it.labels.map((l) => (
               <span key={l} class="ws-tag">
@@ -195,6 +204,11 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
                           Request changes…
                         </button>
                       </>
+                    )}
+                    {w.kind === "failed" && s.rerun?.api && mayWrite && (
+                      <button class="pri" data-rerun disabled={busy !== null} title={s.rerun.note} onClick={() => void call("rerun_checks", {}, "couldn't rerun the checks")}>
+                        {busy === "rerun_checks" ? "Rerunning…" : "Rerun checks"}
+                      </button>
                     )}
                     {w.kind === "failed" && s.rerun?.url && (
                       <a class="button" href={s.rerun.url} target="_blank" rel="noopener" title={s.rerun.note} data-rerun-link>
