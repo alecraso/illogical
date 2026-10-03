@@ -5,6 +5,8 @@
 //! with the imported session's settings and model), a restart, and a
 //! session held by another process: continuing refused, forking allowed;
 //! and one held in a pane, placed there by its parent processes (#81).
+//! Under systemd, one held in a pane's scope, then by the block's own
+//! agent (#82).
 
 mod agentd;
 
@@ -102,6 +104,41 @@ impl Claude {
         )
         .unwrap();
     }
+
+    /// The fake agent, as Claude Code under claude-agent-acp, lists the
+    /// session it has open in `sessions/`.
+    fn adapter_holds(&self) {
+        let shim = self.agents.join("claude/node_modules/.bin/claude-agent-acp");
+        std::fs::write(&shim, format!("#!/bin/sh\nFAKE_ACP_CLAUDE_SESSIONS=1 exec python3 {} \"$@\"\n", fake()))
+            .unwrap();
+    }
+
+    /// A command line for a pane: a fake Claude Code holding `id`, detached
+    /// from the pane's processes (as one under tmux would be), so only its
+    /// systemd scope says where it is. It runs until it's killed, or its
+    /// session file goes (a failed test's cleanup).
+    fn detached_in_pane(&self, id: &str) -> String {
+        let script = self.root.join("claude-code.py");
+        std::fs::write(
+            &script,
+            r#"import json, os, sys, time
+if os.fork():
+    sys.exit(0)
+os.setsid()
+me = os.getpid()
+start = open(f"/proc/{me}/stat").read().rsplit(")", 1)[1].split()[19]
+path = os.path.join(sys.argv[1], "sessions", f"{me}.json")
+with open(path + ".tmp", "w") as f:
+    json.dump({"pid": me, "sessionId": sys.argv[2], "procStart": start, "kind": "interactive",
+               "entrypoint": "cli", "status": "idle", "cwd": os.getcwd()}, f)
+os.rename(path + ".tmp", path)
+while os.path.exists(path):
+    time.sleep(0.1)
+"#,
+        )
+        .unwrap();
+        format!("python3 {} {} {id}; exec sleep 600", script.display(), self.dir.display())
+    }
 }
 
 /// A process's start time (`$1`) as Claude Code writes it in
@@ -130,6 +167,7 @@ fn conversations(d: &Daemon, q: &str) -> Vec<Value> {
 
 const ID: &str = "11111111-2222-4333-8444-555555555555";
 const HELD: &str = "99999999-2222-4333-8444-555555555555";
+const SCOPED: &str = "33333333-2222-4333-8444-555555555555";
 const OTHER: &str = "77777777-2222-4333-8444-555555555555";
 
 #[test]
@@ -281,4 +319,65 @@ fn a_conversation_in_a_pane_says_which() {
     // Opened, its block says the same.
     let v = d.post("/api/conversations/open", json!({ "id": HELD, "then": "continue" }));
     assert!(v["error"].as_str().unwrap().contains(&format!("pane %{pane}")), "{v}");
+}
+
+/// Under systemd (#82), where panes and agents run in scopes: a Claude Code
+/// that left its pane's process tree (under tmux, say) is still placed in
+/// the pane by its scope, and the block points there. Once it's gone and
+/// the block continues it, the list credits the block's own agent.
+#[test]
+fn a_conversation_in_a_panes_scope_goes_to_the_pane_then_to_its_block() {
+    let c = Claude::new("scoped");
+    c.seed(SCOPED, "heron", "cli");
+    c.adapter_holds();
+    let env = c.env();
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let Some(d) = Daemon::service_env(&env) else { return };
+
+    let pane = d.post("/api/run", json!({ "command": c.detached_in_pane(SCOPED) }))["pane"].as_u64().unwrap();
+    d.wait_for("the pane's Claude Code", || !conversations(&d, "live=1").is_empty());
+    let list = conversations(&d, "live=1");
+    assert_eq!(list.len(), 1, "{list:#?}");
+    let live = list[0]["live"].clone();
+    assert_eq!((live["pane"].as_u64(), live["block"].as_u64()), (Some(pane), None), "{live}");
+    assert_eq!(live["place"], format!("open in pane %{pane}"));
+    let holder = live["pid"].as_u64().unwrap() as i32;
+    let shell = d.get(&format!("/api/panes/{pane}/process"))["pid"].as_i64().unwrap() as i32;
+    let mut up = vec![holder];
+    while let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", up.last().unwrap())) {
+        let ppid: i32 = stat.rsplit_once(')').unwrap().1.split_whitespace().nth(1).unwrap().parse().unwrap();
+        if ppid <= 1 {
+            break;
+        }
+        up.push(ppid);
+    }
+    assert!(!up.contains(&shell), "not under the pane's shell {shell}: {up:?}");
+
+    // Opened: the block says where it's live (its Go to pane), and won't
+    // continue it.
+    let v = d.post("/api/conversations/open", json!({ "id": SCOPED, "then": "continue" }));
+    let id = v["block"].as_u64().unwrap();
+    assert!(v["error"].as_str().unwrap().contains(&format!("open in pane %{pane}")), "{v}");
+    let held = &d.state(id)["import"]["held"];
+    assert_eq!((held["pane"].as_u64(), held["place"].as_str()), (Some(pane), Some(&*format!("open in pane %{pane}"))));
+
+    // It exits; the block continues it, and its own agent holds it now.
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(holder), nix::sys::signal::Signal::SIGTERM).unwrap();
+    d.post(&format!("/api/panes/{pane}/close"), json!({}));
+    d.wait_for("the pane's Claude Code to go", || conversations(&d, "live=1").is_empty());
+    d.wait_for("the block to see it", || d.state(id)["import"]["held"].is_null());
+    d.call(id, "send", json!({ "text": "recall" }));
+    assert_eq!(d.wait(id, "idle"), "done");
+    let s = d.state(id);
+    assert_eq!(last_reply(&s), "You said heron.", "{s}");
+    assert_eq!(s["import"]["held"], Value::Null, "its own agent doesn't hold it against it");
+    let list = conversations(&d, "live=1");
+    assert_eq!(list.len(), 1, "{list:#?}");
+    let live = &list[0]["live"];
+    assert_eq!((live["block"].as_u64(), live["pane"].as_u64()), (Some(id), None), "{live}");
+    assert_eq!(live["place"], format!("open in agent block %{id}"));
+    assert_eq!(live["pid"], s["pid"]);
+    assert_eq!(list[0]["block"], id);
+    let cgroup = std::fs::read_to_string(format!("/proc/{}/cgroup", live["pid"])).unwrap();
+    assert!(cgroup.contains(&format!("illogical-agent-{id}-")), "in its scope: {cgroup}");
 }

@@ -52,8 +52,7 @@ impl Drop for Home {
         let _ = self.child.kill();
         let _ = self.child.wait();
         wisp("DELETE", &format!("/{}", self.sprite), None);
-        strays::kill_programs(&self.state);
-        let _ = std::fs::remove_dir_all(&self.state);
+        strays::remove(&self.state);
     }
 }
 

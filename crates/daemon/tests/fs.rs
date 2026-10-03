@@ -52,8 +52,7 @@ impl Drop for Daemon {
                 curl(&token, "DELETE", &format!("{WISP}/v1/sprites/{n}"), None);
             }
         }
-        strays::kill_programs(&self.state);
-        let _ = std::fs::remove_dir_all(&self.state);
+        strays::remove(&self.state);
     }
 }
 
