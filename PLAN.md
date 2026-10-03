@@ -3454,6 +3454,46 @@ A studio box as a block: the app in the frame (its own origin, so no block site)
 
 **Done when:** a real studio box opens from the picker on geek; its agent's question shows on the rail and the phone and is answered from illogical with hud naming who; a release waiting at `ship` is attention you can approve; and the block comes back after a daemon restart without a stored link.
 
+#### M35: as built
+
+**Done 2026-10-02 (tracker #86).**
+
+- **The block and the follower:**
+  - The block is `crates/daemon/src/apps/` (`mod.rs` the block, `studio.rs` studio's client, `hud.rs` S22's follower) and `web/src/blocks/app.tsx`.
+  - Config `{box_url, app, studio, title?, follower?}`. The owner-only `enter {to?}` method mints a fresh `/__enter` link that the frame navigates to after its first load. The link is never in the frame's `src`, the config, the log or storage.
+  - `Api::Ask` takes browser and app blocks. An ask carries `source` and `agent` (the card says "hud asks"), and the bundle and project come from the block.
+  - The follower holds its own cookie jar from a minted link, kept in memory only and re-minted on a 401. It follows each of hud's tabs with backoff and posts answers with the box's own `Origin`.
+  - Gates come from hud's work board, re-read when hud's live feed moves, as M34's `Gate{source: GateSource::Hud}`. *Approve* goes to hud's new route.
+- **Studio:**
+  - `illogical studio login|logout|follower APP` keeps a personal token (studio#292) and any follower links in `studio.json`, mode 0600, never sent to a client.
+  - `illogical app [NAME]`, *Open a studio app…* (pane menu, + menu, phone sheet), MCP `open_app`, swarm kind `app`.
+- **Decisions (2026-10-02):**
+  - **Who answered is hud's trusted follower (hud#736), not a player link per person.**
+    - The box's owner runs `hud share --role follower` and keeps the link with `illogical studio follower APP`. Every block of that app then uses it.
+    - Answers and approvals then carry `onBehalfOf: {name, via: "illogical"}`, with illogical's name made to fit hud's display-name rules (an email becomes its local part, at most 32 characters, never a role label).
+    - Without a follower link, hud records the box's owner.
+  - **The frame enters as the owner**, never with the follower's credential. Guests can't enter the frame.
+- **arugula-salad PRs it needs** (open, for Jake): hud#734 (refuse cross-site writes, needed before cookies are `None`), hud#735 (approve any pending gate), hud#736 (trusted follower), studio#291 (partitioned cookies at the door), studio#292 (personal tokens).
+- **Against the real thing** (a dev daemon on geek; box `ilg-m35-a` cloned from `arugula-box-template` with hud and the door built from those PRs; a throwaway studio from #292 on loopback; stub Anthropic in the box, as S22):
+  - **From the picker:** the block opened in 0.3 s, and the box was framed (cross-site, 200) and followed within 0.4–1.7 s.
+  - **A question:** the agent's question reached the daemon, the swarm's rail and the phone's sheet 2.2–3.8 s after the prompt. That includes the stub's turn; the follower's own lag was 13–16 ms.
+  - **An answer:** answered on the block, the card cleared in 34–39 ms and hud had it in 10–23 ms. The turn went on, and hud's tool result says "jhgaylor answered through illogical".
+  - **A release at `ship`:** `npm run release` in the box stopped there, the gate showed as attention, and *Approve* on the phone (Pixel 7 emulation) cleared it in 7–8 s. chant's ledger says `resolvedBy: "jhgaylor"`.
+    - The time from the release exiting to attention was 32 s, because the 2 GB box stopped answering HTTP for minutes while the release built (load 16, with the box's own steward running chant too). The gate showed 2.9 s after the follower got back in.
+  - **A daemon restart:** the block came back and was following in 139 ms, framed with a fresh link. The state directory holds no entry link.
+- **Found on the way:**
+  - **The follower link wasn't used from the picker.** A block opened there passed no `follower`, so hud recorded the owner. Fixed: a kept link is the default.
+  - **The IDE tests read the fake's file before it was written.** This showed up on macOS CI. They now wait for the file.
+  - **A studio box under a release build can't serve HTTP for minutes.** The follower retries with backoff and catches up when the box answers.
+  - **Studio's routes only take names like `app-xxxxxxxx`,** so the throwaway studio ran with that check relaxed.
+  - **The box can't reach a studio on the host** (wisp's firewall), so the box was enrolled from the host side.
+- **Not covered:**
+  - Jake's real studio (it needs studio#291/#292 and hud#734–#736 deployed, and a token from it);
+  - a real phone;
+  - a second device;
+  - WebKit;
+  - planter's boxes on Fountain.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
