@@ -18,12 +18,16 @@ import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NO
 import { Avatar } from "../ui/people";
 import { MenuLayer, openMenu } from "../ui/menu";
 import { usePhone, useSubscribe } from "../ui/hooks";
-import { Field, type FieldPane } from "./field";
+import { Field, type FieldHooks, type FieldPane, type SwarmScene } from "./field";
 import { FollowView, appName } from "./follow";
 import { DiffCard } from "../ui/diff-card";
 import { activityOf, bundleOf, cardTitle, followable, GROUPINGS, groupOf, isPresence, kindOf, KINDS, REASON_COL, reasonOf, type GroupBy } from "./model";
 
 const BY_KEY = "illogical.swarm.by";
+const THEME_KEY = "illogical.swarm.theme";
+/** M41: how the swarm is drawn. Blocks is the field; the city is 3D. */
+export type Theme = "blocks" | "city";
+export const THEMES: Theme[] = ["blocks", "city"];
 /** A done card leaves the rail by itself after this long. */
 export const DONE_MS = 15_000;
 /** An answered card (with its follow-up box) stays this long. */
@@ -35,6 +39,15 @@ function savedBy(): GroupBy {
     return v && GROUPINGS.includes(v) ? v : "project";
   } catch {
     return "project";
+  }
+}
+
+function savedTheme(): Theme {
+  try {
+    const v = localStorage.getItem(THEME_KEY) as Theme | null;
+    return v && THEMES.includes(v) ? v : "blocks";
+  } catch {
+    return "blocks";
   }
 }
 
@@ -83,6 +96,7 @@ export function SwarmView({
   useSubscribe((fn) => fleet.subscribe(fn));
   const phone = usePhone();
   const [by, setBy] = useState<GroupBy>(savedBy);
+  const [theme, setTheme] = useState<Theme>(savedTheme);
   const [peek, setPeek] = useState<{ key: string; x: number; y: number; text: string } | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Done[]>([]);
@@ -90,7 +104,9 @@ export function SwarmView({
   const [following, setFollowing] = useState<string | null>(null);
   const [, tick] = useState(0);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const field = useRef<Field | null>(null);
+  const field = useRef<SwarmScene | null>(null);
+  /** What the scene was last fed, for a city that loads after. */
+  const fed = useRef<FieldPane[]>([]);
   const rail = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
   const prev = useRef<Map<string, FleetPane>>(new Map());
@@ -115,9 +131,10 @@ export function SwarmView({
   const onRail = new Map<string, string>();
   for (const b of shown) for (const p of b.panes) onRail.set(p.key, b.key);
 
-  // The field: made once, fed on every change.
+  // The scene: the field (blocks) or the city (M41, loaded when picked),
+  // made again when the theme changes, fed on every change.
   useLayoutEffect(() => {
-    const f = new Field(canvas.current!, {
+    const hooks: FieldHooks = {
       railW: () => (innerWidth < 760 ? 0 : 330),
       railH: () => (innerWidth < 760 ? 196 : 0),
       top: () => (bar.current?.getBoundingClientRect().bottom ?? 60) + 10,
@@ -125,22 +142,43 @@ export function SwarmView({
       open: (key) => handlers.current.open(key),
       hover: (key, x, y) => void handlers.current.hover(key, x, y),
       menu: (key, e) => handlers.current.menu(key, e),
-    });
-    field.current = f;
-    f.start();
-    const resize = () => f.resize();
+    };
+    let scene: SwarmScene | null = null;
+    let gone = false;
+    const resize = () => scene?.resize();
+    const begin = (s: SwarmScene) => {
+      scene = s;
+      field.current = s;
+      s.set(fed.current);
+      s.start();
+      (window as unknown as { __swarm?: SwarmScene }).__swarm = s;
+      tick((n) => n + 1);
+    };
+    if (theme === "city") {
+      void import("./city")
+        .then(({ City }) => {
+          if (!gone) begin(new City(canvas.current!, hooks));
+        })
+        .catch((e) => {
+          console.error("the city didn't load", e);
+          if (!gone) setTheme("blocks");
+        });
+    } else begin(new Field(canvas.current!, hooks));
     addEventListener("resize", resize);
-    (window as unknown as { __swarm?: Field }).__swarm = f;
     return () => {
-      f.stop();
+      gone = true;
+      scene?.stop();
+      if (field.current === scene) field.current = null;
       removeEventListener("resize", resize);
     };
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
-    field.current?.set(
-      panes.map((p): FieldPane => {
+    fed.current = panes.map((p): FieldPane => {
         const r = reasonOf(p);
+        const me = fleet.meOn(p.host);
+        const people = (p.watchers ?? []).filter((w) => w.who !== me).map((w) => ({ name: w.name, driving: p.driver?.who === w.who }));
+        if (p.driver && p.driver.who !== me && !people.some((x) => x.name === p.driver!.name)) people.push({ name: p.driver.name, driving: true });
         return {
           key: p.key,
           kind: kindOf(p),
@@ -152,15 +190,31 @@ export function SwarmView({
             : `%${p.id} ${p.info.current?.text ?? p.info.command ?? p.info.title ?? kindOf(p)}`,
           where: p.host,
           lastOut: p.info.activity?.last_ms ?? 0,
-          att: r ? { col: REASON_COL[r.kind], bundle: onRail.get(p.key) ?? null } : null,
+          att: r ? { col: REASON_COL[r.kind], bundle: onRail.get(p.key) ?? null, since: r.since_ms } : null,
+          id: p.id,
+          sub: by === "machine" ? (p.info.project?.name ?? groupOf(p, "project")) : p.host,
+          bps: p.stale ? 0 : (p.info.activity?.bps ?? 0),
+          started: p.info.current && p.info.current.ended_ms == null ? p.info.current.started_ms : null,
+          lastDur: p.info.last?.ended_ms != null ? p.info.last.ended_ms - p.info.last.started_ms : null,
+          lastExit: p.info.last?.exit ?? null,
+          people,
         };
-      }),
-    );
+      });
+    field.current?.set(fed.current);
   });
 
   useEffect(() => {
     field.current?.regroup();
   }, [by]);
+  const pickTheme = (t: Theme) => {
+    setTheme(t);
+    setPeek(null);
+    try {
+      localStorage.setItem(THEME_KEY, t);
+    } catch {
+      // not remembered
+    }
+  };
   const choose = (g: GroupBy) => {
     setBy(g);
     try {
@@ -274,8 +328,13 @@ export function SwarmView({
   const clusters = field.current?.clusters ?? [];
 
   return (
-    <div class={`swarm${phone ? " phone" : ""}`} data-swarm={by}>
-      <canvas ref={canvas} class="swarm-field" aria-label="Every pane, clustered" />
+    <div class={`swarm${phone ? " phone" : ""}`} data-swarm={by} data-theme={theme}>
+      <canvas
+        key={theme}
+        ref={canvas}
+        class={`swarm-field swarm-${theme}`}
+        aria-label={theme === "city" ? "Every pane as a building, each cluster a block" : "Every pane, clustered"}
+      />
       <div class="swarm-bar" ref={bar}>
         <div class="swarm-brand">
           <h1>
@@ -303,6 +362,16 @@ export function SwarmView({
             {GROUPINGS.map((g) => (
               <button key={g} data-g={g} aria-pressed={g === by} onClick={() => choose(g)}>
                 {g}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div class="swarm-seg-l">Theme</div>
+          <div class="swarm-seg" role="group" aria-label="Theme">
+            {THEMES.map((t) => (
+              <button key={t} data-theme-pick={t} aria-pressed={t === theme} onClick={() => pickTheme(t)}>
+                {t}
               </button>
             ))}
           </div>
@@ -360,8 +429,15 @@ export function SwarmView({
               </span>
             ))}
           </div>
+          {theme === "city" && <CityKey />}
           <div class="swarm-hint">
-            {phone ? "Pinch to zoom, drag to pan. Tap a pane to open it." : "Scroll to zoom. Drag to pan. Click a cluster name to dive in, a pane to open it."}
+            {theme === "city"
+              ? phone
+                ? "Drag to orbit, pinch to zoom. Tap a building to open it."
+                : "Drag to orbit, right-drag to pan, scroll to zoom. Click a block's name to fly to it, a building to open it."
+              : phone
+                ? "Pinch to zoom, drag to pan. Tap a pane to open it."
+                : "Scroll to zoom. Drag to pan. Click a cluster name to dive in, a pane to open it."}
           </div>
         </div>
         <div class="swarm-clusters" hidden>
@@ -383,6 +459,35 @@ export function SwarmView({
         </div>
       )}
     </div>
+  );
+}
+
+/** How to read the city (M41): what each thing it draws means. */
+function CityKey() {
+  return (
+    <details class="swarm-key" data-city-key>
+      <summary>How to read the city</summary>
+      <dl>
+        <dt>Height</dt>
+        <dd>How long its command has run (log scale). Keeps the last command's height when done.</dd>
+        <dt>Lit roof</dt>
+        <dd>Still running. Only things that finish get one.</dd>
+        <dt>Windows</dt>
+        <dd>Scrolling: printing now, faster for more. Still: printed lately. Dark: quiet.</dd>
+        <dt>Shape</dt>
+        <dd>Box finishes · drum runs until stopped · hexagon agent · pentagon editor · slab pull request or issue</dd>
+        <dt>Red roof</dt>
+        <dd>Its last command failed.</dd>
+        <dt>Beam</dt>
+        <dd>Needs you. Taller the longer it waits.</dd>
+        <dt>Marker</dt>
+        <dd>A teammate has it open; a cone while they type.</dd>
+        <dt>Lots</dt>
+        <dd>One per pane; rows are machines, in pane order. Only a regroup moves them.</dd>
+        <dt>Greyed</dt>
+        <dd>Its machine isn't connected.</dd>
+      </dl>
+    </details>
   );
 }
 

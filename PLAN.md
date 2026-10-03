@@ -2742,6 +2742,7 @@ One live view of every pane on every machine you (or your team) can see. Panes f
 3. **M25** (#39: every host in one page), then **M30** (#47: the team's swarm): done.
 4. **M26** (#40: the swarm view): done.
 5. **After the MVP:** editors, with **S17** (#41: done, below), **M27** (#42: VS Code blocks, done) and **M28** (#43: your editor in the swarm, done).
+6. **M41** (#116: themes, blocks and city): below.
 
 #### S16: swarm spike (summary cost, fleet connections, canvas)
 
@@ -3122,6 +3123,25 @@ S17's notes for M28:
   - **Extras:** `selection_changed` and `at_mentioned` let the web hand Claude Code lines from a follow view.
   - **Restarts:** Claude Code doesn't reconnect by itself, so a daemon restart must keep these WebSockets (S3's fd store, or a small process that outlives the daemon).
   - **Only Edit and Write** come this way; M29's hook still handles everything else.
+
+#### M41: swarm themes, blocks and city (#116)
+
+**Built 2026-10-03.** The swarm's bar has *Theme*: **blocks** (M26's field, the default) or **city**, the same panes in 3D, remembered per browser (`illogical.swarm.theme`). The mockup it came from: <https://claude.ai/artifact/J9usdMhboLiQPUjG4Pvkt1>.
+
+- **One scene interface.** `SwarmScene` (`set`, `regroup`, `fitAll`, `diveTo`, `start`/`stop`/`resize`, `clusters`, `screenOf`, `measure`) in `field.ts`; `Field` implements it, and so does `City` (`web/src/swarm/city.ts`). The view makes one or the other on a canvas of its own (a canvas with a 2D context can't take WebGL) and feeds both the same `FieldPane`s, which grew what the city needs: `id`, `sub` (the row: machine, or project when clustering by machine), `bps`, `started` (the running command's `started_ms`), `lastDur`, `lastExit`, `people` (watchers other than you, `driving` for the driver), `att.since`.
+- **What the city means (every channel one thing a pane reports).**
+  - A block is a cluster; its rows are machines; lots go in pane order, so a pane keeps its address and buildings move only on a regroup (or when panes come and go in its block).
+  - Height: how long its command has run, `0.45 + 1.4·log2(1 + s/8)` (13 at most), kept from `last` when it's done; while it waits on you (a reason newer than its start) it stops at `since`. Servers, logs, studio apps and editors (they run until stopped), and PRs and issues (not processes), stand low and fixed.
+  - A lit roof: a command still running (only kinds that finish). A red roof: the last one exited non-zero.
+  - Windows: scrolling while it prints (speed from `bps`), lit and still for a minute or two after `last_ms`, dark when quiet. The scroll is accumulated, so text stops where it was.
+  - Colour is kind (the field's `KINDS`); shape is lifecycle: box finishes, drum runs until stopped, hexagon agent, pentagon editor, slab PR or issue.
+  - A beam in the reason's colour on whatever has one, `3 + 9·log2(1 + s/20)` tall after `s` seconds waiting. A red wall around a block with a failure in it. Greyed, dark: its host isn't live. A marker over a building: a teammate with it open, a cone while they drive it.
+  - *How to read the city* (a `<details>` under the legend) says all of this on the page.
+- **Same behaviour as blocks.** Hover peeks (the view's peek), a click opens the pane (an editor that joined: follow), right-click is its menu, a block's name or plate flies to the block, *Show* and a notification's `#swarm=N` fly to the pane, *Fit* frames the whole city in what the bar and rail leave free (corners projected, distance searched) and keeps doing so until you orbit. Orbit, pan, zoom and pinch are three.js's `OrbitControls`; the camera's view offset centres it beside the rail (or above the phone's strip). Reduced motion: no scrolling windows or flights.
+- **Loading.** `three` (0.180, MIT; THIRD_PARTY.md) is imported only by `city.ts`, which the view imports when the city is picked: its own chunk (≈136 kB gzipped); blocks doesn't fetch it. If it fails to load, the view goes back to blocks.
+- **The synthetic fleet** (`swarmFake`) now has running and finished commands that start and stop, so the frame-rate check and screenshots show heights; its first pane is always on sam's machine (a random 40 sometimes had none, which made *clusters by project … remembered* fail about one run in twenty).
+- **Tests:** `web/e2e/swarm-city.spec.ts` (3): blocks is the default and three.js isn't fetched; the city draws the same clusters and pane count for the same grouping, regroups, is remembered across a reload, and goes back; three failed tests on one machine are one card and three beams, *Show* flies to the first, dismissing drops the beams; a building has height, peeks its last lines on hover and opens its tab on a click; a notification's link opens the city at its card and flies to the pane; on a phone the rail is a strip and a tap opens a building. `swarm-fps.spec.ts` adds the city at 500 panes (≥ 20 fps in headless Chromium's software WebGL; about 52–55 measured). The swarm, editor-swarm, team-swarm and fps specs pass.
+- **Left:** the city on real phones and GPUs. Agents: an agent block reports no `current`, so it stands low; Claude Code in a terminal is one long command, so its height is the session's length, not its turn's (no turn start is reported yet).
 
 ### TUI track (S19, M31–M32, added 2026-10-02)
 

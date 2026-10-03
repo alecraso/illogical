@@ -20,6 +20,17 @@ function wpick(o: Record<string, number>): string {
 const PROJECTS = { api: 9, web: 6, mobile: 4, infra: 5, docs: 4, dotfiles: 2, "": 8 };
 const MACHINES = { workstation: 8, laptop: 5, "build-01": 3, "build-02": 3, "build-03": 3, "build-04": 2, "sandbox-a": 2, "team-box": 3 };
 const KINDW = { shell: 5, build: 3, test: 3, agent: 3, server: 2, logs: 2, editor: 2 };
+/** How long a command of each kind runs (s), for the city's heights (M41). */
+const DUR: Partial<Record<WorkKind, [number, number]>> = { shell: [1, 25], build: [25, 260], test: [15, 160], agent: [60, 1500] };
+
+/** A command: running (no end) or finished `ago` seconds ago. */
+function cmdInfo(text: string, kind: WorkKind, running: boolean) {
+  const [a, b] = DUR[kind] ?? [5, 60];
+  const dur = rnd(a, b) * 1000;
+  const now = Date.now();
+  const started = running ? now - rnd(0.05, 0.9) * dur : now - dur - rnd(30, 900) * 1000;
+  return { text, cwd: null, exit: running ? null : Math.random() < 0.08 ? 1 : 0, started_ms: started, ended_ms: running ? null : started + dur, start: 0, end: null };
+}
 const CMDS: Record<WorkKind, string[]> = {
   shell: [""],
   build: ["cargo build --release", "cargo clippy --all-targets", "npm run build"],
@@ -39,15 +50,18 @@ export function fakeSwarm(fleet: Fleet, n: number): () => void {
   for (let i = 0; i < n; i++) {
     const project = wpick(PROJECTS);
     const kind = wpick(KINDW) as WorkKind;
-    const host = project === "infra" && Math.random() < 0.5 ? "team-box" : wpick(MACHINES);
+    // The first is always on the teammate's machine, so every grouping by
+    // person has all three owners (a random 40 sometimes had none of sam's).
+    const host = i === 0 ? "sandbox-a" : project === "infra" && Math.random() < 0.5 ? "team-box" : wpick(MACHINES);
     const cmd = pick(CMDS[kind]);
     const info = {
       id: i + 1,
       cwd: project ? `/home/fake/src/${project}` : pick(["/home/fake/scratch", "/tmp/x", "/home/fake/Downloads"]),
       command: cmd || null,
       running: true,
-      current: null,
-      last: null,
+      // M41: what the city stands on: a command running, or the last one.
+      current: DUR[kind] && Math.random() < 0.45 ? cmdInfo(cmd || "ls", kind, true) : null,
+      last: DUR[kind] && Math.random() < 0.8 ? cmdInfo(cmd || "ls", kind, false) : null,
       attention: "idle",
       type: "terminal",
       host: null,
@@ -77,7 +91,18 @@ export function fakeSwarm(fleet: Fleet, n: number): () => void {
   const t = setInterval(() => {
     for (const p of panes) {
       const a = p.info.activity!;
-      if (Math.random() < 0.05) a.bps = a.bps ? 0 : Math.round(rnd(50, 5000));
+      const kind = p.info.kind as WorkKind;
+      const cur = p.info.current;
+      // Commands finish and start, so heights grow and fall.
+      if (cur && DUR[kind] && Math.random() < 0.01) {
+        p.info.last = { ...cur, ended_ms: Date.now(), exit: Math.random() < 0.08 ? 1 : 0 };
+        p.info.current = null;
+        a.bps = 0;
+      } else if (!cur && DUR[kind] && Math.random() < 0.01) {
+        p.info.current = cmdInfo(p.info.command || "ls", kind, true);
+        p.info.current.started_ms = Date.now();
+      }
+      if (Math.random() < 0.05) a.bps = a.bps || !p.info.current && DUR[kind] ? 0 : Math.round(rnd(50, 5000));
       if (a.bps) a.last_ms = Date.now();
     }
     fleet.inject(panes);

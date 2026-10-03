@@ -751,6 +751,21 @@ the daemon stopping, crashing, or the machine rebooting:
   send an agent its next instruction. Hover a tile to peek at its last
   lines, click it to open it (an editor that joined: follow it). On a
   phone the cards are a strip along the bottom. `just fake-fleet` runs three throwaway machines to try it on.
+- **Swarm themes** (M41). *Theme* in the swarm's bar picks how it's
+  drawn: *blocks* (the field above, the default) or *city*, the same panes
+  in 3D, remembered per browser. In the city a cluster is a block, its
+  rows are machines, and each pane keeps its lot (in pane order) until you
+  regroup. A building's height is how long its command has run (log
+  scale), kept after it's done; a lit roof means still running; its
+  windows scroll while it prints, stay lit a while after, and go dark when
+  it's quiet; colour is kind, and shape says whether it finishes (box),
+  runs until stopped (drum), is an agent (hexagon), an editor (pentagon)
+  or a pull request or issue (slab). A red roof is a failed last command,
+  a beam is something that needs you (taller the longer it waits), a
+  marker over a building is a teammate with it open (a cone while they
+  type). The rail, hover peeks, click to open, *Show* and notification
+  links work as in blocks. *How to read the city* under the legend says
+  all this on the page. three.js loads only when the city is picked.
 - **Tools for any agent** (M16, MCP). Claude Code, Codex or any MCP client
   gets illogical as tools: `run` a command in a pane you can watch and
   take over (here, on a throwaway VM, or a sandbox; it outlives the
