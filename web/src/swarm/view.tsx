@@ -519,7 +519,7 @@ const KEYS: Record<Exclude<Theme, "blocks">, [string, string][]> = {
     ["Red cap", "That command failed."],
     ["Thin line", "Runs until stopped: a server, log tail, studio app or editor."],
     ["Band", "Needs you: from when it started waiting until now, with how long past the now edge."],
-    ["Dot", "A teammate has it open; ringed while they type. A grey lane: its machine isn't connected."],
+    ["Dot", "A teammate has it open; ringed while they type, faintly while they drive it. A grey lane: its machine isn't connected."],
   ],
 };
 
