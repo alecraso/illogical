@@ -231,6 +231,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/auth/passkey/login", post(passkey::login_start))
         .route("/auth/passkey/login/finish", post(passkey::login_finish))
         .route("/api/me", get(api::me))
+        .route("/api/me/name", post(api::set_name))
         .route("/api/devices", get(api::devices).post(api::enroll))
         .route("/api/devices/{id}", get(api::device))
         .route("/api/devices/{id}/approve", post(api::approve))

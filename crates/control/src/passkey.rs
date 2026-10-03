@@ -44,9 +44,10 @@ const AT: u8 = 0x40;
 
 #[derive(Clone)]
 enum Purpose {
-    /// Register: for this account, or a new one.
+    /// Register: for this account, or a new one by this name (#102).
     Register {
         account: Option<String>,
+        name: String,
     },
     Login,
 }
@@ -101,24 +102,34 @@ fn same_origin(app: &App, headers: &HeaderMap) -> Result<(), ApiError> {
     }
 }
 
+#[derive(Deserialize, Default)]
+pub struct Start {
+    /// A new account's name: what teammates see (#102).
+    #[serde(default)]
+    name: Option<String>,
+}
+
 pub async fn register_start(
     State(app): State<Arc<App>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    body: Option<Json<Start>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     same_origin(&app, &headers)?;
     let account = session_of(&app, &headers).await;
-    if account.is_none() {
-        // A new account each time: limited.
-        app.limits.check(crate::limit::ACCOUNTS, app.limits.client_ip(peer, &headers))?;
-    }
-    let login = match &account {
-        Some(a) => app.db.account(a)?.map(|x| x.login).unwrap_or_default(),
-        None => String::new(),
+    let name = match &account {
+        Some(a) => app.db.account(a)?.map(|x| x.name).unwrap_or_default(),
+        None => {
+            let asked = body.and_then(|Json(b)| b.name).unwrap_or_default();
+            let name = crate::api::display_name(&asked).map_err(|_| bad("your name, as teammates will see it"))?;
+            // A new account each time: limited.
+            app.limits.check(crate::limit::ACCOUNTS, app.limits.client_ip(peer, &headers))?;
+            name
+        }
     };
     let user_id = illogical_e2e::random::<16>().to_vec();
-    let challenge = app.passkeys.issue(Purpose::Register { account: account.clone() });
-    let name = if login.is_empty() { "illogical".to_owned() } else { login };
+    let challenge = app.passkeys.issue(Purpose::Register { account: account.clone(), name: name.clone() });
+    let name = if name.is_empty() { "illogical".to_owned() } else { name };
     Ok(Json(json!({
         "challenge": challenge,
         "rp": { "id": rp_id(&app), "name": "illogical" },
@@ -220,7 +231,7 @@ async fn register(
 ) -> Result<(String, Option<header::HeaderValue>), ApiError> {
     same_origin(app, headers)?;
     let (cd, _) = client_data(app, &r.client_data, "webauthn.create")?;
-    let Some(Purpose::Register { account }) = app.passkeys.take(&cd.challenge) else {
+    let Some(Purpose::Register { account, name }) = app.passkeys.take(&cd.challenge) else {
         return Err(bad("that request expired; try again"));
     };
     let att: Cbor = ciborium::from_reader(B64.decode(&r.attestation).map_err(|_| bad("bad attestation"))?.as_slice())
@@ -248,6 +259,7 @@ async fn register(
         Some(a) => (a, None),
         None => {
             let a = app.db.account_for("passkey", &r.id, "", &auth::new_account_id(), now)?;
+            app.db.set_name(&a, &name)?;
             (a.clone(), Some(auth::start_session(app, &a)?))
         }
     };

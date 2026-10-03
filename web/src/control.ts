@@ -140,8 +140,9 @@ export async function passkeySignIn(): Promise<void> {
   });
 }
 
-/** Make a passkey: for the account signed in, or a new account. */
-export async function passkeyRegister(): Promise<void> {
+/** Make a passkey: for the account signed in, or a new account called
+ * `name` (#102: what teammates see). */
+export async function passkeyRegister(name?: string): Promise<void> {
   type Options = {
     challenge: string;
     rp: PublicKeyCredentialRpEntity;
@@ -151,7 +152,7 @@ export async function passkeyRegister(): Promise<void> {
     attestation: AttestationConveyancePreference;
     timeout: number;
   };
-  const o = await api<Options>("/auth/passkey/register", {});
+  const o = await api<Options>("/auth/passkey/register", name === undefined ? {} : { name });
   const cred = (await navigator.credentials.create({
     publicKey: { ...o, challenge: unb64u(o.challenge), user: { ...o.user, id: unb64u(o.user.id) } },
   })) as PublicKeyCredential | null;
@@ -226,7 +227,11 @@ function deviceName(): string {
 export class ControlSession {
   phase: Phase = "loading";
   error = "";
+  /** What to call the account here: its name, else its login. */
   login = "";
+  /** What other people see (#102): the name it chose, or its GitHub
+   * login. Empty for a passkey account made before names. */
+  name = "";
   account = "";
   /** Passkeys registered to the account. */
   passkeys = 0;
@@ -273,7 +278,7 @@ export class ControlSession {
     try {
       this.keys = await loadKeys();
       this.enrollment = await loadEnrollment(location.origin);
-      const me = await api<{ account: string; login: string; root: string | null; passkeys: number }>("/api/me").catch((e) => {
+      const me = await api<{ account: string; login: string; name?: string; root: string | null; passkeys: number }>("/api/me").catch((e) => {
         if (e instanceof HttpError && e.status === 401) return null;
         throw e;
       });
@@ -282,7 +287,8 @@ export class ControlSession {
         // daemons reachable directly while control is down.
         return this.set("signed-out");
       }
-      this.login = me.login || "you";
+      this.name = me.name ?? "";
+      this.login = this.name || me.login || "you";
       this.account = me.account;
       this.passkeys = me.passkeys;
       if (this.enrollment && this.enrollment.account !== me.account) {
@@ -562,7 +568,16 @@ export class ControlSession {
   }
 
   private myMember(): { account: string; root: string; name: string } {
-    return { account: this.account, root: this.enrollment!.root, name: word(this.login) };
+    // Never "you": teammates see this.
+    return { account: this.account, root: this.enrollment!.root, name: word(this.name || `account-${this.account.slice(0, 6)}`) };
+  }
+
+  /** Change what other people see (#102). */
+  async setName(name: string) {
+    const r = await api<{ name: string }>("/api/me/name", { name });
+    this.name = r.name;
+    this.login = r.name;
+    this.emit();
   }
 
   async createTeam(name: string) {
@@ -616,7 +631,7 @@ export class ControlSession {
     await this.refresh();
   }
 
-  /** Someone on control, by their login: whom to share with, and the root
+  /** Someone on control, by their login or name: whom to share with, and the root
    * device to pin for them (compare its fingerprint with them). */
   async person(login: string) {
     return api<{ account: string; name: string; root: string }>(`/api/people?login=${encodeURIComponent(login)}`);

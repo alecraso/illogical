@@ -1,5 +1,5 @@
 // M17: passkeys as a first-class sign-in. With no GitHub at all, a
-// stranger makes an account with a passkey, the browser becomes its first
+// stranger makes an account with a passkey (and a name, #102), the browser becomes its first
 // device, and after signing out the passkey signs them back in (Chrome's
 // virtual authenticator stands in for Touch ID).
 
@@ -49,9 +49,24 @@ test("make an account with a passkey, sign out, sign back in", async ({ page }) 
   await page.goto("/");
   await expect(page.locator("[data-signin=github]")).toHaveCount(0);
   await page.locator("[data-signup=passkey]").click();
+  // #102: a name first, what teammates see.
+  await expect(page.locator("[data-signup-go]")).toBeDisabled();
+  await page.locator("[data-signup-name]").fill("  Ada   Lovelace ");
+  await page.locator("[data-signup-go]").click();
   await expect(page.getByRole("heading", { name: "Add a machine" })).toBeVisible();
   const first = await page.evaluate(() => ({ account: window.__illogical.control!.account, root: window.__illogical.control!.enrollment!.root }));
   expect(first.root).toBe(await page.evaluate(() => window.__illogical.control!.keys.id));
+  expect(await page.evaluate(() => window.__illogical.control!.name)).toBe("Ada Lovelace");
+  // Others find them by it, and it changes later.
+  const found = await page.evaluate(() => fetch("/api/people?login=ada%20lovelace").then((r) => r.json()));
+  expect(found).toMatchObject({ account: first.account, name: "Ada Lovelace", root: first.root });
+  await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "devices" })));
+  await expect(page.locator("[data-account-name]")).toHaveText("Ada Lovelace");
+  await page.locator("[data-edit-name]").click();
+  await page.locator("[data-name-input]").fill("Ada");
+  await page.locator("[data-save-name]").click();
+  await expect(page.locator("[data-account-name]")).toHaveText("Ada");
+  expect(await page.evaluate(() => fetch("/api/me").then((r) => r.json()))).toMatchObject({ name: "Ada" });
 
   // Sign out (keeping this browser's device), then back in with the passkey.
   await page.evaluate(() => fetch("/auth/logout", { method: "POST" }));
