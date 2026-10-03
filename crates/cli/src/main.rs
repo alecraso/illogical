@@ -247,8 +247,9 @@ enum Command {
         split: Option<String>,
         #[arg(long)]
         session: Option<String>,
-        /// The daemon follows the box with the app's follower link
-        /// (`illogical studio follower`), so hud is told who answered.
+        /// Follow the box with the app's follower link (`illogical studio
+        /// follower`), so hud is told who answered. The default whenever a
+        /// link is kept for the app.
         #[arg(long)]
         follower: bool,
     },
@@ -1472,7 +1473,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             };
             let body = json!({
                 "type": "app",
-                "config": { "app": name, "follower": follower },
+                "config": if follower { serde_json::json!({ "app": name, "follower": true }) } else { serde_json::json!({ "app": name }) },
                 "split": split,
                 "session": session,
                 "from_pane": env_pane(),

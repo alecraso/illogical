@@ -376,8 +376,8 @@ the daemon stopping, crashing, or the machine rebooting:
   - **Who answered.** Viewers can't answer or approve; editors and the
     owner can. hud records whoever its session belongs to (the box's
     owner). With a follower credential (`hud share --role follower` in the
-    box, kept with `illogical studio follower APP`, and `illogical app APP
-    --follower`), answers and approvals also name who clicked
+    box, kept with `illogical studio follower APP`; every block of that app
+    then uses it), answers and approvals also name who clicked
     (`onBehalfOf`), and chant's ledger gets that name. hud takes names of
     at most 32 letters, digits, spaces and `-_.'`: an email address goes
     as its local part, other characters as `-`, and `owner` isn't sent.

@@ -1869,7 +1869,10 @@ async fn vsix() -> Response {
 pub async fn app_config(c: &serde_json::Value) -> Result<serde_json::Value, String> {
     let name = c["app"].as_str().filter(|n| !n.is_empty()).ok_or("an app block needs {\"app\": NAME}")?;
     let studio = crate::apps::studio::get().ok_or("no studio here")?;
-    let mut out = serde_json::json!({ "app": name, "follower": c["follower"].as_bool().unwrap_or(false) });
+    // With a follower link kept for the app, hud is told who answered,
+    // wherever the block was opened from (the picker passes nothing).
+    let follower = c["follower"].as_bool().unwrap_or_else(|| studio.follower(name).is_some());
+    let mut out = serde_json::json!({ "app": name, "follower": follower });
     match (c["box_url"].as_str(), c["studio"].as_str()) {
         (Some(b), Some(s)) => {
             out["box_url"] = b.into();

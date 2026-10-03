@@ -139,6 +139,8 @@ fn edits_wait_as_diffs_and_are_accepted_or_rejected_from_the_card() {
     // Accepted from the rail: Claude Code writes it.
     d.post("/api/attention/act", json!({ "action": "accept", "pane": pane }));
     wait_text(d, pane, "result FILE_SAVED");
+    // The fake prints the result before it writes the file.
+    wait_text(d, pane, &format!("wrote {}", file.display()));
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "print('hello')\nprint('again')\n");
     d.wait_for("the card to go", || info(d, pane)["diff"].is_null() && info(d, pane)["reason"].is_null());
     assert_eq!(info(d, pane)["answered"]["how"], "accepted");
@@ -301,6 +303,8 @@ async fn diffs_can_go_to_another_ide() {
     tokio::task::block_in_place(|| {
         say(d, pane, &format!("edit {} from claude\\n", file.display()));
         wait_text(d, pane, "result FILE_SAVED");
+        // The fake prints the result before it writes the file.
+        wait_text(d, pane, &format!("wrote {}", file.display()));
     });
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "from claude\n# from the other IDE\n");
     assert!(info(d, pane)["diff"].is_null(), "no card here: it went to the other IDE");
