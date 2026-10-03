@@ -423,7 +423,8 @@ pub struct OpenWorkspaceArgs {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct OpenPrArgs {
-    /// The pull request: its link, OWNER/REPO#N, or N (in dir's repository).
+    /// The pull request: its link (a Forgejo PR's or a GitLab MR's),
+    /// OWNER/REPO#N, GROUP/PROJECT!N (GitLab), or N (in dir's repository).
     pub pr: String,
     /// A clone of the repository on this host (absolute): what N means,
     /// and where diff and checkout fetch the PR's code.
@@ -714,7 +715,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "open_pr",
             title: "Show a pull request",
-            description: "Open a pull request on the user's Forgejo as a block beside a pane (M36): its checks, reviews and timeline, read with the user's own tea login, and what it waits on them for (a review asked of them, red checks, changes requested) as attention on the phone and the swarm. Returns the PR as text.",
+            description: "Open a pull request on the user's Forgejo (or a GitLab merge request) as a block beside a pane (M36, M39): its checks, reviews and timeline, read with the user's own tea (or glab) login, and what it waits on them for (a review asked of them, red checks, changes requested) as attention on the phone and the swarm. Returns the PR as text.",
             schema: schema_for_type::<OpenPrArgs>,
             read_only: false,
             destructive: false,

@@ -310,12 +310,17 @@ async fn act_one(
     }
     // A failed command typed again (M11), once its shell is idle.
     if req.action == Action::Rerun {
-        let (reason, _) = app
+        let (reason, block) = app
             .mux
             .api(|r| Api::Reason(pane, r))
             .await
             .flatten()
             .ok_or_else(|| format!("%{pane} has nothing to run again (it was dismissed, or ran since)"))?;
+        // M39: a forge block's failed checks run again through its forge.
+        if block && reason.actions.contains(&Action::Rerun) {
+            let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            return block_call(app, pane, &b, "rerun_checks", serde_json::json!({}), by).await.map(|_| ());
+        }
         let command = reason
             .command
             .filter(|_| reason.actions.contains(&Action::Rerun))

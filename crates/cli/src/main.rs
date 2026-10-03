@@ -220,8 +220,10 @@ enum Command {
         session: Option<String>,
     },
     /// Show a pull request as a block (M36: Forgejo, through your `tea`
-    /// login): its checks, reviews and timeline, and what it waits on you
-    /// for. `URL`, `OWNER/REPO#N`, or `N` in this directory's repository.
+    /// login; M39: a GitLab merge request, through your `glab` login, or
+    /// read-only without one): its checks, reviews and timeline, and what
+    /// it waits on you for. `URL`, `OWNER/REPO#N`, `GROUP/PROJECT!N`, or
+    /// `N` in this directory's repository.
     /// Prints the block, then the PR as text. `pr comment|review|merge %N`
     /// write to it; run by an agent (CLAUDECODE or AI_AGENT set), a write
     /// is a draft that waits for a person to send it.

@@ -1,8 +1,10 @@
 // Forge blocks (M36): a pull request on the person's Forgejo, read by the
-// daemon with their own `tea` login. M37: or an issue, with *Agent on this*
-// (a worktree and branch for it, an agent there, the two in a tab, and the
-// agent's PR joining them), the PRs that refer to it, and a new issue an
-// agent drafted, waiting on the card for a person to send. What waits on you comes first (a
+// daemon with their own `tea` login, or a GitLab merge request with their
+// `glab` login (M39; anonymously and read-only when glab has none). M37: or
+// an issue, with *Agent on this* (a worktree and branch for it, an agent
+// there, the two in a tab, and the agent's PR joining them), the PRs that
+// refer to it, and a new issue an agent drafted, waiting on the card for a
+// person to send. What waits on you comes first (a
 // review asked of you, red checks, changes asked for, a mention), then an
 // agent's drafts, the checks, the reviews and the timeline. An agent's
 // draft is answered on the card over the block (the daemon's ask): edit
@@ -31,15 +33,15 @@ interface Issue { item: Item; events: Event[]; linked: Linked[] }
 interface AgentLink { branch: string; worktree: string; base: string; block: PaneId; agent: string; at_ms: number; pr?: number; pr_url?: string; pr_block?: PaneId }
 interface NewIssue { title: string; body: string; by: string; agent: boolean; at_ms: number; status: "waiting" | "sent" | "dropped"; settled_by?: string; url?: string; error?: string }
 interface Draft {
-  id: string; method: "comment" | "review" | "merge"; body?: string; event?: string; style?: string; by: string; at_ms: number;
+  id: string; method: "comment" | "review" | "merge" | "rerun_checks"; body?: string; event?: string; style?: string; by: string; at_ms: number;
   status: "waiting" | "sent" | "dropped"; settled_by?: string; settled_ms?: number; url?: string; error?: string;
 }
 export interface ForgeState {
   provider: string; kind?: "pr" | "issue"; repo: string; number: number; api: string | null; login: string | null; host: string | null; dir: string | null;
-  loading: boolean; error: string | null; logins: { name: string; url: string; user: string }[]; me: string | null; pr: Pr | null;
+  loading: boolean; error: string | null; read_only?: string | null; logins: { name: string; url: string; user: string }[]; me: string | null; pr: Pr | null;
   issue?: Issue | null; link?: AgentLink | null; new?: NewIssue | null;
   wants: { kind: "review" | "failed" | "changes" | "mention" | "done" | "assigned"; why: string }[];
-  rerun: { api: boolean; url: string | null; note: string } | null; drafts: Draft[];
+  rerun: { api: boolean; url: string | null; note: string; pipeline?: string | null } | null; drafts: Draft[];
   updated_ms: number; polls: number; reads: number; watching?: boolean; said: string | null;
 }
 
@@ -97,6 +99,7 @@ function eventLine(e: Event): string {
 function draftWhat(d: Draft): string {
   if (d.method === "comment") return "a comment";
   if (d.method === "merge") return `a merge (${d.style ?? "merge"})`;
+  if (d.method === "rerun_checks") return "a rerun of the checks";
   return d.event === "approve" ? "an approval" : d.event === "request_changes" ? "a review asking for changes" : "a review";
 }
 
@@ -364,7 +367,7 @@ function PrBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeState 
   const role = client.role(session);
   // Writes are the owner's and editors' (they go out with the owner's
   // login, naming who sent them); the clone and the login are the owner's.
-  const mayWrite = role !== "viewer";
+  const mayWrite = role !== "viewer" && !s?.read_only;
   const mayOwn = role === "owner";
   const call = async (method: string, args: unknown, failure: string) => {
     setBusy(method);
@@ -384,11 +387,13 @@ function PrBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeState 
     }
     await call("review", { event, body: body || undefined }, "couldn't review");
   };
+  const gitlab = s?.provider === "gitlab";
   const merge = async () => {
-    const style = await askText("Merge: how?", "merge", "merge, rebase, rebase-merge, squash or fast-forward-only");
+    const style = await askText("Merge: how?", "merge", gitlab ? "merge or squash" : "merge, rebase, rebase-merge, squash or fast-forward-only");
     if (style?.trim()) await call("merge", { style: style.trim() }, "couldn't merge");
   };
   const refresh = () => void call("refresh", {}, "couldn't read the pull request");
+  const viewer = role === "viewer";
 
   if (!s || (s.loading && !s.updated_ms)) {
     return (
@@ -417,7 +422,7 @@ function PrBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeState 
             open ↗
           </a>
         )}
-        {mayWrite && (
+        {!viewer && (
           <button title="Read it again" disabled={busy !== null} onClick={refresh}>
             {busy === "refresh" ? "…" : "↻"}
           </button>
@@ -437,15 +442,21 @@ function PrBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeState 
               ))}
             </div>
           )}
-          {mayWrite && <button onClick={refresh}>Try again</button>}
+          {!viewer && <button onClick={refresh}>Try again</button>}
         </div>
+      )}
+      {s.read_only && (
+        <p class="dim ws-note" data-forge-read-only>
+          {s.read_only}
+        </p>
       )}
       {pr && it && (
         <div class="review-body ws-body">
           <div class="dim forge-meta">
             {it.author} wants to merge <code>{it.head.repo && it.head.repo !== s.repo ? `${it.head.repo}:` : ""}{it.head.branch}</code> into <code>{it.base.branch}</code>
             {" · "}
-            {s.login && `as ${s.me ?? "?"} (tea login ${s.login})`}
+            {s.login && `as ${s.me ?? "?"} (${gitlab ? s.login.replace(/^glab:/, "glab, ") : `tea login ${s.login}`})`}
+            {!s.login && s.read_only && "anonymously, read-only"}
             {it.labels.length > 0 && " · "}
             {it.labels.map((l) => (
               <span key={l} class="ws-tag">
@@ -475,6 +486,11 @@ function PrBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeState 
                         </button>
                       </>
                     )}
+                    {w.kind === "failed" && s.rerun?.api && mayWrite && (
+                      <button class="pri" data-rerun disabled={busy !== null} onClick={() => void call("rerun_checks", {}, "couldn't rerun the checks")}>
+                        {busy === "rerun_checks" ? "Retrying…" : "Rerun"}
+                      </button>
+                    )}
                     {w.kind === "failed" && s.rerun?.url && (
                       <a class="button" href={s.rerun.url} target="_blank" rel="noopener" title={s.rerun.note} data-rerun-link>
                         Open the run ↗
@@ -484,7 +500,7 @@ function PrBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeState 
                 </div>
               ))}
               {s.rerun && !s.rerun.api && <p class="dim ws-note">{s.rerun.note}</p>}
-              {!mayWrite && <p class="dim ws-note">You're watching this session: the owner or an editor answers.</p>}
+              {viewer && <p class="dim ws-note">You're watching this session: the owner or an editor answers.</p>}
             </section>
           )}
           {s.said && <p class="ws-said" data-forge-said>{s.said}</p>}

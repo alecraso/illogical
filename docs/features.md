@@ -388,7 +388,7 @@ the daemon stopping, crashing, or the machine rebooting:
     `source` and `agent` (who asks), for something that follows a page's
     agent from outside.
 
-- **Pull requests** (M36, Forgejo). A PR as a block beside the work on
+- **Pull requests** (M36, Forgejo; M39, GitLab). A PR as a block beside the work on
   it: its checks, reviews and timeline, and what it waits on you for.
   - **Opening one.** *Open pull request…* (a pane's menu, the `+`
     button's menu; *Pull request* in the phone's sheet), `illogical pr
@@ -432,7 +432,25 @@ the daemon stopping, crashing, or the machine rebooting:
     merge-base..head; *Checkout* opens a terminal there. The owner's.
   - `capture --text` is the PR as text; the block's log has the timeline,
     so `history` and `search` find its comments.
-  - **Not yet:** GitHub (M38), GitLab (M39), issues (M37), webhooks (M40).
+  - **GitLab merge requests** (M39). The same block for a merge request:
+    open it from its link (`…/GROUP/[SUB/]PROJECT/-/merge_requests/N`, in
+    a terminal too), `illogical pr URL`, `GROUP/PROJECT!N`, or N in a clone
+    whose remote is gitlab.com (or a `gitlab.` host). It reads with your
+    `glab` login's token for that host (`glab config get token --host H`,
+    memory only, asked again after a 401) when glab knows the host
+    (gitlab.com, its default host, or a host in its config). With none, a
+    public project still reads anonymously and the block says *read-only:
+    no glab login*: no discussions (GitLab keeps them for logins even on
+    public projects), no "you", and no writes. Checks are the head
+    pipeline's jobs (allowed failures and manual jobs don't count); a red
+    pipeline on your MR offers *Rerun*, which retries it (`illogical rerun
+    %N`, the rail, the block). Reviews are each reviewer's state and the
+    approvals; *Approve* approves. *Request changes* posts your text as a
+    comment (GitLab's API can't set a reviewer's state). Merge is `merge`
+    or `squash`. *Diff* and *Checkout* fetch `refs/merge-requests/N/head`
+    and diff from `diff_refs.base_sha`, the merge base. A poll is one
+    conditional request when nothing moved (gitlab.com counts 304s too).
+  - **Not yet:** GitHub (M38), issues (M37), webhooks (M40).
 
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
