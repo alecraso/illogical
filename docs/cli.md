@@ -30,11 +30,15 @@ illogical diff                                # what changed here (a diff block;
 illogical diff %4 HEAD~3 HEAD                 # in %4's repository, on its machine: a range (one rev: against it)
 illogical view %4:src/main.rs:42              # a file block there, at line 42, followed live (PATH, mN:PATH)
 illogical rerun %3                            # type %3's failed command again, once its shell is idle
+illogical workspace ~/src/app [--env prod]    # a chant workspace block: members, records, gates (no dir: here)
+illogical call %6 approve                     # approve the gate it waits at, as you ('{"member","op","gate"}' for another)
+illogical call %6 refresh                     # read it again now (it reads by itself when git says something changed)
 illogical editors                             # editors in the swarm: VS Code, Cursor, nvim, editor blocks
 illogical editors install                     # illogical's extension into VS Code or Cursor here (--with cursor)
 illogical editors vsix -o illogical.vsix      # ...or its VSIX, to install by hand
 illogical ide                                 # illogicald as Claude Code's IDE: its port, where diffs go
 illogical ide --diffs "Visual Studio Code"    # send Claude Code's diffs to that IDE instead (illogical: back)
+illogical shell-env [--refresh]               # the PATH blocks that run your tools get (your shell's; --refresh: read it again)
 illogical describe %4                         # any block: type, place, state
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
@@ -134,6 +138,7 @@ The tools:
 | `read_file` | A text file on this host or a pane's machine, paged | yes |
 | `show_changes` | A diff block beside a pane: what changed in its repository (`rev_a`, `rev_b`); returns the files with +/− | no |
 | `show_file` | A file block beside a pane, at a `line`, followed live | no |
+| `open_workspace` | A chant workspace block beside a pane (`dir`, `env`); returns its members and the gates waiting | no |
 
 Resources: `illogical://history`, and the templates
 `illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and

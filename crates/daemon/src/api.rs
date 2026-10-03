@@ -67,6 +67,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/drivers", get(drivers))
         .route("/api/panes/{id}/diff", get(diff_of))
         .route("/api/ide", get(ide_get).put(ide_set))
+        .route("/api/hosts/self/shell-env", get(shell_env_get))
+        .route("/api/hosts/self/shell-env/refresh", post(shell_env_refresh))
         .route("/api/editors", get(editors))
         .route("/api/editors/vsix", get(vsix))
         .route("/api/ide/mention", post(ide_mention))
@@ -333,6 +335,18 @@ async fn act_one(
         .await
         .flatten()
         .ok_or_else(|| format!("%{pane} doesn't want anything (it was answered, or dismissed)"))?;
+    // A gate (M34): approve it, through the block that read it.
+    if let Some(g) = reason.gate.filter(|_| reason.kind == illogical_proto::ReasonKind::Gate) {
+        if req.action != Action::Allow {
+            return Err(format!("%{pane} waits at a gate: approve it (allow) or dismiss it"));
+        }
+        if req.id.as_ref().is_some_and(|id| *id != g.key()) {
+            return Err(format!("%{pane} now waits at another gate (that one was approved)"));
+        }
+        let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+        let args = serde_json::json!({ "key": g.key() });
+        return block_call(app, pane, &b, "approve", args, by).await.map(|_| ());
+    }
     let ask = reason.ask.ok_or_else(|| format!("%{pane} isn't asking anything: dismiss it"))?;
     let id = req.id.clone().unwrap_or(ask.id.clone());
     if id != ask.id {
@@ -618,9 +632,18 @@ async fn block_call(
     let waiting = b.waiting();
     let id = args["id"].as_str().map(str::to_owned);
     // The transcript names whoever isn't its owner (the owner's own
-    // answers go unremarked, as before M29).
-    let name = by.as_ref().filter(|d| d.who != "owner").map(|d| d.name.as_str());
+    // answers go unremarked, as before M29). A gate's ledger names whoever
+    // approved it, the owner too, by their illogical name (#75).
+    let gate = b.kind() == illogical_proto::BlockType::Workspace;
+    let name = by.as_ref().filter(|d| gate || d.who != "owner").map(|d| d.name.as_str());
     let out = b.call_by(method, args.clone(), name).await?;
+    if gate && method == "approve" {
+        // Its card closes saying who, and the audit log says so.
+        if let (Some(by), Ok(g)) = (by, serde_json::from_value::<illogical_proto::Gate>(out["gate"].clone())) {
+            app.mux.send(Cmd::Api(Api::Answered(pane, by, g.key(), "approved".into(), g.headline())));
+        }
+        return Ok(out);
+    }
     let how = match method {
         "approve" if args["option"].as_str().is_some_and(|o| o.starts_with("always")) => "allowed always",
         "approve" => "allowed",
@@ -1738,6 +1761,37 @@ async fn ide_set(
     let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here (--no-claude-ide)"))?;
     ide.set_diffs_to(Some(req.diffs)).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) })))
+}
+
+/// `GET /api/hosts/self/shell-env` (#74): the user's shell environment
+/// blocks that run the user's tools get here, waiting for it if it's still
+/// being resolved. Its `PATH` and the names of the rest.
+async fn shell_env_get(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    let s = &app.mux.shell_env;
+    let r = s.local().await;
+    Ok(Json(serde_json::json!({
+        "shell": s.shell(),
+        "ok": r.error.is_none(),
+        "error": r.error,
+        "ms": r.took.as_millis() as u64,
+        "path": r.get("PATH"),
+        "vars": r.vars.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+    })))
+}
+
+/// `POST /api/hosts/self/shell-env/refresh` (#74): resolve it again (here,
+/// and on each machine when next needed), after changing an rc file.
+async fn shell_env_refresh(
+    state: AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    state.0.mux.shell_env.refresh();
+    shell_env_get(state, who).await
 }
 
 fn owner_only(who: &Option<axum::Extension<crate::acl::Principal>>) -> Res<()> {

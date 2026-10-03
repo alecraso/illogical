@@ -201,6 +201,24 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
+    /// Show a chant workspace as a block (M34): its members as cards to
+    /// open shells, agents and diffs on, its records, and the gates waiting
+    /// for a person, which are attention you approve (`call %N approve`).
+    /// Read through the workspace's own chant. Prints the block, then its
+    /// members and gates.
+    Workspace {
+        /// The workspace root, holding chant.workspace.json [default: here].
+        dir: Option<String>,
+        /// The environment whose gates and releases to read.
+        #[arg(long, default_value = "local")]
+        env: String,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`.
+        #[arg(long)]
+        split: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Type a pane's failed command again (M24's `failed`), once its shell
     /// is waiting at its prompt.
     Rerun { pane: Option<Pane> },
@@ -247,6 +265,13 @@ enum Command {
     Ide {
         #[arg(long)]
         diffs: Option<String>,
+    },
+    /// The shell environment blocks that run your tools get (your login
+    /// shell's, read once): its PATH. `--refresh` reads it again, after
+    /// you change an rc file.
+    ShellEnv {
+        #[arg(long)]
+        refresh: bool,
     },
     /// Start an agent block (Claude Code by default) and send it a prompt;
     /// prints its block. Then: `wait %N --idle`, `tail %N`, `call %N approve`.
@@ -1250,6 +1275,41 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 println!("%{}", v["block"]);
             }
         }
+        Command::Workspace { dir, env, split, session } => {
+            let root = absolute(dir.as_deref().unwrap_or("."))?;
+            let body = json!({
+                "type": "workspace",
+                "config": { "root": root, "env": env },
+                "split": split_of(split.as_deref())?,
+                "local": true,
+                "session": session,
+                "from_pane": env_pane(),
+            });
+            let block = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?["block"].as_u64().unwrap_or(0);
+            // Its first read: four chant processes, a second or two.
+            let v = loaded(&sock, block)?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            println!("%{block}");
+            let st = &v["state"];
+            if let Some(e) = st["error"].as_str() {
+                bail!("{e}");
+            }
+            let members = st["members"].as_array().map_or(0, Vec::len);
+            let gates = st["gates"].as_array().cloned().unwrap_or_default();
+            println!(
+                "{}: {members} members, {} records, {} waiting at a gate",
+                st["name"].as_str().unwrap_or("workspace"),
+                st["records"].as_array().map_or(0, Vec::len),
+                gates.len()
+            );
+            for g in gates {
+                let s = |k: &str| g[k].as_str().unwrap_or("").to_owned();
+                println!("  {}: {} waits at gate {}", s("member"), s("op"), s("gate"));
+            }
+        }
         Command::Rerun { pane } => {
             let pane = here(pane)?;
             let v = request(&sock, "POST", "/api/attention/act", Some(&json!({ "action": "rerun", "pane": pane })))?;
@@ -1578,6 +1638,30 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                     o["port"],
                     folders.join(", ")
                 );
+            }
+        }
+        Command::ShellEnv { refresh } => {
+            let v = match refresh {
+                true => request(&sock, "POST", "/api/hosts/self/shell-env/refresh", None)?.json()?,
+                false => request(&sock, "GET", "/api/hosts/self/shell-env", None)?.json()?,
+            };
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let shell = v["shell"].as_str().unwrap_or("?");
+            match v["error"].as_str() {
+                Some(e) => println!("{shell}: {e}; blocks get the daemon's environment"),
+                None => {
+                    println!("{shell} ({} ms)", v["ms"]);
+                    match v["path"].as_str() {
+                        Some(p) => println!("PATH={p}"),
+                        None => println!("PATH is the daemon's"),
+                    }
+                    let vars: Vec<&str> =
+                        v["vars"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    println!("also sets: {}", vars.into_iter().filter(|k| *k != "PATH").collect::<Vec<_>>().join(" "));
+                }
             }
         }
         Command::Machines => {

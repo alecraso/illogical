@@ -170,6 +170,37 @@ the daemon stopping, crashing, or the machine rebooting:
     runs on the block's host (through the provider on a VM) and never
     takes the repository's lock. `capture --text` is the unified diff, or
     the file.
+- **chant workspaces** (M34). A [chant](https://intentius.io/chant)
+  workspace (a directory with a `chant.workspace.json`) as a block:
+  `illogical workspace [DIR] [--env E]`, *Open as workspace* in a pane's
+  menu or the directory picker when the directory holds one, or
+  `open_workspace` from MCP. It shows the gates waiting for a person first,
+  then a card per member (its kind, why chant doesn't read it, errors and
+  warnings from `check`, releases, gates), then the records with what
+  blocks them and pin drift.
+  - **Members.** *Shell*, *Agent* and *Changes* open a terminal, a Claude
+    Code agent block or a diff block in the member's directory, beside the
+    workspace. A nested workspace's *Open* opens it as a block of its own.
+  - **Gates are attention.** An op stopped at a gate (`chant run` exits 3)
+    is `needs_input`: "delivery: ship waits at gate approve-ship". It's a
+    card on the swarm's rail (one per workspace), first in the phone's
+    *Needs you* list, and a push notification. *Approve* there or on the
+    block runs `chant approve <op> <gate> --approver <you>` in the member's
+    directory, so chant's ledger says who: the owner by their illogical
+    name, an editor by theirs. A shared session's viewers see the gate and
+    can't approve it. *Run op* opens a pane running `chant run <op>`, which
+    walks through once the gate is approved. Approvals are in the block's
+    history (`illogical history`) and the audit log, with who.
+  - **Read through chant.** The block runs the workspace's own chant
+    (`$CHANT`, else `node_modules/.bin` there or in a parent, else `PATH`,
+    with your shell's environment) for `workspace ls`, `check`, `records`
+    and `status`, and says so when there's none ("run npm install"). A
+    read costs a few CPU-seconds, so it reads on open, on *Refresh* and
+    after an approval, and otherwise only when git says something changed
+    (HEAD, `chant/lifecycle`, the working tree): every 3 seconds while
+    it's drawn, every 5 when it isn't (on this host; on a VM only while
+    drawn). It never fetches, so a gate reached in CI shows once someone
+    fetches `chant/lifecycle`. `illogical call %N approve|refresh|member|state`.
 - **Your editor in the swarm** (M28). VS Code, Cursor or nvim on any of
   your machines shows up in the swarm beside your panes: a tile of kind
   editor in its project, with its file, its errors and unsaved files, and

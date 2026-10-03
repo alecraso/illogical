@@ -151,7 +151,8 @@ loginctl enable-linger $USER
        "ask": [
          "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__close",
          "mcp__illogical__open_port", "mcp__illogical__start_agent", "mcp__illogical__agent_respond",
-         "mcp__illogical__show_changes", "mcp__illogical__show_file", "mcp__illogical__open_conversation"
+         "mcp__illogical__show_changes", "mcp__illogical__show_file", "mcp__illogical__open_conversation",
+         "mcp__illogical__open_workspace"
        ]
      }
    }

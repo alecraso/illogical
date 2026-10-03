@@ -33,6 +33,7 @@ export const REASON_COL: Record<Reason["kind"], [number, number, number]> = {
   errors: [255, 84, 104],
   conflict: [255, 140, 60],
   diff: [185, 140, 255],
+  gate: [255, 192, 77],
 };
 
 /** An editor that joined the swarm (M28): no tab, no PTY. Following it
@@ -141,6 +142,8 @@ export function cardTitle(r: Reason, n: number, machines: string[], agent?: stri
       return n > 1 ? `${n} merge conflicts` : "Merge conflict";
     case "diff":
       return n > 1 ? `${n} edits wait` : "Claude Code wants to edit";
+    case "gate":
+      return n > 1 ? `${n} workspaces wait at gates` : "Waits at a gate";
   }
 }
 

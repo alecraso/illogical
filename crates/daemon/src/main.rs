@@ -15,6 +15,7 @@ mod dial;
 mod e2e;
 mod editor;
 mod fs;
+mod gate;
 mod heap;
 mod history;
 mod holder;
@@ -40,6 +41,7 @@ mod sandbox;
 mod seal;
 mod server;
 mod share;
+mod shellenv;
 mod shellint;
 mod shim;
 mod sites;
@@ -48,6 +50,7 @@ mod sync;
 mod sys;
 mod tailscale;
 mod tls;
+mod workspace;
 
 use std::{net::SocketAddr, path::PathBuf};
 

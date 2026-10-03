@@ -1,0 +1,93 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json",
+  "at": null,
+  "chant": "0.87.0",
+  "contract": 1,
+  "groups": [],
+  "members": [
+    {
+      "because": "a Node HTTP server with its own Dockerfile and test; no app kind exists yet (#2535)",
+      "dir": "app",
+      "kind": "other",
+      "name": "app",
+      "readable": true,
+      "reason": null,
+      "records": [],
+      "roles": [],
+      "upstream": null
+    },
+    {
+      "because": null,
+      "dir": "delivery",
+      "kind": "chant",
+      "name": "delivery",
+      "readable": true,
+      "reason": null,
+      "records": [],
+      "roles": [],
+      "upstream": null
+    },
+    {
+      "because": "a placeholder until a hud client package is published to vendor; the kind and upstream come with it",
+      "dir": "design-client",
+      "kind": "other",
+      "name": "design-client",
+      "readable": true,
+      "reason": null,
+      "records": [],
+      "roles": [
+        {
+          "name": "design-app",
+          "path": null
+        }
+      ],
+      "upstream": null
+    },
+    {
+      "because": "the design data member; decisions pin its files by hash, and its kind comes with #2549",
+      "dir": "design",
+      "kind": "other",
+      "name": "design",
+      "readable": true,
+      "reason": null,
+      "records": [
+        {
+          "kind": "session",
+          "name": "session",
+          "path": "design/sessions/session.kind.mjs",
+          "reason": null
+        }
+      ],
+      "roles": [],
+      "upstream": null
+    }
+  ],
+  "summary": {
+    "groups": 0,
+    "matches": 0,
+    "members": 4,
+    "unreadable": 0
+  },
+  "workspace": {
+    "file": "chant.workspace.json",
+    "minReader": null,
+    "name": "reference",
+    "pins": [],
+    "records": [
+      {
+        "kind": "decision",
+        "name": "decision",
+        "path": "decisions/decision.kind.mjs",
+        "reason": null
+      },
+      {
+        "kind": "work",
+        "name": "work",
+        "path": "work/work.kind.mjs",
+        "reason": null
+      }
+    ],
+    "root": ".",
+    "schema": 1
+  }
+}

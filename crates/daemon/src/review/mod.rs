@@ -47,17 +47,42 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 /// provider.
 #[derive(Clone)]
 pub(crate) enum Runner {
-    Local { env: Vec<(String, String)>, home: PathBuf },
-    Machine { provider: Arc<dyn Provider>, sprite: String },
+    Local {
+        env: Vec<(String, String)>,
+        home: PathBuf,
+    },
+    /// `env`: set before `sh` there (the user's shell environment, #74).
+    Machine {
+        provider: Arc<dyn Provider>,
+        sprite: String,
+        env: Vec<(String, String)>,
+    },
 }
 
 impl Runner {
     pub fn of(ctx: &BlockCtx) -> Result<Self, String> {
         match (&ctx.sprite, &ctx.provider) {
             (None, _) => Ok(Runner::Local { env: ctx.env.clone(), home: ctx.home.clone() }),
-            (Some(sprite), Some(p)) => Ok(Runner::Machine { provider: p.clone(), sprite: sprite.clone() }),
+            (Some(sprite), Some(p)) => Ok(Runner::Machine { provider: p.clone(), sprite: sprite.clone(), env: vec![] }),
             (Some(_), None) => Err("this block's machine can't be reached: VM panes aren't set up".into()),
         }
+    }
+
+    /// As [`Runner::of`], with the user's shell environment over the
+    /// daemon's (#74): for blocks that run the user's tools (node from
+    /// mise or nvm, pyenv), which a pane would find. Waits for it the
+    /// first time; without it, the daemon's.
+    pub async fn user(ctx: &BlockCtx) -> Result<Self, String> {
+        Ok(match Runner::of(ctx)? {
+            Runner::Local { env, home } => {
+                let shell = ctx.shell_env.local().await;
+                Runner::Local { env: crate::shellenv::merge(&env, &shell, ctx.launch.exe.parent()), home }
+            }
+            Runner::Machine { provider, sprite, .. } => {
+                let env = ctx.shell_env.machine(&provider, &sprite).await.vars.clone();
+                Runner::Machine { provider, sprite, env }
+            }
+        })
     }
 
     pub fn local(&self) -> bool {
@@ -86,8 +111,11 @@ impl Runner {
                         .map_err(|e| format!("can't run sh: {e}"))?;
                     Ok((out.stdout, out.status.code()))
                 }
-                Runner::Machine { provider, sprite } => {
-                    let mut argv = vec!["env", "GIT_OPTIONAL_LOCKS=0", "sh", "-c", script, "sh"];
+                Runner::Machine { provider, sprite, env } => {
+                    let env: Vec<String> = env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                    let mut argv = vec!["env"];
+                    argv.extend(env.iter().map(String::as_str));
+                    argv.extend(["GIT_OPTIONAL_LOCKS=0", "sh", "-c", script, "sh"]);
                     argv.extend(args.iter().map(String::as_str));
                     provider.run(sprite, &argv).await.map_err(|e| format!("{e:#}"))
                 }

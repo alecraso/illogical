@@ -146,6 +146,9 @@ pub struct BlockEnv {
     pub mcp: Option<crate::mcp::Link>,
     /// This host's files, as `/api/fs` serves them (M7).
     pub fs: Arc<crate::fs::Scope>,
+    /// The user's shell environment (#74), for blocks that run the user's
+    /// tools: see [`crate::review::Runner::user`].
+    pub shell_env: Arc<crate::shellenv::ShellEnv>,
     /// The multiplexer, for a block that raises questions on itself (M35).
     pub cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
 }
@@ -175,6 +178,7 @@ pub struct BlockCtx {
     pub secrets: Secrets,
     pub mcp: Option<crate::mcp::Link>,
     pub fs: Arc<crate::fs::Scope>,
+    pub shell_env: Arc<crate::shellenv::ShellEnv>,
     cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
 }
 
@@ -204,6 +208,7 @@ impl BlockCtx {
             secrets: base.secrets,
             mcp: base.mcp,
             fs: base.fs,
+            shell_env: base.shell_env,
             cmds: base.cmds,
         }
     }
@@ -257,6 +262,18 @@ impl BlockCtx {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Attention(state, why.into()) });
     }
 
+    /// Ask for attention with a reason of its own (M34: a gate), or say
+    /// more about the same one.
+    pub fn reason(&self, state: Attention, reason: illogical_proto::Reason) {
+        let _ = self.notices.send(Notice { pane: self.id, what: What::Reason(state, reason) });
+    }
+
+    /// Let go of attention, if it's still for a reason of this kind (one
+    /// dismissed or replaced meanwhile is left alone).
+    pub fn clear(&self, kind: illogical_proto::ReasonKind) {
+        let _ = self.notices.send(Notice { pane: self.id, what: What::Clear(kind) });
+    }
+
     /// Something happened that the event stream should carry.
     pub fn event(&self, kind: illogical_proto::EventKind) {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Event(kind) });
@@ -283,6 +300,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::Remote => crate::remote::Remote::create(ctx, config),
         BlockType::Diff => crate::review::diff::Diff::create(ctx, config),
         BlockType::File => crate::review::file::FileView::create(ctx, config),
+        BlockType::Workspace => crate::workspace::Workspace::create(ctx, config),
         BlockType::App => crate::apps::AppBlock::create(ctx, config),
     }
 }

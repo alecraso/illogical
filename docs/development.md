@@ -25,7 +25,10 @@ release tarballs in `dist/`.
 `~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
 alone. `just check` is what CI runs; `just e2e` drives the system Chrome
 against throwaway daemons, or `just e2e https://home.<tailnet>.ts.net`
-against the running one. `just screenshots` regenerates the images in
+against the running one. `workspace.spec.ts` runs the real chant: its first run
+installs the pinned version into `web/e2e/fixtures/chant-workspace` with
+`npm ci` (CI doesn't run the browser tests; the daemon's own workspace
+tests use a stand-in chant). `just screenshots` regenerates the images in
 `site/img/` from a throwaway daemon with a scripted demo session.
 
 ## Releasing
