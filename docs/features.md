@@ -46,7 +46,7 @@ the daemon stopping, crashing, or the machine rebooting:
   777, 99), has an agent go quiet mid-command, or is told by a hook, shows a
   badge on its tab and pane (and in a "Needs you" list on the phone). A long
   command finishing while you're elsewhere shows "done". With *Notify this
-  device* on (session menu), the phone gets a push notification; tapping it
+  device* on (session menu; the phone's sheet), the phone gets a push notification; tapping it
   opens the pane.
   - **Why it wants you** (M24). Every pane that wants you says why: *ask*
     (an agent's question or permission request), *failed* (a command that

@@ -546,6 +546,57 @@ button {
   background: var(--raised);
 }
 
+/* Notifications in the sheet (#95, #96). */
+.sheet-note {
+  margin: 4px 12px 8px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.sheet-notify .copy-text {
+  margin: 4px 12px 8px;
+}
+
+.sheet-check {
+  display: inline-block;
+  min-width: 1.4em;
+  color: var(--accent);
+}
+
+/* Add to Home Screen, once (#96). */
+.install-hint {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 6px 24px #0008;
+  font-size: 13px;
+}
+
+.install-hint > span {
+  flex: 1;
+}
+
+.install-hint .primary {
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.install-hint-close {
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  font-size: 18px;
+  color: var(--dim);
+}
+
 .keybar {
   flex: none;
   display: flex;
@@ -3456,3 +3507,4 @@ button {
 .forge-actions {
   margin-top: 6px;
 }
+

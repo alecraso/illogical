@@ -6,7 +6,6 @@ import type { Cell } from "./cells";
 import { drag, startDrag, type Dragged, type Target } from "./drag";
 import { useSubscribe, usePhone } from "./hooks";
 import { askText, closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./menu";
-import { disablePush, enablePush, pushState, type PushState } from "../push";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
@@ -20,6 +19,7 @@ import { ConversationsLayer, pickConversation } from "./conversations";
 import { AppsLayer, pickApp } from "./apps";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
+import { agentNotifyItems, InstallHint, notificationItems } from "./notify";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -103,6 +103,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <AppsLayer />
       <SandboxesLayer />
       <PickerLayer />
+      {phone && state && <InstallHint />}
       <DragGhost />
       <ControlRequests client={client} />
       <ShareDialog client={client} />
@@ -962,49 +963,4 @@ function useReportFocus(client: Client, phone: boolean) {
       document.removeEventListener("visibilitychange", report);
     };
   }, [client, active, phone, client.connected]);
-}
-
-// ---------------------------------------------------------------- push
-
-let push: PushState = "unsupported";
-void pushState().then((s) => (push = s));
-
-/** M29: someone other than the owner chooses which agents they're told
- * about: this session's, or everything they may answer here ("this team's
- * agents" on a team daemon). The owner always is. */
-function agentNotifyItems(client: Client, session: number): MenuItem[] {
-  if (!client.state?.roles || client.role(session) === "viewer") return [];
-  const pref = client.notifyPref;
-  const set = (body: { session?: number; on: boolean }) => void client.setNotify(body);
-  return [
-    {
-      label: "Notify me about its agents",
-      checked: !!pref && (pref.all || pref.sessions.includes(session)),
-      run: () => set({ session, on: !(pref?.sessions.includes(session) ?? false) }),
-    },
-    {
-      label: "Notify me about every agent here",
-      checked: !!pref?.all,
-      run: () => set({ on: !pref?.all }),
-    },
-  ];
-}
-
-function notificationItems(client: Client): MenuItem[] {
-  if (push === "unsupported") return [{ label: "Notifications need HTTPS", disabled: true, run: () => {} }];
-  if (push === "denied") return [{ label: "Notifications are blocked", disabled: true, run: () => {} }];
-  return [
-    {
-      label: "Notify this device",
-      checked: push === "on",
-      run: async () => {
-        try {
-          push = push === "on" ? await disablePush() : await enablePush();
-        } catch (e) {
-          client.toast(String(e));
-        }
-        client.emit();
-      },
-    },
-  ];
 }

@@ -15,6 +15,7 @@ import { pickConversation } from "./conversations";
 import { pickApp } from "./apps";
 import { openSandboxes } from "./sandboxes";
 import { openPicker } from "./picker";
+import { NotifySection } from "./notify";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -119,6 +120,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             })}
           </section>
         ))}
+        <NotifySection client={client} session={client.session} />
         <div class="sheet-actions">
           <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
             New tab
