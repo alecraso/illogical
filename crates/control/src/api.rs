@@ -11,6 +11,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use illogical_e2e::{
     Cert, Kind, Revocation, Trust,
@@ -99,13 +100,18 @@ pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enrol
 #[derive(Deserialize)]
 pub struct RecoveryCerts {
     certs: Vec<Cert>,
+    /// New codes replace the old (#106): a revocation for each one still
+    /// good, signed by the device making the new ones.
+    #[serde(default)]
+    revocations: Vec<Revocation>,
 }
 
-/// The first device's recovery codes: certificates it signed for keys only
-/// the person holds (on paper). Control never sees the keys.
+/// Recovery codes: certificates a device signed for keys only the person
+/// holds (on paper). Control never sees the keys. The first device makes
+/// them; any device can make new ones, which retire the old.
 pub async fn add_recovery(State(app): State<Arc<App>>, s: Session, Json(b): Json<RecoveryCerts>) -> R {
-    if b.certs.len() > 4 {
-        return Err(err(StatusCode::BAD_REQUEST, "at most 4 recovery codes"));
+    if b.certs.is_empty() || b.certs.len() > 4 {
+        return Err(err(StatusCode::BAD_REQUEST, "one to 4 recovery codes"));
     }
     for c in &b.certs {
         if c.kind != Kind::Recovery || c.account != s.account {
@@ -113,8 +119,32 @@ pub async fn add_recovery(State(app): State<Arc<App>>, s: Session, Json(b): Json
         }
         approval_ok(&app, &s.account, c)?;
     }
+    let (trust, certs, revs) = trusted(&app, &s.account)?;
+    let now = trust.map(|t| t.evaluate(&certs, &revs)).unwrap_or_default();
+    for r in &b.revocations {
+        let ok = now.get(&r.device).is_some_and(|c| c.kind == Kind::Recovery)
+            && now.get(&r.by).is_some_and(|c| c.kind.connects() && r.account == s.account && r.signed_by(c));
+        if !ok {
+            return Err(err(StatusCode::FORBIDDEN, "that revocation doesn't check out"));
+        }
+    }
+    let old = now.devices.values().filter(|c| c.kind == Kind::Recovery).count();
+    let retired = now
+        .devices
+        .values()
+        .filter(|c| c.kind == Kind::Recovery && b.revocations.iter().any(|r| r.device == c.device))
+        .count();
+    if retired != old {
+        return Err(err(StatusCode::CONFLICT, "new recovery codes replace the old ones: revoke every one still good"));
+    }
     for c in &b.certs {
         app.db.put_device(c, true, now_ms())?;
+    }
+    for r in &b.revocations {
+        app.db.add_revocation(r)?;
+    }
+    if !b.revocations.is_empty() {
+        nudge(&app, &s.account);
     }
     Ok(Json(json!({})))
 }
@@ -125,10 +155,17 @@ pub async fn devices(State(app): State<Arc<App>>, s: Session) -> R {
     Ok(Json(json!({ "trust": trust, "certs": certs, "revocations": revs, "pending": pending })))
 }
 
-pub async fn device(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>) -> R {
-    let (cert, approved) =
-        app.db.device(&s.account, &id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such device"))?;
-    Ok(Json(json!({ "approved": approved, "cert": cert })))
+pub async fn device(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>) -> Result<Response, ApiError> {
+    let Some((cert, approved)) = app.db.device(&s.account, &id)? else {
+        // Turned down (#105): say by which device, for the one waiting.
+        let by = app.db.turned_down(&s.account, &id)?;
+        let body = match by {
+            Some(by) => json!({ "error": "this device's request was turned down", "turned_down": true, "by": by }),
+            None => json!({ "error": "no such device" }),
+        };
+        return Ok((StatusCode::NOT_FOUND, Json(body)).into_response());
+    };
+    Ok(Json(json!({ "approved": approved, "cert": cert })).into_response())
 }
 
 pub async fn approve(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>, Json(b): Json<Enroll>) -> R {
@@ -146,8 +183,20 @@ pub async fn approve(State(app): State<Arc<App>>, s: Session, Path(id): Path<Str
     Ok(Json(json!({ "approved": true })))
 }
 
-pub async fn reject(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>) -> R {
-    app.db.drop_pending(&s.account, &id)?;
+#[derive(Deserialize, Default)]
+pub struct Reject {
+    /// The device turning it down, to name to the one waiting.
+    #[serde(default)]
+    by: Option<String>,
+}
+
+pub async fn reject(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>, b: Option<Json<Reject>>) -> R {
+    let by = b.unwrap_or_default().0.by;
+    let name = match by {
+        Some(by) => app.db.device(&s.account, &by)?.filter(|(_, ok)| *ok).map(|(c, _)| c.name).unwrap_or_default(),
+        None => String::new(),
+    };
+    app.db.turn_down(&s.account, &id, &name, now_ms())?;
     Ok(Json(json!({})))
 }
 
