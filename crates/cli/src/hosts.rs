@@ -248,3 +248,57 @@ pub fn run(
     }
     Ok(())
 }
+
+/// What one host said to `--host all`.
+pub enum Answer {
+    Json(Value),
+    /// A sandbox that isn't running: not woken just to be asked.
+    Asleep,
+    Failed(String),
+    /// Nothing by the deadline.
+    Silent,
+}
+
+/// `--host all` (#78): GET `path` on this daemon and every host on its list
+/// at once, each answer handed to `each` as it comes. A host still silent
+/// at `wait` (asleep without saying so, or unreachable) is reported as
+/// such and not waited for: its thread is left behind.
+pub fn each(
+    socket: PathBuf,
+    path: &str,
+    wait: std::time::Duration,
+    mut each: impl FnMut(&str, Answer),
+) -> anyhow::Result<()> {
+    let local = Target::Socket(socket.clone());
+    let list = request(&local, "GET", "/api/hosts", None)?.json()?;
+    let mut names = vec![list["this"].as_str().unwrap_or("this").to_owned()];
+    let (tx, rx) = std::sync::mpsc::channel();
+    for h in list["hosts"].as_array().into_iter().flatten() {
+        let Some(name) = h["name"].as_str() else { continue };
+        if h["transport"].as_str() == Some("provider") && h["status"].as_str().is_some_and(|s| s != "running") {
+            each(name, Answer::Asleep);
+            continue;
+        }
+        names.push(name.to_owned());
+    }
+    for (i, name) in names.iter().enumerate() {
+        let (tx, socket, name, path) = (tx.clone(), socket.clone(), name.clone(), path.to_owned());
+        std::thread::spawn(move || {
+            let t = if i == 0 { Ok(Target::Socket(socket)) } else { target(socket, Some(&name)) };
+            let v = t.and_then(|t| request(&t, "GET", &path, None)?.json());
+            let _ = tx.send((name, v));
+        });
+    }
+    drop(tx);
+    let until = std::time::Instant::now() + wait;
+    let mut left: Vec<String> = names;
+    while !left.is_empty() {
+        let Ok((name, v)) = rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now())) else { break };
+        left.retain(|n| *n != name);
+        each(&name, v.map(Answer::Json).unwrap_or_else(|e| Answer::Failed(format!("{e:#}"))));
+    }
+    for name in left {
+        each(&name, Answer::Silent);
+    }
+    Ok(())
+}

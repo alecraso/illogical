@@ -340,6 +340,14 @@ the daemon stopping, crashing, or the machine rebooting:
     sessions archived in the desktop app, and ones whose folder is gone
     (except the desktop app's, whose scratch folder goes with them, and
     comes back empty if you continue). *All* shows everything.
+  - **Every host's** (#78): with more than one host, the picker lists
+    each host's conversations under its name, then by folder, asking them
+    all at once over the fleet's connections and showing each as it
+    answers. A sandbox that's asleep isn't woken to be asked, and a host
+    that doesn't answer in 5 s says so. Picking another host's opens it
+    on that host and shows it there, where it continues.
+    `illogical claude ls --host all` does the same in a terminal;
+    `illogical --host NAME claude open ID` opens one there.
   - Claude Desktop's chats aren't here: they live on claude.ai.
 
 - **Studio apps** (M35). An app box from your studio (arugula-salad's) as

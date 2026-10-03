@@ -26,6 +26,11 @@ export function setFleet(f: Fleet) {
   fleet = f;
 }
 
+/** The fleet, if this page has one (#78: every host's conversations). */
+export function getFleet(): Fleet | null {
+  return fleet;
+}
+
 function ago(ms: number): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;

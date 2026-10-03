@@ -3336,6 +3336,31 @@ button {
   margin-left: 8px;
 }
 
+/* #78: a host's heading, with how it answered. */
+.conv-host {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 10px 8px 2px;
+  font-weight: 600;
+  border-top: 1px solid var(--raised-hover);
+}
+
+.conv-host:first-child {
+  border-top: none;
+}
+
+.conv-host-state {
+  font-weight: normal;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.conv-host.away .conv-host-state,
+.conv-host.asleep .conv-host-state {
+  color: #f9e2af;
+}
+
 .conv-folder {
   padding: 8px 8px 3px;
   font: 12px ui-monospace, monospace;

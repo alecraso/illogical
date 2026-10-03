@@ -5,35 +5,14 @@
 // and Claude Code's adapter is the fake ACP agent, so nothing here costs
 // anything.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
-import { menu, paneEl, panes, reset } from "./helpers";
+import { menu, paneEl, panes, reset, seedConversation } from "./helpers";
 
 const claude = process.env.CLAUDE_CONFIG_DIR!;
 
-/** A terminal session in its own folder: "remember WORD", a reply, a
- * command and its output. Its id. */
-function seed(word: string, title: string): { id: string; cwd: string } {
-  const cwd = mkdtempSync(join(tmpdir(), `illogical-e2e-conv-${word}-`));
-  const id = crypto.randomUUID();
-  const dir = join(claude, "projects", cwd.replace(/[/.]/g, "-"));
-  mkdirSync(dir, { recursive: true });
-  const base = (type: string, uuid: string, parentUuid: string | null) => ({
-    type, uuid, parentUuid, sessionId: id, cwd, gitBranch: "main", entrypoint: "cli", version: "2.1.288",
-    timestamp: new Date().toISOString(), isSidechain: false,
-  });
-  const lines = [
-    { ...base("user", "u1", null), message: { role: "user", content: `remember ${word}` } },
-    { ...base("assistant", "a1", "u1"), message: { id: "m1", role: "assistant", model: "claude-haiku-4-5-20251001", content: [{ type: "text", text: "Noted." }] } },
-    { ...base("assistant", "a2", "a1"), message: { id: "m1", role: "assistant", model: "claude-haiku-4-5-20251001", content: [{ type: "tool_use", id: `toolu_${word}`, name: "Bash", input: { command: `echo ${word}` } }] } },
-    { ...base("user", "u2", "a2"), message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${word}`, content: word }] } },
-    { type: "ai-title", aiTitle: title, sessionId: id },
-  ];
-  writeFileSync(join(dir, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
-  return { id, cwd };
-}
+const seed = (word: string, title: string) => seedConversation(claude, word, title);
 
 /** This test's process holds the session, as a running Claude Code would. */
 function hold(id: string) {
