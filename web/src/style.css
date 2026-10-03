@@ -3508,3 +3508,62 @@ button {
   margin-top: 6px;
 }
 
+/* ---- getting started (#110) */
+
+.getting-started {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(560px, calc(100vw - 32px));
+  max-height: 80vh;
+}
+
+.prompt-backdrop:has(.getting-started) {
+  padding-top: 8vh;
+}
+
+.getting-started h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.start-sections {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.start-sections section {
+  padding: 10px 0;
+  border-top: 1px solid var(--raised-hover);
+}
+
+.start-sections h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.start-sections p,
+.start-sections ul {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.start-sections ul {
+  padding-left: 18px;
+}
+
+.start-sections summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.start-sections a {
+  color: var(--accent);
+}
+
+.start-done {
+  font-weight: normal;
+  font-size: 12px;
+  color: var(--accent);
+}

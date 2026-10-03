@@ -20,6 +20,7 @@ import { AppsLayer, pickApp } from "./apps";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
 import { agentNotifyItems, InstallHint, notificationItems } from "./notify";
+import { GettingStartedLayer, openGettingStarted, useFirstRun } from "./welcome";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -71,6 +72,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
   useHoverToSwitchTabs(client);
   useReportFocus(client, phone);
   usePickerShortcut(client, phone);
+  useFirstRun(client);
 
   const state = client.state;
   const tab = client.tabView();
@@ -103,6 +105,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <AppsLayer />
       <SandboxesLayer />
       <PickerLayer />
+      <GettingStartedLayer />
       {phone && state && <InstallHint />}
       <DragGhost />
       <ControlRequests client={client} />
@@ -146,6 +149,7 @@ function TopBar({
       "separator",
       ...notificationItems(client),
       ...agentNotifyItems(client, session.id),
+      { label: "Getting started", run: () => openGettingStarted(undefined, client) },
       "separator",
       { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session: session.id }) },
     ];
