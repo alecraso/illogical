@@ -8,6 +8,11 @@
 // A cross-site frame's 401 can't be seen from here, so a client enters each
 // time it draws the block anew, and ↻ enters again. Only the owner may
 // enter; anyone else sees a card.
+//
+// The frame shows once a page has loaded in it after entering. A box that
+// takes the connection and never answers (asleep, or hung) leaves a frame
+// loading forever, which draws as a blank white page: after `STUCK_AFTER`
+// the card says so instead, and the frame comes in if the box answers late.
 
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -35,6 +40,9 @@ export interface AppState {
   /** The last approve that failed: the gate's key, and why. */
   gate_error: [string, string] | null;
 }
+
+/** How long entering may take before the card says the box isn't answering. */
+const STUCK_AFTER = 15_000;
 
 /** hud's own pages, for the frame. */
 const PAGES: [string, string][] = [
@@ -66,6 +74,8 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
   // that load can't land on top of it.
   const pending = useRef<string | null>(null);
   const loaded = useRef(false);
+  // Whether a load in the frame is from entering, not the box's first page.
+  const sent = useRef(false);
   const go = (url: string) => {
     const f = frame.current;
     if (!f || !loaded.current) {
@@ -73,6 +83,7 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
       return;
     }
     pending.current = null;
+    sent.current = true;
     try {
       f.contentWindow!.location.replace(url);
     } catch {
@@ -80,7 +91,10 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
     }
   };
   const [error, setError] = useState<string | null>(null);
-  const [entered, setEntered] = useState(false);
+  // opening: no page from entering yet; in: one loaded; stuck: none came in
+  // time.
+  const [phase, setPhase] = useState<"opening" | "in" | "stuck">("opening");
+  const stuck = useRef<number | null>(null);
   // Bumped to enter again (↻, or another client's `reload`).
   const [want, setWant] = useState<{ n: number; to?: string }>({ n: 0 });
   const owner = !client.state?.roles;
@@ -96,13 +110,19 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
 
   const enter = async (to?: string) => {
     setError(null);
+    setPhase((p) => (p === "stuck" ? "opening" : p));
     try {
       const res = await client.request("POST", `/api/blocks/${id}/call/enter`, to ? { to } : {});
       const v = await res.json<{ url?: string; error?: string }>();
       if (!res.ok || !v.url) throw new Error(v.error ?? `couldn't get in (${res.status})`);
-      setEntered(true);
       // Into the frame, and nowhere else: not its src, not the URL bar.
       go(v.url);
+      // Entering again over a page that's in keeps it showing until then.
+      if (stuck.current !== null) clearTimeout(stuck.current);
+      stuck.current = window.setTimeout(() => {
+        stuck.current = null;
+        setPhase("stuck");
+      }, STUCK_AFTER);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -111,6 +131,12 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
   useEffect(() => {
     if (s && owner) void enter(want.to);
   }, [!!s, owner, want.n, s?.reloads]);
+  useEffect(
+    () => () => {
+      if (stuck.current !== null) clearTimeout(stuck.current);
+    },
+    [],
+  );
 
   if (!s) return <div class="browser-card">…</div>;
   const name = s.title ?? s.app;
@@ -176,12 +202,22 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
         </div>
       ) : (
         <>
-          {!entered && <div class="browser-card dim">Opening {name}…</div>}
+          {phase === "opening" && <div class="browser-card dim">Opening {name}…</div>}
+          {phase === "stuck" && (
+            <div class="browser-card error" data-app-stuck>
+              <p>{name} isn't answering</p>
+              <p class="dim">
+                {hostOf(s.box_url)} hasn't sent a page in {STUCK_AFTER / 1000} seconds
+                {s.follower.state === "error" && s.follower.error ? ` (${s.follower.error})` : ""}. It shows here if it answers.
+              </p>
+              <button onClick={() => setWant((w) => ({ n: w.n + 1 }))}>Try again</button>
+            </div>
+          )}
           {/* The box's own origin, never the app's. */}
           <iframe
             ref={frame}
             class="browser-frame"
-            style={entered ? undefined : { display: "none" }}
+            style={phase === "in" ? undefined : { display: "none" }}
             src={s.box_url + "/"}
             title={name}
             sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
@@ -189,6 +225,11 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
             onLoad={() => {
               loaded.current = true;
               if (pending.current) go(pending.current);
+              else if (sent.current) {
+                if (stuck.current !== null) clearTimeout(stuck.current);
+                stuck.current = null;
+                setPhase("in");
+              }
             }}
           />
         </>
