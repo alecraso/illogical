@@ -35,6 +35,12 @@
 //! group's items, each with `gate: {member, component, name, env, needed,
 //! approvals, approve}`), read again whenever hud's live feed
 //! (`/__hud/api/live/stream`) says something changed, never on a timer.
+//! Each read is a `chant workspace status` in the box (a few hundred MB,
+//! tens of seconds on a busy one), and the feed moves all through an
+//! agent's turn, so reads are paced: one at a time, the next no sooner
+//! than the last took (at least `BOARD_GAP`), except after an approve.
+//! A read waits longer than hud gives chant, so hud is never left running
+//! one we gave up on while we start the next.
 //! Approving one is hud's `POST /__hud/api/work/gates/approve {member,
 //! component, gate, env}` (arugula-salad/hud#735), which approves only a
 //! gate `workspace status` lists as pending; with a follower credential it
@@ -65,6 +71,10 @@ const TABS_EVERY: Duration = Duration::from_secs(30);
 /// Backoff for a dropped stream or a session that can't be made.
 const BACKOFF_MIN: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// The least time between work board reads the live feed asks for.
+const BOARD_GAP: Duration = Duration::from_secs(5);
+/// How long a work board read may take: past hud's own 120s for chant.
+const BOARD_TIMEOUT: Duration = Duration::from_secs(150);
 /// Redirects followed into a box.
 const MAX_HOPS: usize = 10;
 
@@ -185,8 +195,7 @@ impl Session {
     /// The gates hud's work board lists as pending.
     pub async fn work(&self, app: &str) -> Result<Vec<illogical_proto::Gate>, HudError> {
         let res =
-            Self::checked(self.req(reqwest::Method::GET, "/api/work").timeout(Duration::from_secs(60)).send().await)
-                .await?;
+            Self::checked(self.req(reqwest::Method::GET, "/api/work").timeout(BOARD_TIMEOUT).send().await).await?;
         let v: Value = res.json().await.map_err(|e| HudError::Other(format!("work: {}", e.without_url())))?;
         if let Some(e) = v["error"]["message"].as_str() {
             return Err(HudError::Other(format!("hud couldn't read the board: {e}")));
@@ -394,6 +403,9 @@ enum Ev {
     Answered(Value),
     /// hud's live feed moved (or the work board should be read anyway).
     Live,
+    /// Read the work board as soon as the read in flight is done (after an
+    /// approve).
+    Reread,
     /// The work board, read.
     Board(Result<Vec<illogical_proto::Gate>, HudError>),
 }
@@ -407,7 +419,7 @@ pub struct Follower {
 impl Follower {
     /// Read the work board again (after an approve).
     pub fn reread(&self) {
-        let _ = self.tx.send(Ev::Live);
+        let _ = self.tx.send(Ev::Reread);
     }
 }
 
@@ -498,7 +510,7 @@ impl Run {
         // The live feed: each change reads the work board again (one read
         // at a time; a change meanwhile reads once more after it).
         let feed = self.s.ctx.rt.spawn(live_feed(session.clone(), self.tx.clone()));
-        let (mut reading, mut again) = (false, false);
+        let mut board = Board::default();
         let out = loop {
             if tokio::time::Instant::now() >= tabs_due {
                 match session.tabs().await {
@@ -537,6 +549,7 @@ impl Run {
             let expiry = self.next_expiry();
             let ev = tokio::select! {
                 ev = rx.recv() => ev,
+                _ = tokio::time::sleep_until(board.next), if board.again && !board.reading => Some(Ev::Reread),
                 _ = tokio::time::sleep_until(tabs_due) => continue,
                 _ = sleep_until_ms(expiry) => {
                     self.reconcile().await;
@@ -575,16 +588,21 @@ impl Run {
                     self.status.last_answer = Some(v);
                     self.report();
                 }
-                Ev::Live if reading => again = true,
-                Ev::Live => {
-                    reading = true;
+                Ev::Live | Ev::Reread
+                    if board.reading || (matches!(ev, Ev::Live) && tokio::time::Instant::now() < board.next) =>
+                {
+                    board.again = true;
+                    board.now |= matches!(ev, Ev::Reread);
+                }
+                Ev::Live | Ev::Reread => {
+                    board.start();
                     let (session, tx, app) = (session.clone(), self.tx.clone(), self.s.app.clone());
                     self.s.ctx.rt.spawn(async move {
                         let _ = tx.send(Ev::Board(session.work(&app).await));
                     });
                 }
                 Ev::Board(r) => {
-                    reading = false;
+                    board.done();
                     match r {
                         Ok(gates) => (self.s.gates)(gates),
                         Err(HudError::Unauthorized) => break true,
@@ -593,8 +611,10 @@ impl Run {
                             (self.s.log)(json!({ "e": "work_board", "error": e }));
                         }
                     }
-                    if std::mem::take(&mut again) {
-                        let _ = self.tx.send(Ev::Live);
+                    if board.again && board.now {
+                        // Not again at `next` too.
+                        (board.again, board.now) = (false, false);
+                        let _ = self.tx.send(Ev::Reread);
                     }
                 }
             }
@@ -782,6 +802,38 @@ async fn stream(session: Arc<Session>, chat: String, tx: mpsc::UnboundedSender<E
         }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// Pacing for the work board's reads.
+struct Board {
+    reading: bool,
+    /// Another read is wanted after this one ...
+    again: bool,
+    /// ... at once (an approve), not at `next`.
+    now: bool,
+    started: tokio::time::Instant,
+    /// The soonest the live feed may start the next read.
+    next: tokio::time::Instant,
+}
+
+impl Default for Board {
+    fn default() -> Self {
+        let now = tokio::time::Instant::now();
+        Self { reading: false, again: false, now: false, started: now, next: now }
+    }
+}
+
+impl Board {
+    fn start(&mut self) {
+        (self.reading, self.again, self.now) = (true, false, false);
+        self.started = tokio::time::Instant::now();
+    }
+
+    /// A read done: the next waits as long as this one took.
+    fn done(&mut self) {
+        self.reading = false;
+        self.next = tokio::time::Instant::now() + self.started.elapsed().max(BOARD_GAP);
     }
 }
 
