@@ -55,6 +55,8 @@ struct Inner {
     approvals: Vec<Value>,
     /// The next approve fails, saying this.
     fail_next: Option<String>,
+    /// Prompts to the box's agent (with the Origin they came with).
+    prompts: Vec<(Value, Option<String>)>,
 }
 
 #[derive(Clone)]
@@ -151,7 +153,8 @@ async fn tabs(State(f): State<Fake>, h: HeaderMap) -> Response {
     if !f.authed(&h) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let tabs: Vec<Value> = f.inner.lock().unwrap().tabs.iter().map(|t| json!({ "chatKey": t, "title": t })).collect();
+    let tabs: Vec<Value> =
+        f.inner.lock().unwrap().tabs.iter().map(|t| json!({ "chatKey": t, "title": format!("Tab {t}") })).collect();
     Json(json!({ "tabs": tabs })).into_response()
 }
 
@@ -194,6 +197,35 @@ async fn answer(State(f): State<Fake>, h: HeaderMap, Json(body): Json<Value>) ->
     f.inner.lock().unwrap().answers.push((body.clone(), origin));
     f.settle(&chat);
     Json(json!({ "answered": true, "requestId": body["requestId"], "optionId": body["optionId"] })).into_response()
+}
+
+/// hud's prompt route: an unknown tab is refused; else the turn starts
+/// (queued behind one already running), and the box's agent asks.
+async fn prompt(State(f): State<Fake>, h: HeaderMap, Json(body): Json<Value>) -> Response {
+    if !f.authed(&h) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let origin = h.get("origin").and_then(|o| o.to_str().ok()).map(str::to_owned);
+    if origin.as_deref() != Some(f.origin.lock().unwrap().as_str()) {
+        return (StatusCode::FORBIDDEN, "cross-site").into_response();
+    }
+    let chat = body["chatKey"].as_str().unwrap_or_default().to_owned();
+    if !f.inner.lock().unwrap().tabs.contains(&chat) {
+        let e = json!({ "error": "this conversation is not a tab on this box", "reason": "unknown-tab" });
+        return (StatusCode::NOT_FOUND, Json(e)).into_response();
+    }
+    let position = {
+        let mut inner = f.inner.lock().unwrap();
+        let running = inner.questions.contains_key(&chat) as u64;
+        inner.prompts.push((body.clone(), origin));
+        running
+    };
+    if position == 0 {
+        f.ask(&chat, &format!("q{}", f.inner.lock().unwrap().prompts.len()), 300_000);
+    }
+    let id = format!("p{}", f.inner.lock().unwrap().prompts.len());
+    (StatusCode::ACCEPTED, Json(json!({ "ok": true, "promptId": id, "position": position, "queued": position > 0 })))
+        .into_response()
 }
 
 async fn work(State(f): State<Fake>, h: HeaderMap) -> Response {
@@ -306,6 +338,7 @@ impl Fakes {
                 .route("/__hud/api/tabs", get(tabs))
                 .route("/__hud/api/chat/stream", get(stream))
                 .route("/__hud/api/chat/answer", post(answer))
+                .route("/__hud/api/chat/prompt", post(prompt))
                 .route("/__hud/api/work", get(work))
                 .route("/__hud/api/live/stream", get(live))
                 .route("/__hud/api/work/gates/approve", post(approve_gate))
@@ -381,8 +414,10 @@ fn no_link_kept(d: &Daemon, f: &Fakes) {
             assert!(!contains(bytes, TOKEN), "the studio token in {path}");
         }
     }
-    // The grep can see the block's log: its `enter` lines are there.
-    assert!(all.iter().any(|(_, b)| contains(b, "\"e\":\"enter\"")), "the block's log wasn't found");
+    // The grep can see the block's log: its `enter` (or `prompt`) lines are
+    // there.
+    let logged = |b: &[u8]| contains(b, "\"e\":\"enter\"") || contains(b, "\"e\":\"prompt\"");
+    assert!(all.iter().any(|(_, b)| logged(b)), "the block's log wasn't found");
 }
 
 #[test]
@@ -491,6 +526,57 @@ fn a_box_agents_question_is_an_ask_answered_back_to_hud() {
     no_link_kept(&d, &f);
     d.raw("DELETE", "/api/studio", None);
     assert!(!std::fs::read_to_string(&file).unwrap().contains(TOKEN));
+}
+
+#[test]
+fn a_prompt_to_an_app_block_goes_to_the_box_agent() {
+    let f = Fakes::start();
+    f.f.inner.lock().unwrap().tabs.push("c2".into());
+    let d = Daemon::child();
+    f.login(&d);
+    let b = d.post("/api/blocks", json!({ "type": "app", "config": { "app": "pinboard" } }))["block"].as_u64().unwrap();
+    following(&d, b);
+
+    // No tab named: the box's first, which hud starts on; its agent asks,
+    // and the question is on the block.
+    let r = d.call(b, "send", json!({ "text": "Pick a header colour" }));
+    assert_eq!(
+        (r["tab"].as_str(), r["chat"].as_str(), r["queued"].as_bool()),
+        (Some("Tab c1"), Some("c1"), Some(false))
+    );
+    assert_eq!(r["prompt_id"], "p1", "{r}");
+    let (sent, origin) = f.f.inner.lock().unwrap().prompts[0].clone();
+    assert_eq!(sent, json!({ "chatKey": "c1", "text": "Pick a header colour" }));
+    assert_eq!(origin.as_deref(), Some(f.origin.as_str()), "with the box's own Origin");
+    wait_ask(&d, b, "q1");
+
+    // A second prompt to that tab waits behind the turn; another tab, by
+    // title in any case, or by key.
+    let r = d.call(b, "send", json!({ "text": "and the footer", "tab": "c1" }));
+    assert_eq!((r["position"].as_u64(), r["queued"].as_bool()), (Some(1), Some(true)), "{r}");
+    let r = d.call(b, "send", json!({ "text": "hello", "tab": "tab C2" }));
+    assert_eq!(r["chat"], "c2", "{r}");
+
+    // A tab the box hasn't got, and nothing to say: refused, nothing sent.
+    let sent = f.f.inner.lock().unwrap().prompts.len();
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{b}/call/send"), Some(json!({ "text": "x", "tab": "c9" })));
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no tab \\\"c9\\\"") && body.contains("Tab c1, Tab c2"), "{body}");
+    let (status, _) = d.raw("POST", &format!("/api/blocks/{b}/call/send"), Some(json!({ "text": "  " })));
+    assert_eq!(status, 400);
+    assert_eq!(f.f.inner.lock().unwrap().prompts.len(), sent);
+
+    // A follow-up (`/followup`) prompts it too.
+    d.post(&format!("/api/panes/{b}/followup"), json!({ "text": "a follow-up" }));
+    assert_eq!(f.f.inner.lock().unwrap().prompts.last().unwrap().0["text"], "a follow-up");
+
+    // History says who prompted which tab.
+    let h = d.get(&format!("/api/history?pane={b}"));
+    let texts: Vec<&str> = h.as_array().unwrap().iter().filter_map(|c| c["text"].as_str()).collect();
+    assert!(texts.contains(&"prompted Tab c1: Pick a header colour"), "{h}");
+    assert!(texts.contains(&"prompted Tab c2: hello"), "{h}");
+    no_link_kept(&d, &f);
 }
 
 #[test]

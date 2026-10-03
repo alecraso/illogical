@@ -365,6 +365,16 @@ the daemon stopping, crashing, or the machine rebooting:
     to hud as the option picked. Answered in hud's own panel, interrupted
     or expired, the card goes. With several tabs asking, one card shows at
     a time. *Skip* closes the card and leaves the question to hud.
+  - **Prompts.** Sending to the block prompts the box's agent through the
+    daemon's hud session, for scripts and agents: `illogical call %N send
+    '{"text":"…"}'` or MCP's `send_input`. (In a browser, hud's own
+    composer is in the frame.) It goes to the box's first tab unless you
+    name another by title or chat key (`"tab":"Main"`, `send_input`'s
+    `tab`). hud queues it behind a running turn and says where it is in
+    the queue. Refusals come back as hud gave them: an unknown tab, a full
+    queue, or the box's turn budget. The block's history says who prompted
+    which tab. hud has no `onBehalfOf` for prompts, so in hud's chat the
+    prompt is the session's (the box's owner, or the follower).
   - **Gates.** A release or op waiting at a chant gate in the box is
     attention, the same as a workspace block's: the block lists it with
     *Approve*, and it's a `gate` card on the swarm's rail and in the

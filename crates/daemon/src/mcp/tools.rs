@@ -133,6 +133,10 @@ pub struct SendArgs {
     /// F5, M-x, or single characters.
     #[serde(default)]
     pub keys: Vec<String>,
+    /// To an app block: which of its box's chat tabs (title or chat key);
+    /// default the first.
+    #[serde(default)]
+    pub tab: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -502,7 +506,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "send_input",
             title: "Type into a pane",
-            description: "Type text (Enter after it unless enter is false) and/or press named keys (C-c, Up, Escape, ...) in a pane. To an agent block, text is its next prompt.",
+            description: "Type text (Enter after it unless enter is false) and/or press named keys (C-c, Up, Escape, ...) in a pane. To an agent block, text is its next prompt; to an app block, a prompt to its box's agent (in tab, else its first).",
             schema: schema_for_type::<SendArgs>,
             read_only: false,
             destructive: true,
@@ -592,7 +596,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "open_app",
             title: "Open a studio app",
-            description: "Open one of the user's studio apps (a box with its own agent, hud) as an app block beside a pane: the app in a frame, and its agent's questions as asks on the block. Without app: lists the user's apps.",
+            description: "Open one of the user's studio apps (a box with its own agent, hud) as an app block beside a pane: the app in a frame, and its agent's questions as asks on the block; send_input to the block prompts its agent. Without app: lists the user's apps.",
             schema: schema_for_type::<OpenAppArgs>,
             read_only: false,
             destructive: false,
@@ -1263,6 +1267,18 @@ impl<'a> Call<'a> {
             let b =
                 self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
             let text = a.text.ok_or("an agent block takes text (its next prompt), not keys")?;
+            if p.info.kind == BlockType::App {
+                let out = b.call_by("send", json!({ "text": text, "tab": a.tab }), Some(&self.by())).await?;
+                let tab = out["tab"].as_str().unwrap_or("its tab");
+                let queued = match out["position"].as_u64() {
+                    Some(n) if n > 0 => format!(", queued {n} behind a running turn"),
+                    _ => String::new(),
+                };
+                return done(
+                    format!("Prompted %{pane}'s agent in {tab}{queued}; wait until needs_input for its questions"),
+                    json!({ "pane": pane, "tab": tab, "chat": out["chat"], "position": out["position"] }),
+                );
+            }
             b.call_by("send", json!({ "text": text }), Some(&self.by())).await?;
             return done(format!("Sent %{pane} a prompt"), json!({ "pane": pane }));
         }

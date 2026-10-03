@@ -24,6 +24,10 @@
 //!   approve route through the follower's session, naming who approves
 //!   with a follower credential. The card stays until hud's board no
 //!   longer lists the gate; an approve that fails puts its error on it.
+//! - **Prompts.** `send` (`{text, tab?}`) prompts the box's agent through
+//!   the follower's session, in the tab named (its title or chat key) or
+//!   else the box's first; hud queues it behind a running turn. The block's
+//!   log and history say who sent what, to which tab.
 //! - **Restore.** Nothing to bring back but the config: after a restart
 //!   the follower mints again, and so does each client's frame.
 
@@ -235,6 +239,45 @@ impl AppBlock {
         let said = result?;
         Ok(json!({ "approved": gate.key(), "gate": gate, "by": by, "said": said }))
     }
+
+    /// Prompt the box's agent (`{text, tab?}`) through hud, as `by`.
+    async fn send(&self, args: Value, by: Option<String>) -> Result<Value, String> {
+        let text = args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or("send needs {\"text\": …}")?;
+        let session = self.session.lock().unwrap().clone().ok_or("not in the box yet: try again in a moment")?;
+        let tabs = session.tab_list().await.map_err(|e| format!("listing the box's tabs: {e}"))?;
+        let tab = hud::pick_tab(&tabs, args["tab"].as_str().filter(|t| !t.is_empty()))?;
+        let result = session.prompt(&tab.chat, text).await;
+        let ok = result.is_ok();
+        append(
+            &self.ctx,
+            &json!({ "e": "prompt", "chat": tab.chat, "tab": tab.title, "by": by, "ok": ok, "error": result.as_ref().err() }),
+        );
+        if let Ok(mut l) = self.ctx.log() {
+            let at = l.end();
+            let _ = l.record(
+                at,
+                crate::store::Event::Command {
+                    at_ms: crate::store::now_ms(),
+                    text: Some(format!("prompted {}: {text}", tab.title)),
+                    cwd: None,
+                    by: by.clone(),
+                },
+            );
+            let _ = l.record(
+                at,
+                crate::store::Event::End { at_ms: crate::store::now_ms(), exit: Some(if ok { 0 } else { 1 }) },
+            );
+        }
+        let v = result?;
+        Ok(json!({
+            "tab": tab.title,
+            "chat": tab.chat,
+            "prompt_id": v["promptId"],
+            "position": v["position"],
+            "queued": v["queued"].as_bool().unwrap_or(false),
+            "by": by,
+        }))
+    }
 }
 
 /// How the block gets into its box: a fresh studio link each time, or the
@@ -298,6 +341,10 @@ impl Block for AppBlock {
             "approve" => {
                 let (me, by) = (self.me.upgrade(), by.map(str::to_owned));
                 Box::pin(async move { me.ok_or("closed")?.approve(args, by).await })
+            }
+            "send" => {
+                let (me, by) = (self.me.upgrade(), by.map(str::to_owned));
+                Box::pin(async move { me.ok_or("closed")?.send(args, by).await })
             }
             // A fresh way in, for a frame: used once, never kept.
             "enter" => {
