@@ -3498,7 +3498,7 @@ Pull requests and issues from a git forge (Forgejo, then GitHub, then GitLab) as
   - It resolves `by` for its writes: MCP is `mcp:<client>`, so a draft. The CLI sends `agent: true` under `CLAUDECODE` or `AI_AGENT`, a courtesy, not a boundary.
   - New MCP tools `open_pr`, `read_pr` and `pr_*` return a draft id at once.
   - The web gets a textarea for a markdown field.
-  - **To decide:** whether editors may send. Sending posts with the owner's CLI login, so the spike says owner only, as M35 did for `enter`.
+  - **Decided 2026-10-02 (Jake): the owner and editors may send.** Sending posts with the owner's CLI login (the spike leaned owner only, as M35's `enter`), so the block's log and the card record which person sent each draft; viewers can't.
 
 **Order:** S23, done; then M36 (#88).
 
@@ -3522,7 +3522,7 @@ Answer these before M36. Each answer goes in as a fixture or a measured number:
 - **The log:** the timeline as an event stream in `blocks/%N/`, so `history` and `search` find a PR's comments and check runs beside the terminal output of the work.
 - **Attention** through M34's gate `source` (`forge`) and M24's reasons: `ask` for a review requested from you; `failed` for red checks on your PR, with *Rerun checks*; `input` for changes requested or a mention; `done` when your PR is merged or its checks go green. Bundled by repo.
 - **Methods:**
-  - `comment {body}`, `approve {body?}`, `request_changes {body}`, `merge {style?}`, `rerun_checks`, `refresh`. Writes follow "agents draft, people send": an agent's call becomes an ask (M35's `Api::Ask` on non-terminal blocks), and a person's goes out as them. Owner and editors only (M12); viewers read.
+  - `comment {body}`, `review {event: approve|request_changes|comment, body?}`, `merge {style?}`, `rerun_checks` (GitHub; Forgejo has no rerun API, so it links the run), `refresh`. Not `approve`: on a block holding an ask that name answers the card (S23). Writes follow "agents draft, people send": an agent's call becomes an ask (M35's `Api::Ask` on non-terminal blocks), and a person's goes out as them. Owner and editors only (M12); viewers read.
   - `diff`: an M11 diff block beside it on `merge-base..head`, on a worktree of the PR head.
   - `checkout`: a terminal block in that worktree (`.illogical/worktrees/pr-N`, or the repo's own convention if it has one), on the block's host.
 - **`capture --text`:** the PR as text (header, body, reviews, checks, the timeline), for agents.
