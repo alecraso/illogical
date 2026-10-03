@@ -1503,7 +1503,11 @@ impl Daemon {
                 }
             }
             What::Clear(kind) => {
-                if self.reasons.get(&pane).is_some_and(|r| r.kind == kind) {
+                // A question held on the block still wants you.
+                if self.asks.contains_key(&pane) && self.reasons.get(&pane).is_some_and(|r| r.kind == kind) {
+                    self.reasons.remove(&pane);
+                    self.touch(pane);
+                } else if self.reasons.get(&pane).is_some_and(|r| r.kind == kind) {
                     self.set_attention(pane, Attention::Idle, "cleared");
                 }
             }
@@ -2012,6 +2016,18 @@ impl Daemon {
     /// client.
     fn after_ask(&mut self, pane: PaneId) {
         if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
+            // A block still waiting for something else (a studio box's
+            // gate) keeps wanting you, for that.
+            if self.blocks.contains_key(&pane)
+                && self.reasons.get(&pane).is_some_and(|r| !matches!(r.kind, ReasonKind::Ask | ReasonKind::Input))
+            {
+                self.emit(
+                    Some(pane),
+                    EventKind::Attention { state: Attention::NeedsInput, reason: self.live_reason(pane) },
+                );
+                self.touch(pane);
+                return;
+            }
             // A terminal's program goes on; a block that was asked for
             // someone else (a studio box) is just a page again.
             let next = if self.blocks.contains_key(&pane) { Attention::Idle } else { Attention::Working };

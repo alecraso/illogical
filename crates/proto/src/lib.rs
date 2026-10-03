@@ -241,6 +241,14 @@ pub enum GateSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         machine: Option<String>,
     },
+    /// hud in a studio box (M35), from its work board: approved through
+    /// hud's `POST /__hud/api/work/gates/approve`, naming the person who
+    /// approves when the daemon holds a follower credential.
+    Hud {
+        /// The box's origin, and the app's name in studio.
+        box_url: String,
+        app: String,
+    },
 }
 
 impl Gate {
@@ -260,6 +268,7 @@ impl Gate {
         match &self.source {
             GateSource::Chant { root, machine: None, .. } => format!("gate:{root}"),
             GateSource::Chant { root, machine: Some(m), .. } => format!("gate:{m}:{root}"),
+            GateSource::Hud { box_url, .. } => format!("gate:{box_url}"),
         }
     }
 }

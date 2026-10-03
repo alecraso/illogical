@@ -101,6 +101,7 @@ function WorkspaceBlock({ client, id, s }: { client: Client; id: PaneId; s: Work
   const changes = (m: Member) => void client.openBlock({ type: "diff", config: { repo: m.path }, ...beside }, "couldn't show the changes");
   const nested = (m: Member) => openWorkspace(client, m.path, id, s?.env ?? "local");
   const runOp = (g: Gate) =>
+    g.source.kind === "chant" &&
     void client.make("/api/run", { ...beside, cwd: g.source.dir, command: `${s?.chant ?? "chant"} run ${g.op}` }).then((e) => e && client.toast(e));
   const approve = async (g: Gate) => {
     setBusy(gateKey(g));

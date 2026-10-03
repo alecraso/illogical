@@ -28,6 +28,14 @@ const sessions = new Set<string>();
 let question: Record<string, unknown> | null = null;
 const answers: Record<string, unknown>[] = [];
 const streams = new Set<ServerResponse>();
+const feeds = new Set<ServerResponse>();
+let gates: Record<string, unknown>[] = [];
+const approvals: Record<string, unknown>[] = [];
+let failNext: string | null = null;
+
+function moved() {
+  for (const s of feeds) s.write("event: live-state\ndata: {}\n\n");
+}
 
 function cookieOf(req: IncomingMessage): string | undefined {
   return /(?:^|;\s*)hud_session=(\w+)/.exec(req.headers.cookie ?? "")?.[1];
@@ -88,6 +96,33 @@ test.beforeAll(async () => {
         req.on("close", () => streams.delete(res));
         return;
       }
+      if (u.pathname === "/__hud/api/work") {
+        return json(res, 200, { v: 1, groups: [{ id: "approve", items: gates.map((gate) => ({ key: `gate:${gate.name}`, gate })) }] });
+      }
+      if (u.pathname === "/__hud/api/live/stream") {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+        res.write("event: live-snapshot\ndata: {}\n\n");
+        feeds.add(res);
+        req.on("close", () => feeds.delete(res));
+        return;
+      }
+      if (u.pathname === "/__hud/api/work/gates/approve" && req.method === "POST") {
+        let body = "";
+        req.on("data", (d) => (body += d));
+        req.on("end", () => {
+          if (req.headers.origin !== box) return json(res, 403, { error: "cross-site" });
+          if (failNext) {
+            const error = failNext;
+            failNext = null;
+            return json(res, 422, { code: "chant-refused", error });
+          }
+          approvals.push(JSON.parse(body));
+          gates = [];
+          moved();
+          json(res, 200, { v: 1, approval: { command: "chant approve", exitCode: 0 } });
+        });
+        return;
+      }
       if (u.pathname === "/__hud/api/chat/answer" && req.method === "POST") {
         let body = "";
         req.on("data", (d) => (body += d));
@@ -111,7 +146,8 @@ test.beforeAll(async () => {
 
   const studioServer = createServer((req, res) => {
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return json(res, 401, { error: "who are you?" });
-    if (req.url === "/api/apps") return json(res, 200, { apps: [{ name: "pinboard", title: "Pinboard", box: { url: box, status: "running" } }] });
+    // studio#292's shape.
+    if (req.url === "/api/apps") return json(res, 200, { apps: [{ name: "pinboard", title: "Pinboard", url: box, createdAt: 1 }] });
     if (req.url === "/api/apps/pinboard/open" && req.method === "POST") {
       const k = `k${keys.size + 1}x${Date.now()}`;
       keys.add(k);
@@ -129,6 +165,7 @@ test.afterAll(async ({ browser }) => {
   await page.evaluate(() => window.__illogical?.client.request("DELETE", "/api/studio")).catch(() => {});
   await page.close();
   for (const s of streams) s.end();
+  for (const s of feeds) s.end();
   for (const s of servers) s.close();
 });
 
@@ -193,6 +230,22 @@ test("a studio app opens framed from another site; its agent's question is answe
   question = null;
   changed();
   await expect(card).toHaveCount(0);
+
+  // A release waits at ship: a gate on the block and the phone's sheet's
+  // reason. hud refusing puts its error on the card; then it's approved.
+  gates = [{ member: "delivery", component: "release", name: "ship", env: "prod", needed: 1, approvals: 0, approve: "chant approve release ship --env prod" }];
+  moved();
+  const gate = el.locator('[data-gate="delivery/release/ship"]');
+  await expect(gate).toContainText("release waits at gate ship in prod");
+  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.reason?.kind, b)).toBe("gate");
+  failNext = "chant approve exited 1";
+  await gate.getByRole("button", { name: "Approve" }).click();
+  await expect(gate.locator(".app-gate-error")).toHaveText("hud: chant approve exited 1");
+  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.reason?.headline, b)).toContain("approving failed");
+  await gate.getByRole("button", { name: "Approve" }).click();
+  await expect(gate).toHaveCount(0);
+  expect(approvals).toEqual([{ member: "delivery", component: "release", gate: "ship", env: "prod" }]);
+  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.reason ?? null, b)).toBeNull();
 
   // hud's pages, in the frame.
   await el.getByRole("button", { name: "Records ▾" }).click();

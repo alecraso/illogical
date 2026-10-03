@@ -365,15 +365,25 @@ the daemon stopping, crashing, or the machine rebooting:
     to hud as the option picked. Answered in hud's own panel, interrupted
     or expired, the card goes. With several tabs asking, one card shows at
     a time. *Skip* closes the card and leaves the question to hud.
-  - **Who answered.** Viewers can't answer; editors and the owner can.
-    hud records whoever its session belongs to (the box's owner). With a
-    follower credential (`hud share --role follower` in the box, kept with
-    `illogical studio follower APP`, and `illogical app APP --follower`),
-    the answer also names who clicked (`onBehalfOf`). That needs hud's
-    trusted-follower change.
+  - **Gates.** A release or op waiting at a chant gate in the box is
+    attention, the same as a workspace block's: the block lists it with
+    *Approve*, and it's a `gate` card on the swarm's rail and in the
+    phone's sheet. They come from hud's work board, read again each time
+    hud's live feed says something changed, never on a timer. *Approve*
+    goes to hud, which approves it only if `workspace status` still lists
+    it as pending. The card stays until hud's board drops the gate; if hud
+    refuses, the card says why.
+  - **Who answered.** Viewers can't answer or approve; editors and the
+    owner can. hud records whoever its session belongs to (the box's
+    owner). With a follower credential (`hud share --role follower` in the
+    box, kept with `illogical studio follower APP`, and `illogical app APP
+    --follower`), answers and approvals also name who clicked
+    (`onBehalfOf`), and chant's ledger gets that name. hud takes names of
+    at most 32 letters, digits, spaces and `-_.'`: an email address goes
+    as its local part, other characters as `-`, and `owner` isn't sent.
+    That needs hud's trusted-follower change.
   - **After a restart** the block comes back and mints again.
-  - **Not yet:** the box's chant gates (they come with workspace gates),
-    and an "Other" answer (hud only takes one of its options).
+  - **Not yet:** an "Other" answer (hud only takes one of its options).
   - Any browser block takes questions too: `POST /api/panes/%N/ask` with
     `source` and `agent` (who asks), for something that follows a page's
     agent from outside.

@@ -90,7 +90,7 @@ export interface Gate {
   needed: number;
   /** The source's own command, to show. */
   command?: string;
-  source: { kind: "chant"; root: string; dir: string; machine?: string };
+  source: { kind: "chant"; root: string; dir: string; machine?: string } | { kind: "hud"; box_url: string; app: string };
 }
 
 /** What names a gate among its block's: `member/op/gate`. */

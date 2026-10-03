@@ -30,6 +30,21 @@
 //!
 //! A block shows one question at a time: with several tabs asking, the
 //! oldest is on the card and the next follows when it's answered.
+//!
+//! **Gates**, from hud's work board: `GET /__hud/api/work` (its `approve`
+//! group's items, each with `gate: {member, component, name, env, needed,
+//! approvals, approve}`), read again whenever hud's live feed
+//! (`/__hud/api/live/stream`) says something changed, never on a timer.
+//! Approving one is hud's `POST /__hud/api/work/gates/approve {member,
+//! component, gate, env}` (arugula-salad/hud#735), which approves only a
+//! gate `workspace status` lists as pending; with a follower credential it
+//! adds `onBehalfOf` (hud#736).
+//!
+//! **Names for hud.** hud takes a person's name only as a display name
+//! (at most 32 characters: letters, digits, spaces and `-_.'`, not one of
+//! its role labels), so [`hud_name`] makes illogical's name fit: an email
+//! address by its local part, other characters as `-`. A name that can't
+//! fit (or is `owner`) is left out, and hud records its session's player.
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -165,6 +180,45 @@ impl Session {
     async fn stream(&self, chat: &str) -> Result<reqwest::Response, HudError> {
         let url = format!("/api/chat/stream?chatKey={}", enc(chat));
         Self::checked(self.req(reqwest::Method::GET, &url).header("accept", "text/event-stream").send().await).await
+    }
+
+    /// The gates hud's work board lists as pending.
+    pub async fn work(&self, app: &str) -> Result<Vec<illogical_proto::Gate>, HudError> {
+        let res =
+            Self::checked(self.req(reqwest::Method::GET, "/api/work").timeout(Duration::from_secs(60)).send().await)
+                .await?;
+        let v: Value = res.json().await.map_err(|e| HudError::Other(format!("work: {}", e.without_url())))?;
+        if let Some(e) = v["error"]["message"].as_str() {
+            return Err(HudError::Other(format!("hud couldn't read the board: {e}")));
+        }
+        Ok(board_gates(&self.origin, app, &v))
+    }
+
+    /// Approve a pending gate (hud#735). What hud said, or why not.
+    pub async fn approve_gate(&self, body: &Value) -> Result<String, String> {
+        let res = self
+            .req(reqwest::Method::POST, "/api/work/gates/approve")
+            .timeout(Duration::from_secs(120))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("hud: {}", e.without_url()))?;
+        let status = res.status();
+        let v: Value = res.json().await.unwrap_or_default();
+        if status.is_success() {
+            return Ok(v["approval"]["output"]
+                .as_str()
+                .or(v["approval"]["command"].as_str())
+                .unwrap_or("approved")
+                .to_owned());
+        }
+        let said = v["error"].as_str().unwrap_or("").to_owned();
+        Err(match status.as_u16() {
+            401 => "hud wants a new session: try again in a moment".into(),
+            409 if !said.is_empty() => format!("hud: {said} (it may have been approved already)"),
+            _ if !said.is_empty() => format!("hud: {said}"),
+            s => format!("hud answered {s}"),
+        })
     }
 
     /// Answer a question with one of its options.
@@ -315,6 +369,10 @@ pub struct Setup {
     pub report: Arc<dyn Fn(Status) + Send + Sync>,
     /// Lines for the block's log.
     pub log: Arc<dyn Fn(Value) + Send + Sync>,
+    /// The gates hud's work board lists, each time it's read.
+    pub gates: Arc<dyn Fn(Vec<illogical_proto::Gate>) + Send + Sync>,
+    /// The session now, for approving a gate through it.
+    pub session: Arc<std::sync::Mutex<Option<Arc<Session>>>>,
 }
 
 enum Ev {
@@ -334,11 +392,23 @@ enum Ev {
         by: Option<illogical_proto::Driver>,
     },
     Answered(Value),
+    /// hud's live feed moved (or the work board should be read anyway).
+    Live,
+    /// The work board, read.
+    Board(Result<Vec<illogical_proto::Gate>, HudError>),
 }
 
 /// The follower: runs until the handle is dropped (its block closed).
 pub struct Follower {
     task: JoinHandle<()>,
+    tx: mpsc::UnboundedSender<Ev>,
+}
+
+impl Follower {
+    /// Read the work board again (after an approve).
+    pub fn reread(&self) {
+        let _ = self.tx.send(Ev::Live);
+    }
 }
 
 impl Drop for Follower {
@@ -349,7 +419,8 @@ impl Drop for Follower {
 
 pub fn start(setup: Setup) -> Follower {
     let rt = setup.ctx.rt.clone();
-    Follower { task: rt.spawn(run(setup)) }
+    let (tx, rx) = mpsc::unbounded_channel();
+    Follower { task: rt.spawn(run(setup, tx.clone(), rx)), tx }
 }
 
 /// The card on the block now.
@@ -369,8 +440,7 @@ struct Run {
     tx: mpsc::UnboundedSender<Ev>,
 }
 
-async fn run(s: Setup) {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+async fn run(s: Setup, tx: mpsc::UnboundedSender<Ev>, mut rx: mpsc::UnboundedReceiver<Ev>) {
     let mut r = Run {
         s,
         status: Status { state: "starting".into(), ..Status::default() },
@@ -401,6 +471,7 @@ async fn run(s: Setup) {
             }
         };
         info!(app = r.s.app, "following the box's hud");
+        *r.s.session.lock().unwrap() = Some(session.clone());
         (r.s.log)(json!({ "e": "entered" }));
         r.status.error = None;
         if r.follow(&session, &mut rx).await {
@@ -424,6 +495,10 @@ impl Run {
         let mut streams: HashMap<String, JoinHandle<()>> = HashMap::new();
         let mut live: HashSet<String> = HashSet::new();
         let mut tabs_due = tokio::time::Instant::now();
+        // The live feed: each change reads the work board again (one read
+        // at a time; a change meanwhile reads once more after it).
+        let feed = self.s.ctx.rt.spawn(live_feed(session.clone(), self.tx.clone()));
+        let (mut reading, mut again) = (false, false);
         let out = loop {
             if tokio::time::Instant::now() >= tabs_due {
                 match session.tabs().await {
@@ -500,8 +575,32 @@ impl Run {
                     self.status.last_answer = Some(v);
                     self.report();
                 }
+                Ev::Live if reading => again = true,
+                Ev::Live => {
+                    reading = true;
+                    let (session, tx, app) = (session.clone(), self.tx.clone(), self.s.app.clone());
+                    self.s.ctx.rt.spawn(async move {
+                        let _ = tx.send(Ev::Board(session.work(&app).await));
+                    });
+                }
+                Ev::Board(r) => {
+                    reading = false;
+                    match r {
+                        Ok(gates) => (self.s.gates)(gates),
+                        Err(HudError::Unauthorized) => break true,
+                        Err(HudError::Other(e)) => {
+                            debug!(app = self.s.app, error = e, "the work board");
+                            (self.s.log)(json!({ "e": "work_board", "error": e }));
+                        }
+                    }
+                    if std::mem::take(&mut again) {
+                        let _ = self.tx.send(Ev::Live);
+                    }
+                }
             }
         };
+        feed.abort();
+        *self.s.session.lock().unwrap() = None;
         for (_, h) in streams {
             h.abort();
         }
@@ -590,7 +689,7 @@ impl Run {
                     let mut body = json!({ "chatKey": q.chat, "requestId": q.id, "optionId": option });
                     let name = by.as_ref().map(|b| b.name.clone());
                     if self.s.on_behalf
-                        && let Some(n) = &name
+                        && let Some(n) = name.as_deref().and_then(hud_name)
                     {
                         body["onBehalfOf"] = json!({ "name": n, "via": "illogical" });
                     }
@@ -686,6 +785,109 @@ async fn stream(session: Arc<Session>, chat: String, tx: mpsc::UnboundedSender<E
     }
 }
 
+/// hud's live feed: a change (any frame, the first included) is a reason
+/// to read the work board again. Followed again with backoff.
+async fn live_feed(session: Arc<Session>, tx: mpsc::UnboundedSender<Ev>) {
+    let mut backoff = BACKOFF_MIN;
+    loop {
+        let res = Session::checked(
+            session.req(reqwest::Method::GET, "/api/live/stream").header("accept", "text/event-stream").send().await,
+        )
+        .await;
+        match res {
+            Ok(mut res) => {
+                backoff = BACKOFF_MIN;
+                let _ = tx.send(Ev::Live);
+                let mut buf = String::new();
+                while let Ok(Some(bytes)) = res.chunk().await {
+                    buf.push_str(&String::from_utf8_lossy(&bytes));
+                    let mut moved = false;
+                    while let Some(at) = buf.find("\n\n") {
+                        let frame: String = buf.drain(..at + 2).collect();
+                        // Comments (keepalives) aren't changes.
+                        moved |= frame.lines().any(|l| l.starts_with("data:"));
+                    }
+                    if moved {
+                        let _ = tx.send(Ev::Live);
+                    }
+                }
+            }
+            Err(HudError::Unauthorized) => {
+                let _ = tx.send(Ev::Unauthorized);
+                return;
+            }
+            Err(HudError::Other(e)) => {
+                debug!(error = e, "hud's live feed");
+                // No feed (an older hud): read the board once anyway.
+                let _ = tx.send(Ev::Live);
+            }
+        }
+        if tx.is_closed() {
+            return;
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// The pending gates on hud's work board, as M34's [`Gate`]s.
+///
+/// [`Gate`]: illogical_proto::Gate
+pub fn board_gates(origin: &str, app: &str, board: &Value) -> Vec<illogical_proto::Gate> {
+    board["groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|g| g["id"] == "approve")
+        .flat_map(|g| g["items"].as_array().cloned().unwrap_or_default())
+        .filter_map(|i| {
+            let g = &i["gate"];
+            Some(illogical_proto::Gate {
+                member: g["member"].as_str()?.to_owned(),
+                op: g["component"].as_str()?.to_owned(),
+                gate: g["name"].as_str()?.to_owned(),
+                env: g["env"].as_str().map(str::to_owned),
+                since: None,
+                expires: None,
+                approvals: g["approvals"].as_u64().unwrap_or(0),
+                needed: g["needed"].as_u64().unwrap_or(1),
+                command: g["approve"].as_str().map(str::to_owned),
+                source: illogical_proto::GateSource::Hud { box_url: origin.to_owned(), app: app.to_owned() },
+            })
+        })
+        .collect()
+}
+
+/// illogical's name for a person as hud takes a display name: an email by
+/// its local part, characters hud refuses as `-`, at most 32; `None` for
+/// what can't be one (empty, or one of hud's role labels).
+pub fn hud_name(name: &str) -> Option<String> {
+    let name = name.trim();
+    let name = match name.split_once('@') {
+        Some((local, _)) if !local.is_empty() => local,
+        _ => name,
+    };
+    let mapped: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || " -_.'".contains(c) { c } else { '-' })
+        .collect::<String>()
+        .split(' ')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let start = mapped.trim_start_matches(|c: char| !c.is_alphanumeric());
+    let out: String = start.chars().take(32).collect::<String>().trim_end().to_owned();
+    let lower = out.to_lowercase();
+    let reserved = ["owner", "player", "spectator"].iter().any(|r| {
+        lower == *r
+            || lower
+                .strip_prefix(r)
+                .and_then(|rest| rest.strip_prefix(' '))
+                .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()) && !n.is_empty())
+    });
+    (!out.is_empty() && !reserved).then_some(out)
+}
+
 /// What one server-sent event says, for the follower.
 fn frame_events(chat: &str, frame: &str, tx: &mpsc::UnboundedSender<Ev>) {
     let data: String = frame
@@ -715,6 +917,39 @@ fn frame_events(chat: &str, frame: &str, tx: &mpsc::UnboundedSender<Ev>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_hud_takes() {
+        assert_eq!(hud_name("friend@example.com").as_deref(), Some("friend"));
+        assert_eq!(hud_name("Sam Doe").as_deref(), Some("Sam Doe"));
+        assert_eq!(hud_name("`sam` (admin): x").as_deref(), Some("sam- -admin-- x"));
+        assert_eq!(hud_name(&"a".repeat(40)).map(|n| n.len()), Some(32));
+        assert_eq!(hud_name("owner"), None);
+        assert_eq!(hud_name("Player 2"), None);
+        assert_eq!(hud_name("players"), Some("players".into()));
+        assert_eq!(hud_name("  "), None);
+        assert_eq!(hud_name("@x").as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn gates_from_the_work_board() {
+        let board = json!({ "v": 1, "groups": [
+            { "id": "decide", "items": [{ "key": "d" }] },
+            { "id": "approve", "items": [
+                { "key": "gate:delivery/release/ship@prod", "gate": { "member": "delivery", "component": "release",
+                  "name": "ship", "env": "prod", "needed": 2, "approvals": 1, "approve": "chant approve release ship --env prod" } },
+                { "key": "odd" },
+            ] },
+        ]});
+        let gates = board_gates("https://b.example", "pinboard", &board);
+        assert_eq!(gates.len(), 1);
+        let g = &gates[0];
+        assert_eq!(
+            (g.key().as_str(), g.env.as_deref(), g.approvals, g.needed),
+            ("delivery/release/ship", Some("prod"), 1, 2)
+        );
+        assert_eq!(g.bundle(), "gate:https://b.example");
+    }
 
     #[test]
     fn cookies_are_kept_and_cleared() {

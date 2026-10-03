@@ -18,18 +18,22 @@
 //! - **Questions.** The follower (`hud.rs`) puts the box agent's questions
 //!   on the block as asks (`source: "hud"`), answered like a terminal's;
 //!   the answer goes back to hud naming who gave it.
-//! - **Gates** from hud's work board come with M34's gate type: the state
-//!   has their slot (`gates`), empty in this version.
+//! - **Gates** from hud's work board (read again whenever hud's live feed
+//!   moves) are M34's gates with a `hud` source: the same `gate` reason,
+//!   card, rail and phone sheet as a workspace's. `approve` goes to hud's
+//!   approve route through the follower's session, naming who approves
+//!   with a follower credential. The card stays until hud's board no
+//!   longer lists the gate; an approve that fails puts its error on it.
 //! - **Restore.** Nothing to bring back but the config: after a restart
 //!   the follower mints again, and so does each client's frame.
 
 pub mod hud;
 pub mod studio;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use futures_util::future::BoxFuture;
-use illogical_proto::{BlockType, Project, WorkKind};
+use illogical_proto::{Attention, BlockType, Gate, Project, ReasonKind, WorkKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -61,16 +65,21 @@ struct State {
     follower: hud::Status,
     /// Bumped by `reload`: every client enters again.
     reloads: u64,
-    /// The box's gates, from hud's work board (`/__hud/api/work`), as
-    /// M34's gate attention shows them. Empty in this version.
-    gates: Vec<Value>,
+    /// The box's gates waiting, from hud's work board.
+    gates: Vec<Gate>,
+    /// The last approve that failed: the gate's key and why.
+    gate_error: Option<(String, String)>,
 }
 
 pub struct AppBlock {
+    me: Weak<AppBlock>,
     ctx: BlockCtx,
     config: Config,
     state: Arc<Mutex<State>>,
     follower: Mutex<Option<hud::Follower>>,
+    session: Arc<Mutex<Option<Arc<hud::Session>>>>,
+    /// The gate reason's headline raised now, if any.
+    raised: Mutex<Option<String>>,
 }
 
 impl AppBlock {
@@ -89,11 +98,14 @@ impl AppBlock {
             follower_credential: config.follower,
             ..State::default()
         }));
-        let b = Arc::new(Self {
+        let b = Arc::new_cyclic(|me| Self {
+            me: me.clone(),
             ctx: ctx.clone(),
             config: config.clone(),
             state: state.clone(),
             follower: Mutex::new(None),
+            session: Arc::default(),
+            raised: Mutex::new(None),
         });
         let (st, c) = (state.clone(), ctx.clone());
         let report = Arc::new(move |s: hud::Status| {
@@ -106,6 +118,12 @@ impl AppBlock {
         });
         let c = ctx.clone();
         let log = Arc::new(move |v: Value| append(&c, &v));
+        let me = Arc::downgrade(&b);
+        let gates = Arc::new(move |g: Vec<Gate>| {
+            if let Some(b) = me.upgrade() {
+                b.gates(g);
+            }
+        });
         let follower = hud::start(hud::Setup {
             origin: config.box_url.clone(),
             app: config.app.clone(),
@@ -114,9 +132,108 @@ impl AppBlock {
             ctx,
             report,
             log,
+            gates,
+            session: b.session.clone(),
         });
         *b.follower.lock().unwrap() = Some(follower);
         Ok(b)
+    }
+}
+
+impl AppBlock {
+    /// hud's board was read: these gates wait.
+    fn gates(&self, gates: Vec<Gate>) {
+        {
+            let mut st = self.state.lock().unwrap();
+            if st.gates == gates {
+                return;
+            }
+            if st.gate_error.as_ref().is_some_and(|(k, _)| !gates.iter().any(|g| g.key() == *k)) {
+                st.gate_error = None;
+            }
+            st.gates = gates;
+        }
+        self.raise();
+        self.ctx.changed();
+    }
+
+    /// Gates waiting are attention (with the last approve's error, if it
+    /// failed); none, and it's let go.
+    fn raise(&self) {
+        let (reason, error) = {
+            let st = self.state.lock().unwrap();
+            (crate::gate::reason(&st.gates), st.gate_error.clone())
+        };
+        let reason = reason.map(|mut r| {
+            if let (Some((key, e)), Some(g)) = (&error, r.gate.as_ref())
+                && g.key() == *key
+            {
+                r.headline = format!("{}: approving failed: {e}", r.headline);
+            }
+            r
+        });
+        let now = reason.as_ref().map(|r| r.headline.clone());
+        let mut raised = self.raised.lock().unwrap();
+        if *raised == now {
+            return;
+        }
+        match reason {
+            Some(r) => self.ctx.reason(Attention::NeedsInput, r),
+            None => self.ctx.clear(ReasonKind::Gate),
+        }
+        *raised = now;
+    }
+
+    /// Approve the gate `args` names (`{key}`, `{member, op, gate}`, or the
+    /// first) through hud, as `by`.
+    async fn approve(&self, args: Value, by: Option<String>) -> Result<Value, String> {
+        let gate = {
+            let st = self.state.lock().unwrap();
+            let arg = |k: &str| args[k].as_str().map(str::to_owned);
+            let want = arg("key").or_else(|| Some(format!("{}/{}/{}", arg("member")?, arg("op")?, arg("gate")?)));
+            match want {
+                None => st.gates.first().cloned().ok_or("no gate is waiting")?,
+                Some(k) => st.gates.iter().find(|g| g.key() == k).cloned().ok_or_else(|| {
+                    format!("no gate {k} is waiting (it was approved, or hud's board hasn't shown it yet)")
+                })?,
+            }
+        };
+        let session = self.session.lock().unwrap().clone().ok_or("not in the box yet: try again in a moment")?;
+        let via = crate::gate::Via::Hud { session: &session, follower: self.config.follower };
+        let result = crate::gate::approve(&gate, by.as_deref(), &via).await;
+        let (ok, said) = match &result {
+            Ok(s) | Err(s) => (result.is_ok(), s.clone()),
+        };
+        append(
+            &self.ctx,
+            &json!({ "e": "approve", "member": gate.member, "op": gate.op, "gate": gate.gate, "by": by, "ok": ok, "said": said }),
+        );
+        if let Ok(mut l) = self.ctx.log() {
+            let at = l.end();
+            let text = format!("approved {}: {} at gate {}", gate.member, gate.op, gate.gate);
+            let _ = l.record(
+                at,
+                crate::store::Event::Command {
+                    at_ms: crate::store::now_ms(),
+                    text: Some(text),
+                    cwd: None,
+                    by: by.clone(),
+                },
+            );
+            let _ = l.record(
+                at,
+                crate::store::Event::End { at_ms: crate::store::now_ms(), exit: Some(if ok { 0 } else { 1 }) },
+            );
+        }
+        self.state.lock().unwrap().gate_error = if ok { None } else { Some((gate.key(), said.clone())) };
+        self.raise();
+        self.ctx.changed();
+        // hud's board says when it's gone; until then the card stays.
+        if let Some(f) = &*self.follower.lock().unwrap() {
+            f.reread();
+        }
+        let said = result?;
+        Ok(json!({ "approved": gate.key(), "gate": gate, "by": by, "said": said }))
     }
 }
 
@@ -173,7 +290,15 @@ impl Block for AppBlock {
     }
 
     fn call(&self, method: &str, args: Value) -> BoxFuture<'static, Result<Value, String>> {
+        self.call_by(method, args, None)
+    }
+
+    fn call_by(&self, method: &str, args: Value, by: Option<&str>) -> BoxFuture<'static, Result<Value, String>> {
         match method {
+            "approve" => {
+                let (me, by) = (self.me.upgrade(), by.map(str::to_owned));
+                Box::pin(async move { me.ok_or("closed")?.approve(args, by).await })
+            }
             // A fresh way in, for a frame: used once, never kept.
             "enter" => {
                 let to = args["to"].as_str().filter(|t| !t.is_empty()).map(str::to_owned);

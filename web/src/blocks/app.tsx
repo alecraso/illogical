@@ -12,7 +12,7 @@
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
-import type { PaneId } from "../proto";
+import { gateKey, type Gate, type PaneId } from "../proto";
 import { openMenu } from "../ui/menu";
 import { registerBlock, type BlockView } from "./view";
 
@@ -30,7 +30,10 @@ export interface AppState {
     last_answer: { ok: boolean; error?: string } | null;
   };
   reloads: number;
-  gates: unknown[];
+  /** Gates waiting in the box, from hud's work board. */
+  gates: Gate[];
+  /** The last approve that failed: the gate's key, and why. */
+  gate_error: [string, string] | null;
 }
 
 /** hud's own pages, for the frame. */
@@ -81,6 +84,15 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
   // Bumped to enter again (↻, or another client's `reload`).
   const [want, setWant] = useState<{ n: number; to?: string }>({ n: 0 });
   const owner = !client.state?.roles;
+  const [busy, setBusy] = useState<string | null>(null);
+  const may = client.role(client.sessionOfTab(client.tabOfPane(id)?.id ?? -1) ?? null) !== "viewer";
+  const approve = async (g: Gate) => {
+    setBusy(gateKey(g));
+    // The card goes when hud's board no longer lists the gate; a failure
+    // comes back on it (and as a toast).
+    await client.act({ action: "allow", pane: id, id: gateKey(g) });
+    setBusy(null);
+  };
 
   const enter = async (to?: string) => {
     setError(null);
@@ -132,6 +144,25 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
           ↗
         </a>
       </div>
+      {s.gates.length > 0 && (
+        <div class="app-gates" data-app-gates>
+          {s.gates.map((g) => (
+            <div class="app-gate" key={gateKey(g)} data-gate={gateKey(g)}>
+              <span>
+                <b>{g.member}</b>: {g.op} waits at gate <b>{g.gate}</b>
+                {g.env ? ` in ${g.env}` : ""}
+                {g.needed > 1 ? ` (${g.approvals} of ${g.needed})` : ""}
+              </span>
+              {s.gate_error?.[0] === gateKey(g) && <span class="error app-gate-error">{s.gate_error[1]}</span>}
+              {may && (
+                <button class="primary" disabled={busy === gateKey(g)} onClick={() => void approve(g)}>
+                  {busy === gateKey(g) ? "Approving…" : "Approve"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {!owner ? (
         <div class="browser-card">
           <p>{name} is a studio app of this machine's owner.</p>

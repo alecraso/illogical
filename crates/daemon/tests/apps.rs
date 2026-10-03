@@ -49,6 +49,12 @@ struct Inner {
     questions: HashMap<String, Value>,
     answers: Vec<(Value, Option<String>)>,
     connects: u32,
+    /// Gates pending on the work board, and how often it was read.
+    gates: Vec<Value>,
+    board_reads: u32,
+    approvals: Vec<Value>,
+    /// The next approve fails, saying this.
+    fail_next: Option<String>,
 }
 
 #[derive(Clone)]
@@ -58,6 +64,8 @@ struct Fake {
     /// Bumped when a queue changes; and to drop every stream.
     changed: Arc<watch::Sender<u64>>,
     drop: Arc<watch::Sender<u64>>,
+    /// Bumped when the workspace moves (hud's live feed).
+    live: Arc<watch::Sender<u64>>,
 }
 
 impl Fake {
@@ -81,6 +89,15 @@ impl Fake {
     fn settle(&self, chat: &str) {
         self.inner.lock().unwrap().questions.remove(chat);
         self.bump();
+    }
+    fn gate(&self, member: &str, gate: &str) {
+        self.inner
+            .lock()
+            .unwrap()
+            .gates
+            .push(json!({ "member": member, "component": "release", "name": gate, "env": "prod",
+            "needed": 1, "approvals": 0, "approve": format!("chant approve release {gate} --env prod") }));
+        self.live.send_modify(|n| *n += 1);
     }
     fn answers(&self) -> Vec<(Value, Option<String>)> {
         self.inner.lock().unwrap().answers.clone()
@@ -179,13 +196,73 @@ async fn answer(State(f): State<Fake>, h: HeaderMap, Json(body): Json<Value>) ->
     Json(json!({ "answered": true, "requestId": body["requestId"], "optionId": body["optionId"] })).into_response()
 }
 
+async fn work(State(f): State<Fake>, h: HeaderMap) -> Response {
+    if !f.authed(&h) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let mut i = f.inner.lock().unwrap();
+    i.board_reads += 1;
+    let items: Vec<Value> = i.gates.iter().map(|g| json!({ "key": format!("gate:{}/{}", g["member"].as_str().unwrap(), g["name"].as_str().unwrap()), "gate": g })).collect();
+    Json(json!({ "v": 1, "env": "prod", "groups": [{ "id": "decide", "items": [] }, { "id": "approve", "items": items }] })).into_response()
+}
+
+async fn live(State(f): State<Fake>, h: HeaderMap) -> Response {
+    if !f.authed(&h) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let (rx, d) = (f.live.subscribe(), f.drop.subscribe());
+    let s = futures_util::stream::unfold((rx, d, true), |(mut rx, mut d, first)| async move {
+        if !first {
+            tokio::select! {
+                biased;
+                _ = d.changed() => return None,
+                r = rx.changed() => r.ok()?,
+            }
+        }
+        let frame =
+            if first { "event: live-snapshot\ndata: {}\n\n" } else { ": keepalive\n\nevent: live-state\ndata: {}\n\n" };
+        Some((Ok::<_, std::convert::Infallible>(frame), (rx, d, false)))
+    });
+    Response::builder().header("content-type", "text/event-stream").body(Body::from_stream(s)).unwrap()
+}
+
+async fn approve_gate(State(f): State<Fake>, h: HeaderMap, Json(body): Json<Value>) -> Response {
+    if !f.authed(&h) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if h.get("origin").and_then(|o| o.to_str().ok()) != Some(f.origin.lock().unwrap().as_str()) {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "cross-site" }))).into_response();
+    }
+    let mut i = f.inner.lock().unwrap();
+    if let Some(e) = i.fail_next.take() {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "code": "chant-refused", "error": e })))
+            .into_response();
+    }
+    let at = i.gates.iter().position(|g| {
+        g["member"] == body["member"]
+            && g["component"] == body["component"]
+            && g["name"] == body["gate"]
+            && g["env"] == body["env"]
+    });
+    let Some(at) = at else {
+        return (StatusCode::CONFLICT, Json(json!({ "code": "gate-not-pending", "error": "that gate isn't pending" })))
+            .into_response();
+    };
+    i.gates.remove(at);
+    i.approvals.push(body);
+    drop(i);
+    f.live.send_modify(|n| *n += 1);
+    Json(json!({ "v": 1, "approval": { "command": "chant approve", "exitCode": 0, "output": "Gate resolved" } }))
+        .into_response()
+}
+
 async fn apps(State(f): State<Fake>, h: HeaderMap) -> Response {
     if h.get("authorization").and_then(|a| a.to_str().ok()) != Some(&format!("Bearer {TOKEN}")) {
         return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "who are you?" }))).into_response();
     }
     let url = f.origin.lock().unwrap().clone();
-    Json(json!({ "apps": [{ "name": "pinboard", "title": "Pinboard", "box": { "url": url, "status": "running" } }] }))
-        .into_response()
+    // studio#292's shape.
+    Json(json!({ "apps": [{ "name": "pinboard", "title": "Pinboard", "url": url, "createdAt": 1 }] })).into_response()
 }
 
 async fn open(State(f): State<Fake>, h: HeaderMap) -> Response {
@@ -219,6 +296,7 @@ impl Fakes {
             origin: Arc::default(),
             changed: Arc::new(watch::channel(0).0),
             drop: Arc::new(watch::channel(0).0),
+            live: Arc::new(watch::channel(0).0),
         };
         let (studio, origin) = rt.block_on(async {
             let boxed = Router::new()
@@ -228,6 +306,9 @@ impl Fakes {
                 .route("/__hud/api/tabs", get(tabs))
                 .route("/__hud/api/chat/stream", get(stream))
                 .route("/__hud/api/chat/answer", post(answer))
+                .route("/__hud/api/work", get(work))
+                .route("/__hud/api/live/stream", get(live))
+                .route("/__hud/api/work/gates/approve", post(approve_gate))
                 .with_state(f.clone());
             let studio = Router::new()
                 .route("/api/apps", get(apps))
@@ -562,4 +643,109 @@ fn asks_on_a_browser_block_and_who_may_answer() {
     assert_eq!(sent["optionId"], "o0");
     assert_eq!(sent["onBehalfOf"]["via"], "illogical", "{sent}");
     assert!(sent["onBehalfOf"]["name"].as_str().is_some_and(|n| !n.is_empty() && n != "owner"), "{sent}");
+}
+
+#[test]
+fn a_box_gate_is_attention_approved_through_hud_as_whoever_clicked() {
+    let f = Fakes::start();
+    let d = Daemon::child_with(&[
+        "--wisp-token-file",
+        "/nonexistent",
+        "--owner",
+        OWNER,
+        "--tailscale-socket",
+        "/nonexistent/sock",
+    ]);
+    f.login(&d);
+    let (status, _) = d.raw(
+        "PUT",
+        "/api/studio/followers/pinboard",
+        Some(json!({ "link": format!("{}/__hud/join?t=follower", f.origin) })),
+    );
+    assert_eq!(status, 200);
+    let pane = d.get("/api/panes")[0]["id"].as_u64().unwrap();
+    let session = d.get("/api/panes")[0]["session"].as_u64().unwrap();
+    let b = d.post(
+        "/api/blocks",
+        json!({ "type": "app", "config": { "app": "pinboard", "follower": true }, "split": pane }),
+    )["block"]
+        .as_u64()
+        .unwrap();
+    following(&d, b);
+    d.wait_for("the first read of the board", || f.f.inner.lock().unwrap().board_reads > 0);
+
+    // A release waits at ship: attention, from hud's live feed.
+    f.f.gate("delivery", "ship");
+    d.wait_for("the gate", || info(&d, b)["reason"]["kind"] == "gate");
+    let i = info(&d, b);
+    assert_eq!(i["attention"], "needs_input");
+    let r = &i["reason"];
+    assert_eq!(r["gate"]["source"], json!({ "kind": "hud", "box_url": f.origin, "app": "pinboard" }));
+    assert_eq!((r["gate"]["op"].as_str(), r["gate"]["env"].as_str()), (Some("release"), Some("prod")));
+    assert_eq!(r["bundle"], format!("gate:{}", f.origin));
+    assert_eq!(r["headline"], "delivery: release waits at gate ship");
+    assert_eq!(d.state(b)["gates"][0]["gate"], "ship");
+    // Read on change, not on a timer.
+    let reads = f.f.inner.lock().unwrap().board_reads;
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(f.f.inner.lock().unwrap().board_reads, reads, "the board isn't polled");
+
+    // A question meanwhile comes first; answered, the gate is the reason again.
+    f.f.ask("c1", "q1", 300_000);
+    wait_ask(&d, b, "q1");
+    assert_eq!(info(&d, b)["reason"]["kind"], "ask");
+    d.post("/api/attention/act", json!({ "action": "answer", "pane": b, "content": { "question_0": "Green" } }));
+    d.wait_for("the gate again", || info(&d, b)["reason"]["kind"] == "gate");
+    assert_eq!(info(&d, b)["attention"], "needs_input");
+
+    let http = reqwest::Client::new();
+    let as_friend = |body: Value| {
+        let r =
+            f.rt.block_on(
+                http.post(format!("http://127.0.0.1:{}/api/attention/act", d.port))
+                    .header("tailscale-user-login", FRIEND)
+                    .json(&body)
+                    .send(),
+            )
+            .unwrap();
+        (r.status().as_u16(), f.rt.block_on(r.text()).unwrap())
+    };
+    let allow = json!({ "action": "allow", "pane": b, "id": "delivery/release/ship" });
+    // A viewer can't approve it.
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "viewer" }));
+    assert_eq!(as_friend(allow.clone()).0, 403);
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "editor" }));
+
+    // hud refuses: the card stays, saying why.
+    f.f.inner.lock().unwrap().fail_next = Some("chant approve exited 1".into());
+    let (status, body) = as_friend(allow.clone());
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("chant approve exited 1"), "{body}");
+    let i = info(&d, b);
+    assert_eq!(i["reason"]["kind"], "gate");
+    assert!(
+        i["reason"]["headline"].as_str().unwrap().ends_with("approving failed: hud: chant approve exited 1"),
+        "{i}"
+    );
+    assert_eq!(i["attention"], "needs_input");
+
+    // Approved by an editor: hud hears who, and the card goes with the gate.
+    let (status, body) = as_friend(allow);
+    assert_eq!(status, 200, "{body}");
+    let sent = f.f.inner.lock().unwrap().approvals[0].clone();
+    assert_eq!(
+        sent,
+        json!({ "member": "delivery", "component": "release", "gate": "ship", "env": "prod",
+            "onBehalfOf": { "name": "friend", "via": "illogical" } })
+    );
+    d.wait_for("the card to go", || info(&d, b)["reason"].is_null());
+    let i = info(&d, b);
+    assert_ne!(i["attention"], "needs_input");
+    assert_eq!(
+        (i["answered"]["how"].as_str(), i["answered"]["who"].as_str()),
+        (Some("approved"), Some(format!("tailnet:{FRIEND}").as_str()))
+    );
+    assert!(d.state(b)["gates"].as_array().unwrap().is_empty());
+    let hist = d.get(&format!("/api/history?pane={b}"));
+    assert!(hist.as_array().unwrap().iter().any(|h| h["text"] == "approved delivery: release at gate ship"), "{hist}");
 }

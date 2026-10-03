@@ -1,7 +1,7 @@
 //! Gates waiting for a person (M34), whoever read them: the `gate` reason
 //! the swarm's rail, push and the phone show, and approving one through
 //! where it came from. The workspace block reads chant's; a studio app
-//! block (M35) will read hud's. Neither the reason nor the card knows which.
+//! block (M35) reads hud's. Neither the reason nor the card knows which.
 
 use illogical_proto::{Action, Gate, GateSource, Reason, ReasonKind};
 
@@ -50,6 +50,21 @@ pub async fn approve(gate: &Gate, approver: Option<&str>, via: &Via<'_>) -> Resu
                 _ => Err(said),
             }
         }
+        (GateSource::Hud { .. }, Via::Hud { session, follower }) => {
+            // hud re-reads `workspace status` and approves only a gate
+            // pending there, with `--actor` its roster name, or with a
+            // follower credential, the person named here.
+            let mut body = serde_json::json!({
+                "member": gate.member, "component": gate.op, "gate": gate.gate, "env": gate.env,
+            });
+            if *follower && let Some(name) = approver.and_then(crate::apps::hud::hud_name) {
+                body["onBehalfOf"] = serde_json::json!({ "name": name, "via": "illogical" });
+            }
+            session.approve_gate(&body).await
+        }
+        (GateSource::Chant { .. }, Via::Hud { .. }) | (GateSource::Hud { .. }, Via::Chant { .. }) => {
+            Err("this gate isn't this block's to approve".into())
+        }
     }
 }
 
@@ -58,6 +73,9 @@ pub enum Via<'a> {
     /// The workspace's chant, run on the block's host with the user's
     /// shell environment.
     Chant { runner: &'a Runner, chant: &'a str },
+    /// The app block's session with hud in its box (M35); `follower`:
+    /// it's a follower credential, so hud is told who approves.
+    Hud { session: &'a crate::apps::hud::Session, follower: bool },
 }
 
 /// Text without terminal colours, trimmed.

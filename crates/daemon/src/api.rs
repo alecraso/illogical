@@ -634,7 +634,7 @@ async fn block_call(
     // The transcript names whoever isn't its owner (the owner's own
     // answers go unremarked, as before M29). A gate's ledger names whoever
     // approved it, the owner too, by their illogical name (#75).
-    let gate = b.kind() == illogical_proto::BlockType::Workspace;
+    let gate = matches!(b.kind(), illogical_proto::BlockType::Workspace | illogical_proto::BlockType::App);
     let name = by.as_ref().filter(|d| gate || d.who != "owner").map(|d| d.name.as_str());
     let out = b.call_by(method, args.clone(), name).await?;
     if gate && method == "approve" {
@@ -999,7 +999,9 @@ async fn call(
     };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
         // A question raised on the block (M35) is answered where it waits.
-        let answering = matches!(method.as_str(), "answer" | "decline" | "terminal" | "approve" | "deny");
+        // (A studio box's gate is approved by the block: `{key}`.)
+        let gate = method == "approve" && ["key", "member"].iter().any(|k| args.get(*k).is_some());
+        let answering = !gate && matches!(method.as_str(), "answer" | "decline" | "terminal" | "approve" | "deny");
         if !(answering && app.mux.api(|r| Api::Holds(id, r)).await.unwrap_or(false)) {
             return block_call(&app, id, &b, &method, args, by).await.map(Json).map_err(bad);
         }

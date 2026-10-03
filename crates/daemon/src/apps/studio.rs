@@ -7,13 +7,14 @@
 //! Beside it, per app, a hud follower link (`illogical studio follower
 //! APP`), when the box's owner made one with `hud share --role follower`.
 //!
-//! The contract assumed of studio (its personal-token PR, arugula-salad
-//! track A3), both with `Authorization: Bearer <token>`:
+//! studio's contract (arugula-salad/studio#292, personal tokens
+//! `studio_pat_…`), both with `Authorization: Bearer <token>`:
 //!
-//! - `GET <studio>/api/apps`: the caller's apps, as `{apps: [...]}` or a
-//!   bare array. Each has a `name`, and its box as `url`, `box.url`
-//!   (studio's own `/api/me` shape), `boxUrl` or `host`. `title` and
-//!   `box.status` are shown when there.
+//! - `GET <studio>/api/apps`: `{apps: [{name, title, url, createdAt}]}`,
+//!   `url` the box's. Read tolerantly: a bare array, and the box as
+//!   `box.url` (studio's own `/api/me` shape), `boxUrl` or `host`, are
+//!   taken too; `title` is the block's label, and `box.status` is shown
+//!   when there.
 //! - `POST <studio>/api/apps/:name/open`: `{url}` (or `{link}`), the
 //!   owner's ten-minute `/__enter?e=…&k=…` link. A deep link adds `&to=`
 //!   (one of hud's pages), which the box's door follows once inside.
@@ -336,6 +337,20 @@ mod tests {
         let apps = parse_apps(&bare);
         assert_eq!(apps[0].url, "http://127.0.0.1:9");
         assert_eq!(apps[1].url, "https://b.example");
+    }
+
+    #[test]
+    fn studios_token_list() {
+        let v = json!({ "apps": [{ "name": "app-1a2b3c4d", "title": "Pinboard", "url": "https://app-1a2b3c4d.example.test", "createdAt": 1 }] });
+        assert_eq!(
+            parse_apps(&v),
+            vec![AppInfo {
+                name: "app-1a2b3c4d".into(),
+                title: Some("Pinboard".into()),
+                url: "https://app-1a2b3c4d.example.test".into(),
+                status: None,
+            }]
+        );
     }
 
     #[test]
