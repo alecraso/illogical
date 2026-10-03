@@ -388,7 +388,7 @@ the daemon stopping, crashing, or the machine rebooting:
     `source` and `agent` (who asks), for something that follows a page's
     agent from outside.
 
-- **Pull requests** (M36, Forgejo; M39, GitLab). A PR as a block beside the work on
+- **Pull requests** (M36, Forgejo; M38, GitHub; M39, GitLab). A PR as a block beside the work on
   it: its checks, reviews and timeline, and what it waits on you for.
   - **Opening one.** *Open pull request…* (a pane's menu, the `+`
     button's menu; *Pull request* in the phone's sheet), `illogical pr
@@ -450,7 +450,22 @@ the daemon stopping, crashing, or the machine rebooting:
     or `squash`. *Diff* and *Checkout* fetch `refs/merge-requests/N/head`
     and diff from `diff_refs.base_sha`, the merge base. A poll is one
     conditional request when nothing moved (gitlab.com counts 304s too).
-  - **Not yet:** GitHub (M38), issues (M37), webhooks (M40).
+  - **GitHub pull requests** (M38). The same block for a GitHub PR: open
+    it from its link (`github.com/OWNER/REPO/pull/N`, in a terminal too),
+    `illogical pr URL`, or `OWNER/REPO#N` / N in a clone whose remote is on
+    github.com. It reads with your `gh` login's token (`gh auth token
+    --hostname H`, memory only, asked again after a 401). A GitHub
+    Enterprise host (API `https://HOST/api/v3`) works the same when gh has
+    a login there. Every read is conditional (ETags), so a poll with
+    nothing changed is three 304s and costs none of GitHub's rate limit;
+    when the limit runs low the block polls once a minute and says so.
+    Checks are check runs and commit statuses both; a review asked of a
+    team you're in counts as asked of you; branch protection blocking a
+    merge holds *Finished* back. Red checks on your PR offer *Rerun*
+    (`illogical pr rerun %N`, `illogical rerun %N`, the rail, the block),
+    which reruns each red workflow run's failed jobs. Merge is `merge`,
+    `squash` or `rebase`.
+  - **Not yet:** issues (M37), webhooks (M40).
 
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
