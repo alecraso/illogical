@@ -59,6 +59,23 @@ function followerLine(s: AppState): string {
 
 function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState | null }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  // A way in waiting for the frame's own first load (the box's page), so
+  // that load can't land on top of it.
+  const pending = useRef<string | null>(null);
+  const loaded = useRef(false);
+  const go = (url: string) => {
+    const f = frame.current;
+    if (!f || !loaded.current) {
+      pending.current = url;
+      return;
+    }
+    pending.current = null;
+    try {
+      f.contentWindow!.location.replace(url);
+    } catch {
+      f.src = url;
+    }
+  };
   const [error, setError] = useState<string | null>(null);
   const [entered, setEntered] = useState(false);
   // Bumped to enter again (↻, or another client's `reload`).
@@ -73,15 +90,7 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
       if (!res.ok || !v.url) throw new Error(v.error ?? `couldn't get in (${res.status})`);
       setEntered(true);
       // Into the frame, and nowhere else: not its src, not the URL bar.
-      const go = (f: HTMLIFrameElement) => {
-        try {
-          f.contentWindow!.location.replace(v.url!);
-        } catch {
-          f.src = v.url!;
-        }
-      };
-      if (frame.current) go(frame.current);
-      else requestAnimationFrame(() => frame.current && go(frame.current));
+      go(v.url);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -146,6 +155,10 @@ function AppBlock({ client, id, s }: { client: Client; id: PaneId; s: AppState |
             title={name}
             sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
             referrerpolicy="no-referrer"
+            onLoad={() => {
+              loaded.current = true;
+              if (pending.current) go(pending.current);
+            }}
           />
         </>
       )}
