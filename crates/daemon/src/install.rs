@@ -70,6 +70,31 @@ fn args_to_install(given: &[String], reset: bool, earlier: impl FnOnce() -> Opti
     kept
 }
 
+/// Where the installed daemon listens: its `--listen`, else the default.
+fn listen_of(args: &[String]) -> String {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if let Some(v) = a.strip_prefix("--listen=") {
+            return v.to_owned();
+        }
+        if a == "--listen"
+            && let Some(v) = it.next()
+        {
+            return v.clone();
+        }
+    }
+    "127.0.0.1:7681".into()
+}
+
+/// What to do after it starts (#107): open it, read its logs, reach it
+/// from elsewhere.
+fn next_steps(args: &[String], logs: &str) -> String {
+    format!(
+        "Open http://{}\nLogs: {logs}\nFrom other devices: `tailscale serve`, or `illogicald join https://control.illogical.widgets.wtf`\n",
+        listen_of(args)
+    )
+}
+
 /// Arguments in a unit `unit_text` wrote.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 fn unit_args(unit: &str) -> Option<Vec<String>> {
@@ -101,6 +126,9 @@ pub fn install(start: bool, daemon_args: &[String], reset: bool) -> anyhow::Resu
         // new daemon and keep running.
         systemctl(&["restart", UNIT])?;
         println!("started {UNIT}");
+        print!("{}", next_steps(&args, "journalctl --user -u illogicald -e"));
+    } else {
+        println!("start it with `systemctl --user start {UNIT}`");
     }
     let linger = Command::new("loginctl")
         .args(["show-user", &std::env::var("USER").unwrap_or_default(), "-p", "Linger", "--value"])
@@ -257,9 +285,14 @@ mod launchd {
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
             if !ok {
-                bail!("launchctl bootstrap {domain} {plist} failed");
+                bail!(
+                    "launchctl bootstrap {domain} {plist} failed; see {}, or run `{}` in a terminal to see why it stops",
+                    log.display(),
+                    exe.display()
+                );
             }
-            println!("started {LABEL}; logs: {}", log.display());
+            println!("started {LABEL}");
+            print!("{}", super::next_steps(&args, &log.display().to_string()));
         } else {
             println!("it starts at your next login (or: launchctl bootstrap {domain} {})", plist.display());
         }
@@ -295,6 +328,16 @@ mod tests {
         assert!(t.contains("FileDescriptorStoreMax="));
         assert_eq!(super::unit_args(&t).unwrap(), ["--listen", "127.0.0.1:9000"]);
         assert_eq!(super::unit_args(&super::unit_text(&[])).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn next_steps_name_the_listen_address() {
+        assert!(super::next_steps(&[], "logs").starts_with("Open http://127.0.0.1:7681\nLogs: logs\n"));
+        assert!(
+            super::next_steps(&["--listen".into(), "127.0.0.1:9000".into()], "l")
+                .starts_with("Open http://127.0.0.1:9000\n")
+        );
+        assert!(super::next_steps(&["--listen=0.0.0.0:1".into()], "l").starts_with("Open http://0.0.0.0:1\n"));
     }
 
     #[test]
