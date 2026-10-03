@@ -15,6 +15,8 @@ import { pickConversation } from "./conversations";
 import { pickApp } from "./apps";
 import { openSandboxes } from "./sandboxes";
 import { openPicker } from "./picker";
+import { NotifySection } from "./notify";
+import { openGettingStarted } from "./welcome";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -119,6 +121,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             })}
           </section>
         ))}
+        <NotifySection client={client} session={client.session} />
         <div class="sheet-actions">
           <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
             New tab
@@ -168,6 +171,9 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           )}
           <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
           <button onClick={act(() => openSandboxes())}>Sandboxes</button>
+          <button data-getting-started-open onClick={act(() => openGettingStarted(undefined, client))}>
+            Getting started
+          </button>
           {active !== undefined && (
             <button class="danger" onClick={act(() => client.intent({ op: "close_pane", pane: active }))}>
               Close pane

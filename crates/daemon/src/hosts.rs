@@ -490,7 +490,18 @@ fn error(status: StatusCode, msg: impl Into<String>) -> Response {
 }
 
 async fn host(State(app): AppState) -> Json<HostInfo> {
-    Json(HostInfo { name: app.hosts.name().to_owned(), version: env!("CARGO_PKG_VERSION").to_owned() })
+    let joined = app.control.enrolled();
+    let saved = joined.as_ref().map(|e| &e.saved);
+    Json(HostInfo {
+        name: app.hosts.name().to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        tailnet_url: app.access.tailnet_url(),
+        tailnet_seen: app.tailnet_seen.load(std::sync::atomic::Ordering::Relaxed),
+        control: saved.map(|s| s.url.clone()),
+        // The team's name once its roster is in, else its id.
+        team: saved
+            .and_then(|s| s.roster.as_ref().map(|r| r.name.clone()).or_else(|| Some(s.team.as_ref()?.team.clone()))),
+    })
 }
 
 async fn list(State(app): AppState) -> Json<HostList> {

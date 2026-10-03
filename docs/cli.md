@@ -304,6 +304,6 @@ In `acceptEdits` mode Claude Code sends no diffs.
 
 **Notifications.** The owner is always told. Anyone else who may answer
 chooses which agents notify them: *Notify me about its agents* in the
-session menu, or `POST /api/notify` with `{"session": N, "on": true}` (no
+session menu (or the phone's sheet), or `POST /api/notify` with `{"session": N, "on": true}` (no
 session: everything they may edit there). This holds for the daemon's own
 push and for pushes through illogical control.

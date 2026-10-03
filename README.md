@@ -95,7 +95,7 @@ loginctl enable-linger $USER
    and open `https://<this machine>.<tailnet>.ts.net`. Only the Tailscale
    login that owns the machine gets in (`illogicald install -- --owner
    you@example.com` for someone else). On the phone, add it to the home
-   screen, then *Notify this device* in the session menu.
+   screen, then *Notify this device* in the menu (☰).
 3. **From a script or another pane:**
 
    ```

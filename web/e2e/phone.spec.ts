@@ -1,5 +1,7 @@
 // M1 on a phone: one pane at a time, a sheet to switch, and a key bar.
 
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { devices, expect, test } from "@playwright/test";
 import { active, ready, reset, text, type } from "./helpers";
 
@@ -43,4 +45,47 @@ test("one pane at a time, switch from the sheet, extra keys work", async ({ page
   await other.click();
   await expect.poll(() => active(page)).not.toBe(shown);
   await expect.poll(() => page.locator(".pane").count()).toBe(1);
+});
+
+// #95: the README's phone step, on a phone: Notify this device is in the
+// sheet, turns on, and the daemon sends this device a test notification.
+// Headless Chrome has no push service, so the browser's subscription is a
+// stand-in whose endpoint is ours: what the daemon sends lands here.
+test("notify this device from the sheet", async ({ page, context }) => {
+  const got: { encoding?: string; bytes: number }[] = [];
+  const service = createServer((req, res) => {
+    let bytes = 0;
+    req.on("data", (c: Buffer) => (bytes += c.length));
+    req.on("end", () => {
+      got.push({ encoding: req.headers["content-encoding"] as string | undefined, bytes });
+      res.writeHead(201).end();
+    });
+  });
+  await new Promise<void>((r) => service.listen(0, "127.0.0.1", r));
+  const endpoint = `http://127.0.0.1:${(service.address() as AddressInfo).port}/push/e2e`;
+  await page.addInitScript((endpoint) => {
+    let sub: PushSubscription | null = null;
+    const b64 = (b: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    PushManager.prototype.subscribe = async function () {
+      const pair = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
+      const keys = { p256dh: b64(await crypto.subtle.exportKey("raw", pair.publicKey)), auth: b64(crypto.getRandomValues(new Uint8Array(16)).buffer) };
+      sub = { endpoint, toJSON: () => ({ endpoint, keys }), unsubscribe: async () => ((sub = null), true) } as unknown as PushSubscription;
+      return sub;
+    };
+    PushManager.prototype.getSubscription = async () => sub;
+  }, endpoint);
+  await context.grantPermissions(["notifications"]);
+  await reset(page);
+  await page.locator(".sheet-button").click();
+  const notify = page.getByRole("button", { name: "Notify this device" });
+  await expect(notify).toHaveAttribute("aria-pressed", "false");
+  await notify.click();
+  await expect(notify).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => got.length).toBeGreaterThan(0);
+  expect(got[0].encoding).toBe("aes128gcm");
+  expect(got[0].bytes).toBeGreaterThan(0);
+  // And off again.
+  await notify.click();
+  await expect(notify).toHaveAttribute("aria-pressed", "false");
+  service.close();
 });

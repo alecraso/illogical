@@ -546,6 +546,57 @@ button {
   background: var(--raised);
 }
 
+/* Notifications in the sheet (#95, #96). */
+.sheet-note {
+  margin: 4px 12px 8px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.sheet-notify .copy-text {
+  margin: 4px 12px 8px;
+}
+
+.sheet-check {
+  display: inline-block;
+  min-width: 1.4em;
+  color: var(--accent);
+}
+
+/* Add to Home Screen, once (#96). */
+.install-hint {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 6px 24px #0008;
+  font-size: 13px;
+}
+
+.install-hint > span {
+  flex: 1;
+}
+
+.install-hint .primary {
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.install-hint-close {
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  font-size: 18px;
+  color: var(--dim);
+}
+
 .keybar {
   flex: none;
   display: flex;
@@ -3605,4 +3656,64 @@ button {
 
 .forge-actions {
   margin-top: 6px;
+}
+
+/* ---- getting started (#110) */
+
+.getting-started {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(560px, calc(100vw - 32px));
+  max-height: 80vh;
+}
+
+.prompt-backdrop:has(.getting-started) {
+  padding-top: 8vh;
+}
+
+.getting-started h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.start-sections {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.start-sections section {
+  padding: 10px 0;
+  border-top: 1px solid var(--raised-hover);
+}
+
+.start-sections h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.start-sections p,
+.start-sections ul {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.start-sections ul {
+  padding-left: 18px;
+}
+
+.start-sections summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.start-sections a {
+  color: var(--accent);
+}
+
+.start-done {
+  font-weight: normal;
+  font-size: 12px;
+  color: var(--accent);
 }

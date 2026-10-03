@@ -61,6 +61,8 @@ pub struct App {
     /// MCP's tokens (M16).
     pub mcp: Arc<crate::mcp::Tokens>,
     next_client: AtomicU64,
+    /// The owner has reached us over the tailnet (#110: the phone step).
+    pub tailnet_seen: std::sync::atomic::AtomicBool,
 }
 
 impl App {
@@ -92,6 +94,7 @@ impl App {
             acl,
             mcp,
             next_client: AtomicU64::new(1),
+            tailnet_seen: Default::default(),
         })
     }
 
@@ -235,7 +238,17 @@ async fn guard(
             let who = app.access.check_identity(req.headers(), &peer)?.with_pic(pic);
             // Another user gets in only once something is shared with them.
             if !app.acl.knows(&who) {
-                return Err((StatusCode::FORBIDDEN, "nothing on this machine is shared with you".into()));
+                let why = match &who {
+                    crate::acl::Principal::User { id, name, .. } if id.starts_with("tailnet:") => {
+                        app.access.not_yours(name)
+                    }
+                    _ => "nothing on this machine is shared with you".into(),
+                };
+                return Err((StatusCode::FORBIDDEN, why));
+            }
+            // The phone step is done once the owner comes in over the tailnet (#110).
+            if matches!(who, crate::acl::Principal::Owner) && app.access.via_tailnet(req.headers(), &peer) {
+                app.tailnet_seen.store(true, Ordering::Relaxed);
             }
             req.extensions_mut().insert(who);
             Ok(())
@@ -252,7 +265,17 @@ async fn guard(
         Ok(()) => next.run(req).await,
         Err((status, why)) => {
             warn!(%why, ?peer, %addr, uri = %req.uri(), "rejected request");
-            (status, why).into_response()
+            // A browser opening the page gets one it can copy the fix from (#109).
+            let page = req
+                .headers()
+                .get(header::ACCEPT)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|a| a.contains("text/html"));
+            if page {
+                (status, axum::response::Html(crate::access::refusal_page(status, &why))).into_response()
+            } else {
+                (status, why).into_response()
+            }
         }
     };
     // serve authenticates by source, so any page the owner visits could frame

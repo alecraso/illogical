@@ -1,8 +1,17 @@
 // Web Push: let the daemon notify this device when a pane needs you.
 
-export type PushState = "unsupported" | "denied" | "on" | "off";
+/** `insecure`: plain http, where browsers have no push. `install`: iOS in
+ * a Safari tab, which has push only once added to the Home Screen (#96). */
+export type PushState = "unsupported" | "insecure" | "install" | "denied" | "on" | "off";
 
 const supported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+
+/** iOS or iPadOS (which says it's a Mac, but has touch). */
+export const ios = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
+/** Opened from the Home Screen, not a browser tab. */
+export const standalone = () =>
+  matchMedia("(display-mode: standalone)").matches || (navigator as { standalone?: boolean }).standalone === true;
 
 /** Register the service worker (also what makes the app installable). A
  * notification through control (M21) says which daemon it's from. */
@@ -25,7 +34,8 @@ export async function registerWorker(onOpenPane: (pane: number, daemon?: string)
 }
 
 export async function pushState(): Promise<PushState> {
-  if (!supported()) return "unsupported";
+  if (!isSecureContext) return "insecure";
+  if (!supported()) return ios() && !standalone() ? "install" : "unsupported";
   if (Notification.permission === "denied") return "denied";
   const reg = await navigator.serviceWorker.getRegistration();
   const sub = await reg?.pushManager.getSubscription();

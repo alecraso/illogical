@@ -729,6 +729,9 @@ async fn run(
         access = access.require_tunnel_token(digest)?;
         info!("resident: loopback connections need the home daemon's tunnel token");
     }
+    if let Some(t) = &status {
+        access = access.with_tailnet_name(&t.host);
+    }
     let identify = tailscale::Identify::new(local_api, userspace);
     let name = args.name.clone().unwrap_or_else(|| {
         status

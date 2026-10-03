@@ -67,6 +67,9 @@ pub struct Access {
     tunnel: Option<[u8; 32]>,
     /// This daemon's page, for share links.
     page: String,
+    /// This node's MagicDNS name, when tailscaled told us (#109): where
+    /// `tailscale serve` puts the app.
+    tailnet: Option<String>,
 }
 
 impl Access {
@@ -96,7 +99,25 @@ impl Access {
             None => format!("http://127.0.0.1:{port}"),
         };
         let hosts = loopback.into_iter().chain(public.iter().cloned()).chain(direct).collect();
-        Self { hosts, public: public.into_iter().collect(), origins, owner, page, tunnel: None }
+        Self { hosts, public: public.into_iter().collect(), origins, owner, page, tunnel: None, tailnet: None }
+    }
+
+    /// This node's MagicDNS name, from tailscaled.
+    pub fn with_tailnet_name(mut self, name: &str) -> Self {
+        self.tailnet = Some(name.to_ascii_lowercase());
+        self
+    }
+
+    /// The app's address on the tailnet once `tailscale serve` is on, for
+    /// the phone (#109): `https://NAME.TAILNET.ts.net`.
+    pub fn tailnet_url(&self) -> Option<String> {
+        self.tailnet.as_ref().map(|n| format!("https://{n}"))
+    }
+
+    /// Whether this request came through `tailscale serve` (or straight
+    /// from a tailnet node) rather than from this machine.
+    pub fn via_tailnet(&self, headers: &HeaderMap, peer: &Peer) -> bool {
+        matches!(peer, Peer::Tailnet { .. }) || header_str(headers, "tailscale-user-login").is_some()
     }
 
     /// From now on, connections from this machine need the token whose
@@ -218,12 +239,27 @@ impl Access {
     fn must_be_owner(&self, login: &str) -> Result<(), Refusal> {
         match &self.owner {
             Some(owner) if owner.eq_ignore_ascii_case(login) => Ok(()),
-            Some(_) => Err((StatusCode::FORBIDDEN, format!("{login} is not the owner"))),
+            Some(_) => Err((StatusCode::FORBIDDEN, self.not_yours(login))),
             None => Err((
                 StatusCode::FORBIDDEN,
-                "tailnet request but no owner configured; start illogicald with --owner".into(),
+                format!(
+                    "You're signed in to Tailscale as {login}, and this machine has no owner set, so nobody \
+                     from the tailnet gets in.\n\nIf it's yours, run this on it:\n\n{}\n",
+                    owner_fix(login)
+                ),
             )),
         }
+    }
+
+    /// A tailnet user who isn't the owner (#109): who they are, whose
+    /// machine it is, and how to make it theirs if it is.
+    pub fn not_yours(&self, login: &str) -> String {
+        let owner = self.owner.as_deref().unwrap_or("nobody");
+        format!(
+            "You're signed in to Tailscale as {login}. This machine's owner is {owner}, and nothing on it \
+             is shared with you.\n\nIf it's yours, run this on it:\n\n{}\n",
+            owner_fix(login)
+        )
     }
 
     /// The login let in from the tailnet.
@@ -248,6 +284,41 @@ impl Access {
             Err((StatusCode::FORBIDDEN, format!("origin {} not allowed", origin.to_ascii_lowercase())))
         }
     }
+}
+
+/// The lasting fix for the owner (#109): installed, so it survives restarts.
+pub fn owner_fix(login: &str) -> String {
+    format!("illogicald install -- --owner {login}")
+}
+
+/// A refusal as a page, for a browser (#109): the fix's command copyable.
+pub fn refusal_page(status: StatusCode, why: &str) -> String {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let body: String = why
+        .split("\n\n")
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| {
+            let p = p.trim();
+            if p.starts_with("illogicald ") {
+                format!(
+                    "<p class=cmd><code id=fix>{}</code> <button onclick=\"navigator.clipboard.writeText(\
+                     document.getElementById('fix').textContent).then(()=>this.textContent='Copied',()=>\
+                     getSelection().selectAllChildren(document.getElementById('fix')))\">Copy</button></p>",
+                    esc(p)
+                )
+            } else {
+                format!("<p>{}</p>", esc(p))
+            }
+        })
+        .collect();
+    format!(
+        "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">\
+         <title>illogical: {}</title><style>body{{font:16px/1.5 system-ui,sans-serif;max-width:36em;\
+         margin:3em auto;padding:0 16px;color:#222;background:#fff}}@media(prefers-color-scheme:dark){{\
+         body{{color:#ddd;background:#111}}}}code{{font:14px ui-monospace,monospace;word-break:break-all}}\
+         .cmd{{display:flex;gap:.5em;align-items:center}}</style>{body}",
+        status.as_u16()
+    )
 }
 
 fn host(headers: &HeaderMap) -> String {
@@ -319,6 +390,37 @@ mod tests {
         assert_eq!(check(&a, &other).unwrap_err().0, StatusCode::FORBIDDEN);
         let no_owner = Access::new(7681, &["geek.example.ts.net".into()], &[], &[], None);
         assert!(check(&no_owner, &ok).is_err());
+    }
+
+    #[test]
+    fn owner_refusals_say_who_and_the_fix() {
+        let none = Access::new(7681, &["geek.example.ts.net".into()], &[], &[], None);
+        let h = headers(&[("host", "geek.example.ts.net"), ("tailscale-user-login", "me@x.com")]);
+        let (code, why) = none.check_identity(&h, &Peer::Local).unwrap_err();
+        assert_eq!(code, StatusCode::FORBIDDEN);
+        assert!(why.contains("as me@x.com") && why.contains("no owner set"), "{why}");
+        assert!(why.contains("\n\nillogicald install -- --owner me@x.com\n"), "{why}");
+        let a = access();
+        let why = a.not_yours("friend@x.com");
+        assert!(why.contains("as friend@x.com") && why.contains("owner is me@x.com"), "{why}");
+        assert!(why.contains("illogicald install -- --owner friend@x.com"), "{why}");
+        // As a page: escaped, the command on its own with a Copy button.
+        let page = refusal_page(StatusCode::FORBIDDEN, &a.not_yours("<b>@x.com"));
+        assert!(page.contains("&lt;b&gt;@x.com") && !page.contains("<b>@"), "{page}");
+        assert!(page.contains("<code id=fix>illogicald install -- --owner &lt;b&gt;@x.com</code>"), "{page}");
+        assert!(page.contains(">Copy</button>"));
+    }
+
+    #[test]
+    fn the_tailnet_url_and_requests_from_it() {
+        let a = access();
+        assert_eq!(a.tailnet_url(), None);
+        let a = a.with_tailnet_name("Geek.example.ts.net");
+        assert_eq!(a.tailnet_url().as_deref(), Some("https://geek.example.ts.net"));
+        let served = headers(&[("host", "geek.example.ts.net"), ("tailscale-user-login", "me@x.com")]);
+        assert!(a.via_tailnet(&served, &Peer::Local));
+        assert!(!a.via_tailnet(&headers(&[("host", "127.0.0.1:7681")]), &Peer::Local));
+        assert!(a.via_tailnet(&headers(&[]), &Peer::Tailnet { login: Some("me@x.com".into()) }));
     }
 
     #[test]
