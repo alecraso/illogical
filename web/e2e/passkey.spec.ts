@@ -60,6 +60,7 @@ test("make an account with a passkey, sign out, sign back in", async ({ page }) 
   // Others find them by it, and it changes later.
   const found = await page.evaluate(() => fetch("/api/people?login=ada%20lovelace").then((r) => r.json()));
   expect(found).toMatchObject({ account: first.account, name: "Ada Lovelace", root: first.root });
+  await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
   await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "devices" })));
   await expect(page.locator("[data-account-name]")).toHaveText("Ada Lovelace");
