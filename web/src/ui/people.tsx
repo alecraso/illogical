@@ -8,6 +8,7 @@ import type { PaneId, Presence, Role, SessionId } from "../proto";
 import type { MenuItem } from "./menu";
 import type { ControlSession } from "../control";
 import { fingerprint } from "../e2e/cert.ts";
+import { CopyText } from "./copy";
 
 /** Control mode (M19): people are accounts there, and links go through it. */
 let control: ControlSession | null = null;
@@ -376,11 +377,7 @@ export function ShareDialog({ client }: { client: Client }) {
             <span class="dim">(anyone with it watches, from now on, for an hour; no account needed)</span>
           </p>
         ) : null}
-        {link ? (
-          <span class="control-cmd" data-link>
-            {link}
-          </span>
-        ) : null}
+        {link ? <CopyText text={link} share data-link /> : null}
         {err ? <p class="control-error">{err}</p> : null}
         <div class="prompt-buttons">
           <button onClick={() => setSession(null)}>Done</button>

@@ -103,7 +103,16 @@ test("two people at different companies join a team by invite", async ({ browser
   alice = await person(browser, "alice");
   await alice.evaluate(() => window.__illogical.control!.createTeam("Acme"));
   team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
-  const link = await alice.evaluate((t) => window.__illogical.control!.invite(t, "editor"), team);
+  // The Teams panel (#99): the team's id, its join command and an invite
+  // link, each with Copy.
+  await alice.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+  await expect(alice.locator("[data-team-id]")).toHaveText(team);
+  await expect(alice.locator("[data-team-join]")).toHaveText(`illogicald join ${base} --team ${team}`);
+  await alice.locator(`[data-invite="${team}"]`).click();
+  await expect(alice.locator("[data-invite-link]")).toContainText("#invite=");
+  const link = (await alice.locator("[data-invite-link]").textContent())!;
+  await expect(alice.locator("[data-invite-link] + [data-copy]")).toBeVisible();
+  await alice.getByRole("button", { name: "Done" }).click();
   bob = await person(browser, "bob");
   await bob.goto(link);
   await bob.locator("[data-accept-invite]").click();
