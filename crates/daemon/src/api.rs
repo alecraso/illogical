@@ -310,12 +310,20 @@ async fn act_one(
     }
     // A failed command typed again (M11), once its shell is idle.
     if req.action == Action::Rerun {
-        let (reason, _) = app
+        let (reason, block) = app
             .mux
             .api(|r| Api::Reason(pane, r))
             .await
             .flatten()
             .ok_or_else(|| format!("%{pane} has nothing to run again (it was dismissed, or ran since)"))?;
+        // M38: a PR block's red checks run again on the forge, as whoever
+        // asked.
+        if block && reason.actions.contains(&Action::Rerun) {
+            let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            if b.kind() == illogical_proto::BlockType::Forge {
+                return block_call(app, pane, &b, "rerun_checks", serde_json::json!({}), by).await.map(|_| ());
+            }
+        }
         let command = reason
             .command
             .filter(|_| reason.actions.contains(&Action::Rerun))
@@ -1009,9 +1017,8 @@ async fn call(
     let by = match method.as_str() {
         // M11: a file block's `open` is the owner's only. M36: a forge
         // block's writes say who sent them.
-        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" | "open" | "comment" | "review" | "merge" => {
-            who_is(&app, who).await
-        }
+        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" | "open" | "comment" | "review" | "merge"
+        | "rerun_checks" => who_is(&app, who).await,
         _ => None,
     };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {

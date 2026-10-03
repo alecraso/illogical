@@ -380,7 +380,7 @@ impl Forgejo {
     }
 }
 
-fn short(e: &reqwest::Error) -> String {
+pub(super) fn short(e: &reqwest::Error) -> String {
     let mut s = e.to_string();
     let mut src = std::error::Error::source(e);
     while let Some(x) = src {
@@ -475,6 +475,9 @@ impl Adapter for Forgejo {
                     let req = json!({ "Do": style.as_deref().unwrap_or("merge") });
                     self.send(reqwest::Method::POST, &format!("repos/{repo}/pulls/{number}/merge"), Some(&req)).await?;
                     Ok(Sent { url: None, said: format!("merged ({})", style.as_deref().unwrap_or("merge")) })
+                }
+                Write::RerunChecks => {
+                    Err(Error::Http("Forgejo has no API to rerun checks: rerun them on the run's page".into()))
                 }
             }
         })

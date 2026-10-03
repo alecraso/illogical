@@ -1,5 +1,5 @@
 //! M36: a pull request on a git forge as a block (S23, finished for
-//! Forgejo).
+//! Forgejo; M38 adds GitHub, through `gh`'s login: see [`github`]).
 //!
 //! **Config** `{provider, api?, login?, repo, kind: pr, number, host?,
 //! dir?}`: the forge, the person's `tea` login it's read and written with
@@ -44,6 +44,7 @@
 //! a block holding an ask that name answers the card.
 
 pub mod forgejo;
+pub mod github;
 pub mod login;
 pub mod model;
 
@@ -155,6 +156,8 @@ pub enum Write {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         style: Option<String>,
     },
+    /// Rerun the failed checks (M38: GitHub's failed workflow runs).
+    RerunChecks,
 }
 
 impl Write {
@@ -183,6 +186,7 @@ impl Write {
                 }
                 Ok(Write::Merge { style })
             }
+            "rerun_checks" => Ok(Write::RerunChecks),
             m => Err(format!("{m} isn't a write")),
         }
     }
@@ -195,6 +199,7 @@ impl Write {
             Write::Review { event: ReviewEvent::RequestChanges, .. } => "a review asking for changes",
             Write::Review { event: ReviewEvent::Comment, .. } => "a review",
             Write::Merge { .. } => "a merge",
+            Write::RerunChecks => "a rerun of the failed checks",
         }
     }
 
@@ -202,7 +207,7 @@ impl Write {
         match self {
             Write::Comment { body } => Some(body),
             Write::Review { body, .. } => body.as_deref(),
-            Write::Merge { .. } => None,
+            Write::Merge { .. } | Write::RerunChecks => None,
         }
     }
 }
@@ -230,6 +235,14 @@ pub trait Adapter: Send + Sync {
     fn write<'a>(&'a self, repo: &'a str, number: u64, w: &'a Write) -> BoxFuture<'a, Result<Sent, Error>>;
     /// The repository's clone URLs, for matching a remote to a login.
     fn repo_urls<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<Vec<String>, Error>>;
+    /// Whether `rerun_checks` can rerun failed checks here (M38: GitHub).
+    fn reruns(&self) -> bool {
+        false
+    }
+    /// The rate limit as last heard, and any backing off (M38: GitHub).
+    fn rate(&self) -> Option<Value> {
+        None
+    }
 }
 
 fn http() -> reqwest::Client {
@@ -247,6 +260,11 @@ fn http() -> reqwest::Client {
 fn adapter(provider: Provider, login: &Login, tea: Arc<Tea>) -> Arc<dyn Adapter> {
     match provider {
         Provider::Forgejo => Arc::new(forgejo::Forgejo::new(&login.api(), http(), TokenSource::new(tea, login))),
+        Provider::Github => {
+            let host = login::url_host(&login.url).unwrap_or_default();
+            let token = github::GhToken::new(tea.runner.clone(), &host);
+            Arc::new(github::Github::new(&github::api_for(&host), http(), token))
+        }
     }
 }
 
@@ -353,6 +371,8 @@ struct State {
     watching: bool,
     /// The last write's result (sent directly), for the client.
     said: Option<String>,
+    /// The forge's rate limit and any backing off (M38: GitHub).
+    rate: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -457,6 +477,9 @@ impl ForgeBlock {
             return Ok(a);
         }
         let tea = self.tea().await?;
+        if let Some(a) = self.connect_github(&tea).await? {
+            return Ok(a);
+        }
         let logins = tea.logins().await?;
         let (want, host, provider, repo) = {
             let c = self.config.lock().unwrap();
@@ -502,20 +525,60 @@ impl ForgeBlock {
 
     fn connected(&self, provider: Provider, login: Login, tea: Arc<Tea>) -> Arc<dyn Adapter> {
         let a = adapter(provider, &login, tea);
+        let api = login.api();
+        self.attach(login.name, api, a)
+    }
+
+    fn attach(&self, name: String, api: String, a: Arc<dyn Adapter>) -> Arc<dyn Adapter> {
         {
             let mut c = self.config.lock().unwrap();
-            c.login = Some(login.name.clone());
-            c.api = Some(login.api());
+            c.login = Some(name.clone());
+            c.api = Some(api.clone());
         }
         {
             let mut st = self.state.lock().unwrap();
-            st.login = Some(login.name.clone());
-            st.api = Some(login.api());
+            st.provider = self.config.lock().unwrap().provider;
+            st.login = Some(name.clone());
+            st.api = Some(api);
             st.logins.clear();
         }
-        info!(pane = self.ctx.id, login = login.name, "forge block connected");
+        info!(pane = self.ctx.id, login = name, "forge block connected");
         *self.adapter.lock().unwrap() = Some(a.clone());
         a
+    }
+
+    /// M38: a GitHub block reads with `gh`'s login for its host. A host
+    /// that isn't github.com's is GitHub Enterprise when `gh` is logged in
+    /// there (asked once, when the block has no login yet).
+    async fn connect_github(&self, tea: &Arc<Tea>) -> Result<Option<Arc<dyn Adapter>>, String> {
+        let (provider, host, api, login) = {
+            let c = self.config.lock().unwrap();
+            (c.provider, c.host.clone(), c.api.clone(), c.login.clone())
+        };
+        let host = match provider {
+            Provider::Github => login
+                .clone()
+                .or(host)
+                .or_else(|| api.as_deref().map(github::host_of_api))
+                .unwrap_or("github.com".into()),
+            Provider::Forgejo => {
+                let Some(h) = host.filter(|_| login.is_none()) else { return Ok(None) };
+                if github::is_github_host(&h) || !github::knows(&tea.runner, &h).await {
+                    return Ok(None);
+                }
+                let mut c = self.config.lock().unwrap();
+                c.provider = Provider::Github;
+                c.api = Some(github::api_for(&h));
+                h
+            }
+        };
+        let api = match (provider, api) {
+            (Provider::Github, Some(a)) => a,
+            _ => github::api_for(&host),
+        };
+        let token = github::GhToken::new(tea.runner.clone(), &host);
+        let a: Arc<dyn Adapter> = Arc::new(github::Github::new(&api, http(), token));
+        Ok(Some(self.attach(host, api, a)))
     }
 
     fn candidates(&self, logins: &[Login]) {
@@ -607,7 +670,8 @@ impl ForgeBlock {
                 st.reads += 1;
             }
             st.updated_ms = now_ms();
-            st.rerun = rerun(&pr);
+            st.rerun = rerun(&pr, a.reruns());
+            st.rate = a.rate();
             st.pr = Some(pr);
         }
         if self.live.drawn() {
@@ -707,9 +771,13 @@ impl ForgeBlock {
             }
             Want::Failed { why, .. } => {
                 // Like a failed command, it's `done` with a `failed` reason;
-                // Forgejo can't rerun, so there's no `rerun` action.
+                // Forgejo can't rerun, so there's no `rerun` action. GitHub
+                // can (M38): `rerun` calls `rerun_checks`.
                 let mut r = plain(ReasonKind::Failed, why);
                 r.bundle = Some(format!("failed:{bundle}"));
+                if self.adapter.lock().unwrap().as_ref().is_some_and(|a| a.reruns()) {
+                    r.actions.insert(0, Action::Rerun);
+                }
                 (Attention::Done, r)
             }
             Want::Changes { why } | Want::Mention { why, .. } => (Attention::NeedsInput, plain(ReasonKind::Input, why)),
@@ -1072,11 +1140,16 @@ printf 'ok %s/%s %s\n' "$top" "$w" "$mb"
 
 /// What the failed checks' rerun is, on a forge with no rerun API: the
 /// run's page.
-fn rerun(pr: &Pr) -> Option<Value> {
+fn rerun(pr: &Pr, api: bool) -> Option<Value> {
     if pr.rollup != Some(model::CheckState::Failure) {
         return None;
     }
     let url = pr.checks.iter().find(|c| c.state.red()).and_then(|c| c.url.clone());
+    if api {
+        let runs = pr.checks.iter().filter(|c| c.state.red() && c.run.is_some()).count();
+        return Some(json!({ "api": true, "url": url, "runs": runs,
+            "note": "Rerun reruns the failed jobs of each red workflow run" }));
+    }
     Some(
         json!({ "api": false, "url": url, "note": "Forgejo has no API to rerun checks: rerun them on the run's page" }),
     )
@@ -1148,6 +1221,7 @@ fn edited(w: &Write, content: &Value) -> Write {
             },
         },
         Write::Merge { style } => Write::Merge { style: style.clone() },
+        Write::RerunChecks => Write::RerunChecks,
     }
 }
 
@@ -1211,6 +1285,9 @@ impl Block for ForgeBlock {
             "login" => Box::pin(async move {
                 let me = me.ok_or("closed")?;
                 let name = args["name"].as_str().filter(|n| !n.is_empty()).ok_or("login needs {\"name\": LOGIN}")?;
+                if me.config.lock().unwrap().provider == Provider::Github {
+                    return Err("a GitHub block reads with gh's login for its host: `gh auth login` or `gh auth switch` there, then refresh".into());
+                }
                 let tea = me.tea().await?;
                 let logins = tea.logins().await?;
                 let l = logins
@@ -1225,7 +1302,7 @@ impl Block for ForgeBlock {
                 me.ctx.changed();
                 Ok(json!({ "login": name }))
             }),
-            "comment" | "review" | "merge" => {
+            "comment" | "review" | "merge" | "rerun_checks" => {
                 let method = method.to_owned();
                 Box::pin(async move { me.ok_or("closed")?.write(&method, args, by).await })
             }
@@ -1295,7 +1372,7 @@ impl Block for ForgeBlock {
 pub async fn open_config(c: &Value) -> Result<Value, String> {
     let dir = c["dir"].as_str().filter(|d| !d.is_empty()).map(str::to_owned);
     let mut out = json!({ "provider": "forgejo", "kind": "pr" });
-    for k in ["api", "login", "host"] {
+    for k in ["provider", "api", "login", "host"] {
         if let Some(v) = c[k].as_str() {
             out[k] = json!(v);
         }
@@ -1314,6 +1391,22 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or("say which pull request: {\"pr\": URL | OWNER/REPO#N | N}")?;
+    // M38: a GitHub link (`…/pull/N`), on github.com or an Enterprise host.
+    if let Some((host, repo, n)) = github::pr_url(what) {
+        out["provider"] = json!("github");
+        if c["api"].as_str().is_none() {
+            out["api"] = json!(github::api_for(&host));
+        }
+        out["host"] = json!(host);
+        out["repo"] = json!(repo);
+        out["number"] = json!(n);
+        if let Some(d) = &dir
+            && let Some((top, _)) = clone_of(d, Some(&repo)).await
+        {
+            out["dir"] = json!(top);
+        }
+        return Ok(out);
+    }
     if what.starts_with("http://") || what.starts_with("https://") {
         let (host, repo, n, api) = parse_pr_url(what)?;
         out["host"] = json!(host);
@@ -1338,11 +1431,16 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
     out["number"] = json!(n);
     match (repo, dir) {
         (Some(repo), dir) => {
-            if let Some(d) = dir
-                && let Some((top, host)) = clone_of(&d, Some(&repo)).await
-            {
-                out["dir"] = json!(top);
-                out["host"] = json!(host);
+            if let Some(d) = dir {
+                if let Some((top, host)) = clone_of(&d, Some(&repo)).await {
+                    out["dir"] = json!(top);
+                    out["host"] = json!(host);
+                } else if let Ok((_, host, _)) = remote_of(&d).await
+                    && github::is_github_host(&host)
+                {
+                    // M38: OWNER/REPO#N from a GitHub clone is on GitHub.
+                    out["host"] = json!("github.com");
+                }
             }
             out["repo"] = json!(repo);
         }
@@ -1353,6 +1451,16 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
             out["repo"] = json!(repo);
         }
         (None, None) => return Err(format!("#{n} in which repository? Run it in a clone, or say OWNER/REPO#{n}")),
+    }
+    // M38: a clone on github.com is a GitHub PR (its remote's SSH host may
+    // be `ssh.github.com`).
+    if c["provider"].as_str().is_none()
+        && let Some(h) = out["host"].as_str().filter(|h| github::is_github_host(h))
+    {
+        let api = c["api"].as_str().map_or_else(|| github::api_for(h), str::to_owned);
+        out["provider"] = json!("github");
+        out["host"] = json!("github.com");
+        out["api"] = json!(api);
     }
     Ok(out)
 }
@@ -1442,6 +1550,31 @@ mod tests {
         assert!(open_config(&json!({ "pr": "12" })).await.unwrap_err().contains("which repository"));
         assert!(open_config(&json!({ "pr": "o/r#x" })).await.is_err());
         assert!(open_config(&json!({})).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn github_configs() {
+        let c = open_config(&json!({ "pr": "https://github.com/cli/cli/pull/14519" })).await.unwrap();
+        assert_eq!((c["provider"].as_str(), c["api"].as_str()), (Some("github"), Some("https://api.github.com")));
+        assert_eq!(
+            (c["repo"].as_str(), c["number"].as_u64(), c["host"].as_str()),
+            (Some("cli/cli"), Some(14519), Some("github.com"))
+        );
+        let c = open_config(&json!({ "pr": "https://ghe.example.com/o/r/pull/3/files" })).await.unwrap();
+        assert_eq!(
+            (c["provider"].as_str(), c["api"].as_str()),
+            (Some("github"), Some("https://ghe.example.com/api/v3"))
+        );
+        // Forgejo's links stay Forgejo's.
+        let c = open_config(&json!({ "pr": "https://git.inevitable.fyi/jhgaylor/illogical/pulls/84" })).await.unwrap();
+        assert_eq!(c["provider"], "forgejo");
+        // A whole config keeps its provider.
+        let c = open_config(&json!({ "provider": "github", "api": "http://127.0.0.1:1", "repo": "o/r", "number": 2 }))
+            .await
+            .unwrap();
+        assert_eq!((c["provider"].as_str(), c["api"].as_str()), (Some("github"), Some("http://127.0.0.1:1")));
+        assert_eq!(Write::from_call("rerun_checks", &json!({})).unwrap(), Write::RerunChecks);
+        assert_eq!(serde_json::to_value(Write::RerunChecks).unwrap(), json!({ "method": "rerun_checks" }));
     }
 
     #[test]
