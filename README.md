@@ -117,8 +117,10 @@ loginctl enable-linger $USER
    ```
 
    See [docs/control.md](docs/control.md), including running your own.
-6. **Agents.** Install an adapter (needs Node), then *Start an agent…* in a
-   pane's menu, or `illogical agent "fix the failing test"`:
+6. **Agents.** *Start an agent…* in a pane's menu, or `illogical agent
+   "fix the failing test"`. Claude Code and Codex run through an npm
+   adapter (needs Node 20+): *Start an agent…* offers to install it, in a
+   pane you can watch, or install it yourself:
 
    ```
    npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0
