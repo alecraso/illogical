@@ -152,6 +152,11 @@ impl Daemon {
 
     /// Under systemd (FD store, scopes); `None` without a user manager.
     pub fn service() -> Option<Self> {
+        Self::service_env(&[])
+    }
+
+    /// ...with extra environment.
+    pub fn service_env(env: &[(&str, &str)]) -> Option<Self> {
         if !systemctl(&["show-environment"]) {
             eprintln!("no systemd user manager; skipping");
             return None;
@@ -164,6 +169,7 @@ impl Daemon {
             .args(["-p", "KillMode=mixed", "-p", "Restart=on-failure", "-p", "RestartSec=100ms"])
             .arg(format!("--setenv=FAKE_ACP_DIR={}", sessions.display()))
             .arg(format!("--setenv=PATH={}", std::env::var("PATH").unwrap_or_default()))
+            .args(env.iter().map(|(k, v)| format!("--setenv={k}={v}")))
             .arg("--")
             .arg(env!("CARGO_BIN_EXE_illogicald"))
             .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile"])

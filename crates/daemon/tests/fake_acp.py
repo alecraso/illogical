@@ -32,7 +32,8 @@ Claude Code conversations (M33): a session/resume or session/load of a
 session it doesn't have finds $CLAUDE_CONFIG_DIR/projects/*/<id>.jsonl, as
 Claude Code would, and remembers the last "remember WORD" prompt in it.
 session/fork copies a session to a new id (it isn't opened, as with
-claude-agent-acp).
+claude-agent-acp). With $FAKE_ACP_CLAUDE_SESSIONS set, the session it has
+open is in $CLAUDE_CONFIG_DIR/sessions/<pid>.json, as Claude Code lists it.
 
 Only clients that declare elicitation {form: {}, url: {}} get questions; the
 others get "I don't have access to an AskUserQuestion tool" (S13).
@@ -74,6 +75,18 @@ def send(m):
     with out_lock:
         sys.stdout.write(json.dumps(m) + "\n")
         sys.stdout.flush()
+
+
+def holding(sid):
+    """Say we hold sid in $CLAUDE_CONFIG_DIR/sessions, as Claude Code does."""
+    if not os.environ.get("FAKE_ACP_CLAUDE_SESSIONS"):
+        return
+    d = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")), "sessions")
+    me = os.getpid()
+    start = open(f"/proc/{me}/stat").read().rsplit(")", 1)[1].split()[19]
+    with open(os.path.join(d, f"{me}.json"), "w") as f:
+        json.dump({"pid": me, "sessionId": sid, "procStart": start, "kind": "sdk",
+                   "entrypoint": "sdk-ts", "status": "idle"}, f)
 
 
 def path(sid):
@@ -472,6 +485,7 @@ def handle(m):
         if "_meta" in p:
             s["meta"] = p["_meta"]
         save(p["sessionId"], s)
+        holding(p["sessionId"])
         if method == "session/load":
             for u in s["updates"]:
                 send({"method": "session/update", "params": {"sessionId": p["sessionId"], "update": u}})
