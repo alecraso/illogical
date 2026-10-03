@@ -37,9 +37,10 @@ export interface FieldPane {
   bps?: number;
   /** When its command started (ms), while one runs. */
   started?: number | null;
-  /** How long its last command ran (ms), and how it exited. */
+  /** How long its last command ran (ms), how it exited, and when it ended. */
   lastDur?: number | null;
   lastExit?: number | null;
+  lastEnded?: number | null;
   /** Teammates who have it open; `driving` when they type into it. */
   people?: { name: string; driving: boolean }[];
 }
@@ -100,6 +101,21 @@ export interface FieldHooks {
   hover(key: string | null, x: number, y: number): void;
   /** A right-click on a pane. */
   menu?(key: string, e: MouseEvent): void;
+  /** M42: commands that finished in the last `sinceS` seconds, on every
+   * connected host (each daemon's `/api/history`), for the timeline. */
+  history?(sinceS: number): Promise<HistoryRun[]>;
+}
+
+/** A finished command, from a daemon's history. */
+export interface HistoryRun {
+  /** The pane's key (`host:id`). */
+  key: string;
+  text: string | null;
+  started: number;
+  ended: number;
+  exit: number | null;
+  /** Bytes it printed. */
+  bytes: number;
 }
 
 const TW = 16;

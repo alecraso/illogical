@@ -766,6 +766,22 @@ the daemon stopping, crashing, or the machine rebooting:
   type). The rail, hover peeks, click to open, *Show* and notification
   links work as in blocks. *How to read the city* under the legend says
   all this on the page. three.js loads only when the city is picked.
+- **Hive and timeline themes** (M42). Two more choices under *Theme*.
+  The *hive* is one hex cell per pane, packed into a comb per cluster, and
+  it reads flat, so it suits a phone. A cell fills as its command runs
+  (log scale, full at an hour), bright while running and faded once done.
+  What runs until stopped is full and hatched. The cell's edge pulses
+  while it prints, and a red rim means its last command failed. A pane
+  that needs you fills with the reason's colour and shows how long it has
+  waited, and its glow spills onto the cells around it, wider the longer it
+  waits. The *timeline* is one lane per pane under its cluster's name,
+  showing the last 40 minutes with now at the right edge, so you can see
+  what happened while you were away. Each command is a bar as long as it
+  ran, coloured by kind, with stripes for how much it printed and a red cap
+  if it failed. The bars come from each machine's command history, as in
+  `illogical history`. A pane that needs you gets a band from when it
+  started waiting until now. Hover, click, *Show*, *Fit* and the key work as
+  in the other themes.
 - **Tools for any agent** (M16, MCP). Claude Code, Codex or any MCP client
   gets illogical as tools: `run` a command in a pane you can watch and
   take over (here, on a throwaway VM, or a sandbox; it outlives the
