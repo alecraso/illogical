@@ -33,8 +33,11 @@ class Illogical < Formula
       Start the daemon as a service (a launchd agent on macOS, a systemd
       user unit on Linux), and again after each upgrade:
         illogicald install
-      It copies itself to ~/.local/bin and runs from there. Then open
-        http://127.0.0.1:7681
+      It copies itself to ~/.local/bin, runs from there, and prints the
+      next steps: where to open it, its logs, your phone (Tailscale) and
+      illogical control. Then, for Claude Code:
+        claude mcp add illogical -- illogical mcp
+      Docs: https://illogical.widgets.wtf/#install
     EOS
   end
 
