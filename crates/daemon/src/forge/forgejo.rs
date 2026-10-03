@@ -21,8 +21,8 @@ use serde_json::{Value, json};
 use super::{
     Adapter, Error, Polled, Sent, Write,
     model::{
-        Branch, Check, CheckSource, CheckState, Event, EventKind, Item, ItemKind, ItemState, Me, Review, ReviewState,
-        Reviewer, RunRef,
+        Branch, Check, CheckSource, CheckState, Event, EventKind, Item, ItemKind, ItemState, Linked, Me, Review,
+        ReviewState, Reviewer, RunRef,
     },
 };
 
@@ -282,12 +282,27 @@ pub fn events(list: &Value) -> Vec<Event> {
                 commits = p["commit_ids"].as_array().map(|c| c.len() as u32);
                 force = p["is_force_push"].as_bool().unwrap_or(false);
             }
+            // M37: who an issue was given to (or taken from); what referred
+            // to it.
+            let target = match ty {
+                "assignees" => match (login(&e["assignee"]), team(&e["assignee_team"])) {
+                    (Some(u), _) => Some(Reviewer::User(u)),
+                    (None, t) => t.map(Reviewer::Team),
+                },
+                _ => target,
+            };
+            let what = match kind {
+                EventKind::Other => Some(ty.to_owned()),
+                EventKind::Assigned if e["removed_assignee"].as_bool() == Some(true) => Some("unassigned".to_owned()),
+                EventKind::Referenced => e["ref_issue"]["number"].as_u64().map(|n| format!("#{n}")),
+                _ => None,
+            };
             Event {
                 id: format!("fj-{}", e["id"].as_u64().unwrap_or(0)),
                 at: t(&e["created_at"]).unwrap_or(0),
                 actor: login(&e["user"]),
                 kind,
-                what: (kind == EventKind::Other).then(|| ty.to_owned()),
+                what,
                 target,
                 body: matches!(ty, "comment" | "code" | "review")
                     .then(|| e["body"].as_str().filter(|b| !b.is_empty()).map(str::to_owned))
@@ -297,6 +312,69 @@ pub fn events(list: &Value) -> Vec<Event> {
             }
         })
         .collect()
+}
+
+/// `GET repos/O/R/issues/N` (M37): an issue as an item (no branches).
+pub fn issue_item(it: &Value) -> Item {
+    let number = it["number"].as_u64().unwrap_or(0);
+    Item {
+        kind: ItemKind::Issue,
+        number,
+        url: s(&it["html_url"]),
+        title: s(&it["title"]),
+        body: s(&it["body"]),
+        author: login(&it["user"]).unwrap_or_default(),
+        state: if it["state"] == "closed" { ItemState::Closed } else { ItemState::Open },
+        labels: it["labels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|l| l["name"].as_str().map(str::to_owned))
+            .collect(),
+        assignees: it["assignees"].as_array().into_iter().flatten().filter_map(login).collect(),
+        comments: it["comments"].as_u64().unwrap_or(0),
+        updated_at: t(&it["updated_at"]).unwrap_or(0),
+        ..Item::default()
+    }
+}
+
+/// What an issue's poll compares.
+pub fn issue_fingerprint(it: &Value) -> String {
+    let who: Vec<&str> = it["assignees"].as_array().into_iter().flatten().filter_map(|u| u["login"].as_str()).collect();
+    json!([it["updated_at"], it["comments"], it["state"], who]).to_string()
+}
+
+/// The pull requests an issue's timeline says refer to it (newest word on
+/// each), oldest first.
+pub fn linked(list: &Value) -> Vec<Linked> {
+    let mut out: Vec<Linked> = Vec::new();
+    for e in list.as_array().into_iter().flatten() {
+        let r = &e["ref_issue"];
+        let (Some(n), true) = (r["number"].as_u64(), r["pull_request"].is_object()) else { continue };
+        let state = if r["pull_request"]["merged"].as_bool() == Some(true) {
+            ItemState::Merged
+        } else if r["state"] == "closed" {
+            ItemState::Closed
+        } else {
+            ItemState::Open
+        };
+        out.retain(|l| l.number != n);
+        out.push(Linked { number: n, title: s(&r["title"]), state, url: s(&r["html_url"]), head: None });
+    }
+    out
+}
+
+/// `GET pulls?state=all`: the newest pull request whose head is `branch`
+/// in `repo` itself (not a fork's branch of the same name).
+pub fn pr_with_head(list: &Value, repo: &str, branch: &str) -> Option<Linked> {
+    list.as_array().into_iter().flatten().find_map(|p| {
+        let head = &p["head"];
+        let same_repo = head["repo"]["full_name"].as_str().is_none_or(|r| r.eq_ignore_ascii_case(repo));
+        (head["ref"] == branch && same_repo).then(|| {
+            let it = item(p);
+            Linked { number: it.number, title: it.title, state: it.state, url: it.url, head: Some(branch.to_owned()) }
+        })
+    })
 }
 
 /// `GET user` and `GET user/teams`.
@@ -378,6 +456,27 @@ impl Forgejo {
     async fn get(&self, path: &str) -> Result<(Value, Option<u64>), Error> {
         self.send(reqwest::Method::GET, path, None).await
     }
+
+    /// An issue's or PR's newest events (the timeline is oldest first: the
+    /// newest are on its last page).
+    async fn timeline(&self, repo: &str, number: u64) -> Result<Value, Error> {
+        let timeline_path = format!("repos/{repo}/issues/{number}/timeline?limit={EVENTS}");
+        let (mut tl, total) = self.get(&timeline_path).await?;
+        if let Some(total) = total.filter(|n| *n > EVENTS as u64) {
+            let last = total.div_ceil(EVENTS as u64);
+            let (page, _) = self.get(&format!("{timeline_path}&page={last}")).await?;
+            let mut both = if last > 1 {
+                self.get(&format!("{timeline_path}&page={}", last - 1)).await.map(|(v, _)| v).unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            };
+            let mut all = both.as_array_mut().map(std::mem::take).unwrap_or_default();
+            all.extend(page.as_array().cloned().unwrap_or_default());
+            let keep = all.len().saturating_sub(EVENTS);
+            tl = Value::Array(all.split_off(keep));
+        }
+        Ok(tl)
+    }
 }
 
 fn short(e: &reqwest::Error) -> String {
@@ -422,24 +521,9 @@ impl Adapter for Forgejo {
         Box::pin(async move {
             let site = site(&self.api);
             let reviews_path = format!("repos/{repo}/pulls/{number}/reviews?limit=50");
-            let timeline_path = format!("repos/{repo}/issues/{number}/timeline?limit={EVENTS}");
-            let (r, tl) = tokio::join!(self.get(&reviews_path), self.get(&timeline_path));
+            let (r, tl) = tokio::join!(self.get(&reviews_path), self.timeline(repo, number));
             let (r, _) = r?;
-            let (mut tl, total) = tl?;
-            // The timeline is oldest first: the newest are on its last page.
-            if let Some(total) = total.filter(|n| *n > EVENTS as u64) {
-                let last = total.div_ceil(EVENTS as u64);
-                let (page, _) = self.get(&format!("{timeline_path}&page={last}")).await?;
-                let mut both = if last > 1 {
-                    self.get(&format!("{timeline_path}&page={}", last - 1)).await.map(|(v, _)| v).unwrap_or(Value::Null)
-                } else {
-                    Value::Null
-                };
-                let mut all = both.as_array_mut().map(std::mem::take).unwrap_or_default();
-                all.extend(page.as_array().cloned().unwrap_or_default());
-                let keep = all.len().saturating_sub(EVENTS);
-                tl = Value::Array(all.split_off(keep));
-            }
+            let tl = tl?;
             let (reviews, requested) = reviews(&r, &site);
             Ok((reviews, requested, events(&tl)))
         })
@@ -484,6 +568,63 @@ impl Adapter for Forgejo {
         Box::pin(async move {
             let (v, _) = self.get(&format!("repos/{repo}")).await?;
             Ok(["ssh_url", "clone_url", "html_url"].iter().filter_map(|k| v[*k].as_str().map(str::to_owned)).collect())
+        })
+    }
+
+    fn issue<'a>(&'a self, repo: &'a str, number: u64) -> BoxFuture<'a, Result<(Item, String), Error>> {
+        Box::pin(async move {
+            let (raw, _) = self.get(&format!("repos/{repo}/issues/{number}")).await?;
+            if raw["pull_request"].is_object() {
+                return Err(Error::NotFound(format!("{repo}#{number} is a pull request: open it as one")));
+            }
+            Ok((issue_item(&raw), issue_fingerprint(&raw)))
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn issue_events<'a>(
+        &'a self,
+        repo: &'a str,
+        number: u64,
+    ) -> BoxFuture<'a, Result<(Vec<Event>, Vec<Linked>), Error>> {
+        Box::pin(async move {
+            let tl = self.timeline(repo, number).await?;
+            Ok((events(&tl), linked(&tl)))
+        })
+    }
+
+    fn pr_by_head<'a>(&'a self, repo: &'a str, branch: &'a str) -> BoxFuture<'a, Result<Option<Linked>, Error>> {
+        Box::pin(async move {
+            // Merged ones too: the work may have landed between polls.
+            let (list, _) = self.get(&format!("repos/{repo}/pulls?state=all&sort=recentupdate&limit=50")).await?;
+            Ok(pr_with_head(&list, repo, branch))
+        })
+    }
+
+    fn new_issue<'a>(
+        &'a self,
+        repo: &'a str,
+        title: &'a str,
+        body: &'a str,
+    ) -> BoxFuture<'a, Result<(u64, Sent), Error>> {
+        Box::pin(async move {
+            let req = json!({ "title": title, "body": body });
+            let (v, _) = self.send(reqwest::Method::POST, &format!("repos/{repo}/issues"), Some(&req)).await?;
+            let n =
+                v["number"].as_u64().ok_or_else(|| Error::Http("the forge didn't say the issue's number".into()))?;
+            let url = v["html_url"].as_str().map(|u| absolute(&site(&self.api), u));
+            Ok((n, Sent { url, said: format!("opened #{n}") }))
+        })
+    }
+
+    fn default_branch<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<String, Error>> {
+        Box::pin(async move {
+            let (v, _) = self.get(&format!("repos/{repo}")).await?;
+            v["default_branch"]
+                .as_str()
+                .filter(|b| !b.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| Error::Http(format!("{repo} has no default branch")))
         })
     }
 }
@@ -655,6 +796,105 @@ mod tests {
             &json!([{ "name": "Owners", "organization": { "name": "NestedData" } }]),
         );
         assert_eq!(teams.teams, ["Owners", "NestedData/Owners"]);
+    }
+
+    /// An issue fixture read as the block reads it (M37).
+    fn issue(dir: &str) -> crate::forge::model::Issue {
+        let tl = fixture(dir, "timeline.json");
+        crate::forge::model::Issue {
+            item: issue_item(&fixture(dir, "item.json")),
+            events: events(&tl),
+            linked: linked(&tl),
+        }
+    }
+
+    #[test]
+    fn an_issue_assigned_then_fixed_by_a_pr() {
+        use crate::forge::model::issue_attention;
+        // Codeberg #14663: mfenniak mentions wetneb, wetneb takes it, opens
+        // #14667 for it, which merges and closes it.
+        let i = issue("codeberg-forgejo-14663");
+        let it = &i.item;
+        assert_eq!((it.kind, it.number, it.state), (ItemKind::Issue, 14663, ItemState::Closed));
+        assert_eq!((it.author.as_str(), it.assignees.as_slice()), ("mfenniak", &["wetneb".to_owned()][..]));
+        assert_eq!(it.head_ref, "", "an issue has no branches");
+        assert_eq!(i.linked.len(), 1);
+        let l = &i.linked[0];
+        assert_eq!((l.number, l.state), (14667, ItemState::Merged));
+        assert!(l.title.starts_with("fix(tests): fix flaky"), "{l:?}");
+        assert_eq!(l.url, "https://codeberg.org/forgejo/forgejo/pulls/14667");
+        let kinds: Vec<EventKind> = i.events.iter().map(|e| e.kind).collect();
+        use EventKind::*;
+        assert_eq!(kinds, [Commented, Assigned, Referenced, Referenced, Closed]);
+        assert_eq!(i.events[1].target, Some(Reviewer::User("wetneb".into())));
+        assert!(i.events[1].line().ends_with("wetneb assigned wetneb"), "{}", i.events[1].line());
+        assert!(i.events[2].line().ends_with("wetneb referenced it in #14667"), "{}", i.events[2].line());
+        // Closed: done once for its assignee (the mention before is moot);
+        // nothing for anyone else.
+        let w = issue_attention(&i, &me("wetneb", &[]), 0);
+        assert!(matches!(&w[..], [Want::Done { key, .. }] if key == "closed"), "{w:?}");
+        assert!(issue_attention(&i, &me("mfenniak", &[]), 0).is_empty());
+        let text = i.text("forgejo/forgejo");
+        assert!(text.starts_with("forgejo/forgejo#14663 test: intermittent test failure"), "{text}");
+        assert!(text.contains("assigned to: wetneb"), "{text}");
+        assert!(text.contains("  #14667 merged fix(tests)"), "{text}");
+    }
+
+    #[test]
+    fn an_open_issue_assigned_to_you_and_a_mention() {
+        use crate::forge::model::issue_attention;
+        // Codeberg #14556: wetneb took it themselves; mahlzahn mentions them.
+        let mut i = issue("codeberg-forgejo-14556");
+        assert_eq!(i.item.state, ItemState::Open);
+        assert_eq!(i.item.labels, ["impact/unknown", "problem"]);
+        assert_eq!(i.linked.iter().map(|l| (l.number, l.state)).collect::<Vec<_>>(), [(14571, ItemState::Open)]);
+        let w = issue_attention(&i, &me("wetneb", &[]), 0);
+        assert!(matches!(&w[..], [Want::Mention { why, .. }] if why == "mentioned by mahlzahn"), "{w:?}");
+        let last = i.events.iter().map(|e| e.at).max().unwrap();
+        assert!(issue_attention(&i, &me("wetneb", &[]), last).is_empty(), "seen");
+        assert!(issue_attention(&i, &me("mahlzahn", &[]), 0).is_empty());
+        // Given to them by someone else: that's news, until seen.
+        let at = i.events.iter().position(|e| e.kind == EventKind::Assigned).unwrap();
+        i.events[at].actor = Some("mfenniak".into());
+        let given = i.events[at].at;
+        let w = issue_attention(&i, &me("wetneb", &[]), given - 1);
+        assert!(w.iter().any(|w| matches!(w, Want::Assigned { why } if why == "assigned to you by mfenniak")), "{w:?}");
+        assert!(!issue_attention(&i, &me("wetneb", &[]), given).iter().any(|w| matches!(w, Want::Assigned { .. })));
+        // Taken away again: not yours.
+        i.events[at].what = Some("unassigned".into());
+        i.item.assignees.clear();
+        assert!(!issue_attention(&i, &me("wetneb", &[]), 0).iter().any(|w| matches!(w, Want::Assigned { .. })));
+    }
+
+    #[test]
+    fn this_repos_closed_milestone_issue() {
+        use crate::forge::model::issue_attention;
+        // #73 here: a label, refs from other issues (not PRs), comments, closed.
+        let i = issue("forgejo-illogical-issue-73");
+        assert_eq!((i.item.number, i.item.state), (73, ItemState::Closed));
+        assert_eq!(i.item.labels, ["milestone"]);
+        assert!(i.item.assignees.is_empty());
+        assert!(i.linked.is_empty(), "issues that refer to it aren't pull requests: {:?}", i.linked);
+        assert_eq!(i.events.first().map(|e| e.kind), Some(EventKind::Labeled));
+        assert!(i.events.iter().any(|e| e.what.as_deref() == Some("#85")), "the ref to #85");
+        assert!(issue_attention(&i, &me("jhgaylor", &[]), 0).is_empty(), "closed, and nobody's");
+        let raw = fixture("forgejo-illogical-issue-73", "item.json");
+        let mut moved = raw.clone();
+        moved["comments"] = json!(99);
+        assert_ne!(issue_fingerprint(&raw), issue_fingerprint(&moved));
+    }
+
+    #[test]
+    fn a_pr_by_its_head_branch() {
+        let mut a = fixture("forgejo-illogical-84", "item.json");
+        a["head"]["ref"] = json!("i89-issue-blocks");
+        let mut fork = a.clone();
+        fork["number"] = json!(90);
+        fork["head"]["repo"]["full_name"] = json!("someone/illogical");
+        let list = json!([fork, a]);
+        let l = pr_with_head(&list, "jhgaylor/illogical", "i89-issue-blocks").unwrap();
+        assert_eq!((l.number, l.head.as_deref()), (84, Some("i89-issue-blocks")), "not the fork's");
+        assert!(pr_with_head(&list, "jhgaylor/illogical", "main").is_none());
     }
 
     fn me_of(u: &Value, t: &Value) -> Me {

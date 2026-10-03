@@ -18,6 +18,8 @@ pub enum Provider {
 pub enum ItemKind {
     #[default]
     Pr,
+    /// M37.
+    Issue,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,8 +257,11 @@ pub enum Want {
     Changes { why: String },
     /// Someone mentioned you after you last looked.
     Mention { why: String, at: i64, event: String },
-    /// Your PR merged, or it's open, green and nothing holds it.
+    /// Your PR merged, or it's open, green and nothing holds it (M37: an
+    /// issue assigned to you closed).
     Done { why: String, key: String },
+    /// M37: an open issue was given to you after you last looked.
+    Assigned { why: String },
 }
 
 impl Want {
@@ -266,7 +271,8 @@ impl Want {
             | Want::Failed { why, .. }
             | Want::Changes { why }
             | Want::Mention { why, .. }
-            | Want::Done { why, .. } => why,
+            | Want::Done { why, .. }
+            | Want::Assigned { why } => why,
         }
     }
 }
@@ -413,6 +419,17 @@ impl Event {
                 None => "pushed".to_owned(),
             },
             EventKind::Other => self.what.clone().unwrap_or_else(|| "did something".into()),
+            // M37: who was given (or let go of) an issue, and what
+            // referred to it.
+            EventKind::Assigned => match (&self.target, self.what.as_deref()) {
+                (Some(t), Some("unassigned")) => format!("unassigned {}", t.name()),
+                (Some(t), _) => format!("assigned {}", t.name()),
+                _ => "assigned".into(),
+            },
+            EventKind::Referenced => match self.what.as_deref() {
+                Some(w) if w.starts_with('#') => format!("referenced it in {w}"),
+                _ => "referenced it".into(),
+            },
             k => state_word(&k),
         };
         let body = self
@@ -423,6 +440,124 @@ impl Event {
             .unwrap_or_default();
         format!("{} {who} {what}{body}", when(self.at))
     }
+}
+
+/// M37: a pull request that refers to an issue (from the issue's
+/// timeline), or one found by its head branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Linked {
+    pub number: u64,
+    pub title: String,
+    pub state: ItemState,
+    pub url: String,
+    /// Its head branch, when the forge said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+}
+
+/// An issue, read whole (M37): the item (no branches), its newest events,
+/// and the pull requests that refer to it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Issue {
+    pub item: Item,
+    pub events: Vec<Event>,
+    pub linked: Vec<Linked>,
+}
+
+/// What an issue wants of `me` (M37), for events newer than `seen` (ms):
+/// given to you after you last looked, or a mention, while it's open; and
+/// once, when one that's yours closes. A closed issue asks nothing else.
+pub fn issue_attention(issue: &Issue, me: &Me, seen: i64) -> Vec<Want> {
+    let it = &issue.item;
+    let mut out = Vec::new();
+    if me.login.is_empty() {
+        return out;
+    }
+    let mine = it.assignees.iter().any(|a| a.eq_ignore_ascii_case(&me.login));
+    if it.state != ItemState::Open {
+        if mine {
+            out.push(Want::Done { why: "closed".into(), key: "closed".into() });
+        }
+        return out;
+    }
+    if mine {
+        // The newest event that gave it to you; someone else's doing.
+        let given = issue.events.iter().rfind(|e| {
+            e.kind == EventKind::Assigned
+                && e.what.as_deref() != Some("unassigned")
+                && e.target.as_ref().is_some_and(|t| t.name().eq_ignore_ascii_case(&me.login))
+        });
+        let news = match given {
+            Some(e) => e.at > seen && e.actor.as_deref().is_none_or(|a| !a.eq_ignore_ascii_case(&me.login)),
+            // Assigned before the timeline we kept: news until looked at.
+            None => seen == 0,
+        };
+        if news {
+            let by = given.and_then(|e| e.actor.as_deref()).map(|a| format!(" by {a}")).unwrap_or_default();
+            out.push(Want::Assigned { why: format!("assigned to you{by}") });
+        }
+    }
+    let mention = issue.events.iter().rfind(|e| {
+        e.at > seen
+            && e.actor.as_deref().is_none_or(|a| !a.eq_ignore_ascii_case(&me.login))
+            && e.body.as_deref().is_some_and(|b| mentions(b, &me.login))
+    });
+    // The issue's own text counts too, while you've never looked.
+    let in_body = seen == 0 && !it.author.eq_ignore_ascii_case(&me.login) && mentions(&it.body, &me.login);
+    if let Some(e) = mention {
+        let by = e.actor.as_deref().map(|a| format!(" by {a}")).unwrap_or_default();
+        out.push(Want::Mention { why: format!("mentioned{by}"), at: e.at, event: e.id.clone() });
+    } else if in_body {
+        out.push(Want::Mention { why: format!("mentioned by {}", it.author), at: it.updated_at, event: "body".into() });
+    }
+    out
+}
+
+impl Issue {
+    /// The issue as text, for `capture --text` and agents: header, body,
+    /// the pull requests that refer to it, the timeline.
+    pub fn text(&self, repo: &str) -> String {
+        let it = &self.item;
+        let mut out = vec![format!("{repo}#{} {}", it.number, it.title)];
+        out.push(format!("issue · {} · opened by {} · {}", state_word(&it.state), it.author, it.url));
+        if !it.labels.is_empty() {
+            out.push(format!("labels: {}", it.labels.join(", ")));
+        }
+        out.push(if it.assignees.is_empty() {
+            "assigned to nobody".into()
+        } else {
+            format!("assigned to: {}", it.assignees.join(", "))
+        });
+        if !it.body.trim().is_empty() {
+            out.push(String::new());
+            out.push(it.body.trim().to_owned());
+        }
+        out.push(String::new());
+        out.push(format!("pull requests: {}", self.linked.len()));
+        for l in &self.linked {
+            let head = l.head.as_deref().map(|h| format!(" ({h})")).unwrap_or_default();
+            out.push(format!("  #{} {} {}{head}", l.number, state_word(&l.state), l.title));
+        }
+        out.push("timeline:".into());
+        for e in &self.events {
+            out.push(format!("  {}", e.line()));
+        }
+        out.join("\n") + "\n"
+    }
+}
+
+/// A branch name for working on an issue: `i89-short-kebab-title`.
+pub fn branch_for(number: u64, title: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let title = title.to_lowercase().replace(['\'', '’'], "");
+    for w in title.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()) {
+        let len: usize = words.iter().map(|w| w.len() + 1).sum();
+        if words.len() >= 5 || (len + w.len() > 28 && !words.is_empty()) {
+            break;
+        }
+        words.push(w.chars().take(28).collect());
+    }
+    if words.is_empty() { format!("i{number}") } else { format!("i{number}-{}", words.join("-")) }
 }
 
 fn clip(s: &str, n: usize) -> String {
@@ -531,6 +666,20 @@ mod tests {
         assert!(!mentions("me@wetneb.org", "wetneb"));
         assert!(!mentions("@wetneb-bot", "wetneb"));
         assert!(!mentions("anything", ""));
+    }
+
+    #[test]
+    fn branches_for_issues() {
+        assert_eq!(
+            branch_for(89, "M37: issue blocks, and issue → agent (worktree, agent, PR in a tab)"),
+            "i89-m37-issue-blocks-and-issue"
+        );
+        assert_eq!(branch_for(7, "Fix: the `tea` login's ssh_host!"), "i7-fix-the-tea-logins-ssh");
+        assert_eq!(branch_for(3, "→ ✓"), "i3");
+        assert_eq!(
+            branch_for(4, "Supercalifragilisticexpialidociousness everywhere"),
+            "i4-supercalifragilisticexpialid"
+        );
     }
 
     #[test]

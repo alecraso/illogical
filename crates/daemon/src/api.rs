@@ -759,6 +759,7 @@ async fn capture(State(app): AppState, Path(id): Path<PaneId>, Query(q): Query<C
 async fn open_block(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
+    headers: HeaderMap,
     Json(mut req): Json<illogical_proto::api::OpenRequest>,
 ) -> Res<Json<serde_json::Value>> {
     let who = who.map(|axum::Extension(w)| w);
@@ -768,6 +769,15 @@ async fn open_block(
     }
     // A pull request (M36), by its link, OWNER/REPO#N, or N in a clone.
     if req.kind == illogical_proto::BlockType::Forge {
+        // M37: a new issue says who asked for it; under an agent (the CLI's
+        // header) it's a draft a person sends.
+        if req.config["issue"] == "new" && req.config.is_object() {
+            let by = who_is(&app, who.clone().unwrap_or(crate::acl::Principal::Owner)).await;
+            req.config["by"] = serde_json::json!(by.map(|d| d.name));
+            if headers.get("x-illogical-agent").is_some() {
+                req.config["agent"] = true.into();
+            }
+        }
         req.config = crate::forge::open_config(&req.config).await.map_err(bad)?;
     }
     // A pane on another daemon (#17) names a host in our list: that's
