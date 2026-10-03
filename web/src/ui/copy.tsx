@@ -25,7 +25,7 @@ export function CopyText({ text, inline, share, ...attrs }: { text: string; inli
       </span>
       <CopyButton text={text} select={() => value.current} />
       {share && typeof navigator.share === "function" ? (
-        <button class="copy-button" data-share onClick={() => void navigator.share({ url: text }).catch(() => {})}>
+        <button type="button" class="copy-button" data-share onClick={() => void navigator.share({ url: text }).catch(() => {})}>
           Share
         </button>
       ) : null}
@@ -42,6 +42,7 @@ export function CopyButton({ text, label = "Copy", select }: { text: string; lab
   };
   return (
     <button
+      type="button"
       class="copy-button"
       data-copy
       onClick={async () => {

@@ -10,6 +10,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
 import { theme } from "../theme";
+import { AdapterHelp, installAdapter, type Adapter } from "../ui/adapter";
 import { askText } from "../ui/menu";
 import { answeredLine, mayAnswer } from "../ui/term-ask";
 import { registerBlock, type BlockView } from "./view";
@@ -63,6 +64,8 @@ export interface AgentState {
   status: "starting" | "ready" | "working" | "remote" | "stopped" | "exited";
   attention: string;
   error: string | null;
+  /** Its adapter isn't installed here, or has no Node (#111). */
+  adapter: Adapter | null;
   last_stop: string | null;
   current_tool: { id: string; title: string; kind: string } | null;
   pending: Perm[];
@@ -388,6 +391,9 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
         {s.queued.length > 0 && <div class="agent-note">Queued: {s.queued.join(" · ")}</div>}
       </div>
       {s.error && <div class="agent-error">{s.error}</div>}
+      {s.adapter && stopped && (
+        <AdapterHelp client={client} a={s.adapter} said then="Resume once it's done." install={() => void installAdapter(client, s.adapter!.kind, { split: id })} />
+      )}
       {answered && !s.pending.length && !open.length && <div class="agent-answered">{answeredLine(answered)}</div>}
       {s.pending.map((p) =>
         can ? (

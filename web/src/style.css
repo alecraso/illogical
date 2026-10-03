@@ -3456,3 +3456,27 @@ button {
 .forge-actions {
   margin-top: 6px;
 }
+
+/* ---- an agent's adapter to install (#111) */
+
+.adapter-help {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.adapter-help p {
+  margin: 0;
+}
+
+.agent .adapter-help {
+  margin: 0 8px 8px;
+}
+
+.adapter-install button {
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--letterbox);
+  font-weight: 600;
+}
