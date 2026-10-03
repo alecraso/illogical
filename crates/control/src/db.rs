@@ -305,6 +305,18 @@ impl Db {
         Ok(new_id.to_owned())
     }
 
+    /// The account's GitHub login, if it signed in with GitHub (M40).
+    pub fn github_login(&self, account: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT login FROM identities WHERE account = ?1 AND provider = 'github' LIMIT 1",
+                params![account],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     pub fn account(&self, id: &str) -> anyhow::Result<Option<Account>> {
         Ok(self
             .c()

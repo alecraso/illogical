@@ -1623,6 +1623,7 @@ name = "illogical-control"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "aws-lc-rs",
  "axum",
  "base64 0.23.1",
  "ciborium",

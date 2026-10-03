@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
+aws-lc-rs = "1.18.1"
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.1"
 ciborium = "0.2.2"

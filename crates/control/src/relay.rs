@@ -55,6 +55,8 @@ struct Live {
     stop: Arc<tokio::sync::Notify>,
     /// Tells the daemon to fetch its account's certificates now.
     nudge: Arc<tokio::sync::Notify>,
+    /// Text messages for the daemon (M40: forge pokes and heartbeats).
+    text: tokio::sync::mpsc::UnboundedSender<String>,
 }
 
 impl Relay {
@@ -75,6 +77,13 @@ impl Relay {
             if let Some(l) = live.get(id) {
                 l.nudge.notify_one();
             }
+        }
+    }
+
+    /// A text message to a connected daemon (M40); dropped if it isn't.
+    pub fn text(&self, id: &str, msg: &str) {
+        if let Some(l) = self.live.lock().unwrap().get(id) {
+            let _ = l.text.send(msg.to_owned());
         }
     }
 
@@ -111,13 +120,14 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
     let (mux, mut out) = Mux::new(None);
     let stop = Arc::new(tokio::sync::Notify::new());
     let nudge = Arc::new(tokio::sync::Notify::new());
+    let (text, mut texts) = tokio::sync::mpsc::unbounded_channel::<String>();
     let generation = app.relay.next.fetch_add(1, Ordering::Relaxed);
     if let Some(old) = app
         .relay
         .live
         .lock()
         .unwrap()
-        .insert(id.clone(), Live { generation, mux: mux.clone(), stop: stop.clone(), nudge: nudge.clone() })
+        .insert(id.clone(), Live { generation, mux: mux.clone(), stop: stop.clone(), nudge: nudge.clone(), text })
     {
         // A daemon that reconnected: the old socket is dead or about to be.
         old.stop.notify_one();
@@ -142,8 +152,13 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
                     }
                 }
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(Message::Text(t))) => {
+                    heard = Instant::now();
+                    crate::forge::from_daemon(&app, &id, generation, t.as_str());
+                }
                 Some(Ok(_)) => heard = Instant::now(),
             },
+            Some(t) = texts.recv() => if tx.send(Message::Text(t.into())).await.is_err() { break },
             _ = ping.tick() => {
                 if heard.elapsed() > DEAD_AFTER || tx.send(Message::Ping(Default::default())).await.is_err() {
                     break;
@@ -160,6 +175,7 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
         live.remove(&id);
     }
     drop(live);
+    app.forge.drop_daemon(&id, generation);
     let _ = app.db.seen(&id, None, now_ms());
     info!(daemon = %id, "daemon left the relay");
 }
