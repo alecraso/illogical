@@ -3494,6 +3494,111 @@ A studio box as a block: the app in the frame (its own origin, so no block site)
   - WebKit;
   - planter's boxes on Fountain.
 
+### Forge track (S23, M36–M40, added 2026-10-02)
+
+Pull requests and issues from a git forge (Forgejo, then GitHub, then GitLab) as blocks. A PR is a block beside the terminals, agents and diffs that work on it, and whatever it waits on reaches the needs-you rail: a review asked of you, CI red on your PR, changes requested. An issue is where an agent's work starts. The point isn't drawing a forge's pages again; it's attention, `capture --text` for agents, and opening the blocks we already have (diff, terminal, agent) on the PR's code.
+
+**Decisions (2026-10-02):**
+
+- **One block type, `forge`,** with the provider in its config, not a type per forge. Under it, a normalized model (item, review, check, timeline event) and one adapter per provider.
+- **Forgejo first.** Our tracks run there, it's on the tailnet, and its API is close to GitHub's. GitHub follows behind the same adapter; GitLab (merge requests by `iid`, pipelines, discussions) is last.
+- **Auth through the user's own CLIs:** `tea` (or the Forgejo API with `tea`'s login), `gh api`, `glab api`, run with #74's per-host shell environment. illogical stores no forge tokens. A host with no logged-in CLI says so on the block. Hosted boxes (no CLI login) wait for the control plane's GitHub App (M40).
+- **Freshness: poll now, webhooks later.** Conditional requests (ETag / `If-None-Match`; a GitHub 304 doesn't count against the rate limit), every few seconds while drawn or while the item has attention, else every few minutes, like M11's "drawn" rule. Webhooks are M40.
+- **Agents draft, people send.** Read methods are open to agents (MCP, `illogical call`). Write methods (`comment`, `approve`, `request_changes`, `merge`, `close`) called by an agent become an ask on the block holding the draft; the owner or an editor sends, edits or drops it, and it goes out as that person through their CLI. A person in the UI or CLI sends directly. This is the general form of "never file on ghostty-org as an agent": nothing reaches a forge in an agent's name.
+
+**Order:** S23 (#87); then M36 (#88, Forgejo PR blocks), after M34's gate `source` and M35's `Api::Ask` on non-terminal blocks; then M37 (issues, issue → agent); M38 (GitHub); M39 (GitLab); M40 (webhooks and hosted). M38 can start once M36's model is settled; it doesn't wait for M37.
+
+#### S23: forge blocks spike (#87, about half a day)
+
+**Done 2026-10-02: go** (see [spikes/s23-forge](spikes/s23-forge/README.md)). Tried against this repo's Forgejo (#84), Codeberg's `forgejo/forgejo` (forks, red checks, team requests), GitHub's `cli/cli` and Jake's own open PRs, and gitlab.com's `gitlab-org/cli`. Read-only throughout.
+
+- **Read path:** `tea api`, `gh api` and `glab api` all reach the PR, reviews, checks, timeline, files and diff refs. Both CLIs that were run pass `If-None-Match` through (`gh` exits 1 on a 304).
+  - The daemon should take the token from the CLI and make the requests itself with its existing `reqwest`. Tokens: `tea login helper get` (16 ms, refreshes OAuth) and `gh auth token` (39 ms). Keep them in memory only.
+  - A CLI per request costs ~25 ms (`tea`) to ~150 ms (`gh`) more, and each prints headers its own way.
+- **Logins:** `tea` matches an `ssh://` remote to a login by `ssh_host`. This repo's `git.tailb2e8f2.ts.net` matches no login: the login's `ssh_host` is `git.inevitable.fyi`, and the tailnet name serves only SSH.
+  - The daemon matches the remote's host against each login's URL host and `ssh_host`. If none matches, it asks each Forgejo login for `repos/{path}` and compares `ssh_url` (one request; it finds `forgejo` here).
+  - The block offers a choice when no login matches, or several do. The pick is kept in config.
+- **Cost:** a full read is 7 requests on GitHub (1.4–1.6 s, 7 points) and 6 on Forgejo (0.3–0.8 s, 29 KB).
+  - An unchanged GitHub poll is all 304s for **0 points**. GraphQL is one request (1.3–1.8 s) but costs a point on every poll, with no ETag, so M38 stays on REST.
+  - Forgejo sends no ETags and no rate-limit headers, so its poll is the item plus the combined status (2 requests, ~100–200 ms). It re-reads the rest when `updated_at`, the head sha or the status changes.
+  - gitlab.com's 304s still count against its rate limit.
+- **Model:** `Item` / `Review` / `Check` / `Event` (Rust fields in the README) fit 9 PRs across the three forges (`model.mjs`). What doesn't fit:
+  - Forgejo's `requested_reviewers` keeps reviewers who already reviewed. A request is pending only while that reviewer's latest review entry is `REQUEST_REVIEW`.
+  - GitHub's combined status says `pending` when it has no statuses. Check runs and statuses both feed checks.
+  - Forgejo has no rerun API.
+  - GitLab's head pipeline runs on a merge commit. Its discussions need auth even on public projects.
+  - Only GitHub says whether branch protection blocks a merge.
+- **Attention:** each rule fired on real data. `ask`: a request direct and through a team. `failed`: **Jake's studio#291**, 3 checks red. `input`: changes requested, and a mention (GitHub's `mentioned` event, or `@login` in a body, newer than `seen_at`). `done`: merged, or green and not blocked (**studio#292, hud#736**). "You" is `GET /user`; teams come from `GET /user/teams`.
+- **Code:** a treeless fetch of `refs/pull/N/head` or `refs/merge-requests/N/head` worked on all three forges, from forks too (0.2–4.3 s). `git diff $(git merge-base target head) head` matched the forge's file list every time.
+  - GitLab's `diff_refs.start_sha` is the target's tip, not the merge base: diffing from it listed 130 files instead of 4.
+  - M11's diff block takes `rev_a = merge_base`, `rev_b = refs/illogical/pr/N` as it is.
+- **Drafts as asks:** M35's `Mux::ask` already takes any block that isn't an agent or remote block. Ask → posted wasn't measured, since nothing was posted. What M36 changes:
+  - The block queues its drafts, because the mux holds one ask per pane and a second withdraws the first. Each draft is a `Form` ask (`body`, markdown) with `source: forge`.
+  - The PR writes are named `review {event}` and `comment`, because `approve` on a block holding an ask is routed to the card.
+  - It resolves `by` for its writes: MCP is `mcp:<client>`, so a draft. The CLI sends `agent: true` under `CLAUDECODE` or `AI_AGENT`, a courtesy, not a boundary.
+  - New MCP tools `open_pr`, `read_pr` and `pr_*` return a draft id at once.
+  - The web gets a textarea for a markdown field.
+  - **Decided 2026-10-02 (Jake): the owner and editors may send.** Sending posts with the owner's CLI login (the spike leaned owner only, as M35's `enter`), so the block's log and the card record which person sent each draft; viewers can't.
+
+**Order:** S23, done; then M36 (#88).
+
+Answer these before M36. Each answer goes in as a fixture or a measured number:
+
+1. **The CLIs as the read path.**
+   - Do `tea`, `gh` and `glab` cover what the block reads (PR, reviews, checks or statuses, timeline, diff refs) through their `api` passthroughs, with their own logins?
+   - How does each pick a login for a repo? `tea` here says "no login matched this repository" for `ssh://git@git.tailb2e8f2.ts.net/...` and falls back to login `forgejo`. Find the mapping rule (host name, SSH vs HTTPS remote) and what the block shows when it's ambiguous.
+   - Do conditional requests (ETag, 304) go through each CLI's passthrough, or does the daemon need the token (`gh auth token`, `tea`'s config) and its own HTTP client?
+2. **Cost.** One full read of a PR (item, reviews, checks, timeline) on Forgejo and GitHub: wall time, requests, and rate-limit use. The same for an unchanged poll. Use real PRs (this repo on Forgejo; a public GitHub repo with Actions).
+3. **The normalized model.** Map one PR on each of Forgejo, GitHub and GitLab (gitlab.com, a public project) onto item / review / check / timeline event. List what doesn't fit: GitHub's check runs vs commit statuses, Forgejo Actions' statuses, GitLab pipelines and approvals, draft vs `WIP:`, review threads vs discussions.
+4. **Attention rules.** From real data, which states make `needs_input` for *you*: a review requested from you (direct or through a team), your PR's checks failing, changes requested on your PR, a mention, CI going green on a PR you're waiting to merge (`done`). Which login is "you" on each forge.
+5. **The PR's code.** `git fetch` of a PR head on each forge (`refs/pull/N/head` on GitHub and Forgejo, `refs/merge-requests/N/head` on GitLab), into a worktree, from a fork. Does M11's diff block on `merge-base..head` match the forge's own diff?
+6. **Drafts as asks.** A throwaway agent calls `comment` through MCP. The draft shows as an ask on a terminal beside it, as in S22, and *Send* posts it as the person through `tea`. Measure ask to posted.
+
+#### M36: Forgejo pull request blocks (#88)
+
+`BlockType::Forge` with `{provider: forgejo, host, repo, kind: pr, number}`:
+
+- **Reads** through the provider adapter (S23's read path), polled per the freshness rule. State: title, body, author, labels, draft, base and head, mergeable, reviews, checks, and the newest timeline events. `describe %N` returns it and changes go out as events.
+- **The log:** the timeline as an event stream in `blocks/%N/`, so `history` and `search` find a PR's comments and check runs beside the terminal output of the work.
+- **Attention** through M34's gate `source` (`forge`) and M24's reasons: `ask` for a review requested from you; `failed` for red checks on your PR, with *Rerun checks*; `input` for changes requested or a mention; `done` when your PR is merged or its checks go green. Bundled by repo.
+- **Methods:**
+  - `comment {body}`, `review {event: approve|request_changes|comment, body?}`, `merge {style?}`, `rerun_checks` (GitHub; Forgejo has no rerun API, so it links the run), `refresh`. Not `approve`: on a block holding an ask that name answers the card (S23). Writes follow "agents draft, people send": an agent's call becomes an ask (M35's `Api::Ask` on non-terminal blocks), and a person's goes out as them. Owner and editors only (M12); viewers read.
+  - `diff`: an M11 diff block beside it on `merge-base..head`, on a worktree of the PR head.
+  - `checkout`: a terminal block in that worktree (`.illogical/worktrees/pr-N`, or the repo's own convention if it has one), on the block's host.
+- **`capture --text`:** the PR as text (header, body, reviews, checks, the timeline), for agents.
+- **Ways in:** `illogical pr [URL | REPO#N | N]` (N in the current repo), *Open pull request…* in the picker, a PR link in a terminal (OSC 8 or a plain URL on a known forge host), MCP `open_pr`, and the swarm (kind `pr`, filed under the repo's project).
+- **Web:** `web/src/blocks/forge.tsx`: header, checks, reviews, the timeline, and the draft asks. The phone's sheet puts what waits on you first. A TUI line.
+
+**Tests:** adapter unit tests on S23's fixtures (every review and check state); daemon tests for attention, drafts as asks and the viewer's refusal, against a fake Forgejo (recorded responses, ETags included); an e2e spec on a Forgejo in CI if one is cheap to run, else the fake.
+
+**Done when:** on geek, a real PR on this repo's Forgejo opens as a block; a review requested from Jake is on the rail and the phone within about a minute of being asked (polling), and approved from the phone shows on Forgejo as Jake; red checks show as *Failed* with *Rerun checks*; and an agent's `comment` waits as a draft until Jake sends it.
+
+#### M37: issue blocks, and issue → agent (#89)
+
+- `kind: issue` on the same block: state, labels, assignees, linked PRs, the timeline. Attention: assigned to you, or a mention.
+- **Start work:** *Agent on this* makes a worktree and branch named after the issue (`iNN-<slug>`, as we name them now), an agent block there with the issue's text as its prompt and a link back, and a tab holding both. When that branch's PR appears, its PR block joins the tab.
+- `illogical issue [URL | REPO#N | N]`, MCP `open_issue`, `illogical issue new` (a person's; an agent's is a draft ask, as in M36).
+- **Done when:** on geek, *Agent on this* on a real issue in this repo gives a tab with the agent working in its own worktree, and the PR it opens shows up in that tab.
+
+#### M38: GitHub (#90)
+
+- The GitHub adapter through `gh api`: check runs and commit statuses both feed checks; teams count for "a review requested from you".
+- GraphQL only if S23's numbers say one query beats REST's several for a full read.
+- **Done when:** M36's and M37's "done when", run against a GitHub repo, including a PR from a fork.
+
+#### M39: GitLab (#91)
+
+- The GitLab adapter through `glab api`: merge requests by `iid`, pipelines as checks, approvals as reviews, discussions as the timeline.
+- `checkout` from `refs/merge-requests/N/head`.
+- **Done when:** M36's "done when" against a gitlab.com project.
+
+#### M40: webhooks and hosted boxes (#92)
+
+- **Forgejo:** a webhook straight to the daemon over the tailnet, set up from the block (*Live updates*) with the person's own CLI; the daemon checks its signature, and the block drops to slow polling while the hook is healthy.
+- **GitHub:** the control plane's GitHub App (control track) takes webhooks and relays them to the daemons that have that repo's blocks open, through M18's relay. The same App gives hosted boxes (M20) read access with no CLI login. Writes still go out as the person.
+- **GitLab:** webhooks to the daemon, as for Forgejo, when GitLab is reachable from it; else the relay.
+- **Done when:** a review requested on Forgejo shows on the phone within about 5 s, and a hosted box's PR block reads through the App.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
