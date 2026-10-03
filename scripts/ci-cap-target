@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Delete the CI's kept build ($CARGO_TARGET_DIR) once it passes $1 GB. Every
+# push adds new artifacts and cargo never prunes them: on 2026-10-02 this
+# reached 136 GB on jake-mini, filled the disk and took the home cluster's
+# master VM down with it. Starting cold now and then is the cheap side.
+set -euo pipefail
+limit_gb=$1
+dir=${CARGO_TARGET_DIR:?CARGO_TARGET_DIR is not set}
+case "$dir" in "$HOME"/.cache/illogical-ci/?*) ;; *) echo "refusing to prune $dir" >&2; exit 1 ;; esac
+[ -d "$dir" ] || exit 0
+size_gb=$(( $(du -sk "$dir" | cut -f1) / 1024 / 1024 ))
+if [ "$size_gb" -ge "$limit_gb" ]; then
+  echo "$dir is $size_gb GB (limit $limit_gb GB): starting from a clean build"
+  rm -rf "$dir"
+else
+  echo "$dir is $size_gb GB (limit $limit_gb GB)"
+fi

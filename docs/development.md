@@ -47,7 +47,9 @@ jake-mini (`macos-arm64`, a launchd agent,
 `~/Library/LaunchAgents/fyi.inevitable.forgejo-runner.plist`, with
 `ProcessType` Interactive: launchd's throttling of background agents made
 daemon tests time out). Both use the host executor and keep their build in
-`~/.cache/illogical-ci/`. Workflows run on pushes and tags only, never on
+`~/.cache/illogical-ci/`, which each job deletes first once it passes 30 GB
+(`scripts/ci-cap-target`): cargo never prunes it, and on 2026-10-02 it grew
+to 136 GB, filled jake-mini's disk and took the home cluster down. Workflows run on pushes and tags only, never on
 pull requests, since they run on those hosts.
 
 ## Testing iTerm2
