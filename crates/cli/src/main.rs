@@ -219,6 +219,25 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
+    /// Show a pull request as a block (M36: Forgejo, through your `tea`
+    /// login): its checks, reviews and timeline, and what it waits on you
+    /// for. `URL`, `OWNER/REPO#N`, or `N` in this directory's repository.
+    /// Prints the block, then the PR as text. `pr comment|review|merge %N`
+    /// write to it; run by an agent (CLAUDECODE or AI_AGENT set), a write
+    /// is a draft that waits for a person to send it.
+    #[command(args_conflicts_with_subcommands = true)]
+    Pr {
+        #[command(subcommand)]
+        cmd: Option<PrCmd>,
+        /// The pull request.
+        target: Option<String>,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`.
+        #[arg(long)]
+        split: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Type a pane's failed command again (M24's `failed`), once its shell
     /// is waiting at its prompt.
     Rerun { pane: Option<Pane> },
@@ -618,6 +637,21 @@ enum ClaudeCmd {
         /// Split this block instead of opening a tab.
         #[arg(long)]
         split: Option<Pane>,
+    },
+}
+
+/// Writes to a PR block (M36).
+#[derive(Subcommand)]
+enum PrCmd {
+    /// Comment on it.
+    Comment { block: Pane, body: String },
+    /// Review it: approve, request_changes or comment.
+    Review { block: Pane, event: String, body: Option<String> },
+    /// Merge it (merge, rebase, rebase-merge, squash, fast-forward-only).
+    Merge {
+        block: Pane,
+        #[arg(long)]
+        style: Option<String>,
     },
 }
 
@@ -1310,6 +1344,45 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 let s = |k: &str| g[k].as_str().unwrap_or("").to_owned();
                 println!("  {}: {} waits at gate {}", s("member"), s("op"), s("gate"));
             }
+        }
+        Command::Pr { cmd: Some(cmd), .. } => {
+            let (block, method, mut args) = match cmd {
+                PrCmd::Comment { block, body } => (block, "comment", json!({ "body": body })),
+                PrCmd::Review { block, event, body } => (block, "review", json!({ "event": event, "body": body })),
+                PrCmd::Merge { block, style } => (block, "merge", json!({ "style": style })),
+            };
+            if http::agent() {
+                args["agent"] = json!(true);
+            }
+            let v = request(&sock, "POST", &format!("/api/blocks/{}/call/{method}", block.0), Some(&args))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else if let Some(d) = v["draft"].as_str() {
+                println!("draft {d}: waits for a person to send it on %{}", block.0);
+            } else {
+                println!("{}", v["url"].as_str().or(v["said"].as_str()).unwrap_or("sent"));
+            }
+        }
+        Command::Pr { cmd: None, target, split, session } => {
+            let target = target.context("which pull request? a URL, OWNER/REPO#N, or N in this repository")?;
+            let body = json!({
+                "type": "forge",
+                "config": { "pr": target, "dir": absolute(".")? },
+                "split": split_of(split.as_deref())?,
+                "session": session,
+                "from_pane": env_pane(),
+            });
+            let block = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?["block"].as_u64().unwrap_or(0);
+            let v = loaded(&sock, block)?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            println!("%{block}");
+            if let Some(e) = v["state"]["error"].as_str() {
+                bail!("{e}");
+            }
+            print!("{}", request(&sock, "GET", &format!("/api/panes/{block}/capture"), None)?.text()?);
         }
         Command::Rerun { pane } => {
             let pane = here(pane)?;

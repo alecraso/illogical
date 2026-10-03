@@ -16,7 +16,7 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::{Path, Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -344,6 +344,12 @@ async fn act_one(
             return Err(format!("%{pane} now waits at another gate (that one was approved)"));
         }
         let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+        // M36: a review asked of you is approved as a review, sent with the
+        // owner's forge login and naming who approved.
+        if matches!(g.source, illogical_proto::GateSource::Forge { .. }) {
+            let args = serde_json::json!({ "event": "approve", "key": g.key() });
+            return block_call(app, pane, &b, "review", args, by).await.map(|_| ());
+        }
         let args = serde_json::json!({ "key": g.key() });
         return block_call(app, pane, &b, "approve", args, by).await.map(|_| ());
     }
@@ -635,9 +641,12 @@ async fn block_call(
     // answers go unremarked, as before M29). A gate's ledger names whoever
     // approved it, the owner too, by their illogical name (#75).
     let gate = matches!(b.kind(), illogical_proto::BlockType::Workspace | illogical_proto::BlockType::App);
-    let name = by.as_ref().filter(|d| gate || d.who != "owner").map(|d| d.name.as_str());
+    // A forge block (M36) names everyone who writes through it, the owner
+    // too: its log and its drafts say who sent what.
+    let forge = b.kind() == illogical_proto::BlockType::Forge;
+    let name = by.as_ref().filter(|d| gate || forge || d.who != "owner").map(|d| d.name.as_str());
     let out = b.call_by(method, args.clone(), name).await?;
-    if gate && method == "approve" {
+    if (gate && method == "approve") || (forge && method == "review" && out.get("gate").is_some()) {
         // Its card closes saying who, and the audit log says so.
         if let (Some(by), Ok(g)) = (by, serde_json::from_value::<illogical_proto::Gate>(out["gate"].clone())) {
             app.mux.send(Cmd::Api(Api::Answered(pane, by, g.key(), "approved".into(), g.headline())));
@@ -756,6 +765,10 @@ async fn open_block(
     // A studio box (M35), by its app's name: where it is, from studio.
     if req.kind == illogical_proto::BlockType::App {
         req.config = app_config(&req.config).await.map_err(bad)?;
+    }
+    // A pull request (M36), by its link, OWNER/REPO#N, or N in a clone.
+    if req.kind == illogical_proto::BlockType::Forge {
+        req.config = crate::forge::open_config(&req.config).await.map_err(bad)?;
     }
     // A pane on another daemon (#17) names a host in our list: that's
     // where clients look it up.
@@ -984,20 +997,33 @@ async fn call(
     State(app): AppState,
     Path((id, method)): Path<(PaneId, String)>,
     who: Option<axum::Extension<crate::acl::Principal>>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Res<Json<serde_json::Value>> {
-    let args: serde_json::Value = if body.is_empty() {
+    let mut args: serde_json::Value = if body.is_empty() {
         serde_json::json!({})
     } else {
         serde_json::from_slice(&body).map_err(|e| bad(e.to_string()))?
     };
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let by = match method.as_str() {
-        // M11: a file block's `open` is the owner's only.
-        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" | "open" => who_is(&app, who).await,
+        // M11: a file block's `open` is the owner's only. M36: a forge
+        // block's writes say who sent them.
+        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" | "open" | "comment" | "review" | "merge" => {
+            who_is(&app, who).await
+        }
         _ => None,
     };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+        // The CLI says when an agent runs it (CLAUDECODE, AI_AGENT): a forge
+        // block makes its writes drafts then (M36). A courtesy, not a
+        // boundary.
+        if b.kind() == illogical_proto::BlockType::Forge
+            && headers.get("x-illogical-agent").is_some()
+            && let Some(o) = args.as_object_mut()
+        {
+            o.insert("agent".into(), true.into());
+        }
         // A question raised on the block (M35) is answered where it waits.
         // (A studio box's gate is approved by the block: `{key}`.)
         let gate = method == "approve" && ["key", "member"].iter().any(|k| args.get(*k).is_some());

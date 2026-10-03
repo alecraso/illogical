@@ -238,6 +238,24 @@ impl BlockCtx {
         }
     }
 
+    /// Open another block (M36: a diff beside a PR), as the owner.
+    pub async fn open(&self, req: illogical_proto::api::OpenRequest) -> Result<PaneId, String> {
+        let cmds = self.cmds.as_ref().ok_or("this block can't open others")?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        cmds.send(crate::mux::Cmd::Api(crate::mux::Api::Open(req, None, tx)))
+            .map_err(|_| "the daemon is stopping".to_owned())?;
+        rx.await.map_err(|_| "the daemon is stopping".to_owned())?
+    }
+
+    /// Start a terminal (M36: a shell in a PR's worktree).
+    pub async fn run(&self, req: illogical_proto::api::RunRequest) -> Result<PaneId, String> {
+        let cmds = self.cmds.as_ref().ok_or("this block can't open others")?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        cmds.send(crate::mux::Cmd::Api(crate::mux::Api::Run(req, tx)))
+            .map_err(|_| "the daemon is stopping".to_owned())?;
+        rx.await.map_err(|_| "the daemon is stopping".to_owned())?
+    }
+
     /// Where its files are: this host's, or its machine's.
     pub fn files(&self) -> Result<crate::fs::Target, String> {
         match (&self.sprite, &self.provider) {
@@ -302,6 +320,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::File => crate::review::file::FileView::create(ctx, config),
         BlockType::Workspace => crate::workspace::Workspace::create(ctx, config),
         BlockType::App => crate::apps::AppBlock::create(ctx, config),
+        BlockType::Forge => crate::forge::ForgeBlock::create(ctx, config),
     }
 }
 

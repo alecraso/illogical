@@ -191,7 +191,23 @@ pub fn request(
     body: Option<&serde_json::Value>,
 ) -> anyhow::Result<Response> {
     let body = body.map(|b| b.to_string()).unwrap_or_default();
+    if agent() {
+        // M36: a forge block makes an agent's writes drafts.
+        return send(
+            target,
+            method,
+            path,
+            &[("Content-Type", "application/json"), ("X-Illogical-Agent", "1")],
+            body.as_bytes(),
+        );
+    }
     send(target, method, path, &[("Content-Type", "application/json")], body.as_bytes())
+}
+
+/// Whether an agent runs this (Claude Code sets CLAUDECODE; others
+/// AI_AGENT): a courtesy the daemon honours, not a boundary.
+pub fn agent() -> bool {
+    ["CLAUDECODE", "AI_AGENT"].iter().any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty() && v != "0"))
 }
 
 /// A request with headers of the caller's own (MCP's bridge).
