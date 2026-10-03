@@ -612,6 +612,18 @@ impl ForgeBlock {
         }
         if self.live.drawn() {
             self.look();
+        } else if had.is_none() && !self.ctx.restoring {
+            // `done` is for a change: a PR opened already merged (or
+            // green) is seen as it is. After a restart, what changed while
+            // the daemon was down still is one.
+            let done = self.wants().into_iter().find_map(|w| match w {
+                Want::Done { key, .. } => Some(key),
+                _ => None,
+            });
+            let mut c = self.config.lock().unwrap();
+            if c.done_ack.is_none() {
+                c.done_ack = done;
+            }
         }
         self.raise();
         self.ctx.changed();

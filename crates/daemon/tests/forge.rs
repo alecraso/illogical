@@ -395,10 +395,14 @@ fn a_review_asked_of_you_is_a_gate_you_approve_as_yourself() {
 fn your_prs_checks_changes_mentions_and_merge() {
     let dir = scratch("mine");
     let forge = Forge::start(&dir, "jhgaylor", None);
+    forge.f.with(|i| i.statuses[1]["status"] = json!("pending"));
     let d = forge.daemon();
     let block = open_pr(&d, &forge);
     read(&d, block);
-    // Green, open, mine: done (once).
+    // Running: nothing yet. Going green: done.
+    assert_eq!(d.state(block)["pr"]["rollup"], "running");
+    assert_eq!(info(&d, block)["attention"], "idle");
+    forge.f.with(|i| i.statuses[1]["status"] = json!("success"));
     d.wait_for("done", || info(&d, block)["reason"]["kind"] == "done");
     assert!(info(&d, block)["reason"]["headline"].as_str().unwrap().contains("checks green"));
 
@@ -454,6 +458,27 @@ fn your_prs_checks_changes_mentions_and_merge() {
     assert!(text.contains("jhgaylor/illogical#84 CI: delete the kept build"), "{text}");
     assert!(text.contains("reviewer changes requested: please split it"), "{text}");
     assert!(text.contains("jhgaylor pushed 1 commit"), "{text}");
+}
+
+#[test]
+fn a_pr_opened_already_done_isnt_news() {
+    let dir = scratch("seen");
+    let forge = Forge::start(&dir, "jhgaylor", None);
+    let d = forge.daemon();
+    let block = open_pr(&d, &forge);
+    let st = read(&d, block);
+    assert!(st["wants"].as_array().unwrap().iter().any(|w| w["kind"] == "done"), "{st}");
+    // A few polls on, still nothing raised: it was green when opened.
+    let polls = st["polls"].as_u64().unwrap();
+    d.wait_for("polls", || d.state(block)["polls"].as_u64().unwrap() >= polls + 3);
+    assert_eq!(info(&d, block)["attention"], "idle");
+    // Merged later: that is news.
+    forge.f.with(|i| {
+        i.item["merged"] = json!(true);
+        i.item["state"] = json!("closed");
+        Fake::touch(i);
+    });
+    d.wait_for("merged", || info(&d, block)["reason"]["headline"].as_str().is_some_and(|h| h.contains("merged")));
 }
 
 #[test]
