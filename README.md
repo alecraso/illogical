@@ -45,7 +45,7 @@ tabs and splits you drive with the mouse.
   Select, search a pane's whole history and copy, to your own clipboard
   over ssh.
 
-[![Diving into the swarm: every pane clustered by project, then one project's panes up close, then an agent's request on the Needs You rail, then that agent's session opened](site/img/dive.gif)](https://illogical.widgets.wtf)
+[![A tour of the swarm: every pane clustered by project, then one project's panes up close, then an agent's request on the Needs You rail, then that agent's session opened](site/img/dive.gif)](https://illogical.widgets.wtf)
 
 Linux (x86_64, arm64) and macOS (Apple silicon). Share a session with
 someone, or a whole machine with a team, with roles and presence
