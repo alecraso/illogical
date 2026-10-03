@@ -4,7 +4,8 @@
 // one runs a build on it. A read-only link works in a logged-out browser
 // and dies at expiry. Removing a member cuts them off within a second.
 // Joining (#100): the approver sees the team, picks it or Just me, and only
-// its owners can approve; Cancel turns the daemon down.
+// its owners can approve; Cancel turns the daemon down. A presigned invite
+// lets someone already in another team in with one click, no owner's yes.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -123,8 +124,10 @@ test("two people at different companies join a team by invite", async ({ browser
   expect(await alice.evaluate(() => window.__illogical.control!.teams[0].locked)).toBe(false);
   // The invite's role is picked in the team's own section (default: drives).
   await expect(alice.locator(`[data-invite-role="${team}"]`)).toHaveValue("editor");
-  await alice.locator(`[data-invite="${team}"]`).click();
+  // This one waits for her yes (the presigned kind is below).
   const section = alice.locator(`[data-team="${team}"]`);
+  await section.locator("[data-invite-ask-first]").check();
+  await alice.locator(`[data-invite="${team}"]`).click();
   await expect(section.locator("[data-invite-link]")).toContainText("#invite=");
   const link = (await section.locator("[data-invite-link]").textContent())!;
   await expect(section.locator("[data-invite-link] + [data-copy]")).toBeVisible();
@@ -241,6 +244,51 @@ test("a team-owned box joins; both use it through the relay and pass control", a
   await bob.evaluate((p) => window.__illogical.client.paneOp(p, { op: "request_control" }), pane);
   await alice.locator("[data-give]").click();
   await run(bob, pane, "echo bob-$((6*7))", "bob-42");
+});
+
+test("a presigned invite: someone already in a team joins another in one click", async ({ browser }) => {
+  // Carol has her own team already.
+  const carol = await person(browser, "carol");
+  await carol.evaluate(() => window.__illogical.control!.createTeam("Carols"));
+  // Alice makes a presigned link (the default) for someone who watches.
+  await alice.goto("/");
+  await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await alice.evaluate(() => window.dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+  const section = alice.locator(`[data-team="${team}"]`);
+  await section.locator(`[data-invite-role="${team}"]`).selectOption("viewer");
+  await expect(section.locator("[data-invite-ask-first]")).not.toBeChecked();
+  await alice.locator(`[data-invite="${team}"]`).click();
+  await expect(section).toContainText("One person can join with this link, within a day");
+  const link = (await section.locator("[data-invite-link]").textContent())!;
+  expect(link).toMatch(/#invite=[0-9a-f]{16}\.[0-9a-f]{64}$/);
+  await alice.getByRole("button", { name: "Done" }).click();
+  // A signed-out page still says who invited whom.
+  const stranger = await (await browser.newContext()).newPage();
+  await stranger.goto(link);
+  await expect(stranger.locator("[data-why=invite]")).toContainText("alice invited you to Acme.");
+  // Carol opens it: one button, and she's in, with no visit from Alice.
+  await carol.goto(link);
+  await expect(carol.locator("[data-invite-team]")).toHaveText("Acme");
+  await expect(carol.locator(".control-prompt")).toContainText("Joining adds you right away");
+  await carol.locator("[data-accept-invite]").click();
+  await expect(carol.locator("[data-invite-joined]")).toBeVisible({ timeout: 15_000 });
+  const mine = await carol.evaluate(() => window.__illogical.control!.teams.map((t) => `${t.roster.name}:${t.role}`).sort());
+  expect(mine).toEqual(["Acme:viewer", "Carols:owner"]);
+  await carol.getByRole("button", { name: "Done" }).click();
+  // Alice's browser checks the version Carol wrote, as daemons do.
+  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await expect
+    .poll(() => alice.evaluate(() => window.__illogical.control!.teams.find((t) => t.roster.name === "Acme")!.roster.members.map((m) => `${m.name}:${m.role}`)))
+    .toEqual(["alice:owner", "bob:editor", "carol:viewer"]);
+  // The team's box takes the new roster: Carol reaches it.
+  await carol.goto("/");
+  await carol.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await expect.poll(() => hostNames(carol), { timeout: 30_000 }).toContain("buildbox");
+  await expect.poll(() => carol.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
+  // Once: the same link does nothing for anyone after her.
+  const dave = await person(browser, "dave");
+  await dave.goto(link);
+  await expect(dave.locator(".control-prompt .control-error")).toContainText("expired, was used, or never was");
 });
 
 test("a read-only link works logged out, and dies at expiry", async ({ browser }) => {
