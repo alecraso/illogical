@@ -146,6 +146,9 @@ pub struct BlockEnv {
     pub mcp: Option<crate::mcp::Link>,
     /// This host's files, as `/api/fs` serves them (M7).
     pub fs: Arc<crate::fs::Scope>,
+    /// The user's shell environment (#74), for blocks that run the user's
+    /// tools: see [`crate::review::Runner::user`].
+    pub shell_env: Arc<crate::shellenv::ShellEnv>,
 }
 
 /// What a block gets from the daemon.
@@ -173,6 +176,7 @@ pub struct BlockCtx {
     pub secrets: Secrets,
     pub mcp: Option<crate::mcp::Link>,
     pub fs: Arc<crate::fs::Scope>,
+    pub shell_env: Arc<crate::shellenv::ShellEnv>,
 }
 
 impl BlockCtx {
@@ -201,6 +205,7 @@ impl BlockCtx {
             secrets: base.secrets,
             mcp: base.mcp,
             fs: base.fs,
+            shell_env: base.shell_env,
         }
     }
 

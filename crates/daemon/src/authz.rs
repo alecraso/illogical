@@ -153,6 +153,8 @@ mod tests {
         assert_eq!(policy(&g, "/api/ide"), Policy::Owner);
         assert_eq!(policy(&Method::PUT, "/api/ide"), Policy::Owner);
         assert_eq!(policy(&g, "/api/editors/vsix"), Policy::Owner);
+        assert_eq!(policy(&g, "/api/hosts/self/shell-env"), Policy::Owner);
+        assert_eq!(policy(&p, "/api/hosts/self/shell-env/refresh"), Policy::Owner);
     }
 
     #[test]

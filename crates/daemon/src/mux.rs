@@ -254,6 +254,8 @@ pub struct MuxHandle {
     pub fs: Arc<crate::fs::Scope>,
     /// Claude Code's IDE (M28), if on.
     pub ide: Option<Arc<crate::ide::Ide>>,
+    /// The user's shell environment, here and on machines (#74).
+    pub shell_env: Arc<crate::shellenv::ShellEnv>,
 }
 
 impl MuxHandle {
@@ -487,6 +489,7 @@ struct Daemon {
     drawn: std::collections::HashSet<PaneId>,
     /// This host's files, as `/api/fs` serves them.
     fs: Arc<crate::fs::Scope>,
+    shell_env: Arc<crate::shellenv::ShellEnv>,
     /// Who drives each pane (M13), and panes in pair mode.
     drivers: HashMap<PaneId, Driver>,
     pair: std::collections::HashSet<PaneId>,
@@ -599,6 +602,19 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
     let mut private = config.private.clone();
     private.push(store.root().to_path_buf());
     let fs = Arc::new(crate::fs::Scope::new(config.home.clone(), private));
+    // The user's shell environment (#74), resolved in the background.
+    let shell_env = crate::shellenv::ShellEnv::new(
+        config.shell.clone(),
+        config.shell_args.iter().filter(|a| a.starts_with("--") && *a != "--login").cloned().collect(),
+        config.home.clone(),
+        config
+            .env(0)
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with("ILLOGICAL_") && k != "CLAUDE_CODE_SSE_PORT")
+            .collect(),
+        crate::shellenv::TIMEOUT,
+    );
+    shell_env.start();
     let mut d = Daemon {
         mux: Mux::new(),
         panes: HashMap::new(),
@@ -612,6 +628,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         zoomed: HashMap::new(),
         drawn: Default::default(),
         fs: fs.clone(),
+        shell_env: shell_env.clone(),
         drivers: HashMap::new(),
         pair: Default::default(),
         trust: HashMap::new(),
@@ -661,7 +678,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
     d.sweep_machines();
     let (provider, daemon_id, ide) = (d.config.provider.clone(), d.config.daemon_id.clone(), d.config.ide.clone());
     tokio::spawn(d.run(rx, notices_rx));
-    MuxHandle { tx, events, store, provider, daemon_id, fs, ide }
+    MuxHandle { tx, events, store, provider, daemon_id, fs, ide, shell_env }
 }
 
 /// A reason with nothing but its headline.
@@ -963,6 +980,7 @@ impl Daemon {
             secrets: self.config.secrets.clone(),
             mcp: self.config.mcp.clone(),
             fs: self.fs.clone(),
+            shell_env: self.shell_env.clone(),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();

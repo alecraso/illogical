@@ -67,6 +67,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/drivers", get(drivers))
         .route("/api/panes/{id}/diff", get(diff_of))
         .route("/api/ide", get(ide_get).put(ide_set))
+        .route("/api/hosts/self/shell-env", get(shell_env_get))
+        .route("/api/hosts/self/shell-env/refresh", post(shell_env_refresh))
         .route("/api/editors", get(editors))
         .route("/api/editors/vsix", get(vsix))
         .route("/api/ide/mention", post(ide_mention))
@@ -1710,6 +1712,37 @@ async fn ide_set(
     let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here (--no-claude-ide)"))?;
     ide.set_diffs_to(Some(req.diffs)).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) })))
+}
+
+/// `GET /api/hosts/self/shell-env` (#74): the user's shell environment
+/// blocks that run the user's tools get here, waiting for it if it's still
+/// being resolved. Its `PATH` and the names of the rest.
+async fn shell_env_get(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    let s = &app.mux.shell_env;
+    let r = s.local().await;
+    Ok(Json(serde_json::json!({
+        "shell": s.shell(),
+        "ok": r.error.is_none(),
+        "error": r.error,
+        "ms": r.took.as_millis() as u64,
+        "path": r.get("PATH"),
+        "vars": r.vars.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+    })))
+}
+
+/// `POST /api/hosts/self/shell-env/refresh` (#74): resolve it again (here,
+/// and on each machine when next needed), after changing an rc file.
+async fn shell_env_refresh(
+    state: AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    state.0.mux.shell_env.refresh();
+    shell_env_get(state, who).await
 }
 
 fn owner_only(who: &Option<axum::Extension<crate::acl::Principal>>) -> Res<()> {

@@ -39,6 +39,7 @@ mod sandbox;
 mod seal;
 mod server;
 mod share;
+mod shellenv;
 mod shellint;
 mod shim;
 mod sites;
