@@ -52,6 +52,14 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
     `#!/bin/sh\nd='${tea}'\ncase "$1 $2" in\n  "auth token") grep -qx -- "$4" "$d/gh-hosts" || exit 1; echo e2e-github-token ;;\n  *) exit 2 ;;\nesac\n`,
   );
   chmodSync(join(tea, "gh"), 0o755);
+  // M39: and a stand-in `glab` beside it, whose default host (and the one
+  // it has a token for) is whatever forge-gitlab.spec.ts writes to
+  // glab-host: none, so a GitLab block reads anonymously, until it does.
+  writeFileSync(
+    join(tea, "glab"),
+    `#!/bin/sh\nd='${tea}'\nh=$(cat "$d/glab-host" 2>/dev/null)\ncase "$1 $2 $3" in\n  "config get host") echo "$h" ;;\n  "config get token") [ -n "$h" ] && [ "$5" = "$h" ] && echo e2e-gitlab-token ;;\nesac\nexit 0\n`,
+  );
+  chmodSync(join(tea, "glab"), 0o755);
   if (!process.env.PATH?.startsWith(`${tea}:`)) process.env.PATH = `${tea}:${process.env.PATH}`;
   process.env.ILLOGICAL_FORGE_POLL_MS ??= "300,1500";
 }

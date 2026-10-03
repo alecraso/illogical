@@ -546,7 +546,7 @@ fn red_checks_on_your_pr_rerun_from_the_rail() {
         hist.as_array()
             .unwrap()
             .iter()
-            .any(|h| h["by"] == OWNER && h["text"] == "a rerun of the failed checks on cli/cli#13788"),
+            .any(|h| h["by"] == OWNER && h["text"] == "a rerun of the checks on cli/cli#13788"),
         "{hist}"
     );
 }
@@ -573,7 +573,7 @@ fn an_agents_writes_are_drafts_and_a_persons_go_out() {
     let w = hub.f.writes();
     assert_eq!((w[0].0.as_str(), w[0].1["body"].as_str()), ("comment", Some("Looks right to me, thanks")));
     d.wait_for("the rerun's card", || info(&d, block)["ask"]["id"] == two["draft"]);
-    assert_eq!(info(&d, block)["ask"]["message"], "an agent drafted a rerun of the failed checks on cli/cli#13788");
+    assert_eq!(info(&d, block)["ask"]["message"], "an agent drafted a rerun of the checks on cli/cli#13788");
     d.post(&format!("/api/blocks/{block}/call/decline"), json!({ "id": two["draft"] }));
     d.wait_for("no card", || info(&d, block)["ask"].is_null());
     assert_eq!(hub.f.writes().len(), 1, "the dropped rerun went out");

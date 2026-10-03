@@ -1,5 +1,7 @@
-// Forge blocks (M36): a pull request on the person's Forgejo (or GitHub,
-// M38), read by the daemon with their own `tea` (or `gh`) login. What waits on you comes first (a
+// Forge blocks (M36): a pull request on the person's Forgejo, read by the
+// daemon with their own `tea` login; on GitHub with their `gh` login (M38);
+// or a GitLab merge request with their `glab` login (M39; anonymously and
+// read-only when glab has none). What waits on you comes first (a
 // review asked of you, red checks, changes asked for, a mention), then an
 // agent's drafts, the checks, the reviews and the timeline. An agent's
 // draft is answered on the card over the block (the daemon's ask): edit
@@ -29,9 +31,9 @@ interface Draft {
 }
 export interface ForgeState {
   provider: string; repo: string; number: number; api: string | null; login: string | null; host: string | null; dir: string | null;
-  loading: boolean; error: string | null; logins: { name: string; url: string; user: string }[]; me: string | null; pr: Pr | null;
+  loading: boolean; error: string | null; read_only?: string | null; logins: { name: string; url: string; user: string }[]; me: string | null; pr: Pr | null;
   wants: { kind: "review" | "failed" | "changes" | "mention" | "done"; why: string }[];
-  rerun: { api: boolean; url: string | null; note: string; runs?: number } | null; drafts: Draft[];
+  rerun: { api: boolean; url: string | null; note: string; pipeline?: string | null; runs?: number } | null; drafts: Draft[];
   /** M38: GitHub's rate limit, and why it's backing off. */
   rate?: { remaining: number | null; limit: number | null; backoff: string | null } | null;
   updated_ms: number; polls: number; reads: number; watching?: boolean; said: string | null;
@@ -77,7 +79,7 @@ function eventLine(e: Event): string {
 function draftWhat(d: Draft): string {
   if (d.method === "comment") return "a comment";
   if (d.method === "merge") return `a merge (${d.style ?? "merge"})`;
-  if (d.method === "rerun_checks") return "a rerun of the failed checks";
+  if (d.method === "rerun_checks") return "a rerun of the checks";
   return d.event === "approve" ? "an approval" : d.event === "request_changes" ? "a review asking for changes" : "a review";
 }
 
@@ -87,7 +89,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
   const role = client.role(session);
   // Writes are the owner's and editors' (they go out with the owner's
   // login, naming who sent them); the clone and the login are the owner's.
-  const mayWrite = role !== "viewer";
+  const mayWrite = role !== "viewer" && !s?.read_only;
   const mayOwn = role === "owner";
   const call = async (method: string, args: unknown, failure: string) => {
     setBusy(method);
@@ -107,12 +109,13 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
     }
     await call("review", { event, body: body || undefined }, "couldn't review");
   };
+  const gitlab = s?.provider === "gitlab";
   const merge = async () => {
-    const how = s?.provider === "github" ? "merge, squash or rebase" : "merge, rebase, rebase-merge, squash or fast-forward-only";
-    const style = await askText("Merge: how?", "merge", how);
+    const style = await askText("Merge: how?", "merge", gitlab ? "merge or squash" : s?.provider === "github" ? "merge, squash or rebase" : "merge, rebase, rebase-merge, squash or fast-forward-only");
     if (style?.trim()) await call("merge", { style: style.trim() }, "couldn't merge");
   };
   const refresh = () => void call("refresh", {}, "couldn't read the pull request");
+  const viewer = role === "viewer";
 
   if (!s || (s.loading && !s.updated_ms)) {
     return (
@@ -142,7 +145,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
             open ↗
           </a>
         )}
-        {mayWrite && (
+        {!viewer && (
           <button title="Read it again" disabled={busy !== null} onClick={refresh}>
             {busy === "refresh" ? "…" : "↻"}
           </button>
@@ -167,15 +170,21 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
               ))}
             </div>
           )}
-          {mayWrite && <button onClick={refresh}>Try again</button>}
+          {!viewer && <button onClick={refresh}>Try again</button>}
         </div>
+      )}
+      {s.read_only && (
+        <p class="dim ws-note" data-forge-read-only>
+          {s.read_only}
+        </p>
       )}
       {pr && it && (
         <div class="review-body ws-body">
           <div class="dim forge-meta">
             {it.author} wants to merge <code>{it.head.repo && it.head.repo !== s.repo ? `${it.head.repo}:` : ""}{it.head.branch}</code> into <code>{it.base.branch}</code>
             {" · "}
-            {s.login && `as ${s.me ?? "?"} (${s.provider === "github" ? "gh on" : "tea login"} ${s.login})`}
+            {s.login && `as ${s.me ?? "?"} (${gitlab ? s.login.replace(/^glab:/, "glab, ") : s.provider === "github" ? `gh on ${s.login}` : `tea login ${s.login}`})`}
+            {!s.login && s.read_only && "anonymously, read-only"}
             {it.labels.length > 0 && " · "}
             {it.labels.map((l) => (
               <span key={l} class="ws-tag">
@@ -207,7 +216,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
                     )}
                     {w.kind === "failed" && s.rerun?.api && mayWrite && (
                       <button class="pri" data-rerun disabled={busy !== null} title={s.rerun.note} onClick={() => void call("rerun_checks", {}, "couldn't rerun the checks")}>
-                        {busy === "rerun_checks" ? "Rerunning…" : "Rerun checks"}
+                        {busy === "rerun_checks" ? "Retrying…" : "Rerun"}
                       </button>
                     )}
                     {w.kind === "failed" && s.rerun?.url && (
@@ -219,7 +228,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
                 </div>
               ))}
               {s.rerun && !s.rerun.api && <p class="dim ws-note">{s.rerun.note}</p>}
-              {!mayWrite && <p class="dim ws-note">You're watching this session: the owner or an editor answers.</p>}
+              {viewer && <p class="dim ws-note">You're watching this session: the owner or an editor answers.</p>}
             </section>
           )}
           {s.said && <p class="ws-said" data-forge-said>{s.said}</p>}

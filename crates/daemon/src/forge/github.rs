@@ -815,7 +815,7 @@ impl Adapter for Github {
                     self.send(reqwest::Method::PUT, &path, Some(&json!({ "merge_method": how }))).await?;
                     Ok(Sent { url: None, said: format!("merged ({how})") })
                 }
-                Write::RerunChecks => {
+                Write::Rerun => {
                     // The failed checks now (conditional, so free if unchanged).
                     let p = self.poll_now(repo, number).await?;
                     let mut runs: Vec<String> = Vec::new();
@@ -852,7 +852,7 @@ impl Adapter for Github {
         })
     }
 
-    fn reruns(&self) -> bool {
+    fn rerun_api(&self) -> bool {
         true
     }
 

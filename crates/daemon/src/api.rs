@@ -316,13 +316,10 @@ async fn act_one(
             .await
             .flatten()
             .ok_or_else(|| format!("%{pane} has nothing to run again (it was dismissed, or ran since)"))?;
-        // M38: a PR block's red checks run again on the forge, as whoever
-        // asked.
+        // M39: a forge block's failed checks run again through its forge.
         if block && reason.actions.contains(&Action::Rerun) {
             let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
-            if b.kind() == illogical_proto::BlockType::Forge {
-                return block_call(app, pane, &b, "rerun_checks", serde_json::json!({}), by).await.map(|_| ());
-            }
+            return block_call(app, pane, &b, "rerun_checks", serde_json::json!({}), by).await.map(|_| ());
         }
         let command = reason
             .command

@@ -1,6 +1,6 @@
 //! The normalized model of a pull request (S23's structs): an item, its
 //! reviews, checks and timeline events, the same whichever forge it's on.
-//! An adapter per provider ([`super::forgejo`]) maps a forge's answers onto
+//! An adapter per provider ([`super::forgejo`], [`super::gitlab`]) maps a forge's answers onto
 //! it. The attention rules are written against it, not against a forge.
 
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,8 @@ pub enum Provider {
     Forgejo,
     /// GitHub, or GitHub Enterprise (M38).
     Github,
+    /// GitLab (M39): merge requests, through the person's `glab` login.
+    Gitlab,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,6 +125,8 @@ pub enum CheckSource {
     Action,
     /// A GitHub check run (Actions, or another app).
     CheckRun,
+    /// A job in a GitLab merge request's head pipeline.
+    PipelineJob,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +140,8 @@ pub enum CheckState {
     Skipped,
     Neutral,
     ActionRequired,
+    /// Waits for someone to start it (a GitLab manual job); not counted.
+    Manual,
 }
 
 impl CheckState {
@@ -223,12 +229,14 @@ pub struct Pr {
 }
 
 /// The checks' sum: failure if any counted check is red, else running if
-/// any isn't done, else success; `None` when nothing counts. Skipped and
-/// neutral checks, and ones allowed to fail, don't count.
+/// any isn't done, else success; `None` when nothing counts. Skipped,
+/// neutral and manual checks, and ones allowed to fail, don't count.
 pub fn rollup(checks: &[Check]) -> Option<CheckState> {
     let counted: Vec<&Check> = checks
         .iter()
-        .filter(|c| !c.allow_failure && !matches!(c.state, CheckState::Skipped | CheckState::Neutral))
+        .filter(|c| {
+            !c.allow_failure && !matches!(c.state, CheckState::Skipped | CheckState::Neutral | CheckState::Manual)
+        })
         .collect();
     if counted.is_empty() {
         return None;
