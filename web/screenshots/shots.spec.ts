@@ -4,19 +4,27 @@
 // the UI changes and never show anything real.
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
 import type { PaneId } from "../src/proto";
-import { open, paneEl, panes, ready, reset, text } from "../e2e/helpers";
+import { menu, open, paneEl, panes, ready, reset, text } from "../e2e/helpers";
 
 const PORT = 7689;
+const BLOCK_PORT = 7690;
 const base = `http://127.0.0.1:${PORT}`;
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "../../site/img");
 const agent = join(here, "demo_acp.py");
+
+const codeServer = (() => {
+  const dir = join(process.env.HOME ?? "", ".cache/illogical/code-server");
+  if (!existsSync(dir)) return null;
+  const bin = readdirSync(dir).map((v) => join(dir, v, "bin/code-server")).find(existsSync);
+  return bin ?? null;
+})();
 
 let root: string;
 let home: string;
@@ -106,6 +114,123 @@ fi
 printf 'test result: \\033[32mok\\033[0m. 6 passed; 0 failed; 0 ignored; finished in 0.02s\\n'
 `;
 
+// A stand-in for npm: `npm run dev` says what Vite would, then serves web/.
+const NPM = `#!/bin/sh
+printf '\\n> auth-admin@0.4.2 dev\\n> vite\\n\\n'
+sleep 0.3
+printf '  \\033[1;32mVITE\\033[0m \\033[32mv6.3.5\\033[0m  ready in \\033[1m284\\033[0m ms\\n\\n'
+printf '  \\033[32m➜\\033[0m  \\033[1mLocal\\033[0m:   \\033[36mhttp://localhost:\\033[1m5173\\033[0;36m/\\033[0m\\n'
+printf '  \\033[2m➜  Network: use --host to expose\\033[0m\\n'
+printf '  \\033[2m➜  press h + enter to show help\\033[0m\\n'
+exec python3 -m http.server 5173 --bind 127.0.0.1 --directory web >/dev/null 2>&1
+`;
+
+// What the dev server serves: the auth crate's admin page.
+const ADMIN_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>auth admin</title>
+<style>
+body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #f6f7fb; color: #1f2333; }
+header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; background: #fff; border-bottom: 1px solid #e3e5ee; }
+header b { font-size: 16px; }
+header span { margin-left: auto; color: #6b7088; font-size: 13px; }
+main { padding: 24px; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
+.tile { background: #fff; border: 1px solid #e3e5ee; border-radius: 10px; padding: 14px 16px; }
+.tile small { color: #6b7088; }
+.tile div { font-size: 26px; font-weight: 650; }
+table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e3e5ee; border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid #eef0f5; }
+th { color: #6b7088; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.ok { color: #1a7f37; } .old { color: #b42318; }
+</style></head><body>
+<header><b>🔐 auth</b> admin <span>v0.4.2 · dev</span></header>
+<main>
+<div class="tiles">
+<div class="tile"><small>Live sessions</small><div>1,284</div></div>
+<div class="tile"><small>Expiring in 5 min</small><div>37</div></div>
+<div class="tile"><small>Swept today</small><div>9,912</div></div>
+</div>
+<table>
+<tr><th>Session</th><th>User</th><th>Expires</th><th>State</th></tr>
+<tr><td>s_7f3a…c21</td><td>ana</td><td>in 58 min</td><td class="ok">live</td></tr>
+<tr><td>s_19be…04d</td><td>sam</td><td>in 41 min</td><td class="ok">live</td></tr>
+<tr><td>s_c0d2…9aa</td><td>kim</td><td>in 12 min</td><td class="ok">live</td></tr>
+<tr><td>s_44e1…7f0</td><td>lee</td><td>in 3 min</td><td class="ok">live</td></tr>
+<tr><td>s_a8b9…e13</td><td>ana</td><td>2 min ago</td><td class="old">expired</td></tr>
+<tr><td>s_5d70…b62</td><td>jo</td><td>9 min ago</td><td class="old">expired</td></tr>
+</table>
+</main></body></html>
+`;
+
+// The fix an agent made, for the changes shot: a Clock, and the sweep.
+const CLOCK_RS = `use std::time::Instant;
+
+/// Where the session store reads the time, so tests can move it.
+pub trait Clock: Send {
+    fn now(&self) -> Instant;
+}
+
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+`;
+
+const SWEEP = `
+    /// Drop every expired session; how many went.
+    pub fn sweep(&mut self) -> usize {
+        let now = self.clock.now();
+        let before = self.sessions.len();
+        self.sessions.retain(|_, s| s.expires > now);
+        before - self.sessions.len()
+    }
+}
+`;
+
+/** A Claude Code session from a terminal in the auth repo, for the
+ * conversations shot: in the demo HOME's ~/.claude, as Claude Code writes it. */
+function seedConversation(cwd: string) {
+  const id = "3b6f0c1e-5a2d-4c8e-9f7a-1d2e3c4b5a69";
+  const dir = join(home, ".claude/projects", cwd.replace(/[/.]/g, "-"));
+  mkdirSync(dir, { recursive: true });
+  let n = 0;
+  let parent: string | null = null;
+  const lines: object[] = [];
+  const t0 = Date.parse("2026-09-28T09:12:00Z");
+  const add = (type: string, message: object) => {
+    const uuid = `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
+    lines.push({
+      type, uuid, parentUuid: parent, sessionId: id, cwd, gitBranch: "fix-flaky-expiry", entrypoint: "cli", version: "2.1.288",
+      timestamp: new Date(t0 + n * 9000).toISOString(), isSidechain: false, message,
+    });
+    parent = uuid;
+  };
+  const model = "claude-opus-5-5";
+  const say = (text: string) => add("assistant", { id: `msg_${n}`, role: "assistant", model, content: [{ type: "text", text }] });
+  const tool = (name: string, input: object, result: string) => {
+    const tid = `toolu_${n}`;
+    add("assistant", { id: `msg_${n}`, role: "assistant", model, content: [{ type: "tool_use", id: tid, name, input }] });
+    add("user", { role: "user", content: [{ type: "tool_result", tool_use_id: tid, content: result }] });
+  };
+  add("user", { role: "user", content: "expires_after_ttl fails about one run in five on CI. find out why" });
+  say("I'll look at the test and the store's expiry check.");
+  tool("Bash", { command: "grep -n 'Instant::now\\|sleep' src/session.rs" }, "18:        let expires = Instant::now() + self.ttl;\n26:        let now = Instant::now();\n204:        std::thread::sleep(ttl + Duration::from_millis(5));");
+  tool("Read", { file_path: "src/session.rs", offset: 196, limit: 20 }, "196  #[test]\n197  fn expires_after_ttl() {\n198      let ttl = Duration::from_millis(50);\n...");
+  say(
+    "Found it. The test sleeps for the TTL plus 5 ms and then expects the session to be gone, but get compares against an Instant::now() taken after the lookup starts. On a loaded CI runner the sleep can return early relative to the store's clock reads, so the session is still live.\n\nThe fix is to stop sleeping: give the store a Clock and have the test advance a fake one past the TTL.",
+  );
+  add("user", { role: "user", content: "do that, and add a sweep while you're there" });
+  tool("Write", { file_path: "src/clock.rs", content: CLOCK_RS }, "File created successfully");
+  tool("Edit", { file_path: "src/session.rs", old_string: "Instant::now()", new_string: "self.clock.now()", replace_all: true }, "The file has been updated.");
+  tool("Bash", { command: "cargo test -p auth session" }, "running 6 tests\ntest session::tests::expires_after_ttl ... ok\n...\ntest result: ok. 6 passed; 0 failed");
+  say("Done: Store takes a Clock, the test uses a fake one, and sweep() drops expired sessions. All 6 tests pass, 50 runs in a row.");
+  lines.push({ type: "ai-title", aiTitle: "Fix flaky expires_after_ttl", sessionId: id });
+  writeFileSync(join(dir, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+}
+
 function git(cwd: string, ...args: string[]) {
   execFileSync("git", args, {
     cwd,
@@ -148,6 +273,10 @@ function demoHome() {
     git(repo, "add", "-A");
     git(repo, "commit", "-q", "-m", msg);
   }
+  writeFileSync(join(home, "bin/npm"), NPM);
+  chmodSync(join(home, "bin/npm"), 0o755);
+  mkdirSync(join(repo, "web"));
+  writeFileSync(join(repo, "web/index.html"), ADMIN_HTML);
   git(repo, "checkout", "-q", "-b", "fix-flaky-expiry");
   writeFileSync(join(repo, "src/session.rs"), SESSION_RS + "\n// TODO: sweep on a timer\n");
 }
@@ -159,6 +288,10 @@ async function startDaemon() {
     [
       ...["--listen", `127.0.0.1:${PORT}`, "--state-dir", state],
       ...["--shell", "bash", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
+      ...["--block-listen", `127.0.0.1:${BLOCK_PORT}`],
+      // The pinned code-server, if this machine has it already, rather
+      // than a download into the demo HOME.
+      ...(codeServer ? ["--code-server", codeServer] : []),
     ],
     {
       stdio: "ignore",
@@ -333,6 +466,125 @@ test.describe("desktop", () => {
     await expect(block.getByText("Inject the clock everywhere")).toBeVisible();
     await page.waitForTimeout(500);
     await block.screenshot({ path: join(out, "question.png") });
+  });
+});
+
+test.describe("blocks", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+
+  const openBlock = (page: Page, body: object) =>
+    page.evaluate(async (b) => (await window.__illogical.client.openBlock(b as never))!, body);
+  const repo = () => join(home, "src/auth");
+  const settle = async (page: Page, ms = 800) => {
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(ms);
+  };
+
+  test("what an agent changed, beside its terminal", async ({ page }) => {
+    await open(page);
+    await newTab(page, "review");
+    const [shell] = await panes(page);
+    await ready(page, shell);
+    await prompted(page, shell, 1);
+    // The agent's fix: a Clock, the store reading it, and a sweep.
+    writeFileSync(join(repo(), "src/clock.rs"), CLOCK_RS);
+    writeFileSync(join(repo(), "src/lib.rs"), "pub mod clock;\npub mod session;\npub mod token;\n");
+    writeFileSync(
+      join(repo(), "src/session.rs"),
+      SESSION_RS.replace("use crate::token", "use crate::clock::Clock;\nuse crate::token").replace(/\n}\n$/, "\n" + SWEEP),
+    );
+    await line(page, shell, "cd ~/src/auth && cargo test -p auth session");
+    await prompted(page, shell, 2);
+    const diff = await openBlock(page, { type: "diff", config: {}, from_pane: shell, split: shell });
+    const view = page.locator(`[data-diff="${diff}"]`);
+    const row = view.locator('.diff-file[data-file="src/session.rs"]');
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.locator(".diff-file-head").click();
+    const at = row.locator(".dl.add", { hasText: "pub fn sweep" });
+    await expect(at).toBeVisible();
+    await at.click();
+    const file = await page.evaluate(async () => {
+      for (;;) {
+        const f = window.__illogical.client.state!.panes.find((p) => p.type === "file");
+        if (f) return f.id;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    });
+    await expect(page.locator(`[data-file-block="${file}"] .cm-mark-line`)).toContainText("pub fn sweep", { timeout: 30_000 });
+    await settle(page);
+    await page.screenshot({ path: join(out, "changes.png") });
+  });
+
+  test("a dev server beside its terminal", async ({ page }) => {
+    await open(page);
+    await newTab(page, "admin");
+    const [shell] = await panes(page);
+    await ready(page, shell);
+    await prompted(page, shell, 1);
+    await line(page, shell, "cd ~/src/auth && npm run dev");
+    await expect.poll(() => text(page, shell)).toContain("ready in");
+    for (let i = 0; i < 50; i++) {
+      try {
+        if ((await fetch("http://127.0.0.1:5173/")).ok) break;
+      } catch {
+        // not up yet
+      }
+      await page.waitForTimeout(100);
+    }
+    const block = await openBlock(page, { type: "browser", config: { port: 5173, path: "/" }, split: shell });
+    const frame = paneEl(page, block).frameLocator("iframe");
+    await expect(frame.getByText("Live sessions")).toBeVisible({ timeout: 30_000 });
+    await settle(page);
+    await page.screenshot({ path: join(out, "port.png") });
+  });
+
+  test("VS Code where the pane runs", async ({ page }) => {
+    test.skip(!codeServer, "code-server isn't in ~/.cache/illogical yet");
+    test.setTimeout(180_000);
+    await open(page);
+    await newTab(page, "edit");
+    const [shell] = await panes(page);
+    await ready(page, shell);
+    await prompted(page, shell, 1);
+    await line(page, shell, "cd ~/src/auth && cargo test -p auth session");
+    await prompted(page, shell, 2);
+    const block = await openBlock(page, {
+      type: "editor",
+      config: { path: join(repo(), "src/session.rs"), line: 47 },
+      from_pane: shell,
+      split: shell,
+    });
+    const frame = paneEl(page, block).frameLocator("iframe");
+    await expect(frame.locator(".monaco-editor .view-lines").first()).toContainText("pub fn sweep", { timeout: 120_000 });
+    await settle(page, 2500);
+    await page.screenshot({ path: join(out, "editor.png") });
+  });
+
+  test("a Claude Code conversation from a terminal", async ({ page }) => {
+    seedConversation(repo());
+    await open(page);
+    await newTab(page, "claude");
+    const [shell] = await panes(page);
+    await ready(page, shell);
+    await prompted(page, shell, 1);
+    await line(page, shell, "cd ~/src/auth && git log --oneline -3 && git status -sb");
+    await prompted(page, shell, 2);
+    await menu(page, paneEl(page, shell), "Claude Code conversations…");
+    const dialog = page.getByRole("dialog", { name: "Claude Code conversations" });
+    await expect(dialog.getByText("Fix flaky expires_after_ttl")).toBeVisible();
+    const agents = await page.evaluate(() => window.__illogical.client.state!.panes.filter((p) => p.type === "agent").map((p) => p.id));
+    await dialog.getByText("Fix flaky expires_after_ttl").click();
+    await expect(dialog).toBeHidden();
+    const block = await page.evaluate(async (old) => {
+      for (;;) {
+        const a = window.__illogical.client.state!.panes.find((p) => p.type === "agent" && !old.includes(p.id));
+        if (a) return a.id;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }, agents);
+    await expect(paneEl(page, block).locator(".agent-msg").last()).toContainText("50 runs in a row");
+    await settle(page);
+    await page.screenshot({ path: join(out, "conversation.png") });
   });
 });
 
