@@ -3470,6 +3470,38 @@ Pull requests and issues from a git forge (Forgejo, then GitHub, then GitLab) as
 
 #### S23: forge blocks spike (#87, about half a day)
 
+**Done 2026-10-02: go** (see [spikes/s23-forge](spikes/s23-forge/README.md)). Tried against this repo's Forgejo (#84), Codeberg's `forgejo/forgejo` (forks, red checks, team requests), GitHub's `cli/cli` and Jake's own open PRs, and gitlab.com's `gitlab-org/cli`. Read-only throughout.
+
+- **Read path:** `tea api`, `gh api` and `glab api` all reach the PR, reviews, checks, timeline, files and diff refs. Both CLIs that were run pass `If-None-Match` through (`gh` exits 1 on a 304).
+  - The daemon should take the token from the CLI and make the requests itself with its existing `reqwest`. Tokens: `tea login helper get` (16 ms, refreshes OAuth) and `gh auth token` (39 ms). Keep them in memory only.
+  - A CLI per request costs ~25 ms (`tea`) to ~150 ms (`gh`) more, and each prints headers its own way.
+- **Logins:** `tea` matches an `ssh://` remote to a login by `ssh_host`. This repo's `git.tailb2e8f2.ts.net` matches no login: the login's `ssh_host` is `git.inevitable.fyi`, and the tailnet name serves only SSH.
+  - The daemon matches the remote's host against each login's URL host and `ssh_host`. If none matches, it asks each Forgejo login for `repos/{path}` and compares `ssh_url` (one request; it finds `forgejo` here).
+  - The block offers a choice when no login matches, or several do. The pick is kept in config.
+- **Cost:** a full read is 7 requests on GitHub (1.4–1.6 s, 7 points) and 6 on Forgejo (0.3–0.8 s, 29 KB).
+  - An unchanged GitHub poll is all 304s for **0 points**. GraphQL is one request (1.3–1.8 s) but costs a point on every poll, with no ETag, so M38 stays on REST.
+  - Forgejo sends no ETags and no rate-limit headers, so its poll is the item plus the combined status (2 requests, ~100–200 ms). It re-reads the rest when `updated_at`, the head sha or the status changes.
+  - gitlab.com's 304s still count against its rate limit.
+- **Model:** `Item` / `Review` / `Check` / `Event` (Rust fields in the README) fit 9 PRs across the three forges (`model.mjs`). What doesn't fit:
+  - Forgejo's `requested_reviewers` keeps reviewers who already reviewed. A request is pending only while that reviewer's latest review entry is `REQUEST_REVIEW`.
+  - GitHub's combined status says `pending` when it has no statuses. Check runs and statuses both feed checks.
+  - Forgejo has no rerun API.
+  - GitLab's head pipeline runs on a merge commit. Its discussions need auth even on public projects.
+  - Only GitHub says whether branch protection blocks a merge.
+- **Attention:** each rule fired on real data. `ask`: a request direct and through a team. `failed`: **Jake's studio#291**, 3 checks red. `input`: changes requested, and a mention (GitHub's `mentioned` event, or `@login` in a body, newer than `seen_at`). `done`: merged, or green and not blocked (**studio#292, hud#736**). "You" is `GET /user`; teams come from `GET /user/teams`.
+- **Code:** a treeless fetch of `refs/pull/N/head` or `refs/merge-requests/N/head` worked on all three forges, from forks too (0.2–4.3 s). `git diff $(git merge-base target head) head` matched the forge's file list every time.
+  - GitLab's `diff_refs.start_sha` is the target's tip, not the merge base: diffing from it listed 130 files instead of 4.
+  - M11's diff block takes `rev_a = merge_base`, `rev_b = refs/illogical/pr/N` as it is.
+- **Drafts as asks:** M35's `Mux::ask` already takes any block that isn't an agent or remote block. Ask → posted wasn't measured, since nothing was posted. What M36 changes:
+  - The block queues its drafts, because the mux holds one ask per pane and a second withdraws the first. Each draft is a `Form` ask (`body`, markdown) with `source: forge`.
+  - The PR writes are named `review {event}` and `comment`, because `approve` on a block holding an ask is routed to the card.
+  - It resolves `by` for its writes: MCP is `mcp:<client>`, so a draft. The CLI sends `agent: true` under `CLAUDECODE` or `AI_AGENT`, a courtesy, not a boundary.
+  - New MCP tools `open_pr`, `read_pr` and `pr_*` return a draft id at once.
+  - The web gets a textarea for a markdown field.
+  - **To decide:** whether editors may send. Sending posts with the owner's CLI login, so the spike says owner only, as M35 did for `enter`.
+
+**Order:** S23, done; then M36 (#88).
+
 Answer these before M36. Each answer goes in as a fixture or a measured number:
 
 1. **The CLIs as the read path.**
