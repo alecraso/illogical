@@ -120,15 +120,18 @@ export async function at(el: Locator, fx: number, fy: number) {
   return { x: b.x + b.width * fx, y: b.y + b.height * fy };
 }
 
+/** A seeded line's common fields: its type, uuid and parent. */
+export type Base = (type: string, uuid: string, parentUuid: string | null) => Record<string, unknown>;
+
 /** M33: a Claude Code terminal session in `claude` (a Claude directory),
  * in a folder of its own: "remember WORD", a reply, a command and its
- * output. Its id and folder. */
-export function seedConversation(claude: string, word: string, title: string): { id: string; cwd: string } {
+ * output, then `more`. Its id and folder. */
+export function seedConversation(claude: string, word: string, title: string, more: (base: Base) => object[] = () => []): { id: string; cwd: string } {
   const cwd = mkdtempSync(join(tmpdir(), `illogical-e2e-conv-${word}-`));
   const id = crypto.randomUUID();
   const dir = join(claude, "projects", cwd.replace(/[/.]/g, "-"));
   mkdirSync(dir, { recursive: true });
-  const base = (type: string, uuid: string, parentUuid: string | null) => ({
+  const base: Base = (type, uuid, parentUuid) => ({
     type, uuid, parentUuid, sessionId: id, cwd, gitBranch: "main", entrypoint: "cli", version: "2.1.288",
     timestamp: new Date().toISOString(), isSidechain: false,
   });
@@ -137,6 +140,7 @@ export function seedConversation(claude: string, word: string, title: string): {
     { ...base("assistant", "a1", "u1"), message: { id: "m1", role: "assistant", model: "claude-haiku-4-5-20251001", content: [{ type: "text", text: "Noted." }] } },
     { ...base("assistant", "a2", "a1"), message: { id: "m1", role: "assistant", model: "claude-haiku-4-5-20251001", content: [{ type: "tool_use", id: `toolu_${word}`, name: "Bash", input: { command: `echo ${word}` } }] } },
     { ...base("user", "u2", "a2"), message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${word}`, content: word }] } },
+    ...more(base),
     { type: "ai-title", aiTitle: title, sessionId: id },
   ];
   writeFileSync(join(dir, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");

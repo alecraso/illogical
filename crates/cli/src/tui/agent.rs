@@ -36,7 +36,11 @@ pub fn pending(state: &Value) -> Vec<Perm> {
 fn transcript(state: &Value, width: usize) -> Vec<(String, Style)> {
     let mut out = Vec::new();
     let dim = Style::default().add_modifier(Modifier::DIM);
+    // What Continue won't remember (#79) is dimmed, after the note that
+    // says so.
+    let gone = std::cell::Cell::new(false);
     let mut push = |text: &str, style: Style, indent: &str| {
+        let style = if gone.get() { style.add_modifier(Modifier::DIM) } else { style };
         for raw in text.lines() {
             wrap(raw, width.saturating_sub(indent.chars().count()).max(8), |l| {
                 out.push((format!("{indent}{l}"), style));
@@ -44,6 +48,7 @@ fn transcript(state: &Value, width: usize) -> Vec<(String, Style)> {
         }
     };
     for e in state["entries"].as_array().into_iter().flatten() {
+        gone.set(e["forgotten"] == true);
         let text = e["text"].as_str().unwrap_or("");
         match e["type"].as_str() {
             Some("user") => push(text, Style::default().add_modifier(Modifier::BOLD), "› "),
@@ -219,6 +224,12 @@ mod tests {
         });
         let lines: Vec<String> = transcript(&state, 40).into_iter().map(|l| l.0).collect();
         assert_eq!(lines[0], "› fix the build");
+        let mut forgotten = state.clone();
+        forgotten["entries"][1]["forgotten"] = json!(true);
+        let styled = transcript(&forgotten, 40);
+        assert!(!styled[0].1.add_modifier.contains(Modifier::DIM));
+        assert_eq!(styled[1].0, "Looking.");
+        assert!(styled[1].1.add_modifier.contains(Modifier::DIM));
         assert!(lines.contains(&"✓ Run cargo build".to_owned()));
         assert!(lines.contains(&"  error: x".to_owned()));
         let p = pending(&state);

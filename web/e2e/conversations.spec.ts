@@ -8,11 +8,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
-import { menu, paneEl, panes, reset, seedConversation } from "./helpers";
+import { menu, paneEl, panes, reset, seedConversation, type Base } from "./helpers";
 
 const claude = process.env.CLAUDE_CONFIG_DIR!;
 
-const seed = (word: string, title: string) => seedConversation(claude, word, title);
+const seed = (word: string, title: string, more?: (base: Base) => object[]) => seedConversation(claude, word, title, more);
 
 /** This test's process holds the session, as a running Claude Code would. */
 function hold(id: string) {
@@ -75,6 +75,36 @@ test.describe("desktop", () => {
     await picker(page).locator(`[data-conversation="${id}"]`).click();
     await expect(picker(page)).toBeHidden();
     expect(await panes(page)).toEqual([term, block]);
+  });
+
+  test("what Continue won't remember is folded away (#79)", async ({ page }) => {
+    // A rewind: "red" was sent, then "blue" from the same point instead.
+    const reply = (base: Base, uuid: string, parent: string, m: string) => ({
+      ...base("assistant", uuid, parent),
+      message: { id: m, role: "assistant", model: "claude-haiku-4-5-20251001", content: [{ type: "text", text: "OK." }] },
+    });
+    seed("wren", "Colours", (base) => [
+      { ...base("user", "u3", "u2"), message: { role: "user", content: "the colour is red" } },
+      reply(base, "a3", "u3", "m3"),
+      { type: "last-prompt", lastPrompt: "the colour is red", leafUuid: "a3" },
+      { ...base("user", "u4", "u2"), message: { role: "user", content: "the colour is blue" } },
+      reply(base, "a4", "u4", "m4"),
+      { type: "last-prompt", lastPrompt: "the colour is blue", leafUuid: "a4" },
+    ]);
+    await reset(page);
+    const [term] = await panes(page);
+    await menu(page, paneEl(page, term), "Claude Code conversations…");
+    await picker(page).locator(".picker-filter").fill("colours");
+    await picker(page).locator("[data-conversation]").first().click();
+    await expect.poll(() => agentBlock(page)).not.toBeNull();
+    const el = paneEl(page, (await agentBlock(page))!);
+    const fold = el.locator(".agent-forgotten");
+    await expect(fold).toHaveCount(1);
+    await expect(fold.locator("summary")).toHaveText("Not in what it remembers: Continue goes on from another branch (2 entries)");
+    await expect(el.locator(".agent-user", { hasText: "red" })).toBeHidden();
+    await expect(el.locator(".agent-user", { hasText: "blue" })).toBeVisible();
+    await fold.locator("summary").click();
+    await expect(fold.locator(".agent-user")).toHaveText("the colour is red");
   });
 
   test("one open elsewhere can't be continued, only forked", async ({ page }) => {

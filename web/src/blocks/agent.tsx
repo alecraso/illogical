@@ -3,7 +3,7 @@
 // requests as approve/deny cards, questions and forms as cards (M6c), and a
 // composer. Works the same on a phone.
 
-import { render } from "preact";
+import { render, type ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -33,13 +33,17 @@ export interface Tool {
   questions?: Question[];
   started_ms: number;
   ended_ms?: number;
+  forgotten?: boolean;
 }
 
+/** #79: an opened conversation's entry off the branch Continue resumes. */
+type Mark = { forgotten?: boolean };
+
 export type Entry =
-  | { type: "user"; text: string; at_ms: number }
-  | { type: "agent"; text: string; id?: string }
-  | { type: "thought"; text: string; id?: string }
-  | { type: "note"; text: string; at_ms: number }
+  | ({ type: "user"; text: string; at_ms: number } & Mark)
+  | ({ type: "agent"; text: string; id?: string } & Mark)
+  | ({ type: "thought"; text: string; id?: string } & Mark)
+  | ({ type: "note"; text: string; at_ms: number } & Mark)
   | Tool;
 
 export interface Perm {
@@ -353,7 +357,7 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
         }}
       >
         {s.entries_from > 0 && <div class="agent-note">{s.entries_from} earlier entries: `illogical capture %{id}`</div>}
-        {s.entries.map((e, i) => {
+        {rows(s.entries, (e, i) => {
           switch (e.type) {
             case "user":
               return (
@@ -424,6 +428,36 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
       <Composer client={client} id={id} s={s} />
     </div>
   );
+}
+
+/**
+ * The entries, with each run the agent won't remember after Continue (#79)
+ * folded under the note the daemon puts before it.
+ */
+function rows(entries: Entry[], show: (e: Entry, i: number) => ComponentChildren): ComponentChildren[] {
+  const out: ComponentChildren[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const next = entries[i + 1];
+    if (!e.forgotten && !(e.type === "note" && next?.forgotten)) {
+      out.push(show(e, i));
+      continue;
+    }
+    const label = e.forgotten ? "Not in what it remembers" : e.text;
+    const run: ComponentChildren[] = [];
+    let j = e.forgotten ? i : i + 1;
+    for (; j < entries.length && entries[j].forgotten; j++) run.push(show(entries[j], j));
+    out.push(
+      <details key={`forgotten-${i}`} class="agent-forgotten">
+        <summary>
+          {label} <span class="agent-forgotten-n">({run.length === 1 ? "1 entry" : `${run.length} entries`})</span>
+        </summary>
+        {run}
+      </details>,
+    );
+    i = j - 1;
+  }
+  return out;
 }
 
 /** Plain text of the transcript, roughly as `capture --text` gives it. */
