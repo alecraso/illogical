@@ -140,8 +140,9 @@ fn edits_wait_as_diffs_and_are_accepted_or_rejected_from_the_card() {
     d.post("/api/attention/act", json!({ "action": "accept", "pane": pane }));
     wait_text(d, pane, "result FILE_SAVED");
     // The fake prints the result before it writes the file.
-    wait_text(d, pane, &format!("wrote {}", file.display()));
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "print('hello')\nprint('again')\n");
+    d.wait_for("the edit written", || {
+        std::fs::read_to_string(&file).unwrap_or_default() == "print('hello')\nprint('again')\n"
+    });
     d.wait_for("the card to go", || info(d, pane)["diff"].is_null() && info(d, pane)["reason"].is_null());
     assert_eq!(info(d, pane)["answered"]["how"], "accepted");
 
@@ -191,7 +192,7 @@ fn a_daemon_restart_keeps_claude_connected_and_the_card() {
     s.d.wait_for("the card again", || info(&s.d, pane)["diff"].is_object());
     s.d.post("/api/attention/act", json!({ "action": "accept", "pane": pane }));
     wait_text(&s.d, pane, "result FILE_SAVED");
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "after the restart\n");
+    s.d.wait_for("the edit written", || std::fs::read_to_string(&file).unwrap_or_default() == "after the restart\n");
     assert!(!capture(&s.d, pane).contains("disconnected"));
 }
 
@@ -304,9 +305,10 @@ async fn diffs_can_go_to_another_ide() {
         say(d, pane, &format!("edit {} from claude\\n", file.display()));
         wait_text(d, pane, "result FILE_SAVED");
         // The fake prints the result before it writes the file.
-        wait_text(d, pane, &format!("wrote {}", file.display()));
+        d.wait_for("the edit written", || {
+            std::fs::read_to_string(&file).unwrap_or_default() == "from claude\n# from the other IDE\n"
+        });
     });
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "from claude\n# from the other IDE\n");
     assert!(info(d, pane)["diff"].is_null(), "no card here: it went to the other IDE");
     task.abort();
 }
@@ -348,8 +350,10 @@ async fn only_those_who_may_drive_answer_a_diff() {
     // Someone who may drive the session can.
     d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "editor" }));
     assert_eq!(accept().await.unwrap().status(), 200);
-    tokio::task::block_in_place(|| wait_text(d, pane, "result FILE_SAVED"));
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "after\n");
+    tokio::task::block_in_place(|| {
+        wait_text(d, pane, "result FILE_SAVED");
+        d.wait_for("the edit written", || std::fs::read_to_string(&file).unwrap_or_default() == "after\n");
+    });
     let answered = &info(d, pane)["answered"];
     assert_eq!(
         (answered["how"].as_str(), answered["who"].as_str()),
