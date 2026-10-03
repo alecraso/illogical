@@ -31,8 +31,10 @@ The design is in [control-e2e.md](control-e2e.md).
    illogicald join https://control.illogical.widgets.wtf
    ```
 
-   It prints a link with a code. Open it on a signed-in device, check the
-   code matches, and approve. A running daemon connects within a few
+   It prints a link with a code (good for 15 minutes). Open it on a
+   signed-in device, check the code matches, and approve. *Join to* picks
+   your account (*Just me*) or a team you own; `--team ID` picks the team
+   ahead. *Cancel* turns it down. A running daemon connects within a few
    seconds, and the machine appears in the host menu.
 3. **Add your phone** (or any other browser): sign in there. It shows a
    fingerprint and waits. Your first device asks *New device?* with the
@@ -50,7 +52,16 @@ The design is in [control-e2e.md](control-e2e.md).
   machine has a tailnet or LAN address. Without that permission, it uses
   the relay.
 
-**Leaving.** `illogicald leave` takes a machine off your account.
+**Leaving.** `illogicald leave` takes a machine off your account (or its
+team). illogical keeps running there, at `http://127.0.0.1:7681`.
+
+**Moving a machine** between your account and a team: leave, then join
+again and pick the other one when you approve.
+
+```
+illogicald leave
+illogicald join https://control.illogical.widgets.wtf --team ID
+```
 
 **What isn't here yet:** the CLI (`illogical`) still reaches only the local
 daemon, or others over the tailnet.
