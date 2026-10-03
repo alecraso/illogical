@@ -38,7 +38,7 @@ use axum::{
 use serde_json::{Value, json};
 
 const OWNER: &str = "owner@example.com";
-const TOKEN: &str = "glpat-fake-gitlab-token-456";
+const TOKEN: &str = "fake-gitlab-token-456";
 const REPO: &str = "group/sub/proj";
 const N: u64 = 3941;
 
