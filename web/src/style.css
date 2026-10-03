@@ -2193,8 +2193,72 @@ button {
 
 .hosted-vm {
   margin: 12px 0;
-  padding-bottom: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+/* No machines yet (#97, #98): the account's menu on top, then the steps.
+ * It scrolls, since the steps outgrow a phone. */
+.control-page {
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.control-page main {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.control-page h1 {
+  margin: 8px 0;
+  font-size: 22px;
+}
+
+.control-account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--divider);
+}
+
+.control-who {
+  margin-right: auto;
+}
+
+.control-steps {
+  margin: 8px 0;
+  padding-left: 1.4em;
+  display: grid;
+  gap: 14px;
+}
+
+.control-steps .copy-text {
+  margin: 6px 0 2px;
+}
+
+.control-asked {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--raised);
+}
+
+.control-why {
+  font-weight: 600;
+}
+
+.control-roles {
+  margin: 4px 0 8px;
+  padding-left: 1.2em;
+}
+
+.control-invite {
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 /* ---- team answers (M29): who answered, follow-ups, who's looking */

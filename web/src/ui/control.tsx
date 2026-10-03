@@ -3,11 +3,15 @@
 // list, and how to add a machine.
 
 import { useEffect, useState } from "preact/hooks";
-import { passkeyRegister, passkeySignIn, type ControlSession, type JoinRequest } from "../control";
+import { passkeyRegister, passkeySignIn, previewInvite, type ControlSession, type JoinRequest } from "../control";
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 import { directory } from "../hosts";
 import { CopyButton, CopyText, download } from "./copy";
+import { ROLE_HELP, roleAs, roleLabel } from "./roles";
+import type { MenuItem } from "./menu";
+import type { Team } from "../control";
+import type { TeamRole } from "../e2e/team.ts";
 
 export function useControl(s: ControlSession) {
   useSubscribe((fn) => s.subscribe(fn));
@@ -36,6 +40,7 @@ export function ControlGate({ s }: { s: ControlSession }) {
     return (
       <Center>
         <h1>illogical</h1>
+        <WhyHere />
         <p>Your terminals, on every machine, from any device. End to end encrypted: this service introduces your devices to your machines and relays for them, but can't read what they say.</p>
         <div class="control-signins">
           {s.info.github ? (
@@ -64,6 +69,43 @@ export function ControlGate({ s }: { s: ControlSession }) {
         <p class="dim">Waiting…</p>
         <RecoveryForm s={s} />
       </Center>
+    );
+  return null;
+}
+
+/** Signed out, but following a link (#103): say what it was for. The hash
+ * survives signing in, so it opens once you're in. */
+function WhyHere() {
+  const [hash, setHash] = useState(location.hash);
+  const invite = /^#invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
+  const [team, setTeam] = useState<{ name: string; by: string } | null>(null);
+  useEffect(() => {
+    const on = () => setHash(location.hash);
+    addEventListener("hashchange", on);
+    return () => removeEventListener("hashchange", on);
+  }, []);
+  useEffect(() => {
+    setTeam(null);
+    if (invite) void previewInvite(invite[1], invite[2]).then(setTeam);
+  }, [hash]);
+  if (invite)
+    return (
+      <p class="control-why" data-why="invite">
+        {team ? (
+          <>
+            {team.by ? `${team.by} invited you` : "You've been invited"} to <b data-why-team>{team.name}</b>.
+          </>
+        ) : (
+          "You've been invited to a team."
+        )}{" "}
+        Sign in or make an account to accept.
+      </p>
+    );
+  if (/^#join=/.test(hash))
+    return (
+      <p class="control-why" data-why="join">
+        Sign in to approve this machine.
+      </p>
     );
   return null;
 }
@@ -206,24 +248,67 @@ function RecoveryCodes({ s }: { s: ControlSession }) {
   );
 }
 
-/** Ready, but no machine has joined yet. */
+/** Ready, but no machine to show yet: the account's menu (#97), any team
+ * this account is waiting on (#103), and how to add a machine (#98). */
 export function NoMachines({ s }: { s: ControlSession }) {
+  const items = accountItems(s).filter((i): i is Extract<MenuItem, { label: string }> => typeof i === "object" && "label" in i);
   return (
-    <Center>
-      <h1>Add a machine</h1>
-      <AddMachine s={s} />
-    </Center>
+    <div class="control-page">
+      <header class="control-account" data-account-bar>
+        <span class="control-who">
+          Signed in as <b data-signed-in-as>{s.login}</b>
+        </span>
+        {items.map((i) => (
+          <button key={i.label} class="control-linkish" onClick={i.run}>
+            {i.label}
+          </button>
+        ))}
+      </header>
+      <main>
+        {s.asked.map((a) => (
+          <p key={a.team} class="control-asked" data-asked={a.team}>
+            Waiting for {a.owners.length ? a.owners.join(" or ") : "an owner"} to add you to <b>{a.name}</b>. Their machines appear here when they do.
+          </p>
+        ))}
+        <h1>{s.asked.length ? "Add your own machine" : "Add a machine"}</h1>
+        <AddMachine s={s} />
+      </main>
+    </div>
   );
 }
 
+const INSTALL = "curl -fsSL https://illogical.widgets.wtf/install.sh | sh";
+
 function AddMachine({ s }: { s: ControlSession }) {
+  const owns = s.teams.some((t) => t.role === "owner");
   return (
     <div class="control-add">
+      <ol class="control-steps">
+        <li>
+          <b>Install illogical on the machine</b> (macOS or Linux):
+          <CopyText text={INSTALL} data-install />
+          <span class="dim">
+            Or with <a href="https://illogical.widgets.wtf/#install" target="_blank" rel="noopener">Homebrew, or from source</a>.
+          </span>
+        </li>
+        <li>
+          <b>Join it to this account:</b>
+          <CopyText text={`~/.local/bin/illogicald join ${s.info.url}`} data-join-cmd />
+          {owns ? (
+            <span class="dim">
+              To make it a team's machine, add <code>--team</code> and the team's id (in Teams…).
+            </span>
+          ) : null}
+        </li>
+        <li>
+          <b>Approve it here.</b> It prints a link and a code: open the link here, or type the code below. Codes last 15 minutes.
+          <JoinCodeForm s={s} />
+        </li>
+      </ol>
+      <p class="dim">
+        A <i>machine</i> runs your terminals; a <i>device</i> (this browser, your phone) reaches them.
+      </p>
       {s.sandboxesOpen ? <HostedVm s={s} /> : null}
-      <p>Install illogical on it, then run:</p>
-      <CopyText text={`illogicald join ${s.info.url}`} />
-      <p>It prints a link with a code. Open the link here (or type the code below) and approve it.</p>
-      <JoinCodeForm s={s} />
     </div>
   );
 }
@@ -235,7 +320,7 @@ function HostedVm({ s }: { s: ControlSession }) {
   const starting = s.starting ? s.sandboxes.find((x) => x.id === s.starting) : undefined;
   return (
     <div class="hosted-vm">
-      <p>Or use a hosted VM: a fresh Linux machine, deleted when you close its last tab.</p>
+      <p>No machine to hand? Use a hosted VM: a fresh Linux machine, deleted when you close its last tab.</p>
       <button class="primary" data-start-vm disabled={!!starting && !starting.state.startsWith("failed")} onClick={() => s.startSandbox().catch((e: Error) => setErr(e.message))}>
         {starting && !starting.state.startsWith("failed") ? `Starting (${starting.state})…` : "Start a hosted VM"}
       </button>
@@ -289,6 +374,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   if (req) return <AdmitPrompt s={s} team={req.t} req={req.r} />;
   const asking = s.pending[0];
   if (asking) return <DevicePrompt s={s} c={asking} />;
+  if (s.joined) return <Joined s={s} />;
   if (panel === "devices") return <Devices s={s} close={() => setPanel(null)} />;
   if (panel === "teams") return <Teams s={s} close={() => setPanel(null)} />;
   if (panel === "plan") return <Plan s={s} close={() => setPanel(null)} />;
@@ -499,19 +585,29 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
   );
 }
 
+const panel = (p: "devices" | "add" | "teams" | "plan") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+
 /** For the host menu. */
-export function controlMenuItems(s: ControlSession) {
-  const panel = (p: "devices" | "add" | "teams" | "plan") => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+export function controlMenuItems(s: ControlSession): MenuItem[] {
   const shown = s.daemons.find((d) => d.name === directory.current);
   return [
-    "separator" as const,
+    "separator",
     { header: `${s.login}${s.stale ? " · control unreachable" : ""}` },
     ...(s.sandboxesOpen ? [{ label: "New hosted VM", run: () => void s.startSandbox() }] : []),
     ...(shown?.sandbox ? [{ label: "Delete this VM", run: () => void s.deleteSandbox(shown.sandbox!) }] : []),
     { label: "Add a machine…", run: panel("add") },
+    ...accountItems(s),
+  ];
+}
+
+/** The account's own items: in the host menu, and on the no-machines
+ * screen's header (#97). */
+function accountItems(s: ControlSession): MenuItem[] {
+  return [
     { label: "Teams…", run: panel("teams") },
-    ...(s.billing?.billing ? [{ label: s.billing.relay.warning ? "Plan and usage… (over the free relay)" : "Plan and usage…", run: panel("plan") }] : []),
     { label: "Devices and machines…", run: panel("devices") },
+    ...(s.billing?.billing ? [{ label: s.billing.relay.warning ? "Plan and usage… (over the free relay)" : "Plan and usage…", run: panel("plan") }] : []),
+    { label: "Sign out", run: () => void s.signOut(false) },
   ];
 }
 
@@ -558,8 +654,25 @@ function Plan({ s, close }: { s: ControlSession; close: () => void }) {
   );
 }
 
+/** An owner said yes to this account's request (#103). */
+function Joined({ s }: { s: ControlSession }) {
+  const j = s.joined!;
+  const has = s.daemons.some((d) => d.team === j.team);
+  return (
+    <Modal close={() => s.sawJoined()}>
+      <h2 data-joined={j.team}>You're in {j.name}</h2>
+      <p>{has ? "Its machines are in your host list now." : "Its machines appear here when an owner adds one."}</p>
+      <div class="prompt-buttons">
+        <button class="primary" onClick={() => s.sawJoined()}>
+          OK
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code: string }) {
-  const [info, setInfo] = useState<{ name: string; role: string } | null>(null);
+  const [info, setInfo] = useState<{ name: string; role: TeamRole } | null>(null);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
   useEffect(() => {
@@ -571,7 +684,7 @@ function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code
       {err ? <p class="control-error">{err}</p> : null}
       {info && !done ? (
         <p>
-          You're invited to <b data-invite-team={team}>{info.name}</b> as {info.role === "viewer" ? "someone who watches" : info.role === "editor" ? "someone who drives" : "an owner"}.
+          You're invited to <b data-invite-team={team}>{info.name}</b> as {roleAs(info.role)}.
         </p>
       ) : null}
       {done ? <p data-invite-pending>Asked to join. An owner adds you when they're next here; their machines appear once they do.</p> : null}
@@ -592,13 +705,13 @@ function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code
   );
 }
 
-function AdmitPrompt({ s, team, req }: { s: ControlSession; team: import("../control").Team; req: import("../control").Team["requests"][number] }) {
+function AdmitPrompt({ s, team, req }: { s: ControlSession; team: Team; req: Team["requests"][number] }) {
   const [err, setErr] = useState("");
   return (
     <Modal>
       <h2>Add to {team.roster.name}?</h2>
       <p>
-        <b>{req.name}</b> used an invite, as {req.role}. Their account's first device:
+        <b>{req.name}</b> used an invite, {roleAs(req.role)}. Their account's first device:
       </p>
       <p class="fingerprint" data-admit={req.account}>
         {fingerprint(req.root)}
@@ -618,71 +731,24 @@ function AdmitPrompt({ s, team, req }: { s: ControlSession; team: import("../con
 function Teams({ s, close }: { s: ControlSession; close: () => void }) {
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
-  const [link, setLink] = useState<string | null>(null);
   const act = (f: () => Promise<unknown>) => f().catch((e: Error) => setErr(e.message));
   return (
     <Modal close={close}>
       <h2>Teams</h2>
-      {s.teams.length === 0 ? <p class="dim">Teams share their machines with their members.</p> : null}
+      <p class="dim" data-teams-intro>
+        A team shares its machines with its members. Each member:
+      </p>
+      <ul class="control-roles">
+        {ROLE_HELP.map(([r, what]) => (
+          <li key={r}>
+            <b>{roleLabel(r)}</b>: {what}
+          </li>
+        ))}
+      </ul>
+      <p class="dim">Owners approve everyone who uses an invite. Machines join a team when an owner approves them for it.</p>
       {s.teams.map((t) => (
-        <section key={t.team} class="team" data-team={t.team}>
-          <h3>
-            {t.roster.name} {t.locked ? <span class="control-error">· locked</span> : null}
-          </h3>
-          <p class="dim">
-            Team id <CopyText inline text={t.team} data-team-id />. Add a machine to it with:
-          </p>
-          <CopyText text={`illogicald join ${s.info.url} --team ${t.team}`} data-team-join />
-          <ul class="control-devices">
-            {t.roster.members.map((m) => (
-              <li key={m.account} data-member={m.account}>
-                <span>
-                  {m.name}
-                  {m.account === s.account ? " (you)" : ""}
-                </span>
-                {t.role === "owner" && m.account !== s.account ? (
-                  <select
-                    value={m.role}
-                    onChange={(e) => {
-                      const role = (e.target as HTMLSelectElement).value as typeof m.role;
-                      void act(() => s.changeTeam(t.team, (ms) => ms.map((x) => (x.account === m.account ? { ...x, role } : x))));
-                    }}
-                  >
-                    <option value="viewer">watches</option>
-                    <option value="editor">drives</option>
-                    <option value="owner">owner</option>
-                  </select>
-                ) : (
-                  <span class="dim">{m.role}</span>
-                )}
-                {t.role === "owner" && m.account !== s.account ? (
-                  <button class="control-revoke" data-remove-member={m.account} onClick={() => act(() => s.changeTeam(t.team, (ms) => ms.filter((x) => x.account !== m.account)))}>
-                    Remove
-                  </button>
-                ) : (
-                  <span />
-                )}
-              </li>
-            ))}
-          </ul>
-          {t.role === "owner" ? (
-            <div class="prompt-buttons">
-              <button data-invite={t.team} onClick={() => act(async () => setLink(await s.invite(t.team, "editor")))}>
-                Invite link
-              </button>
-              <button class={t.locked ? "" : "control-revoke danger"} data-lock={t.team} onClick={() => act(() => s.lockTeam(t.team, !t.locked))}>
-                {t.locked ? "Unlock" : "Lock (owners only)"}
-              </button>
-            </div>
-          ) : null}
-        </section>
+        <TeamSection key={t.team} s={s} t={t} act={act} />
       ))}
-      {link ? (
-        <p>
-          Anyone with this link can ask to join (for a week); you approve each:
-          <CopyText text={link} share data-invite-link />
-        </p>
-      ) : null}
       <form
         class="control-code"
         onSubmit={(e) => {
@@ -700,5 +766,129 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
         <button onClick={close}>Done</button>
       </div>
     </Modal>
+  );
+}
+
+function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () => Promise<unknown>) => void }) {
+  const [role, setRole] = useState<TeamRole>("editor");
+  const [link, setLink] = useState<string | null>(null);
+  // Which button waits for a second click: "lock", or a member to remove.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const owner = t.role === "owner";
+  return (
+    <section class="team" data-team={t.team}>
+      <h3>
+        {t.roster.name} {t.locked ? <span class="control-error">· locked</span> : null}
+      </h3>
+      {owner ? (
+        <>
+          <p class="dim">
+            Team id <CopyText inline text={t.team} data-team-id />. Add a machine to it with:
+          </p>
+          <CopyText text={`illogicald join ${s.info.url} --team ${t.team}`} data-team-join />
+        </>
+      ) : (
+        <p class="dim" data-ask-owner>
+          Ask an owner to add a machine.
+        </p>
+      )}
+      <ul class="control-devices">
+        {t.roster.members.map((m) => (
+          <li key={m.account} data-member={m.account}>
+            <span>
+              {m.name}
+              {m.account === s.account ? " (you)" : ""}
+            </span>
+            {owner && m.account !== s.account ? (
+              <select
+                value={m.role}
+                aria-label={`${m.name}'s role`}
+                onChange={(e) => {
+                  const r = (e.target as HTMLSelectElement).value as TeamRole;
+                  act(() => s.changeTeam(t.team, (ms) => ms.map((x) => (x.account === m.account ? { ...x, role: r } : x))));
+                }}
+              >
+                <RoleOptions />
+              </select>
+            ) : (
+              <span class="dim">{roleLabel(m.role)}</span>
+            )}
+            {owner && m.account !== s.account ? (
+              <button
+                class={confirming === m.account ? "control-revoke danger" : "control-revoke"}
+                data-remove-member={m.account}
+                title="They lose access to the team's machines at once"
+                onClick={() => {
+                  if (confirming !== m.account) return setConfirming(m.account);
+                  setConfirming(null);
+                  act(() => s.changeTeam(t.team, (ms) => ms.filter((x) => x.account !== m.account)));
+                }}
+              >
+                {confirming === m.account ? "Really remove?" : "Remove"}
+              </button>
+            ) : (
+              <span />
+            )}
+          </li>
+        ))}
+      </ul>
+      {owner ? (
+        <>
+          <div class="control-code control-invite">
+            <label>
+              Invite{" "}
+              <select value={role} aria-label="Invite as" data-invite-role={t.team} onChange={(e) => setRole((e.target as HTMLSelectElement).value as TeamRole)}>
+                {ROLE_HELP.map(([r]) => (
+                  <option key={r} value={r}>
+                    {roleAs(r).replace(/^as /, "")}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button data-invite={t.team} disabled={t.locked} onClick={() => act(async () => setLink(await s.invite(t.team, role)))}>
+              Make a link
+            </button>
+          </div>
+          {link ? (
+            <p>
+              Anyone with this link can ask to join (for a week); you approve each:
+              <CopyText text={link} share data-invite-link />
+            </p>
+          ) : null}
+          {confirming === "lock" ? (
+            <p class="control-error" data-lock-warning>
+              Lock: only owners reach the team's machines; open invites and requests are dropped.
+            </p>
+          ) : null}
+          <div class="prompt-buttons">
+            {confirming === "lock" ? <button onClick={() => setConfirming(null)}>Cancel</button> : null}
+            <button
+              class={t.locked ? "" : "control-revoke danger"}
+              data-lock={t.team}
+              onClick={() => {
+                if (!t.locked && confirming !== "lock") return setConfirming("lock");
+                setConfirming(null);
+                setLink(null);
+                act(() => s.lockTeam(t.team, !t.locked));
+              }}
+            >
+              {t.locked ? "Unlock" : confirming === "lock" ? "Lock it" : "Lock (owners only)"}
+            </button>
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function RoleOptions() {
+  return (
+    <>
+      {ROLE_HELP.map(([r]) => (
+        <option key={r} value={r}>
+          {roleLabel(r)}
+        </option>
+      ))}
+    </>
   );
 }

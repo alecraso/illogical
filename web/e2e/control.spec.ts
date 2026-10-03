@@ -79,7 +79,7 @@ test.afterAll(() => {
 async function signIn(page: Page) {
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
-  await expect(page.locator(".control-center, .app")).toBeVisible();
+  await expect(page.locator(".control-center, .control-page, .app")).toBeVisible();
 }
 
 /** `illogicald join`, approved from `page`; then the daemon runs. */
@@ -157,18 +157,64 @@ test("a stranger signs up and becomes the first device", async ({ browser }) => 
   await laptop.locator("[data-download-codes]").click();
   expect((await saved).suggestedFilename()).toBe("illogical-recovery-codes.txt");
   await laptop.locator("[data-saved-codes]").click();
+  // No machine yet (#98): install, join (by full path) and approve, as
+  // numbered steps, each command with Copy.
   await expect(laptop.getByRole("heading", { name: "Add a machine" })).toBeVisible();
-  await expect(laptop.locator(".control-cmd")).toHaveText(`illogicald join ${base}`);
-  await laptop.locator(".copy-text [data-copy]").click();
-  expect(await clipboard()).toBe(`illogicald join ${base}`);
+  await expect(laptop.locator(".control-steps > li")).toHaveCount(3);
+  await expect(laptop.locator("[data-install]")).toHaveText("curl -fsSL https://illogical.widgets.wtf/install.sh | sh");
+  const join = `~/.local/bin/illogicald join ${base}`;
+  await expect(laptop.locator("[data-join-cmd]")).toHaveText(join);
+  await expect(laptop.locator(".control-steps")).toContainText("Codes last 15 minutes.");
+  await expect(laptop.locator(".control-add")).toContainText("a device (this browser, your phone) reaches them");
+  const copyJoin = laptop.locator("[data-join-cmd] + [data-copy]");
+  await copyJoin.click();
+  expect(await clipboard()).toBe(join);
   // With the clipboard blocked, Copy selects the command instead.
   await laptop.evaluate(() => {
     navigator.clipboard.writeText = () => Promise.reject(new DOMException("blocked", "NotAllowedError"));
     document.execCommand = () => false;
   });
-  await laptop.locator(".copy-text [data-copy]").click();
-  await expect(laptop.locator(".copy-text [data-copy]")).toHaveText("Selected");
-  expect(await laptop.evaluate(() => getSelection()!.toString())).toBe(`illogicald join ${base}`);
+  await copyJoin.click();
+  await expect(copyJoin).toHaveText("Selected");
+  expect(await laptop.evaluate(() => getSelection()!.toString())).toBe(join);
+});
+
+test("with no machine yet, the account's menu is there (#97)", async () => {
+  await expect(laptop.locator("[data-signed-in-as]")).toHaveText("stranger");
+  // Devices: this browser, and a passkey could be added.
+  await laptop.getByRole("button", { name: "Devices and machines…" }).click();
+  await expect(laptop.getByRole("heading", { name: "Devices and machines" })).toBeVisible();
+  await expect(laptop.locator(".control-devices li")).toHaveCount(1);
+  await laptop.locator(".prompt").getByRole("button", { name: "Done" }).click();
+  // A team.
+  await laptop.getByRole("button", { name: "Teams…" }).click();
+  await laptop.getByLabel("Team name").fill("Solo");
+  await laptop.getByRole("button", { name: "Make a team" }).click();
+  await expect(laptop.locator("[data-team] h3")).toHaveText("Solo");
+  await laptop.locator(".prompt").getByRole("button", { name: "Done" }).click();
+  // The plan, where billing is on (faked here: no Stripe in tests).
+  await laptop.route("**/api/billing", (r) =>
+    r.fulfill({
+      json: { billing: true, plan: "personal", relay: { bytes: 0, allowance: 1e9, warning: false, slowed: false }, sandbox_minutes: 0, teams: [] },
+    }),
+  );
+  await laptop.evaluate(() => window.__illogical.control!.refresh());
+  await laptop.getByRole("button", { name: "Plan and usage…" }).click();
+  await expect(laptop.getByRole("heading", { name: "Plan and usage" })).toBeVisible();
+  await laptop.locator(".prompt").getByRole("button", { name: "Done" }).click();
+  await laptop.unroute("**/api/billing");
+  // Owning one, step 2 mentions --team.
+  await expect(laptop.locator(".control-steps")).toContainText("--team");
+  // Signing out, and the sign-in page says why a #join= link came here
+  // (#103); signing back in keeps this browser's place.
+  await laptop.locator("[data-account-bar]").getByRole("button", { name: "Sign out" }).click();
+  await expect(laptop.locator("[data-signin=github]")).toBeVisible();
+  await laptop.goto("/#join=ABCDE-FGHIJ");
+  await expect(laptop.locator("[data-why=join]")).toHaveText("Sign in to approve this machine.");
+  await laptop.goto("/");
+  await signIn(laptop);
+  await booted(laptop);
+  await expect(laptop.locator("[data-signed-in-as]")).toHaveText("stranger");
 });
 
 test("two machines join by code; one direct, one only through the relay", async () => {

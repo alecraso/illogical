@@ -83,11 +83,12 @@ test.afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-async function person(browser: Browser, login: string): Promise<Page> {
+async function person(browser: Browser, login: string, before?: (page: Page) => Promise<void>): Promise<Page> {
   const ctx = await browser.newContext();
   await ctx.addCookies([{ name: "as", value: login, url: github }]);
   const page = await ctx.newPage();
-  await page.goto("/");
+  if (before) await before(page);
+  else await page.goto("/");
   await page.locator("[data-signin=github]").click();
   await page.locator("[data-saved-codes]").click();
   await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
@@ -107,25 +108,57 @@ test("two people at different companies join a team by invite", async ({ browser
   team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
   // The Teams panel (#99): the team's id, its join command and an invite
   // link, each with Copy.
-  await alice.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+  // Alice has no machine yet: the Teams panel is on her header (#97).
+  await alice.getByRole("button", { name: "Teams…" }).click();
+  await expect(alice.locator("[data-teams-intro]")).toBeVisible();
+  await expect(alice.locator(".control-roles")).toContainText("drives: also types");
   await expect(alice.locator("[data-team-id]")).toHaveText(team);
   await expect(alice.locator("[data-team-join]")).toHaveText(`illogicald join ${base} --team ${team}`);
+  // Lock asks first, and says what it drops (#101).
+  await alice.locator(`[data-lock="${team}"]`).click();
+  await expect(alice.locator("[data-lock-warning]")).toContainText("open invites and requests are dropped");
+  await alice.getByRole("button", { name: "Cancel" }).click();
+  await expect(alice.locator("[data-lock-warning]")).toHaveCount(0);
+  expect(await alice.evaluate(() => window.__illogical.control!.teams[0].locked)).toBe(false);
+  // The invite's role is picked in the team's own section (default: drives).
+  await expect(alice.locator(`[data-invite-role="${team}"]`)).toHaveValue("editor");
   await alice.locator(`[data-invite="${team}"]`).click();
-  await expect(alice.locator("[data-invite-link]")).toContainText("#invite=");
-  const link = (await alice.locator("[data-invite-link]").textContent())!;
-  await expect(alice.locator("[data-invite-link] + [data-copy]")).toBeVisible();
+  const section = alice.locator(`[data-team="${team}"]`);
+  await expect(section.locator("[data-invite-link]")).toContainText("#invite=");
+  const link = (await section.locator("[data-invite-link]").textContent())!;
+  await expect(section.locator("[data-invite-link] + [data-copy]")).toBeVisible();
   await alice.getByRole("button", { name: "Done" }).click();
-  bob = await person(browser, "bob");
-  await bob.goto(link);
+  // Bob follows it with no account: the sign-in page says who invited him
+  // to what (#103), and the invite is waiting once he's in.
+  bob = await person(browser, "bob", async (p) => {
+    await p.goto(link);
+    await expect(p.locator("[data-why=invite]")).toContainText("alice invited you to Acme. Sign in or make an account to accept.");
+  });
+  await expect(bob.locator("[data-invite-team]")).toHaveText("Acme");
+  await expect(bob.locator(".control-prompt")).toContainText("as someone who drives");
   await bob.locator("[data-accept-invite]").click();
   await expect(bob.locator("[data-invite-pending]")).toBeVisible();
+  await bob.getByRole("button", { name: "Done" }).click();
+  await expect(bob.locator(`[data-asked="${team}"]`)).toHaveText("Waiting for alice to add you to Acme. Their machines appear here when they do.");
+  await expect(bob.getByRole("heading", { name: "Add your own machine" })).toBeVisible();
   // Alice is asked, sees Bob's fingerprint, and adds him (signing the roster).
   await alice.evaluate(() => window.__illogical.control!.refresh());
   await expect(alice.locator("[data-admit-yes]")).toBeVisible({ timeout: 15_000 });
+  await expect(alice.locator(".control-prompt")).toContainText("used an invite, as someone who drives");
   await alice.locator("[data-admit-yes]").click();
   await expect
     .poll(() => alice.evaluate(() => window.__illogical.control!.teams[0].roster.members.map((m) => `${m.name}:${m.role}`)), { timeout: 15_000 })
     .toEqual(["alice:owner", "bob:editor"]);
+  // Bob hears, without a reload.
+  await expect(bob.locator(`[data-joined="${team}"]`)).toHaveText("You're in Acme", { timeout: 15_000 });
+  await bob.getByRole("button", { name: "OK", exact: true }).click();
+  await expect(bob.locator("[data-asked]")).toHaveCount(0);
+  // A member who isn't an owner is told to ask one for machines.
+  await bob.getByRole("button", { name: "Teams…" }).click();
+  await expect(bob.locator("[data-ask-owner]")).toBeVisible();
+  await expect(bob.locator("[data-team-join]")).toHaveCount(0);
+  await expect(bob.locator(`[data-member] .dim`).first()).toHaveText("owner");
+  await bob.getByRole("button", { name: "Done" }).click();
 });
 
 /** `illogicald join`, waiting for approval: its link, what it printed,
@@ -240,8 +273,14 @@ test("a read-only link works logged out, and dies at expiry", async ({ browser }
 
 test("removing a member cuts them off within a second", async () => {
   await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected)).toBe(true);
+  // Remove asks first (#101).
+  const bobId = await bob.evaluate(() => window.__illogical.control!.account);
+  await alice.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+  const remove = alice.locator(`[data-remove-member="${bobId}"]`);
+  await remove.click();
+  await expect(remove).toHaveText("Really remove?");
   const t = Date.now();
-  await alice.evaluate((tm) => window.__illogical.control!.changeTeam(tm, (ms) => ms.filter((m) => m.name !== "bob")), team);
+  await remove.click();
   await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected), { timeout: 3000, intervals: [50] }).toBe(false);
   expect(Date.now() - t).toBeLessThan(1500);
 });

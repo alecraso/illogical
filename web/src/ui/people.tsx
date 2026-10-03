@@ -5,6 +5,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { Client } from "../client";
 import type { PaneId, Presence, Role, SessionId } from "../proto";
+import { roleLabel } from "./roles";
 import type { MenuItem } from "./menu";
 import type { ControlSession } from "../control";
 import { fingerprint } from "../e2e/cert.ts";
@@ -259,9 +260,9 @@ export function ShareDialog({ client }: { client: Client }) {
                 <Avatar p={{ who: g.principal, name: g.name }} />
                 <span>{g.name}</span>
                 <select value={g.role} onChange={(e) => void set(g.principal, (e.target as HTMLSelectElement).value as Role)}>
-                  <option value="viewer">can watch</option>
-                  <option value="editor">can drive</option>
-                  <option value="owner">owner</option>
+                  <option value="viewer">{roleLabel("viewer")}</option>
+                  <option value="editor">{roleLabel("editor")}</option>
+                  <option value="owner">{roleLabel("owner")}</option>
                 </select>
                 <span class="dim">{g.from ? "from now" : "with history"}</span>
                 <button class="control-revoke" onClick={() => void set(g.principal, null)}>
@@ -351,8 +352,8 @@ export function ShareDialog({ client }: { client: Client }) {
             aria-label="Who"
           />
           <select value={role} onChange={(e) => setRole((e.target as HTMLSelectElement).value as Role)} aria-label="Role">
-            <option value="viewer">can watch</option>
-            <option value="editor">can drive</option>
+            <option value="viewer">{roleLabel("viewer")}</option>
+            <option value="editor">{roleLabel("editor")}</option>
           </select>
           <label class="share-history">
             <input type="checkbox" checked={history} onChange={(e) => setHistory((e.target as HTMLInputElement).checked)} /> with history

@@ -81,7 +81,7 @@ test.afterAll(() => {
 async function signIn(page: Page) {
   await page.goto("/");
   await page.locator("[data-signin=github]").click();
-  await expect(page.locator(".control-center, .app")).toBeVisible();
+  await expect(page.locator(".control-center, .control-page, .app")).toBeVisible();
 }
 
 function runDaemon(name: string) {

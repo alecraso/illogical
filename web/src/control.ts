@@ -172,6 +172,12 @@ export async function passkeyRegister(name?: string): Promise<void> {
   });
 }
 
+/** What a signed-out page may know about an invite (#103): the team's
+ * name and who made it. */
+export async function previewInvite(team: string, code: string): Promise<{ name: string; by: string } | null> {
+  return api<{ name: string; by: string }>(`/api/invites/${team}/${code}/preview`).catch(() => null);
+}
+
 export type Phase = "loading" | "signed-out" | "waiting" | "ready" | "error";
 
 // ---- recovery codes: an Ed25519 seed each, on paper only.
@@ -561,9 +567,16 @@ export class ControlSession {
   // ---- teams and people (M19)
 
   teams: Team[] = [];
+  /** Teams this account asked to join, waiting on an owner (#103). */
+  asked: { team: string; name: string; owners: string[] }[] = [];
+  /** A team that took this account in while this page watched, to say so. */
+  joined: { team: string; name: string } | null = null;
 
   async loadTeams() {
-    const r = await api<{ teams: Omit<Team, "verified">[] }>("/api/teams").catch(() => ({ teams: [] as Omit<Team, "verified">[] }));
+    const r = await api<{ teams: Omit<Team, "verified">[]; asked?: ControlSession["asked"] }>("/api/teams").catch(() => ({
+      teams: [] as Omit<Team, "verified">[],
+      asked: this.asked,
+    }));
     const out: Team[] = [];
     for (const t of r.teams) {
       // The founder pinned on first sight. The team's daemons check each
@@ -571,7 +584,16 @@ export class ControlSession {
       const ok = pin(`team:${t.team}`, `${t.pin.founder}.${t.pin.founder_root}`);
       out.push({ ...t, verified: ok });
     }
+    const now = r.asked ?? [];
+    const yes = this.asked.find((a) => !now.some((x) => x.team === a.team) && out.some((t) => t.team === a.team));
+    if (yes) this.joined = { team: yes.team, name: yes.name };
+    this.asked = now;
     this.teams = out;
+  }
+
+  sawJoined() {
+    this.joined = null;
+    this.emit();
   }
 
   private myMember(): { account: string; root: string; name: string } {
@@ -626,6 +648,7 @@ export class ControlSession {
 
   async acceptInvite(team: string, code: string) {
     await api(`/api/invites/${team}/${code}/accept`, {});
+    await this.refresh();
   }
 
   async rejectRequest(team: string, account: string) {

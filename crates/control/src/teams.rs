@@ -165,7 +165,15 @@ pub async fn list(State(app): State<Arc<App>>, s: Session) -> R {
             "requests": requests, "certs": certs,
         }));
     }
-    Ok(Json(json!({ "teams": out })))
+    // Teams I asked to join, and whose yes I'm waiting for (#103).
+    let mut asked = Vec::new();
+    for team in app.db.asked(&s.account)? {
+        let Ok(r) = latest(&app, &team) else { continue };
+        let owners: Vec<&str> =
+            r.members.iter().filter(|m| m.role == TeamRole::Owner).map(|m| m.name.as_str()).collect();
+        asked.push(json!({ "team": team, "name": r.name, "owners": owners }));
+    }
+    Ok(Json(json!({ "teams": out, "asked": asked })))
 }
 
 #[derive(Deserialize)]
@@ -229,6 +237,25 @@ pub async fn show_invite(State(app): State<Arc<App>>, _s: Session, Path((team, c
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
     let name = app.db.team(&t)?.map(|t| t.name).unwrap_or_default();
     Ok(Json(json!({ "team": t, "name": name, "role": role })))
+}
+
+/// What a signed-out page may say about an invite (#103): the team's name
+/// and who made it, nothing else. The code is the secret, as for accepting.
+pub async fn preview_invite(
+    State(app): State<Arc<App>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Path((team, code)): Path<(String, String)>,
+) -> R {
+    app.limits.check(crate::limit::INVITES, app.limits.client_ip(peer, &headers))?;
+    let (t, by) = app
+        .db
+        .invite_by(&hash(&code), illogical_e2e::now_ms())?
+        .filter(|(t, _)| *t == team)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
+    let name = app.db.team(&t)?.map(|t| t.name).unwrap_or_default();
+    let by = app.db.account(&by)?.map(|a| a.login).unwrap_or_default();
+    Ok(Json(json!({ "name": name, "by": by })))
 }
 
 pub async fn accept_invite(State(app): State<Arc<App>>, s: Session, Path((team, code)): Path<(String, String)>) -> R {

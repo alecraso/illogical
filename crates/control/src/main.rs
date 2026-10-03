@@ -256,6 +256,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/teams/{id}/lock", post(teams::lock))
         .route("/api/invites/{team}/{code}", get(teams::show_invite))
         .route("/api/invites/{team}/{code}/accept", post(teams::accept_invite))
+        .route("/api/invites/{team}/{code}/preview", get(teams::preview_invite))
         .route("/api/daemon/team", get(teams::daemon_team))
         .route("/api/daemon/peers", get(teams::daemon_peers))
         .route("/api/daemon/teams", get(teams::daemon_teams))
