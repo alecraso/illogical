@@ -44,6 +44,11 @@ export function rosterBody(r: Roster): string {
 export const teamJoinBody = (daemon: string, p: TeamPin) =>
   `illogical team join v1\ndaemon ${daemon}\nteam ${p.team}\nfounder ${p.founder}\nfounder_root ${p.founder_root}\n`;
 
+/** What a device of a machine's own account signs to move it into a team,
+ * between teams, or back to the account (#100): `Move::body`. */
+export const moveBody = (daemon: string, p: TeamPin | null, at: number) =>
+  `illogical machine move v1\ndaemon ${daemon}\nteam ${p?.team ?? "-"}\nfounder ${p?.founder ?? "-"}\nfounder_root ${p?.founder_root ?? "-"}\nat ${at}\n`;
+
 /** A name in a roster: no spaces or control characters. */
 export const word = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, "-").slice(0, 120) || "someone";
 

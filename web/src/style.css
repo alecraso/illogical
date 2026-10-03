@@ -2032,6 +2032,15 @@ button {
   margin: 0;
 }
 
+/* Move to… (#100): its own row under the machine. */
+.control-devices li .control-move {
+  grid-column: 1 / -1;
+}
+
+.control-move .control-explain {
+  margin: 4px 0 0;
+}
+
 .control-badge {
   margin-left: 6px;
   padding: 0 5px;

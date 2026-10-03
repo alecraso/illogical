@@ -245,6 +245,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/joins/{code}", get(api::join_show))
         .route("/api/joins/{code}/approve", post(api::join_approve))
         .route("/api/joins/{code}/reject", post(api::join_reject))
+        .route("/api/daemons/{id}/team", post(api::move_daemon))
         .route("/api/daemon/trust", get(api::daemon_trust))
         .route("/api/daemon/leave", post(api::daemon_leave))
         .route("/api/directory", get(api::directory))

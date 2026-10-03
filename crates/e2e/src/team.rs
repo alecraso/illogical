@@ -100,6 +100,44 @@ impl TeamPin {
     }
 }
 
+/// A joined machine moved into a team, between teams, or back to its
+/// account, after it joined: a device of its own account signs it, and the
+/// daemon applies only a move newer than the last it took, so control can
+/// neither make one up nor replay an old one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Move {
+    /// The team it's in from now on; none for its own account.
+    #[serde(default)]
+    pub team: Option<TeamPin>,
+    /// When it was made (ms); a daemon takes only newer ones.
+    pub at: u64,
+    /// The signing device.
+    pub by: String,
+    pub sig: String,
+}
+
+impl Move {
+    /// ```text
+    /// illogical machine move v1
+    /// daemon <device id>
+    /// team <id>|-
+    /// founder <account>|-
+    /// founder_root <device id>|-
+    /// at <ms>
+    /// ```
+    pub fn body(daemon: &str, team: Option<&TeamPin>, at: u64) -> String {
+        let (t, f, r) = team.map_or(("-", "-", "-"), |p| (&p.team, &p.founder, &p.founder_root));
+        format!("illogical machine move v1\ndaemon {daemon}\nteam {t}\nfounder {f}\nfounder_root {r}\nat {at}\n")
+    }
+
+    /// Signed by `by` (a device that may approve) for `daemon`.
+    pub fn signed_for(&self, daemon: &str, by: &Cert) -> bool {
+        by.device == self.by
+            && by.kind.approves()
+            && verify_hex(&by.sign, Self::body(daemon, self.team.as_ref(), self.at).as_bytes(), &self.sig)
+    }
+}
+
 /// Every member account's certificates and revocations, as control hands
 /// them out.
 pub type AccountCerts = HashMap<String, (Vec<Cert>, Vec<Revocation>)>;
@@ -277,5 +315,27 @@ mod tests {
         let swapped = TeamPin { founder_root: mallory.cert.device.clone(), ..pin.clone() };
         assert!(!swapped.join_signed_by("box", &alice.cert, &sig));
         assert!(!pin.join_signed_by("box", &mallory.cert, &sig));
+    }
+
+    #[test]
+    fn a_move_is_signed_for_its_daemon_and_time() {
+        let (alice, mallory) = (person("alice"), person("mallory"));
+        let pin = TeamPin { team: "t1".into(), founder: "alice".into(), founder_root: alice.cert.device.clone() };
+        let sign = |who: &Person, team: Option<&TeamPin>, at| Move {
+            team: team.cloned(),
+            at,
+            by: who.cert.device.clone(),
+            sig: hex::encode(who.keys.signature(Move::body("box", team, at).as_bytes())),
+        };
+        let into = sign(&alice, Some(&pin), 5);
+        assert!(into.signed_for("box", &alice.cert));
+        assert!(!into.signed_for("other", &alice.cert));
+        assert!(!into.signed_for("box", &mallory.cert));
+        // Control can't change the team, drop it, or change the time.
+        assert!(!Move { team: None, ..into.clone() }.signed_for("box", &alice.cert));
+        assert!(!Move { at: 6, ..into.clone() }.signed_for("box", &alice.cert));
+        let out = sign(&alice, None, 7);
+        assert!(out.signed_for("box", &alice.cert));
+        assert!(!sign(&mallory, None, 7).signed_for("box", &alice.cert));
     }
 }

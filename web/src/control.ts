@@ -12,7 +12,7 @@
 import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
 import { forget, loadEnrollment, loadKeys, saveEnrollment, saveWorkerDirectory, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
-import { follows, signRoster, teamJoinBody, word, type AccountCerts, type Roster, type TeamPin, type TeamRole } from "./e2e/team.ts";
+import { follows, moveBody, signRoster, teamJoinBody, word, type AccountCerts, type Roster, type TeamPin, type TeamRole } from "./e2e/team.ts";
 
 export interface ControlInfo {
   control: true;
@@ -788,6 +788,21 @@ export class ControlSession {
       teamSig = await signText(this.keys, teamJoinBody(c.device, t.pin));
     }
     await api(`/api/joins/${code}/approve`, { cert: signed, team, team_sig: teamSig });
+    await this.refresh();
+  }
+
+  /** Move a machine of this account into `team` (one I own), or back to
+   * the account (null). This device signs it for the daemon to check. */
+  async moveDaemon(daemon: string, team: string | null) {
+    let pin: TeamPin | null = null;
+    if (team) {
+      const t = this.teams.find((x) => x.team === team && x.role === "owner" && x.verified);
+      if (!t) throw new Error("only the team's owners add its machines");
+      pin = t.pin;
+    }
+    const at = Date.now();
+    const sig = await signText(this.keys, moveBody(daemon, pin, at));
+    await api(`/api/daemons/${daemon}/team`, { team: pin, at, by: this.keys.id, sig });
     await this.refresh();
   }
 

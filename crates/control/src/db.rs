@@ -180,6 +180,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("accounts", "name")? {
         conn.execute_batch("ALTER TABLE accounts ADD COLUMN name TEXT")?;
     }
+    if !has("daemons", "moved")? {
+        conn.execute_batch("ALTER TABLE daemons ADD COLUMN moved TEXT")?;
+    }
     Ok(())
 }
 
@@ -822,6 +825,22 @@ impl Db {
     pub fn set_daemon_team(&self, daemon: &str, team: &str) -> anyhow::Result<()> {
         self.c().execute("UPDATE daemons SET team = ?2 WHERE id = ?1", params![daemon, team])?;
         Ok(())
+    }
+
+    /// A machine moved after it joined: its team (none for its account)
+    /// and the signed move its daemon checks.
+    pub fn move_daemon(&self, daemon: &str, team: Option<&str>, moved: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE daemons SET team = ?2, moved = ?3 WHERE id = ?1", params![daemon, team, moved])?;
+        Ok(())
+    }
+
+    /// The last signed move of a machine, if it ever moved.
+    pub fn daemon_moved(&self, daemon: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .c()
+            .query_row("SELECT moved FROM daemons WHERE id = ?1", params![daemon], |r| r.get(0))
+            .optional()?
+            .flatten())
     }
 
     pub fn daemon_team(&self, daemon: &str) -> anyhow::Result<Option<String>> {

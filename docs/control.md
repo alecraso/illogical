@@ -61,13 +61,11 @@ vs team machines and sharing a session:
 **Leaving.** `illogicald leave` takes a machine off your account (or its
 team). illogical keeps running there, at `http://127.0.0.1:7681`.
 
-**Moving a machine** between your account and a team: leave, then join
-again and pick the other one when you approve.
-
-```
-illogicald leave
-illogicald join https://control.illogical.widgets.wtf --team ID
-```
+**Moving a machine** between your account and a team (or between teams):
+*Move to…* on it in *Devices and machines…*. You need to own the teams on
+both sides. Your device signs the move and the machine checks that
+signature, so control can't move a machine by itself. An offline machine
+moves when it next connects.
 
 **What isn't here yet:** the CLI (`illogical`) still reaches only the local
 daemon, or others over the tailnet.

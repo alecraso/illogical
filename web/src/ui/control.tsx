@@ -598,6 +598,74 @@ const since = (ms: number) => {
   return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
 };
 
+/** *Move to…* on a machine (#100): into a team you own, or back to just
+ * you. Only shown when there's somewhere to move it. */
+function MoveMachine({ s, c, team, online }: { s: ControlSession; c: Cert; team: string | null; online: boolean }) {
+  const [to, setTo] = useState<string | null | undefined>(undefined);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const owned = s.teams.filter((t) => t.role === "owner" && t.verified);
+  const ownsNow = !team || owned.some((t) => t.team === team);
+  if (!ownsNow || (owned.length === 0 && !team)) return null;
+  const name = (id: string | null) => (id ? s.teams.find((t) => t.team === id)?.roster.name ?? "a team" : "just you");
+  return (
+    <div class="control-move" data-move={c.device}>
+      <label class="dim">
+        In{" "}
+        <select
+          class="control-select"
+          data-move-to
+          value={to === undefined ? (team ?? "") : (to ?? "")}
+          onChange={(e) => {
+            const v = (e.target as HTMLSelectElement).value || null;
+            setErr("");
+            setTo(v === team ? undefined : v);
+          }}
+        >
+          <option value="">Just me</option>
+          {owned.map((t) => (
+            <option key={t.team} value={t.team}>
+              {t.roster.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {to !== undefined ? (
+        <p class="dim control-explain" data-move-explain>
+          {to
+            ? `${name(to)}'s members reach ${c.name} by their role${team ? `, and ${name(team)}'s lose it` : ""}. It stays yours.`
+            : `${name(team)}'s members lose ${c.name} at once; only your devices reach it.`}
+          {online ? " " : " It's offline, so it moves when it next connects. "}
+          <button
+            class="primary"
+            data-move-go
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              s.moveDaemon(c.device, to).then(
+                () => {
+                  setBusy(false);
+                  setTo(undefined);
+                },
+                (e: Error) => {
+                  setBusy(false);
+                  setErr(e.message);
+                },
+              );
+            }}
+          >
+            Move
+          </button>{" "}
+          <button data-move-cancel onClick={() => setTo(undefined)}>
+            Cancel
+          </button>
+        </p>
+      ) : null}
+      {err ? <p class="control-error">{err}</p> : null}
+    </div>
+  );
+}
+
 function Devices({ s, close }: { s: ControlSession; close: () => void }) {
   const [err, setErr] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -653,6 +721,7 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
               </span>
               <span class="dim">{fingerprint(c.device)}</span>
               {remove(c)}
+              <MoveMachine s={s} c={c} team={d?.team ?? null} online={!!d?.online} />
               {confirming === c.device ? (
                 <p class="dim control-explain" data-remove-explain>
                   It's taken off your account at once; illogical keeps running on it, reachable only locally. <code>illogicald join</code> adds it back.

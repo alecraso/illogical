@@ -399,20 +399,14 @@ pub async fn join_approve(
     // signs it in, for the daemon to check.
     let team = match &b.team {
         Some(id) => {
-            let t = app.db.team(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
-            let r = app.db.latest_roster(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
-            let r: illogical_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
-            if r.member(&s.account).map(|m| m.role) != Some(illogical_e2e::team::TeamRole::Owner) {
-                return Err(err(StatusCode::FORBIDDEN, "only the team's owners add its machines"));
-            }
+            let pin = owned_team(&app, &s.account, id, "only the team's owners add its machines")?;
             let sig = b.team_sig.as_deref().unwrap_or_default();
-            let pin = TeamPin { team: t.id.clone(), founder: t.founder, founder_root: t.founder_root };
             let (trust, certs, revs) = trusted(&app, &s.account)?;
             let approver = trust.and_then(|t| t.evaluate(&certs, &revs).get(&c.approver).cloned());
             if !approver.is_some_and(|a| pin.join_signed_by(&c.device, &a, sig)) {
                 return Err(err(StatusCode::BAD_REQUEST, "the team choice isn't signed by the approving device"));
             }
-            Some((t.id, sig.to_owned()))
+            Some((pin.team, sig.to_owned()))
         }
         None => None,
     };
@@ -453,12 +447,76 @@ pub async fn join_reject(
     Ok(Json(json!({})))
 }
 
+/// A team `account` owns, as a daemon pins it; `no` when they don't.
+fn owned_team(app: &App, account: &str, id: &str, no: &str) -> Result<TeamPin, ApiError> {
+    let t = app.db.team(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+    let r = app.db.latest_roster(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+    let r: illogical_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
+    if r.member(account).map(|m| m.role) != Some(illogical_e2e::team::TeamRole::Owner) {
+        return Err(err(StatusCode::FORBIDDEN, no));
+    }
+    Ok(TeamPin { team: t.id, founder: t.founder, founder_root: t.founder_root })
+}
+
+/// How far a move's time may be from control's clock.
+const MOVE_SKEW_MS: u64 = 10 * 60 * 1000;
+
+/// *Move to…* on a machine (#100): into a team its account owns, or back
+/// to the account. A device of the account signs it; the daemon checks.
+pub async fn move_daemon(
+    State(app): State<Arc<App>>,
+    s: Session,
+    Path(id): Path<String>,
+    Json(m): Json<illogical_e2e::team::Move>,
+) -> R {
+    let (owner, _) = app.db.daemon_row(&id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such machine"))?;
+    if owner != s.account {
+        return Err(err(StatusCode::FORBIDDEN, "only the machine's own account moves it"));
+    }
+    // Owners of the team it leaves and the team it joins.
+    let now = app.db.daemon_team(&id)?;
+    if let Some(t) = &now
+        && m.team.as_ref().map(|p| &p.team) != Some(t)
+    {
+        owned_team(&app, &s.account, t, "only the team's owners take its machines out")?;
+    }
+    let pin = match &m.team {
+        Some(p) => Some(owned_team(&app, &s.account, &p.team, "only the team's owners add its machines")?),
+        None => None,
+    };
+    if pin != m.team {
+        return Err(err(StatusCode::BAD_REQUEST, "that's not the team's founder"));
+    }
+    let last = app
+        .db
+        .daemon_moved(&id)?
+        .and_then(|j| serde_json::from_str::<illogical_e2e::team::Move>(&j).ok())
+        .map_or(0, |l| l.at);
+    if m.at <= last || m.at.abs_diff(now_ms()) > MOVE_SKEW_MS {
+        return Err(err(StatusCode::BAD_REQUEST, "that move is out of date; check this device's clock"));
+    }
+    let (trust, certs, revs) = trusted(&app, &s.account)?;
+    let by = trust.and_then(|t| t.evaluate(&certs, &revs).get(&m.by).cloned());
+    if !by.is_some_and(|by| m.signed_for(&id, &by)) {
+        return Err(err(StatusCode::BAD_REQUEST, "the move isn't signed by one of your devices"));
+    }
+    app.db.move_daemon(
+        &id,
+        m.team.as_ref().map(|p| p.team.as_str()),
+        &serde_json::to_string(&m).map_err(anyhow::Error::from)?,
+    )?;
+    app.relay.nudge(&[id]);
+    Ok(Json(json!({})))
+}
+
 // ---------------------------------------------------------------- daemons
 
 /// The daemon's account's certificates, to evaluate against its root.
 pub async fn daemon_trust(State(app): State<Arc<App>>, d: DaemonAuth) -> R {
     let (trust, certs, revs) = trusted(&app, &d.cert.account)?;
-    Ok(Json(json!({ "trust": trust, "certs": certs, "revocations": revs })))
+    // Its last move (#100), for the daemon to check and take.
+    let moved: Option<Value> = app.db.daemon_moved(&d.cert.device)?.and_then(|j| serde_json::from_str(&j).ok());
+    Ok(Json(json!({ "trust": trust, "certs": certs, "revocations": revs, "moved": moved })))
 }
 
 pub async fn daemon_leave(State(app): State<Arc<App>>, d: DaemonAuth) -> R {

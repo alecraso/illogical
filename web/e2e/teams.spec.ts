@@ -7,7 +7,7 @@
 // its owners can approve; Cancel turns the daemon down.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -286,6 +286,16 @@ test("removing a member cuts them off within a second", async () => {
   expect(Date.now() - t).toBeLessThan(1500);
 });
 
+const mineState = temp("mine");
+/** The team a daemon pinned, from its saved control state. */
+const pinned = (state: string) => {
+  try {
+    return (JSON.parse(readFileSync(join(state, "control.json"), "utf8")) as { team?: { team: string } }).team?.team ?? null;
+  } catch {
+    return undefined;
+  }
+};
+
 test("Cancel turns a join down; Just me keeps a machine apart from the team's", async () => {
   // #100: Cancel tells the daemon, which stops waiting.
   const no = await startJoin("nope", temp("nope"));
@@ -295,7 +305,7 @@ test("Cancel turns a join down; Just me keeps a machine apart from the team's", 
   expect(await no.exited).not.toBe(0);
   expect(no.err()).toContain("turned down on");
   // --team only picks ahead: Alice keeps this one to herself.
-  const state = temp("mine");
+  const state = mineState;
   const j = await startJoin("minebox", state, ["--team", team]);
   await alice.goto(j.link);
   await expect(alice.locator("[data-join-to]")).toHaveValue(team);
@@ -313,4 +323,44 @@ test("Cancel turns a join down; Just me keeps a machine apart from the team's", 
   await alice.locator(".host-button").click();
   await expect(alice.locator(".menu-header", { hasText: "Team Acme" })).toBeVisible();
   await expect(alice.locator(".menu-header", { hasText: "Yours" })).toBeVisible();
+});
+
+test("Move to… puts a machine in a team and back, signed by the device", async () => {
+  // minebox (from the test before) is Alice's own.
+  expect(pinned(mineState)).toBeNull();
+  const minebox = await alice.evaluate(() => window.__illogical.control!.daemons.find((d) => d.name === "minebox")!.id);
+  // Online, so the nudge reaches it now rather than at its next refresh.
+  await expect
+    .poll(() => alice.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.online, minebox), { timeout: 30_000 })
+    .toBe(true);
+  await alice.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "devices" })));
+  const row = alice.locator(`[data-move="${minebox}"]`);
+  await row.locator("[data-move-to]").selectOption(team);
+  await expect(row.locator("[data-move-explain]")).toContainText("Acme's members reach minebox by their role");
+  await row.locator("[data-move-go]").click();
+  await expect(row.locator("[data-move-explain]")).toHaveCount(0);
+  // Control lists it as the team's, and the daemon pinned the team itself.
+  await expect.poll(() => alice.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.team, minebox)).toBe(team);
+  await expect.poll(() => pinned(mineState), { timeout: 15_000 }).toBe(team);
+  await expect(alice.locator(`[data-device="${minebox}"] [data-team-badge]`)).toHaveText("Acme");
+
+  // Control refuses a move nobody signed, and an old one again.
+  const forged = await alice.evaluate(
+    (id) =>
+      fetch(`/api/daemons/${id}/team`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ team: null, at: Date.now(), by: window.__illogical.control!.keys.id, sig: "00" }),
+      }).then((r) => r.status),
+    minebox,
+  );
+  expect(forged).toBe(400);
+
+  // Back to just her: the daemon drops the team.
+  await row.locator("[data-move-to]").selectOption("");
+  await expect(row.locator("[data-move-explain]")).toContainText("Acme's members lose minebox at once");
+  await row.locator("[data-move-go]").click();
+  await expect.poll(() => pinned(mineState), { timeout: 15_000 }).toBeNull();
+  await expect.poll(() => alice.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.team ?? null, minebox)).toBeNull();
+  await alice.getByRole("button", { name: "Done" }).click();
 });

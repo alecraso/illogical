@@ -91,13 +91,10 @@ panes leave their screens within a second. *Unlock* lets them back in.
   on your screen alone, whatever is shared. On a team machine the team's
   owners count as its owner. Sharing warns about panes that look like
   they show a secret, and offers to make them private.
-- **Moving a machine** between your account and a team: leave, then join
-  again and pick the other one when you approve.
-
-  ```
-  illogicald leave
-  illogicald join https://control.illogical.widgets.wtf --team ID
-  ```
+- **Moving a machine** between your account and a team, or between teams:
+  *Move to…* on it in *Devices and machines…* (you must own the teams on
+  both sides). The members of the team it leaves lose it at once. Your
+  device signs the move and the machine checks it, as at a join.
 
 ## Sharing one session
 

@@ -32,7 +32,7 @@ use illogical_e2e::{
     keys::fingerprint,
     now_ms,
     push::PushSub,
-    team::{AccountCerts, Roster, TeamPin, TeamRole},
+    team::{AccountCerts, Move, Roster, TeamPin, TeamRole},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
@@ -81,6 +81,9 @@ pub struct Saved {
     /// The account's login on control (M30), for what to call its owner.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub login: String,
+    /// When the last move it took was made (#100): older ones are replays.
+    #[serde(default)]
+    pub moved_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +93,29 @@ pub struct SharedTeam {
     pub certs: AccountCerts,
     #[serde(default)]
     pub locked: bool,
+}
+
+/// Take a move (#100) if a device of this machine's own account signed
+/// it: into a team, between teams, or back to the account. The new team's
+/// roster is fetched from scratch, checked against the pin as at a join.
+/// One no newer than the last it took is a replay (or the same one again).
+fn take_move(saved: &mut Saved, m: Move) {
+    if m.at <= saved.moved_at {
+        return;
+    }
+    let trusted = saved.trust.evaluate(&saved.certs, &saved.revocations);
+    if !trusted.get(&m.by).is_some_and(|by| m.signed_for(&saved.cert.device, by)) {
+        warn!(by = m.by, "a move from control isn't signed by this account's devices; ignoring it");
+        return;
+    }
+    if saved.team != m.team {
+        info!(team = m.team.as_ref().map(|p| p.team.as_str()), "moved");
+        saved.team = m.team;
+        saved.roster = None;
+        saved.team_certs = Default::default();
+        saved.locked = false;
+    }
+    saved.moved_at = m.at;
 }
 
 /// A team grant's pin (`<founder device>.<founder's root>`).
@@ -368,11 +394,16 @@ impl Control {
         struct Own {
             certs: Vec<Cert>,
             revocations: Vec<Revocation>,
+            #[serde(default)]
+            moved: Option<Move>,
         }
         let own: Own = self.get(&e, "/api/daemon/trust").await?;
         let mut saved = e.saved.clone();
         saved.certs = own.certs;
         saved.revocations = own.revocations;
+        if let Some(m) = own.moved {
+            take_move(&mut saved, m);
+        }
 
         if let Some(pin) = saved.team.clone() {
             #[derive(Deserialize)]
@@ -462,6 +493,7 @@ impl Control {
 
         let changed = saved.shared_teams != e.saved.shared_teams
             || saved.login != e.saved.login
+            || (saved.team.clone(), saved.moved_at) != (e.saved.team.clone(), e.saved.moved_at)
             || (
                 saved.certs.clone(),
                 saved.revocations.clone(),
@@ -900,6 +932,7 @@ pub async fn join(
         peers: Default::default(),
         shared_teams: Default::default(),
         login: String::new(),
+        moved_at: 0,
     };
     write_saved(state_dir, &saved)?;
     let approver = approver.map(|c| c.name.clone()).unwrap_or_default();
@@ -964,4 +997,63 @@ pub async fn leave(state_dir: &Path, listen: &str) -> anyhow::Result<()> {
     println!("illogical keeps running here; reach it at http://{listen}.");
     println!("Rejoin with `illogicald join {}` (the approver picks their account or a team).", s.url);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use illogical_e2e::{DeviceKeys, Kind};
+
+    use super::*;
+
+    fn device(account: &str, kind: Kind) -> (DeviceKeys, Cert) {
+        let keys = DeviceKeys::generate();
+        let mut cert = Cert::new(&keys, account, kind, "x");
+        cert.sign_with(&keys);
+        (keys, cert)
+    }
+
+    fn mv(keys: &DeviceKeys, by: &Cert, daemon: &str, team: Option<&TeamPin>, at: u64) -> Move {
+        let sig = hex::encode(keys.signature(Move::body(daemon, team, at).as_bytes()));
+        Move { team: team.cloned(), at, by: by.device.clone(), sig }
+    }
+
+    /// #100: a move signed by the account's own device is taken; one by
+    /// anyone else, or an older one control replays, isn't.
+    #[test]
+    fn a_daemon_takes_only_newer_moves_its_account_signed() {
+        let (keys, root) = device("a", Kind::Browser);
+        let (_, daemon) = device("a", Kind::Daemon);
+        let (mkeys, mallory) = device("m", Kind::Browser);
+        let mut saved = Saved {
+            url: String::new(),
+            trust: Trust { account: "a".into(), root: root.device.clone() },
+            cert: daemon.clone(),
+            certs: vec![root.clone()],
+            revocations: vec![],
+            team: None,
+            roster: None,
+            team_certs: Default::default(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: String::new(),
+            moved_at: 0,
+        };
+        let pin = TeamPin { team: "t1".into(), founder: "a".into(), founder_root: root.device.clone() };
+        let d = daemon.device.as_str();
+
+        take_move(&mut saved, mv(&mkeys, &mallory, d, Some(&pin), 5));
+        assert_eq!(saved.team, None, "not by someone else");
+        take_move(&mut saved, mv(&keys, &root, "other", Some(&pin), 5));
+        assert_eq!(saved.team, None, "not one signed for another machine");
+
+        let into = mv(&keys, &root, d, Some(&pin), 5);
+        take_move(&mut saved, into.clone());
+        assert_eq!((saved.team.as_ref(), saved.moved_at), (Some(&pin), 5));
+        take_move(&mut saved, mv(&keys, &root, d, None, 9));
+        assert_eq!((saved.team.as_ref(), saved.moved_at), (None, 9));
+        // Control replays the move into the team: too old.
+        take_move(&mut saved, into);
+        assert_eq!(saved.team, None);
+    }
 }
