@@ -79,6 +79,16 @@
   section.feature.wide li { break-inside: avoid; margin: 0 0 12px; }
   section.feature li strong { color: var(--fg); }
 
+  section.blocks { padding: 64px 0; border-top: 1px solid var(--raised); }
+  section.blocks > .text { max-width: 760px; margin-bottom: 32px; }
+  section.blocks h2 { font-size: 30px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -0.01em; }
+  section.blocks p { color: var(--dim); margin: 0 0 12px; }
+  .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 36px 32px; }
+  .kind h3 { font-size: 19px; margin: 18px 0 6px; }
+  .kind p { font-size: 15.5px; margin: 0; }
+  .also { margin-top: 36px; color: var(--dim); }
+  .also strong { color: var(--fg); }
+
   .cli { background: var(--deep); border: 1px solid var(--raised); border-radius: 12px; padding: 18px 20px; overflow-x: auto; font-size: 14px; line-height: 1.7; margin: 0; }
   .cli .c { color: var(--faint); }
   .cli .p { color: var(--green); }
@@ -106,6 +116,8 @@
     section.feature.flip .text { order: 0; }
     section.feature.wide ul { columns: 1; }
     .ways { grid-template-columns: 1fr; }
+    section.blocks { padding: 44px 0; }
+    .kinds { grid-template-columns: 1fr; gap: 32px; }
     .install code { font-size: 13px; }
   }
 </style>
@@ -189,6 +201,48 @@
       <source srcset="img/agent.webp" type="image/webp">
       <img class="shot" src="img/agent.png" width="2880" height="1800" loading="lazy" alt="An agent block beside a shell: a failing test run, an edit, a passing run, and a card asking to approve a git commit">
     </picture>
+  </section>
+
+  <section class="blocks">
+    <div class="text">
+      <h2>Not just terminals.</h2>
+      <p>A terminal is one kind of block. The things you'd switch windows for open beside the pane they're about, in the same tabs and splits, on the same machine, a VM tab's too. They come back after a restart and show on every screen you open, your phone included.</p>
+    </div>
+    <div class="kinds">
+      <div class="kind">
+        <picture>
+          <source srcset="img/changes.webp" type="image/webp">
+          <img class="shot" src="img/changes.png" width="2880" height="1800" loading="lazy" alt="A failing test run beside a diff block listing the changed files with their hunks, and a file block open at the new sweep function">
+        </picture>
+        <h3>What changed</h3>
+        <p><em>Changes</em> opens a diff block for the pane's repository: each file with its <span style="white-space:nowrap">+/−</span>, its hunks a tap away. Tap a line for the file, marked there. Both follow the edits as they land, and nothing in them can write, so checking an agent's work from your phone is safe.</p>
+      </div>
+      <div class="kind">
+        <picture>
+          <source srcset="img/port.webp" type="image/webp">
+          <img class="shot" src="img/port.png" width="2880" height="1800" loading="lazy" alt="npm run dev in a terminal, and the app it serves in a browser block beside it">
+        </picture>
+        <h3>Your dev server, beside it</h3>
+        <p><code>npm run dev</code> in a pane, then open its port: the app sits next to the terminal, hot reload and all, even from a VM or your phone. Each block is its own origin, so the page can't reach illogical. When the server dies the block says so, and the page comes back with it.</p>
+      </div>
+      <div class="kind">
+        <picture>
+          <source srcset="img/editor.webp" type="image/webp">
+          <img class="shot" src="img/editor.png" width="2880" height="1800" loading="lazy" alt="A passing test run beside VS Code, open on the same repository at the changed function">
+        </picture>
+        <h3>VS Code where the pane runs</h3>
+        <p><em>Open in editor</em> starts VS Code on the pane's machine, at the file and line, with your settings and extensions kept. No ports, no SSH config, and it sleeps when nobody has it open.</p>
+      </div>
+      <div class="kind">
+        <picture>
+          <source srcset="img/conversation.webp" type="image/webp">
+          <img class="shot" src="img/conversation.png" width="2880" height="1800" loading="lazy" alt="A Claude Code session from a terminal opened as a block: its prompts, replies and tool calls, with Continue and Fork">
+        </picture>
+        <h3>Claude Code conversations</h3>
+        <p>Any Claude Code session on the machine, from a terminal or the desktop app, opens as a block: prompts, replies, every tool call and its output. Follow one from your phone as it runs, then <em>Continue</em> it right there, with your settings and skills, or <em>Fork</em> it if it's still open somewhere else.</p>
+      </div>
+    </div>
+    <p class="also">And more: <strong>web pages</strong> (<code>illogical open example.com</code>), <strong>panes from your other machines</strong> in this layout, drawn straight from their host, and <strong>your own VS Code, Cursor or nvim</strong> as tiles in the swarm, with the debugger's stops as cards. Every kind shares the layout, the <code>illogical</code> CLI and the rail of what needs you.</p>
   </section>
 
   <section class="feature flip">
