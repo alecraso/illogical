@@ -2,3 +2,5 @@
 8c326f3408da02278e3e59cc3458d7cdc220c9f9:crates/daemon/src/api.rs:github-pat:1028
 # S22 spike result: a throwaway test chat id, redacted in a later commit.
 db8b86c7546e24247115edb20d95502d0ca6adcb:spikes/s22-apps/results/bridge.jsonl:generic-api-key:2
+# M39: a fake glpat- token for the fake GitLab in the tests, not a real one.
+59881dc27574bc7ed1c26084fce2e00d8bb86c2d:crates/daemon/tests/forge_gitlab.rs:gitlab-pat:41
