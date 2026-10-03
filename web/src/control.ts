@@ -98,9 +98,11 @@ export async function detectControl(): Promise<ControlInfo | null> {
 
 class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  body: Record<string, unknown>;
+  constructor(status: number, message: string, body: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -111,7 +113,7 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const j = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new HttpError(res.status, j.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new HttpError(res.status, j.error ?? `HTTP ${res.status}`, j as Record<string, unknown>);
   return j;
 }
 
@@ -164,7 +166,7 @@ export async function passkeyRegister(): Promise<void> {
   });
 }
 
-export type Phase = "loading" | "signed-out" | "waiting" | "ready" | "error";
+export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "ready" | "error";
 
 // ---- recovery codes: an Ed25519 seed each, on paper only.
 
@@ -230,8 +232,13 @@ export class ControlSession {
   account = "";
   /** Passkeys registered to the account. */
   passkeys = 0;
-  /** Shown once, right after the account's first device enrolls. */
+  /** Shown once, right after the account's first device enrolls (or new
+   * ones are made). */
   recoveryCodes: string[] | null = null;
+  /** While turned down: the name of the device that did it. */
+  turnedDownBy = "";
+  /** Asks again after a turn-down. */
+  private askAgain: (() => void) | null = null;
   keys!: DeviceKeys;
   enrollment: Enrollment | undefined;
   /** Every device the account trusts, by this browser's reckoning. */
@@ -324,18 +331,22 @@ export class ControlSession {
       cert.approver = k.id;
       cert.sig = await signText(k, certBody(cert));
     }
-    let r = await api<{ approved: boolean; cert?: Cert; root: string | null }>("/api/devices", { cert });
-    if (!r.approved) {
+    this.request = cert;
+    const ask = () => api<{ approved: boolean; cert?: Cert }>("/api/devices", { cert });
+    let r = await ask();
+    while (!r.approved) {
       this.set("waiting");
-      while (!r.approved) {
-        await new Promise((res) => setTimeout(res, 2000));
-        r = await api<{ approved: boolean; cert: Cert }>(`/api/devices/${k.id}`).then(
-          (x) => ({ ...x, root: null }),
-          (e) => {
-            if (e instanceof HttpError && e.status === 404) throw new Error("this device's request was turned down");
-            return { approved: false, root: null };
-          },
-        );
+      await new Promise((res) => setTimeout(res, 2000));
+      try {
+        r = await api<{ approved: boolean; cert: Cert }>(`/api/devices/${k.id}`);
+      } catch (e) {
+        if (!(e instanceof HttpError && e.status === 404)) continue;
+        // Turned down (#105): say so, until this browser asks again.
+        this.turnedDownBy = typeof e.body.by === "string" ? e.body.by : "";
+        this.set("turned-down");
+        await new Promise<void>((res) => (this.askAgain = res));
+        this.askAgain = null;
+        r = await ask();
       }
     }
     if (root === null) await this.makeRecoveryCodes();
@@ -349,8 +360,9 @@ export class ControlSession {
     await saveEnrollment(this.enrollment);
   }
 
-  /** Two recovery codes, signed by this (the first) device. */
-  private async makeRecoveryCodes() {
+  /** Two recovery codes, signed by this device (the first, or one making
+   * new ones). */
+  private async makeRecoveryCodes(revocations: Revocation[] = []) {
     const codes: string[] = [];
     const certs: Cert[] = [];
     for (let i = 1; i <= 2; i++) {
@@ -373,8 +385,42 @@ export class ControlSession {
       certs.push(c);
       codes.push(toCode(seed));
     }
-    await api("/api/recovery", { certs });
+    await api("/api/recovery", { certs, revocations });
     this.recoveryCodes = codes;
+  }
+
+  /** This browser's request, as it asks to join. */
+  private request: Cert | null = null;
+
+  /** After a turn-down: ask again. */
+  tryAgain() {
+    this.askAgain?.();
+  }
+
+  /** Recovery codes still good. */
+  get recoveryLeft(): number {
+    return [...this.trusted.values()].filter((c) => c.kind === "recovery").length;
+  }
+
+  /** New recovery codes, signed by this device; the old ones are revoked
+   * in the same request, so they stop working (#106). */
+  async newRecoveryCodes() {
+    const old = [...this.trusted.values()].filter((c) => c.kind === "recovery");
+    const revocations: Revocation[] = [];
+    for (const c of old) {
+      const r: Revocation = { v: 1, account: this.account, device: c.device, at: Date.now(), by: this.keys.id, sig: "" };
+      r.sig = await signText(this.keys, revocationBody(r));
+      revocations.push(r);
+    }
+    await this.makeRecoveryCodes(revocations);
+    await this.refresh();
+  }
+
+  /** A passkey for the account signed in. */
+  async addPasskey() {
+    await passkeyRegister();
+    this.passkeys = (await api<{ passkeys: number }>("/api/me")).passkeys;
+    this.emit();
   }
 
   savedRecoveryCodes() {
@@ -399,6 +445,8 @@ export class ControlSession {
       if (await subtle.verify("Ed25519", pub, sig, probe)) mine = c;
     }
     if (!mine) throw new Error("that isn't one of this account's recovery codes (or it was used)");
+    // Turned down: ask again first, so there's a request to approve.
+    if (this.phase === "turned-down" && this.request) await api("/api/devices", { cert: this.request });
     const k = this.keys;
     const cert: Cert = {
       v: 1,
@@ -415,6 +463,7 @@ export class ControlSession {
     cert.sig = hex(new Uint8Array(await subtle.sign("Ed25519", key, new TextEncoder().encode(certBody(cert)))));
     await api(`/api/devices/${k.id}/approve`, { cert });
     this.usedRecovery = mine.device;
+    this.tryAgain();
   }
 
   /** The recovery code that let this browser in, to retire once enrolled. */
@@ -667,7 +716,7 @@ export class ControlSession {
   }
 
   async reject(c: Cert) {
-    await api(`/api/devices/${c.device}/reject`, {});
+    await api(`/api/devices/${c.device}/reject`, { by: this.keys.id });
     await this.refresh();
   }
 

@@ -24,7 +24,9 @@ The design is in [control-e2e.md](control-e2e.md).
    also make an account by itself).
    - The first browser you use becomes your account's first device.
    - It shows two **recovery codes** once. Keep them offline: if you lose
-     every device, one of them lets a new browser in, once.
+     every device, one of them lets a new browser in, once. *Devices and
+     machines…* says how many are left; *Make new codes* there replaces
+     them (the old ones stop working).
 2. **Add a machine.** Install illogical on it, then run:
 
    ```
@@ -34,11 +36,13 @@ The design is in [control-e2e.md](control-e2e.md).
    It prints a link with a code. Open it on a signed-in device, check the
    code matches, and approve. A running daemon connects within a few
    seconds, and the machine appears in the host menu.
-3. **Add your phone** (or any other browser): sign in there. It shows a
-   fingerprint and waits. Your first device asks *New device?* with the
-   same fingerprint; approve it there.
+3. **Add your phone** (or any other browser): *Add a phone or browser…* in
+   the host menu shows control's address as a QR code and a link. Sign in
+   there. It shows a fingerprint and waits. Your devices ask *New device?*
+   with the same fingerprint; approve it on one of them.
 4. **Remove a device or machine** from *Devices and machines…* in the host
-   menu. It loses access at once.
+   menu. It loses access at once. A removed machine keeps running
+   illogical, reachable only locally; `illogicald join` adds it back.
 
 **How a device reaches a machine:**
 

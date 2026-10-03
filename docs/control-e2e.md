@@ -95,6 +95,9 @@ phone runs below confirm Safari on iOS.
 - At first sign-in, the user gets two recovery codes. Each is an Ed25519
   seed, shown as words, whose certificate (`kind: recovery`) the first
   device signs.
+- Any of the account's devices can make new ones. It signs their
+  certificates and revokes every code still good, in one request; control
+  refuses new codes that don't retire the old.
 - A recovery code can sign exactly one certificate (a new first device),
   and daemons then treat it as spent.
 - Control never sees the seed.
