@@ -50,6 +50,7 @@ illogical studio login https://studio.example # keep a studio token in the daemo
 illogical studio                              # which studio, logged in or not (studio logout: forget it)
 illogical app                                 # your studio's apps, and the blocks that show them
 illogical app pinboard                        # one as an app block; its agent's questions come here
+illogical call %9 send '{"text":"Pick a header colour"}'  # prompt its agent (its first tab; "tab": another)
 illogical studio follower pinboard            # keep its box's hud follower link (from stdin; --forget)
 illogical pr 84                               # a pull request as a block (in this repo; or a URL, OWNER/REPO#N)
 illogical pr comment %7 "LGTM"                # comment; review %7 approve|request_changes|comment [TEXT]; merge %7
@@ -124,7 +125,7 @@ The tools:
 | Tool | What it does | Reads only |
 |---|---|---|
 | `run` | A command in a new tab or split (`cwd`, `split`, `vm`, `vm_tab`, `machine`, `session`, `policy`), typed into a shell so it's in history and you can take over. With `wait`, its exit code and last lines. | no |
-| `send_input` | Text (Enter after it unless `enter: false`) and named keys (`C-c`, `Up`) to a pane; to an agent block, its next prompt | no |
+| `send_input` | Text (Enter after it unless `enter: false`) and named keys (`C-c`, `Up`) to a pane; to an agent block, its next prompt; to an app block, a prompt to its box's agent (`tab`: which) | no |
 | `read_output` | A pane's output as text: the latest, from an `offset`, or its `last_command`'s. Paged (16,000 characters by default): pass `next_offset` back | yes |
 | `capture_screen` | What a pane shows now | yes |
 | `wait` | Until `command_end`, `exit`, `match` (a `pattern`), `idle` or `needs_input`. After `timeout` seconds (100 by default) it answers "still running" with the offset: call it again | yes |

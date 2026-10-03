@@ -27,6 +27,11 @@
 //!   via: "illogical"}`, naming whoever answered in illogical; that needs
 //!   hud's trusted-follower change (arugula-salad track A5). Without one,
 //!   hud records the session's own player, the box's owner.
+//! - `POST /__hud/api/chat/prompt {chatKey, text}`, for the block's
+//!   `send`: a prompt to the box's agent in one of `/api/tabs`' tabs
+//!   (`{chatKey, title}`, oldest first), queued behind a running turn.
+//!   hud takes no `onBehalfOf` here, so the prompt is the session's
+//!   (the owner's, or the follower's); the block's log says who sent it.
 //!
 //! A block shows one question at a time: with several tabs asking, the
 //! oldest is on the card and the next follows when it's answered.
@@ -162,18 +167,36 @@ impl Session {
         }
     }
 
-    /// The box's chat tabs.
+    /// The box's chat tabs' keys.
     pub async fn tabs(&self) -> Result<Vec<String>, HudError> {
+        Ok(self.tab_list().await?.into_iter().map(|t| t.chat).collect())
+    }
+
+    /// The box's chat tabs, oldest first (hud always has one).
+    pub async fn tab_list(&self) -> Result<Vec<Tab>, HudError> {
         let res =
             Self::checked(self.req(reqwest::Method::GET, "/api/tabs").timeout(Duration::from_secs(15)).send().await)
                 .await?;
         let v: Value = res.json().await.map_err(|e| HudError::Other(format!("tabs: {}", e.without_url())))?;
-        Ok(v["tabs"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|t| t["chatKey"].as_str().map(str::to_owned))
-            .collect())
+        Ok(parse_tabs(&v))
+    }
+
+    /// Prompt the box's agent in a tab (hud queues it behind a running
+    /// turn). hud's answer (`{promptId, position, queued}`), or why not.
+    pub async fn prompt(&self, chat: &str, text: &str) -> Result<Value, String> {
+        let res = self
+            .req(reqwest::Method::POST, "/api/chat/prompt")
+            .timeout(Duration::from_secs(30))
+            .json(&json!({ "chatKey": chat, "text": text }))
+            .send()
+            .await
+            .map_err(|e| format!("hud: {}", e.without_url()))?;
+        let status = res.status();
+        let v: Value = res.json().await.unwrap_or_default();
+        if status.is_success() {
+            return Ok(v);
+        }
+        Err(prompt_refused(status.as_u16(), &v))
     }
 
     /// A tab's chat stream (server-sent events), from now.
@@ -232,6 +255,50 @@ impl Session {
         )
         .await?;
         Ok(res.json().await.unwrap_or_default())
+    }
+}
+
+/// One of the box's chat tabs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tab {
+    pub chat: String,
+    pub title: String,
+}
+
+fn parse_tabs(v: &Value) -> Vec<Tab> {
+    v["tabs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| {
+            let chat = t["chatKey"].as_str()?.to_owned();
+            Some(Tab { title: t["title"].as_str().unwrap_or(&chat).to_owned(), chat })
+        })
+        .collect()
+}
+
+/// The tab `want` names (its key, or its title in any case); none named,
+/// the box's first.
+pub fn pick_tab<'a>(tabs: &'a [Tab], want: Option<&str>) -> Result<&'a Tab, String> {
+    let Some(w) = want else { return tabs.first().ok_or_else(|| "hud listed no tabs".into()) };
+    tabs.iter().find(|t| t.chat == w).or_else(|| tabs.iter().find(|t| t.title.eq_ignore_ascii_case(w))).ok_or_else(
+        || {
+            let names: Vec<_> = tabs.iter().map(|t| t.title.as_str()).collect();
+            format!("no tab {w:?} in the box (it has: {})", names.join(", "))
+        },
+    )
+}
+
+/// Why hud refused a prompt, for whoever sent it.
+fn prompt_refused(status: u16, v: &Value) -> String {
+    let said = v["error"].as_str().unwrap_or("");
+    match (status, v["reason"].as_str()) {
+        (401, _) => "hud wants a new session: try again in a moment".into(),
+        (403, _) => format!("hud refused: {}", if said.is_empty() { "this session may only watch" } else { said }),
+        (429, Some("queue-full")) => "the tab's queue is full: wait for its turn to finish".into(),
+        (_, Some(r)) if !said.is_empty() => format!("hud: {said} ({r})"),
+        (s, _) if said.is_empty() => format!("hud answered {s}"),
+        _ => format!("hud: {said}"),
     }
 }
 
@@ -993,5 +1060,26 @@ mod tests {
         assert_eq!(q.picked(&json!({ "question_0": "Blue" })), Some("o1"));
         assert_eq!(q.picked(&json!({ "question_0_custom": "Red" })), None);
         assert_eq!(q.expires_at, Some(300005));
+    }
+
+    #[test]
+    fn a_prompt_goes_to_the_tab_named_or_the_first() {
+        let tabs = parse_tabs(&json!({ "tabs": [{ "chatKey": "k1", "title": "Main" }, { "chatKey": "k2" }] }));
+        assert_eq!(tabs[1], Tab { chat: "k2".into(), title: "k2".into() }, "untitled: its key");
+        assert_eq!(pick_tab(&tabs, None).unwrap().chat, "k1");
+        assert_eq!(pick_tab(&tabs, Some("k2")).unwrap().chat, "k2");
+        assert_eq!(pick_tab(&tabs, Some("main")).unwrap().chat, "k1");
+        assert_eq!(pick_tab(&tabs, Some("nope")).unwrap_err(), "no tab \"nope\" in the box (it has: Main, k2)");
+        assert!(pick_tab(&[], None).is_err());
+    }
+
+    #[test]
+    fn why_hud_refused_a_prompt() {
+        let full = json!({ "error": "queue is full", "reason": "queue-full", "queued": 5 });
+        assert_eq!(prompt_refused(429, &full), "the tab's queue is full: wait for its turn to finish");
+        let budget = json!({ "error": "out of turns today", "reason": "turn-budget" });
+        assert_eq!(prompt_refused(429, &budget), "hud: out of turns today (turn-budget)");
+        assert_eq!(prompt_refused(403, &json!({})), "hud refused: this session may only watch");
+        assert_eq!(prompt_refused(502, &json!({})), "hud answered 502");
     }
 }
