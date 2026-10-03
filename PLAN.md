@@ -3575,7 +3575,7 @@ Answer these before M36. Each answer goes in as a fixture or a measured number:
 
 #### M36: as built
 
-**Done 2026-10-02 (branch `m36-forge-prs`; not merged).** `crates/daemon/src/forge/` (`mod.rs` the block, `model.rs` S23's normalized model and the attention rules, `forgejo.rs` the adapter, `login.rs` tea logins and tokens), `illogical pr` (and `pr comment|review|merge`), MCP `open_pr`, `read_pr`, `pr_comment`, `pr_review`, `pr_merge`, `web/src/blocks/forge.tsx`, a TUI line, swarm kind `pr`. docs/features.md has how it's used.
+**Done 2026-10-02 (merged as `e01f369`; the real-write "done when" is Jake's, below).** `crates/daemon/src/forge/` (`mod.rs` the block, `model.rs` S23's normalized model and the attention rules, `forgejo.rs` the adapter, `login.rs` tea logins and tokens), `illogical pr` (and `pr comment|review|merge`), MCP `open_pr`, `read_pr`, `pr_comment`, `pr_review`, `pr_merge`, `web/src/blocks/forge.tsx`, a TUI line, swarm kind `pr`. docs/features.md has how it's used.
 
 - **The block.** `BlockType::Forge`, config `{provider, api?, login?, repo, kind: pr, number, host?, dir?}` plus what it has seen (`seen_ms`, `done_ack`, `log_mark`) and the drafts still waiting. Opened from a link, `OWNER/REPO#N` or N (`forge::open_config`: the clone's `upstream`, else `origin`).
   - **The adapter trait** (`me`, `poll`, `rest`, `write`, `repo_urls`) returns the normalized model, so M38/M39 add a file each. `Write` is `comment | review {event} | merge {style}`.
