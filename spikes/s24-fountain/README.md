@@ -3,7 +3,7 @@
 Run 2026-10-03 on geek, against hosted Fountain (`managoat.com`, Jake's account, CLI v0.21.0).
 Today illogical knows Fountain only as an ACP command: an agent block can run `fountain acp
 --agent X` (S7), and that's all. This spike asks what else is worth building.
-**Result: go on two of three. A read-only agent catalog and "wear this agent locally" are cheap,
+**Result: go on all three, with geek as the only runner (decided below). Before that decision it was two of three. A read-only agent catalog and "wear this agent locally" are cheap,
 and they work from what Fountain already exposes (a worn agent's bundle is built; a live session
 using it is still owed, see q1). Managing runners waits on one Fountain change:
 an agent can't be pinned to a runner.**
@@ -89,9 +89,10 @@ Not worth it now: Fountain conversations in swarm (webhooks into attention) is r
 from 1; injecting the whole team as `--agents` subagents into every local Claude bloats every
 session's context for the rare delegation.
 
-## Decisions for Jake
+## Decided (2026-10-03, Jake)
 
-- Catalog: curated only (agent-specs and hand-made), or everything with a filter?
-- Wearing: are agent-specs' Infisical secrets the right source for local `${VAR}`s?
-- Runners: ask Fountain for runner pinning first, or ship runner status/supervision now and
-  live with "last connected wins"?
+geek is the only runner (Jake adds runner pinning to Fountain going forward), on the process
+backend as a dedicated `fountain` user; jake-air's runner stops, and all three other
+registrations are deleted. The catalog shows every agent with a filter. Local `${VAR}`s come
+from Infisical, then the environment, then helpers. The three agents on the runner provider today
+move to geek. The plan is PLAN.md's Fountain track: M43 (#121), M44 (#122), M45 (#123).

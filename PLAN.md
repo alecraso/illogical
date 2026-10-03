@@ -3842,6 +3842,110 @@ Answer these before M36. Each answer goes in as a fixture or a measured number:
   - GitLab: the same on a gitlab.com MR only works where gitlab.com can reach the daemon, which a tailnet address isn't; that case polls (the relay for GitLab, as the plan said, isn't built).
 - **Not covered:** GitHub Enterprise webhooks; org-membership-only access; pokes to hosted sandboxes (no relay socket: they poll through the App); a Forgejo hook that already exists from another daemon (each daemon makes its own); refreshing a GitHub App token's 401 beyond asking control again.
 
+### Fountain track (S24, M43–M45, added 2026-10-03)
+
+Today illogical knows Fountain only as an ACP command: an agent block runs `fountain acp --agent X` (S7). This track goes further in three ways. It shows the account's agents as a catalog. It runs one of them locally, as a Claude Code wearing its prompt, skills and MCP servers. And it makes geek the account's Fountain runner, so a Fountain conversation runs on a machine illogical can open a shell on, diff and take over.
+
+**Decisions (2026-10-03, Jake):**
+
+- **geek is the only runner.** Fountain puts a runner conversation on the most recently connected online runner, because per-agent pinning (`agents.runner_id`, ADR 0022) isn't built. Jake fixes that in Fountain going forward. Until then there is one runner: jake-air's runner is stopped and its registration deleted, along with `jake-mbair` and `fireball`.
+- **Process backend, as a dedicated `fountain` user.** A sandbox is a directory on geek, so illogical can open it with code it already has. Its agent can't read Jake's keys, `~/.fountain/credentials` or illogical's socket. firecracker stays out (it overlaps wisp, and M3b stays on wisp).
+- **The catalog shows every agent, with a filter**, not only the curated ones.
+- **Local `${VAR}`s come from Infisical first** (agent-specs keeps its secrets there), then the host's shell environment (#74), then known helpers (`GITHUB_TOKEN` from `gh auth token`). Fountain never returns a secret's value, so they can't come from Fountain.
+- **The three agents on `sandbox_provider: runner` today move to geek:** `hud-playground`, `fireball-smoke` and `home-cloud-steward` (the last is `managed-by: chant`, so it changes in agent-specs).
+- **The catalog is read-only.** agent-specs (chant's fountain lexicon) stays the one place a curated agent is edited, so illogical never fights chant's converge. *Spec* opens the file.
+
+**Order:** S24 (#120), done; then M43 (#121) and M45 (#123), which don't depend on each other; then M44 (#122), which needs M43's reads and starts by re-running S24's q1.
+
+#### S24: Fountain spike (#120)
+
+**Done 2026-10-03: go** (see [spikes/s24-fountain](spikes/s24-fountain/README.md)). Run against hosted Fountain (`managoat.com`, CLI v0.21.0). Read-only, apart from building local bundles.
+
+- **108 agents, mostly made by apps:** 13 Switchyard, 8 Salon, 5 Mend, 4 Rounds, planter, Paddock and probes. About 23 are `managed-by: chant` (from `~/dev/jhgaylor/agent-specs`), and a handful are hand-made. Metadata tells them apart: `managed-by`, `switchyard`, `salon`, `paddock`, `attemptId`, `part-of`.
+- **An agent is a full recipe:** `system` (105 of 108), `skills` (25: inline `{name, content}` or GitHub `{source, name?}`), `mcp_servers` (43, with `${VAR}` in any string), model, runtime, environment, `sandbox_provider`. `fountain agent list --json` returns all of it, about 550 KB.
+- **Secrets are write-only** (`docs/concepts/vault.md`).
+- **Runners:** `GET /api/runners` returns name, os, arch, version, online and last seen. Python's default User-Agent gets a 403 from `managoat.com` and curl doesn't, so the daemon sends its own User-Agent. A runner sandbox is named `runner-<runner_id>-<short>`.
+- **Wearing an agent locally** (`wear.py`): inline skills are written out, and GitHub skills are shallow-cloned and each directory with a `SKILL.md` is copied. `pr-reviewer` got 19 skills and three MCP servers once `GITHUB_TOKEN` was set. `claude-agent-acp` takes the system prompt as `_meta.systemPrompt.append` and SDK options (plugins, model) as `_meta.claudeCode.options`. illogical already sends `mcpServers`.
+- **Not seen working yet:** on geek, headless `claude -p "say hi"` (2.1.289, logged in, API reachable) answers "No messages returned from query" even with no flags, so no live session was seen using a bundle. M44 starts there.
+- **The prompts are written for the sandbox.** Orchestrators such as `captain-picard`, `team-lead` and `tech-lead` clone into `/workspace` and spawn with `vault_id`, so they're for Fountain, not for wearing.
+
+#### M43: Fountain agent catalog (#121)
+
+`BlockType::Fountain` with `{profile, view: catalog}`:
+
+- **Reads** go through Fountain's HTTP API with the key from the user's own CLI login (`FOUNTAIN_API_KEY`, or `~/.fountain/credentials` and its `[profile]`), the way M36 uses `tea`'s login. The key is kept in memory only. A host with no login says so on the block.
+  - The list loads when the block opens, then refreshes every few minutes while it's drawn, and on *Refresh*.
+  - Environment names come from `GET /api/environments`.
+- **Every agent is a card:** name, description, runtime and model, skills, MCP servers, environment, sandbox provider and mode, conversation count, last updated, and where it comes from.
+- **Where it comes from:**
+  - **agent-specs:** `managed-by: chant`;
+  - **made by an app:** `switchyard`, `salon`, `paddock`, `part-of` or `attemptId` in its metadata, or a name ending in a UUID;
+  - **hand-made:** everything else.
+- **Filters:** a search box over name, description, skills and MCP servers; chips for source, runtime and sandbox provider. The filters are kept in the block's config. Every agent is listed, and app-made ones are only filtered, never hidden by default.
+- **Actions:**
+  - *Run on Fountain*: today's `fountain` agent block, beside the catalog.
+  - *Run here*: M44. Shown only for `claude` agents, greyed out with the reason when `metadata.illogical.local` is `false`.
+  - *Spec*: for `managed-by: chant`, the agent-specs file that declares it (found by matching `name:` under `src/agents/`), opened as a file block. Otherwise Fountain's dashboard page for the agent.
+- **MCP:** `list_agents {query?, source?}` returns compact rows, and `read_agent {name}` returns the full recipe with secret-shaped values left as their `${VAR}`. Any local agent can see the team and hand off a task through `start_agent`, which already takes a Fountain agent.
+- **`capture --text`:** the filtered list as text.
+- **Ways in:** `illogical fountain [agents]`, *Fountain agents…* in the picker, and MCP.
+- **Web:** `web/src/blocks/fountain.tsx`, with cards in a grid (a list on the phone) and the filter bar on top. One line in the TUI.
+
+**Tests:** filters and source rules as unit tests on S24's `agents.json`, scrubbed. Daemon tests against a fake Fountain made of recorded responses.
+
+**Done when:** on geek, the catalog shows all of Jake's agents. Filtering to agent-specs leaves the ~23 curated ones. *Run on Fountain* on `games` opens a working block. *Spec* on `pr-reviewer` opens its agent-specs file. And a Claude block's `list_agents` finds `designer` by the skill `frontend-design`.
+
+#### M44: wear a Fountain agent locally (#122)
+
+`illogical agent --as <fountain agent>`, and *Run here* in M43: a Claude agent block on this host, in a worktree (or the current directory), configured as that agent. A terminal `claude` launched from the picker as *Claude Code as…* gets the same bundle through flags.
+
+- **First, finish S24's q1.** Check that a session actually uses the bundle. Use `claude-agent-acp` with the `_meta` below, which is the path a block takes anyway, and also `claude -p` once it works on geek again. Ask the session to name its skills and MCP servers.
+- **The bundle** is built by the daemon from the agent's recipe (M43's read), and cached under `~/.cache/illogical/fountain/<agent id>/<updated_at>/`:
+  - a plugin whose `skills/` holds the inline skills, plus the GitHub ones. GitHub repos are shallow-cloned into a shared cache and refreshed once a day;
+  - the system prompt, after a short preamble: you're local, and `/home/sprite`, `/workspace`, vaults and spawning describe the sandbox;
+  - MCP servers with their `${VAR}`s resolved. Fountain's rules: `$$` is a literal `$`, references are resolved once, recursively, and every unset name is reported.
+- **`session/new`:** `_meta.systemPrompt.append`, plus `_meta.claudeCode.options` with `plugins: [{type: "local", path}]` and `model` (`anthropic/` stripped). `mcpServers` is the agent's servers alongside illogical's own.
+- **Secrets, in order:**
+  - Infisical: agent-specs' `.infisical.json` project, mapping each `${VAR}` through the agent's environment and vault in `dist/fountain.yaml` to its `infisical://` URI, read with the `infisical` CLI and Jake's login;
+  - then #74's shell environment;
+  - then helpers (`GITHUB_TOKEN` ← `gh auth token`).
+
+  Values are held in memory and passed in `session/new`. A terminal `claude` gets a 0600 `--mcp-config` file in the daemon's runtime directory, deleted when the pane closes. A server with an unresolved `${VAR}` is left out, and the block's header says which server and which variable.
+- **Not wearable:** an agent with `metadata.illogical.local: false` is refused with the reason. The orchestrators get it in agent-specs, a change Jake makes there. `codex`, `gemini`, `opencode` and `acp` agents say "Run on Fountain" for now.
+- **The header** says "as <agent>" with the bundle's skills and servers, and what didn't carry over.
+
+**Tests:**
+- unit tests: substitution, matching the cases in Fountain's `managoat_substitution`; and building a bundle from fixtures (inline skills, a GitHub skill with a `name`, all of a repo's skills, an unset variable);
+- daemon tests: the `_meta` on `session/new`, against the fake adapter;
+- a real test (`agents_real.rs`, gated): `games` worn locally names its three skills.
+
+**Done when:** on geek, *Run here* on `pr-reviewer` opens a Claude block in a worktree of this repo. It lists `code-review` and `iterate-pr` among its skills and has `github`, `context7` and `mem0`, with GitHub working through `gh auth token`. Running `captain-picard` says it's for Fountain.
+
+#### M45: geek as the Fountain runner (#123)
+
+- **Set up (once, with Jake):**
+  - Jake stops the runner on jake-air. Then `DELETE /api/runners/:id` for `jake-air`, `jake-mbair` and `fireball`.
+  - Create a `fountain` user on geek, with Jake in its group. Sandboxes go under `/home/fountain/sandboxes` (group-readable).
+  - Give that user its own Fountain login, a full-scope key, in `/home/fountain/.fountain/credentials`.
+  - Run `fountain runner --name geek --root /home/fountain/sandboxes` as a systemd unit (`User=fountain`, `Restart=always`). Then move `hud-playground` and `fireball-smoke` to the runner provider through the API, and `home-cloud-steward` in agent-specs.
+  - `illogical fountain runner install` does the steps that don't need Jake, so it's written down and can be done again. It refuses on a host without `sudo`.
+- **Runner status on the machine:** the machine panel and the swarm's machine show *Fountain runner*: online or offline, version against the installed `fountain` CLI, last seen, and how many sandboxes it holds. `/api/runners` is polled every minute while drawn. Attention (`failed`) when geek's runner has been offline for 5 minutes while the unit says it's running, and for any other runner on the account (one would win placement).
+- **Runner conversations as blocks:**
+  - `fountain sandbox list` gives the conversations whose sandboxes are on geek. Each sandbox is a directory under `--root`, named `runner-<runner_id>-<short>`, and its git checkouts are inside it.
+  - From a conversation's card in the catalog (M43), or a *Fountain on geek* group in the swarm:
+    - *Follow*: today's `fountain` agent block attached to that conversation (`session/load`);
+    - *Changes*: M11's diff block on each git checkout in the sandbox, read through group permissions;
+    - *Shell*: a terminal as `fountain` in that directory with `HOME` set to it, through one sudoers rule (`jake ALL=(fountain) NOPASSWD: /bin/bash`).
+  - A parked sandbox (processes stopped) still opens. A shell started from illogical isn't Fountain's, so Fountain's park doesn't stop it, and the block says so.
+- **Not in M45:** a runner picker. It waits for Fountain's pinning; when that lands, M43's card shows the agent's runner and *Move to geek*.
+
+**Tests:**
+- unit tests: runner status and the stale-runner attention, from recorded `/api/runners`;
+- daemon tests: sandbox → directory mapping, and the sudo argv for *Shell*;
+- a manual checklist for the real setup, in the README.
+
+**Done when:** `/api/runners` lists only geek, online. A conversation with `hud-playground` lands on geek; from its card, *Changes* shows its edits and *Shell* opens in its sandbox as `fountain`. That user can't read `~jake/.ssh` or connect to illogical's socket. Stopping the unit puts *Fountain runner offline* on the rail within about 5 minutes.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
