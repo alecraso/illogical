@@ -10,8 +10,16 @@
 //!
 //! Lines and blocks this doesn't know are skipped, so a newer Claude Code
 //! shows less rather than breaking.
+//!
+//! A transcript being written is followed with [`Follow`], which converts
+//! only what was appended since the last read (#80).
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    io::{Read, Seek, SeekFrom},
+    os::unix::fs::MetadataExt,
+    path::Path,
+};
 
 use serde_json::Value;
 
@@ -19,34 +27,94 @@ use super::branch;
 use crate::agent::transcript::{Entry, Tool};
 
 /// The entries of a transcript. `finished`: nothing is running it, so a tool
-/// call that never got its result was cut off.
+/// call that never got its result was cut off. What [`Follow`] is held to;
+/// the daemon itself follows.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn entries(jsonl: &[u8], finished: bool) -> Vec<Entry> {
     let mut c = Converter::default();
-    for line in jsonl.split(|b| *b == b'\n') {
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(v) = serde_json::from_slice::<Value>(line) {
-            c.line(&v);
-        }
-    }
-    if finished {
-        for e in &mut c.out {
-            if let Entry::Tool(t) = e
-                && !t.finished()
-            {
-                t.status = "failed".into();
-                if t.text.is_empty() && t.output.is_empty() {
-                    t.text = "(no result)".into();
-                }
-            }
-        }
-    }
-    let remembered = c.chain.remembered();
-    branch::mark(c.out, &c.from, remembered.as_ref())
+    c.lines(jsonl);
+    c.entries(finished)
 }
 
+/// A transcript followed as it grows (#80): each read converts only the
+/// lines appended since the last, keeping the converter's state (open tool
+/// calls, the rewind set) between reads. A file that shrank, was replaced
+/// or doesn't end as it did is converted again from the start. Its entries
+/// are always what [`entries`] gives for the whole file.
 #[derive(Default)]
+pub struct Follow {
+    c: Converter,
+    /// Bytes converted so far, to the end of a line.
+    read: u64,
+    /// The last of those bytes, and the file (device, inode) they were in.
+    tail: Vec<u8>,
+    file: Option<(u64, u64)>,
+    /// The converter with a last line that has no newline yet, when that
+    /// line is whole JSON: `entries` would convert it.
+    open: Option<Converter>,
+}
+
+/// How much of what was read is kept to check the file still starts so.
+const TAIL: usize = 4096;
+
+impl Follow {
+    /// Read what's new in `path`. True if the entries may have changed.
+    pub fn read(&mut self, path: &Path) -> std::io::Result<bool> {
+        let mut f = std::fs::File::open(path)?;
+        let md = f.metadata()?;
+        let file = Some((md.dev(), md.ino()));
+        let mut changed = false;
+        if file != self.file || !self.same(&mut f, md.len())? {
+            changed = self.read > 0 || self.open.is_some();
+            *self = Self { file, ..Self::default() };
+        }
+        f.seek(SeekFrom::Start(self.read))?;
+        let mut new = vec![];
+        f.read_to_end(&mut new)?;
+        Ok(self.add(&new) || changed)
+    }
+
+    /// The entries so far. `finished`: as for [`entries`].
+    pub fn entries(&self, finished: bool) -> Vec<Entry> {
+        self.open.as_ref().unwrap_or(&self.c).entries(finished)
+    }
+
+    /// The file still holds what was read: it's as long, and ends there
+    /// with the same bytes.
+    fn same(&self, f: &mut std::fs::File, len: u64) -> std::io::Result<bool> {
+        if len < self.read {
+            return Ok(false);
+        }
+        let mut was = vec![0; self.tail.len()];
+        f.seek(SeekFrom::Start(self.read - self.tail.len() as u64))?;
+        f.read_exact(&mut was)?;
+        Ok(was == self.tail)
+    }
+
+    /// Convert the whole lines of what follows what was read.
+    fn add(&mut self, new: &[u8]) -> bool {
+        let end = new.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        let whole = &new[..end];
+        self.c.lines(whole);
+        self.read += end as u64;
+        if whole.len() >= TAIL {
+            self.tail = whole[whole.len() - TAIL..].to_vec();
+        } else {
+            self.tail.extend_from_slice(whole);
+            self.tail.drain(..self.tail.len().saturating_sub(TAIL));
+        }
+        let had = self.open.take().is_some();
+        let rest = &new[end..];
+        if let Ok(v) = serde_json::from_slice::<Value>(rest) {
+            let mut c = self.c.clone();
+            c.line(&v);
+            self.open = Some(c);
+        }
+        end > 0 || had || self.open.is_some()
+    }
+}
+
+#[derive(Default, Clone)]
 struct Converter {
     out: Vec<Entry>,
     /// The line each entry came from.
@@ -59,6 +127,38 @@ struct Converter {
 }
 
 impl Converter {
+    /// JSON lines; the last needn't end with a newline.
+    fn lines(&mut self, jsonl: &[u8]) {
+        for line in jsonl.split(|b| *b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_slice::<Value>(line) {
+                self.line(&v);
+            }
+        }
+    }
+
+    /// What it has, a tool call without a result failed if `finished`, and
+    /// what a resume wouldn't follow marked.
+    fn entries(&self, finished: bool) -> Vec<Entry> {
+        let mut out = self.out.clone();
+        if finished {
+            for e in &mut out {
+                if let Entry::Tool(t) = e
+                    && !t.finished()
+                {
+                    t.status = "failed".into();
+                    if t.text.is_empty() && t.output.is_empty() {
+                        t.text = "(no result)".into();
+                    }
+                }
+            }
+        }
+        let remembered = self.chain.remembered();
+        branch::mark(out, &self.from, remembered.as_ref())
+    }
+
     fn line(&mut self, v: &Value) {
         self.chain.line(v);
         self.convert(v);
@@ -432,6 +532,132 @@ mod tests {
         assert!(entries(b"{\"type\":\"from-the-future\"}\nnot json\n\n", true).is_empty());
     }
 
+    /// A file of its own in the temp directory, gone when dropped.
+    struct Tmp(std::path::PathBuf);
+
+    impl Tmp {
+        fn new(name: &str) -> Self {
+            let p = std::env::temp_dir().join(format!(
+                "illogical-follow-{name}-{}-{}.jsonl",
+                std::process::id(),
+                crate::store::now_ms()
+            ));
+            std::fs::write(&p, b"").unwrap();
+            Self(p)
+        }
+
+        fn append(&self, b: &[u8]) {
+            use std::io::Write;
+            std::fs::OpenOptions::new().append(true).open(&self.0).unwrap().write_all(b).unwrap();
+        }
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// Following gives what converting the whole file gives, finished or not.
+    fn same(f: &Follow, whole: &[u8], at: &str) {
+        for finished in [false, true] {
+            assert_eq!(f.entries(finished), entries(whole, finished), "{at}, finished: {finished}");
+        }
+    }
+
+    /// Appended a line at a time, and in pieces that split lines.
+    fn followed(name: &str, bytes: &[u8]) {
+        let file = Tmp::new(name);
+        let mut f = Follow::default();
+        let mut cuts: Vec<usize> = vec![];
+        let mut start = 0;
+        for (i, b) in bytes.iter().enumerate() {
+            if *b == b'\n' {
+                // Mid-line, just before the newline, and after it.
+                cuts.extend([(start + i) / 2, i, i + 1]);
+                start = i + 1;
+            }
+        }
+        cuts.push(bytes.len());
+        let mut at = 0;
+        for cut in cuts {
+            if cut < at {
+                continue;
+            }
+            file.append(&bytes[at..cut]);
+            at = cut;
+            f.read(&file.0).unwrap();
+            same(&f, &bytes[..at], &format!("{name} at {at}"));
+        }
+        // Nothing new: nothing to do.
+        assert!(!f.read(&file.0).unwrap());
+    }
+
+    #[test]
+    fn following_gives_what_a_whole_conversion_does() {
+        for name in [
+            "scratch/a683c96a-c2b1-4ed7-bdd4-51b7d759125b.jsonl",
+            "shapes/bash.jsonl",
+            "shapes/parallel-tool-calls.jsonl",
+            "shapes/subagent-call.jsonl",
+            "shapes/compaction.jsonl",
+            "shapes/rewind.jsonl",
+            "shapes/api-error.jsonl",
+        ] {
+            followed(name.rsplit('/').next().unwrap(), &fixture(name));
+        }
+        // A rewind whose earlier prompt was read before its new one.
+        let rewind = fixture("shapes/rewind.jsonl");
+        let file = Tmp::new("rewind-split");
+        let mut f = Follow::default();
+        let half = rewind.len() / 2;
+        let half = rewind[..half].iter().rposition(|b| *b == b'\n').unwrap() + 1;
+        file.append(&rewind[..half]);
+        f.read(&file.0).unwrap();
+        file.append(&rewind[half..]);
+        assert!(f.read(&file.0).unwrap());
+        same(&f, &rewind, "rewind");
+        assert!(f.entries(true).iter().any(|e| matches!(e, Entry::Note { text, .. } if text.starts_with("Rewound"))));
+    }
+
+    #[test]
+    fn a_shrunk_or_rewritten_transcript_is_read_again() {
+        let long = fixture("scratch/a683c96a-c2b1-4ed7-bdd4-51b7d759125b.jsonl");
+        let file = Tmp::new("rewrite");
+        let mut f = Follow::default();
+        file.append(&long);
+        f.read(&file.0).unwrap();
+        same(&f, &long, "whole");
+
+        // Truncated to its first half.
+        let half = long[..long.len() / 2].iter().rposition(|b| *b == b'\n').unwrap() + 1;
+        std::fs::OpenOptions::new().write(true).open(&file.0).unwrap().set_len(half as u64).unwrap();
+        assert!(f.read(&file.0).unwrap());
+        same(&f, &long[..half], "truncated");
+
+        // Rewritten in place, as long as before but ending otherwise.
+        let other = fixture("shapes/bash.jsonl");
+        let mut rewritten = long[..half - other.len()].to_vec();
+        rewritten.extend_from_slice(&other);
+        assert_eq!(rewritten.len(), half);
+        std::fs::write(&file.0, &rewritten).unwrap();
+        assert!(f.read(&file.0).unwrap());
+        same(&f, &rewritten, "rewritten");
+
+        // Replaced by another file (a rename over it).
+        let next = file.0.with_extension("next");
+        std::fs::write(&next, &long).unwrap();
+        std::fs::rename(&next, &file.0).unwrap();
+        assert!(f.read(&file.0).unwrap());
+        same(&f, &long, "replaced");
+
+        // Emptied.
+        std::fs::write(&file.0, b"").unwrap();
+        assert!(f.read(&file.0).unwrap());
+        assert!(f.entries(true).is_empty());
+        assert!(f.read(Path::new("/nonexistent/x.jsonl")).is_err());
+    }
+
     #[test]
     fn commands_and_reminders() {
         assert_eq!(
@@ -447,5 +673,109 @@ mod tests {
         assert_eq!(strip_reminders("<system-reminder>only"), "");
         let e = entries(&fixture("shapes/desktop-transcript.jsonl"), true);
         assert!(e.iter().all(|e| !matches!(e, Entry::User { text, .. } if text.contains("system-reminder"))));
+    }
+}
+
+/// What following a real transcript costs (#80): `ILLOGICAL_FOLLOW_BENCH=
+/// <a .jsonl> MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072
+/// cargo test --release follow_cost -- --ignored --nocapture`. The
+/// transcript is only read; its last lines are appended to a copy one at a
+/// time, as a live session writes them. (The allocator settings return
+/// freed memory, so the peaks are each refresh's own.)
+#[cfg(test)]
+mod bench {
+    use std::{io::Write, time::Instant};
+
+    use super::Follow;
+    use crate::agent::transcript::Transcript;
+
+    /// Peak resident memory since the call, over what was resident then,
+    /// in MiB (Linux).
+    fn peak() -> impl FnOnce() -> f64 {
+        let kb = |k: &str| {
+            let s = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+            s.lines()
+                .find_map(|l| l.strip_prefix(k))
+                .and_then(|r| r.trim().trim_end_matches("kB").trim().parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
+        let _ = std::fs::write("/proc/self/clear_refs", "5");
+        let base = kb("VmRSS:");
+        move || (kb("VmHWM:") - base) / 1024.0
+    }
+
+    fn ms(t: Instant) -> f64 {
+        t.elapsed().as_secs_f64() * 1000.0
+    }
+
+    #[test]
+    #[ignore]
+    fn follow_cost() {
+        let Ok(path) = std::env::var("ILLOGICAL_FOLLOW_BENCH") else { return };
+        let bytes = std::fs::read(&path).unwrap();
+        let mib = |n: usize| n as f64 / 1048576.0;
+        // Before: the whole file, each change.
+        for _ in 0..3 {
+            let mem = peak();
+            let start = Instant::now();
+            let whole = std::fs::read(&path).unwrap();
+            let t = Transcript::from_entries(super::entries(&whole, false));
+            println!(
+                "full: {:.1} MiB, {} entries, {:.1} ms, {:.1} MiB peak",
+                mib(whole.len()),
+                t.entries.len(),
+                ms(start),
+                mem()
+            );
+        }
+        // After: all but the last 100 lines, then those a line at a time.
+        let ends: Vec<usize> = bytes.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1).collect();
+        let from = ends[ends.len().saturating_sub(101)];
+        let copy = std::env::temp_dir().join(format!("illogical-follow-cost-{}.jsonl", std::process::id()));
+        std::fs::write(&copy, &bytes[..from]).unwrap();
+        let mut f = Follow::default();
+        let mem = peak();
+        let start = Instant::now();
+        f.read(&copy).unwrap();
+        let t = Transcript::from_entries(f.entries(false));
+        println!(
+            "first read: {:.1} MiB, {} entries, {:.1} ms, {:.1} MiB peak",
+            mib(from),
+            t.entries.len(),
+            ms(start),
+            mem()
+        );
+        drop(t);
+        let mut file = std::fs::OpenOptions::new().append(true).open(&copy).unwrap();
+        let (mut times, mut peaks, mut sizes) = (vec![], vec![], vec![]);
+        let mut at = from;
+        for end in ends.iter().copied().filter(|e| *e > from) {
+            file.write_all(&bytes[at..end]).unwrap();
+            sizes.push(end - at);
+            at = end;
+            let mem = peak();
+            let start = Instant::now();
+            f.read(&copy).unwrap();
+            let t = Transcript::from_entries(f.entries(false));
+            times.push(ms(start));
+            peaks.push(mem());
+            drop(t);
+        }
+        let _ = std::fs::remove_file(&copy);
+        let q = |v: &mut Vec<f64>, p: f64| {
+            v.sort_by(f64::total_cmp);
+            v[((v.len() - 1) as f64 * p) as usize]
+        };
+        let mut sizes: Vec<f64> = sizes.into_iter().map(|s| s as f64 / 1024.0).collect();
+        println!(
+            "appends: {} lines of {:.1} KiB median ({:.0} KiB max); {:.2} ms median, {:.2} ms max; {:.1} MiB peak median, {:.1} MiB max",
+            times.len(),
+            q(&mut sizes, 0.5),
+            q(&mut sizes, 1.0),
+            q(&mut times, 0.5),
+            q(&mut times, 1.0),
+            q(&mut peaks, 0.5),
+            q(&mut peaks, 1.0)
+        );
     }
 }

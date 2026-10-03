@@ -84,6 +84,15 @@ impl Live {
             _ => format!("open in a terminal (pid {})", self.pid),
         }
     }
+
+    /// Only this daemon's panes and blocks (#77): a scope named for a pane
+    /// of another daemon on this machine (a dev or test one) isn't ours.
+    pub fn ours(mut self, has: impl Fn(PaneId) -> bool) -> Self {
+        self.pane = self.pane.filter(|p| has(*p));
+        self.block = self.block.filter(|p| has(*p));
+        self.place = self.place();
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -562,6 +571,26 @@ mod tests {
 
     fn fixture(name: &str) -> PathBuf {
         PathBuf::from(format!("{}/tests/fixtures/conversations/{name}", env!("CARGO_MANIFEST_DIR")))
+    }
+
+    #[test]
+    fn a_holder_in_another_daemons_pane_is_in_a_terminal() {
+        // #77: the scope names pane 76, which only another daemon has.
+        let l = Live {
+            pid: 4242,
+            kind: "interactive".into(),
+            entrypoint: "cli".into(),
+            status: "idle".into(),
+            pane: Some(76),
+            block: None,
+            place: String::new(),
+        };
+        let theirs = l.clone().ours(|p| p == 3);
+        assert_eq!((theirs.pane, theirs.block), (None, None));
+        assert_eq!(theirs.place, "open in a terminal (pid 4242)");
+        assert_eq!(l.clone().ours(|p| p == 76).place, "open in pane %76");
+        let b = Live { pane: None, block: Some(76), ..l }.ours(|_| false);
+        assert_eq!(b.place, "open in a terminal (pid 4242)");
     }
 
     #[test]

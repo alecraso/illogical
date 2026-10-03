@@ -38,7 +38,7 @@ const MISSING_PARENT_MS: u64 = 5_000;
 
 pub const NOTE: &str = "Not in what it remembers: Continue goes on from another branch";
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Chain {
     lines: HashMap<String, Line>,
     order: Vec<String>,
@@ -52,7 +52,7 @@ pub struct Chain {
     last: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Line {
     parent: Option<String>,
     /// `user` or `assistant`.
@@ -68,6 +68,7 @@ struct Line {
     compaction: Option<Compaction>,
 }
 
+#[derive(Clone)]
 struct Compaction {
     logical: Option<String>,
     /// The kept segment, head first, and the summary it goes under.
