@@ -388,6 +388,52 @@ the daemon stopping, crashing, or the machine rebooting:
     `source` and `agent` (who asks), for something that follows a page's
     agent from outside.
 
+- **Pull requests** (M36, Forgejo). A PR as a block beside the work on
+  it: its checks, reviews and timeline, and what it waits on you for.
+  - **Opening one.** *Open pull request…* (a pane's menu, the `+`
+    button's menu; *Pull request* in the phone's sheet), `illogical pr
+    URL | OWNER/REPO#N | N` (N: in this directory's repository), MCP's
+    `open_pr`, or clicking a Forgejo PR link (`…/pulls/N`) in a terminal
+    (Shift-click opens it in the browser instead).
+  - **Your login.** It reads and writes with your own `tea` login, run
+    with your shell's environment. The token comes from tea's credential
+    helper and is kept in memory only: never in the block's config, its
+    log, or anything a client gets. The remote's (or link's) host picks
+    the login: one whose URL or SSH host is that host, else the one whose
+    Forgejo says the repository's `ssh_url` is there. If none or several
+    do, the block lists them to pick from (*Use login …*, `call %N login
+    {"name":…}`), and keeps the pick. No tea here, or no login: the block
+    says so.
+  - **Fresh.** Every few seconds while you look at it or it wants you,
+    every few minutes otherwise. Forgejo has no ETags, so a poll is the PR
+    and its checks; reviews and the timeline are read again only when the
+    PR changed.
+  - **What waits on you,** as attention on the rail, the phone and push,
+    bundled by repository: a review asked of you (or a team of yours),
+    which *Approve* (here, on the rail, or the phone's sheet) sends as a
+    review with your login; your PR's checks red (*Failed*: Forgejo has no
+    API to rerun them, so the block links the run); changes requested on
+    your PR, or a mention since you last looked (*Waiting for you*); your
+    PR merged, or green with nothing holding it (*Finished*, once).
+  - **Agents draft, people send.** An agent's comment, review or merge
+    (MCP's `pr_comment`, `pr_review`, `pr_merge`, or `illogical pr …` and
+    `illogical call` run under Claude Code) never reaches the forge by
+    itself: it waits on the block as a card with the text to edit. *Send*
+    posts it (as edited) with the owner's login; *Drop* drops it. The
+    owner and editors may send; viewers can't. The block and its history
+    say who sent each one, and that an agent drafted it. Several wait in
+    turn. This holds on illogical's own surfaces; an agent on your account
+    could still run `tea` itself. A person's own write (the block's
+    buttons, `illogical pr comment %N …` in your shell) goes straight out.
+  - **The code.** *Diff* fetches `refs/pull/N/head` into your clone (no
+    branch is touched), makes a worktree of it in
+    `.illogical/worktrees/pr-N` (or `.claude/worktrees/pr-N` where the
+    repository keeps its worktrees), and opens a diff block on
+    merge-base..head; *Checkout* opens a terminal there. The owner's.
+  - `capture --text` is the PR as text; the block's log has the timeline,
+    so `history` and `search` find its comments.
+  - **Not yet:** GitHub (M38), GitLab (M39), issues (M37), webhooks (M40).
+
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's

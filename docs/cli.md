@@ -51,6 +51,9 @@ illogical studio                              # which studio, logged in or not (
 illogical app                                 # your studio's apps, and the blocks that show them
 illogical app pinboard                        # one as an app block; its agent's questions come here
 illogical studio follower pinboard            # keep its box's hud follower link (from stdin; --forget)
+illogical pr 84                               # a pull request as a block (in this repo; or a URL, OWNER/REPO#N)
+illogical pr comment %7 "LGTM"                # comment; review %7 approve|request_changes|comment [TEXT]; merge %7
+                                              #   (under CLAUDECODE or AI_AGENT: a draft a person sends)
 illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused while it's open elsewhere)
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
@@ -139,6 +142,9 @@ The tools:
 | `show_changes` | A diff block beside a pane: what changed in its repository (`rev_a`, `rev_b`); returns the files with +/− | no |
 | `show_file` | A file block beside a pane, at a `line`, followed live | no |
 | `open_workspace` | A chant workspace block beside a pane (`dir`, `env`); returns its members and the gates waiting | no |
+| `open_pr` | A pull request (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
+| `read_pr` | A PR block as text, what it waits on the user for, and your drafts (waiting, sent with who and a link, dropped) | yes |
+| `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
 
 Resources: `illogical://history`, and the templates
 `illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and
