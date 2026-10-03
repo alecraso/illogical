@@ -476,6 +476,9 @@ impl Adapter for Forgejo {
                     self.send(reqwest::Method::POST, &format!("repos/{repo}/pulls/{number}/merge"), Some(&req)).await?;
                     Ok(Sent { url: None, said: format!("merged ({})", style.as_deref().unwrap_or("merge")) })
                 }
+                Write::Rerun => {
+                    Err(Error::Http("Forgejo has no API to rerun checks: rerun them on the run's page".into()))
+                }
             }
         })
     }

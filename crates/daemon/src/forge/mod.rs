@@ -39,11 +39,19 @@
 //! find a PR's comments beside the work.
 //!
 //! Methods: `refresh`, `login {name}`, `comment {body}`, `review {event:
-//! approve|request_changes|comment, body?}`, `merge {style?}`, `diff
-//! {dir?}`, `checkout {dir?}`, `drafts`, `state`. There's no `approve`: on
-//! a block holding an ask that name answers the card.
+//! approve|request_changes|comment, body?}`, `merge {style?}`,
+//! `rerun_checks` (GitLab), `diff {dir?}`, `checkout {dir?}`, `drafts`,
+//! `state`. There's no `approve`: on a block holding an ask that name
+//! answers the card.
+//!
+//! **GitLab** (M39, [`gitlab`]): `provider: gitlab`, a merge request by its
+//! `iid` in a project path (`group/sub/proj`), read with the token of the
+//! person's `glab` for the host, or anonymously (public projects) when glab
+//! has none: then the state's `read_only` says so and writes are refused.
+//! Its failed pipeline offers *Rerun* (`rerun_checks`).
 
 pub mod forgejo;
+pub mod gitlab;
 pub mod login;
 pub mod model;
 
@@ -155,6 +163,9 @@ pub enum Write {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         style: Option<String>,
     },
+    /// Run the failed checks again (GitLab: retry the head pipeline).
+    #[serde(rename = "rerun_checks")]
+    Rerun,
 }
 
 impl Write {
@@ -183,6 +194,7 @@ impl Write {
                 }
                 Ok(Write::Merge { style })
             }
+            "rerun_checks" => Ok(Write::Rerun),
             m => Err(format!("{m} isn't a write")),
         }
     }
@@ -195,6 +207,7 @@ impl Write {
             Write::Review { event: ReviewEvent::RequestChanges, .. } => "a review asking for changes",
             Write::Review { event: ReviewEvent::Comment, .. } => "a review",
             Write::Merge { .. } => "a merge",
+            Write::Rerun => "a rerun of the checks",
         }
     }
 
@@ -202,7 +215,7 @@ impl Write {
         match self {
             Write::Comment { body } => Some(body),
             Write::Review { body, .. } => body.as_deref(),
-            Write::Merge { .. } => None,
+            Write::Merge { .. } | Write::Rerun => None,
         }
     }
 }
@@ -230,6 +243,14 @@ pub trait Adapter: Send + Sync {
     fn write<'a>(&'a self, repo: &'a str, number: u64, w: &'a Write) -> BoxFuture<'a, Result<Sent, Error>>;
     /// The repository's clone URLs, for matching a remote to a login.
     fn repo_urls<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<Vec<String>, Error>>;
+    /// Why it can only read (GitLab with no glab login), if it can't write.
+    fn read_only(&self) -> Option<String> {
+        None
+    }
+    /// Whether failed checks can be run again through the API.
+    fn rerun_api(&self) -> bool {
+        false
+    }
 }
 
 fn http() -> reqwest::Client {
@@ -247,6 +268,13 @@ fn http() -> reqwest::Client {
 fn adapter(provider: Provider, login: &Login, tea: Arc<Tea>) -> Arc<dyn Adapter> {
     match provider {
         Provider::Forgejo => Arc::new(forgejo::Forgejo::new(&login.api(), http(), TokenSource::new(tea, login))),
+        // GitLab connects through glab ([`ForgeBlock::connect_gitlab`]),
+        // never a tea login: anything else reads anonymously.
+        Provider::Gitlab => {
+            let api = format!("{}/api/v4", login.url.trim_end_matches('/'));
+            let note = gitlab::read_only_note(&login::url_host(&login.url).unwrap_or_default(), "not a glab login");
+            Arc::new(gitlab::Gitlab::new(&api, http(), None, Some(note)))
+        }
     }
 }
 
@@ -337,6 +365,8 @@ struct State {
     dir: Option<String>,
     loading: bool,
     error: Option<String>,
+    /// It can only read, and why (GitLab with no glab login: anonymous).
+    read_only: Option<String>,
     /// Logins to pick from, when none (or several) matched.
     logins: Vec<LoginView>,
     /// "You", on the forge.
@@ -390,7 +420,10 @@ impl ForgeBlock {
     pub fn create(ctx: BlockCtx, config: Value) -> Result<Arc<dyn Block>, String> {
         let mut config: Config = serde_json::from_value(config).map_err(|e| format!("forge config: {e}"))?;
         config.repo = config.repo.trim_matches('/').to_owned();
-        if config.repo.split('/').count() != 2 || config.repo.split('/').any(str::is_empty) {
+        // GitLab's projects can sit in subgroups (group/sub/proj).
+        let parts = config.repo.split('/').count();
+        let fits = if config.provider == Provider::Gitlab { parts >= 2 } else { parts == 2 };
+        if !fits || config.repo.split('/').any(str::is_empty) {
             return Err(format!("not a repository: {:?} (owner/name)", config.repo));
         }
         if config.number == 0 {
@@ -456,6 +489,9 @@ impl ForgeBlock {
         if let Some(a) = self.adapter.lock().unwrap().clone() {
             return Ok(a);
         }
+        if self.config.lock().unwrap().provider == Provider::Gitlab {
+            return self.connect_gitlab().await;
+        }
         let tea = self.tea().await?;
         let logins = tea.logins().await?;
         let (want, host, provider, repo) = {
@@ -498,6 +534,35 @@ impl ForgeBlock {
             }
         };
         Ok(self.connected(provider, login, tea))
+    }
+
+    /// GitLab (M39): glab's token for the host, or anonymous and read-only.
+    async fn connect_gitlab(&self) -> Result<Arc<dyn Adapter>, String> {
+        let runner = Runner::user(&self.ctx).await?;
+        let (host, api) = {
+            let c = self.config.lock().unwrap();
+            let host = c.host.clone().or_else(|| c.api.as_deref().and_then(login::url_host));
+            let host = host.ok_or("which GitLab? open it from a link or a clone")?;
+            let api = c.api.clone().unwrap_or_else(|| format!("https://{host}/api/v4"));
+            (host, api)
+        };
+        let g = gitlab::connect(runner, &host, &api, http()).await;
+        let a: Arc<dyn Adapter> = Arc::new(g.adapter);
+        {
+            let mut c = self.config.lock().unwrap();
+            c.login = g.login.clone();
+            c.api = Some(api.clone());
+        }
+        {
+            let mut st = self.state.lock().unwrap();
+            st.login = g.login.clone();
+            st.api = Some(api);
+            st.read_only = a.read_only();
+            st.logins.clear();
+        }
+        info!(pane = self.ctx.id, host, login = g.login, "gitlab block connected");
+        *self.adapter.lock().unwrap() = Some(a.clone());
+        Ok(a)
     }
 
     fn connected(&self, provider: Provider, login: Login, tea: Arc<Tea>) -> Arc<dyn Adapter> {
@@ -567,7 +632,7 @@ impl ForgeBlock {
         if self.you.lock().unwrap().is_none() {
             match a.me().await {
                 Ok(m) => {
-                    self.state.lock().unwrap().me = Some(m.login.clone());
+                    self.state.lock().unwrap().me = Some(m.login.clone()).filter(|l| !l.is_empty());
                     *self.you.lock().unwrap() = Some(m);
                 }
                 Err(e) => warn!(pane = self.ctx.id, error = %e, "who am I on the forge"),
@@ -607,7 +672,8 @@ impl ForgeBlock {
                 st.reads += 1;
             }
             st.updated_ms = now_ms();
-            st.rerun = rerun(&pr);
+            st.read_only = a.read_only();
+            st.rerun = rerun(&pr, a.rerun_api() && st.read_only.is_none());
             st.pr = Some(pr);
         }
         if self.live.drawn() {
@@ -707,9 +773,13 @@ impl ForgeBlock {
             }
             Want::Failed { why, .. } => {
                 // Like a failed command, it's `done` with a `failed` reason;
-                // Forgejo can't rerun, so there's no `rerun` action.
+                // Forgejo can't rerun, so there's no `rerun` action. GitLab
+                // retries the pipeline (`rerun_checks`).
                 let mut r = plain(ReasonKind::Failed, why);
                 r.bundle = Some(format!("failed:{bundle}"));
+                if self.state.lock().unwrap().rerun.as_ref().is_some_and(|v| v["api"] == true) {
+                    r.actions.insert(0, Action::Rerun);
+                }
                 (Attention::Done, r)
             }
             Want::Changes { why } | Want::Mention { why, .. } => (Attention::NeedsInput, plain(ReasonKind::Input, why)),
@@ -784,6 +854,9 @@ impl ForgeBlock {
     /// A write: an agent's becomes a draft; a person's goes out now.
     async fn write(&self, method: &str, args: Value, by: Option<String>) -> Result<Value, String> {
         let w = Write::from_call(method, &args)?;
+        if let Some(why) = self.adapter.lock().unwrap().as_ref().and_then(|a| a.read_only()) {
+            return Err(why);
+        }
         let agent = args["agent"] == true || by.as_deref().is_some_and(|b| b.starts_with("mcp:"));
         if agent {
             let id = format!("d{}", self.next_draft.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
@@ -1070,16 +1143,24 @@ fi
 printf 'ok %s/%s %s\n' "$top" "$w" "$mb"
 "#;
 
-/// What the failed checks' rerun is, on a forge with no rerun API: the
-/// run's page.
-fn rerun(pr: &Pr) -> Option<Value> {
+/// What the failed checks' rerun is: through the API (`api`: GitLab, as
+/// `rerun_checks`), or on a forge with none (or no login), the run's page.
+fn rerun(pr: &Pr, api: bool) -> Option<Value> {
     if pr.rollup != Some(model::CheckState::Failure) {
         return None;
     }
-    let url = pr.checks.iter().find(|c| c.state.red()).and_then(|c| c.url.clone());
-    Some(
-        json!({ "api": false, "url": url, "note": "Forgejo has no API to rerun checks: rerun them on the run's page" }),
-    )
+    let red = pr.checks.iter().find(|c| c.state.red() && !c.allow_failure);
+    let url = red.and_then(|c| c.url.clone());
+    if api {
+        let pipeline = red.and_then(|c| c.run.as_ref()).map(|r| r.id.clone());
+        return Some(json!({ "api": true, "url": url, "pipeline": pipeline,
+            "note": "Rerun retries the pipeline's failed jobs" }));
+    }
+    let note = match pr.checks.first().map(|c| c.source) {
+        Some(model::CheckSource::PipelineJob) => "Rerun needs a glab login: rerun them on the pipeline's page",
+        _ => "Forgejo has no API to rerun checks: rerun them on the run's page",
+    };
+    Some(json!({ "api": false, "url": url, "note": note }))
 }
 
 /// A draft as a form card: the text to edit (and a review's event).
@@ -1148,6 +1229,7 @@ fn edited(w: &Write, content: &Value) -> Write {
             },
         },
         Write::Merge { style } => Write::Merge { style: style.clone() },
+        Write::Rerun => Write::Rerun,
     }
 }
 
@@ -1173,6 +1255,9 @@ impl Block for ForgeBlock {
             (None, Some(e)) => format!("{}#{}\n{e}\n", st.repo, st.number),
             (None, None) => format!("{}#{}\nreading…\n", st.repo, st.number),
         };
+        if let Some(r) = &st.read_only {
+            out.push_str(&format!("{r}\n"));
+        }
         if !st.wants.is_empty() {
             out.push_str("waiting on you:\n");
             for w in &st.wants {
@@ -1211,6 +1296,9 @@ impl Block for ForgeBlock {
             "login" => Box::pin(async move {
                 let me = me.ok_or("closed")?;
                 let name = args["name"].as_str().filter(|n| !n.is_empty()).ok_or("login needs {\"name\": LOGIN}")?;
+                if me.config.lock().unwrap().provider == Provider::Gitlab {
+                    return Err("a GitLab block uses glab's login for its host: `glab auth login`, then refresh".into());
+                }
                 let tea = me.tea().await?;
                 let logins = tea.logins().await?;
                 let l = logins
@@ -1225,7 +1313,7 @@ impl Block for ForgeBlock {
                 me.ctx.changed();
                 Ok(json!({ "login": name }))
             }),
-            "comment" | "review" | "merge" => {
+            "comment" | "review" | "merge" | "rerun_checks" => {
                 let method = method.to_owned();
                 Box::pin(async move { me.ok_or("closed")?.write(&method, args, by).await })
             }
@@ -1295,7 +1383,7 @@ impl Block for ForgeBlock {
 pub async fn open_config(c: &Value) -> Result<Value, String> {
     let dir = c["dir"].as_str().filter(|d| !d.is_empty()).map(str::to_owned);
     let mut out = json!({ "provider": "forgejo", "kind": "pr" });
-    for k in ["api", "login", "host"] {
+    for k in ["provider", "api", "login", "host"] {
         if let Some(v) = c[k].as_str() {
             out[k] = json!(v);
         }
@@ -1314,6 +1402,22 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or("say which pull request: {\"pr\": URL | OWNER/REPO#N | N}")?;
+    if let Some((host, repo, n, api)) = gitlab::parse_mr_url(what) {
+        // M39: a GitLab merge request's link.
+        out["provider"] = json!("gitlab");
+        out["host"] = json!(host);
+        out["repo"] = json!(repo);
+        out["number"] = json!(n);
+        if c["api"].as_str().is_none() {
+            out["api"] = json!(api);
+        }
+        if let Some(d) = &dir
+            && let Some((top, _)) = clone_of(d, Some(&repo)).await
+        {
+            out["dir"] = json!(top);
+        }
+        return Ok(out);
+    }
     if what.starts_with("http://") || what.starts_with("https://") {
         let (host, repo, n, api) = parse_pr_url(what)?;
         out["host"] = json!(host);
@@ -1329,7 +1433,12 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
         }
         return Ok(out);
     }
-    let (repo, n) = match what.split_once('#') {
+    // `GROUP/PROJECT!N` is GitLab's way of naming a merge request.
+    let bang = what.contains('!');
+    if bang {
+        out["provider"] = json!("gitlab");
+    }
+    let (repo, n) = match what.split_once('#').or_else(|| what.split_once('!')) {
         Some((r, n)) if !r.is_empty() => (Some(r.trim_matches('/').to_owned()), n),
         Some((_, n)) => (None, n),
         None => (None, what),
@@ -1353,6 +1462,19 @@ pub async fn open_config(c: &Value) -> Result<Value, String> {
             out["repo"] = json!(repo);
         }
         (None, None) => return Err(format!("#{n} in which repository? Run it in a clone, or say OWNER/REPO#{n}")),
+    }
+    // A clone on a GitLab host is GitLab's (others are told by a link, `!N`
+    // or `provider`).
+    if let Some(h) = out["host"].as_str()
+        && gitlab::known_host(h)
+        && c["provider"].as_str().is_none()
+    {
+        out["provider"] = json!("gitlab");
+    }
+    if out["provider"] == "gitlab" && out["api"].is_null() {
+        let host = out["host"].as_str().unwrap_or("gitlab.com").to_owned();
+        out["host"] = json!(host);
+        out["api"] = json!(format!("https://{host}/api/v4"));
     }
     Ok(out)
 }
@@ -1442,6 +1564,32 @@ mod tests {
         assert!(open_config(&json!({ "pr": "12" })).await.unwrap_err().contains("which repository"));
         assert!(open_config(&json!({ "pr": "o/r#x" })).await.is_err());
         assert!(open_config(&json!({})).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn gitlab_configs() {
+        let c = open_config(&json!({ "pr": "https://gitlab.com/gitlab-org/cli/-/merge_requests/3941" })).await.unwrap();
+        assert_eq!(
+            (c["provider"].as_str(), c["repo"].as_str(), c["number"].as_u64()),
+            (Some("gitlab"), Some("gitlab-org/cli"), Some(3941))
+        );
+        assert_eq!((c["host"].as_str(), c["api"].as_str()), (Some("gitlab.com"), Some("https://gitlab.com/api/v4")));
+        let c = open_config(&json!({ "pr": "http://127.0.0.1:9/g/sub/p/-/merge_requests/2" })).await.unwrap();
+        assert_eq!((c["repo"].as_str(), c["api"].as_str()), (Some("g/sub/p"), Some("http://127.0.0.1:9/api/v4")));
+        // GitLab's own notation; a host it's known by.
+        let c = open_config(&json!({ "pr": "gitlab-org/cli!12" })).await.unwrap();
+        assert_eq!((c["provider"].as_str(), c["number"].as_u64()), (Some("gitlab"), Some(12)));
+        assert_eq!(c["api"], "https://gitlab.com/api/v4");
+        let c = open_config(&json!({ "pr": "o/r#3", "host": "gitlab.example.org" })).await.unwrap();
+        assert_eq!(
+            (c["provider"].as_str(), c["api"].as_str()),
+            (Some("gitlab"), Some("https://gitlab.example.org/api/v4"))
+        );
+        // Forgejo stays Forgejo.
+        let c = open_config(&json!({ "pr": "o/r#3", "host": "git.inevitable.fyi" })).await.unwrap();
+        assert_eq!(c["provider"], "forgejo");
+        assert_eq!(Write::from_call("rerun_checks", &json!({})).unwrap(), Write::Rerun);
+        assert_eq!(serde_json::to_value(Write::Rerun).unwrap(), json!({ "method": "rerun_checks" }));
     }
 
     #[test]
