@@ -86,13 +86,24 @@ loginctl enable-linger $USER
    everything. Drag a tab or a pane onto another pane's edge to split it
    there; drag dividers to resize.
 2. **From your phone and other machines**, put it behind Tailscale on this
-   machine:
+   machine. The first time:
+   - turn on **MagicDNS** and **HTTPS certificates** in the tailnet's
+     [DNS settings](https://login.tailscale.com/admin/dns), or `serve`
+     fails;
+   - on Linux, let yourself run `serve` without sudo: `sudo tailscale set
+     --operator=$USER`;
+   - on macOS, the app's CLI may not be on your PATH: it's
+     `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+
+   Then:
 
    ```
    tailscale serve --bg --https=443 http://127.0.0.1:7681
    ```
 
-   and open `https://<this machine>.<tailnet>.ts.net`. Only the Tailscale
+   and open `https://<this machine>.<tailnet>.ts.net`: `tailscale serve
+   status` prints it, and so does *Getting started* in the session menu
+   (and `install.sh`, when Tailscale is up). Only the Tailscale
    login that owns the machine gets in (`illogicald install -- --owner
    you@example.com` for someone else). On the phone, add it to the home
    screen, then *Notify this device* in the session menu.
