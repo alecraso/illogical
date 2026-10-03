@@ -22,6 +22,8 @@ export const KINDS: Record<WorkKind, [number, number, number]> = {
   app: [130, 200, 90],
   // M36: a pull request.
   pr: [235, 150, 110],
+  // M37: an issue.
+  issue: [215, 190, 95],
 };
 
 /** What a reason looks like on the rail. */
