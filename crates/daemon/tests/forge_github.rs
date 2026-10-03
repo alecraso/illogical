@@ -487,15 +487,18 @@ fn a_second_poll_is_304s_and_rereads_nothing() {
     // reviews and timeline aren't asked at all.
     let (reviews, timeline) = (hub.f.full("reviews"), hub.f.full("timeline"));
     assert_eq!((reviews, timeline), (1, 1));
-    d.wait_for("polls", || hub.f.not_modified("pull") >= 4);
+    // A poll asks the item, then check runs, then status: wait for all
+    // three, or the last can be one behind.
+    d.wait_for("polls", || ["pull", "check-runs", "status"].iter().all(|r| hub.f.conditional(r) >= 4));
     for r in ["pull", "check-runs", "status"] {
         assert_eq!(hub.f.full(r), 1, "{r} read whole again");
         assert!(hub.f.conditional(r) >= 4, "{r} not conditional");
     }
     assert_eq!(hub.f.full("reviews") + hub.f.not_modified("reviews"), 1, "reviews re-read");
     assert_eq!(hub.f.full("timeline") + hub.f.not_modified("timeline"), 1, "the timeline re-read");
+    // The block's state is published after the poll the fake counted.
+    d.wait_for("the 304s in the state", || d.state(block)["rate"]["not_modified"].as_u64().unwrap_or(0) >= 12);
     let st = d.state(block);
-    assert!(st["rate"]["not_modified"].as_u64().unwrap() >= 12, "{}", st["rate"]);
     let used = st["rate"]["used"].as_u64().unwrap();
     d.wait_for("more polls", || hub.f.not_modified("pull") >= 8);
     assert_eq!(d.state(block)["rate"]["used"].as_u64(), Some(used), "an unchanged poll cost points");
