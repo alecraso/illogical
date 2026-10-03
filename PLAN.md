@@ -3499,7 +3499,14 @@ A studio box as a block: the app in the frame (its own origin, so no block site)
 Jake asked whether illogical could prompt a studio app's hud agent. It couldn't: the follower read tabs and streams, answered questions and approved gates, but never started a turn. Now an app block's `send` (`{text, tab?}`) goes to hud's `POST /__hud/api/chat/prompt {chatKey, text}` through the follower's session, in the box's first tab or the one named (title or chat key). MCP's `send_input` passes `tab`; the CLI is `illogical call %N send '{…}'`, as for agent blocks.
 - **Who:** owner and editors, the same as answering (any block call). hud takes no `onBehalfOf` on prompts, so its chat shows the session's player (the owner, or the follower). The block's log and `illogical history` say who sent what to which tab. If hud should name the person, that's a hud change: `onBehalfOf` on `/api/chat/prompt` for a follower, as hud#733 did for answers.
 - **Refusals** come back as hud gives them: unknown tab (404), turn budget or full queue (429), chat unavailable (503), a spectator (403).
-- **Not covered:** a real box (the fake hud in `tests/apps.rs` only).
+- **Against a real hud (2026-10-03):**
+  - a throwaway `ilg-prompt-a` cloned from `arugula-box-template` (hud 0a4cf0e), with S22's stub Anthropic as its model;
+  - a dev daemon from this branch, entering with a hud follower link and a fake studio that only lists the app.
+  - MCP `send_input` → hud took it in `main` (position 0); `wait` (needs_input) showed the agent's question; `agent_respond` answered it.
+  - A second prompt (`tab: "MAIN"`) queued 1 behind the running turn. `tab: "nope"` was refused, listing `main`.
+  - `illogical history --pane` shows both prompts `by mcp:live-check`.
+  - Box, daemon and fake studio removed afterwards.
+- **Not covered:** Jake's real studio (its own entry links rather than a follower link).
 
 ### Forge track (S23, M36–M40, added 2026-10-02)
 
