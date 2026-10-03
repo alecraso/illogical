@@ -760,7 +760,7 @@ struct JoinTeam {
 }
 
 /// What control said, as a sentence: its `{"error": …}` if it sent one.
-pub async fn control_said(res: reqwest::Response) -> String {
+async fn control_said(res: reqwest::Response) -> String {
     let status = res.status();
     let body = res.text().await.unwrap_or_default();
     match serde_json::from_str::<serde_json::Value>(&body).ok().and_then(|v| v["error"].as_str().map(str::to_owned)) {
