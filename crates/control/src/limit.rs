@@ -27,6 +27,8 @@ pub const JOINS: (&str, usize) = ("join", 30);
 pub const ACCOUNTS: (&str, usize) = ("account", 10);
 pub const SIGN_INS: (&str, usize) = ("sign-in", 60);
 pub const LINKS: (&str, usize) = ("link", 240);
+/// Invite previews on the signed-out page (#103).
+pub const INVITES: (&str, usize) = ("invite", 240);
 /// Notifications relayed, all daemons together, per hour: a brake.
 pub const PUSHES: (&str, usize) = ("push", 100_000);
 const WINDOW: Duration = Duration::from_secs(3600);

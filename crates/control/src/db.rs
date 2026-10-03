@@ -683,6 +683,18 @@ impl Db {
             .optional()?)
     }
 
+    /// Who made a live invite (#103): (team, their account).
+    pub fn invite_by(&self, code_hash: &str, now: u64) -> anyhow::Result<Option<(String, String)>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT team, by_account FROM invites WHERE code_hash = ?1 AND expires > ?2",
+                params![code_hash, now],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
     pub fn drop_invites(&self, team: &str) -> anyhow::Result<()> {
         let c = self.c();
         c.execute("DELETE FROM invites WHERE team = ?1", params![team])?;
@@ -711,6 +723,14 @@ impl Db {
                 created: r.get(4)?,
             })
         })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The teams `account` asked to join, waiting on an owner (#103).
+    pub fn asked(&self, account: &str) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT team FROM team_requests WHERE account = ?1 ORDER BY created")?;
+        let rows = q.query_map(params![account], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
