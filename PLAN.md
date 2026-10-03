@@ -3382,6 +3382,7 @@ A [chant](https://intentius.io/chant) workspace (a repo with a `chant.workspace.
 - *Run op* in a pane;
 - *Shell*, *Agent* and *Changes* on a member;
 - nested workspaces as blocks;
+- gate attention written against a gate type with a `source`, not against chant, so M35's gates from hud in a studio box use the same reason, card and sheet (added from S22);
 - `illogical workspace [DIR]`;
 - *Open as workspace* in a pane's menu and the picker when a directory holds a `chant.workspace.json`;
 - an MCP `open_workspace`;
@@ -3437,6 +3438,21 @@ arugula-salad's studio makes a box per app on wisp: the app, hud's proxy and pan
 - **Questions:** hud puts a waiting question in every `hud-chat-queue` frame, and a follower of `/__hud/api/chat/stream` turned each one into an M24 `ask` 11 ms after hud asked. That puts it on the pane's card, the swarm's rail, push and `illogical attention`. Answered on the swarm's rail, it reached hud (`/__hud/api/chat/answer`) in 48–74 ms and the agent's turn went on. Answered in hud's own panel, the card was withdrawn 33 ms later.
 - **What it needs:** studio's door hands out the partitioned cookie; `Api::Ask` takes browser blocks (it's terminal-only, so the spike's follower raised the card on a terminal beside the app, and the swarm filed it under the wrong project); the follower moves into the daemon as an app block; illogical gets a studio token to list apps and mint entry links (passkey-only today); and hud learns who answered in illogical (it records the follower's own player).
 - **Found on the way (arugula-salad):** hud's panel never mounts on the template's page, framed or not (the injected client looks for `<body>` from `<head>`). A clone of the box template on geek gets `widgets.wtf` while the template's `~/box/domain` says `studio.arugula.io`.
+
+**Order:** S22, done; then M35 (#85), after M34 (#73) and #75.
+
+#### M35: studio app blocks (#85)
+
+A studio box as a block: the app in the frame (its own origin, so no block site), its agent's questions as asks on the block, and its chant gates as M34's gate attention. A box's repo is a chant workspace, but illogical reads it through hud in the box, never by running chant there. illogical can't run commands in a hosted box, and hud already pays for the reads.
+
+- entry links minted from a studio token each time, never kept; studio's door hands out partitioned cookies (both studio's to build);
+- S22's follower in the daemon: hud's chat queue → asks on the block (`Api::Ask` on browser blocks), answers back, withdraws;
+- gates from hud's work board, refreshed by its live feed. Approving a gate hud didn't start has no hud route yet (open, #85);
+- who answered: the person who clicked, in hud and in chant's ledger (#75's rule);
+- records linked into hud's pages, never reviewed here (`ws-052`);
+- kind `app` on the swarm, `illogical app [NAME]`, *Open a studio app…*, MCP `open_app`.
+
+**Done when:** a real studio box opens from the picker on geek; its agent's question shows on the rail and the phone and is answered from illogical with hud naming who; a release waiting at `ship` is attention you can approve; and the block comes back after a daemon restart without a stored link.
 
 ## Acceptance tests (automated where possible)
 
