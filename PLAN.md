@@ -3391,6 +3391,40 @@ A [chant](https://intentius.io/chant) workspace (a repo with a `chant.workspace.
 
 **Done when:** on geek, `illogical workspace ~/dev/intentius/chant` (after `npm install`) shows its members, and a gated op shows as attention within about 5 s. The phone can approve it, and the next `chant run` walks through.
 
+#### #74 and M34: as built
+
+**Done 2026-10-02 (#74 merged first, then M34; tracker #86).**
+
+- **#74:**
+  - `crates/daemon/src/shellenv.rs` runs the login shell once per host (`$SHELL -l -i -c`, `env -0` between sentinels, 10 s timeout). It starts in the background when the daemon starts, and the first block that needs it waits.
+  - Blocks opt in with `Runner::user(ctx)`. A VM resolves once per machine through its provider.
+  - `illogical shell-env [--refresh]` and `/api/hosts/self/shell-env[/refresh]` (owner only).
+  - On geek, a cold resolve took **236 ms** and a refresh 182–190 ms. A dev daemon started with `PATH=/usr/bin:/bin` found mise's node.
+- **M34:**
+  - `Gate` and `GateSource` live in `crates/proto`; approval is dispatched on the source in `crates/daemon/src/gate.rs`. The reader and composer are in `crates/daemon/src/workspace/`.
+  - A gate is its own reason kind (`gate`, bundled as `gate:<root>`). The web card, the swarm rail, the phone sheet (gates first) and the TUI line are all built from `Gate`.
+  - *Approve* runs `chant approve <op> <gate> [--env] --approver <name>` in the member. Guests get 403 (#75). The name is the caller's: the owner's illogical login, not the OS user. Approvals are logged in the block's log, `illogical history` and the audit log.
+- **Decisions (2026-10-02):**
+  - **A fingerprint every 5 s while nothing draws the block** (this host only), as well as every 3 s while drawn. Otherwise a gate reached with no tab open would never reach push or the swarm. It costs about 0.24 CPU-s a minute.
+  - **Only gates raise attention.** Errors and drift show in the block's headline.
+- **Against the real thing** (a dev daemon on geek, chant 0.87.0, the daemon's own PATH without node):
+  - `illogical workspace ~/dev/intentius/chant` showed 25 members in 1.6 s, through the cached shell environment with no per-call fallback.
+  - A toy gated op in a top-level member of a scratch clone of chant (Pixel 7 emulation drawing the session; `chant run` exits 3):
+    - the gate reached the phone's sheet in **0.8–1.8 s** over three runs (5.3 s once);
+    - *Approve* on the phone cleared it in the daemon in **2.6–2.8 s**;
+    - the next `chant run` walked through every time;
+    - chant's ledger says `resolvedBy: jhgaylor@gmail.com`.
+  - A full read of chant costs 11.3 CPU-s and 2.4 s wall (S21 measured about 7.5). Idle while drawn, 0.8 CPU-s a minute.
+- **Found on the way:**
+  - **chant pushes `chant/lifecycle` to `origin`** after a run or approve. A scratch clone of a local checkout therefore writes gate records into that checkout. Remove the clone's remote first.
+  - **A run inside a nested workspace** writes its gates under the outer prefix (`_members/reference-workspace/_members/delivery/_gates`), and neither the outer nor the inner `status` shows them (#76).
+  - **A gate is per op and gate name, and an approval lasts.** Re-running an approved op walks through, so a test needs a fresh op name each time.
+  - **The phone hides a gate's card when it's tapped,** and the daemon clears it once chant has written the approval, about 2.7 s later.
+- **Not covered:**
+  - a real phone (only Pixel 7 emulation; editor and viewer on the phone are in `workspace.spec.ts`);
+  - a workspace on a VM tab (the path exists, untried);
+  - jake-mini's resolve time.
+
 ### Studio apps track (S22, added 2026-10-02)
 
 arugula-salad's studio makes a box per app on wisp: the app, hud's proxy and panel in front of it, a door, and a steward that runs releases. The idea is that the box shows up in illogical as a block beside its terminals and agents, and whatever it waits on reaches the swarm's needs-you rail. That covers hud's agent asking a question now. Release gates are chant's (`chant approve release ship`), so they come with M34's workspace attention.
