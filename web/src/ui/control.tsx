@@ -884,7 +884,12 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
           </li>
         ))}
       </ul>
-      <p class="dim">Owners approve everyone who uses an invite. Machines join a team when an owner approves them for it.</p>
+      <p class="dim">
+        Owners approve everyone who uses an invite. Machines join a team when an owner approves them for it.{" "}
+        <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/teams.md" target="_blank" rel="noreferrer">
+          More about teams
+        </a>
+      </p>
       {s.teams.map((t) => (
         <TeamSection key={t.team} s={s} t={t} act={act} />
       ))}
