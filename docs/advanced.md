@@ -63,6 +63,16 @@ pane should have from boot (`PATH` additions, `EDITOR`), put `KEY=value`
 lines in `~/.config/environment.d/50-illogical.conf`. Panes run `$SHELL -l`,
 so your profile runs too.
 
+Blocks that run your tools for you (a chant workspace, say) don't have a
+shell of their own, so the daemon reads your shell's environment once, as
+VS Code does: it runs `$SHELL -l -i` when it starts and keeps the `PATH`
+and variables your rc files set, so node from mise or nvm is found there as
+in a pane. On a VM it does the same once per machine, with `bash -l -i`. If
+your shell takes more than 10 seconds or fails, those blocks get the
+daemon's own environment, and the log says why. After changing an rc file,
+`illogical shell-env --refresh` reads it again (`illogical shell-env` shows
+what blocks get).
+
 ## Claude Code hooks
 
 Claude Code in a pane can tell you when it needs you, put its questions and

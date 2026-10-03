@@ -35,6 +35,7 @@ illogical editors install                     # illogical's extension into VS Co
 illogical editors vsix -o illogical.vsix      # ...or its VSIX, to install by hand
 illogical ide                                 # illogicald as Claude Code's IDE: its port, where diffs go
 illogical ide --diffs "Visual Studio Code"    # send Claude Code's diffs to that IDE instead (illogical: back)
+illogical shell-env [--refresh]               # the PATH blocks that run your tools get (your shell's; --refresh: read it again)
 illogical describe %4                         # any block: type, place, state
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,

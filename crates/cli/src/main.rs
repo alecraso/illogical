@@ -225,6 +225,13 @@ enum Command {
         #[arg(long)]
         diffs: Option<String>,
     },
+    /// The shell environment blocks that run your tools get (your login
+    /// shell's, read once): its PATH. `--refresh` reads it again, after
+    /// you change an rc file.
+    ShellEnv {
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Start an agent block (Claude Code by default) and send it a prompt;
     /// prints its block. Then: `wait %N --idle`, `tail %N`, `call %N approve`.
     Agent {
@@ -1465,6 +1472,30 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                     o["port"],
                     folders.join(", ")
                 );
+            }
+        }
+        Command::ShellEnv { refresh } => {
+            let v = match refresh {
+                true => request(&sock, "POST", "/api/hosts/self/shell-env/refresh", None)?.json()?,
+                false => request(&sock, "GET", "/api/hosts/self/shell-env", None)?.json()?,
+            };
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let shell = v["shell"].as_str().unwrap_or("?");
+            match v["error"].as_str() {
+                Some(e) => println!("{shell}: {e}; blocks get the daemon's environment"),
+                None => {
+                    println!("{shell} ({} ms)", v["ms"]);
+                    match v["path"].as_str() {
+                        Some(p) => println!("PATH={p}"),
+                        None => println!("PATH is the daemon's"),
+                    }
+                    let vars: Vec<&str> =
+                        v["vars"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                    println!("also sets: {}", vars.into_iter().filter(|k| *k != "PATH").collect::<Vec<_>>().join(" "));
+                }
             }
         }
         Command::Machines => {
