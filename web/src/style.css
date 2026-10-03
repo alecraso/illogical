@@ -2623,6 +2623,41 @@ button {
   opacity: 0.7;
   margin-top: 6px;
 }
+/* M41: how to read the city. */
+.swarm-key {
+  pointer-events: auto;
+  margin-top: 8px;
+  max-width: 380px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.swarm-key summary {
+  cursor: pointer;
+  font: 500 11px/1.4 var(--f-mono);
+  color: var(--mute);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.swarm-key dl {
+  margin: 8px 0 2px;
+  display: grid;
+  grid-template-columns: 6.2em 1fr;
+  gap: 3px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.swarm-key dt {
+  font: 700 14px/1.25 var(--f-display);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.swarm-key dd {
+  margin: 0;
+  color: #b7c0d0;
+  min-width: 0;
+}
 .swarm-rail {
   position: absolute;
   z-index: 6;

@@ -25,8 +25,43 @@ export interface FieldPane {
   where: string;
   /** When it last printed (ms), to flash when that moves. */
   lastOut: number;
-  /** Its reason: a card on the rail (`bundle`), or waiting for room. */
-  att: { col: [number, number, number]; bundle: string | null } | null;
+  /** Its reason: a card on the rail (`bundle`), or waiting for room;
+   * `since` is when it started wanting someone (ms). */
+  att: { col: [number, number, number]; bundle: string | null; since?: number } | null;
+  // What the city (M41) draws besides; the field doesn't need them.
+  /** Its pane number. */
+  id?: number;
+  /** Its row inside its block: its machine (its project, by machine). */
+  sub?: string;
+  /** Bytes of output a second, lately. */
+  bps?: number;
+  /** When its command started (ms), while one runs. */
+  started?: number | null;
+  /** How long its last command ran (ms), and how it exited. */
+  lastDur?: number | null;
+  lastExit?: number | null;
+  /** Teammates who have it open; `driving` when they type into it. */
+  people?: { name: string; driving: boolean }[];
+}
+
+/** What the swarm draws its panes with (M41's themes): the field (blocks)
+ * or the city. The view feeds it and asks it to move. */
+export interface SwarmScene {
+  set(panes: FieldPane[]): void;
+  regroup(): void;
+  /** Fit everything in view, and keep doing so until someone moves it. */
+  fitAll(): void;
+  /** Go to a pane (a card's "Show", a notification's deep link). */
+  diveTo(key: string): void;
+  start(): void;
+  stop(): void;
+  resize(): void;
+  /** Cluster names and sizes, as drawn (for tests and the phone's list). */
+  readonly clusters: { name: string; n: number; need: number }[];
+  /** Where a pane is on the screen now (tests click it). */
+  screenOf(key: string): { x: number; y: number } | null;
+  /** Frame-rate check. */
+  measure(ms: number): Promise<{ fps: number; workP50: number; frames: number }>;
 }
 
 interface Tile extends FieldPane {
@@ -96,7 +131,7 @@ function stubs(key: string): number[] {
   return [0, 1, 2].map((i) => 0.35 + (((h >>> (i * 8)) & 255) / 255) * 0.65);
 }
 
-export class Field {
+export class Field implements SwarmScene {
   private cx: CanvasRenderingContext2D;
   private tiles = new Map<string, Tile>();
   private groups = new Map<string, Group>();
