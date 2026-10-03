@@ -3466,9 +3466,9 @@ Pull requests and issues from a git forge (Forgejo, then GitHub, then GitLab) as
 - **Freshness: poll now, webhooks later.** Conditional requests (ETag / `If-None-Match`; a GitHub 304 doesn't count against the rate limit), every few seconds while drawn or while the item has attention, else every few minutes, like M11's "drawn" rule. Webhooks are M40.
 - **Agents draft, people send.** Read methods are open to agents (MCP, `illogical call`). Write methods (`comment`, `approve`, `request_changes`, `merge`, `close`) called by an agent become an ask on the block holding the draft; the owner or an editor sends, edits or drops it, and it goes out as that person through their CLI. A person in the UI or CLI sends directly. This is the general form of "never file on ghostty-org as an agent": nothing reaches a forge in an agent's name.
 
-**Order:** S23; then M36 (Forgejo PR blocks), after M34's gate `source` and M35's `Api::Ask` on non-terminal blocks; then M37 (issues, issue → agent); M38 (GitHub); M39 (GitLab); M40 (webhooks and hosted). M38 can start once M36's model is settled; it doesn't wait for M37.
+**Order:** S23 (#87); then M36 (#88, Forgejo PR blocks), after M34's gate `source` and M35's `Api::Ask` on non-terminal blocks; then M37 (issues, issue → agent); M38 (GitHub); M39 (GitLab); M40 (webhooks and hosted). M38 can start once M36's model is settled; it doesn't wait for M37.
 
-#### S23: forge blocks spike (about half a day)
+#### S23: forge blocks spike (#87, about half a day)
 
 Answer these before M36. Each answer goes in as a fixture or a measured number:
 
@@ -3482,7 +3482,7 @@ Answer these before M36. Each answer goes in as a fixture or a measured number:
 5. **The PR's code.** `git fetch` of a PR head on each forge (`refs/pull/N/head` on GitHub and Forgejo, `refs/merge-requests/N/head` on GitLab), into a worktree, from a fork. Does M11's diff block on `merge-base..head` match the forge's own diff?
 6. **Drafts as asks.** A throwaway agent calls `comment` through MCP. The draft shows as an ask on a terminal beside it, as in S22, and *Send* posts it as the person through `tea`. Measure ask to posted.
 
-#### M36: Forgejo pull request blocks
+#### M36: Forgejo pull request blocks (#88)
 
 `BlockType::Forge` with `{provider: forgejo, host, repo, kind: pr, number}`:
 
@@ -3501,26 +3501,26 @@ Answer these before M36. Each answer goes in as a fixture or a measured number:
 
 **Done when:** on geek, a real PR on this repo's Forgejo opens as a block; a review requested from Jake is on the rail and the phone within about a minute of being asked (polling), and approved from the phone shows on Forgejo as Jake; red checks show as *Failed* with *Rerun checks*; and an agent's `comment` waits as a draft until Jake sends it.
 
-#### M37: issue blocks, and issue → agent
+#### M37: issue blocks, and issue → agent (#89)
 
 - `kind: issue` on the same block: state, labels, assignees, linked PRs, the timeline. Attention: assigned to you, or a mention.
 - **Start work:** *Agent on this* makes a worktree and branch named after the issue (`iNN-<slug>`, as we name them now), an agent block there with the issue's text as its prompt and a link back, and a tab holding both. When that branch's PR appears, its PR block joins the tab.
 - `illogical issue [URL | REPO#N | N]`, MCP `open_issue`, `illogical issue new` (a person's; an agent's is a draft ask, as in M36).
 - **Done when:** on geek, *Agent on this* on a real issue in this repo gives a tab with the agent working in its own worktree, and the PR it opens shows up in that tab.
 
-#### M38: GitHub
+#### M38: GitHub (#90)
 
 - The GitHub adapter through `gh api`: check runs and commit statuses both feed checks; teams count for "a review requested from you".
 - GraphQL only if S23's numbers say one query beats REST's several for a full read.
 - **Done when:** M36's and M37's "done when", run against a GitHub repo, including a PR from a fork.
 
-#### M39: GitLab
+#### M39: GitLab (#91)
 
 - The GitLab adapter through `glab api`: merge requests by `iid`, pipelines as checks, approvals as reviews, discussions as the timeline.
 - `checkout` from `refs/merge-requests/N/head`.
 - **Done when:** M36's "done when" against a gitlab.com project.
 
-#### M40: webhooks and hosted boxes
+#### M40: webhooks and hosted boxes (#92)
 
 - **Forgejo:** a webhook straight to the daemon over the tailnet, set up from the block (*Live updates*) with the person's own CLI; the daemon checks its signature, and the block drops to slow polling while the hook is healthy.
 - **GitHub:** the control plane's GitHub App (control track) takes webhooks and relays them to the daemons that have that repo's blocks open, through M18's relay. The same App gives hosted boxes (M20) read access with no CLI login. Writes still go out as the person.
