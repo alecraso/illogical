@@ -21,6 +21,7 @@ use illogical_e2e::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tracing::warn;
 
 use crate::{
     ApiError, App,
@@ -78,12 +79,32 @@ fn nudge(app: &App, account: &str) {
     }
 }
 
-/// `cert` checks out against the account's trusted devices.
-fn approval_ok(app: &App, account: &str, cert: &Cert) -> Result<(), ApiError> {
+/// A refused enrolment or approval, in the log (#94): which request, the
+/// reason, and the ids. Never a signature or a body.
+/// The ids are the request's own, so they're clipped and quoted.
+fn refused(what: &str, account: &str, c: &Cert, why: &str) {
+    let clip = |s: &str| s.chars().take(64).collect::<String>();
+    warn!(what, account, device = ?clip(&c.device), kind = c.kind.as_str(), approver = ?clip(&c.approver), why, "refused");
+}
+
+/// `cert` checks out against the account's trusted devices. `what` names
+/// the request, for the log.
+fn approval_ok(app: &App, account: &str, cert: &Cert, what: &str) -> Result<(), ApiError> {
     let (trust, mut certs, revs) = trusted(app, account)?;
-    let trust = trust.ok_or_else(|| err(StatusCode::CONFLICT, "this account has no devices yet"))?;
+    let Some(trust) = trust else {
+        refused(what, account, cert, "the account has no devices yet");
+        return Err(err(StatusCode::CONFLICT, "this account has no devices yet"));
+    };
     certs.push(cert.clone());
     if trust.evaluate(&certs, &revs).get(&cert.device).is_none_or(|c| c != cert) {
+        certs.pop();
+        let why = match trust.evaluate(&certs, &revs).get(&cert.approver) {
+            None => "the approver isn't a device this account trusts",
+            Some(a) if !cert.signed_by(a) => "the signature doesn't verify with the approver's key",
+            Some(a) if !a.kind.approves() => "the approver can't approve",
+            Some(_) => "it doesn't chain to the account's root (form, kind or time)",
+        };
+        refused(what, account, cert, why);
         return Err(err(
             StatusCode::FORBIDDEN,
             "that approval doesn't check out (signed by a device this account trusts?)",
@@ -101,8 +122,12 @@ pub struct Enroll {
 /// self-signed and trusted on first use; later ones wait for an approval.
 pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enroll>) -> R {
     let c = b.cert;
-    c.check_request().map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    if let Err(e) = c.check_request() {
+        refused("enroll", &s.account, &c, &e.to_string());
+        return Err(err(StatusCode::BAD_REQUEST, &e.to_string()));
+    }
     if c.account != s.account || !c.kind.connects() {
+        refused("enroll", &s.account, &c, "not a browser or CLI certificate for this account");
         return Err(err(StatusCode::BAD_REQUEST, "a browser or CLI certificate for your account"));
     }
     let account = app.db.account(&s.account)?.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "no such account"))?;
@@ -111,8 +136,12 @@ pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enrol
     }
     match account.root {
         None => {
-            c.check_form().map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
+            if let Err(e) = c.check_form() {
+                refused("enroll", &s.account, &c, &e.to_string());
+                return Err(err(StatusCode::BAD_REQUEST, &e.to_string()));
+            }
             if c.approver != c.device || !c.signed_by(&c) {
+                refused("enroll", &s.account, &c, "the first device's certificate isn't signed by itself");
                 return Err(err(StatusCode::BAD_REQUEST, "the first device signs its own certificate"));
             }
             app.db.put_device(&c, true, now_ms())?;
@@ -157,7 +186,7 @@ pub async fn add_recovery(State(app): State<Arc<App>>, s: Session, Json(b): Json
         if c.kind != Kind::Recovery || c.account != s.account {
             return Err(err(StatusCode::BAD_REQUEST, "recovery certificates for your account"));
         }
-        approval_ok(&app, &s.account, c)?;
+        approval_ok(&app, &s.account, c, "recovery")?;
     }
     let (trust, certs, revs) = trusted(&app, &s.account)?;
     let now = trust.map(|t| t.evaluate(&certs, &revs)).unwrap_or_default();
@@ -215,9 +244,10 @@ pub async fn approve(State(app): State<Arc<App>>, s: Session, Path(id): Path<Str
         return Ok(Json(json!({ "approved": true })));
     }
     if b.cert.device != id || b.cert.account != s.account || !b.cert.same_request(&pending) {
+        refused("approve", &s.account, &b.cert, "not the certificate that asked");
         return Err(err(StatusCode::BAD_REQUEST, "that's not the certificate that asked"));
     }
-    approval_ok(&app, &s.account, &b.cert)?;
+    approval_ok(&app, &s.account, &b.cert, "approve")?;
     app.db.put_device(&b.cert, true, now_ms())?;
     nudge(&app, &s.account);
     Ok(Json(json!({ "approved": true })))
@@ -389,12 +419,16 @@ pub async fn join_approve(
         .db
         .join(&code, now_ms())?
         .filter(|j| j.account.is_none() && j.rejected.is_none())
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such code (expired?)"))?;
+        .ok_or_else(|| {
+            warn!(what = "join_approve", account = %s.account, why = "no such code (expired, used or turned down)", "refused");
+            err(StatusCode::NOT_FOUND, "no such code (expired?)")
+        })?;
     let c = b.cert;
     if c.account != s.account || c.kind != Kind::Daemon || !c.same_request(&j.cert) {
+        refused("join_approve", &s.account, &c, "not the daemon that asked");
         return Err(err(StatusCode::BAD_REQUEST, "that's not the daemon that asked"));
     }
-    approval_ok(&app, &s.account, &c)?;
+    approval_ok(&app, &s.account, &c, "join_approve")?;
     // A team's machine: only its owners add one, and the approving device
     // signs it in, for the daemon to check.
     let team = match &b.team {
@@ -404,6 +438,7 @@ pub async fn join_approve(
             let (trust, certs, revs) = trusted(&app, &s.account)?;
             let approver = trust.and_then(|t| t.evaluate(&certs, &revs).get(&c.approver).cloned());
             if !approver.is_some_and(|a| pin.join_signed_by(&c.device, &a, sig)) {
+                refused("join_approve", &s.account, &c, "the team choice isn't signed by the approver");
                 return Err(err(StatusCode::BAD_REQUEST, "the team choice isn't signed by the approving device"));
             }
             Some((pin.team, sig.to_owned()))

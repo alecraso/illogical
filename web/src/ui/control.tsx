@@ -74,6 +74,24 @@ export function ControlGate({ s }: { s: ControlSession }) {
         </button>
       </Center>
     );
+  if (s.phase === "lost-key")
+    return (
+      <Center>
+        <h1>This browser lost its device key</h1>
+        <p data-lost-key>
+          It can't read back the key it was approved with (<b>{s.enrollment?.cert.name ?? "this browser"}</b>, {fingerprint(s.enrollment?.cert.device ?? "")}), so it can't approve machines or reach them. Some versions of Safari lose keys this way.
+        </p>
+        <p>
+          Enroll it again as a new device: another of your devices approves it, or a recovery code does. The old entry stays in <i>Devices and machines</i>.
+        </p>
+        <button class="primary" data-enroll-again onClick={() => void s.enrollAgain()}>
+          Forget this browser and enroll again
+        </button>
+        <button class="control-linkish" data-sign-out onClick={() => void s.signOut(false)}>
+          Sign out
+        </button>
+      </Center>
+    );
   if (s.phase === "turned-down")
     return (
       <Center>

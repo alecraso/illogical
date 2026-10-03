@@ -334,6 +334,11 @@ try {
   const logs = Buffer.concat(controlLog).toString();
   check("no terminal content in control's logs", logs.length > 0 && !logs.includes("SECRET-MARKER"), `${logs.length} bytes of log`);
   check("no notification text in control's logs", logs.includes("push relayed") && !logs.includes("Needs you"));
+  // #94: the self-approval refused in 2 is logged, with why and whose,
+  // and not its signature.
+  const refusal = logs.split("\n").find((l) => l.includes("refused") && l.includes(phone.id)) ?? "";
+  check("a refused approval is logged with its reason and ids", refusal.includes("isn't a device this account trusts") && refusal.includes(me.account), refusal);
+  check("but not its signature", !logs.includes(forged.sig));
   spy.close();
 
   // 8. Billing (M22). The free account used the relay past its allowance

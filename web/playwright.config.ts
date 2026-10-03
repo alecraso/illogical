@@ -81,7 +81,9 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
 }
 
 // By default runs against a throwaway debug daemon on 7683 (which serves
-// web/dist from disk), driving the system Chrome. Set E2E_BASE_URL to test a
+// web/dist from disk), driving the system Chrome; `*.webkit.spec.ts` drive
+// Playwright's WebKit (#94: Safari's engine, where device keys behave
+// differently), which needs `pnpm exec playwright install webkit`. Set E2E_BASE_URL to test a
 // daemon that is already running, e.g. through `tailscale serve`.
 // E2E_PORT runs it elsewhere (beside another worktree's run, say).
 const port = Number(process.env.E2E_PORT) || 7683;
@@ -98,9 +100,12 @@ export default defineConfig({
   workers: 1,
   use: {
     baseURL: external ?? `http://127.0.0.1:${port}`,
-    channel: "chrome",
     viewport: { width: 1000, height: 640 },
   },
+  projects: [
+    { name: "chrome", use: { channel: "chrome" }, testIgnore: /\.webkit\.spec\.ts$/ },
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: /\.webkit\.spec\.ts$/ },
+  ],
   webServer: external
     ? undefined
     : {
