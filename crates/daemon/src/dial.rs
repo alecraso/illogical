@@ -441,19 +441,36 @@ fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
 async fn connect_once(opts: &PeerOpts, accept: &mpsc::UnboundedSender<DuplexStream>) -> anyhow::Result<()> {
     let ws = open_socket(opts).await?;
     info!(peer = opts.url, "tunnel to the home daemon up");
-    serve_mux(ws, accept, None).await
+    serve_mux(ws, accept, None, None).await
+}
+
+/// Text messages on control's relay socket besides `trust` (M40): what
+/// to do with those that come, and the latest one to send (sent on
+/// connect and whenever it changes).
+pub struct Texts<'a> {
+    pub on_text: &'a (dyn Fn(&str) + Send + Sync),
+    pub out: tokio::sync::watch::Receiver<Option<String>>,
 }
 
 /// The host end of a mux over `ws`: streams the other end opens go to
 /// `accept`, until the socket closes or goes quiet.
-/// A text message `trust` (control's relay) wakes `nudge`.
+/// A text message `trust` (control's relay) wakes `nudge`; others go to
+/// `texts`.
 pub async fn serve_mux(
     ws: Ws,
     accept: &mpsc::UnboundedSender<DuplexStream>,
     nudge: Option<&Notify>,
+    texts: Option<Texts<'_>>,
 ) -> anyhow::Result<()> {
     let (mux, mut out) = Mux::new(Some(accept.clone()));
     let (mut tx, mut rx) = ws.split();
+    let (on_text, mut say) = match texts {
+        Some(t) => (Some(t.on_text), Some(t.out)),
+        None => (None, None),
+    };
+    if let Some(m) = say.as_mut().and_then(|s| s.borrow_and_update().clone()) {
+        tx.send(tungstenite::Message::Text(m.into())).await?;
+    }
     let mut ping = tokio::time::interval(PING_EVERY);
     let mut heard = Instant::now();
     let result = loop {
@@ -469,14 +486,34 @@ pub async fn serve_mux(
                 Some(Err(e)) => break Err(e.into()),
                 Some(Ok(tungstenite::Message::Text(t))) => {
                     heard = Instant::now();
-                    if t.as_str() == "trust" && let Some(n) = nudge {
-                        n.notify_one();
+                    if t.as_str() == "trust" {
+                        if let Some(n) = nudge {
+                            n.notify_one();
+                        }
+                    } else if let Some(f) = on_text {
+                        f(t.as_str());
                     }
                 }
                 Some(Ok(_)) => heard = Instant::now(),
             },
             Some(f) = out.recv() => {
                 if let Err(e) = tx.send(tungstenite::Message::Binary(f.into())).await { break Err(e.into()) }
+            }
+            changed = async {
+                match say.as_mut() {
+                    Some(s) => s.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match changed {
+                    Ok(()) => {
+                        let m = say.as_mut().and_then(|s| s.borrow_and_update().clone());
+                        if let Some(m) = m && let Err(e) = tx.send(tungstenite::Message::Text(m.into())).await {
+                            break Err(e.into());
+                        }
+                    }
+                    Err(_) => say = None,
+                }
             }
             _ = ping.tick() => {
                 if heard.elapsed() > DEAD_AFTER {

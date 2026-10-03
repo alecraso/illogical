@@ -135,6 +135,9 @@ pub fn router(app: Arc<App>) -> Router {
                 .layer(middleware::from_fn_with_state(app.clone(), api_origin)),
         )
         .merge(crate::share::viewer_routes())
+        // M40: forges' webhooks, by their signatures (the handler checks).
+        .route(crate::forge::live::FORGEJO_PATH, axum::routing::post(crate::forge::live::forgejo_hook))
+        .route(crate::forge::live::GITLAB_PATH, axum::routing::post(crate::forge::live::gitlab_hook))
         .fallback(asset)
         .layer(middleware::from_fn_with_state(app.clone(), cors))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
@@ -271,7 +274,9 @@ enum Class {
     /// or its per-host token) is the credential, checked by the handler.
     /// Or an end-to-end channel, whose handshake is the credential.
     /// Joining is how a tagged sandbox node adds itself; dialing in and
-    /// pushing history are how a dial-out host reaches us.
+    /// pushing history are how a dial-out host reaches us. A forge's
+    /// webhook (M40) is signed with a secret only this daemon and the forge
+    /// hold.
     Token,
     /// MCP with a bearer token (M16): an MCP client without a tailnet
     /// identity of its own, or an agent block's.
@@ -297,6 +302,7 @@ fn class(req: &Request) -> Class {
         || (m == Method::GET && path == crate::dial::DIAL_PATH)
         || (m == Method::GET && path == crate::e2e::PATH)
         || path.starts_with(crate::sync::PUSH_PREFIX)
+        || (m == Method::POST && [crate::forge::live::FORGEJO_PATH, crate::forge::live::GITLAB_PATH].contains(&path))
     {
         Class::Token
     } else if path == crate::mcp::PATH && req.headers().get(header::AUTHORIZATION).is_some() {
