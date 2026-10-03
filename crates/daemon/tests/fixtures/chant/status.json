@@ -1,0 +1,141 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json",
+  "chant": "0.87.0",
+  "compareTo": null,
+  "contract": 1,
+  "env": "local",
+  "lifecycle": {
+    "commit": "7a9982696e339686516fd87a951fe112de29eeb9",
+    "ref": "chant/lifecycle"
+  },
+  "members": [
+    {
+      "compare": null,
+      "dir": "app",
+      "environments": [
+        {
+          "env": "local",
+          "ledger": {
+            "layout": "flat",
+            "path": "local/releases.jsonl",
+            "shared": true
+          },
+          "reason": null,
+          "releases": []
+        }
+      ],
+      "gateLedger": {
+        "layout": "flat",
+        "malformed": 0,
+        "path": "_gates",
+        "reason": {
+          "code": "gates-no-gate-ledger",
+          "message": "_gates does not exist on chant/lifecycle: no run has reached a gate"
+        },
+        "shared": true
+      },
+      "gates": [],
+      "kind": "other",
+      "name": "app",
+      "readable": true
+    },
+    {
+      "compare": null,
+      "dir": "delivery",
+      "environments": [
+        {
+          "env": "local",
+          "ledger": {
+            "layout": "members",
+            "path": "_members/delivery/local/releases.jsonl",
+            "shared": false
+          },
+          "reason": null,
+          "releases": []
+        }
+      ],
+      "gateLedger": {
+        "layout": "members",
+        "malformed": 0,
+        "path": "_members/delivery/_gates",
+        "reason": null,
+        "shared": false
+      },
+      "gates": [],
+      "kind": "chant",
+      "name": "delivery",
+      "readable": true
+    },
+    {
+      "compare": null,
+      "dir": "design-client",
+      "environments": [
+        {
+          "env": "local",
+          "ledger": {
+            "layout": "flat",
+            "path": "local/releases.jsonl",
+            "shared": true
+          },
+          "reason": null,
+          "releases": []
+        }
+      ],
+      "gateLedger": {
+        "layout": "flat",
+        "malformed": 0,
+        "path": "_gates",
+        "reason": {
+          "code": "gates-no-gate-ledger",
+          "message": "_gates does not exist on chant/lifecycle: no run has reached a gate"
+        },
+        "shared": true
+      },
+      "gates": [],
+      "kind": "other",
+      "name": "design-client",
+      "readable": true
+    },
+    {
+      "compare": null,
+      "dir": "design",
+      "environments": [
+        {
+          "env": "local",
+          "ledger": {
+            "layout": "flat",
+            "path": "local/releases.jsonl",
+            "shared": true
+          },
+          "reason": null,
+          "releases": []
+        }
+      ],
+      "gateLedger": {
+        "layout": "flat",
+        "malformed": 0,
+        "path": "_gates",
+        "reason": {
+          "code": "gates-no-gate-ledger",
+          "message": "_gates does not exist on chant/lifecycle: no run has reached a gate"
+        },
+        "shared": true
+      },
+      "gates": [],
+      "kind": "other",
+      "name": "design",
+      "readable": true
+    }
+  ],
+  "summary": {
+    "differing": null,
+    "members": 4,
+    "released": 0,
+    "unreadable": 0
+  },
+  "workspace": {
+    "file": "chant.workspace.json",
+    "name": "reference",
+    "root": "."
+  }
+}

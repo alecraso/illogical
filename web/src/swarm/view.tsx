@@ -12,7 +12,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Fleet, FleetPane } from "../fleet";
-import type { Action, Reason } from "../proto";
+import { gateKey, type Action, type Reason } from "../proto";
 import { AskCard, type Answered } from "../blocks/ask";
 import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE, type Requester } from "../ui/answer-card";
 import { Avatar } from "../ui/people";
@@ -427,7 +427,10 @@ async function act(fleet: Fleet, panes: FleetPane[], action: Action, extra: Reco
   let err: string | null = null;
   await Promise.all(
     [...hosts].map(async ([host, ps]) => {
-      const body = ps.length === 1 ? { action, pane: ps[0].id, id: ps[0].info.reason?.ask?.id, ...extra } : { action, panes: ps.map((p) => p.id), ...extra };
+      const r = ps[0].info.reason;
+      // What it answers: a question or approval's id, or a gate's key (M34).
+      const id = r?.ask?.id ?? (r?.gate ? gateKey(r.gate) : undefined);
+      const body = ps.length === 1 ? { action, pane: ps[0].id, id, ...extra } : { action, panes: ps.map((p) => p.id), ...extra };
       try {
         const res = await fleet.request(host, "POST", "/api/attention/act", body);
         if (!res.ok) err = (await res.json<{ error?: string; results?: { error?: string }[] }>().catch(() => null))?.error ?? `couldn't (${res.status})`;
@@ -517,7 +520,7 @@ function Card({
       ) : (
         <div class="cq">
           {r.headline}
-          {r.command && r.kind !== "ask" && !r.headline.includes(r.command) ? <code> {r.command}</code> : null}
+          {r.command && r.kind !== "ask" && r.kind !== "gate" && !r.headline.includes(r.command) ? <code> {r.command}</code> : null}
         </div>
       )}
       {diff ? (
@@ -556,8 +559,8 @@ function Card({
             </button>
           )}
           {r.actions.includes("allow") && (
-            <button class="pri" disabled={busy} onClick={() => void run("allow")}>
-              {all("Allow")}
+            <button class="pri" data-approve-gate={r.kind === "gate" ? "" : undefined} disabled={busy} onClick={() => void run("allow")}>
+              {all(r.kind === "gate" ? "Approve" : "Allow")}
             </button>
           )}
           {r.actions.includes("deny") && r.ask?.what === "approve" && (

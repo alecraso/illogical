@@ -165,6 +165,10 @@ pub struct Reason {
     /// `ask`: what is asked, and how to answer it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<AskRef>,
+    /// `gate`: the gate that waits (the first, if several do), which
+    /// `allow` approves (M34).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<Box<Gate>>,
     /// What [`api::ActRequest`] can do about it here.
     pub actions: Vec<Action>,
 }
@@ -192,6 +196,72 @@ pub enum ReasonKind {
     /// An agent's edit waits for approval as a diff (Claude Code's
     /// `openDiff`, with illogicald as its IDE).
     Diff,
+    /// A release or an op waits at a gate for a person to approve it (M34:
+    /// a chant gate in a workspace's member).
+    Gate,
+}
+
+/// A gate that waits for someone (M34): an op stopped before a step until
+/// a person approves it. The `gate` reason, its bundle on the swarm's rail,
+/// the card and the phone's sheet are all made from this, whichever reader
+/// found it (`source`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Gate {
+    /// The member (of a workspace) whose op waits.
+    pub member: String,
+    pub op: String,
+    pub gate: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+    /// When it started waiting, and when it stops (RFC 3339).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// Approvals so far, of how many it needs.
+    pub approvals: u64,
+    pub needed: u64,
+    /// The source's own command for approving it, to show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    pub source: GateSource,
+}
+
+/// Where a gate was read, which is how it's approved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GateSource {
+    /// chant on the block's host: approved by `chant approve <op> <gate>`
+    /// in the member's directory, `--approver` the person who approves.
+    Chant {
+        /// The workspace's root, and the member's directory, on that host.
+        root: String,
+        dir: String,
+        /// The machine (sprite) it's on; none for this host.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+}
+
+impl Gate {
+    /// What names it among a block's gates: `member/op/gate`.
+    pub fn key(&self) -> String {
+        format!("{}/{}/{}", self.member, self.op, self.gate)
+    }
+
+    /// "delivery: ship waits at gate approve-ship".
+    pub fn headline(&self) -> String {
+        format!("{}: {} waits at gate {}", self.member, self.op, self.gate)
+    }
+
+    /// Gates of one workspace are one card on the rail: `gate:<root>`
+    /// (with its machine, when it's on one).
+    pub fn bundle(&self) -> String {
+        match &self.source {
+            GateSource::Chant { root, machine: None, .. } => format!("gate:{root}"),
+            GateSource::Chant { root, machine: Some(m), .. } => format!("gate:{m}:{root}"),
+        }
+    }
 }
 
 /// The open question or approval behind an `ask` reason.
@@ -590,6 +660,9 @@ pub enum BlockType {
     /// option (a)): this layout holds its place, and clients reach its
     /// terminal on that daemon directly. Its config is [`RemoteRef`].
     Remote,
+    /// A chant workspace (M34): its members, records and the gates waiting
+    /// in it, read through chant's read contract. Config `{root, env}`.
+    Workspace,
 }
 
 /// Where a remote block's pane lives (#17): a host in the home daemon's

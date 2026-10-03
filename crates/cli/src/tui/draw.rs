@@ -123,6 +123,44 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 let path = s.and_then(|s| s["path"].as_str().map(str::to_owned)).unwrap_or_default();
                 note(buf, r, &format!("%{pid} file {path}  (`illogical capture %{pid}`)"));
             }
+            Some(BlockType::Workspace) => {
+                // M34: what it is on one line, then each gate waiting and
+                // how to approve it.
+                let s = app.blocks.get(&pid);
+                let at = |k: &str| s.and_then(|s| s[k].as_str().map(str::to_owned));
+                let len = |k: &str| s.and_then(|s| s[k].as_array().map(Vec::len)).unwrap_or(0);
+                let name = at("name").unwrap_or_else(|| "workspace".into());
+                let line = match at("error") {
+                    Some(e) => format!("%{pid} chant workspace {}: {e}", at("root").unwrap_or_default()),
+                    None => format!(
+                        "%{pid} chant workspace {name}: {} members, {} gates waiting  (`illogical capture %{pid}`)",
+                        len("members"),
+                        len("gates")
+                    ),
+                };
+                note(buf, r, &line);
+                let gates = s.and_then(|s| s["gates"].as_array()).into_iter().flatten();
+                for (i, g) in gates.enumerate().take(r.height.saturating_sub(1) as usize) {
+                    let g = |k: &str| g[k].as_str().unwrap_or("").to_owned();
+                    let row = Rect { y: r.y + 1 + i as u16, height: 1, ..r };
+                    let text = format!(
+                        "  {}: {} waits at gate {}  (`illogical call %{pid} approve '{{\"key\":\"{}/{}/{}\"}}'`)",
+                        g("member"),
+                        g("op"),
+                        g("gate"),
+                        g("member"),
+                        g("op"),
+                        g("gate")
+                    );
+                    buf.set_stringn(
+                        row.x + 1,
+                        row.y,
+                        text,
+                        row.width.saturating_sub(1) as usize,
+                        Style::default().fg(Color::Yellow),
+                    );
+                }
+            }
             _ => note(buf, r, &format!("%{pid}")),
         }
     }

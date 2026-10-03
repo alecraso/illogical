@@ -1,0 +1,48 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json",
+  "at": null,
+  "chant": "0.87.0",
+  "contract": 1,
+  "declaration": {
+    "diagnostics": [
+      {
+        "column": 5,
+        "entity": "app",
+        "file": "chant.workspace.json",
+        "line": 5,
+        "message": "member app (app) is kind other, which chant does not read: a Node HTTP server with its own Dockerfile and test; no app kind exists yet (#2535)",
+        "ruleId": "WSP009",
+        "severity": "warning"
+      },
+      {
+        "column": 5,
+        "entity": "design-client",
+        "file": "chant.workspace.json",
+        "line": 16,
+        "message": "member design-client (design-client) is kind other, which chant does not read: a placeholder until a hud client package is published to vendor; the kind and upstream come with it",
+        "ruleId": "WSP009",
+        "severity": "warning"
+      },
+      {
+        "column": 5,
+        "entity": "design",
+        "file": "chant.workspace.json",
+        "line": 23,
+        "message": "member design (design) is kind other, which chant does not read: the design data member; decisions pin its files by hash, and its kind comes with #2549",
+        "ruleId": "WSP009",
+        "severity": "warning"
+      }
+    ],
+    "file": "chant.workspace.json",
+    "links": [],
+    "ok": true,
+    "suppressed": []
+  },
+  "findings": [],
+  "lock": null,
+  "ok": true,
+  "workspace": {
+    "name": "reference",
+    "root": "."
+  }
+}

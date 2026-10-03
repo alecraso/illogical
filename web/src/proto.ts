@@ -59,7 +59,7 @@ export type Policy =
 export type Attention = "idle" | "working" | "needs_input" | "done";
 
 /** M24: why a pane wants you. */
-export type ReasonKind = "ask" | "input" | "failed" | "exited" | "done" | "paused" | "errors" | "conflict" | "diff";
+export type ReasonKind = "ask" | "input" | "failed" | "exited" | "done" | "paused" | "errors" | "conflict" | "diff" | "gate";
 export type Action = "allow" | "deny" | "answer" | "dismiss" | "continue" | "accept" | "reject" | "rerun";
 
 export interface Reason {
@@ -72,7 +72,30 @@ export interface Reason {
   /** Same key, one card on a rail: `failed:<machine>`, `ask:<project>:<agent>`. */
   bundle?: string;
   ask?: { id: string; what: "approve" | "question"; agent: string };
+  /** `gate` (M34): the gate that waits (the first of several); `allow`
+   * approves it. */
+  gate?: Gate;
   actions: Action[];
+}
+
+/** M34: a gate waiting for a person, whichever reader found it. */
+export interface Gate {
+  member: string;
+  op: string;
+  gate: string;
+  env?: string;
+  since?: string;
+  expires?: string;
+  approvals: number;
+  needed: number;
+  /** The source's own command, to show. */
+  command?: string;
+  source: { kind: "chant"; root: string; dir: string; machine?: string };
+}
+
+/** What names a gate among its block's: `member/op/gate`. */
+export function gateKey(g: Gate): string {
+  return `${g.member}/${g.op}/${g.gate}`;
 }
 
 /** `POST /api/attention/act`. */
@@ -240,7 +263,7 @@ export interface Delta {
   presence?: Presence[];
 }
 
-export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote";
+export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "workspace";
 
 /** A remote block's config and state (#17): a pane on another host in the
  * home daemon's list, shown in this layout. */

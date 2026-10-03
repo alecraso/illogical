@@ -332,6 +332,18 @@ async fn act_one(
         .await
         .flatten()
         .ok_or_else(|| format!("%{pane} doesn't want anything (it was answered, or dismissed)"))?;
+    // A gate (M34): approve it, through the block that read it.
+    if let Some(g) = reason.gate.filter(|_| reason.kind == illogical_proto::ReasonKind::Gate) {
+        if req.action != Action::Allow {
+            return Err(format!("%{pane} waits at a gate: approve it (allow) or dismiss it"));
+        }
+        if req.id.as_ref().is_some_and(|id| *id != g.key()) {
+            return Err(format!("%{pane} now waits at another gate (that one was approved)"));
+        }
+        let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+        let args = serde_json::json!({ "key": g.key() });
+        return block_call(app, pane, &b, "approve", args, by).await.map(|_| ());
+    }
     let ask = reason.ask.ok_or_else(|| format!("%{pane} isn't asking anything: dismiss it"))?;
     let id = req.id.clone().unwrap_or(ask.id.clone());
     if id != ask.id {
@@ -601,9 +613,18 @@ async fn block_call(
     let waiting = b.waiting();
     let id = args["id"].as_str().map(str::to_owned);
     // The transcript names whoever isn't its owner (the owner's own
-    // answers go unremarked, as before M29).
-    let name = by.as_ref().filter(|d| d.who != "owner").map(|d| d.name.as_str());
+    // answers go unremarked, as before M29). A gate's ledger names whoever
+    // approved it, the owner too, by their illogical name (#75).
+    let gate = b.kind() == illogical_proto::BlockType::Workspace;
+    let name = by.as_ref().filter(|d| gate || d.who != "owner").map(|d| d.name.as_str());
     let out = b.call_by(method, args.clone(), name).await?;
+    if gate && method == "approve" {
+        // Its card closes saying who, and the audit log says so.
+        if let (Some(by), Ok(g)) = (by, serde_json::from_value::<illogical_proto::Gate>(out["gate"].clone())) {
+            app.mux.send(Cmd::Api(Api::Answered(pane, by, g.key(), "approved".into(), g.headline())));
+        }
+        return Ok(out);
+    }
     let how = match method {
         "approve" if args["option"].as_str().is_some_and(|o| o.starts_with("always")) => "allowed always",
         "approve" => "allowed",

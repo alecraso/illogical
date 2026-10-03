@@ -692,6 +692,7 @@ fn plain_reason(kind: ReasonKind, headline: &str) -> Reason {
         duration_ms: None,
         bundle: None,
         ask: None,
+        gate: None,
         actions: vec![Action::Dismiss],
     }
 }
@@ -720,6 +721,7 @@ fn push_title(state: Attention, reason: Option<&Reason>) -> &'static str {
         Some(ReasonKind::Errors) => "Errors",
         Some(ReasonKind::Conflict) => "Merge conflict",
         Some(ReasonKind::Diff) => "Wants to edit",
+        Some(ReasonKind::Gate) => "Waits at a gate",
         None if state == Attention::Done => "Done",
         None => "Needs you",
     }
@@ -1140,6 +1142,7 @@ impl Daemon {
             duration_ms: None,
             bundle: None,
             ask: None,
+            gate: None,
             actions: vec![Action::Accept, Action::Reject, Action::Dismiss],
         })
     }
@@ -1356,6 +1359,7 @@ impl Daemon {
             duration_ms: None,
             bundle: Some(format!("ask:{project}:{agent}")),
             ask: Some(AskRef { id, what, agent }),
+            gate: None,
             actions,
         })
     }
