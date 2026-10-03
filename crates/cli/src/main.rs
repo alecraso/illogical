@@ -220,11 +220,12 @@ enum Command {
         session: Option<String>,
     },
     /// Show a pull request as a block (M36: Forgejo, through your `tea`
-    /// login; M39: a GitLab merge request, through your `glab` login, or
-    /// read-only without one): its checks, reviews and timeline, and what
-    /// it waits on you for. `URL`, `OWNER/REPO#N`, `GROUP/PROJECT!N`, or
-    /// `N` in this directory's repository.
-    /// Prints the block, then the PR as text. `pr comment|review|merge %N`
+    /// login; M38: GitHub, through `gh`'s; M39: a GitLab merge request,
+    /// through your `glab` login, or read-only without one): its checks,
+    /// reviews and timeline, and what it waits on you for. `URL`,
+    /// `OWNER/REPO#N`, `GROUP/PROJECT!N`, or `N` in this directory's
+    /// repository. Prints the block, then the PR as text. `pr
+    /// comment|review|merge|rerun %N`
     /// write to it; run by an agent (CLAUDECODE or AI_AGENT set), a write
     /// is a draft that waits for a person to send it.
     #[command(args_conflicts_with_subcommands = true)]
@@ -649,12 +650,16 @@ enum PrCmd {
     Comment { block: Pane, body: String },
     /// Review it: approve, request_changes or comment.
     Review { block: Pane, event: String, body: Option<String> },
-    /// Merge it (merge, rebase, rebase-merge, squash, fast-forward-only).
+    /// Merge it (merge, rebase, rebase-merge, squash, fast-forward-only;
+    /// GitHub: merge, squash or rebase).
     Merge {
         block: Pane,
         #[arg(long)]
         style: Option<String>,
     },
+    /// Rerun its failed checks (GitHub: each red workflow run's failed
+    /// jobs; Forgejo has no API for it).
+    Rerun { block: Pane },
 }
 
 #[derive(Subcommand)]
@@ -1352,6 +1357,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 PrCmd::Comment { block, body } => (block, "comment", json!({ "body": body })),
                 PrCmd::Review { block, event, body } => (block, "review", json!({ "event": event, "body": body })),
                 PrCmd::Merge { block, style } => (block, "merge", json!({ "style": style })),
+                PrCmd::Rerun { block } => (block, "rerun_checks", json!({})),
             };
             if http::agent() {
                 args["agent"] = json!(true);

@@ -1,6 +1,7 @@
 // Forge blocks (M36): a pull request on the person's Forgejo, read by the
-// daemon with their own `tea` login, or a GitLab merge request with their
-// `glab` login (M39; anonymously and read-only when glab has none). What waits on you comes first (a
+// daemon with their own `tea` login; on GitHub with their `gh` login (M38);
+// or a GitLab merge request with their `glab` login (M39; anonymously and
+// read-only when glab has none). What waits on you comes first (a
 // review asked of you, red checks, changes asked for, a mention), then an
 // agent's drafts, the checks, the reviews and the timeline. An agent's
 // draft is answered on the card over the block (the daemon's ask): edit
@@ -32,7 +33,9 @@ export interface ForgeState {
   provider: string; repo: string; number: number; api: string | null; login: string | null; host: string | null; dir: string | null;
   loading: boolean; error: string | null; read_only?: string | null; logins: { name: string; url: string; user: string }[]; me: string | null; pr: Pr | null;
   wants: { kind: "review" | "failed" | "changes" | "mention" | "done"; why: string }[];
-  rerun: { api: boolean; url: string | null; note: string; pipeline?: string | null } | null; drafts: Draft[];
+  rerun: { api: boolean; url: string | null; note: string; pipeline?: string | null; runs?: number } | null; drafts: Draft[];
+  /** M38: GitHub's rate limit, and why it's backing off. */
+  rate?: { remaining: number | null; limit: number | null; backoff: string | null } | null;
   updated_ms: number; polls: number; reads: number; watching?: boolean; said: string | null;
 }
 
@@ -108,7 +111,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
   };
   const gitlab = s?.provider === "gitlab";
   const merge = async () => {
-    const style = await askText("Merge: how?", "merge", gitlab ? "merge or squash" : "merge, rebase, rebase-merge, squash or fast-forward-only");
+    const style = await askText("Merge: how?", "merge", gitlab ? "merge or squash" : s?.provider === "github" ? "merge, squash or rebase" : "merge, rebase, rebase-merge, squash or fast-forward-only");
     if (style?.trim()) await call("merge", { style: style.trim() }, "couldn't merge");
   };
   const refresh = () => void call("refresh", {}, "couldn't read the pull request");
@@ -149,6 +152,11 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
         )}
         <span class={`review-live ${s.watching ? "on" : ""}`}>{s.watching ? "live" : "paused"}</span>
       </div>
+      {s.rate?.backoff && (
+        <p class="dim ws-note" data-forge-rate>
+          {s.rate.backoff}
+        </p>
+      )}
       {s.error && (
         <div class="browser-card" data-forge-error>
           <p>Can't read this pull request</p>
@@ -175,7 +183,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
           <div class="dim forge-meta">
             {it.author} wants to merge <code>{it.head.repo && it.head.repo !== s.repo ? `${it.head.repo}:` : ""}{it.head.branch}</code> into <code>{it.base.branch}</code>
             {" · "}
-            {s.login && `as ${s.me ?? "?"} (${gitlab ? s.login.replace(/^glab:/, "glab, ") : `tea login ${s.login}`})`}
+            {s.login && `as ${s.me ?? "?"} (${gitlab ? s.login.replace(/^glab:/, "glab, ") : s.provider === "github" ? `gh on ${s.login}` : `tea login ${s.login}`})`}
             {!s.login && s.read_only && "anonymously, read-only"}
             {it.labels.length > 0 && " · "}
             {it.labels.map((l) => (
@@ -207,7 +215,7 @@ function ForgeBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeSta
                       </>
                     )}
                     {w.kind === "failed" && s.rerun?.api && mayWrite && (
-                      <button class="pri" data-rerun disabled={busy !== null} onClick={() => void call("rerun_checks", {}, "couldn't rerun the checks")}>
+                      <button class="pri" data-rerun disabled={busy !== null} title={s.rerun.note} onClick={() => void call("rerun_checks", {}, "couldn't rerun the checks")}>
                         {busy === "rerun_checks" ? "Retrying…" : "Rerun"}
                       </button>
                     )}
