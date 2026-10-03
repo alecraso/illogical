@@ -2339,7 +2339,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 24);
+        assert_eq!(all.len(), 28);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -2356,6 +2356,7 @@ mod tests {
                 "search",
                 "list_conversations",
                 "read_pr",
+                "read_issue",
                 "read_file"
             ]
         );
