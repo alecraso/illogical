@@ -3105,3 +3105,181 @@ button {
   color: var(--dim);
   border-bottom: 1px solid var(--raised-hover);
 }
+/* M34: chant workspace blocks. */
+.ws-body {
+  padding: 10px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ws h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.ws-meta {
+  font-size: 12px;
+}
+
+.ws-gates {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.ws-gate {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 0;
+}
+
+.ws-gate + .ws-gate {
+  border-top: 1px solid var(--divider);
+}
+
+.ws-gate-what {
+  flex: 1;
+  min-width: 200px;
+}
+
+.ws-gate-when {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.ws-said {
+  margin: 0;
+  color: #a6e3a1;
+}
+
+.ws-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.ws-card {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ws-card.waits {
+  border-color: var(--accent);
+}
+
+.ws-card.bad {
+  border-color: var(--danger);
+}
+
+.ws-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.ws-card-head b,
+.ws-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-dir {
+  font-size: 11px;
+}
+
+.ws-kind,
+.ws-tag {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.ws-tag.waits {
+  background: var(--accent);
+  color: var(--letterbox);
+}
+
+.ws-tag.bad {
+  background: var(--danger);
+  color: var(--letterbox);
+}
+
+.ws-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ws-tags:empty {
+  display: none;
+}
+
+.ws-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ws-actions button {
+  background: var(--raised);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.ws-actions button:hover {
+  background: var(--raised-hover);
+}
+
+.ws-actions button.pri {
+  background: var(--accent);
+  color: var(--letterbox);
+  font-weight: 600;
+}
+
+.ws-actions button:disabled {
+  opacity: 0.6;
+}
+
+.ws-record {
+  padding: 3px 0;
+}
+
+.ws-diag {
+  font-size: 12px;
+  margin: 2px 0;
+}
+
+.ws-diag.error {
+  color: var(--danger);
+}
+
+.ws-note {
+  font-size: 11px;
+  margin: 0;
+}
+
+.phone .ws-gate .ws-actions button {
+  padding: 8px 14px;
+  font-size: 14px;
+}

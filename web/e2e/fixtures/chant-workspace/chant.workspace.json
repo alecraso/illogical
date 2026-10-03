@@ -1,0 +1,8 @@
+{
+  "name": "toy",
+  "schema": 1,
+  "members": [
+    { "name": "delivery", "dir": "delivery", "kind": "chant" },
+    { "name": "app", "dir": "app", "kind": "other", "because": "a toy app with nothing for chant to read" }
+  ]
+}

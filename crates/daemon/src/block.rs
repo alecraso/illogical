@@ -233,6 +233,18 @@ impl BlockCtx {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Attention(state, why.into()) });
     }
 
+    /// Ask for attention with a reason of its own (M34: a gate), or say
+    /// more about the same one.
+    pub fn reason(&self, state: Attention, reason: illogical_proto::Reason) {
+        let _ = self.notices.send(Notice { pane: self.id, what: What::Reason(state, reason) });
+    }
+
+    /// Let go of attention, if it's still for a reason of this kind (one
+    /// dismissed or replaced meanwhile is left alone).
+    pub fn clear(&self, kind: illogical_proto::ReasonKind) {
+        let _ = self.notices.send(Notice { pane: self.id, what: What::Clear(kind) });
+    }
+
     /// Something happened that the event stream should carry.
     pub fn event(&self, kind: illogical_proto::EventKind) {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Event(kind) });
@@ -259,6 +271,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::Remote => crate::remote::Remote::create(ctx, config),
         BlockType::Diff => crate::review::diff::Diff::create(ctx, config),
         BlockType::File => crate::review::file::FileView::create(ctx, config),
+        BlockType::Workspace => crate::workspace::Workspace::create(ctx, config),
     }
 }
 

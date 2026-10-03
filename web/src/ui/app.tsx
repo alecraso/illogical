@@ -14,7 +14,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
-import { newRemote, openChanges, openEditor, openPort, remoteHosts } from "../blocks";
+import { newRemote, openChanges, openEditor, openPort, openWorkspace, remoteHosts, useWorkspaceDir } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { ConversationsLayer, pickConversation } from "./conversations";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
@@ -488,6 +488,9 @@ function PaneSlot({
   }, [view]);
 
   const info = client.info(id);
+  // M34: a chant workspace where it runs, to open as one.
+  const workspaceDir = client.cwd(id);
+  const isWorkspace = useWorkspaceDir(client, id, info?.type === "terminal" ? workspaceDir : null);
 
   // Right-clicking a command's mark.
   useEffect(() => {
@@ -563,6 +566,7 @@ function PaneSlot({
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),
       // M11: what changed in its repository, where it runs.
       ...(!client.state?.roles ? [{ label: "Changes", run: () => openChanges(client, id) } as MenuItem] : []),
+      ...(isWorkspace && workspaceDir ? [{ label: "Open as workspace", run: () => openWorkspace(client, workspaceDir, id) } as MenuItem] : []),
       ...(own && !tabMachine
         ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
         : []),

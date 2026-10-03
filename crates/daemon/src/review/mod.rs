@@ -72,7 +72,6 @@ impl Runner {
     /// daemon's (#74): for blocks that run the user's tools (node from
     /// mise or nvm, pyenv), which a pane would find. Waits for it the
     /// first time; without it, the daemon's.
-    #[allow(dead_code)] // M34's workspace block is the first
     pub async fn user(ctx: &BlockCtx) -> Result<Self, String> {
         Ok(match Runner::of(ctx)? {
             Runner::Local { env, home } => {

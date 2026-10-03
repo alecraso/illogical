@@ -377,6 +377,7 @@ fn attention(
         duration_ms: None,
         bundle: None,
         ask: None,
+        gate: None,
         actions,
     };
     // What stopped holding.

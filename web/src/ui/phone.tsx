@@ -4,6 +4,7 @@
 
 import { useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
+import { gateKey } from "../proto";
 import { useSubscribe } from "./hooks";
 import { AttentionBadge } from "./attention";
 import { HostCrumb, HostSection } from "./hosts";
@@ -43,7 +44,11 @@ export function PhoneHeader({ client }: { client: Client }) {
 function Sheet({ client, close }: { client: Client; close: () => void }) {
   const state = client.state!;
   const active = client.active();
-  const wanting = state.panes.filter((p) => p.attention === "needs_input" || p.attention === "done");
+  // Gates first (M34): a release waiting for a person is the most likely
+  // reason to have opened this on a phone.
+  const wanting = state.panes
+    .filter((p) => p.attention === "needs_input" || p.attention === "done")
+    .sort((a, b) => Number(b.reason?.kind === "gate") - Number(a.reason?.kind === "gate"));
   const act = (fn: () => void) => () => {
     fn();
     close();
@@ -59,7 +64,9 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           <section class="needs-you">
             <h2>Needs you</h2>
             {wanting.map((p) => {
-              const rerun = p.reason?.actions.includes("rerun") && client.role(client.sessionOfTab(client.tabOfPane(p.id)?.id ?? -1) ?? null) !== "viewer";
+              const may = client.role(client.sessionOfTab(client.tabOfPane(p.id)?.id ?? -1) ?? null) !== "viewer";
+              const rerun = p.reason?.actions.includes("rerun") && may;
+              const gate = p.reason?.kind === "gate" ? p.reason.gate : undefined;
               return (
                 <div key={p.id} class="sheet-row" data-wants={p.id}>
                   <button class="sheet-item" onClick={act(() => client.setActive(p.id))}>
@@ -69,6 +76,11 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
                   {rerun && (
                     <button class="sheet-act" data-rerun={p.id} onClick={act(() => void client.act({ action: "rerun", pane: p.id }))}>
                       Rerun
+                    </button>
+                  )}
+                  {gate && may && (
+                    <button class="sheet-act" data-approve-gate={p.id} onClick={act(() => void client.act({ action: "allow", pane: p.id, id: gateKey(gate) }))}>
+                      Approve
                     </button>
                   )}
                 </div>

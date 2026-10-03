@@ -395,6 +395,20 @@ pub struct ShowFileArgs {
     pub beside: Option<PaneArg>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct OpenWorkspaceArgs {
+    /// The workspace's root: a directory holding chant.workspace.json (an
+    /// absolute path, or ~/...).
+    pub dir: String,
+    /// The environment whose gates and releases to read (default local).
+    #[serde(default)]
+    pub env: Option<String>,
+    /// Beside this pane, on its machine (an agent block's token: default
+    /// the agent itself).
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
 // ---------------------------------------------------------------- the list
 
 struct Def {
@@ -571,6 +585,16 @@ fn defs() -> Vec<Def> {
             open_world: false,
         },
         Def {
+            name: "open_workspace",
+            title: "Show a chant workspace",
+            description: "Open a chant workspace block (M34) beside a pane: its members as cards (open a shell, an agent or the changes in one), its records, and the gates waiting for a person, which the user can approve there and which show as attention on the phone and the swarm. Read through the workspace's own chant. Returns its members and the gates waiting.",
+            schema: schema_for_type::<OpenWorkspaceArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
             name: "read_file",
             title: "Read a file",
             description: "A text file on this host or the machine a pane runs on, paged by byte offset.",
@@ -711,6 +735,10 @@ impl<'a> Call<'a> {
             },
             "show_file" => match parse(args) {
                 Ok(a) => self.show_file(a).await,
+                Err(e) => Err(e),
+            },
+            "open_workspace" => match parse(args) {
+                Ok(a) => self.open_workspace(a).await,
                 Err(e) => Err(e),
             },
             _ => Err(format!("no tool {name}")),
@@ -1471,6 +1499,60 @@ impl<'a> Call<'a> {
         done(format!("Showing {}{at} in file block %{block}", a.path), json!({ "block": block }))
     }
 
+    async fn open_workspace(&self, a: OpenWorkspaceArgs) -> Out {
+        let (beside, host) = self.beside(a.beside.as_ref()).await?;
+        let dir = a.dir.trim_end_matches('/').to_owned();
+        if !dir.starts_with('/') && !dir.starts_with("~/") {
+            return Err(format!("{dir:?}: give the workspace's directory as an absolute path"));
+        }
+        let req = OpenRequest {
+            kind: BlockType::Workspace,
+            config: json!({ "root": dir, "env": a.env.as_deref().unwrap_or("local") }),
+            session: None,
+            split: beside,
+            from_pane: beside,
+            vm: false,
+            image: None,
+            host,
+            local: host.is_none(),
+        };
+        let block = self.open(req).await?;
+        // Its first read takes a second or two (four chant processes).
+        let deadline = Instant::now() + Duration::from_secs(40);
+        let state = loop {
+            let b = self.app.mux.api(|r| Api::Block(block, r)).await.flatten().ok_or("the block closed")?;
+            let st = b.state();
+            if st["updated_ms"].as_u64().is_some_and(|t| t > 0) || Instant::now() > deadline {
+                break st;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        if let Some(e) = state["error"].as_str() {
+            return Err(format!("workspace block %{block}: {e}"));
+        }
+        let members: Vec<Value> = state["members"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|m| json!({ "name": m["name"], "dir": m["dir"], "kind": m["kind"], "errors": m["errors"], "gates": m["gates"] }))
+            .collect();
+        let gates = state["gates"].clone();
+        let waiting = gates.as_array().map_or(0, Vec::len);
+        done(
+            format!(
+                "Workspace block %{block}: {} ({} members{}); read_output on %{block} has the whole of it",
+                state["name"].as_str().unwrap_or("workspace"),
+                members.len(),
+                match waiting {
+                    0 => String::new(),
+                    1 => ", a gate waits for the user".into(),
+                    n => format!(", {n} gates wait for the user"),
+                }
+            ),
+            json!({ "block": block, "root": state["root"], "members": members, "gates": gates }),
+        )
+    }
+
     async fn open(&self, req: OpenRequest) -> Result<PaneId, String> {
         match self.app.mux.api(|r| Api::Open(req, None, r)).await {
             Some(Ok(b)) => {
@@ -1878,7 +1960,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 17);
+        assert_eq!(all.len(), 18);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))

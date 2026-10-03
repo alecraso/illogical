@@ -10,6 +10,7 @@ import type { Client } from "../client";
 import type { PaneId } from "../proto";
 import { directory } from "../hosts";
 import { fuzzy, isDir, listDirs, recentDirs, type FsList } from "../fs";
+import { isWorkspace, openWorkspace } from "../blocks/workspace";
 
 let open: { client: Client; pane: PaneId; phone: boolean } | null = null;
 const listeners = new Set<() => void>();
@@ -77,6 +78,8 @@ function Picker({ client, pane, phone, close }: { client: Client; pane: PaneId; 
   const [sel, setSel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // M34: the directory shown is a chant workspace.
+  const [workspace, setWorkspace] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const started = useRef(false);
@@ -109,6 +112,16 @@ function Picker({ client, pane, phone, close }: { client: Client; pane: PaneId; 
       .then(setRecent)
       .catch(() => setRecent([]));
   }, []);
+
+  useEffect(() => {
+    setWorkspace(false);
+    if (!list || client.state?.roles) return;
+    let live = true;
+    void isWorkspace(client, pane, list.path).then((v) => live && setWorkspace(v));
+    return () => {
+      live = false;
+    };
+  }, [list?.path]);
 
   // A phone's keyboard would cover half the list: only on request there.
   useLayoutEffect(() => {
@@ -272,6 +285,17 @@ function Picker({ client, pane, phone, close }: { client: Client; pane: PaneId; 
           <button disabled={!list || busy || !isTerminal} title={cdRefusal ?? undefined} onClick={() => void act("cd")}>
             cd there
           </button>
+          {workspace && list && (
+            <button
+              data-open-workspace
+              onClick={() => {
+                openWorkspace(client, list.path, pane);
+                close();
+              }}
+            >
+              Open as workspace
+            </button>
+          )}
           <button onClick={close}>Cancel</button>
         </div>
       </div>
