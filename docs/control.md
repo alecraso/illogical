@@ -70,6 +70,43 @@ illogical-control --public-url https://control.example.com --listen 127.0.0.1:76
   - **GitHub**: register a GitHub App (or OAuth app) with the callback
     `https://control.example.com/auth/github/callback`, then set
     `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
+- **The GitHub App** (M40, optional): forge blocks' live updates from
+  GitHub, and read access for hosted boxes with no `gh` login. Make it
+  with GitHub's manifest flow (or by hand at *Settings → Developer settings
+  → GitHub Apps*):
+  - **Permissions**, all read-only: metadata, contents, pull requests,
+    issues, checks, commit statuses, actions.
+  - **Events:** pull request, pull request review, pull request review
+    comment, issues, issue comment, check run, check suite, status,
+    workflow run.
+  - **Webhook URL** `https://control.example.com/github/webhook`, with a
+    secret. **Callback URL** `https://control.example.com/auth/github/callback`
+    if it also signs people in.
+  - Install it on the accounts (or organizations) whose repositories you
+    want live, then give control its id, slug, client id and secret,
+    webhook secret and private key: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`,
+    `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`,
+    `GITHUB_APP_WEBHOOK_SECRET`, and `GITHUB_APP_PRIVATE_KEY_FILE` (a
+    `.pem` path) or `GITHUB_APP_PRIVATE_KEY` (the PEM itself; `\n` for
+    newlines works). On Fly:
+    `fly secrets set GITHUB_APP_ID=… GITHUB_APP_SLUG=… GITHUB_APP_CLIENT_ID=… GITHUB_APP_CLIENT_SECRET=… GITHUB_APP_WEBHOOK_SECRET=… GITHUB_APP_PRIVATE_KEY="$(cat app.pem)"`.
+  - With no `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`, the App's client id
+    and secret sign people in with GitHub.
+  - **What control keeps of a webhook:** the signature is checked
+    (HMAC-SHA256, constant time), the delivery id deduplicated, and only
+    `{provider, host, repo, number?, event, delivery}` goes to daemons,
+    over their relay sockets. Its log has the event, delivery, repository
+    and how many daemons heard; never the payload.
+  - **Who hears what:** a daemon's account must have signed in with GitHub,
+    and the App's installation for the repository must be that GitHub
+    user's, or GitHub must list them as a collaborator on it (asked with
+    an installation token; answers kept ten minutes). Organization
+    membership alone doesn't count, and passkey-only accounts hear
+    nothing: their blocks poll.
+  - **Hosted boxes** ask `POST /api/daemon/github/token {repo}` (signed as
+    the daemon) for an installation token scoped to that repository with
+    read-only permissions; control keeps one until five minutes before it
+    expires.
 - **Behind a proxy** that passes the client's address in a header, use
   `--trust-proxy-header` (for example `Fly-Client-IP`), so rate limits are
   per client.

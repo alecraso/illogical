@@ -344,3 +344,59 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
     let (_, v) = hook(&base, "pull_request", "del-7", &pr2, Some(sig(&pr2.to_string()))).await;
     assert_eq!(v["relayed"], 0);
 }
+
+/// By hand, once, read-only: the real App (`ILLOGICAL_REAL_GITHUB_APP_ENV`
+/// names its env file, as the manifest flow left it): a JWT, the App's
+/// installations, an installation token for one repository, and a PR read
+/// with it. Prints no secret.
+/// `ILLOGICAL_REAL_GITHUB_APP_ENV=… ILLOGICAL_REAL_REPO=o/r ILLOGICAL_REAL_PR=N cargo test -p illogical-control real_app -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn real_app_reads() {
+    let env = std::fs::read_to_string(std::env::var("ILLOGICAL_REAL_GITHUB_APP_ENV").unwrap()).unwrap();
+    let get = |k: &str| {
+        env.lines().find_map(|l| l.strip_prefix(&format!("{k}="))).map(|v| v.trim().trim_matches('"').to_owned())
+    };
+    let pem = std::fs::read_to_string(get("GITHUB_APP_PRIVATE_KEY_FILE").unwrap()).unwrap();
+    let app = forge::GithubApp::new(
+        get("GITHUB_APP_ID").unwrap(),
+        get("GITHUB_APP_SLUG").unwrap(),
+        String::new(),
+        "https://api.github.com",
+        forge::parse_pem(&pem).unwrap(),
+    );
+    let http = reqwest::Client::new();
+    let jwt = app.jwt(now_ms() / 1000).unwrap();
+    let r = http
+        .get("https://api.github.com/app/installations")
+        .bearer_auth(&jwt)
+        .header("User-Agent", "illogical-control")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .unwrap();
+    println!("GET /app/installations: {}", r.status());
+    let v: Value = r.json().await.unwrap();
+    for i in v.as_array().into_iter().flatten() {
+        println!("  installation {} on {} ({})", i["id"], i["account"]["login"], i["repository_selection"]);
+    }
+    let repo = std::env::var("ILLOGICAL_REAL_REPO").unwrap();
+    let pr = std::env::var("ILLOGICAL_REAL_PR").unwrap();
+    let install = app.installation(&http, &repo).await.unwrap().expect("installed there");
+    println!("installation for {repo}: {} on {}", install.id, install.account);
+    let owner = repo.split('/').next().unwrap();
+    println!("may {owner} hear {repo}: {:?}", app.may(&http, owner, &repo).await.map(|i| i.id));
+    let (token, expires) = app.token(&http, install.id, repo.split('/').nth(1).unwrap()).await.unwrap();
+    println!("installation token minted, {} chars, expires {expires}", token.len());
+    let r = http
+        .get(format!("https://api.github.com/repos/{repo}/pulls/{pr}"))
+        .bearer_auth(&token)
+        .header("User-Agent", "illogical-control")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .unwrap();
+    let status = r.status();
+    let v: Value = r.json().await.unwrap();
+    println!("GET repos/{repo}/pulls/{pr}: {status}: {:?} ({}), head {}", v["title"], v["state"], v["head"]["sha"]);
+}
