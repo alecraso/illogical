@@ -877,13 +877,7 @@ pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<serd
         .take(q.limit.unwrap_or(500))
         .map(|mut c| {
             let block = blocks.get(&c.id).copied();
-            if let Some(l) = c.live.as_mut() {
-                // A scope named for a pane of another daemon on this
-                // machine (a dev or test one) isn't one of ours.
-                l.pane = l.pane.filter(|p| ours.contains(p));
-                l.block = l.block.filter(|p| ours.contains(p));
-                l.place = l.place();
-            }
+            c.live = c.live.take().map(|l| l.ours(|p| ours.contains(&p)));
             // The adapter of the block that has it, when its scope didn't
             // say (no systemd scopes).
             if let (Some(b), Some(l)) = (block, c.live.as_mut())

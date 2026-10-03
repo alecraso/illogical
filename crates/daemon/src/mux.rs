@@ -521,6 +521,9 @@ struct Daemon {
     push: Option<Push>,
     /// Non-terminal blocks (terminals are in `panes`).
     blocks: HashMap<PaneId, Arc<dyn Block>>,
+    /// The ids of both, for blocks to tell our panes from another daemon's
+    /// (#77).
+    ids: crate::block::PaneIds,
     /// Questions open in terminals, one per pane (M6c).
     asks: HashMap<PaneId, TermAsk>,
     /// Who answered each pane's last card (M29).
@@ -656,6 +659,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         events: events.clone(),
         push,
         blocks: HashMap::new(),
+        ids: Default::default(),
         asks: HashMap::new(),
         answered: HashMap::new(),
         pre: HashMap::new(),
@@ -972,6 +976,7 @@ impl Daemon {
             host,
         })?;
         self.panes.insert(id, h);
+        self.ids.lock().unwrap().insert(id);
         self.sizes.insert(id, (cols, rows));
         Ok(())
     }
@@ -1001,12 +1006,14 @@ impl Daemon {
             fs: self.fs.clone(),
             shell_env: self.shell_env.clone(),
             cmds: Some(self.tx.clone()),
+            ids: self.ids.clone(),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();
         let ctx = BlockCtx::new(id, dir, base, sprite, is_restore, policy, kept);
         let b = crate::block::create(kind, ctx, config)?;
         self.blocks.insert(id, b);
+        self.ids.lock().unwrap().insert(id);
         Ok(())
     }
 
@@ -2960,6 +2967,7 @@ impl Daemon {
                     }
                 }
                 Effect::Kill { pane } => {
+                    self.ids.lock().unwrap().remove(&pane);
                     if let Some(p) = self.panes.remove(&pane) {
                         p.close();
                     }

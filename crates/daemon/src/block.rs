@@ -151,7 +151,12 @@ pub struct BlockEnv {
     pub shell_env: Arc<crate::shellenv::ShellEnv>,
     /// The multiplexer, for a block that raises questions on itself (M35).
     pub cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
+    /// The daemon's panes and blocks.
+    pub ids: PaneIds,
 }
+
+/// The ids of the daemon's panes and blocks, as the multiplexer keeps them.
+pub type PaneIds = Arc<Mutex<std::collections::HashSet<PaneId>>>;
 
 /// What a block gets from the daemon.
 #[derive(Clone)]
@@ -180,6 +185,7 @@ pub struct BlockCtx {
     pub fs: Arc<crate::fs::Scope>,
     pub shell_env: Arc<crate::shellenv::ShellEnv>,
     cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
+    ids: PaneIds,
 }
 
 impl BlockCtx {
@@ -210,7 +216,13 @@ impl BlockCtx {
             fs: base.fs,
             shell_env: base.shell_env,
             cmds: base.cmds,
+            ids: base.ids,
         }
+    }
+
+    /// Whether a pane or block is this daemon's (#77).
+    pub fn ours(&self, id: PaneId) -> bool {
+        self.ids.lock().unwrap().contains(&id)
     }
 
     /// Raise a question on this block (M35), drawn and answered as a

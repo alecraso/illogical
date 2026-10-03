@@ -1051,7 +1051,7 @@ impl Agent {
             // nothing running (M33).
             if !inner.frozen {
                 inner.status = Status::Stopped;
-                refresh_import(self.ctx.id, &mut inner);
+                refresh_import(&self.ctx, &mut inner);
                 return;
             }
         }
@@ -1398,7 +1398,7 @@ async fn run(
                 if tokio::time::Instant::now() >= follow_at {
                     follow_at = tokio::time::Instant::now() + FOLLOW_EVERY;
                     let mut g = inner.lock().unwrap();
-                    if g.cfg.import.is_some() && !g.frozen && refresh_import(ctx.id, &mut g) {
+                    if g.cfg.import.is_some() && !g.frozen && refresh_import(&ctx, &mut g) {
                         dirty = true;
                     }
                 }
@@ -1449,11 +1449,13 @@ async fn fountain_busy(def: &Def, session: &str) -> Option<bool> {
 
 /// An opened conversation, read again if its transcript changed; and who
 /// holds it now. True if anything changed.
-fn refresh_import(block: illogical_proto::PaneId, g: &mut Inner) -> bool {
+fn refresh_import(ctx: &BlockCtx, g: &mut Inner) -> bool {
     let Some(imp) = g.cfg.import.clone() else { return false };
     let held = g.cfg.session_id.as_deref().and_then(|sid| {
-        crate::conversations::Index::global().lock().unwrap().live_for(sid).filter(|l| l.block != Some(block))
+        crate::conversations::Index::global().lock().unwrap().live_for(sid).filter(|l| l.block != Some(ctx.id))
     });
+    // A scope can name another daemon's pane (#77).
+    let held = held.map(|l| l.ours(|p| ctx.ours(p)));
     let mut changed = held != g.held;
     if changed {
         // Whether a tool call without a result was cut off depends on it.
@@ -1847,7 +1849,7 @@ impl Agent {
         if g.cfg.import.is_none() || g.frozen {
             return Ok(());
         }
-        refresh_import(self.ctx.id, g);
+        refresh_import(&self.ctx, g);
         if let Some(l) = &g.held {
             return Err(format!("it's {}: fork it instead, or continue once that's closed", l.place()));
         }
@@ -1882,7 +1884,7 @@ impl Agent {
             return Err("there's no session to fork yet".into());
         }
         if g.cfg.import.is_some() && !g.frozen {
-            refresh_import(self.ctx.id, &mut g);
+            refresh_import(&self.ctx, &mut g);
             self.freeze(&mut g)?;
         }
         g.cfg.fork = true;
