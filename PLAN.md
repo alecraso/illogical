@@ -3421,6 +3421,7 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
   | 23.6 MiB (ravix session) | 1,897 | 55 ms, 25 MiB peak | 0.43 ms median, 0.9 ms max; no measurable peak |
 
   The first read when a block opens costs what a whole conversion did. What's left per change is mostly copying the entries into the block's transcript, which grows with the entries, not the bytes (744 entries from 30 MiB).
+  With #79 merged, each read also walks the whole chain again to mark what a resume wouldn't follow: on the 30.6 MiB transcript an appended line went to 1.3 ms median (2.1 ms max), against 31–47 ms for the whole file. Still no measurable memory.
 - **Tests:** following gives exactly what a whole conversion gives, for S20's fixtures appended a line at a time and in pieces that split lines (finished and not); a rewind whose earlier prompt was read before its new one; a file truncated, rewritten in place at the same length, replaced by a rename, and emptied.
 - **Not covered:** a rewrite in place that leaves the file at least as long and the 4 KiB before the offset as they were, but changes something earlier. Claude Code only appends.
 
