@@ -211,6 +211,29 @@ enum Command {
         #[command(subcommand)]
         cmd: ClaudeCmd,
     },
+    /// Your studio (M35: arugula-salad's): `login URL` keeps a studio
+    /// token in the daemon (read from stdin), `logout` forgets it, and
+    /// `follower APP` keeps a hud follower link for an app's box.
+    Studio {
+        #[command(subcommand)]
+        cmd: Option<StudioCmd>,
+    },
+    /// Open a studio app's box as a block (M35); prints its block. With no
+    /// name, lists your apps.
+    App {
+        /// The app's name in studio.
+        name: Option<String>,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`.
+        #[arg(long)]
+        split: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        /// The daemon follows the box with the app's follower link
+        /// (`illogical studio follower`), so hud is told who answered.
+        #[arg(long)]
+        follower: bool,
+    },
     /// Editors in the swarm (M28): VS Code, Cursor or nvim that joined, and
     /// editor blocks. `editors install` adds illogical's extension to VS
     /// Code or Cursor here (in a Remote-SSH window's terminal: there).
@@ -569,6 +592,25 @@ enum ClaudeCmd {
         /// Split this block instead of opening a tab.
         #[arg(long)]
         split: Option<Pane>,
+    },
+}
+
+#[derive(Subcommand)]
+enum StudioCmd {
+    /// Keep a studio token in the daemon (mode 0600, never sent to a
+    /// client). The token is read from stdin, or asked for.
+    Login {
+        /// The studio, e.g. `https://studio.example`.
+        url: String,
+    },
+    /// Forget the token, and every follower link.
+    Logout,
+    /// Keep the follower link the box's owner made with `hud share --role
+    /// follower` (read from stdin), or with `--forget`, drop it.
+    Follower {
+        app: String,
+        #[arg(long)]
+        forget: bool,
     },
 }
 
@@ -1311,6 +1353,77 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 println!("{id}  {src:<5} {when:>8}  {title}  {cwd}{tags}");
             }
         }
+        Command::Studio { cmd } => {
+            let v = match cmd {
+                None => request(&sock, "GET", "/api/studio", None)?.json()?,
+                Some(StudioCmd::Login { url }) => {
+                    let token = secret_input("Studio token: ")?;
+                    request(&sock, "POST", "/api/studio", Some(&json!({ "url": url, "token": token })))?.json()?
+                }
+                Some(StudioCmd::Logout) => request(&sock, "DELETE", "/api/studio", None)?.json()?,
+                Some(StudioCmd::Follower { app, forget: true }) => {
+                    request(&sock, "DELETE", &format!("/api/studio/followers/{}", enc(&app)), None)?.json()?
+                }
+                Some(StudioCmd::Follower { app, forget: false }) => {
+                    let link = secret_input("Follower link: ")?;
+                    let path = format!("/api/studio/followers/{}", enc(&app));
+                    request(&sock, "PUT", &path, Some(&json!({ "link": link })))?.json()?
+                }
+            };
+            if json_out {
+                print_json(&v);
+            } else if let Some(apps) = v["apps"].as_array() {
+                println!("logged in; {} app{}", apps.len(), if apps.len() == 1 { "" } else { "s" });
+            } else if let Some(url) = v["url"].as_str() {
+                let state = if v["logged_in"] == true { "logged in" } else { "logged out" };
+                println!("{url}: {state}");
+                for f in v["followers"].as_array().into_iter().flatten() {
+                    println!("  follower link for {}", f.as_str().unwrap_or("?"));
+                }
+            } else if v.get("logged_in").is_some() {
+                println!("no studio: `illogical studio login <url>`");
+            }
+        }
+        Command::App { name: None, .. } => {
+            let v = request(&sock, "GET", "/api/studio/apps", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            for a in v["apps"].as_array().into_iter().flatten() {
+                let s = |k: &str| a[k].as_str().unwrap_or("");
+                let blocks: Vec<String> = a["blocks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|b| b.as_u64())
+                    .map(|b| format!("%{b}"))
+                    .collect();
+                let open = if blocks.is_empty() { String::new() } else { format!("  [{}]", blocks.join(", ")) };
+                let status = if s("status").is_empty() { String::new() } else { format!(" ({})", s("status")) };
+                println!("{:<24} {}{status}{open}", s("name"), s("url"));
+            }
+        }
+        Command::App { name: Some(name), split, session, follower } => {
+            let split = match split.as_deref() {
+                None => None,
+                Some("right") => Some(here(None)?),
+                Some(p) => Some(p.parse::<Pane>().map_err(anyhow::Error::msg)?.0),
+            };
+            let body = json!({
+                "type": "app",
+                "config": { "app": name, "follower": follower },
+                "split": split,
+                "session": session,
+                "from_pane": env_pane(),
+            });
+            let v = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("%{}", v["block"]);
+            }
+        }
         Command::Claude { cmd: ClaudeCmd::Open { id, session, split } } => {
             let body = json!({ "id": id, "session": session, "split": split.map(|p| p.0), "from_pane": env_pane() });
             let v = request(&sock, "POST", "/api/conversations/open", Some(&body))?.json()?;
@@ -1896,6 +2009,37 @@ fn vsix(sock: &http::Target) -> anyhow::Result<(String, Vec<u8>)> {
         .map(|f| f.trim_matches('"').to_owned())
         .unwrap_or_else(|| "illogical-editor.vsix".into());
     Ok((name, res.bytes()?))
+}
+
+/// A secret from stdin: piped, the first line; on a terminal, asked for
+/// without echo.
+fn secret_input(prompt: &str) -> anyhow::Result<String> {
+    use std::io::IsTerminal;
+    let stdin = std::io::stdin();
+    let tty = stdin.is_terminal();
+    let saved = if tty {
+        eprint!("{prompt}");
+        let _ = std::io::stderr().flush();
+        nix::sys::termios::tcgetattr(&stdin).ok().inspect(|t| {
+            let mut quiet = t.clone();
+            quiet.local_flags.remove(nix::sys::termios::LocalFlags::ECHO);
+            let _ = nix::sys::termios::tcsetattr(&stdin, nix::sys::termios::SetArg::TCSANOW, &quiet);
+        })
+    } else {
+        None
+    };
+    let mut line = String::new();
+    let read = stdin.read_line(&mut line);
+    if let Some(t) = saved {
+        let _ = nix::sys::termios::tcsetattr(&stdin, nix::sys::termios::SetArg::TCSANOW, &t);
+        eprintln!();
+    }
+    read?;
+    let v = line.trim().to_owned();
+    if v.is_empty() {
+        bail!("nothing given on stdin");
+    }
+    Ok(v)
 }
 
 #[cfg(test)]

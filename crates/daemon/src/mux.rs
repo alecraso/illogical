@@ -119,9 +119,15 @@ pub enum Api {
     /// Delete and recreate a machine; its panes restart by policy.
     ResetMachine(MachineId, oneshot::Sender<Result<(), String>>),
     /// A question asked in a terminal (`illogical ask`, from Claude Code's
-    /// hook): shown beside it until answered. The reply carries a token
-    /// (for withdrawing exactly this one) and where the answer will come.
-    Ask(PaneId, Box<Ask>, oneshot::Sender<Result<(u64, oneshot::Receiver<AskReply>), String>>),
+    /// hook), or on a block (M35: a studio box's agent, through its
+    /// follower): shown beside it until answered. The reply carries a
+    /// token (for withdrawing exactly this one) and where the answer will
+    /// come, with who gave it.
+    Ask(PaneId, Box<Ask>, oneshot::Sender<Result<(u64, oneshot::Receiver<Replied>), String>>),
+    /// Whether the daemon holds a question open on a pane or block (one
+    /// raised through `Ask`), so its answer goes there and not to the
+    /// block's own methods.
+    Holds(PaneId, oneshot::Sender<bool>),
     /// A client answered a terminal's question (`id`: which; `None`: the
     /// one open). Replies with the question, or why not.
     AskReply(PaneId, Option<String>, AskReply, Option<Driver>, oneshot::Sender<Result<Ask, String>>),
@@ -215,6 +221,10 @@ pub enum AskReply {
     Deny { message: String },
 }
 
+/// What a question's asker gets: the answer, and who gave it (`None`:
+/// nobody did; it was withdrawn).
+pub type Replied = (AskReply, Option<Driver>);
+
 /// What a follow-up waiter (`illogical inbox`) gets.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InboxReply {
@@ -235,11 +245,11 @@ struct Waiter {
 /// How many follow-ups wait for an agent that isn't listening yet.
 const MAX_QUEUED: usize = 8;
 
-/// A question open in a terminal.
+/// A question open in a terminal, or raised on a block (M35).
 struct TermAsk {
     ask: Ask,
     token: u64,
-    reply: oneshot::Sender<AskReply>,
+    reply: oneshot::Sender<Replied>,
 }
 
 #[derive(Clone)]
@@ -963,6 +973,7 @@ impl Daemon {
             secrets: self.config.secrets.clone(),
             mcp: self.config.mcp.clone(),
             fs: self.fs.clone(),
+            cmds: Some(self.tx.clone()),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();
@@ -1313,18 +1324,35 @@ impl Daemon {
     /// An open question in a terminal (Claude Code's hook), or a block's
     /// open permission request or question.
     fn ask_reason(&self, pane: PaneId) -> Option<Reason> {
-        let (id, what, headline, agent, cwd, at_ms) = if let Some(a) = self.asks.get(&pane) {
-            let agent = self.agent_name(pane).unwrap_or_else(|| "claude".into());
-            let cwd =
-                self.panes.get(&pane).and_then(|h| h.status().cwd.or_else(|| h.cwd().map(|c| c.display().to_string())));
+        let local = self.meta.get(&pane).and_then(|m| m.host).is_none();
+        let (id, what, headline, agent, project, at_ms) = if let Some(a) = self.asks.get(&pane) {
             let what = if a.ask.kind == AskKind::Permission { AskWhat::Approve } else { AskWhat::Question };
-            (a.ask.id.clone(), what, a.ask.headline(), agent, cwd, a.ask.at_ms)
+            let (agent, project) = match self.blocks.get(&pane) {
+                // Raised on a block (M35): who asks is the ask's, and the
+                // project the block's (a studio box's app), not a cwd.
+                Some(b) => {
+                    let s = b.summary();
+                    let project = match s.project {
+                        Some(p) => p.root,
+                        None => project_key(s.cwd.as_deref(), local),
+                    };
+                    (a.ask.agent.clone().unwrap_or_else(|| a.ask.source.clone()), project)
+                }
+                None => {
+                    let agent =
+                        a.ask.agent.clone().or_else(|| self.agent_name(pane)).unwrap_or_else(|| "claude".into());
+                    let cwd = self
+                        .panes
+                        .get(&pane)
+                        .and_then(|h| h.status().cwd.or_else(|| h.cwd().map(|c| c.display().to_string())));
+                    (agent, project_key(cwd.as_deref(), local))
+                }
+            };
+            (a.ask.id.clone(), what, a.ask.headline(), agent, project, a.ask.at_ms)
         } else {
             let w = self.blocks.get(&pane)?.waiting()?;
-            (w.id, w.what, w.headline, w.agent, w.cwd, w.at_ms)
+            (w.id, w.what, w.headline, w.agent, project_key(w.cwd.as_deref(), local), w.at_ms)
         };
-        let local = self.meta.get(&pane).and_then(|m| m.host).is_none();
-        let project = project_key(cwd.as_deref(), local);
         let actions = match what {
             AskWhat::Approve => vec![Action::Allow, Action::Deny, Action::Dismiss],
             AskWhat::Question => vec![Action::Answer, Action::Deny, Action::Dismiss],
@@ -1433,6 +1461,10 @@ impl Daemon {
                 // Its config may have changed with it.
                 self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
             }
+            // A question raised on a block (M35) still wants an answer,
+            // whatever the block says about itself meanwhile (a page that
+            // finished loading).
+            What::Attention(state, _) if state != Attention::NeedsInput && self.asks.contains_key(&pane) => {}
             What::Attention(state, why) => self.set_attention(pane, state, &why),
             What::Reason(state, reason) => {
                 // The same reason again, saying more (the debugger's line,
@@ -1717,7 +1749,10 @@ impl Daemon {
                 let _ = reply.send(out);
             }
             Api::Reason(pane, reply) => {
-                let _ = reply.send(self.live_reason(pane).map(|r| (r, self.blocks.contains_key(&pane))));
+                // A block answers through its own methods, unless the daemon
+                // holds the question (M35: raised on it through `Ask`).
+                let block = self.blocks.contains_key(&pane) && !self.asks.contains_key(&pane);
+                let _ = reply.send(self.live_reason(pane).map(|r| (r, block)));
             }
             Api::Machines(reply) => {
                 let _ = reply.send(self.machines.values().cloned().collect());
@@ -1813,6 +1848,9 @@ impl Daemon {
             Api::Ask(pane, ask, reply) => {
                 let _ = reply.send(self.ask(pane, *ask));
             }
+            Api::Holds(pane, reply) => {
+                let _ = reply.send(self.asks.contains_key(&pane));
+            }
             Api::AskReply(pane, id, answer, by, reply) => {
                 let _ = reply.send(self.ask_reply(pane, id, answer, by));
             }
@@ -1840,7 +1878,7 @@ impl Daemon {
                 });
                 if open && let Some(a) = self.asks.remove(&pane) {
                     info!(pane, id = a.ask.id, "question withdrawn");
-                    let _ = a.reply.send(AskReply::Withdrawn);
+                    let _ = a.reply.send((AskReply::Withdrawn, None));
                     if a.ask.kind == AskKind::Permission && token.is_none() {
                         // Its hook was stopped: "No" or Esc in the terminal.
                         self.terminal_answered(pane, &a.ask, "denied in the terminal");
@@ -1852,9 +1890,17 @@ impl Daemon {
     }
 
     /// Show a terminal's question on every client, and ask for you.
-    fn ask(&mut self, pane: PaneId, ask: Ask) -> Result<(u64, oneshot::Receiver<AskReply>), String> {
-        if !self.panes.contains_key(&pane) {
-            return Err(format!("no terminal %{pane}"));
+    fn ask(&mut self, pane: PaneId, ask: Ask) -> Result<(u64, oneshot::Receiver<Replied>), String> {
+        // A terminal, or a block that doesn't ask through its own methods
+        // (a web page, a studio box: M35). An agent block's questions are
+        // its own.
+        let block = self.blocks.get(&pane).map(|b| b.kind());
+        match block {
+            None if !self.panes.contains_key(&pane) => return Err(format!("no pane %{pane}")),
+            Some(BlockType::Agent | BlockType::Remote) => {
+                return Err(format!("%{pane} is an agent or remote block: it asks through its own methods"));
+            }
+            _ => {}
         }
         let mut ask = ask;
         if ask.kind == AskKind::Permission && ask.tool_call_id.is_none() {
@@ -1874,7 +1920,7 @@ impl Daemon {
         // The same question again (its asker reconnected) or a newer one:
         // either way the older registration is over.
         if let Some(old) = self.asks.insert(pane, TermAsk { ask, token, reply: tx }) {
-            let _ = old.reply.send(AskReply::Withdrawn);
+            let _ = old.reply.send((AskReply::Withdrawn, None));
         }
         if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
             // Already asking for you (Claude Code's own hook, say): this is
@@ -1926,9 +1972,9 @@ impl Daemon {
             AskReply::Deny { .. } => Some("denied"),
             AskReply::Terminal | AskReply::Withdrawn => None,
         };
-        let _ = a.reply.send(answer);
+        let by = by.unwrap_or_else(|| self.driver_of(&Principal::Owner));
+        let _ = a.reply.send((answer, Some(by.clone())));
         if let Some(how) = how {
-            let by = by.unwrap_or_else(|| self.driver_of(&Principal::Owner));
             self.record_answer(pane, &by, &ask.id, how, &ask.headline());
         }
         if terminal {
@@ -1944,7 +1990,10 @@ impl Daemon {
     /// client.
     fn after_ask(&mut self, pane: PaneId) {
         if self.attention.get(&pane) == Some(&Attention::NeedsInput) {
-            self.set_attention(pane, Attention::Working, "answered");
+            // A terminal's program goes on; a block that was asked for
+            // someone else (a studio box) is just a page again.
+            let next = if self.blocks.contains_key(&pane) { Attention::Idle } else { Attention::Working };
+            self.set_attention(pane, next, "answered");
         } else {
             self.touch(pane);
         }
@@ -2036,7 +2085,7 @@ impl Daemon {
             && let Some(t) = self.asks.remove(&pane)
         {
             info!(pane, id = a.id, event, "permission card closed: the terminal answered");
-            let _ = t.reply.send(AskReply::Withdrawn);
+            let _ = t.reply.send((AskReply::Withdrawn, None));
             self.terminal_answered(pane, &a, how);
             self.after_ask(pane);
         }
@@ -2249,6 +2298,11 @@ impl Daemon {
         // a machine of ours.
         if req.kind == BlockType::Remote {
             crate::remote::parse(&req.config)?;
+            (req.vm, req.host, req.local) = (false, None, true);
+        }
+        // A studio box (M35) is its own site: nothing of it runs here or on
+        // a machine of ours.
+        if req.kind == BlockType::App {
             (req.vm, req.host, req.local) = (false, None, true);
         }
         let session = self.resolve_session(req.session.as_deref(), from)?;
@@ -2854,7 +2908,7 @@ impl Daemon {
                     self.meta.remove(&pane);
                     self.attention.remove(&pane);
                     if let Some(a) = self.asks.remove(&pane) {
-                        let _ = a.reply.send(AskReply::Withdrawn);
+                        let _ = a.reply.send((AskReply::Withdrawn, None));
                     }
                     self.emit(Some(pane), EventKind::Closed);
                 }
@@ -3707,14 +3761,19 @@ impl Daemon {
             integration: false,
             kind: b.kind(),
             host: meta.host,
-            ask: None,
+            // A question raised on it (M35), as a terminal's is drawn.
+            ask: self.asks.get(&id).map(|a| a.ask.clone()),
             answered: self.answered.get(&id).cloned(),
             inbox: false,
             driver: None,
             pair: false,
             private: meta.private,
             trusted: Vec::new(),
-            work: s.work.or((b.kind() == BlockType::Agent).then_some(WorkKind::Agent)),
+            work: s.work.or(match b.kind() {
+                BlockType::Agent => Some(WorkKind::Agent),
+                BlockType::App => Some(WorkKind::App),
+                _ => None,
+            }),
             activity: None,
             title: s.title,
             started_by: meta.started_by.clone(),

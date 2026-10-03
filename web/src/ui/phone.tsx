@@ -11,6 +11,7 @@ import { openSwarm } from "../swarm/route";
 import { openChanges, openPort } from "../blocks";
 import { startAgent } from "./agent-dialog";
 import { pickConversation } from "./conversations";
+import { pickApp } from "./apps";
 import { openSandboxes } from "./sandboxes";
 import { openPicker } from "./picker";
 
@@ -118,6 +119,11 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
               onClick={act(() => client.session !== null && pickConversation(client, { session: client.session, cwd: (active !== undefined && client.cwd(active)) || undefined }, true))}
             >
               Conversations
+            </button>
+          )}
+          {!state.roles && (
+            <button data-studio-apps onClick={act(() => client.session !== null && pickApp(client, { session: client.session }, true))}>
+              Studio apps
             </button>
           )}
           {active !== undefined && <button onClick={act(() => openPicker(client, active, true))}>Go to directory</button>}

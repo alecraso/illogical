@@ -446,6 +446,8 @@ pub enum WorkKind {
     Server,
     Logs,
     Editor,
+    /// A studio box (M35).
+    App,
 }
 
 /// The git repository a pane's working directory is in (M23).
@@ -590,6 +592,9 @@ pub enum BlockType {
     /// option (a)): this layout holds its place, and clients reach its
     /// terminal on that daemon directly. Its config is [`RemoteRef`].
     Remote,
+    /// A studio box (M35): a web page that knows it's a hud box. It frames
+    /// the box, and its agent's questions are asks on it.
+    App,
 }
 
 /// Where a remote block's pane lives (#17): a host in the home daemon's

@@ -30,7 +30,10 @@ export interface Ask {
   url?: string;
   accepted?: boolean;
   tool_call_id?: string;
-  source: "agent" | "hook";
+  /** `agent`, `hook`, or what raised it on a block (M35: `hud`). */
+  source: string;
+  /** Who asks, when that isn't the terminal's own agent (M35: "hud"). */
+  agent?: string;
   at_ms: number;
   /** `permission` (M29): the tool Claude Code asks to use, its input and
    * its own "always allow" suggestions. */

@@ -215,7 +215,7 @@ export interface StartedBy {
   block?: PaneId;
 }
 
-export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor";
+export type WorkKind = "shell" | "build" | "test" | "agent" | "server" | "logs" | "editor" | "app";
 
 export interface Project {
   root: string;
@@ -240,7 +240,7 @@ export interface Delta {
   presence?: Presence[];
 }
 
-export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote";
+export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "app";
 
 /** A remote block's config and state (#17): a pane on another host in the
  * home daemon's list, shown in this layout. */

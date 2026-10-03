@@ -236,6 +236,18 @@ pub struct OpenPortArgs {
     pub beside: Option<PaneArg>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct OpenAppArgs {
+    /// The app's name in the user's studio. Leave it out to list their
+    /// apps instead.
+    #[serde(default)]
+    pub app: Option<String>,
+    /// The pane to open it beside. An agent block's token: default the
+    /// agent itself.
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
 #[derive(Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentKind {
@@ -511,6 +523,16 @@ fn defs() -> Vec<Def> {
             open_world: false,
         },
         Def {
+            name: "open_app",
+            title: "Open a studio app",
+            description: "Open one of the user's studio apps (a box with its own agent, hud) as an app block beside a pane: the app in a frame, and its agent's questions as asks on the block. Without app: lists the user's apps.",
+            schema: schema_for_type::<OpenAppArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
             name: "start_agent",
             title: "Start an agent",
             description: "Start an agent (Claude Code, Codex, a Fountain agent, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user.",
@@ -683,6 +705,10 @@ impl<'a> Call<'a> {
             },
             "open_port" => match parse(args) {
                 Ok(a) => self.open_port(a).await,
+                Err(e) => Err(e),
+            },
+            "open_app" => match parse(args) {
+                Ok(a) => self.open_app(a).await,
                 Err(e) => Err(e),
             },
             "start_agent" => match parse(args) {
@@ -1391,6 +1417,36 @@ impl<'a> Call<'a> {
         )
     }
 
+    async fn open_app(&self, a: OpenAppArgs) -> Out {
+        let studio = crate::apps::studio::get().ok_or("no studio here")?;
+        let Some(name) = a.app else {
+            let apps = studio.apps().await?;
+            let names: Vec<&str> = apps.iter().map(|a| a.name.as_str()).collect();
+            return done(format!("{} apps: {}", apps.len(), names.join(", ")), json!({ "apps": apps }));
+        };
+        let beside = match (a.beside.as_ref().map(PaneArg::id).transpose()?, self.me()) {
+            (Some(b), _) => Some(b),
+            (None, me) => me,
+        };
+        if let Some(b) = beside {
+            self.readable(b).await?;
+        }
+        let config = crate::api::app_config(&json!({ "app": name })).await?;
+        let req = OpenRequest {
+            kind: BlockType::App,
+            config,
+            session: None,
+            split: beside,
+            from_pane: beside,
+            vm: false,
+            image: None,
+            host: None,
+            local: true,
+        };
+        let block = self.open(req).await?;
+        done(format!("Opened app {name} in block %{block}"), json!({ "block": block, "app": name }))
+    }
+
     /// Beside `beside`, or the agent itself; on its machine.
     async fn beside(&self, beside: Option<&PaneArg>) -> Result<(Option<PaneId>, Option<u32>), String> {
         let beside = match (beside.map(PaneArg::id).transpose()?, self.me()) {
@@ -1878,7 +1934,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 17);
+        assert_eq!(all.len(), 18);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))

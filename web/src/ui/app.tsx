@@ -17,6 +17,7 @@ import { openSandboxes, SandboxesLayer } from "./sandboxes";
 import { newRemote, openChanges, openEditor, openPort, remoteHosts } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { ConversationsLayer, pickConversation } from "./conversations";
+import { AppsLayer, pickApp } from "./apps";
 import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
 
@@ -99,6 +100,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <PromptLayer />
       <AgentDialogLayer />
       <ConversationsLayer />
+      <AppsLayer />
       <SandboxesLayer />
       <PickerLayer />
       <DragGhost />
@@ -196,6 +198,8 @@ function TopBar({
               { label: "New tab", run: () => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null }) },
               { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
               { label: "In a directory…", disabled: client.active() === undefined, run: () => openPicker(client, client.active()) },
+              // M35: a studio app's box, in a tab of its own. The owner's.
+              ...(!client.state?.roles ? [{ label: "Open a studio app…", run: () => pickApp(client, { session: session.id }) } as MenuItem] : []),
               // #17: a tab here whose shell runs on another host.
               ...remoteHosts().map((h): MenuItem => ({ label: `New tab on ${h}`, run: () => void newRemote(client, h, { session: session.id }) })),
             ])
@@ -558,6 +562,8 @@ function PaneSlot({
       ...(!client.state?.roles
         ? [{ label: "Claude Code conversations…", run: () => pickConversation(client, { split: id, cwd: cwd ?? undefined }) } as MenuItem]
         : []),
+      // M35: a studio app's box beside this pane.
+      ...(!client.state?.roles ? [{ label: "Open a studio app…", run: () => pickApp(client, { split: id }) } as MenuItem] : []),
       // M27: VS Code where this pane runs, in its directory. The owner's,
       // like ports.
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),

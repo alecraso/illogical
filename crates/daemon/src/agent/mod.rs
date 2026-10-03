@@ -857,6 +857,7 @@ impl Inner {
             accepted: false,
             tool_call_id,
             source: "agent".into(),
+            agent: None,
             at_ms: at,
             tool: None,
             input: None,

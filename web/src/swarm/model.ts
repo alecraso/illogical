@@ -18,6 +18,8 @@ export const KINDS: Record<WorkKind, [number, number, number]> = {
   server: [80, 205, 200],
   logs: [100, 125, 165],
   editor: [240, 130, 165],
+  // M35: a studio box.
+  app: [130, 200, 90],
 };
 
 /** What a reason looks like on the rail. */
@@ -48,6 +50,7 @@ export function followable(p: FleetPane): boolean {
 export function kindOf(p: FleetPane): WorkKind {
   if (p.info.kind) return p.info.kind;
   if (p.info.type === "agent") return "agent";
+  if (p.info.type === "app") return "app";
   if (p.info.type === "browser") return "server";
   return "shell";
 }
@@ -142,5 +145,7 @@ export function cardTitle(r: Reason, n: number, machines: string[], agent?: stri
 }
 
 function titleCase(s: string): string {
+  // hud writes its own name in lower case.
+  if (s === "hud") return s;
   return s === "claude" ? "Claude Code" : s.charAt(0).toUpperCase() + s.slice(1);
 }
