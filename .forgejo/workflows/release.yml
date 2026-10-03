@@ -12,6 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/release" >> "$GITHUB_ENV"
+      - run: scripts/ci-cap-target 30
       - run: just bootstrap
       - run: scripts/release check-version "$GITHUB_REF_NAME"
       - run: just static x86_64
@@ -26,6 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/release" >> "$GITHUB_ENV"
+      - run: scripts/ci-cap-target 30
       - run: just bootstrap
       - run: just build
       - run: just dist
