@@ -3397,6 +3397,12 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
   - the Mac (`~/Library/Application Support/Claude` for the desktop app's records);
   - inotify: a listing finds new sessions, but an open picker doesn't update by itself.
 
+**Every host's (#78, 2026-10-03).** The web picker asks every host in the fleet (M25) at once, through `fleet.request`, and shows each under its name as it answers, then by folder. A host gets 5 s; an asleep sandbox isn't asked (`asleep`), a capped one says so, and one that doesn't answer shows `not answering` while the rest stay usable. Picking another host's conversation sends `POST /api/conversations/open` to that host (its first session, a new tab), then `fleet.open` shows the block there. `illogical claude ls --host all` does the same per host, printing each as it answers (`hosts::each`, a thread per host, 5 s). MCP's `list_conversations` stays this machine's: the daemon never talks to other hosts for a client (clients do, M4a), so there is no fleet to ask from inside it.
+
+- **Tests:** `web/e2e/fleet-conversations.spec.ts`: three daemons, each with its own Claude directory; the picker grouped by host, search across them, one of jake-mini's opened and continued on jake-mini (its adapter read jake-mini's transcript), picked again from geek goes to that block; a stopped host (SIGSTOP) holds nothing up (the others in 124–164 ms, it gives up at 5.4 s); the phone's sheet.
+- **Against the real fleet:** `illogical claude ls --host all` from geek listed geek's and jake-mini's in 0.15 s.
+- **For Jake:** the phone with jake-mini and geek: a conversation from jake-mini's terminal and one from geek's desktop app in one list, each opened and continued on its own host.
+
 ### Workspaces track (S21, M34, added 2026-10-02)
 
 A [chant](https://intentius.io/chant) workspace (a repo with a `chant.workspace.json`, such as `~/dev/intentius/chant`) as a block you work in. Its members are cards you open shells, agents and diffs on. Its records show with their state. A gate waiting in any member is illogical attention you can approve. illogical reads the workspace only through chant's read contract (chant `ws-017`), as one more reader beside hud and behold. Review actions on records stay hud's (`ws-052`).
