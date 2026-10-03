@@ -75,6 +75,31 @@ pub struct TeamPin {
     pub founder_root: String,
 }
 
+impl TeamPin {
+    /// What the approving device signs to put a joining daemon in this
+    /// team (#100). The team is picked at approval, so a daemon pins only
+    /// one a device of the approving account chose, not one control adds.
+    ///
+    /// ```text
+    /// illogical team join v1
+    /// daemon <device id>
+    /// team <id>
+    /// founder <account>
+    /// founder_root <device id>
+    /// ```
+    pub fn join_body(&self, daemon: &str) -> String {
+        format!(
+            "illogical team join v1\ndaemon {daemon}\nteam {}\nfounder {}\nfounder_root {}\n",
+            self.team, self.founder, self.founder_root
+        )
+    }
+
+    /// `sig` is `approver`'s signature putting `daemon` in this team.
+    pub fn join_signed_by(&self, daemon: &str, approver: &Cert, sig: &str) -> bool {
+        approver.kind.approves() && verify_hex(&approver.sign, self.join_body(daemon).as_bytes(), sig)
+    }
+}
+
 /// Every member account's certificates and revocations, as control hands
 /// them out.
 pub type AccountCerts = HashMap<String, (Vec<Cert>, Vec<Revocation>)>;
@@ -239,5 +264,18 @@ mod tests {
         let other = person("bob");
         moved.insert("bob".into(), (vec![other.cert], vec![]));
         assert_eq!(v1.devices("bob", &moved).devices.len(), 0);
+    }
+
+    #[test]
+    fn a_team_join_is_signed_by_the_approver() {
+        let (alice, mallory) = (person("alice"), person("mallory"));
+        let pin = TeamPin { team: "t1".into(), founder: "alice".into(), founder_root: alice.cert.device.clone() };
+        let sig = hex::encode(alice.keys.signature(pin.join_body("box").as_bytes()));
+        assert!(pin.join_signed_by("box", &alice.cert, &sig));
+        // Not for another daemon, another founder, or by someone else.
+        assert!(!pin.join_signed_by("other", &alice.cert, &sig));
+        let swapped = TeamPin { founder_root: mallory.cert.device.clone(), ..pin.clone() };
+        assert!(!swapped.join_signed_by("box", &alice.cert, &sig));
+        assert!(!pin.join_signed_by("box", &mallory.cert, &sig));
     }
 }

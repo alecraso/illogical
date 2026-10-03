@@ -3,7 +3,7 @@
 // list, and how to add a machine.
 
 import { useEffect, useState } from "preact/hooks";
-import { passkeyRegister, passkeySignIn, type ControlSession } from "../control";
+import { passkeyRegister, passkeySignIn, type ControlSession, type JoinRequest } from "../control";
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 import { directory } from "../hosts";
@@ -248,12 +248,29 @@ function clearHash() {
 }
 
 function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
-  const [j, setJ] = useState<{ code: string; cert: Cert } | null>(null);
+  const [j, setJ] = useState<JoinRequest | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // "" is just me; else a team's id.
+  const [to, setTo] = useState("");
   useEffect(() => {
-    s.showJoin(code).then(setJ, (e: Error) => setErr(e.message));
+    s.showJoin(code).then(
+      (j) => {
+        setJ(j);
+        setTo(j.team?.team ?? "");
+      },
+      (e: Error) => setErr(e.message),
+    );
   }, [code]);
+  // Teams I own (#100), and the one it asked for even if I don't.
+  const owned = s.teams.filter((t) => t.role === "owner" && t.verified);
+  const asked = j?.team && !owned.some((t) => t.team === j.team!.team) ? j.team : null;
+  const team = owned.find((t) => t.team === to);
+  const notOwner = !!to && !team;
+  const cancel = () => {
+    if (j) void s.rejectJoin(j.code).catch(() => {});
+    clearHash();
+  };
   return (
     <Modal close={clearHash}>
       <h2>Add a machine?</h2>
@@ -261,24 +278,55 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
       {j ? (
         <>
           <p>
-            <b>{j.cert.name}</b> asks to join your account with code <b data-join-code={j.code}>{j.code}</b>. Check that's the code it printed.
+            <b>{j.cert.name}</b> asks to join {j.team ? <>the team <b data-join-team={j.team.team}>{j.team.name}</b></> : "your account"} with code{" "}
+            <b data-join-code={j.code}>{j.code}</b>. Check that's the code it printed.
           </p>
           <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
+          {owned.length || asked ? (
+            <p>
+              <label>
+                Join to{" "}
+                <select class="control-select" data-join-to value={to} onChange={(e) => setTo((e.target as HTMLSelectElement).value)}>
+                  <option value="">Just me</option>
+                  {owned.map((t) => (
+                    <option key={t.team} value={t.team}>
+                      {t.roster.name}
+                    </option>
+                  ))}
+                  {asked ? <option value={asked.team}>{asked.name} (you're not an owner)</option> : null}
+                </select>
+              </label>
+            </p>
+          ) : null}
+          {notOwner ? (
+            <p class="control-error" data-join-not-owner>
+              Only the team's owners add its machines. Ask one of them to approve it, or pick Just me.
+            </p>
+          ) : (
+            <p class="dim" data-join-grants>
+              {team
+                ? `The members of ${team.roster.name} reach it by their role: owners and editors drive its terminals, viewers watch.`
+                : "Only your devices reach it, and they can drive its terminals."}{" "}
+              Control relays the connection but can't read it.
+            </p>
+          )}
         </>
       ) : err ? null : (
         <p class="dim">Looking up {code}…</p>
       )}
       <div class="prompt-buttons">
-        <button onClick={clearHash}>Cancel</button>
+        <button data-cancel-join onClick={cancel}>
+          Cancel
+        </button>
         <button
           class="primary"
           data-approve-join
-          disabled={!j || busy}
+          disabled={!j || busy || notOwner}
           onClick={async () => {
             if (!j) return;
             setBusy(true);
             try {
-              await s.approveJoin(j.code, j.cert);
+              await s.approveJoin(j.code, j.cert, team?.team ?? null);
               clearHash();
             } catch (e) {
               setErr((e as Error).message);

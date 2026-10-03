@@ -554,6 +554,15 @@ fn socket_path(state_dir: &std::path::Path) -> PathBuf {
     socket
 }
 
+/// A daemon is listening on `state_dir`'s CLI socket.
+fn daemon_running(state_dir: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStringExt;
+    let path = std::fs::read(state_dir.join("sock.path"))
+        .map(|b| PathBuf::from(std::ffi::OsString::from_vec(b)))
+        .unwrap_or_else(|_| state_dir.join("sock"));
+    std::os::unix::net::UnixStream::connect(path).is_ok()
+}
+
 /// `<state>/editors/sock`, in a 0700 directory with nothing else in it, for
 /// a dev container to mount (M28).
 fn editors_socket(state_dir: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
@@ -632,13 +641,21 @@ fn main() -> anyhow::Result<()> {
                 team.as_deref(),
                 ticket.as_deref(),
                 &dir,
-            ))
+            ))?;
+            if daemon_running(&dir) {
+                println!("  The running daemon picks this up within a few seconds.");
+            } else {
+                println!("  illogicald isn't running here: start it with `illogicald install`.");
+            }
+            Ok(())
         }
         Some(Command::JoinRequest { name, out, state_dir }) => {
             control::join_request(&name, &out, &state_dir.unwrap_or_else(default_state_dir))
         }
         Some(Command::Leave { state_dir }) => {
-            tokio::runtime::Runtime::new()?.block_on(control::leave(&state_dir.unwrap_or_else(default_state_dir)))
+            let dir = state_dir.unwrap_or_else(default_state_dir);
+            let listen = std::fs::read_to_string(dir.join("listen")).unwrap_or_else(|_| "127.0.0.1:7681".into());
+            tokio::runtime::Runtime::new()?.block_on(control::leave(&dir, listen.trim()))
         }
         None => {
             heap::tune();

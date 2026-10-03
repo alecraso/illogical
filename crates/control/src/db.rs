@@ -164,6 +164,12 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("joins", "sandbox")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN sandbox TEXT")?;
     }
+    if !has("joins", "team_sig")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN team_sig TEXT")?;
+    }
+    if !has("joins", "rejected")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN rejected TEXT")?;
+    }
     Ok(())
 }
 
@@ -243,6 +249,10 @@ pub struct Join {
     pub team: Option<String>,
     /// A hosted sandbox's (M20): its requester approves it by itself.
     pub sandbox: Option<String>,
+    /// The approver's signature putting it in `team` (#100).
+    pub team_sig: Option<String>,
+    /// Turned down, on the device named here (#100).
+    pub rejected: Option<String>,
 }
 
 fn cert_of(s: String) -> rusqlite::Result<Cert> {
@@ -486,7 +496,8 @@ impl Db {
         Ok(self
             .c()
             .query_row(
-                "SELECT cert, poll_hash, urls, created, account, team, sandbox FROM joins WHERE code = ?1 AND created >= ?2",
+                "SELECT cert, poll_hash, urls, created, account, team, sandbox, team_sig, rejected FROM joins
+                 WHERE code = ?1 AND created >= ?2",
                 params![code, now.saturating_sub(JOIN_TTL_MS)],
                 |r| {
                     Ok(Join {
@@ -497,18 +508,27 @@ impl Db {
                         account: r.get(4)?,
                         team: r.get(5)?,
                         sandbox: r.get(6)?,
+                        team_sig: r.get(7)?,
+                        rejected: r.get(8)?,
                     })
                 },
             )
             .optional()?)
     }
 
-    /// Approved: the signed certificate replaces the request.
-    pub fn approve_join(&self, code: &str, cert: &Cert) -> anyhow::Result<()> {
+    /// Approved: the signed certificate replaces the request, and the team
+    /// the approver chose (with their signature) replaces the one asked for.
+    pub fn approve_join(&self, code: &str, cert: &Cert, team: Option<(&str, &str)>) -> anyhow::Result<()> {
         self.c().execute(
-            "UPDATE joins SET cert = ?2, account = ?3 WHERE code = ?1",
-            params![code, serde_json::to_string(cert)?, cert.account],
+            "UPDATE joins SET cert = ?2, account = ?3, team = ?4, team_sig = ?5 WHERE code = ?1",
+            params![code, serde_json::to_string(cert)?, cert.account, team.map(|t| t.0), team.map(|t| t.1)],
         )?;
+        Ok(())
+    }
+
+    /// Turned down: the daemon learns it on its next poll.
+    pub fn reject_join(&self, code: &str, on: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE joins SET rejected = ?2 WHERE code = ?1", params![code, on])?;
         Ok(())
     }
 

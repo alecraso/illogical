@@ -1876,6 +1876,14 @@ button {
   color: var(--danger);
 }
 
+.control-select {
+  padding: 4px;
+  color: var(--fg);
+  background: var(--letterbox);
+  border: 1px solid var(--raised-hover);
+  border-radius: 6px;
+}
+
 .dim {
   color: var(--dim);
 }
