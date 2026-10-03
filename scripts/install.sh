@@ -6,7 +6,7 @@
 #
 #   curl -fsSL https://illogical.widgets.wtf/install.sh | sh
 #
-# ILLOGICAL_VERSION=v0.1.0  a release tag (default: the latest)
+# ILLOGICAL_VERSION=vX.Y.Z  a release tag (default: the latest)
 # ILLOGICAL_NO_START=1      install the service without starting it
 set -eu
 
@@ -52,33 +52,131 @@ else
 fi
 [ "$want" = "$got" ] || die "checksum mismatch for $name.tar.gz"
 
+
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
-if [ "$(uname -s)" = Linux ] && ! command -v systemctl >/dev/null 2>&1; then
+os=$(uname -s)
+started=""
+if [ "$os" = Linux ] && ! command -v systemctl >/dev/null 2>&1; then
   # No systemd (a container, a sandbox): the binaries, but no service.
   mkdir -p "$HOME/.local/bin"
   for b in illogicald illogical; do
     cp "$tmp/$name/$b" "$HOME/.local/bin/.$b.new" && mv "$HOME/.local/bin/.$b.new" "$HOME/.local/bin/$b"
   done
   say "installed ~/.local/bin/illogicald and ~/.local/bin/illogical"
-  say "No systemd here, so no service: start the daemon with  ~/.local/bin/illogicald --keep-panes &  (panes then outlive its restarts)"
   nosystemd=1
 elif [ -n "${ILLOGICAL_NO_START:-}" ]; then
   "$tmp/$name/illogicald" install --no-start
 else
   "$tmp/$name/illogicald" install
+  started=1
+fi
+
+# Where the service listens: its --listen, kept from an earlier install,
+# or the default.
+listen=127.0.0.1:7681
+if [ "$os" = Darwin ]; then
+  args=$(sed -n 's:.*<string>\(.*\)</string>.*:\1:p' "$HOME/Library/LaunchAgents/illogicald.plist" 2>/dev/null || true)
+else
+  args=$(sed -n 's/^ExecStart=[^ ]*//p' "$HOME/.config/systemd/user/illogicald.service" 2>/dev/null || true)
+fi
+prev=""
+for a in $args; do
+  case "$a" in --listen=*) listen=${a#--listen=} ;; esac
+  [ "$prev" = --listen ] && listen=$a
+  prev=$a
+done
+url="http://$listen"
+
+# The commands below, as you can type them now.
+bin=""
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) bin="$HOME/.local/bin/" ;;
+esac
+
+say ""
+if [ -n "$started" ]; then
+  # It answers within a second or two; a crash loop never does.
+  up=""
+  i=0
+  while [ $i -lt 20 ]; do
+    if curl -s -o /dev/null -m 1 "$url/"; then up=1; break; fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+  if [ -n "$up" ]; then
+    say "illogical $version is installed and running."
+  else
+    say "illogical $version is installed, but it isn't answering at $url yet."
+    if [ "$os" = Darwin ]; then
+      say "  Its logs:  tail -n 50 ~/Library/Logs/illogicald.log"
+    else
+      say "  Its logs:  journalctl --user -u illogicald -e"
+    fi
+  fi
+elif [ -n "${nosystemd:-}" ]; then
+  say "illogical $version is installed. No systemd here, so no service: start the daemon with"
+  say "  nohup $HOME/.local/bin/illogicald --keep-panes >>~/illogicald.log 2>&1 &"
+  say "(--keep-panes: panes outlive its restarts)"
+else
+  say "illogical $version is installed, not started (ILLOGICAL_NO_START)."
+fi
+
+if [ -n "$bin" ]; then
+  say ""
+  say "$HOME/.local/bin isn't on your PATH. Add it:"
+  case "${SHELL:-}" in
+    */fish) say "  fish_add_path ~/.local/bin" ;;
+    */zsh) say "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc && exec zsh" ;;
+    */bash)
+      rc=~/.bashrc
+      [ "$os" = Darwin ] && rc=~/.bash_profile
+      say "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> $rc && exec bash"
+      ;;
+    *) say "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile  (then log in again)" ;;
+  esac
+fi
+
+# The phone: this machine's tailnet name, if tailscale is here and up.
+ts=""
+if command -v tailscale >/dev/null 2>&1; then
+  ts=tailscale
+elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then
+  ts=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+fi
+dns=""
+if [ -n "$ts" ]; then
+  # Self comes before Peer in the status; its DNSName ends in a dot.
+  dns=$("$ts" status --json 2>/dev/null | awk '/"Self":/ { s = 1 } s && /"DNSName":/ { gsub(/[",]/, "", $2); sub(/\.$/, "", $2); print $2; exit }' || true)
 fi
 
 say ""
-say "illogical $version is installed."
-case ":$PATH:" in
-  *":$HOME/.local/bin:"*) ;;
-  *) say "Add ~/.local/bin to your PATH to use the illogical CLI." ;;
-esac
-say "Open http://127.0.0.1:7681"
-say ""
-say "From your phone and other machines on your tailnet:"
-say "  tailscale serve --bg --https=443 http://127.0.0.1:7681"
-if [ "$(uname -s)" = Linux ] && [ -z "${nosystemd:-}" ]; then
-  say "To start it at boot, before you log in:"
-  say "  loginctl enable-linger \$USER"
+if [ -n "$started" ]; then
+  say "  Open      $url"
+else
+  say "  Open      $url  (once it's running)"
 fi
+serve="tailscale serve --bg --https=443 $url"
+if [ -n "$dns" ]; then
+  if "$ts" serve status 2>/dev/null | grep -q "$listen"; then
+    say "  Phone     https://$dns"
+  else
+    say "  Phone     $serve"
+    say "            then https://$dns"
+    if [ "$os" = Linux ] && [ "$(id -u)" != 0 ]; then
+      say "            (first time: sudo tailscale set --operator=\$USER, and HTTPS on"
+      say "            at https://login.tailscale.com/admin/dns)"
+    else
+      say "            (first time: HTTPS on at https://login.tailscale.com/admin/dns)"
+    fi
+  fi
+elif [ -n "$ts" ]; then
+  say "  Phone     tailscale up, then $serve"
+else
+  say "  Phone     install Tailscale (https://tailscale.com/download) to reach it"
+  say "            from your phone, or use illogical control (Anywhere)"
+fi
+say "  Anywhere  ${bin}illogicald join https://control.illogical.widgets.wtf"
+say "            (also how you add this machine to a team: pick it when you approve)"
+say "  Agents    ${bin}illogical agent --help · claude mcp add illogical -- ${bin}illogical mcp"
+say "  Docs      https://illogical.widgets.wtf/#install"

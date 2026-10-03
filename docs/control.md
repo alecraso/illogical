@@ -16,7 +16,9 @@ repository (below).
   - every device and machine is approved by a device you already have;
   - your devices and machines check those approvals themselves.
 
-The design is in [control-e2e.md](control-e2e.md).
+The design is in [control-e2e.md](control-e2e.md). Teams, roles, personal
+vs team machines and sharing a session:
+[Your machines, your team](teams.md).
 
 ## Using it
 

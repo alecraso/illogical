@@ -48,11 +48,11 @@ tabs and splits you drive with the mouse.
 ![The swarm: every pane, clustered, with what needs you on the rail](site/img/swarm.png)
 
 Linux (x86_64, arm64) and macOS (Apple silicon). Share a session with
-someone, or a whole machine with a team, with roles and presence. Remote
-access is over your tailnet, or through
-[illogical control](docs/control.md) for devices without one: end to end
-encrypted, so the service relays for your devices but can't read your
-terminals.
+someone, or a whole machine with a team, with roles and presence
+([docs/teams.md](docs/teams.md)). Remote access is over your tailnet, or
+through [illogical control](docs/control.md) for devices without one: end
+to end encrypted, so the service relays for your devices but can't read
+your terminals.
 
 ## Install
 
@@ -62,7 +62,7 @@ curl -fsSL https://illogical.widgets.wtf/install.sh | sh
 
 This puts `illogicald` and `illogical` in `~/.local/bin` and starts the
 daemon as a service (systemd user unit on Linux, launchd agent on macOS).
-Run it again to upgrade. `ILLOGICAL_VERSION=v0.1.0` picks a version.
+Run it again to upgrade. `ILLOGICAL_VERSION=vX.Y.Z` picks a version.
 
 **Homebrew** (macOS, Linux):
 
@@ -86,13 +86,24 @@ loginctl enable-linger $USER
    everything. Drag a tab or a pane onto another pane's edge to split it
    there; drag dividers to resize.
 2. **From your phone and other machines**, put it behind Tailscale on this
-   machine:
+   machine. The first time:
+   - turn on **MagicDNS** and **HTTPS certificates** in the tailnet's
+     [DNS settings](https://login.tailscale.com/admin/dns), or `serve`
+     fails;
+   - on Linux, let yourself run `serve` without sudo: `sudo tailscale set
+     --operator=$USER`;
+   - on macOS, the app's CLI may not be on your PATH: it's
+     `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+
+   Then:
 
    ```
    tailscale serve --bg --https=443 http://127.0.0.1:7681
    ```
 
-   and open `https://<this machine>.<tailnet>.ts.net`. Only the Tailscale
+   and open `https://<this machine>.<tailnet>.ts.net`: `tailscale serve
+   status` prints it, and so does *Getting started* in the session menu
+   (and `install.sh`, when Tailscale is up). Only the Tailscale
    login that owns the machine gets in (`illogicald install -- --owner
    you@example.com` for someone else). On the phone, add it to the home
    screen, then *Notify this device* in the menu (☰).
@@ -117,6 +128,9 @@ loginctl enable-linger $USER
    ```
 
    See [docs/control.md](docs/control.md), including running your own.
+   **With a team:** make one in control (*Teams…*), invite people, and
+   pick the team when you approve a machine's join. Roles, personal vs
+   team machines and sharing one session: [docs/teams.md](docs/teams.md).
 6. **Agents.** *Start an agent…* in a pane's menu, or `illogical agent
    "fix the failing test"`. Claude Code and Codex run through an npm
    adapter (needs Node 20+): *Start an agent…* offers to install it, in a
@@ -148,13 +162,16 @@ loginctl enable-linger $USER
        "allow": [
          "mcp__illogical__read_output", "mcp__illogical__capture_screen", "mcp__illogical__wait",
          "mcp__illogical__list", "mcp__illogical__history", "mcp__illogical__search",
-         "mcp__illogical__read_file", "mcp__illogical__list_conversations"
+         "mcp__illogical__list_conversations", "mcp__illogical__read_pr", "mcp__illogical__read_issue",
+         "mcp__illogical__read_file"
        ],
        "ask": [
          "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__close",
-         "mcp__illogical__open_port", "mcp__illogical__start_agent", "mcp__illogical__agent_respond",
-         "mcp__illogical__show_changes", "mcp__illogical__show_file", "mcp__illogical__open_conversation",
-         "mcp__illogical__open_workspace"
+         "mcp__illogical__open_port", "mcp__illogical__open_app", "mcp__illogical__start_agent",
+         "mcp__illogical__open_conversation", "mcp__illogical__agent_respond", "mcp__illogical__show_changes",
+         "mcp__illogical__show_file", "mcp__illogical__open_workspace", "mcp__illogical__open_pr",
+         "mcp__illogical__pr_comment", "mcp__illogical__pr_review", "mcp__illogical__pr_merge",
+         "mcp__illogical__open_issue", "mcp__illogical__issue_comment", "mcp__illogical__issue_new"
        ]
      }
    }
@@ -175,6 +192,8 @@ layout still come back. VM tabs are Linux only.
 - [docs/features.md](docs/features.md): everything it does, in detail.
 - [docs/advanced.md](docs/advanced.md): VM tabs (wisp), web apps beside
   their terminals, more machines and sandboxes, iTerm2 as a tmux client.
+- [docs/teams.md](docs/teams.md): your machines, your team: roles,
+  personal vs team machines, sharing a session.
 - [docs/control.md](docs/control.md): illogical control, hosted or your
   own; [docs/control-e2e.md](docs/control-e2e.md), how it keeps out of your
   terminals.
