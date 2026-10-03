@@ -33,7 +33,9 @@ but it can't read.**
 - **Push:**
   - the daemon encrypts the notification (RFC 8291) to a subscription
     the device signed;
-  - control only adds the VAPID signature and posts it.
+  - control only adds the VAPID signature and posts it;
+  - control's own notices (something waits for approval) it encrypts
+    itself, and they say only that.
 
 ## Keys
 
@@ -339,6 +341,11 @@ leaves it. So:
   - control signs the VAPID JWT and posts it.
 - **What control and the push service see:** endpoint, size and timing.
   Control logs "daemon X notified device Y".
+- **Control's own notices:** a new device waiting for the account, or
+  someone asking to join a team (to its owners). Control encrypts these
+  itself. They say only that something waits ("A new browser wants into
+  your account", "Ada asks to join Acme"); approving still happens on the
+  page, with the fingerprint.
 
 This is confirmed by construction: the daemon's existing RFC 8291 encrypt
 plus a separate VAPID signer is exactly what the RFC allows. M21 adds the
@@ -359,7 +366,7 @@ only an approval does.
 
 | Stored | Never stored |
 |---|---|
-| accounts, OAuth ids, passkey public keys | Noise or signing private keys of anything |
+| accounts and their display names, OAuth ids, passkey public keys | Noise or signing private keys of anything |
 | device and daemon certificates, revocations, signed grants | terminal bytes, snapshots, logs, history |
 | directory: daemon ids, names, URLs, last seen, presence | link keys (the fragment) |
 | connection metadata: who, which daemon, when, byte counts | push payloads in the clear |

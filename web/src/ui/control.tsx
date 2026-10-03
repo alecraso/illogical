@@ -70,6 +70,9 @@ export function ControlGate({ s }: { s: ControlSession }) {
 
 function PasskeyButtons() {
   const [err, setErr] = useState("");
+  // #102: a new account says what teammates call it first.
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
   const go = (f: () => Promise<void>) =>
     f().then(
       () => location.reload(),
@@ -80,11 +83,76 @@ function PasskeyButtons() {
       <button class="primary control-signin" data-signin="passkey" onClick={() => go(passkeySignIn)}>
         Sign in with a passkey
       </button>
-      <button class="control-signin control-secondary" data-signup="passkey" onClick={() => go(passkeyRegister)}>
-        New here? Make an account with a passkey
-      </button>
+      {naming ? (
+        <form
+          class="control-code control-name"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) void go(() => passkeyRegister(name));
+          }}
+        >
+          <input
+            data-signup-name
+            placeholder="Your name"
+            maxLength={64}
+            value={name}
+            onInput={(e) => setName((e.target as HTMLInputElement).value)}
+            aria-label="Your name"
+            autoFocus
+          />
+          <button type="submit" class="primary" data-signup-go disabled={!name.trim()}>
+            Make the account
+          </button>
+          <p class="dim">Teammates see this name. You can change it later.</p>
+        </form>
+      ) : (
+        <button class="control-signin control-secondary" data-signup="passkey" onClick={() => setNaming(true)}>
+          New here? Make an account with a passkey
+        </button>
+      )}
       {err ? <p class="control-error">{err}</p> : null}
     </>
+  );
+}
+
+/** What other people see (#102), changed in place. */
+function NameLine({ s }: { s: ControlSession }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(s.name);
+  const [err, setErr] = useState("");
+  if (!editing)
+    return (
+      <p class="dim">
+        Name <b data-account-name>{s.name || "none yet"}</b>{" "}
+        <button
+          class="control-linkish"
+          data-edit-name
+          onClick={() => {
+            setName(s.name);
+            setEditing(true);
+          }}
+        >
+          Change
+        </button>
+      </p>
+    );
+  return (
+    <form
+      class="control-code control-name"
+      onSubmit={(e) => {
+        e.preventDefault();
+        s.setName(name).then(
+          () => setEditing(false),
+          (x: Error) => setErr(x.message),
+        );
+      }}
+    >
+      <input data-name-input maxLength={64} value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} aria-label="Name" autoFocus />
+      <button type="submit" data-save-name disabled={!name.trim()}>
+        Save
+      </button>
+      {err ? <p class="control-error">{err}</p> : null}
+    </form>
   );
 }
 
@@ -405,6 +473,7 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
       <p class="dim">
         Account <CopyText inline text={s.account} data-account />
       </p>
+      <NameLine s={s} />
       {s.info.passkeys ? (
         <p class="dim">
           {s.passkeys ? `${s.passkeys} passkey${s.passkeys === 1 ? "" : "s"} can sign in to this account. ` : "No passkey signs in to this account yet. "}

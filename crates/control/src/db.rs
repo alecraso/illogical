@@ -170,6 +170,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("joins", "rejected")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN rejected TEXT")?;
     }
+    if !has("accounts", "name")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN name TEXT")?;
+    }
     Ok(())
 }
 
@@ -220,6 +223,9 @@ pub struct Account {
     pub id: String,
     pub root: Option<String>,
     pub login: String,
+    /// What other people see (#102): the name it chose, or its GitHub
+    /// login. Empty only for a passkey account made before names.
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -331,11 +337,21 @@ impl Db {
         Ok(self
             .c()
             .query_row(
-                "SELECT a.id, a.root, COALESCE((SELECT login FROM identities WHERE account = a.id LIMIT 1), '') FROM accounts a WHERE a.id = ?1",
+                "SELECT a.id, a.root,
+                    COALESCE((SELECT login FROM identities WHERE account = a.id LIMIT 1), ''),
+                    COALESCE(NULLIF(a.name, ''),
+                        (SELECT login FROM identities WHERE account = a.id AND login != '' ORDER BY provider = 'github' DESC LIMIT 1), '')
+                 FROM accounts a WHERE a.id = ?1",
                 params![id],
-                |r| Ok(Account { id: r.get(0)?, root: r.get(1)?, login: r.get(2)? }),
+                |r| Ok(Account { id: r.get(0)?, root: r.get(1)?, login: r.get(2)?, name: r.get(3)? }),
             )
             .optional()?)
+    }
+
+    /// The account's display name (#102).
+    pub fn set_name(&self, account: &str, name: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE accounts SET name = ?2 WHERE id = ?1", params![account, name])?;
+        Ok(())
     }
 
     pub fn add_session(&self, token_hash: &str, account: &str, now: u64, expires: u64) -> anyhow::Result<()> {
@@ -589,6 +605,9 @@ impl Db {
 
     /// An account by its sign-in login (to share with a person).
     pub fn account_by_login(&self, login: &str) -> anyhow::Result<Option<Account>> {
+        if login.is_empty() {
+            return Ok(None);
+        }
         let c = self.c();
         let id: Option<String> = c
             .query_row("SELECT account FROM identities WHERE lower(login) = lower(?1) LIMIT 1", params![login], |r| {
@@ -600,6 +619,14 @@ impl Db {
             Some(id) => self.account(&id),
             None => Ok(None),
         }
+    }
+
+    /// Accounts that chose this display name (#102), a few at most.
+    pub fn accounts_named(&self, name: &str) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT id FROM accounts WHERE name != '' AND lower(name) = lower(?1) LIMIT 2")?;
+        let rows = q.query_map(params![name], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn add_team(&self, t: &Team, roster_version: u64, roster: &str, now: u64) -> anyhow::Result<()> {
@@ -1090,3 +1117,36 @@ impl Db {
 
 /// How long a join code stays good.
 pub const JOIN_TTL_MS: u64 = 15 * 60 * 1000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #102: a GitHub account goes by its login, a passkey one by the name
+    /// it chose; rosters and requests get one word, never "you".
+    #[test]
+    fn names() {
+        let db = Db::memory();
+        db.account_for("github", "1", "jhgaylor", "a1", 1).unwrap();
+        db.account_for("passkey", "p2", "", "b2c3d4e5", 1).unwrap();
+        assert_eq!(db.account("a1").unwrap().unwrap().name, "jhgaylor");
+        let pk = db.account("b2c3d4e5").unwrap().unwrap();
+        assert_eq!(pk.name, "");
+        assert_eq!(crate::teams::member_name(&pk), "account-b2c3d4");
+
+        db.set_name("b2c3d4e5", "Ada Lovelace").unwrap();
+        let pk = db.account("b2c3d4e5").unwrap().unwrap();
+        assert_eq!(pk.name, "Ada Lovelace");
+        assert_eq!(crate::teams::member_name(&pk), "Ada-Lovelace");
+        assert_eq!(db.accounts_named("ada lovelace").unwrap(), vec!["b2c3d4e5".to_owned()]);
+        // An empty login finds nobody (passkey identities have none).
+        assert!(db.account_by_login("").unwrap().is_none());
+
+        // A GitHub account can pick a name too.
+        db.set_name("a1", "Jake").unwrap();
+        assert_eq!(db.account("a1").unwrap().unwrap().name, "Jake");
+        assert_eq!(crate::api::display_name("  Ada \n Lovelace ").unwrap(), "Ada Lovelace");
+        assert!(crate::api::display_name("   ").is_err());
+        assert!(crate::api::display_name(&"x".repeat(65)).is_err());
+    }
+}

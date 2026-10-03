@@ -1915,6 +1915,23 @@ button {
   width: 10rem;
 }
 
+/* A display name (#102): words, not a code. */
+.control-name {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.control-name input {
+  font: 14px system-ui, sans-serif;
+  width: 14rem;
+  max-width: 100%;
+}
+
+.control-name p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .control-code button,
 .control-revoke {
   padding: 6px 12px;

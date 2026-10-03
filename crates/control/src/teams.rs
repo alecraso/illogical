@@ -89,15 +89,36 @@ pub struct Lookup {
     login: String,
 }
 
-/// Someone to share with, by their sign-in login: their account and the
-/// root device to pin (compare its fingerprint with them).
+/// Someone to share with, by their sign-in login or their name (#102):
+/// their account and the root device to pin (compare its fingerprint with
+/// them).
 pub async fn person(State(app): State<Arc<App>>, _s: Session, Query(q): Query<Lookup>) -> R {
-    let a = app
-        .db
-        .account_by_login(q.login.trim())?
+    let asked = q.login.split_whitespace().collect::<Vec<_>>().join(" ");
+    let a = match app.db.account_by_login(&asked)? {
+        Some(a) => Some(a),
+        None => match app.db.accounts_named(&asked)?.as_slice() {
+            [one] => app.db.account(one)?,
+            [] => None,
+            _ => {
+                return Err(err(
+                    StatusCode::CONFLICT,
+                    "more than one person goes by that name; ask them for their login",
+                ));
+            }
+        },
+    };
+    let a = a
         .filter(|a| a.root.is_some())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "nobody by that name here yet (they sign in once first)"))?;
-    Ok(Json(json!({ "account": a.id, "name": a.login, "root": a.root })))
+    Ok(Json(json!({ "account": a.id, "name": a.name, "root": a.root })))
+}
+
+/// A name for a roster or a request: one word (rosters are signed text).
+pub fn member_name(a: &crate::db::Account) -> String {
+    let words: Vec<&str> =
+        a.name.split(|c: char| c.is_whitespace() || c.is_control()).filter(|w| !w.is_empty()).collect();
+    let name: String = words.join("-").chars().take(120).collect();
+    if name.is_empty() { format!("account-{}", &a.id[..6.min(a.id.len())]) } else { name }
 }
 
 // ---------------------------------------------------------------- teams
@@ -217,13 +238,26 @@ pub async fn accept_invite(State(app): State<Arc<App>>, s: Session, Path((team, 
         .filter(|(t, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
     let me = app.db.account(&s.account)?.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "no account"))?;
-    let root = me.root.ok_or_else(|| err(StatusCode::CONFLICT, "enroll a device first"))?;
-    let name: String = me.login.chars().filter(|c| !c.is_whitespace() && !c.is_control()).collect();
-    let name = if name.is_empty() { format!("account-{}", &s.account[..6]) } else { name };
+    let root = me.root.clone().ok_or_else(|| err(StatusCode::CONFLICT, "enroll a device first"))?;
+    let name = member_name(&me);
+    let new = !app.db.requests(&t)?.iter().any(|r| r.account == s.account);
     app.db.add_request(
         &t,
         &TeamRequest { account: s.account.clone(), root, name, role, created: illogical_e2e::now_ms() },
     )?;
+    // The team's owners hear of it (#104), once.
+    if new && let Some(team) = app.db.team(&t)? {
+        let owners: Vec<String> =
+            latest(&app, &t)?.members.into_iter().filter(|m| m.role == TeamRole::Owner).map(|m| m.account).collect();
+        let who = if me.name.is_empty() { "Someone" } else { me.name.as_str() };
+        crate::push::notify(
+            &app,
+            owners,
+            &format!("control-team-{t}"),
+            format!("{who} asks to join {}", team.name),
+            "Open illogical to add them.".into(),
+        );
+    }
     Ok(Json(json!({ "team": t, "pending": true })))
 }
 
@@ -325,9 +359,9 @@ pub async fn daemon_peers(State(app): State<Arc<App>>, _d: DaemonAuth, Query(q):
     let accounts: Vec<&str> = q.accounts.split(',').filter(|a| !a.is_empty()).take(200).collect();
     let mut out = serde_json::Map::new();
     for a in accounts {
-        let login = app.db.account(a)?.map(|x| x.login).unwrap_or_default();
+        let name = app.db.account(a)?.map(|x| x.name).unwrap_or_default();
         let (certs, revocations) = certs_of(&app, a)?;
-        out.insert(a.to_owned(), json!({ "certs": certs, "revocations": revocations, "name": login }));
+        out.insert(a.to_owned(), json!({ "certs": certs, "revocations": revocations, "name": name }));
     }
     Ok(Json(Value::Object(out)))
 }

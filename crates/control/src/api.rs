@@ -32,7 +32,34 @@ type R = Result<Json<Value>, ApiError>;
 pub async fn me(State(app): State<Arc<App>>, s: Session) -> R {
     let a = app.db.account(&s.account)?.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "no such account"))?;
     let passkeys = app.db.passkey_count(&a.id)?;
-    Ok(Json(json!({ "account": a.id, "login": a.login, "root": a.root, "passkeys": passkeys })))
+    Ok(Json(json!({ "account": a.id, "login": a.login, "name": a.name, "root": a.root, "passkeys": passkeys })))
+}
+
+/// A display name as people type it: trimmed, spaces folded, no control
+/// characters, 1 to 64 characters.
+pub fn display_name(s: &str) -> Result<String, ApiError> {
+    let name = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
+        return Err(err(StatusCode::BAD_REQUEST, "a name of 1 to 64 characters"));
+    }
+    Ok(name)
+}
+
+#[derive(Deserialize)]
+pub struct Name {
+    name: String,
+}
+
+/// Change what other people see (#102). Rosters keep the name an owner
+/// signed until they sign the next one.
+pub async fn set_name(State(app): State<Arc<App>>, s: Session, Json(b): Json<Name>) -> R {
+    let name = display_name(&b.name)?;
+    app.db.set_name(&s.account, &name)?;
+    // Daemons that let this account in call it by name.
+    let mut ds: Vec<String> = app.db.daemons(&s.account)?.into_iter().map(|d| d.id).collect();
+    ds.extend(crate::teams::reachable(&app, &s.account)?);
+    app.relay.nudge(&ds);
+    Ok(Json(json!({ "name": name })))
 }
 
 /// What the account trusts now, by control's own reckoning.
@@ -91,7 +118,19 @@ pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enrol
             Ok(Json(json!({ "approved": true, "cert": c, "root": c.device })))
         }
         Some(root) => {
+            let new = app.db.device(&s.account, &c.device)?.is_none();
             app.db.put_device(&Cert { approver: String::new(), sig: String::new(), ..c.clone() }, false, now_ms())?;
+            // The account's other devices hear of it once (#104), not on
+            // every reload of the waiting page.
+            if new {
+                crate::push::notify(
+                    &app,
+                    vec![s.account.clone()],
+                    "control-device",
+                    "A new browser wants into your account".into(),
+                    "Open illogical to check its fingerprint and approve it.".into(),
+                );
+            }
             Ok(Json(json!({ "approved": false, "root": root })))
         }
     }
@@ -404,7 +443,7 @@ pub async fn directory(State(app): State<Arc<App>>, s: Session) -> R {
         }
         let online = app.relay.online(&d.id);
         let team = app.db.daemon_team(&d.id)?;
-        let owner_name = app.db.account(&owner)?.map(|a| a.login).unwrap_or_default();
+        let owner_name = app.db.account(&owner)?.map(|a| a.name).unwrap_or_default();
         daemons.push(json!({
             "id": d.id, "name": d.name, "urls": d.urls, "last_seen": d.last_seen, "online": online,
             "account": owner, "owner_name": owner_name, "team": team, "chain": crate::teams::chain_of(&app, &owner)?,
