@@ -4,8 +4,7 @@ Run 2026-10-03 on geek, against hosted Fountain (`managoat.com`, Jake's account,
 Today illogical knows Fountain only as an ACP command: an agent block can run `fountain acp
 --agent X` (S7), and that's all. This spike asks what else is worth building.
 **Result: go on all three, with geek as the only runner (decided below). Before that decision it was two of three. A read-only agent catalog and "wear this agent locally" are cheap,
-and they work from what Fountain already exposes (a worn agent's bundle is built; a live session
-using it is still owed, see q1). Managing runners waits on one Fountain change:
+and they work from what Fountain already exposes (q1: a session wearing `pr-reviewer` works). Managing runners waits on one Fountain change:
 an agent can't be pinned to a runner.**
 
 ## What's there
@@ -45,13 +44,15 @@ an agent can't be pinned to a runner.**
 - `pr-reviewer`: 4 of `getsentry/skills` + all 15 of `obra/superpowers`, and `context7`, `mem0`,
   `github`. `github` needs `${GITHUB_TOKEN}`. It's left out unless set, and set from `gh auth
   token` it resolves.
-- **Not yet loaded into a real Claude.** On geek, headless `claude -p "say hi"` (2.1.289,
-  logged in, API reachable) answers "No messages returned from query" with no flags at all, in a
-  pane as well as from an agent's shell. So the bundles are built and the flags exist, but no
-  session has been seen using them. The test is `claude -p --plugin-dir … --mcp-config …
-  --append-system-prompt …` asking it to name its skills and servers. Re-run it once `-p` works,
-  or through `claude-agent-acp` with the `_meta` below, which is the path a block would take
-  anyway.
+- **Loaded into a real session through `claude-agent-acp`** (`q1-acp.mjs`, the path a block
+  takes; 11 s). The session calls itself pr-reviewer running locally. It lists the plugin's
+  skills as `fountain-pr-reviewer:code-review`, `…:iterate-pr` and so on, and has tools from
+  `github` and `context7`.
+  - `mem0` (HTTP, OAuth) can't connect headless.
+  - The account's claude.ai connectors come along too.
+  - **The client must send `settingSources: []`**, as illogical's Claude blocks do. Without it,
+    the SessionStart hook `illogical inbox` (24 h timeout) holds the session. That is why headless
+    `claude -p` never answered on geek; `--setting-sources project,local` answers in 4.6 s (#124).
 
 **The prompts are written for the sandbox.** `captain-picard` clones into `/workspace`, spawns
 specialists with `vault_id`, and talks about `/home/sprite`. `wear.py` puts a short preamble in
