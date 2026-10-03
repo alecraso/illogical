@@ -3,6 +3,8 @@
 // control's relay, see each other there and pass control back and forth;
 // one runs a build on it. A read-only link works in a logged-out browser
 // and dies at expiry. Removing a member cuts them off within a second.
+// Joining (#100): the approver sees the team, picks it or Just me, and only
+// its owners can approve; Cancel turns the daemon down.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -126,34 +128,60 @@ test("two people at different companies join a team by invite", async ({ browser
     .toEqual(["alice:owner", "bob:editor"]);
 });
 
-test("a team-owned box joins; both use it through the relay and pass control", async () => {
-  const state = temp("box");
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", "buildbox", "--team", team, "--state-dir", state], {
-    stdio: ["ignore", "pipe", "ignore"],
+/** `illogicald join`, waiting for approval: its link, what it printed,
+ * and how it ended. */
+async function startJoin(name: string, state: string, extra: string[] = []) {
+  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state, ...extra], {
+    stdio: ["ignore", "pipe", "pipe"],
   });
   procs.push(joining);
+  let out = "";
+  let err = "";
+  joining.stderr!.on("data", (d) => (err += d));
+  const exited = new Promise<number | null>((r) => joining.on("exit", r));
   const link = await new Promise<string>((res) => {
-    let out = "";
     joining.stdout!.on("data", (d) => {
       out += d;
       const m = out.match(/(http\S+#join=[A-Z0-9-]+)/);
       if (m) res(m[1]);
     });
   });
-  const exited = new Promise<number | null>((r) => joining.on("exit", r));
-  await alice.goto(link);
-  await alice.locator("[data-approve-join]").click();
-  expect(await exited).toBe(0);
+  return { link, exited, out: () => out, err: () => err };
+}
+
+function runDaemon(name: string, state: string) {
   procs.push(
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", ANY, "--name", "buildbox", "--state-dir", state],
+        ...["--listen", ANY, "--name", name, "--state-dir", state],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },
     ),
   );
+}
+
+test("a team-owned box joins; both use it through the relay and pass control", async () => {
+  const state = temp("box");
+  const j = await startJoin("buildbox", state, ["--team", team]);
+  expect(j.out()).toContain("To add this machine (buildbox) to the team Acme");
+  expect(j.out()).toContain("Waiting for approval (the code lasts 15 minutes)");
+  // #100: Bob (an editor) sees it's for the team, and can't approve it.
+  await bob.goto(j.link);
+  await expect(bob.locator("[data-join-team]")).toHaveText("Acme");
+  await expect(bob.locator("[data-join-not-owner]")).toBeVisible();
+  await expect(bob.locator("[data-approve-join]")).toBeDisabled();
+  // Alice owns it: the team is picked already, and she's told what it grants.
+  await alice.goto(j.link);
+  await expect(alice.locator("[data-join-team]")).toHaveText("Acme");
+  await expect(alice.locator("[data-join-to]")).toHaveValue(team);
+  await expect(alice.locator("[data-join-grants]")).toContainText("The members of Acme reach it by their role");
+  await alice.locator("[data-approve-join]").click();
+  expect(await j.exited).toBe(0);
+  expect(j.out()).toContain("This machine is in the team Acme");
+  expect(j.out()).toContain("illogicald isn't running here");
+  runDaemon("buildbox", state);
   for (const p of [alice, bob]) {
     await p.goto("/");
     await p.waitForFunction(() => window.__illogical?.control?.phase === "ready");
@@ -216,4 +244,33 @@ test("removing a member cuts them off within a second", async () => {
   await alice.evaluate((tm) => window.__illogical.control!.changeTeam(tm, (ms) => ms.filter((m) => m.name !== "bob")), team);
   await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected), { timeout: 3000, intervals: [50] }).toBe(false);
   expect(Date.now() - t).toBeLessThan(1500);
+});
+
+test("Cancel turns a join down; Just me keeps a machine apart from the team's", async () => {
+  // #100: Cancel tells the daemon, which stops waiting.
+  const no = await startJoin("nope", temp("nope"));
+  await alice.goto(no.link);
+  await expect(alice.locator("[data-join-grants]")).toContainText("Only your devices reach it");
+  await alice.locator("[data-cancel-join]").click();
+  expect(await no.exited).not.toBe(0);
+  expect(no.err()).toContain("turned down on");
+  // --team only picks ahead: Alice keeps this one to herself.
+  const state = temp("mine");
+  const j = await startJoin("minebox", state, ["--team", team]);
+  await alice.goto(j.link);
+  await expect(alice.locator("[data-join-to]")).toHaveValue(team);
+  await alice.locator("[data-join-to]").selectOption("");
+  await expect(alice.locator("[data-join-grants]")).toContainText("Only your devices reach it");
+  await alice.locator("[data-approve-join]").click();
+  expect(await j.exited).toBe(0);
+  expect(j.out()).toContain("This machine is in your account");
+  expect(j.out()).toContain("Not the team Acme");
+  runDaemon("minebox", state);
+  await alice.goto("/");
+  await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await expect.poll(async () => (await hostNames(alice)).sort(), { timeout: 30_000 }).toEqual(["buildbox", "minebox"]);
+  // The host menu groups them: hers, and the team's.
+  await alice.locator(".host-button").click();
+  await expect(alice.locator(".menu-header", { hasText: "Team Acme" })).toBeVisible();
+  await expect(alice.locator(".menu-header", { hasText: "Yours" })).toBeVisible();
 });

@@ -67,7 +67,9 @@ phone runs below confirm Safari on iOS.
   device. That is the "approve this device?" prompt, showing a fingerprint
   to compare (the first 8 bytes of SHA-256 of `noise‖sign`, as words).
 - A daemon's own certificate is signed by the device that approved its
-  `join` code.
+  `join` code. When the approver puts it in a team, that device also
+  signs the choice (`illogical team join v1`: the daemon, the team, its
+  founder). The daemon pins only a team signed that way.
 
 **Verification on the daemon:**
 

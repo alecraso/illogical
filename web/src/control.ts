@@ -12,7 +12,7 @@
 import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
 import { forget, loadEnrollment, loadKeys, saveEnrollment, saveWorkerDirectory, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
-import { follows, signRoster, word, type AccountCerts, type Roster, type TeamPin, type TeamRole } from "./e2e/team.ts";
+import { follows, signRoster, teamJoinBody, word, type AccountCerts, type Roster, type TeamPin, type TeamRole } from "./e2e/team.ts";
 
 export interface ControlInfo {
   control: true;
@@ -44,6 +44,13 @@ export interface DirDaemon {
  * certificates to check it by. */
 interface ForeignEntry extends Omit<DirDaemon, "cert"> {
   chain?: { trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[] };
+}
+
+export interface JoinRequest {
+  code: string;
+  cert: Cert;
+  urls: string[];
+  team: { team: string; name: string } | null;
 }
 
 export interface Team {
@@ -672,20 +679,34 @@ export class ControlSession {
   }
 
   /** A daemon's join request, by the code it printed. The code is
-   * recomputed from the key control shows, so control can't swap it. */
-  async showJoin(code: string): Promise<{ code: string; cert: Cert; urls: string[] }> {
+   * recomputed from the key control shows, so control can't swap it.
+   * `team` is the one it asked for (`--team`), if any. */
+  async showJoin(code: string): Promise<JoinRequest> {
     const c = normalizeCode(code);
     if (!c) throw new Error("a code is ten letters and digits");
-    const j = await api<{ code: string; cert: Cert; urls: string[] }>(`/api/joins/${c}`);
+    const j = await api<JoinRequest>(`/api/joins/${c}`);
     if ((await joinCode(j.cert)) !== c) throw new Error("that request doesn't match its code: not approving it");
     return j;
   }
 
-  async approveJoin(code: string, c: Cert) {
+  /** Approve a daemon into this account, or into `team` (one I own): this
+   * device signs the team in, so control can't pick one (#100). */
+  async approveJoin(code: string, c: Cert, team: string | null = null) {
     const signed: Cert = { ...c, account: this.account, approver: this.keys.id, sig: "" };
     signed.sig = await signText(this.keys, certBody(signed));
-    await api(`/api/joins/${code}/approve`, { cert: signed });
+    let teamSig: string | null = null;
+    if (team) {
+      const t = this.teams.find((x) => x.team === team && x.role === "owner" && x.verified);
+      if (!t) throw new Error("only the team's owners add its machines");
+      teamSig = await signText(this.keys, teamJoinBody(c.device, t.pin));
+    }
+    await api(`/api/joins/${code}/approve`, { cert: signed, team, team_sig: teamSig });
     await this.refresh();
+  }
+
+  /** Turn a daemon's join down: it stops waiting. */
+  async rejectJoin(code: string) {
+    await api(`/api/joins/${code}/reject`, { device: this.keys.id });
   }
 
   async revoke(id: string) {

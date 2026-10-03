@@ -351,10 +351,13 @@ impl Control {
         if res.status() == reqwest::StatusCode::UNAUTHORIZED {
             bail!(
                 "control doesn't know this daemon any more ({}); run `illogicald join` again",
-                res.text().await.unwrap_or_default()
+                control_said(res).await
             );
         }
-        Ok(res.error_for_status()?.json().await?)
+        if !res.status().is_success() {
+            bail!("{}", control_said(res).await);
+        }
+        Ok(res.json().await?)
     }
 
     /// Fetch certificates (the account's, the team's, people's shared
@@ -723,11 +726,17 @@ struct JoinStarted {
     code: String,
     poll: String,
     expires_in_secs: u64,
+    /// The team `--team` named, by name.
+    #[serde(default)]
+    team_name: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct JoinPoll {
     approved: bool,
+    /// Turned down, on this device (#100).
+    #[serde(default)]
+    rejected: Option<String>,
     cert: Option<Cert>,
     trust: Option<Trust>,
     #[serde(default)]
@@ -745,10 +754,35 @@ struct JoinTeam {
     founder_root: String,
     #[serde(default)]
     name: String,
+    /// The approving device's signature over [`TeamPin::join_body`].
+    #[serde(default)]
+    sig: Option<String>,
+}
+
+/// What control said, as a sentence: its `{"error": …}` if it sent one.
+pub async fn control_said(res: reqwest::Response) -> String {
+    let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    match serde_json::from_str::<serde_json::Value>(&body).ok().and_then(|v| v["error"].as_str().map(str::to_owned)) {
+        Some(e) => format!("control says: {e}"),
+        None => format!("control answered {status}"),
+    }
+}
+
+/// Who a saved enrollment belongs to, in words.
+fn whose(s: &Saved) -> String {
+    match (&s.roster, &s.team) {
+        (Some(r), _) => format!("the team {}", r.name),
+        (None, Some(t)) => format!("the team {}", t.team),
+        _ if !s.login.is_empty() => format!("{}'s account", s.login),
+        _ => "an account".into(),
+    }
 }
 
 /// `illogicald join URL [--team ID]`: ask, show the code, wait, pin, save.
-/// A hosted sandbox (M20) joins with the `ticket` control gave it.
+/// The person approving picks their account or a team they own; `--team`
+/// picks one ahead. A hosted sandbox (M20) joins with the `ticket` control
+/// gave it.
 pub async fn join(
     url: &str,
     name: &str,
@@ -761,7 +795,11 @@ pub async fn join(
         bail!("control's URL must be https:// (or http on loopback or a private network, for testing)");
     }
     if let Some(s) = read_saved(state_dir)? {
-        bail!("already joined to {} (account {}); `illogicald leave` first", s.url, s.trust.account);
+        bail!(
+            "this machine is already in {} on {}; to move it, run `illogicald leave`, then join again",
+            whose(&s),
+            s.url
+        );
     }
     let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
     let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
@@ -770,31 +808,53 @@ pub async fn join(
         .post(format!("{url}/api/join"))
         .json(&serde_json::json!({ "cert": ask, "urls": [], "team": team, "ticket": ticket }))
         .send()
-        .await?;
+        .await
+        .with_context(|| format!("can't reach control at {url}"))?;
+    if res.status() == reqwest::StatusCode::NOT_FOUND
+        && let Some(t) = team
+    {
+        bail!("control has no team {t}; copy the command from the team's page (Teams, in the session menu)");
+    }
     if !res.status().is_success() {
-        bail!("control said {}: {}", res.status(), res.text().await.unwrap_or_default());
+        bail!("{}", control_said(res).await);
     }
     let started: JoinStarted = res.json().await?;
     debug_assert_eq!(started.code, join_code(&ask));
+    let to = match &started.team_name {
+        Some(t) => format!("the team {t}"),
+        None => "your account".into(),
+    };
+    let mins = started.expires_in_secs / 60;
     println!();
-    println!("  To add this machine ({name}) to your account, open");
+    println!("  To add this machine ({name}) to {to}, open");
     println!();
     println!("    {url}/#join={}", started.code);
     println!();
     println!("  on a device that's signed in, and check the code there is {}.", started.code);
+    println!("  Or sign in at {url} and type the code.");
+    if team.is_none() {
+        println!("  Whoever approves picks their account or a team they own (--team ID picks one ahead).");
+    }
     println!();
+    println!("  Waiting for approval (the code lasts {mins} minutes)…");
     let deadline = std::time::Instant::now() + Duration::from_secs(started.expires_in_secs);
     let got = loop {
         if std::time::Instant::now() > deadline {
-            bail!("nobody approved it in time; run join again");
+            bail!("nobody approved it in {mins} minutes; run join again for a new code");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
         let res = http.get(format!("{url}/api/join/{}?poll={}", started.code, started.poll)).send().await;
         let Ok(res) = res else { continue };
         if res.status() == reqwest::StatusCode::NOT_FOUND {
-            bail!("the code expired; run join again");
+            bail!("the code expired; run join again for a new one");
         }
-        let Ok(p) = res.error_for_status()?.json::<JoinPoll>().await else { continue };
+        if !res.status().is_success() {
+            bail!("{}", control_said(res).await);
+        }
+        let Ok(p) = res.json::<JoinPoll>().await else { continue };
+        if let Some(on) = p.rejected {
+            bail!("turned down on {on}; run join again to ask again");
+        }
         if p.approved {
             break p;
         }
@@ -809,17 +869,26 @@ pub async fn join(
     if trust.evaluate(&all, &got.revocations).get(&cert.device) != Some(&cert) {
         bail!("the approval doesn't check out against the account's devices; not joining");
     }
-    let approver = trusted.get(&cert.approver).map(|c| c.name.clone()).unwrap_or_default();
-    let pin = got.team.as_ref().map(|t| TeamPin {
-        team: t.team.clone(),
-        founder: t.founder.clone(),
-        founder_root: t.founder_root.clone(),
-    });
-    if team.is_some() && pin.is_none() {
-        bail!("control approved it, but not as the team's machine; not joining");
-    }
+    let approver = trusted.get(&cert.approver);
+    // A team is pinned only if the approving device chose it (#100):
+    // control can't make a machine a team's on its own.
+    let pin = match &got.team {
+        Some(t) => {
+            let pin =
+                TeamPin { team: t.team.clone(), founder: t.founder.clone(), founder_root: t.founder_root.clone() };
+            let sig = t.sig.as_deref().unwrap_or_default();
+            if !approver.is_some_and(|a| pin.join_signed_by(&cert.device, a, sig)) {
+                bail!(
+                    "control put this machine in the team {}, but the approving device didn't sign that; not joining",
+                    t.name
+                );
+            }
+            Some(pin)
+        }
+        None => None,
+    };
     let saved = Saved {
-        url,
+        url: url.clone(),
         trust: trust.clone(),
         cert: cert.clone(),
         certs: all,
@@ -833,12 +902,20 @@ pub async fn join(
         login: String::new(),
     };
     write_saved(state_dir, &saved)?;
-    println!("  Joined. Approved by \"{approver}\"; the account's first device is {}.", fingerprint(&trust.root));
-    if let (Some(t), Some(p)) = (&got.team, &pin) {
-        println!("  It belongs to the team {} (founded by the device {}).", t.name, fingerprint(&p.founder_root));
+    let approver = approver.map(|c| c.name.clone()).unwrap_or_default();
+    let place = match &got.team {
+        Some(t) => format!("the team {}", t.name),
+        None => "your account".into(),
+    };
+    println!();
+    println!("  Joined. This machine is in {place}, approved on \"{approver}\".");
+    if got.team.is_none()
+        && let Some(t) = &started.team_name
+    {
+        println!("  (Not the team {t}: the approver kept it to their account.)");
     }
-    println!("  This machine is {} ({}).", fingerprint(&cert.device), cert.name);
-    println!("  A running daemon picks this up within a few seconds.");
+    println!("  Its key is {}; the account's first device is {}.", fingerprint(&cert.device), fingerprint(&trust.root));
+    println!("  Open {url}; it's in the host menu.");
     Ok(())
 }
 
@@ -867,9 +944,10 @@ fn private_http(url: &str) -> bool {
     }
 }
 
-/// `illogicald leave`: tell control, forget it.
-pub async fn leave(state_dir: &Path) -> anyhow::Result<()> {
-    let Some(s) = read_saved(state_dir)? else { bail!("not joined to any control") };
+/// `illogicald leave`: tell control, forget it. `listen` is where this
+/// machine is still reached locally.
+pub async fn leave(state_dir: &Path, listen: &str) -> anyhow::Result<()> {
+    let Some(s) = read_saved(state_dir)? else { bail!("this machine isn't joined to any control") };
     let keys = DeviceKeys::load(&state_dir.join(KEY_FILE))?;
     let path = "/api/daemon/leave";
     let res = reqwest::Client::new()
@@ -878,10 +956,12 @@ pub async fn leave(state_dir: &Path) -> anyhow::Result<()> {
         .send()
         .await;
     match res {
-        Ok(r) if r.status().is_success() => println!("Left {} (account {}).", s.url, s.trust.account),
-        Ok(r) => println!("control said {} (leaving anyway)", r.status()),
-        Err(e) => println!("couldn't reach control ({e}); leaving anyway"),
+        Ok(r) if r.status().is_success() => println!("Left {} ({}).", s.url, whose(&s)),
+        Ok(r) => println!("{} (leaving anyway)", control_said(r).await),
+        Err(e) => println!("can't reach control ({e}); leaving anyway"),
     }
     std::fs::remove_file(state_dir.join(FILE))?;
+    println!("illogical keeps running here; reach it at http://{listen}.");
+    println!("Rejoin with `illogicald join {}` (the approver picks their account or a team).", s.url);
     Ok(())
 }

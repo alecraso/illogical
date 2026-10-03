@@ -16,6 +16,7 @@ use illogical_e2e::{
     Cert, Kind, Revocation, Trust,
     cert::{join_code, normalize_code},
     now_ms,
+    team::TeamPin,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -214,11 +215,10 @@ pub async fn join(
     check_urls(&b.urls)?;
     let code = join_code(&b.cert);
     let poll = token();
-    if let Some(t) = &b.team
-        && app.db.team(t)?.is_none()
-    {
-        return Err(err(StatusCode::NOT_FOUND, "no such team"));
-    }
+    let team_name = match &b.team {
+        Some(t) => Some(app.db.team(t)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?.name),
+        None => None,
+    };
     let sandbox = match &b.ticket {
         Some(t) => {
             Some(crate::sandboxes::ticket(&app, t)?.ok_or_else(|| err(StatusCode::FORBIDDEN, "that ticket is spent"))?)
@@ -226,7 +226,9 @@ pub async fn join(
         None => None,
     };
     app.db.add_join(&code, &b.cert, &hash(&poll), &b.urls, b.team.as_deref(), sandbox.as_deref(), now_ms())?;
-    Ok(Json(json!({ "code": code, "poll": poll, "expires_in_secs": crate::db::JOIN_TTL_MS / 1000 })))
+    Ok(Json(
+        json!({ "code": code, "poll": poll, "expires_in_secs": crate::db::JOIN_TTL_MS / 1000, "team_name": team_name }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -242,15 +244,18 @@ pub async fn join_poll(State(app): State<Arc<App>>, Path(code): Path<String>, Qu
     if j.poll_hash != hash(&q.poll) {
         return Err(err(StatusCode::FORBIDDEN, "not your join"));
     }
+    if let Some(on) = j.rejected {
+        app.db.drop_join(&code)?;
+        return Ok(Json(json!({ "approved": false, "rejected": on })));
+    }
     let Some(account) = j.account else { return Ok(Json(json!({ "approved": false }))) };
     let (trust, certs, revs) = trusted(&app, &account)?;
     app.db.drop_join(&code)?;
-    // A team daemon pins the team's founder too.
+    // A team daemon pins the team's founder too, if the approver signed it in.
     let team = match &j.team {
-        Some(t) => app
-            .db
-            .team(t)?
-            .map(|t| json!({ "team": t.id, "founder": t.founder, "founder_root": t.founder_root, "name": t.name })),
+        Some(t) => app.db.team(t)?.map(|t| {
+            json!({ "team": t.id, "founder": t.founder, "founder_root": t.founder_root, "name": t.name, "sig": j.team_sig })
+        }),
         None => None,
     };
     Ok(Json(
@@ -264,8 +269,9 @@ pub async fn join_show(State(app): State<Arc<App>>, _s: Session, Path(code): Pat
     let j = app
         .db
         .join(&code, now_ms())?
-        .filter(|j| j.account.is_none())
+        .filter(|j| j.account.is_none() && j.rejected.is_none())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such code (expired?)"))?;
+    // The team it asked for (`--team`): the approver may pick another.
     let team = match &j.team {
         Some(t) => app.db.team(t)?.map(|t| json!({ "team": t.id, "name": t.name })),
         None => None,
@@ -273,43 +279,90 @@ pub async fn join_show(State(app): State<Arc<App>>, _s: Session, Path(code): Pat
     Ok(Json(json!({ "code": code, "cert": j.cert, "urls": j.urls, "created": j.created, "team": team })))
 }
 
+#[derive(Deserialize)]
+pub struct JoinApprove {
+    cert: Cert,
+    /// The team the approver puts it in (one they own), and their signature
+    /// over [`TeamPin::join_body`]; none for their own account (#100).
+    #[serde(default)]
+    team: Option<String>,
+    #[serde(default)]
+    team_sig: Option<String>,
+}
+
 pub async fn join_approve(
     State(app): State<Arc<App>>,
     s: Session,
     Path(code): Path<String>,
-    Json(b): Json<Enroll>,
+    Json(b): Json<JoinApprove>,
 ) -> R {
     let code = normalize_code(&code).map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
     let j = app
         .db
         .join(&code, now_ms())?
-        .filter(|j| j.account.is_none())
+        .filter(|j| j.account.is_none() && j.rejected.is_none())
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such code (expired?)"))?;
     let c = b.cert;
     if c.account != s.account || c.kind != Kind::Daemon || !c.same_request(&j.cert) {
         return Err(err(StatusCode::BAD_REQUEST, "that's not the daemon that asked"));
     }
     approval_ok(&app, &s.account, &c)?;
-    app.db.put_device(&c, true, now_ms())?;
-    // A team's machine: only its owners add one.
-    if let Some(team) = &j.team {
-        let r = app.db.latest_roster(team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
-        let r: illogical_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
-        if r.member(&s.account).map(|m| m.role) != Some(illogical_e2e::team::TeamRole::Owner) {
-            return Err(err(StatusCode::FORBIDDEN, "only the team's owners add its machines"));
+    // A team's machine: only its owners add one, and the approving device
+    // signs it in, for the daemon to check.
+    let team = match &b.team {
+        Some(id) => {
+            let t = app.db.team(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+            let r = app.db.latest_roster(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+            let r: illogical_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
+            if r.member(&s.account).map(|m| m.role) != Some(illogical_e2e::team::TeamRole::Owner) {
+                return Err(err(StatusCode::FORBIDDEN, "only the team's owners add its machines"));
+            }
+            let sig = b.team_sig.as_deref().unwrap_or_default();
+            let pin = TeamPin { team: t.id.clone(), founder: t.founder, founder_root: t.founder_root };
+            let (trust, certs, revs) = trusted(&app, &s.account)?;
+            let approver = trust.and_then(|t| t.evaluate(&certs, &revs).get(&c.approver).cloned());
+            if !approver.is_some_and(|a| pin.join_signed_by(&c.device, &a, sig)) {
+                return Err(err(StatusCode::BAD_REQUEST, "the team choice isn't signed by the approving device"));
+            }
+            Some((t.id, sig.to_owned()))
         }
-    }
+        None => None,
+    };
     app.db.put_device(&c, true, now_ms())?;
     app.db.put_daemon(&s.account, &c.device, &c.name, &j.urls)?;
-    if let Some(team) = &j.team {
+    if let Some((team, _)) = &team {
         app.db.set_daemon_team(&c.device, team)?;
     }
     if let Some(sandbox) = &j.sandbox {
         app.db.set_sandbox_daemon(sandbox, &c.device)?;
         crate::sandboxes::enrolled(&app, sandbox, &c).await?;
     }
-    app.db.approve_join(&code, &c)?;
+    app.db.approve_join(&code, &c, team.as_ref().map(|(t, sig)| (t.as_str(), sig.as_str())))?;
     Ok(Json(json!({ "approved": true, "daemon": c.device })))
+}
+
+#[derive(Deserialize)]
+pub struct JoinReject {
+    /// The device turning it down, to name to the daemon.
+    #[serde(default)]
+    device: String,
+}
+
+/// Cancel on the approval page: the daemon stops waiting (#100).
+pub async fn join_reject(
+    State(app): State<Arc<App>>,
+    s: Session,
+    Path(code): Path<String>,
+    Json(b): Json<JoinReject>,
+) -> R {
+    let code = normalize_code(&code).map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    app.db
+        .join(&code, now_ms())?
+        .filter(|j| j.account.is_none() && j.rejected.is_none())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "no such code (expired?)"))?;
+    let on = app.db.device(&s.account, &b.device)?.map(|(c, _)| c.name).unwrap_or_else(|| "a device".into());
+    app.db.reject_join(&code, &on)?;
+    Ok(Json(json!({})))
 }
 
 // ---------------------------------------------------------------- daemons

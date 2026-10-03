@@ -39,6 +39,11 @@ export function rosterBody(r: Roster): string {
   return b + `by ${r.by}\n`;
 }
 
+/** What the approving device signs to put a joining daemon in a team
+ * (#100): `TeamPin::join_body`. */
+export const teamJoinBody = (daemon: string, p: TeamPin) =>
+  `illogical team join v1\ndaemon ${daemon}\nteam ${p.team}\nfounder ${p.founder}\nfounder_root ${p.founder_root}\n`;
+
 /** A name in a roster: no spaces or control characters. */
 export const word = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, "-").slice(0, 120) || "someone";
 
