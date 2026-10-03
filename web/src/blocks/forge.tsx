@@ -46,6 +46,9 @@ export interface ForgeState {
   /** M38: GitHub's rate limit, and why it's backing off. */
   rate?: { remaining: number | null; limit: number | null; backoff: string | null } | null;
   updated_ms: number; polls: number; reads: number; watching?: boolean; said: string | null;
+  /** M40: webhook (pokes say when to read) or polling, and why. */
+  live?: "webhook" | "polling"; live_via?: string | null; live_why?: string | null; live_heard_ms?: number | null;
+  hook?: boolean; pokes?: number;
 }
 
 /** "Open pull request…": a link, OWNER/REPO#N, or N in `dir`'s repository,
@@ -577,10 +580,16 @@ function PrBlock({ client, id, s }: { client: Client; id: PaneId; s: ForgeState 
                   Checkout
                 </button>
               )}
+              {mayOwn && s.provider !== "github" && !s.read_only && (
+                <button data-forge-live disabled={busy !== null} title="A webhook on the repository, straight to this daemon" onClick={() => void call("live", { on: !s.hook }, "couldn't change live updates")}>
+                  {s.hook ? "Stop live updates" : "Live updates"}
+                </button>
+              )}
             </div>
           )}
-          <p class="dim ws-note">
+          <p class="dim ws-note" data-forge-live-state title={s.live_why ?? undefined}>
             {s.polls} polls, {s.reads} full reads · read {ago(s.updated_ms)}
+            {s.live && ` · ${s.live === "webhook" ? `live (${s.live_via === "github-app" ? "GitHub App" : "webhook"})` : "polling"}`}
           </p>
         </div>
       )}

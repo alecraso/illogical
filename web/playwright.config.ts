@@ -70,6 +70,8 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
 // E2E_PORT runs it elsewhere (beside another worktree's run, say).
 const port = Number(process.env.E2E_PORT) || 7683;
 const external = process.env.E2E_BASE_URL || undefined;
+// M40: forge webhooks reach the test daemon on its own port.
+if (!external) process.env.ILLOGICAL_FORGE_HOOK_BASE ??= `http://127.0.0.1:${port}`;
 // E2E_DAEMON_LOG=/path/to/file keeps the test daemon's debug log.
 const log = process.env.E2E_DAEMON_LOG ? ` >>${process.env.E2E_DAEMON_LOG} 2>&1` : "";
 

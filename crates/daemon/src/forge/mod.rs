@@ -54,6 +54,7 @@ pub mod forgejo;
 pub mod github;
 pub mod gitlab;
 pub mod issue;
+pub mod live;
 pub mod login;
 pub mod model;
 
@@ -171,6 +172,11 @@ pub enum Write {
     /// Run the failed checks again (GitLab: retry the head pipeline).
     #[serde(rename = "rerun_checks")]
     Rerun,
+    /// M40: a webhook to this daemon on the repository, made or removed
+    /// with the person's login (Forgejo, GitLab).
+    Live {
+        on: bool,
+    },
 }
 
 impl Write {
@@ -200,6 +206,7 @@ impl Write {
                 Ok(Write::Merge { style })
             }
             "rerun_checks" => Ok(Write::Rerun),
+            "live" => Ok(Write::Live { on: args["on"].as_bool().ok_or("live needs {\"on\": true | false}")? }),
             m => Err(format!("{m} isn't a write")),
         }
     }
@@ -213,6 +220,8 @@ impl Write {
             Write::Review { event: ReviewEvent::Comment, .. } => "a review",
             Write::Merge { .. } => "a merge",
             Write::Rerun => "a rerun of the checks",
+            Write::Live { on: true } => "a webhook for live updates",
+            Write::Live { on: false } => "removing the live updates webhook",
         }
     }
 
@@ -220,7 +229,7 @@ impl Write {
         match self {
             Write::Comment { body } => Some(body),
             Write::Review { body, .. } => body.as_deref(),
-            Write::Merge { .. } | Write::Rerun => None,
+            Write::Merge { .. } | Write::Rerun | Write::Live { .. } => None,
         }
     }
 }
@@ -298,6 +307,17 @@ pub trait Adapter: Send + Sync {
     /// The rate limit as last heard, and any backing off (M38: GitHub).
     fn rate(&self) -> Option<Value> {
         None
+    }
+    /// M40: make (`on`) or remove a repository webhook to this daemon:
+    /// the forge's id for a new one.
+    fn hook<'a>(
+        &'a self,
+        repo: &'a str,
+        on: bool,
+        rec: &'a live::HookRec,
+    ) -> BoxFuture<'a, Result<Option<u64>, Error>> {
+        let _ = (repo, on, rec);
+        Box::pin(async { Err(Error::Http("this forge's webhooks don't come to the daemon".into())) })
     }
 }
 
@@ -446,6 +466,8 @@ struct State {
     drafts: Vec<Draft>,
     updated_ms: u64,
     polls: u64,
+    /// M40: pokes heard (webhooks through control or straight here).
+    pokes: u64,
     reads: u64,
     watching: bool,
     /// The last write's result (sent directly), for the client.
@@ -478,6 +500,8 @@ pub struct ForgeBlock {
     logged: Mutex<HashSet<String>>,
     live: Live,
     wake: tokio::sync::Notify,
+    /// M40: the webhook path's standing changed.
+    relook: tokio::sync::Notify,
     reading: tokio::sync::Mutex<()>,
     next_draft: std::sync::atomic::AtomicU64,
     restored_mark: i64,
@@ -545,10 +569,12 @@ impl ForgeBlock {
             logged: Mutex::new(HashSet::new()),
             live: Live::default(),
             wake: tokio::sync::Notify::new(),
+            relook: tokio::sync::Notify::new(),
             reading: tokio::sync::Mutex::new(()),
             next_draft: std::sync::atomic::AtomicU64::new(now_ms()),
         });
         b.sync_drafts();
+        live::register(Arc::downgrade(&b));
         let me = b.clone();
         b.ctx.rt.spawn(async move { me.run().await });
         Ok(b)
@@ -557,6 +583,75 @@ impl ForgeBlock {
     fn repo(&self) -> (String, u64) {
         let c = self.config.lock().unwrap();
         (c.repo.clone(), c.number)
+    }
+
+    /// M40: what pokes are matched on: (provider, host, repo, number).
+    pub fn live_key(&self) -> (Provider, String, String, u64) {
+        let c = self.config.lock().unwrap();
+        let api_host = || {
+            c.api.as_deref().map(|a| {
+                if c.provider == Provider::Github {
+                    github::host_of_api(a)
+                } else {
+                    login::url_host(a).unwrap_or_default()
+                }
+            })
+        };
+        let host = c.host.clone().or_else(api_host).unwrap_or_default().to_ascii_lowercase();
+        let host =
+            if c.provider == Provider::Github && github::is_github_host(&host) { "github.com".into() } else { host };
+        (c.provider, host, c.repo.clone(), c.number)
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.live.closed()
+    }
+
+    /// Something changed on the forge: poll now.
+    pub fn poked(&self) {
+        self.state.lock().unwrap().pokes += 1;
+        self.wake.notify_one();
+    }
+
+    /// The webhook path's standing changed: clients redraw, and the poll
+    /// loop looks at its interval again.
+    pub fn live_changed(&self) {
+        self.relook.notify_one();
+        self.ctx.changed();
+    }
+
+    fn standing(&self) -> live::Standing {
+        let (p, host, repo, _) = self.live_key();
+        live::standing(p, &host, &repo)
+    }
+
+    /// `live {on}` sent: make or remove the webhook with the owner's login.
+    async fn set_hook(&self, a: &Arc<dyn Adapter>, on: bool) -> Result<Sent, Error> {
+        let (p, host, repo, _) = self.live_key();
+        if p == Provider::Github {
+            return Err(Error::Http(
+                "GitHub's live updates come through illogical control's GitHub App: join control (`illogicald join`), sign in there with GitHub and install the App; there's no webhook to make here".into(),
+            ));
+        }
+        let had = live::hook_of(p, &host, &repo);
+        if on {
+            if had.as_ref().is_some_and(|r| r.id.is_some()) {
+                return Ok(Sent { url: None, said: "live updates were already on".into() });
+            }
+            let mut rec = live::new_hook(p, &host, &repo).map_err(Error::Http)?;
+            rec.id = a.hook(&repo, true, &rec).await?;
+            live::keep_hook(p, &host, &repo, Some(rec)).map_err(Error::Http)?;
+            self.relook.notify_one();
+            Ok(Sent { url: None, said: "turned on live updates (a webhook to this daemon)".into() })
+        } else {
+            let Some(rec) = had else { return Ok(Sent { url: None, said: "live updates were off".into() }) };
+            if rec.id.is_some() {
+                a.hook(&repo, false, &rec).await?;
+            }
+            live::keep_hook(p, &host, &repo, None).map_err(Error::Http)?;
+            self.relook.notify_one();
+            Ok(Sent { url: None, said: "turned off live updates (the webhook is gone)".into() })
+        }
     }
 
     async fn tea(&self) -> Result<Arc<Tea>, String> {
@@ -704,7 +799,8 @@ impl ForgeBlock {
             (Provider::Github, Some(a)) => a,
             _ => github::api_for(&host),
         };
-        let token = github::GhToken::new(tea.runner.clone(), &host);
+        let repo = self.config.lock().unwrap().repo.clone();
+        let token = github::GhToken::new(tea.runner.clone(), &host).for_repo(&repo);
         let a: Arc<dyn Adapter> = Arc::new(github::Github::new(&api, http(), token));
         Ok(Some(self.attach(host, api, a)))
     }
@@ -723,7 +819,13 @@ impl ForgeBlock {
         loop {
             let (fast, slow) = intervals();
             let wants = self.raised.lock().unwrap().as_ref().is_some_and(|(_, h)| !h.is_empty());
-            let wait = if self.live.drawn() || wants {
+            let (p, host, repo, _) = self.live_key();
+            let healthy = live::fresh(&live::key(p, &host, &repo));
+            let wait = if let Some(left) = healthy {
+                // M40: pokes say when to read; poll slowly meanwhile, and
+                // look again when the webhook path would go quiet.
+                slow.min(left + Duration::from_millis(20))
+            } else if self.live.drawn() || wants {
                 fast
             } else if self.waits_for_pr() {
                 // M37: an agent works on it; its PR shows within a minute.
@@ -734,6 +836,11 @@ impl ForgeBlock {
             tokio::select! {
                 _ = tokio::time::sleep(wait) => {}
                 _ = self.wake.notified() => {}
+                // The webhook path's standing changed: work the wait out again.
+                _ = self.relook.notified() => {
+                    self.ctx.changed();
+                    continue;
+                }
             }
             if self.live.closed() {
                 break;
@@ -1066,7 +1173,11 @@ impl ForgeBlock {
     async fn send(&self, w: &Write, by: Option<&str>, drafted: Option<&str>) -> Result<Sent, String> {
         let a = self.connect().await?;
         let (repo, number) = self.repo();
-        let r = a.write(&repo, number, w).await.map_err(|e| e.to_string());
+        let r = match w {
+            Write::Live { on } => self.set_hook(&a, *on).await,
+            _ => a.write(&repo, number, w).await,
+        }
+        .map_err(|e| e.to_string());
         let ok = r.is_ok();
         let url = r.as_ref().ok().and_then(|s| s.url.clone());
         let err = r.as_ref().err().cloned();
@@ -1400,6 +1511,7 @@ fn edited(w: &Write, content: &Value) -> Write {
         },
         Write::Merge { style } => Write::Merge { style: style.clone() },
         Write::Rerun => Write::Rerun,
+        Write::Live { on } => Write::Live { on: *on },
     }
 }
 
@@ -1415,6 +1527,13 @@ impl Block for ForgeBlock {
     fn state(&self) -> Value {
         let mut v = serde_json::to_value(&*self.state.lock().unwrap()).unwrap_or_default();
         v["watching"] = self.live.drawn().into();
+        // M40: webhook or polling, and why.
+        let s = self.standing();
+        v["live"] = json!(s.live);
+        v["live_via"] = json!(s.via);
+        v["live_why"] = json!(s.why);
+        v["live_heard_ms"] = json!(s.heard_ms);
+        v["hook"] = json!(s.hook);
         v
     }
 
@@ -1428,6 +1547,11 @@ impl Block for ForgeBlock {
             (None, None, None) => format!("{}#{}\nreading…\n", st.repo, st.number),
         };
         out.push_str(&issue::text(&st));
+        let live = self.standing();
+        out.push_str(&match &live.why {
+            Some(w) => format!("live: {} ({w})\n", live.live),
+            None => format!("live: {}\n", live.live),
+        });
         if let Some(r) = &st.read_only {
             out.push_str(&format!("{r}\n"));
         }
@@ -1496,7 +1620,7 @@ impl Block for ForgeBlock {
             "comment" | "review" | "merge" | "rerun_checks" if self.config.lock().unwrap().number == 0 => {
                 Box::pin(async move { Err("this issue isn't on the forge yet".into()) })
             }
-            "comment" | "review" | "merge" | "rerun_checks" => {
+            "comment" | "review" | "merge" | "rerun_checks" | "live" => {
                 let method = method.to_owned();
                 Box::pin(async move { me.ok_or("closed")?.write(&method, args, by).await })
             }
@@ -1532,6 +1656,7 @@ impl Block for ForgeBlock {
     fn close(&self) {
         self.live.close();
         self.wake.notify_one();
+        live::resubscribe();
         if let Some((id, token)) = self.asking.lock().unwrap().take() {
             self.ctx.withdraw(&id, token);
         }

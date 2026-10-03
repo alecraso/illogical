@@ -475,7 +475,35 @@ the daemon stopping, crashing, or the machine rebooting:
     (`illogical pr rerun %N`, `illogical rerun %N`, the rail, the block),
     which reruns each red workflow run's failed jobs. Merge is `merge`,
     `squash` or `rebase`.
-  - **Not yet:** webhooks (M40).
+  - **Live updates** (M40). A poke from the forge makes the block read at
+    once, and while the webhook path is healthy (something heard from it
+    in the last ten minutes) the block polls only every few minutes, even
+    while you look at it; the block's footer and its state say *live* or
+    *polling* (and why), and `capture --text` says `live: webhook` or
+    `live: polling (why)`. Issues on the same repository hear theirs too.
+    - **GitHub** needs nothing on the block: a daemon joined to illogical
+      control tells control which repositories it has blocks on, and
+      control's GitHub App relays its webhooks (only "something changed on
+      OWNER/REPO#N", never the event's contents) to the daemons of people
+      it may tell: signed in to control with GitHub, the App installed on
+      the repository's owner, and the repository theirs or one GitHub lists
+      them as a collaborator on. Control's heartbeat each minute keeps it
+      *live*.
+    - **Forgejo and GitLab**: *Live updates* on the block (the owner's;
+      `call %N live '{"on": true}'`) makes a webhook on the repository with
+      your login, pointed at this daemon's tailnet address, with a secret
+      made here (kept 0600 in `secrets/forge-hooks.json` in the daemon's
+      state directory). The daemon takes only deliveries signed with it
+      (Forgejo's `X-Forgejo-Signature`, GitLab's `X-Gitlab-Token`). *Stop
+      live updates* removes the webhook. An agent's `live` is a draft, like
+      any other write to the forge. The forge must reach the daemon over
+      the tailnet; a hook that goes quiet just means polling again.
+  - **A box with no `gh` login** (a hosted sandbox) joined to control
+    reads GitHub through control's App: a read-only token for that one
+    repository, held in memory until a minute before it expires. Who you
+    are comes from your control sign-in, so a review asked of you still
+    reaches the rail. Every write, a person's or an agent's draft, is
+    refused there: writes go out as you, with your own `gh` login.
 
 - **Issues** (M37, Forgejo and GitHub). An issue is the same block: its
   labels, assignees, the pull requests that refer to it and its timeline,

@@ -768,7 +768,37 @@ impl Adapter for Gitlab {
                     *self.jobs.lock().unwrap() = None;
                     Ok(Sent { url: v["web_url"].as_str().map(str::to_owned), said: format!("retried pipeline {id}") })
                 }
+                Write::Live { .. } => Err(Error::Http("live updates go through the block's hook".into())),
             }
+        })
+    }
+
+    /// M40: a project webhook to this daemon (its token in
+    /// `X-Gitlab-Token`), or its removal.
+    fn hook<'a>(
+        &'a self,
+        repo: &'a str,
+        on: bool,
+        rec: &'a crate::forge::live::HookRec,
+    ) -> BoxFuture<'a, Result<Option<u64>, Error>> {
+        Box::pin(async move {
+            if self.token.is_none() {
+                return Err(self.refused());
+            }
+            let base = format!("projects/{}/hooks", project(repo));
+            if !on {
+                let id = rec.id.unwrap_or_default();
+                return match self.send(reqwest::Method::DELETE, &format!("{base}/{id}"), None).await {
+                    Ok(_) | Err(Error::NotFound(_)) => Ok(None),
+                    Err(e) => Err(e),
+                };
+            }
+            let req = json!({
+                "url": rec.url, "token": rec.secret,
+                "merge_requests_events": true, "note_events": true, "pipeline_events": true,
+                "push_events": false, "issues_events": false, "enable_ssl_verification": true,
+            });
+            Ok(self.send(reqwest::Method::POST, &base, Some(&req)).await?.v["id"].as_u64())
         })
     }
 

@@ -400,6 +400,23 @@ pub fn review_event(event: super::ReviewEvent) -> &'static str {
     }
 }
 
+/// What a live updates webhook hears (M40): pull requests, their reviews
+/// and comments, issues, and commit statuses.
+pub const HOOK_EVENTS: &[&str] = &[
+    "pull_request",
+    "pull_request_assign",
+    "pull_request_label",
+    "pull_request_comment",
+    "pull_request_review_approved",
+    "pull_request_review_rejected",
+    "pull_request_review_comment",
+    "pull_request_review_request",
+    "pull_request_sync",
+    "issues",
+    "issue_comment",
+    "status",
+];
+
 /// A Forgejo instance, through one login's token.
 pub struct Forgejo {
     pub api: String,
@@ -563,7 +580,36 @@ impl Adapter for Forgejo {
                 Write::Rerun => {
                     Err(Error::Http("Forgejo has no API to rerun checks: rerun them on the run's page".into()))
                 }
+                Write::Live { .. } => Err(Error::Http("live updates go through the block's hook".into())),
             }
+        })
+    }
+
+    /// M40: a repository webhook (`type: forgejo`, JSON, signed with the
+    /// secret) to this daemon, or its removal.
+    fn hook<'a>(
+        &'a self,
+        repo: &'a str,
+        on: bool,
+        rec: &'a crate::forge::live::HookRec,
+    ) -> BoxFuture<'a, Result<Option<u64>, Error>> {
+        Box::pin(async move {
+            if !on {
+                let id = rec.id.unwrap_or_default();
+                return match self.send(reqwest::Method::DELETE, &format!("repos/{repo}/hooks/{id}"), None).await {
+                    Ok(_) | Err(Error::NotFound(_)) => Ok(None),
+                    Err(e) => Err(e),
+                };
+            }
+            let req = json!({
+                "type": "forgejo",
+                "active": true,
+                "branch_filter": "*",
+                "config": { "url": rec.url, "content_type": "json", "secret": rec.secret },
+                "events": HOOK_EVENTS,
+            });
+            let (v, _) = self.send(reqwest::Method::POST, &format!("repos/{repo}/hooks"), Some(&req)).await?;
+            Ok(v["id"].as_u64())
         })
     }
 

@@ -11,6 +11,9 @@ mod api;
 mod auth;
 mod billing;
 mod db;
+mod forge;
+#[cfg(test)]
+mod forge_wire;
 mod limit;
 mod passkey;
 mod push;
@@ -64,6 +67,30 @@ struct Args {
     github_url: String,
     #[arg(long, default_value = "https://api.github.com", hide = true)]
     github_api: String,
+
+    /// The GitHub App (M40) whose webhooks come to /github/webhook and
+    /// whose installation tokens let hosted boxes read: its id, slug,
+    /// webhook secret and private key (a PEM file, or the PEM itself in
+    /// GITHUB_APP_PRIVATE_KEY, as a Fly secret). Its client id and secret
+    /// sign people in when GITHUB_CLIENT_ID/SECRET aren't set. Off without
+    /// an id and a key.
+    #[arg(long, env = "GITHUB_APP_ID")]
+    github_app_id: Option<String>,
+    #[arg(long, env = "GITHUB_APP_SLUG", default_value = "illogical")]
+    github_app_slug: String,
+    #[arg(long, env = "GITHUB_APP_CLIENT_ID")]
+    github_app_client_id: Option<String>,
+    #[arg(long, env = "GITHUB_APP_CLIENT_SECRET", hide_env_values = true)]
+    github_app_client_secret: Option<String>,
+    #[arg(long, env = "GITHUB_APP_WEBHOOK_SECRET", hide_env_values = true)]
+    github_app_webhook_secret: Option<String>,
+    #[arg(long, env = "GITHUB_APP_PRIVATE_KEY_FILE")]
+    github_app_private_key_file: Option<PathBuf>,
+    #[arg(long, env = "GITHUB_APP_PRIVATE_KEY", hide_env_values = true)]
+    github_app_private_key: Option<String>,
+    /// How often subscribed daemons hear the webhook path is up (tests).
+    #[arg(long, default_value_t = 60, hide = true)]
+    forge_heartbeat_secs: u64,
 
     /// Hosted sandboxes (M20): the Sprites API they're made with, and its
     /// token (SPRITES_TOKEN). Off without a token.
@@ -145,6 +172,9 @@ pub struct App {
     pub vapid: push::Vapid,
     pub hosted: Option<sandboxes::Hosted>,
     pub stripe: Option<billing::Stripe>,
+    /// The GitHub App (M40), and daemons' subscriptions to its webhooks.
+    pub github_app: Option<forge::GithubApp>,
+    pub forge: forge::Watches,
 }
 
 /// An API error: `{"error": "..."}` with a status.
@@ -238,6 +268,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/billing/checkout", post(billing::checkout))
         .route("/api/billing/report", post(billing::report_now))
         .route("/api/stripe/webhook", post(billing::webhook))
+        .route("/github/webhook", post(forge::webhook))
+        .route("/api/daemon/github/token", post(forge::daemon_token))
         .route("/api/relay/dial", get(relay::dial))
         .route("/api/relay/c/{id}", get(relay::client))
         .route("/api/relay/m", get(relay::many))
@@ -252,6 +284,7 @@ async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>)
     Json(json!({
         "control": true, "url": app.cfg.public_url, "github": app.cfg.github.is_some(), "passkeys": passkeys,
         "vapid": app.vapid.public(),
+        "github_app": app.github_app.as_ref().map(|g| g.slug.clone()),
     }))
 }
 
@@ -317,6 +350,27 @@ pub fn origin_of(url: &str) -> anyhow::Result<String> {
     Ok(u.origin().ascii_serialization())
 }
 
+/// The GitHub App from its id and key, if both are given.
+fn github_app(a: &Args) -> anyhow::Result<Option<forge::GithubApp>> {
+    let Some(id) = a.github_app_id.clone().filter(|s| !s.is_empty()) else {
+        info!("no GITHUB_APP_ID: no GitHub webhooks or App tokens (forge blocks poll)");
+        return Ok(None);
+    };
+    let pem = match (&a.github_app_private_key, &a.github_app_private_key_file) {
+        (Some(k), _) if !k.is_empty() => k.clone(),
+        (_, Some(f)) => std::fs::read_to_string(f)
+            .with_context(|| format!("reading GITHUB_APP_PRIVATE_KEY_FILE {}", f.display()))?,
+        _ => anyhow::bail!("GITHUB_APP_ID is set but there's no GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_FILE"),
+    };
+    let key = forge::parse_pem(&pem)?;
+    let secret = a.github_app_webhook_secret.clone().unwrap_or_default();
+    if secret.is_empty() {
+        tracing::warn!("no GITHUB_APP_WEBHOOK_SECRET: every GitHub webhook will be refused");
+    }
+    info!(app = id, slug = a.github_app_slug, "GitHub App");
+    Ok(Some(forge::GithubApp::new(id, a.github_app_slug.clone(), secret, &a.github_api, key)))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -345,9 +399,16 @@ async fn main() -> anyhow::Result<()> {
         public_url = u.as_str().trim_end_matches('/').to_owned();
     }
     let set = |v: Option<String>| v.filter(|s| !s.is_empty());
-    let github = match (set(a.github_client_id), set(a.github_client_secret)) {
+    let github_app = github_app(&a)?;
+    // Sign-in: an OAuth app's (or another App's) credentials, else the
+    // GitHub App's own.
+    let (client_id, client_secret) = match (set(a.github_client_id.clone()), set(a.github_client_secret.clone())) {
+        (Some(i), Some(s)) => (Some(i), Some(s)),
+        _ => (set(a.github_app_client_id.clone()), set(a.github_app_client_secret.clone())),
+    };
+    let github = match (client_id, client_secret) {
         (Some(client_id), Some(client_secret)) => {
-            Some(Github { client_id, client_secret, url: a.github_url, api: a.github_api })
+            Some(Github { client_id, client_secret, url: a.github_url.clone(), api: a.github_api.clone() })
         }
         _ => None,
     };
@@ -390,7 +451,12 @@ async fn main() -> anyhow::Result<()> {
         vapid,
         hosted,
         stripe,
+        github_app,
+        forge: Default::default(),
     });
+    if app.github_app.is_some() {
+        tokio::spawn(forge::heartbeat(app.clone(), std::time::Duration::from_secs(a.forge_heartbeat_secs.max(1))));
+    }
     if app.stripe.is_some() {
         let a2 = app.clone();
         tokio::spawn(async move {

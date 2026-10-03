@@ -540,6 +540,28 @@ impl Control {
         });
     }
 
+    /// M40: a read-only installation token for a GitHub repository from
+    /// control's GitHub App (for a box with no `gh` login), and the
+    /// account's GitHub login. Never logged.
+    pub async fn github_token(&self, repo: &str) -> Result<serde_json::Value, String> {
+        let e = self.enrolled().ok_or("not joined to illogical control")?;
+        let path = "/api/daemon/github/token";
+        let res = self
+            .http
+            .post(format!("{}{path}", e.saved.url))
+            .header(AUTH, auth_header(&e.keys, "POST", path))
+            .json(&serde_json::json!({ "repo": repo }))
+            .send()
+            .await
+            .map_err(|e| format!("can't reach control: {e}"))?;
+        let status = res.status();
+        let v: serde_json::Value = res.json().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(v["error"].as_str().map_or_else(|| format!("control said {status}"), str::to_owned));
+        }
+        Ok(v)
+    }
+
     /// A hosted sandbox's last session closed (M20): control deletes it.
     pub fn sandbox_done(self: &Arc<Self>) {
         let Some(e) = self.enrolled() else { return };
@@ -688,7 +710,10 @@ async fn relay_once(
     url.set_scheme(scheme).map_err(|()| anyhow::anyhow!("bad control URL"))?;
     let ws = crate::dial::open_ws(&url, &[(AUTH, &auth_header(&e.keys, "GET", path))]).await?;
     info!(control = e.saved.url, "connected to control's relay");
-    crate::dial::serve_mux(ws, accept, Some(&control.nudge)).await
+    // M40: forge subscriptions out, pokes and heartbeats in.
+    let texts = crate::forge::live::watch_messages()
+        .map(|out| crate::dial::Texts { on_text: &crate::forge::live::from_control, out });
+    crate::dial::serve_mux(ws, accept, Some(&control.nudge), texts).await
 }
 
 // ---------------------------------------------------------------- join

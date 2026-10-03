@@ -34,7 +34,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
 
@@ -49,6 +49,8 @@ use super::{
         ReviewState, Reviewer, RunRef,
     },
 };
+use tracing::info;
+
 use crate::review::Runner;
 
 /// Timeline events kept in the state (as on Forgejo).
@@ -520,20 +522,60 @@ pub async fn knows(runner: &Runner, host: &str) -> bool {
     ok
 }
 
-/// Where the GitHub adapter gets its token: `gh`, on the block's host.
+/// Where the GitHub adapter gets its token: `gh`, on the block's host;
+/// and (M40) on github.com with no `gh` login, illogical control's GitHub
+/// App, read-only, for the block's repository.
 #[derive(Clone)]
 pub struct GhToken {
     runner: Runner,
     host: String,
+    repo: Option<String>,
+    /// Reading through the App: the account's GitHub login.
+    app: Arc<Mutex<Option<String>>>,
 }
 
 impl GhToken {
     pub fn new(runner: Runner, host: &str) -> Self {
-        Self { runner, host: host.to_ascii_lowercase() }
+        Self { runner, host: host.to_ascii_lowercase(), repo: None, app: Arc::default() }
     }
 
-    /// The token; `fresh`: the last one was refused, ask gh again.
+    /// ...that falls back to control's App for this repository.
+    pub fn for_repo(mut self, repo: &str) -> Self {
+        self.repo = Some(repo.to_owned());
+        self
+    }
+
+    /// The person's GitHub login when it reads through the App.
+    pub fn via_app(&self) -> Option<String> {
+        self.app.lock().unwrap().clone()
+    }
+
+    /// The token; `fresh`: the last one was refused, ask again.
     pub async fn get(&self, fresh: bool) -> Result<String, String> {
+        if self.via_app().is_some() {
+            return self.app_token(fresh).await;
+        }
+        match self.gh(fresh).await {
+            Ok(t) => Ok(t),
+            Err(e) if self.host == "github.com" && self.repo.is_some() => match self.app_token(fresh).await {
+                Ok(t) => {
+                    info!(host = self.host, "no gh login: reading through illogical control's GitHub App");
+                    Ok(t)
+                }
+                Err(why) => Err(format!("{e} (and illogical control's GitHub App can't read it: {why})")),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn app_token(&self, fresh: bool) -> Result<String, String> {
+        let repo = self.repo.as_deref().unwrap_or_default();
+        let (t, login) = crate::forge::live::app_token(repo, fresh).await?;
+        *self.app.lock().unwrap() = Some(login);
+        Ok(t)
+    }
+
+    async fn gh(&self, fresh: bool) -> Result<String, String> {
         if !fresh && let Some(t) = TOKENS.lock().unwrap().get(&self.host).cloned() {
             return Ok(t);
         }
@@ -804,6 +846,12 @@ impl Github {
 impl Adapter for Github {
     fn me(&self) -> BoxFuture<'_, Result<Me, Error>> {
         Box::pin(async move {
+            // Through the App (M40), `user` isn't the person: control says
+            // who they are on GitHub (no teams).
+            self.token.get(false).await.map_err(Error::Login)?;
+            if let Some(login) = self.token.via_app() {
+                return Ok(Me { login, teams: vec![] });
+            }
             let user = self.get("user").await?;
             // Teams need read:org; without it, no team requests.
             let teams = self.get("user/teams?per_page=100").await.unwrap_or(Value::Null);
@@ -900,6 +948,7 @@ impl Adapter for Github {
                         said: format!("reran the failed jobs of {n} workflow run{}", if n == 1 { "" } else { "s" }),
                     })
                 }
+                Write::Live { .. } => Err(Error::Http("live updates go through the block's hook".into())),
             }
         })
     }
@@ -913,6 +962,12 @@ impl Adapter for Github {
 
     fn rerun_api(&self) -> bool {
         true
+    }
+
+    fn read_only(&self) -> Option<String> {
+        self.token.via_app().map(|_| {
+            "read-only: no gh login here, so it reads through illogical control's GitHub App; writes go out as you, so they need your own login (`gh auth login`, then refresh)".to_owned()
+        })
     }
 
     fn issue<'a>(&'a self, repo: &'a str, number: u64) -> BoxFuture<'a, Result<(Item, String), Error>> {
