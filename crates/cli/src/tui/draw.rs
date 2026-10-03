@@ -165,16 +165,24 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 // M36: the PR on one line, then what waits on you, each a
                 // line (drafts first: an agent's write waits to be sent).
                 let s = app.blocks.get(&pid);
-                let pr = s.map(|s| &s["pr"]["item"]);
+                // M37: an issue's line is the same, without checks.
+                let issue = s.is_some_and(|s| s["kind"] == "issue");
+                let pr = s.map(|s| if issue { &s["issue"]["item"] } else { &s["pr"]["item"] });
                 let at = |v: Option<&serde_json::Value>, k: &str| v.and_then(|v| v[k].as_str().map(str::to_owned));
                 let repo = at(s, "repo").unwrap_or_default();
                 let n = s.and_then(|s| s["number"].as_u64()).unwrap_or(0);
-                let checks =
-                    s.and_then(|s| s["pr"]["rollup"].as_str().map(str::to_owned)).unwrap_or_else(|| "no checks".into());
+                let checks = match s.and_then(|s| s["pr"]["rollup"].as_str()) {
+                    _ if issue => {
+                        let a = s.and_then(|s| s["link"]["block"].as_u64());
+                        a.map(|a| format!("agent %{a}")).unwrap_or_else(|| "issue".into())
+                    }
+                    Some(r) => format!("checks {r}"),
+                    None => "checks: none".into(),
+                };
                 let line = match (at(s, "error"), pr.filter(|p| p.is_object())) {
                     (Some(e), _) => format!("%{pid} {repo}#{n}: {e}"),
                     (None, Some(p)) => format!(
-                        "%{pid} {repo}#{n} {} [{}] checks {checks}  (`illogical capture %{pid}`)",
+                        "%{pid} {repo}#{n} {} [{}] {checks}  (`illogical capture %{pid}`)",
                         at(Some(p), "title").unwrap_or_default(),
                         at(Some(p), "state").unwrap_or_default()
                     ),

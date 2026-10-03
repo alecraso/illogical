@@ -247,6 +247,26 @@ impl BlockCtx {
         rx.await.map_err(|_| "the daemon is stopping".to_owned())?
     }
 
+    /// Put this block in a tab of its own (M37: an issue, before its agent
+    /// joins it), named `name` if the tab has no name.
+    pub async fn own_tab(&self, name: Option<String>) -> Result<(), String> {
+        let cmds = self.cmds.as_ref().ok_or("this block can't move")?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        cmds.send(crate::mux::Cmd::Api(crate::mux::Api::OwnTab(self.id, name, tx)))
+            .map_err(|_| "the daemon is stopping".to_owned())?;
+        rx.await.map_err(|_| "the daemon is stopping".to_owned())?
+    }
+
+    /// Whether another block is still open (M37: an issue's agent).
+    pub async fn block_open(&self, id: PaneId) -> bool {
+        let Some(cmds) = self.cmds.as_ref() else { return false };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if cmds.send(crate::mux::Cmd::Api(crate::mux::Api::Block(id, tx))).is_err() {
+            return false;
+        }
+        rx.await.ok().flatten().is_some()
+    }
+
     /// Start a terminal (M36: a shell in a PR's worktree).
     pub async fn run(&self, req: illogical_proto::api::RunRequest) -> Result<PaneId, String> {
         let cmds = self.cmds.as_ref().ok_or("this block can't open others")?;

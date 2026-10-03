@@ -440,6 +440,49 @@ pub struct OpenPrArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct OpenIssueArgs {
+    /// The issue: its link, OWNER/REPO#N, or N (in dir's repository).
+    pub issue: String,
+    /// A clone of the repository on this host (absolute): what N means,
+    /// and where the user's "Agent on this" makes its worktree.
+    #[serde(default)]
+    pub dir: Option<String>,
+    /// Beside this pane (an agent block's token: default the agent itself).
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadIssueArgs {
+    /// The issue block (from open_issue).
+    pub block: PaneArg,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct IssueCommentArgs {
+    /// The issue block (from open_issue).
+    pub block: PaneArg,
+    /// The comment, in markdown.
+    pub body: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct IssueNewArgs {
+    /// The repository, OWNER/REPO (default: dir's, or the one beside you).
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// A clone of it on this host (absolute).
+    #[serde(default)]
+    pub dir: Option<String>,
+    pub title: String,
+    /// The issue's text, in markdown.
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ReadPrArgs {
     /// The PR block (from open_pr).
     pub block: PaneArg,
@@ -724,6 +767,46 @@ fn defs() -> Vec<Def> {
             open_world: true,
         },
         Def {
+            name: "open_issue",
+            title: "Show an issue",
+            description: "Open an issue on the user's Forgejo as a block beside a pane (M37): its labels, assignees, the pull requests that refer to it and its timeline, read with the user's own tea login; one assigned to them or mentioning them is attention on the phone and the swarm. From the block the user can start an agent on it in a worktree of its own. Returns the issue as text.",
+            schema: schema_for_type::<OpenIssueArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "read_issue",
+            title: "Read an issue",
+            description: "An issue block's issue as text (header, body, linked pull requests, timeline), what it waits on the user for, the agent working on it and its PR, and your drafts.",
+            schema: schema_for_type::<ReadIssueArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: true,
+        },
+        Def {
+            name: "issue_comment",
+            title: "Draft an issue comment",
+            description: "Draft a comment on an issue block's issue. Nothing reaches the forge in an agent's name: it waits as a card the user (or an editor) edits and sends, or drops. Returns its draft id at once; follow it with read_issue.",
+            schema: schema_for_type::<IssueCommentArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "issue_new",
+            title: "Draft a new issue",
+            description: "Draft a new issue on the user's Forgejo: a block beside you holding the draft as a card with its title and text, which the user edits and sends (the block then shows the issue) or drops. Nothing reaches the forge in an agent's name. Returns the block at once; read_issue shows what became of it.",
+            schema: schema_for_type::<IssueNewArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
             name: "read_file",
             title: "Read a file",
             description: "A text file on this host or the machine a pane runs on, paged by byte offset.",
@@ -880,6 +963,26 @@ impl<'a> Call<'a> {
             },
             "read_pr" => match parse(args) {
                 Ok(a) => self.read_pr(a).await,
+                Err(e) => Err(e),
+            },
+            "open_issue" => match parse::<OpenIssueArgs>(args) {
+                Ok(a) => self.open_forge(json!({ "issue": a.issue }), a.dir, a.beside).await,
+                Err(e) => Err(e),
+            },
+            "read_issue" => match parse::<ReadIssueArgs>(args) {
+                Ok(a) => self.read_pr(ReadPrArgs { block: a.block }).await,
+                Err(e) => Err(e),
+            },
+            "issue_comment" => match parse::<IssueCommentArgs>(args) {
+                Ok(a) => self.pr_write(&a.block, "comment", json!({ "body": a.body })).await,
+                Err(e) => Err(e),
+            },
+            "issue_new" => match parse::<IssueNewArgs>(args) {
+                Ok(a) => {
+                    let c = json!({ "issue": "new", "title": a.title, "body": a.body.unwrap_or_default(),
+                        "repo": a.repo, "by": self.by(), "agent": true });
+                    self.open_forge(c, a.dir, a.beside).await
+                }
                 Err(e) => Err(e),
             },
             "pr_comment" => match parse::<PrCommentArgs>(args) {
@@ -1756,14 +1859,20 @@ impl<'a> Call<'a> {
     }
 
     async fn open_pr(&self, a: OpenPrArgs) -> Out {
-        let (beside, host) = self.beside(a.beside.as_ref()).await?;
+        self.open_forge(json!({ "pr": a.pr }), a.dir, a.beside).await
+    }
+
+    /// A forge block (M36's PR, M37's issue or new issue) beside a pane.
+    async fn open_forge(&self, mut what: Value, dir: Option<String>, beside: Option<PaneArg>) -> Out {
+        let (beside, host) = self.beside(beside.as_ref()).await?;
         // N alone means the repository beside it, if no dir is given.
-        let dir = match (&a.dir, beside) {
+        let dir = match (&dir, beside) {
             (Some(d), _) => Some(d.clone()),
             (None, Some(b)) if host.is_none() => self.readable(b).await?.info.cwd,
             _ => None,
         };
-        let config = crate::forge::open_config(&json!({ "pr": a.pr, "dir": dir })).await?;
+        what["dir"] = json!(dir);
+        let config = crate::forge::open_config(&what).await?;
         let req = OpenRequest {
             kind: BlockType::Forge,
             config,
@@ -1785,16 +1894,22 @@ impl<'a> Call<'a> {
             tokio::time::sleep(Duration::from_millis(100)).await;
         };
         let st = b.state();
+        let what = if st["kind"] == "issue" { "Issue" } else { "PR" };
         if let Some(e) = st["error"].as_str() {
-            return Err(format!("PR block %{block}: {e}"));
+            return Err(format!("{what} block %{block}: {e}"));
         }
+        if st["number"] == 0 {
+            return done(
+                format!(
+                    "Drafted a new issue on {} in %{block}: it waits for the user to send, edit or drop it (read_issue shows what became of it)",
+                    st["repo"].as_str().unwrap_or("")
+                ),
+                json!({ "block": block, "status": "waiting", "text": b.text() }),
+            );
+        }
+        let title = st["pr"]["item"]["title"].as_str().or(st["issue"]["item"]["title"].as_str()).unwrap_or("");
         done(
-            format!(
-                "PR block %{block}: {}#{} {}",
-                st["repo"].as_str().unwrap_or(""),
-                st["number"],
-                st["pr"]["item"]["title"].as_str().unwrap_or("")
-            ),
+            format!("{what} block %{block}: {}#{} {title}", st["repo"].as_str().unwrap_or(""), st["number"]),
             json!({ "block": block, "text": b.text(), "wants": st["wants"] }),
         )
     }
@@ -1804,7 +1919,7 @@ impl<'a> Call<'a> {
         let id = block.id()?;
         let p = self.readable(id).await?;
         if p.info.kind != BlockType::Forge {
-            return Err(format!("%{id} isn't a PR block: open_pr opens one"));
+            return Err(format!("%{id} isn't a PR or issue block: open_pr or open_issue opens one"));
         }
         let b = self.app.mux.api(|r| Api::Block(id, r)).await.flatten().ok_or_else(|| format!("no block %{id}"))?;
         Ok((id, b))
@@ -2240,7 +2355,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 24);
+        assert_eq!(all.len(), 28);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -2257,6 +2372,7 @@ mod tests {
                 "search",
                 "list_conversations",
                 "read_pr",
+                "read_issue",
                 "read_file"
             ]
         );

@@ -475,7 +475,37 @@ the daemon stopping, crashing, or the machine rebooting:
     (`illogical pr rerun %N`, `illogical rerun %N`, the rail, the block),
     which reruns each red workflow run's failed jobs. Merge is `merge`,
     `squash` or `rebase`.
-  - **Not yet:** issues (M37), webhooks (M40).
+  - **Not yet:** webhooks (M40).
+
+- **Issues** (M37, Forgejo and GitHub). An issue is the same block: its
+  labels, assignees, the pull requests that refer to it and its timeline,
+  read with the same `tea` (or `gh`) login. GitLab's issues aren't read
+  yet.
+  - **Opening one.** *Open issue…* (a pane's menu, the `+` button's menu;
+    *Issue* in the phone's sheet), `illogical issue URL | OWNER/REPO#N | N`,
+    MCP's `open_issue`, or clicking an issue link (`…/issues/N`) in a
+    terminal.
+  - **What waits on you:** an open issue given to you, or a mention, since
+    you last looked (*Waiting for you*); one given to you that closes
+    (*Finished*, once). A closed issue asks nothing else.
+  - **Agent on this** (the owner's): a branch `iNN-<slug>` (from the title)
+    off the repository's default branch, fetched fresh, in a worktree of
+    its own (`.claude/worktrees/` where the repository keeps them, else
+    `.illogical/worktrees/`). The branch tracks nothing, so a plain `git
+    push` can't land on main. The issue moves to a tab of its own (named
+    `#N`), and Claude Code (or `{"agent": "codex"}`…) starts beside it in
+    the worktree with the issue's title, text and link as its prompt, told
+    to open a PR from the branch that closes the issue. *With
+    instructions…* adds to the prompt. The block looks for a PR from that
+    branch (every 30 s, faster while you look) and, when one appears, opens
+    it beside the agent, once. `illogical issue agent %N` does the same.
+  - **New issues.** `illogical issue new -t TITLE [-b TEXT]` (in a clone,
+    or `--repo`) opens one with your login, and the block shows it. An
+    agent's (MCP's `issue_new`, or the CLI under Claude Code) is a draft:
+    a block holding a card with the title and text to edit, which *Send*
+    opens on the forge (the block becomes the issue) and *Drop* drops.
+    Comments on issues (`issue_comment`, `illogical issue comment %N`) are
+    drafts from agents too, as on a PR.
 
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on

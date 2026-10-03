@@ -494,7 +494,8 @@ fn a_poll_rereads_the_rest_only_when_the_item_moves() {
     d.wait_for("polls", || forge.f.gets("pull") >= polls + 4);
     assert_eq!(forge.f.gets("reviews"), reviews, "reviews re-read with nothing changed");
     assert_eq!(forge.f.gets("timeline"), forge.f.gets("reviews"));
-    assert!(forge.f.gets("status") >= polls + 4, "the status is polled with the item");
+    // (The item's GET is counted before the status's is made.)
+    d.wait_for("the status polled with the item", || forge.f.gets("status") >= polls + 4);
     // A new status shows without a re-read: it's in the poll.
     forge.f.with(|i| i.statuses.push(json!({ "context": "lint", "status": "pending" })));
     d.wait_for("the new check", || d.state(block)["pr"]["checks"].as_array().unwrap().len() == 3);

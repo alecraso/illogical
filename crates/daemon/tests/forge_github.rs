@@ -298,6 +298,28 @@ async fn rerun(
     StatusCode::CREATED.into_response()
 }
 
+/// M37: the PR's number as an issue, given to jhgaylor.
+async fn issue(State(f): State<Fake>, h: HeaderMap) -> Response {
+    let mut it = f.with(|i| i.item.clone());
+    if let Some(o) = it.as_object_mut() {
+        o.remove("pull_request");
+    }
+    it["state"] = json!("open");
+    it["html_url"] = json!(format!("https://github.com/{REPO}/issues/{N}"));
+    it["assignees"] = json!([{ "login": "jhgaylor" }]);
+    answer(&f, "issue", &h, it, None)
+}
+
+/// M37: a new issue.
+async fn new_issue(State(f): State<Fake>, h: HeaderMap, Json(body): Json<Value>) -> Response {
+    if let Some(r) = guard(&h) {
+        return r;
+    }
+    f.with(|i| i.writes.push(("new issue".into(), body.clone(), token_of(&h))));
+    (StatusCode::CREATED, Json(json!({ "number": N, "html_url": format!("https://github.com/{REPO}/issues/{N}") })))
+        .into_response()
+}
+
 async fn missing(UrlPath(p): UrlPath<String>) -> Response {
     (StatusCode::NOT_FOUND, Json(json!({ "message": format!("Not Found: {p}") }))).into_response()
 }
@@ -343,6 +365,8 @@ impl Hub {
                 .route(&format!("{p}/commits/{{sha}}/check-runs"), get(check_runs))
                 .route(&format!("{p}/commits/{{sha}}/status"), get(status))
                 .route(&format!("{p}/issues/{{n}}/timeline"), get(timeline))
+                .route(&format!("{p}/issues/{{n}}"), get(issue))
+                .route(&format!("{p}/issues"), post(new_issue))
                 .route("/repositories/{id}/issues/{n}/timeline", get(moved_timeline))
                 .route(&format!("{p}/issues/{{n}}/comments"), post(comment))
                 .route(&format!("{p}/actions/runs/{{id}}/rerun-failed-jobs"), post(rerun))
@@ -752,4 +776,30 @@ fn a_host_gh_is_logged_in_to_is_github_enterprise() {
     let st = d.state(block);
     assert_eq!(st["provider"], "forgejo");
     assert!(st["error"].as_str().unwrap().starts_with("no tea login here"), "{st}");
+}
+
+#[test]
+fn an_issue_on_github_and_a_new_one() {
+    // M37: GitHub's issues through the same adapter.
+    let dir = scratch("issue");
+    let hub = Hub::start(&dir, "someone", &[], &[]);
+    let d = hub.daemon();
+    let block = open(&d, json!({ "issue": format!("https://github.com/{REPO}/issues/{N}") }));
+    let st = read(&d, block);
+    assert_eq!(st["error"], Value::Null, "{st}");
+    assert_eq!((st["kind"].as_str(), st["provider"].as_str()), (Some("issue"), Some("github")));
+    assert_eq!(st["issue"]["item"]["assignees"], json!(["jhgaylor"]));
+    d.wait_for("assigned", || info(&d, block)["reason"]["kind"] == "input");
+    assert!(info(&d, block)["reason"]["headline"].as_str().unwrap().contains("assigned to you"));
+    let out = d.call(block, "comment", json!({ "body": "Looking." }));
+    assert!(out["url"].as_str().unwrap().contains("#issuecomment-"), "{out}");
+    // A person's new issue goes out with gh's token.
+    let config = json!({ "issue": "new", "repo": REPO, "provider": "github", "title": "A new one", "body": "Text." });
+    let made = open(&d, config);
+    d.wait_for("opened", || d.state(made)["number"] == N);
+    let w = hub.f.writes();
+    assert!(
+        w.iter().any(|(r, b, t)| r == "new issue" && b["title"] == "A new one" && *t == format!("Bearer {TOKEN}")),
+        "{w:?}"
+    );
 }

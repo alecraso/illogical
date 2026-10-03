@@ -30,6 +30,7 @@ const CMDS: Record<WorkKind, string[]> = {
   editor: ["nvim src/main.rs", "nvim README.md"],
   app: [""],
   pr: [""],
+  issue: [""],
 };
 
 /** `n` made-up panes, refreshed every second, alongside the real ones. */

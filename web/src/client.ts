@@ -952,9 +952,13 @@ export class Client {
     // M36: a pull request's link (Forgejo's; M38: GitHub's; M39: a GitLab
     // merge request's) opens as a PR block beside the terminal (Shift: in
     // the browser, as any other link).
+    // M37: an issue's link opens as an issue block.
     const view = new TerminalView((uri, e) => {
-      if (e.shiftKey || this.state?.roles || !forgePr(uri)) return false;
-      void this.openBlock({ type: "forge", config: { pr: uri, dir: this.cwd(id) ?? undefined }, split: id, from_pane: id }, "couldn't open the pull request");
+      if (e.shiftKey || this.state?.roles) return false;
+      const what = forgePr(uri) ? "pr" : forgeIssue(uri) ? "issue" : null;
+      if (!what) return false;
+      const failure = what === "pr" ? "couldn't open the pull request" : "couldn't open the issue";
+      void this.openBlock({ type: "forge", config: { [what]: uri, dir: this.cwd(id) ?? undefined }, split: id, from_pane: id }, failure);
       return true;
     });
     const entry: PaneEntry = { view, epoch, offset: null, title: "" };
@@ -1049,6 +1053,17 @@ export function tabLabel(client: Client, tab: TabView): string {
   if (title) return title;
   const cwd = client.cwd(pane);
   return cwd ? cwd.split("/").filter(Boolean).pop() ?? "/" : `@${tab.id}`;
+}
+
+/** A link to a Forgejo issue (M37: `…/OWNER/REPO/issues/N`, GitHub's
+ * too). */
+export function forgeIssue(uri: string): boolean {
+  try {
+    const u = new URL(uri);
+    return /^https?:$/.test(u.protocol) && /^\/(?:[^/]+\/)*[^/]+\/[^/]+\/issues\/\d+(?:\/|$)/.test(u.pathname);
+  } catch {
+    return false;
+  }
 }
 
 /** A link to a pull request: Forgejo's (`…/OWNER/REPO/pulls/N`), GitHub's

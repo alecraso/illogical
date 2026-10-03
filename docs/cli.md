@@ -55,6 +55,10 @@ illogical studio follower pinboard            # keep its box's hud follower link
 illogical pr 84                               # a pull request as a block (in this repo; or a URL, OWNER/REPO#N)
 illogical pr comment %7 "LGTM"                # comment; review %7 approve|request_changes|comment [TEXT]; merge %7
                                               #   (under CLAUDECODE or AI_AGENT: a draft a person sends)
+illogical issue 89                            # an issue as a block (or a URL, OWNER/REPO#N)
+illogical issue agent %8                      # an agent on it: worktree + branch i89-…, the two in a tab
+illogical issue new -t "Frobs leak" -b "…"    # open one here (under an agent: a draft a person sends)
+illogical issue comment %8 "On it"            # comment (under an agent: a draft)
 illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused while it's open elsewhere)
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
@@ -145,6 +149,9 @@ The tools:
 | `open_workspace` | A chant workspace block beside a pane (`dir`, `env`); returns its members and the gates waiting | no |
 | `open_pr` | A pull request (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
 | `read_pr` | A PR block as text, what it waits on the user for, and your drafts (waiting, sent with who and a link, dropped) | yes |
+| `open_issue` | An issue (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
+| `read_issue` | An issue block as text: linked PRs, the agent on it and its PR, what it waits on the user for, your drafts | yes |
+| `issue_comment`, `issue_new` | Draft a comment on an issue block, or a new issue (a block beside you holding the draft): a card the user sends, edits or drops | no |
 | `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
 
 Resources: `illogical://history`, and the templates
