@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Device key probe</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fff;
+        --fg: #1b1b1b;
+        --dim: #666;
+        --yes: #1a7f37;
+        --no: #c62828;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141414;
+          --fg: #e6e6e6;
+          --dim: #999;
+          --yes: #4ac26b;
+          --no: #ff6b6b;
+        }
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.45 -apple-system, system-ui, sans-serif;
+        margin: 0 auto;
+        max-width: 40rem;
+        padding: 1.5rem 16px;
+      }
+      h1 {
+        font-size: 1.3rem;
+      }
+      #verdict {
+        font-size: 1.15rem;
+        font-weight: 600;
+      }
+      .yes {
+        color: var(--yes);
+      }
+      .no {
+        color: var(--no);
+      }
+      .dim {
+        color: var(--dim);
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td {
+        border-top: 1px solid color-mix(in srgb, var(--fg) 15%, transparent);
+        padding: 0.35rem 0.5rem 0.35rem 0;
+        vertical-align: top;
+      }
+      code {
+        overflow-wrap: anywhere;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Do device keys survive a reload here?</h1>
+    <p class="dim">
+      illogical keeps this browser's keys (Ed25519 and X25519) in IndexedDB. This page stores a set, reloads, and checks they still sign and agree
+      (#94). It sends nothing anywhere.
+    </p>
+    <p id="verdict">Checking…</p>
+    <p id="browser"></p>
+    <table id="rows"></table>
+    <p><button id="again">Run again</button></p>
+    <p class="dim"><code id="ua"></code></p>
+    <script src="key-probe.js"></script>
+  </body>
+</html>

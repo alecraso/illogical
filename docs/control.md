@@ -142,3 +142,13 @@ Daemons join a self-hosted control the same way:
   - a check that control's wire traffic, database and logs never contain
     what was typed.
 - `web/e2e/control.spec.ts` and `web/e2e/passkey.spec.ts` drive it in Chrome.
+- `web/e2e/device-keys.webkit.spec.ts` drives it in Playwright's WebKit
+  (`pnpm exec playwright install webkit` first): device keys survive a
+  reload, a join is approved from a later page load, and a browser that
+  lost its key enrolls again.
+- **Safari itself:** open `/key-probe.html` on control (or any daemon) in
+  Safari. It stores a set of device keys, reloads, and says whether they
+  still work, and which Safari it is.
+- Control logs every refused enrolment and approval (`refused`, with the
+  request, the reason, and the account, device and approver ids; never a
+  signature or a body), so `fly logs` shows why.

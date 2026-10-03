@@ -41,7 +41,7 @@ but it can't read.**
 
 | Holder | Keys | Where | Lost when |
 |---|---|---|---|
-| Browser / PWA | X25519 `noise`, Ed25519 `sign` | IndexedDB, non-extractable `CryptoKey`s | site data is cleared; Safari's 7-day eviction for sites not added to the home screen |
+| Browser / PWA | X25519 `noise`, Ed25519 `sign` | IndexedDB, non-extractable `CryptoKey`s (wrapped where those don't survive: below) | site data is cleared; Safari's 7-day eviction for sites not added to the home screen |
 | CLI | X25519 + Ed25519 | `~/.config/illogical/device.key`, 0600 | the file is deleted |
 | Daemon | X25519 `noise`, Ed25519 `sign` | `<state>/daemon.key`, 0600 | the state directory is deleted (re-enroll) |
 | Recovery code | Ed25519 seed | printed once at first sign-in, never stored | the user loses the paper |
@@ -54,6 +54,33 @@ S15 checked in Chrome 153 (desktop, headless) that:
 
 Safari and Firefox support both curves (Safari 17+, Firefox 130+). The
 phone runs below confirm Safari on iOS.
+
+**WebKit loses X25519 keys in IndexedDB (#94).** Playwright's WebKit
+(Safari 26.6's engine, on Linux) stores a record holding an X25519
+`CryptoKey` and reads it back as `null`, in the same page load or the next;
+Ed25519 and AES-GCM keys come back fine. A Safari that enrolled therefore
+made new keys on every later page load, and its approvals were signed by a
+device nobody trusted. Now:
+
+- **Keys are checked after they're stored:** read back from IndexedDB, they
+  must sign what their public key verifies and agree on an X25519 secret,
+  before the browser enrolls. The same check runs on every load.
+- **Where the check fails, the keys are kept wrapped:** generated
+  extractable, then stored as PKCS#8 encrypted with a non-extractable
+  AES-GCM key (`wrapKey`), and unwrapped inside WebCrypto as
+  non-extractable on each load. If that fails too, the page says this
+  browser can't keep a device key.
+- **What wrapping gives up:** script running in the page's origin (an XSS,
+  a malicious build) can unwrap the keys as extractable and copy them out,
+  to use anywhere until the device is removed. With plain non-extractable
+  keys it can only use them while it runs in the page. On disk both forms
+  are equally readable to someone with the browser profile.
+- **A browser enrolled with keys it lost** says so at boot and offers to
+  forget itself and enroll again, approved by another device or a recovery
+  code.
+- `/key-probe.html` (on control and on every daemon) runs the round trip
+  in whatever browser opens it and says plainly whether it works, with the
+  Safari version.
 
 **A device certificate** is what control stores and hands out:
 

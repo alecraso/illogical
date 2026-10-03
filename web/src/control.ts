@@ -180,7 +180,7 @@ export async function previewInvite(team: string, code: string): Promise<{ name:
   return api<{ name: string; by: string }>(`/api/invites/${team}/${code}/preview`).catch(() => null);
 }
 
-export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "ready" | "error";
+export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "lost-key" | "ready" | "error";
 
 // ---- recovery codes: an Ed25519 seed each, on paper only.
 
@@ -298,6 +298,12 @@ export class ControlSession {
     try {
       this.keys = await loadKeys();
       this.enrollment = await loadEnrollment(location.origin);
+      if (this.enrollment && this.enrollment.cert.device !== this.keys.id) {
+        // #94: the key this browser enrolled with didn't come back from
+        // its storage (WebKit loses X25519 keys there), so it would sign
+        // approvals nobody trusts. Say so, not fail later.
+        return this.set("lost-key");
+      }
       const me = await api<{ account: string; login: string; name?: string; root: string | null; passkeys: number }>("/api/me").catch((e) => {
         if (e instanceof HttpError && e.status === 401) return null;
         throw e;
@@ -816,6 +822,13 @@ export class ControlSession {
     r.sig = await signText(this.keys, revocationBody(r));
     await api("/api/revocations", { revocation: r });
     await this.refresh();
+  }
+
+  /** After a lost key (#94): forget this browser's place in the account
+   * and ask to join again, as a new device. */
+  async enrollAgain() {
+    await forget(location.origin);
+    location.reload();
   }
 
   async signOut(forgetDevice: boolean) {
