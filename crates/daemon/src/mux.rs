@@ -3810,6 +3810,7 @@ impl Daemon {
             work: s.work.or(match b.kind() {
                 BlockType::Agent => Some(WorkKind::Agent),
                 BlockType::App => Some(WorkKind::App),
+                BlockType::Forge => Some(WorkKind::Pr),
                 _ => None,
             }),
             activity: None,

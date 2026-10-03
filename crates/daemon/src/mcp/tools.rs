@@ -421,6 +421,58 @@ pub struct OpenWorkspaceArgs {
     pub beside: Option<PaneArg>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct OpenPrArgs {
+    /// The pull request: its link, OWNER/REPO#N, or N (in dir's repository).
+    pub pr: String,
+    /// A clone of the repository on this host (absolute): what N means,
+    /// and where diff and checkout fetch the PR's code.
+    #[serde(default)]
+    pub dir: Option<String>,
+    /// Beside this pane (an agent block's token: default the agent itself).
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadPrArgs {
+    /// The PR block (from open_pr).
+    pub block: PaneArg,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PrCommentArgs {
+    /// The PR block (from open_pr).
+    pub block: PaneArg,
+    /// The comment, in markdown.
+    pub body: String,
+}
+
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum PrReviewEvent {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PrReviewArgs {
+    pub block: PaneArg,
+    pub event: PrReviewEvent,
+    /// The review's text (needed unless it approves).
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PrMergeArgs {
+    pub block: PaneArg,
+    /// merge, rebase, rebase-merge, squash or fast-forward-only (default merge).
+    #[serde(default)]
+    pub style: Option<String>,
+}
+
 // ---------------------------------------------------------------- the list
 
 struct Def {
@@ -617,6 +669,56 @@ fn defs() -> Vec<Def> {
             open_world: false,
         },
         Def {
+            name: "open_pr",
+            title: "Show a pull request",
+            description: "Open a pull request on the user's Forgejo as a block beside a pane (M36): its checks, reviews and timeline, read with the user's own tea login, and what it waits on them for (a review asked of them, red checks, changes requested) as attention on the phone and the swarm. Returns the PR as text.",
+            schema: schema_for_type::<OpenPrArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "read_pr",
+            title: "Read a pull request",
+            description: "A PR block's pull request as text (header, body, checks, reviews, timeline), what it waits on the user for, and your drafts: each waiting, sent (with its link and who sent it) or dropped (and by whom).",
+            schema: schema_for_type::<ReadPrArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: true,
+        },
+        Def {
+            name: "pr_comment",
+            title: "Draft a PR comment",
+            description: "Draft a comment on a PR block's pull request. Nothing reaches the forge in an agent's name: the draft waits on the block as a card the user (or an editor) edits and sends, or drops. Returns its draft id at once; follow it with read_pr.",
+            schema: schema_for_type::<PrCommentArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "pr_review",
+            title: "Draft a PR review",
+            description: "Draft a review (approve, request_changes or comment) of a PR block's pull request. It waits as a card for the user to edit and send, or drop; returns its draft id at once.",
+            schema: schema_for_type::<PrReviewArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "pr_merge",
+            title: "Propose merging a PR",
+            description: "Propose merging a PR block's pull request. It waits as a card for the user to send (merge) or drop; returns its draft id at once.",
+            schema: schema_for_type::<PrMergeArgs>,
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
             name: "read_file",
             title: "Read a file",
             description: "A text file on this host or the machine a pane runs on, paged by byte offset.",
@@ -765,6 +867,33 @@ impl<'a> Call<'a> {
             },
             "open_workspace" => match parse(args) {
                 Ok(a) => self.open_workspace(a).await,
+                Err(e) => Err(e),
+            },
+            "open_pr" => match parse(args) {
+                Ok(a) => self.open_pr(a).await,
+                Err(e) => Err(e),
+            },
+            "read_pr" => match parse(args) {
+                Ok(a) => self.read_pr(a).await,
+                Err(e) => Err(e),
+            },
+            "pr_comment" => match parse::<PrCommentArgs>(args) {
+                Ok(a) => self.pr_write(&a.block, "comment", json!({ "body": a.body })).await,
+                Err(e) => Err(e),
+            },
+            "pr_review" => match parse::<PrReviewArgs>(args) {
+                Ok(a) => {
+                    let event = match a.event {
+                        PrReviewEvent::Approve => "approve",
+                        PrReviewEvent::RequestChanges => "request_changes",
+                        PrReviewEvent::Comment => "comment",
+                    };
+                    self.pr_write(&a.block, "review", json!({ "event": event, "body": a.body })).await
+                }
+                Err(e) => Err(e),
+            },
+            "pr_merge" => match parse::<PrMergeArgs>(args) {
+                Ok(a) => self.pr_write(&a.block, "merge", json!({ "style": a.style })).await,
                 Err(e) => Err(e),
             },
             _ => Err(format!("no tool {name}")),
@@ -1609,6 +1738,84 @@ impl<'a> Call<'a> {
         )
     }
 
+    async fn open_pr(&self, a: OpenPrArgs) -> Out {
+        let (beside, host) = self.beside(a.beside.as_ref()).await?;
+        // N alone means the repository beside it, if no dir is given.
+        let dir = match (&a.dir, beside) {
+            (Some(d), _) => Some(d.clone()),
+            (None, Some(b)) if host.is_none() => self.readable(b).await?.info.cwd,
+            _ => None,
+        };
+        let config = crate::forge::open_config(&json!({ "pr": a.pr, "dir": dir })).await?;
+        let req = OpenRequest {
+            kind: BlockType::Forge,
+            config,
+            session: None,
+            split: beside,
+            from_pane: beside,
+            vm: false,
+            image: None,
+            host: None,
+            local: true,
+        };
+        let block = self.open(req).await?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let b = loop {
+            let b = self.app.mux.api(|r| Api::Block(block, r)).await.flatten().ok_or("the block closed")?;
+            if b.state()["loading"] != true || Instant::now() > deadline {
+                break b;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let st = b.state();
+        if let Some(e) = st["error"].as_str() {
+            return Err(format!("PR block %{block}: {e}"));
+        }
+        done(
+            format!(
+                "PR block %{block}: {}#{} {}",
+                st["repo"].as_str().unwrap_or(""),
+                st["number"],
+                st["pr"]["item"]["title"].as_str().unwrap_or("")
+            ),
+            json!({ "block": block, "text": b.text(), "wants": st["wants"] }),
+        )
+    }
+
+    /// A forge block this caller may read.
+    async fn forge(&self, block: &PaneArg) -> Result<(PaneId, Arc<dyn crate::block::Block>), String> {
+        let id = block.id()?;
+        let p = self.readable(id).await?;
+        if p.info.kind != BlockType::Forge {
+            return Err(format!("%{id} isn't a PR block: open_pr opens one"));
+        }
+        let b = self.app.mux.api(|r| Api::Block(id, r)).await.flatten().ok_or_else(|| format!("no block %{id}"))?;
+        Ok((id, b))
+    }
+
+    async fn read_pr(&self, a: ReadPrArgs) -> Out {
+        let (id, b) = self.forge(&a.block).await?;
+        let st = b.state();
+        let drafts = st["drafts"].clone();
+        done(
+            format!("PR block %{id}: {}#{}", st["repo"].as_str().unwrap_or(""), st["number"]),
+            json!({ "block": id, "text": b.text(), "wants": st["wants"], "drafts": drafts, "error": st["error"] }),
+        )
+    }
+
+    /// An agent's write: a draft on the block, at once.
+    async fn pr_write(&self, block: &PaneArg, method: &str, args: Value) -> Out {
+        let (id, b) = self.forge(block).await?;
+        let out = b.call_by(method, args, Some(&self.by())).await?;
+        let draft = out["draft"].as_str().unwrap_or("?").to_owned();
+        done(
+            format!(
+                "Drafted on %{id} as {draft}: it waits for the user to send, edit or drop it (read_pr shows what became of it)"
+            ),
+            out,
+        )
+    }
+
     async fn open(&self, req: OpenRequest) -> Result<PaneId, String> {
         match self.app.mux.api(|r| Api::Open(req, None, r)).await {
             Some(Ok(b)) => {
@@ -2016,7 +2223,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 19);
+        assert_eq!(all.len(), 24);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -2024,7 +2231,17 @@ mod tests {
             .collect();
         assert_eq!(
             ro,
-            ["read_output", "capture_screen", "wait", "list", "history", "search", "list_conversations", "read_file"]
+            [
+                "read_output",
+                "capture_screen",
+                "wait",
+                "list",
+                "history",
+                "search",
+                "list_conversations",
+                "read_pr",
+                "read_file"
+            ]
         );
         assert_eq!(list(Scope::Read).len(), ro.len(), "a read token sees the read-only tools only");
         let close = all.iter().find(|t| t.name == "close").unwrap();

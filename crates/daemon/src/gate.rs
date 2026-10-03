@@ -1,7 +1,8 @@
 //! Gates waiting for a person (M34), whoever read them: the `gate` reason
 //! the swarm's rail, push and the phone show, and approving one through
 //! where it came from. The workspace block reads chant's; a studio app
-//! block (M35) reads hud's. Neither the reason nor the card knows which.
+//! block (M35) reads hud's; a forge block (M36) raises one for a review
+//! asked of you. Neither the reason nor the card knows which.
 
 use illogical_proto::{Action, Gate, GateSource, Reason, ReasonKind};
 
@@ -62,6 +63,9 @@ pub async fn approve(gate: &Gate, approver: Option<&str>, via: &Via<'_>) -> Resu
             }
             session.approve_gate(&body).await
         }
+        // M36: a review asked of you is approved as a review, by the forge
+        // block itself (`act` calls its `review` method).
+        (GateSource::Forge { .. }, _) => Err("a review is approved through its forge block".into()),
         (GateSource::Chant { .. }, Via::Hud { .. }) | (GateSource::Hud { .. }, Via::Chant { .. }) => {
             Err("this gate isn't this block's to approve".into())
         }

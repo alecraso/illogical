@@ -9,7 +9,7 @@ import { useSubscribe } from "./hooks";
 import { AttentionBadge } from "./attention";
 import { HostCrumb, HostSection } from "./hosts";
 import { openSwarm } from "../swarm/route";
-import { openChanges, openPort } from "../blocks";
+import { openChanges, openPort, openPr } from "../blocks";
 import { startAgent } from "./agent-dialog";
 import { pickConversation } from "./conversations";
 import { pickApp } from "./apps";
@@ -136,6 +136,11 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           {!state.roles && (
             <button data-studio-apps onClick={act(() => client.session !== null && pickApp(client, { session: client.session }, true))}>
               Studio apps
+            </button>
+          )}
+          {!state.roles && (
+            <button data-open-pr onClick={act(() => client.session !== null && void openPr(client, { session: client.session }))}>
+              Pull request
             </button>
           )}
           {active !== undefined && <button onClick={act(() => openPicker(client, active, true))}>Go to directory</button>}

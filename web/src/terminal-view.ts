@@ -46,7 +46,9 @@ export class TerminalView {
   private pending: { text: string; start: IMarker } | null = null;
   private markMenu: ((mark: CommandMark, e: MouseEvent) => void) | undefined;
 
-  constructor() {
+  /** `link`: a link clicked in the terminal, before the browser opens it;
+   * true if it was handled (M36: a pull request opens as a block). */
+  constructor(link?: (uri: string, e: MouseEvent) => boolean) {
     this.host = document.createElement("div");
     this.host.className = "term-host";
     this.term = new Terminal({
@@ -61,7 +63,12 @@ export class TerminalView {
     });
     this.term.loadAddon(new Unicode11Addon());
     this.term.unicode.activeVersion = "11";
-    this.term.loadAddon(new WebLinksAddon());
+    this.term.loadAddon(
+      new WebLinksAddon((e, uri) => {
+        if (link?.(uri, e)) return;
+        window.open(uri, "_blank", "noopener");
+      }),
+    );
     this.swallowQueries();
     this.watchCommands();
     this.term.attachCustomKeyEventHandler((e) => this.clipboardKeys(e));

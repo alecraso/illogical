@@ -76,6 +76,9 @@ export interface Schema {
   items?: Schema;
   minimum?: number;
   maximum?: number;
+  maxLength?: number;
+  /** `markdown` (M36: a forge draft's text): a multi-line box. */
+  format?: string;
   default?: unknown;
 }
 
@@ -107,15 +110,27 @@ export function AskCard({ ask, actions }: { ask: Ask; actions: AskActions }) {
   );
 }
 
-function Buttons({ actions, submit, disabled }: { actions: AskActions; submit?: () => void; disabled?: boolean }) {
+function Buttons({
+  actions,
+  submit,
+  disabled,
+  labels,
+}: {
+  actions: AskActions;
+  submit?: () => void;
+  disabled?: boolean;
+  labels?: { submit: string; decline: string };
+}) {
   return (
     <div class="ask-buttons">
       {submit && (
-        <button class="primary" disabled={disabled} onClick={submit}>
-          Submit
+        <button class="primary" data-ask-submit disabled={disabled} onClick={submit}>
+          {labels?.submit ?? "Submit"}
         </button>
       )}
-      <button onClick={() => actions.decline()}>Skip</button>
+      <button data-ask-decline onClick={() => actions.decline()}>
+        {labels?.decline ?? "Skip"}
+      </button>
       {actions.terminal && (
         <button title="Claude Code shows its own picker" onClick={() => actions.terminal!()}>
           Answer in terminal
@@ -330,13 +345,16 @@ function FormCard({ ask, actions }: { ask: Ask; actions: AskActions }) {
                   set(key, raw === "" ? undefined : Number(raw));
                 }}
               />
+            ) : f.format === "markdown" || (f.maxLength ?? 0) > 200 ? (
+              <textarea name={key} rows={6} value={value} onInput={(e) => set(key, (e.currentTarget as HTMLTextAreaElement).value)} />
             ) : (
               <input type="text" name={key} value={value} onInput={(e) => set(key, (e.currentTarget as HTMLInputElement).value)} />
             )}
           </label>
         );
       })}
-      <Buttons actions={actions} submit={submit} disabled={!ready} />
+      {/* M36: a forge draft is sent (with your login) or dropped. */}
+      <Buttons actions={actions} submit={submit} disabled={!ready} labels={ask.source === "forge" ? { submit: "Send", decline: "Drop" } : undefined} />
     </>
   );
 }

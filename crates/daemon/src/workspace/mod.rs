@@ -255,6 +255,7 @@ impl Workspace {
             let dir = match &gate.source {
                 GateSource::Chant { dir, .. } => dir,
                 GateSource::Hud { box_url, .. } => box_url,
+                GateSource::Forge { url, .. } => url,
             };
             let text = format!("approved {}: {} at gate {}", gate.member, gate.op, gate.gate);
             let _ = l.record(

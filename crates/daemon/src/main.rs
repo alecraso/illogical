@@ -14,6 +14,7 @@ mod conversations;
 mod dial;
 mod e2e;
 mod editor;
+mod forge;
 mod fs;
 mod gate;
 mod heap;

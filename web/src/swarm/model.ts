@@ -20,6 +20,8 @@ export const KINDS: Record<WorkKind, [number, number, number]> = {
   editor: [240, 130, 165],
   // M35: a studio box.
   app: [130, 200, 90],
+  // M36: a pull request.
+  pr: [235, 150, 110],
 };
 
 /** What a reason looks like on the rail. */
@@ -52,6 +54,7 @@ export function kindOf(p: FleetPane): WorkKind {
   if (p.info.kind) return p.info.kind;
   if (p.info.type === "agent") return "agent";
   if (p.info.type === "app") return "app";
+  if (p.info.type === "forge") return "pr";
   if (p.info.type === "browser") return "server";
   return "shell";
 }
@@ -143,6 +146,8 @@ export function cardTitle(r: Reason, n: number, machines: string[], agent?: stri
     case "diff":
       return n > 1 ? `${n} edits wait` : "Claude Code wants to edit";
     case "gate":
+      // M36: a review asked of you is a gate too.
+      if (r.gate?.source.kind === "forge") return n > 1 ? `${n} reviews asked of you` : "Review requested";
       return n > 1 ? `${n} workspaces wait at gates` : "Waits at a gate";
   }
 }

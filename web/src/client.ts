@@ -949,7 +949,13 @@ export class Client {
   }
 
   private newPane(id: PaneId, epoch: number): PaneEntry {
-    const view = new TerminalView();
+    // M36: a Forgejo pull request's link opens as a PR block beside the
+    // terminal (Shift: in the browser, as any other link).
+    const view = new TerminalView((uri, e) => {
+      if (e.shiftKey || this.state?.roles || !forgePr(uri)) return false;
+      void this.openBlock({ type: "forge", config: { pr: uri, dir: this.cwd(id) ?? undefined }, split: id, from_pane: id }, "couldn't open the pull request");
+      return true;
+    });
     const entry: PaneEntry = { view, epoch, offset: null, title: "" };
     view.onInput((data) => this.input(id, data));
     view.onTitle((t) => {
@@ -1042,4 +1048,15 @@ export function tabLabel(client: Client, tab: TabView): string {
   if (title) return title;
   const cwd = client.cwd(pane);
   return cwd ? cwd.split("/").filter(Boolean).pop() ?? "/" : `@${tab.id}`;
+}
+
+/** A link to a Forgejo pull request (`…/OWNER/REPO/pulls/N`: GitHub's are
+ * `/pull/N`, and wait for M38). */
+export function forgePr(uri: string): boolean {
+  try {
+    const u = new URL(uri);
+    return /^https?:$/.test(u.protocol) && /^\/(?:[^/]+\/)*[^/]+\/[^/]+\/pulls\/\d+(?:\/|$|[?#])/.test(u.pathname + (u.search || ""));
+  } catch {
+    return false;
+  }
 }

@@ -161,6 +161,53 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                     );
                 }
             }
+            Some(BlockType::Forge) => {
+                // M36: the PR on one line, then what waits on you, each a
+                // line (drafts first: an agent's write waits to be sent).
+                let s = app.blocks.get(&pid);
+                let pr = s.map(|s| &s["pr"]["item"]);
+                let at = |v: Option<&serde_json::Value>, k: &str| v.and_then(|v| v[k].as_str().map(str::to_owned));
+                let repo = at(s, "repo").unwrap_or_default();
+                let n = s.and_then(|s| s["number"].as_u64()).unwrap_or(0);
+                let checks =
+                    s.and_then(|s| s["pr"]["rollup"].as_str().map(str::to_owned)).unwrap_or_else(|| "no checks".into());
+                let line = match (at(s, "error"), pr.filter(|p| p.is_object())) {
+                    (Some(e), _) => format!("%{pid} {repo}#{n}: {e}"),
+                    (None, Some(p)) => format!(
+                        "%{pid} {repo}#{n} {} [{}] checks {checks}  (`illogical capture %{pid}`)",
+                        at(Some(p), "title").unwrap_or_default(),
+                        at(Some(p), "state").unwrap_or_default()
+                    ),
+                    (None, None) => format!("%{pid} {repo}#{n}: reading…"),
+                };
+                note(buf, r, &line);
+                let drafts =
+                    s.and_then(|s| s["drafts"].as_array()).into_iter().flatten().filter(|d| d["status"] == "waiting");
+                let mut rows: Vec<String> = drafts
+                    .map(|d| {
+                        format!(
+                            "  draft {} by {}: answer it in the web client or `illogical attention`",
+                            d["method"].as_str().unwrap_or("?"),
+                            d["by"].as_str().unwrap_or("?")
+                        )
+                    })
+                    .collect();
+                rows.extend(
+                    s.and_then(|s| s["wants"].as_array()).into_iter().flatten().map(|w| {
+                        format!("  {}: {}", w["kind"].as_str().unwrap_or(""), w["why"].as_str().unwrap_or(""))
+                    }),
+                );
+                for (i, text) in rows.into_iter().enumerate().take(r.height.saturating_sub(1) as usize) {
+                    let row = Rect { y: r.y + 1 + i as u16, height: 1, ..r };
+                    buf.set_stringn(
+                        row.x + 1,
+                        row.y,
+                        text,
+                        row.width.saturating_sub(1) as usize,
+                        Style::default().fg(Color::Yellow),
+                    );
+                }
+            }
             _ => note(buf, r, &format!("%{pid}")),
         }
     }

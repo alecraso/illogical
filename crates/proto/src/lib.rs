@@ -249,6 +249,17 @@ pub enum GateSource {
         box_url: String,
         app: String,
     },
+    /// A review asked of you on a forge's pull request (M36): approved as
+    /// a review (`review {event: approve}`) through the forge block, with
+    /// the person's own CLI login. `member` is the repository, `op` the
+    /// PR (`#84`), `gate` is `review`.
+    Forge {
+        /// The forge's API base (`https://git.example/api/v1`) and its web
+        /// address for the PR.
+        api: String,
+        url: String,
+        number: u64,
+    },
 }
 
 impl Gate {
@@ -259,7 +270,10 @@ impl Gate {
 
     /// "delivery: ship waits at gate approve-ship".
     pub fn headline(&self) -> String {
-        format!("{}: {} waits at gate {}", self.member, self.op, self.gate)
+        match &self.source {
+            GateSource::Forge { .. } => format!("{}{}: review requested from you", self.member, self.op),
+            _ => format!("{}: {} waits at gate {}", self.member, self.op, self.gate),
+        }
     }
 
     /// Gates of one workspace are one card on the rail: `gate:<root>`
@@ -269,8 +283,17 @@ impl Gate {
             GateSource::Chant { root, machine: None, .. } => format!("gate:{root}"),
             GateSource::Chant { root, machine: Some(m), .. } => format!("gate:{m}:{root}"),
             GateSource::Hud { box_url, .. } => format!("gate:{box_url}"),
+            // M36: bundled by repository, with the PR's other reasons.
+            GateSource::Forge { api, .. } => format!("forge:{}/{}", host_of(api), self.member),
         }
     }
+}
+
+/// The host part of a URL (`https://git.example:3000/api/v1` →
+/// `git.example:3000`), for bundle keys.
+pub fn host_of(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    rest.split('/').next().unwrap_or(rest)
 }
 
 /// The open question or approval behind an `ask` reason.
@@ -527,6 +550,8 @@ pub enum WorkKind {
     Editor,
     /// A studio box (M35).
     App,
+    /// A pull request on a forge (M36).
+    Pr,
 }
 
 /// The git repository a pane's working directory is in (M23).
@@ -677,6 +702,10 @@ pub enum BlockType {
     /// A studio box (M35): a web page that knows it's a hud box. It frames
     /// the box, and its agent's questions are asks on it.
     App,
+    /// A pull request on a git forge (M36: Forgejo): its reviews, checks
+    /// and timeline, and what it waits on you for. Config `{provider, api?,
+    /// login?, repo, kind: pr, number, host?, dir?}`.
+    Forge,
 }
 
 /// Where a remote block's pane lives (#17): a host in the home daemon's
