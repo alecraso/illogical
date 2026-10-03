@@ -479,7 +479,7 @@ impl Forgejo {
     }
 }
 
-fn short(e: &reqwest::Error) -> String {
+pub(super) fn short(e: &reqwest::Error) -> String {
     let mut s = e.to_string();
     let mut src = std::error::Error::source(e);
     while let Some(x) = src {

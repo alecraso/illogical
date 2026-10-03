@@ -102,6 +102,14 @@ pub(super) async fn new_config(c: &Value, mut out: Value, dir: Option<String>) -
         }
         (None, None) => return Err("a new issue in which repository? Run it in a clone, or say OWNER/REPO".into()),
     }
+    // On GitHub (M38) when the clone is.
+    if c["provider"].as_str().is_none()
+        && let Some(h) = out["host"].as_str().filter(|h| super::github::is_github_host(h)).map(str::to_owned)
+    {
+        out["provider"] = json!("github");
+        out["api"] = json!(c["api"].as_str().map_or_else(|| super::github::api_for(&h), str::to_owned));
+        out["host"] = json!("github.com");
+    }
     out["kind"] = json!("issue");
     out["number"] = json!(0);
     let by = c["by"].as_str().filter(|b| !b.is_empty()).unwrap_or("").to_owned();

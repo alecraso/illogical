@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 pub enum Provider {
     #[default]
     Forgejo,
+    /// GitHub, or GitHub Enterprise (M38).
+    Github,
     /// GitLab (M39): merge requests, through the person's `glab` login.
     Gitlab,
 }
@@ -123,6 +125,8 @@ pub enum CheckSource {
     Status,
     /// Forgejo Actions, which write commit statuses.
     Action,
+    /// A GitHub check run (Actions, or another app).
+    CheckRun,
     /// A job in a GitLab merge request's head pipeline.
     PipelineJob,
 }
@@ -188,6 +192,8 @@ pub enum EventKind {
     Reopened,
     BranchDeleted,
     Milestone,
+    /// GitHub says who was mentioned (`target`), not who wrote it.
+    Mentioned,
     Other,
 }
 
@@ -358,7 +364,9 @@ pub fn attention(pr: &Pr, me: &Me, seen: i64) -> Vec<Want> {
     let mention = pr.events.iter().rfind(|e| {
         e.at > seen
             && e.actor.as_deref().is_none_or(|a| !a.eq_ignore_ascii_case(&me.login))
-            && e.body.as_deref().is_some_and(|b| mentions(b, &me.login))
+            && (e.body.as_deref().is_some_and(|b| mentions(b, &me.login))
+                || (e.kind == EventKind::Mentioned
+                    && matches!(&e.target, Some(Reviewer::User(u)) if u.eq_ignore_ascii_case(&me.login))))
     });
     if let Some(e) = mention {
         let by = e.actor.as_deref().map(|a| format!(" by {a}")).unwrap_or_default();
@@ -418,6 +426,9 @@ impl Event {
             }
             EventKind::ReviewRequestRemoved => "took back a review request".to_owned(),
             EventKind::ReviewDismissed => "dismissed a review".to_owned(),
+            EventKind::Mentioned => {
+                format!("mentioned {}", self.target.as_ref().map_or("someone", Reviewer::name))
+            }
             EventKind::Pushed => match self.commits {
                 Some(n) => format!(
                     "pushed {n} commit{}{}",

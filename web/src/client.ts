@@ -949,9 +949,9 @@ export class Client {
   }
 
   private newPane(id: PaneId, epoch: number): PaneEntry {
-    // M36: a Forgejo pull request's link (M39: or a GitLab merge
-    // request's) opens as a PR block beside the terminal (Shift: in the
-    // browser, as any other link).
+    // M36: a pull request's link (Forgejo's; M38: GitHub's; M39: a GitLab
+    // merge request's) opens as a PR block beside the terminal (Shift: in
+    // the browser, as any other link).
     // M37: an issue's link opens as an issue block.
     const view = new TerminalView((uri, e) => {
       if (e.shiftKey || this.state?.roles) return false;
@@ -1056,7 +1056,7 @@ export function tabLabel(client: Client, tab: TabView): string {
 }
 
 /** A link to a Forgejo issue (M37: `…/OWNER/REPO/issues/N`, GitHub's
- * too, though only Forgejo is read until M38). */
+ * too). */
 export function forgeIssue(uri: string): boolean {
   try {
     const u = new URL(uri);
@@ -1066,13 +1066,14 @@ export function forgeIssue(uri: string): boolean {
   }
 }
 
-/** A link to a Forgejo pull request (`…/OWNER/REPO/pulls/N`: GitHub's are
- * `/pull/N`, and wait for M38), or a GitLab merge request
- * (`…/GROUP/[SUB/…]PROJECT/-/merge_requests/N`, M39). */
+/** A link to a pull request: Forgejo's (`…/OWNER/REPO/pulls/N`), GitHub's
+ * (`OWNER/REPO/pull/N`, on github.com or an Enterprise host: M38), or a
+ * GitLab merge request (`…/GROUP/[SUB/…]PROJECT/-/merge_requests/N`, M39). */
 export function forgePr(uri: string): boolean {
   try {
     const u = new URL(uri);
     if (!/^https?:$/.test(u.protocol)) return false;
+    if (/^\/[^/]+\/[^/]+\/pull\/\d+(?:\/|$)/.test(u.pathname)) return true;
     if (/^\/(?:[^/]+\/){2,}-\/merge_requests\/\d+(?:\/|$)/.test(u.pathname)) return true;
     return /^\/(?:[^/]+\/)*[^/]+\/[^/]+\/pulls\/\d+(?:\/|$|[?#])/.test(u.pathname + (u.search || ""));
   } catch {

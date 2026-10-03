@@ -1024,9 +1024,8 @@ async fn call(
     let by = match method.as_str() {
         // M11: a file block's `open` is the owner's only. M36: a forge
         // block's writes say who sent them.
-        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" | "open" | "comment" | "review" | "merge" => {
-            who_is(&app, who).await
-        }
+        "approve" | "deny" | "answer" | "decline" | "send" | "terminal" | "open" | "comment" | "review" | "merge"
+        | "rerun_checks" => who_is(&app, who).await,
         _ => None,
     };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
