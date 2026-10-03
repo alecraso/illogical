@@ -100,8 +100,12 @@
   .way h3 { margin: 0 0 10px; font-size: 18px; }
   .way p { color: var(--dim); font-size: 15px; margin: 10px 0 0; }
   .way pre { background: var(--deep); border-radius: 8px; padding: 12px; font-size: 13px; overflow-x: auto; margin: 0; }
-  .needs { margin-top: 28px; color: var(--dim); }
-  .needs strong { color: var(--fg); }
+  .way .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
+  .way .head h3 { margin: 0; }
+  .way button.copy { padding: 5px 11px; font-size: 13px; }
+  .next-h { font-size: 22px; margin: 40px 0 6px; }
+  .then { color: var(--dim); margin: 0 0 20px; }
+  .more { margin-top: 28px; color: var(--dim); }
 
   footer { border-top: 1px solid var(--raised); padding: 32px 0 48px; color: var(--faint); font-size: 14px; }
   footer p { margin: 6px 0; }
@@ -110,7 +114,6 @@
     body { font-size: 16px; }
     .wrap { padding: 0 16px; }
     nav a { margin-left: 14px; }
-    nav a.hide-sm { display: none; }
     .hero { padding-top: 32px; }
     section.feature, section.feature.flip { grid-template-columns: 1fr; gap: 24px; padding: 44px 0; }
     section.feature.flip .text { order: 0; }
@@ -128,7 +131,7 @@
     <a class="brand" href="/"><img src="icon.svg" alt="">illogical</a>
     <nav>
       <a href="#install">Install</a>
-      <a class="hide-sm" href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/features.md">Docs</a>
+      <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">Docs</a>
       <a href="https://git.inevitable.fyi/jhgaylor/illogical">Source</a>
     </nav>
   </header>
@@ -283,32 +286,51 @@
     <h2>Install</h2>
     <div class="ways">
       <div class="way">
-        <h3>One line</h3>
-        <pre>curl -fsSL https://illogical.widgets.wtf/install.sh | sh</pre>
+        <div class="head"><h3>One line</h3><button class="copy" type="button" data-copy="get-line">Copy</button></div>
+        <pre id="get-line">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</pre>
         <p>Downloads the release for your machine, checks it, and starts the daemon as a service (systemd on Linux, launchd on macOS). Run it again to upgrade.</p>
       </div>
       <div class="way">
-        <h3>Homebrew</h3>
-        <pre>brew tap jhgaylor/tap \
+        <div class="head"><h3>Homebrew</h3><button class="copy" type="button" data-copy="get-brew">Copy</button></div>
+        <pre id="get-brew">brew tap jhgaylor/tap \
   https://git.inevitable.fyi/jhgaylor/homebrew-tap
 brew install illogical
 illogicald install</pre>
         <p>macOS and Linux.</p>
       </div>
       <div class="way">
-        <h3>From source</h3>
-        <pre>git clone https://git.inevitable.fyi/jhgaylor/illogical
+        <div class="head"><h3>From source</h3><button class="copy" type="button" data-copy="get-source">Copy</button></div>
+        <pre id="get-source">git clone https://git.inevitable.fyi/jhgaylor/illogical
 cd illogical
 just bootstrap && just install</pre>
-        <p>Needs Rust, mise, just and pnpm. <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/development.md#build-from-source">Details</a>.</p>
+        <p>Needs Rust (rustup), mise, just, Node and pnpm; on macOS, the Xcode command line tools too. <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/development.md#build-from-source">Details</a>.</p>
       </div>
     </div>
-    <p class="needs">Then open <code>http://127.0.0.1:7681</code>. <strong>From your phone and other machines</strong>, put it behind Tailscale (<code>tailscale serve --bg --https=443 http://127.0.0.1:7681</code>), or join it to illogical control to reach it from anywhere and share it with your team (<code>illogicald join https://control.illogical.widgets.wtf</code>). The <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
+    <h3 class="next-h">Then</h3>
+    <p class="then">Open <code>http://127.0.0.1:7681</code> on that machine. From there:</p>
+    <div class="ways">
+      <div class="way">
+        <div class="head"><h3>On your phone</h3><button class="copy" type="button" data-copy="next-phone">Copy</button></div>
+        <pre id="next-phone">tailscale serve --bg --https=443 http://127.0.0.1:7681</pre>
+        <p>Over <a href="https://tailscale.com">Tailscale</a>, then open <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code> and add it to the home screen. The first time, turn on HTTPS certificates in the tailnet's <a href="https://login.tailscale.com/admin/dns">DNS settings</a>.</p>
+      </div>
+      <div class="way">
+        <div class="head"><h3>Anywhere, or with your team</h3><button class="copy" type="button" data-copy="next-join">Copy</button></div>
+        <pre id="next-join">illogicald join https://control.illogical.widgets.wtf</pre>
+        <p>Join illogical control to reach it from any browser, no tailnet needed. Make a team there, invite people, and pick the team when you approve a machine. <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/teams.md">Your machines, your team</a>.</p>
+      </div>
+      <div class="way">
+        <div class="head"><h3>Agents &amp; Claude Code</h3><button class="copy" type="button" data-copy="next-mcp">Copy</button></div>
+        <pre id="next-mcp">claude mcp add illogical -- illogical mcp</pre>
+        <p>Builds and dev servers in panes you can watch and take over. Or <em>Start an agent…</em> in any pane's menu. <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">Allowlist and more</a>.</p>
+      </div>
+    </div>
+    <p class="more">The <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
   </section>
 
   <footer>
     <p>illogical is a personal project by <a href="https://jakegaylor.com">Jake Gaylor</a>, for your own machines and the people you share them with.</p>
-    <p>Terminal emulation by <a href="https://ghostty.org">libghostty</a> and <a href="https://xtermjs.org">xterm.js</a>. <a href="https://git.inevitable.fyi/jhgaylor/illogical">Source</a> · <a href="https://git.inevitable.fyi/jhgaylor/illogical/releases">Releases</a> · MIT or Apache-2.0.</p>
+    <p>Terminal emulation by <a href="https://ghostty.org">libghostty</a> and <a href="https://xtermjs.org">xterm.js</a>. <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">Docs</a> · <a href="https://git.inevitable.fyi/jhgaylor/illogical">Source</a> · <a href="https://git.inevitable.fyi/jhgaylor/illogical/releases">Releases</a> · MIT or Apache-2.0.</p>
   </footer>
 </div>
 <script>
