@@ -3394,7 +3394,7 @@ Answer these before M33. Each answer goes in as a fixture or a measured number:
 - **Against the real thing** (a dev daemon on geek, `claude-agent-acp` 0.85.0): S20's terminal session opened with its tool calls and output, continued with its context (it named the courier), and the new turn is in the session's jsonl for `claude --resume`; the desktop app's live "Hello" session was refused with "it's open in the Claude desktop app" and forked.
 - **Not covered:**
   - jumping to a pane that runs the conversation, in an automated test: it needs a Claude Code in a scoped pane (systemd scopes), which neither test daemon has. The listing showed real sessions in the daily daemon's panes;
-  - the Mac (`~/Library/Application Support/Claude` for the desktop app's records);
+  - the Mac (`~/Library/Application Support/Claude` for the desktop app's records). #81 (2026-10-03): liveness there reads `procStart` as Claude Code writes it on macOS (`LC_ALL=C TZ=UTC ps -o lstart=`, to the second) against the process's start time from libproc, and a holder is placed in a pane or agent block by its parent processes (the daemon's panes' and agents' pids, before the systemd scope, on both OSes). jake-mini's desktop app (1.7196.0) had never run a Code tab session, so its record folder and the scratch-workspace deletion are still unchecked there;
   - inotify: a listing finds new sessions, but an open picker doesn't update by itself.
 
 ### Workspaces track (S21, M34, added 2026-10-02)

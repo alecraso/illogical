@@ -1992,6 +1992,10 @@ impl Block for Agent {
         Some(json!({ "ask": choice }))
     }
 
+    fn pid(&self) -> Option<u32> {
+        self.inner.lock().unwrap().pid
+    }
+
     fn waiting(&self) -> Option<crate::block::Waiting> {
         use illogical_proto::AskWhat;
         let g = self.inner.lock().unwrap();
