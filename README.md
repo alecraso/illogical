@@ -48,11 +48,11 @@ tabs and splits you drive with the mouse.
 ![The swarm: every pane, clustered, with what needs you on the rail](site/img/swarm.png)
 
 Linux (x86_64, arm64) and macOS (Apple silicon). Share a session with
-someone, or a whole machine with a team, with roles and presence. Remote
-access is over your tailnet, or through
-[illogical control](docs/control.md) for devices without one: end to end
-encrypted, so the service relays for your devices but can't read your
-terminals.
+someone, or a whole machine with a team, with roles and presence
+([docs/teams.md](docs/teams.md)). Remote access is over your tailnet, or
+through [illogical control](docs/control.md) for devices without one: end
+to end encrypted, so the service relays for your devices but can't read
+your terminals.
 
 ## Install
 
@@ -128,6 +128,9 @@ loginctl enable-linger $USER
    ```
 
    See [docs/control.md](docs/control.md), including running your own.
+   **With a team:** make one in control (*Teams…*), invite people, and
+   pick the team when you approve a machine's join. Roles, personal vs
+   team machines and sharing one session: [docs/teams.md](docs/teams.md).
 6. **Agents.** Install an adapter (needs Node), then *Start an agent…* in a
    pane's menu, or `illogical agent "fix the failing test"`:
 
@@ -187,6 +190,8 @@ layout still come back. VM tabs are Linux only.
 - [docs/features.md](docs/features.md): everything it does, in detail.
 - [docs/advanced.md](docs/advanced.md): VM tabs (wisp), web apps beside
   their terminals, more machines and sandboxes, iTerm2 as a tmux client.
+- [docs/teams.md](docs/teams.md): your machines, your team: roles,
+  personal vs team machines, sharing a session.
 - [docs/control.md](docs/control.md): illogical control, hosted or your
   own; [docs/control-e2e.md](docs/control-e2e.md), how it keeps out of your
   terminals.
