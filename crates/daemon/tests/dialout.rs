@@ -38,8 +38,7 @@ impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        strays::kill_programs(&self.state);
-        let _ = std::fs::remove_dir_all(&self.state);
+        strays::remove(&self.state);
     }
 }
 
@@ -151,13 +150,12 @@ fn wait_for(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
     }
 }
 
-/// A token minted on `home` for `name`, in a private file.
+/// A token minted on `home` for `name`, in a private file (in home's state
+/// dir, so it goes with it).
 fn token_file(home: &Daemon, name: &str) -> (PathBuf, String) {
     let token = stdout(&cli(home, &["hosts", "token", name])).trim().to_owned();
     assert!(token.starts_with("ilh_"), "{token}");
-    let dir = temp("token");
-    std::fs::create_dir_all(&dir).unwrap();
-    let f = dir.join("token");
+    let f = home.state.join(format!("test-token-{name}"));
     std::fs::write(&f, &token).unwrap();
     (f, token)
 }

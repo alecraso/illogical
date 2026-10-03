@@ -73,12 +73,12 @@ impl Drop for Daemon {
         }
         // Anything it left running.
         let _ = Command::new("pkill").args(["-f", &self.sessions.display().to_string()]).status();
-        strays::kill_programs(&self.state);
         if std::env::var_os("ILLOGICAL_KEEP_TEST_STATE").is_some() {
+            strays::kill_programs(&self.state);
             eprintln!("kept {}", self.state.display());
             return;
         }
-        let _ = std::fs::remove_dir_all(&self.state);
+        strays::remove(&self.state);
         let _ = std::fs::remove_dir_all(&self.sessions);
     }
 }
@@ -97,6 +97,32 @@ pub fn dirs(tag: &str) -> (PathBuf, PathBuf, u32) {
     let _ = std::fs::remove_dir_all(&sessions);
     std::fs::create_dir_all(&sessions).unwrap();
     (state, sessions, n)
+}
+
+/// A test's scratch dir (fake tools, a forge's files), by its real path: on
+/// macOS the temp dir is /var, which is /private/var. Deleted when dropped.
+pub struct Scratch(PathBuf);
+
+impl Scratch {
+    pub fn new(tag: &str) -> Self {
+        let d = std::env::temp_dir().join(format!("ilg-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        Self(d.canonicalize().unwrap())
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = std::path::Path;
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 impl Daemon {

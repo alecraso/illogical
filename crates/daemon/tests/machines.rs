@@ -52,8 +52,7 @@ impl Drop for Daemon {
                     .status();
             }
         }
-        strays::kill_programs(&self.state);
-        let _ = std::fs::remove_dir_all(&self.state);
+        strays::remove(&self.state);
     }
 }
 

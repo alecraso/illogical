@@ -19,7 +19,7 @@ mod agentd;
 
 use std::{
     os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -50,12 +50,8 @@ fn fixture(dir: &str, f: &str) -> Value {
     serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
 }
 
-fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("ilg-live-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    // By its real path: on macOS the temp dir is /var, which is /private/var.
-    d.canonicalize().unwrap()
+fn scratch(tag: &str) -> Scratch {
+    Scratch::new(&format!("live-{tag}"))
 }
 
 fn script(bin: &Path, name: &str, body: &str) {
