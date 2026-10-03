@@ -2743,6 +2743,7 @@ One live view of every pane on every machine you (or your team) can see. Panes f
 4. **M26** (#40: the swarm view): done.
 5. **After the MVP:** editors, with **S17** (#41: done, below), **M27** (#42: VS Code blocks, done) and **M28** (#43: your editor in the swarm, done).
 6. **M41** (#116: themes, blocks and city): below.
+7. **M42** (#117: the hive and the timeline themes): below.
 
 #### S16: swarm spike (summary cost, fleet connections, canvas)
 
@@ -3142,6 +3143,37 @@ S17's notes for M28:
 - **The synthetic fleet** (`swarmFake`) now has running and finished commands that start and stop, so the frame-rate check and screenshots show heights; its first pane is always on sam's machine (a random 40 sometimes had none, which made *clusters by project … remembered* fail about one run in twenty).
 - **Tests:** `web/e2e/swarm-city.spec.ts` (3): blocks is the default and three.js isn't fetched; the city draws the same clusters and pane count for the same grouping, regroups, is remembered across a reload, and goes back; three failed tests on one machine are one card and three beams, *Show* flies to the first, dismissing drops the beams; a building has height, peeks its last lines on hover and opens its tab on a click; a notification's link opens the city at its card and flies to the pane; on a phone the rail is a strip and a tap opens a building. `swarm-fps.spec.ts` adds the city at 500 panes (≥ 20 fps in headless Chromium's software WebGL; about 52–55 measured). The swarm, editor-swarm, team-swarm and fps specs pass.
 - **Left:** the city on real phones and GPUs. Agents: an agent block reports no `current`, so it stands low; Claude Code in a terminal is one long command, so its height is the session's length, not its turn's (no turn start is reported yet).
+
+#### M42: the hive and the timeline themes (#117)
+
+**Built 2026-10-03.** Two more themes under *Theme*, taken from a mockup of nine views: <https://claude.ai/artifact/NZoeJbYneDHuyZcxKYC36D>. Both are Canvas 2D `SwarmScene`s on a shared base, `Flat` (`web/src/swarm/flat.ts`). The base handles the camera, pan, zoom, pinch, fitting to what the bar and rail leave free, hover, click, right-click and the frame-rate check. Each theme is its own lazy chunk, like the city: the hive is about 2.5 kB gzipped and the timeline about 3.5 kB.
+
+- **Hive** (`hive.ts`): one hex cell per pane, in a comb per cluster.
+  - Cells spiral out from the comb's middle by row (machine), then pane number, so a pane keeps its cell until a regroup.
+  - Combs are packed in rows. The packer tries row widths and keeps the one that draws biggest in the free box, so the hive is wide on a laptop and tall on a phone.
+  - Fill: how long the command has run, on the city's log scale, full at an hour (`fillFor`). It stops where it was while the pane waits on you. Bright while running, faded once done.
+  - What runs until stopped (`UNTIL_STOPPED`, the city's `LONG` kinds) is full and hatched.
+  - Edge: pulsing while it prints (faster for more `bps`), faint for a while after `lastOut`.
+  - A red rim: the last command exited non-zero.
+  - Needs you: the cell fills with the reason's colour and shows how long it has waited. An additive glow spills onto its neighbours, `1.3 + 1.15·log2(1 + s/20)` cell radii wide (7 at most, `spillFor`).
+  - A ring is a teammate with the pane open; it's dashed and turns while they drive it.
+- **Timeline** (`timeline.ts`): one lane per pane under its cluster's name, with now at the right edge.
+  - Fit shows the last 40 minutes across, with lanes at their own height, so 150 lanes scroll rather than shrink.
+  - Bars: finished commands, as long as they ran, coloured by kind. Stripe density is bytes a second (`(end − start)` stream offsets over the duration). A red cap means a non-zero exit.
+  - The bars come from each connected daemon's `/api/history?since=2700`, fetched through a new optional `FieldHooks.history` every 30 s. Commands the view sees end while it's open are added too, as is each pane's `last` (`FieldPane.lastEnded` is new).
+  - The running command's bar has its last four minutes shaded by the `bps` it sampled, and a lit leading edge while it grows. What runs until stopped is a thin line.
+  - Needs you: a band in the reason's colour from `att.since` to now, with a "waits 4m06s" tag past the now edge.
+  - A dot at the now edge is a teammate with the pane open; it's ringed while they drive.
+  - The label column (`%id` and command), the cluster names and the time axis stay in place while you pan. Axis ticks pick their own step as you zoom.
+- **Same behaviour as blocks and city:** hover peeks, a click opens the pane (or follows an editor that joined), right-click is its menu, *Show* and a notification's `#swarm=N` go to the pane, and *Fit* frames everything again. *How to read the hive* and *How to read the timeline* sit under the legend, as the city's key does (`ThemeKey`).
+- **Tests:** `web/e2e/swarm-hive-timeline.spec.ts` (7):
+  - Each theme draws the same clusters and pane count as blocks, regroups, is remembered across a reload, and goes back to blocks.
+  - Three failed tests are one card, and the cluster's three panes need you. *Show* centres the pane, and clearing the rail clears them.
+  - A pane peeks on hover and opens its tab on a click.
+  - The timeline has the failed runs (exit 101), and a finished build is a bar as long as it ran, taken from history.
+  - On a phone, the rail is a strip and a tap opens a pane.
+  - `swarm-fps.spec.ts` adds both themes at 500 panes: 60 fps, with median frame work of 2.6 ms for the hive and 0.6 ms for the timeline. The swarm, city, MVP, editor-swarm and fps specs pass.
+- **Left:** panes closed in the last 45 minutes have no lane (their history is kept, but the timeline draws today's panes), and synced history from hosts that are away isn't drawn. Agent blocks report no commands, so their lanes are empty apart from reasons; Claude Code in a terminal is one long bar.
 
 ### TUI track (S19, M31–M32, added 2026-10-02)
 

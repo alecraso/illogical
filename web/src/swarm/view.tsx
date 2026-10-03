@@ -18,16 +18,17 @@ import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NO
 import { Avatar } from "../ui/people";
 import { MenuLayer, openMenu } from "../ui/menu";
 import { usePhone, useSubscribe } from "../ui/hooks";
-import { Field, type FieldHooks, type FieldPane, type SwarmScene } from "./field";
+import { Field, type FieldHooks, type FieldPane, type HistoryRun, type SwarmScene } from "./field";
 import { FollowView, appName } from "./follow";
 import { DiffCard } from "../ui/diff-card";
 import { activityOf, bundleOf, cardTitle, followable, GROUPINGS, groupOf, isPresence, kindOf, KINDS, REASON_COL, reasonOf, type GroupBy } from "./model";
 
 const BY_KEY = "illogical.swarm.by";
 const THEME_KEY = "illogical.swarm.theme";
-/** M41: how the swarm is drawn. Blocks is the field; the city is 3D. */
-export type Theme = "blocks" | "city";
-export const THEMES: Theme[] = ["blocks", "city"];
+/** M41: how the swarm is drawn. Blocks is the field; the city is 3D; M42's
+ * hive is a cell per pane and the timeline a lane per pane over time. */
+export type Theme = "blocks" | "city" | "hive" | "timeline";
+export const THEMES: Theme[] = ["blocks", "city", "hive", "timeline"];
 /** A done card leaves the rail by itself after this long. */
 export const DONE_MS = 15_000;
 /** An answered card (with its follow-up box) stays this long. */
@@ -142,6 +143,7 @@ export function SwarmView({
       open: (key) => handlers.current.open(key),
       hover: (key, x, y) => void handlers.current.hover(key, x, y),
       menu: (key, e) => handlers.current.menu(key, e),
+      history: (sinceS) => historyOf(fleet, sinceS),
     };
     let scene: SwarmScene | null = null;
     let gone = false;
@@ -154,16 +156,23 @@ export function SwarmView({
       (window as unknown as { __swarm?: SwarmScene }).__swarm = s;
       tick((n) => n + 1);
     };
-    if (theme === "city") {
-      void import("./city")
-        .then(({ City }) => {
-          if (!gone) begin(new City(canvas.current!, hooks));
-        })
-        .catch((e) => {
-          console.error("the city didn't load", e);
-          if (!gone) setTheme("blocks");
-        });
-    } else begin(new Field(canvas.current!, hooks));
+    // Everything but blocks is its own chunk, fetched when it's picked.
+    const make: Promise<(cv: HTMLCanvasElement, h: FieldHooks) => SwarmScene> =
+      theme === "city"
+        ? import("./city").then(({ City }) => (cv, h) => new City(cv, h))
+        : theme === "hive"
+          ? import("./hive").then(({ Hive }) => (cv, h) => new Hive(cv, h))
+          : theme === "timeline"
+            ? import("./timeline").then(({ Timeline }) => (cv, h) => new Timeline(cv, h))
+            : Promise.resolve((cv, h) => new Field(cv, h));
+    void make
+      .then((mk) => {
+        if (!gone) begin(mk(canvas.current!, hooks));
+      })
+      .catch((e) => {
+        console.error(`the ${theme} theme didn't load`, e);
+        if (!gone) setTheme("blocks");
+      });
     addEventListener("resize", resize);
     return () => {
       gone = true;
@@ -197,6 +206,7 @@ export function SwarmView({
           started: p.info.current && p.info.current.ended_ms == null ? p.info.current.started_ms : null,
           lastDur: p.info.last?.ended_ms != null ? p.info.last.ended_ms - p.info.last.started_ms : null,
           lastExit: p.info.last?.exit ?? null,
+          lastEnded: p.info.last?.ended_ms ?? null,
           people,
         };
       });
@@ -333,7 +343,7 @@ export function SwarmView({
         key={theme}
         ref={canvas}
         class={`swarm-field swarm-${theme}`}
-        aria-label={theme === "city" ? "Every pane as a building, each cluster a block" : "Every pane, clustered"}
+        aria-label={ARIA[theme]}
       />
       <div class="swarm-bar" ref={bar}>
         <div class="swarm-brand">
@@ -429,16 +439,8 @@ export function SwarmView({
               </span>
             ))}
           </div>
-          {theme === "city" && <CityKey />}
-          <div class="swarm-hint">
-            {theme === "city"
-              ? phone
-                ? "Drag to orbit, pinch to zoom. Tap a building to open it."
-                : "Drag to orbit, right-drag to pan, scroll to zoom. Click a block's name to fly to it, a building to open it."
-              : phone
-                ? "Pinch to zoom, drag to pan. Tap a pane to open it."
-                : "Scroll to zoom. Drag to pan. Click a cluster name to dive in, a pane to open it."}
-          </div>
+          {theme !== "blocks" && <ThemeKey theme={theme} />}
+          <div class="swarm-hint">{HINT[theme][phone ? 1 : 0]}</div>
         </div>
         <div class="swarm-clusters" hidden>
           {clusters.map((c) => (
@@ -462,33 +464,104 @@ export function SwarmView({
   );
 }
 
-/** How to read the city (M41): what each thing it draws means. */
-function CityKey() {
+const ARIA: Record<Theme, string> = {
+  blocks: "Every pane, clustered",
+  city: "Every pane as a building, each cluster a block",
+  hive: "Every pane as a cell, each cluster a comb",
+  timeline: "Every pane as a lane of its commands over the last 40 minutes",
+};
+
+/** What to do with each theme: [laptop, phone]. */
+const HINT: Record<Theme, [string, string]> = {
+  blocks: ["Scroll to zoom. Drag to pan. Click a cluster name to dive in, a pane to open it.", "Pinch to zoom, drag to pan. Tap a pane to open it."],
+  city: [
+    "Drag to orbit, right-drag to pan, scroll to zoom. Click a block's name to fly to it, a building to open it.",
+    "Drag to orbit, pinch to zoom. Tap a building to open it.",
+  ],
+  hive: ["Scroll to zoom. Drag to pan. Click a cell to open its pane.", "Pinch to zoom, drag to pan. Tap a cell to open its pane."],
+  timeline: ["Drag to scroll back or down, scroll to zoom. Click a lane to open its pane.", "Drag to scroll, pinch to zoom. Tap a lane to open its pane."],
+};
+
+/** How to read a theme (M41, M42): what each thing it draws means. */
+const KEYS: Record<Exclude<Theme, "blocks">, [string, string][]> = {
+  city: [
+    ["Height", "How long its command has run (log scale). Keeps the last command's height when done."],
+    ["Lit roof", "Still running. Only things that finish get one."],
+    ["Windows", "Scrolling: printing now, faster for more. Still: printed lately. Dark: quiet."],
+    ["Shape", "Box finishes · drum runs until stopped · hexagon agent · pentagon editor · slab pull request or issue"],
+    ["Red roof", "Its last command failed."],
+    ["Beam", "Needs you. Taller the longer it waits."],
+    ["Marker", "A teammate has it open; a cone while they type."],
+    ["Lots", "One per pane; rows are machines, in pane order. Only a regroup moves them."],
+    ["Greyed", "Its machine isn't connected."],
+  ],
+  hive: [
+    ["Comb", "A cluster. Cells spiral out from the middle by machine, in pane order. Only a regroup moves them."],
+    ["Fill", "How long its command has run (log scale, full at an hour). Bright while running, faded once done."],
+    ["Hatched", "Runs until stopped: a server, log tail, studio app or editor (or a pull request or issue)."],
+    ["Edge", "Pulsing: printing now, faster for more. Faint: printed lately. Dark: quiet."],
+    ["Red rim", "Its last command failed."],
+    ["Overflow", "Needs you. The cell takes the reason's colour and says how long; its glow spills wider the longer it waits."],
+    ["Ring", "A teammate has it open; dashed and turning while they type."],
+    ["Greyed", "Its machine isn't connected."],
+  ],
+  timeline: [
+    ["Lane", "One pane, under its cluster. Now is the right edge; the last 40 minutes fit."],
+    ["Bar", "A command: as long as it ran, coloured by kind. From each machine's history."],
+    ["Stripes", "What it printed: denser stripes, more bytes a second."],
+    ["Lit edge", "Still running: the bar is still growing. Its last four minutes are shaded by its output."],
+    ["Red cap", "That command failed."],
+    ["Thin line", "Runs until stopped: a server, log tail, studio app or editor."],
+    ["Band", "Needs you: from when it started waiting until now, with how long past the now edge."],
+    ["Dot", "A teammate has it open; ringed while they type. A grey lane: its machine isn't connected."],
+  ],
+};
+
+function ThemeKey({ theme }: { theme: Exclude<Theme, "blocks"> }) {
   return (
-    <details class="swarm-key" data-city-key>
-      <summary>How to read the city</summary>
+    <details class="swarm-key" data-city-key={theme === "city" ? "" : undefined} data-theme-key={theme}>
+      <summary>How to read the {theme}</summary>
       <dl>
-        <dt>Height</dt>
-        <dd>How long its command has run (log scale). Keeps the last command's height when done.</dd>
-        <dt>Lit roof</dt>
-        <dd>Still running. Only things that finish get one.</dd>
-        <dt>Windows</dt>
-        <dd>Scrolling: printing now, faster for more. Still: printed lately. Dark: quiet.</dd>
-        <dt>Shape</dt>
-        <dd>Box finishes · drum runs until stopped · hexagon agent · pentagon editor · slab pull request or issue</dd>
-        <dt>Red roof</dt>
-        <dd>Its last command failed.</dd>
-        <dt>Beam</dt>
-        <dd>Needs you. Taller the longer it waits.</dd>
-        <dt>Marker</dt>
-        <dd>A teammate has it open; a cone while they type.</dd>
-        <dt>Lots</dt>
-        <dd>One per pane; rows are machines, in pane order. Only a regroup moves them.</dd>
-        <dt>Greyed</dt>
-        <dd>Its machine isn't connected.</dd>
+        {KEYS[theme].map(([t, d]) => [<dt key={`t${t}`}>{t}</dt>, <dd key={`d${t}`}>{d}</dd>])}
       </dl>
     </details>
   );
+}
+
+/** A daemon's history entry (`GET /api/history`). */
+interface HistoryEntry {
+  pane: number;
+  open: boolean;
+  text: string | null;
+  exit: number | null;
+  started_ms: number;
+  ended_ms: number | null;
+  start: number;
+  end: number | null;
+  host?: string;
+}
+
+/** Commands that finished in the last `sinceS` seconds on every connected
+ * host, for the timeline (M42). */
+async function historyOf(fleet: Fleet, sinceS: number): Promise<HistoryRun[]> {
+  const out: HistoryRun[] = [];
+  await Promise.all(
+    fleet.list
+      .filter((h) => h.state === "connected")
+      .map(async (h) => {
+        try {
+          const res = await fleet.request(h.name, "GET", `/api/history?since=${Math.round(sinceS)}&limit=2000`);
+          if (!res.ok) return;
+          for (const e of await res.json<HistoryEntry[]>()) {
+            if (!e.open || e.host || e.ended_ms == null) continue;
+            out.push({ key: `${h.name}:${e.pane}`, text: e.text, started: e.started_ms, ended: e.ended_ms, exit: e.exit, bytes: e.end != null ? Math.max(0, e.end - e.start) : 0 });
+          }
+        } catch {
+          // gone since: its lanes keep what they had
+        }
+      }),
+  );
+  return out;
 }
 
 /** Whether VS Code can be opened where a pane runs (M27): a terminal's, and
