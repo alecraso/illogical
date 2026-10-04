@@ -23,7 +23,9 @@
 #     and as root `systemctl start|stop|restart|status fountain-runner`,
 #     nothing else;
 #   - /etc/systemd/system/fountain-runner.service (User=fountain,
-#     Restart=always, UMask=0027 so the group can read), enabled. It starts
+#     Restart=always, UMask=0027 so the group can read; ProtectProc=invisible
+#     and ProcSubset=pid, so its agents can't read other users' processes'
+#     command lines in /proc; systemd 247 or later), enabled. It starts
 #     once its key exists (ConditionPathExists), so at boot without one it's
 #     skipped rather than failing in a loop.
 #
@@ -116,6 +118,10 @@ Restart=always
 RestartSec=10
 NoNewPrivileges=yes
 PrivateTmp=yes
+# The runner's agents see only their own processes in /proc: not other
+# users' command lines (an MCP config on claude's argv, say), nor theirs.
+ProtectProc=invisible
+ProcSubset=pid
 InaccessiblePaths=-$user_home -/run/user/$user_uid
 
 [Install]

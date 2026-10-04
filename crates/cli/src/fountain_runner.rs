@@ -532,6 +532,9 @@ mod tests {
             "ExecStart=/usr/local/bin/fountain runner --name geek --root /home/fountain/sandboxes",
             "Environment=PATH=/opt/fountain-node/bin:/usr/local/bin:/usr/bin:/bin",
             "ConditionPathExists=/home/fountain/.fountain/credentials",
+            // Sandbox agents can't read other users' /proc/PID/cmdline.
+            "ProtectProc=invisible",
+            "ProcSubset=pid",
         ] {
             assert!(unit.lines().any(|l| l == line), "{line} in\n{unit}");
         }
