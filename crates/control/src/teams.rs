@@ -253,6 +253,11 @@ pub async fn set_roster(
             let Some(me) = me else {
                 return Err(err(StatusCode::FORBIDDEN, "an invite adds the account that's signed in"));
             };
+            // With its own root, so owners see its real fingerprint.
+            let root = app.db.account(&s.account)?.and_then(|a| a.root);
+            if root.as_deref() != Some(me.root.as_str()) {
+                return Err(err(StatusCode::FORBIDDEN, "an invite adds the account with its own first device"));
+            }
             // Again now: a machine may have started checking the team
             // since the link was made.
             let old = behind(&app, &team, now)?;

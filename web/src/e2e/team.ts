@@ -160,7 +160,8 @@ async function verify(signHex: string, msg: string, sigHex: string): Promise<boo
 }
 
 // `Roster::well_formed`, so a browser takes exactly the rosters daemons do.
-const isWord = (s: unknown) => typeof s === "string" && s.length > 0 && s.length <= 120 && !/[\p{White_Space}\p{Cc}]/u.test(s);
+const isWord = (s: unknown) =>
+  typeof s === "string" && s.length > 0 && new TextEncoder().encode(s).length <= 120 && !/[\p{White_Space}\p{Cc}]/u.test(s);
 const isCount = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 const ROLES: unknown[] = ["owner", "editor", "viewer"];
 
