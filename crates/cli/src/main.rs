@@ -241,6 +241,31 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
+    /// Your Fountain agents as a catalog block (M43), read with your own
+    /// `fountain` login (FOUNTAIN_API_KEY or ~/.fountain/credentials): a
+    /// card per agent, where it comes from (agent-specs, hand-made, an
+    /// app), filters, and Run on Fountain / Spec. Prints the block, then the
+    /// list. `fountain agents [QUERY]` lists them here without a block.
+    #[command(args_conflicts_with_subcommands = true)]
+    Fountain {
+        #[command(subcommand)]
+        cmd: Option<FountainCmd>,
+        /// Start with this search (names, descriptions, skills, MCP servers).
+        #[arg(long, short)]
+        query: Option<String>,
+        /// Start with this source: agent-specs, hand or app.
+        #[arg(long)]
+        source: Option<String>,
+        /// The credentials profile (default: FOUNTAIN_PROFILE, else default).
+        #[arg(long)]
+        profile: Option<String>,
+        /// Split a block instead of opening a tab: `right` for the one this
+        /// runs in, or `%N`.
+        #[arg(long)]
+        split: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Show an issue as a block (M37: Forgejo, through your `tea` login):
     /// its labels, assignees, linked pull requests and timeline. `URL`,
     /// `OWNER/REPO#N`, or `N` in this directory's repository. `issue new`
@@ -679,6 +704,21 @@ enum PrCmd {
     /// Rerun its failed checks (GitHub: each red workflow run's failed
     /// jobs; Forgejo has no API for it).
     Rerun { block: Pane },
+}
+
+/// Fountain (M43).
+#[derive(Subcommand)]
+enum FountainCmd {
+    /// List your agents here, one line each, without opening a block.
+    Agents {
+        /// Words to look for (names, descriptions, skills, MCP servers).
+        query: Option<String>,
+        /// agent-specs, hand or app.
+        #[arg(long)]
+        source: Option<String>,
+        #[arg(long)]
+        profile: Option<String>,
+    },
 }
 
 /// Issues (M37).
@@ -1535,6 +1575,72 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             let body = json!({
                 "type": "forge",
                 "config": { "pr": target, "dir": absolute(".")? },
+                "split": split_of(split.as_deref())?,
+                "session": session,
+                "from_pane": env_pane(),
+            });
+            let block = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?["block"].as_u64().unwrap_or(0);
+            let v = loaded(&sock, block)?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            println!("%{block}");
+            if let Some(e) = v["state"]["error"].as_str() {
+                bail!("{e}");
+            }
+            print!("{}", request(&sock, "GET", &format!("/api/panes/{block}/capture"), None)?.text()?);
+        }
+        Command::Fountain { cmd: Some(FountainCmd::Agents { query, source, profile }), .. } => {
+            let mut q = vec![];
+            for (k, v) in [("query", query), ("source", source), ("profile", profile)] {
+                if let Some(v) = v {
+                    q.push(format!("{k}={}", enc(&v)));
+                }
+            }
+            let path = if q.is_empty() {
+                "/api/fountain/agents".into()
+            } else {
+                format!("/api/fountain/agents?{}", q.join("&"))
+            };
+            let v = request(&sock, "GET", &path, None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let rows = v["agents"].as_array().cloned().unwrap_or_default();
+            println!("{} of {} agents on {}", rows.len(), v["total"], v["base_url"].as_str().unwrap_or("Fountain"));
+            if let Some(n) = v["unreadable"].as_u64().filter(|n| *n > 0) {
+                println!("({n} couldn't be read: Fountain sent something this illogical doesn't understand)");
+            }
+            for r in rows {
+                let s = |k: &str| r[k].as_str().unwrap_or("").to_owned();
+                let list = |k: &str| {
+                    r[k].as_array()
+                        .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
+                        .unwrap_or_default()
+                };
+                let mut line = format!("{}  [{}] {}", s("name"), s("runtime"), s("source"));
+                if !list("skills").is_empty() {
+                    line.push_str(&format!("  skills: {}", list("skills")));
+                }
+                if !list("mcp").is_empty() {
+                    line.push_str(&format!("  mcp: {}", list("mcp")));
+                }
+                println!("{line}");
+            }
+        }
+        Command::Fountain { cmd: None, query, source, profile, split, session } => {
+            let mut filter = json!({});
+            if let Some(q) = query {
+                filter["query"] = json!(q);
+            }
+            if let Some(s) = source {
+                filter["sources"] = json!(s.split(',').map(str::trim).collect::<Vec<_>>());
+            }
+            let body = json!({
+                "type": "fountain",
+                "config": { "profile": profile, "view": "catalog", "filter": filter },
                 "split": split_of(split.as_deref())?,
                 "session": session,
                 "from_pane": env_pane(),

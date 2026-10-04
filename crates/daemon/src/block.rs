@@ -358,6 +358,7 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::Workspace => crate::workspace::Workspace::create(ctx, config),
         BlockType::App => crate::apps::AppBlock::create(ctx, config),
         BlockType::Forge => crate::forge::ForgeBlock::create(ctx, config),
+        BlockType::Fountain => crate::fountain::FountainBlock::create(ctx, config),
     }
 }
 

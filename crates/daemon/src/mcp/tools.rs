@@ -521,6 +521,45 @@ pub struct PrMergeArgs {
     pub style: Option<String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct ListAgentsArgs {
+    /// Words to look for in each agent's name, description, skills and MCP
+    /// servers (all must match): a skill's name finds the agents that have
+    /// it.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Where they come from: agent-specs (the curated ones, managed by
+    /// chant), hand (hand-made) or app (made by an app). Default: all.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// The Fountain credentials profile (default: the user's default).
+    #[serde(default)]
+    pub profile: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadAgentArgs {
+    /// The agent's name (or id), as list_agents gives it.
+    pub name: String,
+    #[serde(default)]
+    pub profile: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OpenFountainArgs {
+    /// Start with this search (as list_agents' query).
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Start with this source: agent-specs, hand or app.
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Beside this pane (an agent block's token: default the agent itself).
+    #[serde(default)]
+    pub beside: Option<PaneArg>,
+}
+
 // ---------------------------------------------------------------- the list
 
 struct Def {
@@ -807,6 +846,36 @@ fn defs() -> Vec<Def> {
             open_world: true,
         },
         Def {
+            name: "list_agents",
+            title: "List the user's Fountain agents",
+            description: "The agents on the user's Fountain account (M43), one compact row each: name, runtime and model, where it comes from (agent-specs: curated; hand: hand-made; app: made by an app), skills, MCP servers and description. query searches names, descriptions, skills and servers. To hand one a task, start_agent {agent: fountain, fountain_agent: NAME}; read_agent shows one's whole recipe.",
+            schema: schema_for_type::<ListAgentsArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: true,
+        },
+        Def {
+            name: "read_agent",
+            title: "Read a Fountain agent",
+            description: "One Fountain agent's whole recipe (M43): its system prompt, skills (inline or from GitHub), MCP servers, model, runtime, environment, sandbox provider and metadata, as Fountain returns it. Secrets are never in it: a server's credentials show as their ${VAR} references.",
+            schema: schema_for_type::<ReadAgentArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: true,
+        },
+        Def {
+            name: "open_fountain",
+            title: "Show the Fountain agent catalog",
+            description: "Open the user's Fountain agents as a catalog block beside a pane (M43): a card per agent with its skills, servers and where it comes from, filters, and Run on Fountain / Spec for each. Returns the (filtered) list as text.",
+            schema: schema_for_type::<OpenFountainArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
             name: "read_file",
             title: "Read a file",
             description: "A text file on this host or the machine a pane runs on, paged by byte offset.",
@@ -963,6 +1032,18 @@ impl<'a> Call<'a> {
             },
             "read_pr" => match parse(args) {
                 Ok(a) => self.read_pr(a).await,
+                Err(e) => Err(e),
+            },
+            "list_agents" => match parse(args) {
+                Ok(a) => self.list_agents(a).await,
+                Err(e) => Err(e),
+            },
+            "read_agent" => match parse(args) {
+                Ok(a) => self.read_agent(a).await,
+                Err(e) => Err(e),
+            },
+            "open_fountain" => match parse(args) {
+                Ok(a) => self.open_fountain(a).await,
                 Err(e) => Err(e),
             },
             "open_issue" => match parse::<OpenIssueArgs>(args) {
@@ -1858,6 +1939,88 @@ impl<'a> Call<'a> {
         )
     }
 
+    /// The account's agents (M43), read with the user's own login on this
+    /// host.
+    async fn fountain_agents(&self, profile: Option<&str>) -> Result<crate::fountain::Agents, String> {
+        let runner = crate::fountain::local_runner(&self.app.mux.shell_env).await;
+        crate::fountain::agents_for(&runner, profile).await
+    }
+
+    async fn list_agents(&self, a: ListAgentsArgs) -> Out {
+        let mut f = crate::fountain::catalog::Filter::default();
+        f.apply(&json!({ "query": a.query, "source": a.source }))?;
+        let got = self.fountain_agents(a.profile.as_deref()).await?;
+        let (login, agents) = (&got.login, &got.agents);
+        let rows = crate::fountain::rows(agents, &f);
+        let mut text = match f.describe() {
+            d if d.is_empty() => format!("{} agents on {}:\n", agents.len(), login.base_url),
+            d => format!("{} of {} agents on {} ({d}):\n", rows.len(), agents.len(), login.base_url),
+        };
+        for r in &rows {
+            text.push_str(&crate::fountain::catalog::line(r));
+            text.push('\n');
+        }
+        let note = crate::fountain::unreadable_note(got.unreadable);
+        if let Some(n) = &note {
+            text.push_str(n);
+            text.push('\n');
+        }
+        let rows: Vec<Value> = rows
+            .iter()
+            .map(|c| {
+                json!({ "name": c.name, "id": c.id, "runtime": c.runtime, "model": c.model, "source": c.source,
+                    "app": c.app, "skills": c.skills, "mcp": c.mcp, "description": c.description })
+            })
+            .collect();
+        done(text, json!({ "total": agents.len(), "agents": rows, "unreadable": got.unreadable }))
+    }
+
+    async fn read_agent(&self, a: ReadAgentArgs) -> Out {
+        let got = self.fountain_agents(a.profile.as_deref()).await?;
+        let agent = crate::fountain::find(&got.agents, &a.name)
+            .ok_or_else(|| format!("no agent {:?} on this Fountain account (list_agents lists them)", a.name))?;
+        let recipe = crate::fountain::recipe(agent);
+        done(format!("{} ({}, {})", agent.name, agent.runtime, agent.model), recipe)
+    }
+
+    async fn open_fountain(&self, a: OpenFountainArgs) -> Out {
+        let (beside, _) = self.beside(a.beside.as_ref()).await?;
+        let mut filter = crate::fountain::catalog::Filter::default();
+        filter.apply(&json!({ "query": a.query, "source": a.source }))?;
+        let req = OpenRequest {
+            kind: BlockType::Fountain,
+            config: json!({ "profile": a.profile, "view": "catalog", "filter": filter }),
+            session: None,
+            split: beside,
+            from_pane: beside,
+            vm: false,
+            image: None,
+            host: None,
+            local: true,
+        };
+        let block = self.open(req).await?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let b = loop {
+            let b = self.app.mux.api(|r| Api::Block(block, r)).await.flatten().ok_or("the block closed")?;
+            if b.state()["loading"] != true || Instant::now() > deadline {
+                break b;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let st = b.state();
+        if let Some(e) = st["error"].as_str() {
+            return Err(format!("Fountain block %{block}: {e}"));
+        }
+        done(
+            format!(
+                "Fountain block %{block}: {} of {} agents",
+                st["agents"].as_array().map_or(0, Vec::len),
+                st["total"]
+            ),
+            json!({ "block": block, "text": b.text() }),
+        )
+    }
+
     async fn open_pr(&self, a: OpenPrArgs) -> Out {
         self.open_forge(json!({ "pr": a.pr }), a.dir, a.beside).await
     }
@@ -2355,7 +2518,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 28);
+        assert_eq!(all.len(), 31);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -2373,6 +2536,8 @@ mod tests {
                 "list_conversations",
                 "read_pr",
                 "read_issue",
+                "list_agents",
+                "read_agent",
                 "read_file"
             ]
         );

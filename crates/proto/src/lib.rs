@@ -554,6 +554,8 @@ pub enum WorkKind {
     Pr,
     /// An issue on a forge (M37).
     Issue,
+    /// A Fountain block (M43): the account's agents.
+    Fountain,
 }
 
 /// The git repository a pane's working directory is in (M23).
@@ -709,6 +711,10 @@ pub enum BlockType {
     /// login?, repo, kind: pr | issue, number, host?, dir?}` (M37: an
     /// issue, and the agent working on it).
     Forge,
+    /// The person's Fountain account (M43): its agents as a catalog, read
+    /// with their own `fountain` login. Config `{profile?, view: catalog,
+    /// filter?, specs?}`.
+    Fountain,
 }
 
 /// Where a remote block's pane lives (#17): a host in the home daemon's
