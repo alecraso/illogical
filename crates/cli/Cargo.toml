@@ -8,9 +8,9 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-illogical-core = { version = "0.14.0", path = "../core" }
-illogical-proto = { version = "0.14.0", path = "../proto" }
-illogical-vt = { version = "0.14.0", path = "../vt" }
+illogical-core = { version = "0.15.0", path = "../core" }
+illogical-proto = { version = "0.15.0", path = "../proto" }
+illogical-vt = { version = "0.15.0", path = "../vt" }
 nix = { version = "0.31.3", features = ["term", "poll", "signal", "ioctl", "hostname"] }
 ratatui = "0.29.0"
 rustls = "0.23.45"
