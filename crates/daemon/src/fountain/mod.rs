@@ -851,7 +851,7 @@ impl FountainBlock {
         };
         let pane = self.ctx.run(req).await?;
         crate::review::log(&self.ctx, &json!({ "e": "shell", "sandbox": row.id, "dir": dir, "pane": pane }));
-        self.said(format!("a shell as {} in {} (%{pane}). {}", runner::USER, row.name, runner::PARK_NOTE));
+        self.said(format!("a shell as {} in {} (%{pane})", runner::USER, row.name));
         Ok(json!({ "pane": pane, "dir": dir, "command": command, "parked": row.parked, "note": runner::PARK_NOTE }))
     }
 
