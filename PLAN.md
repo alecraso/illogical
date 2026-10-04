@@ -3952,6 +3952,31 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
 
 **Done when:** on geek, *Run here* on `pr-reviewer` opens a Claude block in a worktree of this repo. It lists `code-review` and `iterate-pr` among its skills and has `github`, `context7` and `mem0`, with GitHub working through `gh auth token`. Running `captain-picard` says it's for Fountain.
 
+#### M44: as built
+
+**Done 2026-10-03 (5110bb6). It also fixed #127 and #128.**
+
+- **The bundle:** `fountain/wear.rs` builds it under `~/.cache/illogical/fountain/<id>/<updated_at>/`, in versioned directories behind a `current` pointer, kept a week. GitHub skills share a clone cache that's fetched daily.
+- **Secrets:**
+  - In order: Infisical through agent-specs (the vault's mapping, then the environment's; an unmapped variable is tried as `dev/NAME` and labelled so), then #74's shell environment, then helpers (`gh auth token`).
+  - **No value goes on a command line.** The SDK under claude-agent-acp writes `--mcp-config` onto `claude`'s argv. So worn servers carry `${ILLOGICAL_FTN_…}` references, and the values sit in the adapter's environment. Claude Code expands them; checked for real for headers, URLs and stdio env.
+  - **Left out, with the reason:** stdio args with variables (they'd land on the server's own argv), values containing `${` (Claude Code expands twice), unresolved variables and OAuth servers.
+  - **#128:** every local Claude block's own illogical MCP token travels the same way (`${ILLOGICAL_MCP_BLOCK_TOKEN}`).
+  - **Scrubbing:** values are scrubbed from logs, the transcript and reasons.
+- **Restarts:** after a restart, a worn block is worn again before it takes over its adapter. An adapter from before #128 is restarted.
+- **#127:** ordinary blocks keep `settingSources: []` on resume, load and fork.
+- **Authz:**
+  - *Run here*, `--as` and `start_agent {as_fountain}` are owner-only.
+  - An agent on a machine (a guest's) can create things only on machines, through every MCP tool that creates one (`run`, `start_agent`, `open_conversation`, the `open_*` tools). This closed an older way onto the owner's host.
+- **Refusals:** `illogical.local: false` (on captain-picard, tech-lead and team-lead; agent-specs#20) and non-claude runtimes.
+- **Not built:** *Claude Code as…* for a plain terminal `claude`.
+- **R3 on geek:**
+  - `pr-reviewer` worn in a worktree of this repo had 19 skills, `context7` and `github`, and said `mem0` needs OAuth.
+  - It found the planted bug in `driven()`, named the test it breaks, and read agent-specs#20 through GitHub MCP.
+  - `captain-picard` is refused as "for Fountain only".
+  - `fountain-workbench` wears, and says why its `workbench` server didn't carry over.
+  - No token was in any process's argv.
+
 #### M45: geek as the Fountain runner (#123)
 
 - **Set up (once, with Jake):**
