@@ -169,7 +169,7 @@ in GTK, CADisplayLink on macOS).
 
 ## What this means for M46
 
-M46 waits for this (Jake). The options:
+**Decided (Jake, 2026-10-04): Tauri, as planned.** Native terminals come later, when a trigger in PLAN.md fires, starting on macOS. The options were:
 
 - **Hybrid (recommended):** `crates/client` (the core here, also usable by the TUI), a GTK4 app and
   an AppKit app. Each has native terminals, native tabs and rail, native notifications, and
