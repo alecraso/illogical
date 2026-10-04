@@ -101,32 +101,33 @@ export async function signInvite(i: Omit<Invite, "by" | "sig">, keys: DeviceKeys
 }
 
 /** The version after `prev` that adds `me` with a presigned invite, signed
- * by this browser and the one-time key. */
-export async function redeemInvite(
-  prev: Roster,
-  invite: Invite,
-  seed: string,
-  me: Omit<Member, "role">,
-  keys: DeviceKeys,
-): Promise<Roster> {
+ * by the one-time key (`Roster::sign_redeem`). */
+export async function redeemInvite(prev: Roster, invite: Invite, seed: string, me: Omit<Member, "role">): Promise<Roster> {
   const k = await inviteKey(seed);
   if (k.key !== invite.key) throw new Error("that invite link doesn't match its invite");
   const m: Member = { ...me, role: invite.role };
   const version = prev.version + 1;
   const proof = await k.sign(redeemBody(invite, version, m));
-  return signRoster(
-    {
-      v: 2,
-      team: prev.team,
-      name: prev.name,
-      version,
-      at: Date.now(),
-      members: [...prev.members, m],
-      spent: [...(prev.spent ?? []), { key: invite.key, expires: invite.expires }],
-      redeem: { invite, proof },
-    },
-    keys,
-  );
+  const out: Omit<Roster, "by" | "sig"> = {
+    v: 2,
+    team: prev.team,
+    name: prev.name,
+    version,
+    // Never before the version it follows, whatever this clock says.
+    at: Math.max(Date.now(), prev.at),
+    members: [...prev.members, m],
+    spent: [...(prev.spent ?? []), { key: invite.key, expires: invite.expires }],
+    redeem: { invite, proof },
+  };
+  return signRedeem(out, seed);
+}
+
+/** Sign a version that redeems a presigned invite with its one-time key. */
+export async function signRedeem(r: Omit<Roster, "by" | "sig">, seed: string): Promise<Roster> {
+  const k = await inviteKey(seed);
+  const out: Roster = { ...r, by: k.key, sig: "" };
+  out.sig = await k.sign(rosterBody(out));
+  return out;
 }
 
 /** What the approving device signs to put a joining daemon in a team
@@ -158,13 +159,43 @@ async function verify(signHex: string, msg: string, sigHex: string): Promise<boo
   }
 }
 
+// `Roster::well_formed`, so a browser takes exactly the rosters daemons do.
+const isWord = (s: unknown) => typeof s === "string" && s.length > 0 && s.length <= 120 && !/[\p{White_Space}\p{Cc}]/u.test(s);
+const isCount = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+const ROLES: unknown[] = ["owner", "editor", "viewer"];
+
+function wellFormed(r: Roster): boolean {
+  if (r.spent !== undefined && !Array.isArray(r.spent)) return false;
+  const spent = r.spent ?? [];
+  if ( !Array.isArray(r.members) || !isCount(r.version) || !isCount(r.at)) return false;
+  if (typeof r.by !== "string" || typeof r.sig !== "string") return false;
+  const shape =
+    r.v === 1
+      ? !spent.length && r.redeem == null
+      : r.v === 2 && spent.every((x) => isWord(x?.key) && isCount(x?.expires));
+  if (r.redeem != null) {
+    const i = r.redeem.invite;
+    if (!i || typeof r.redeem.proof !== "string" || !isWord(i.team) || !ROLES.includes(i.role) || !isCount(i.expires)) return false;
+    if (typeof i.key !== "string" || typeof i.by !== "string" || typeof i.sig !== "string") return false;
+  }
+  return (
+    shape &&
+    isWord(r.team) &&
+    typeof r.name === "string" &&
+    r.name.length > 0 &&
+    new TextEncoder().encode(r.name).length <= 80 &&
+    !/\p{Cc}/u.test(r.name) &&
+    r.members.every((m) => isWord(m?.account) && isWord(m?.root) && isWord(m?.name) && ROLES.includes(m?.role)) &&
+    r.members.some((m) => m.role === "owner")
+  );
+}
+
 const sameMember = (a: Member, b: Member) => a.account === b.account && a.root === b.root && a.role === b.role && a.name === b.name;
 
 /** Whether `r` may follow `prev` (or start the team, as `pin` says). */
 export async function follows(r: Roster, prev: Roster | null, pin: TeamPin, certs: AccountCerts): Promise<boolean> {
   const spent = r.spent ?? [];
-  const shape = r.v === 1 ? !spent.length && !r.redeem : r.v === 2;
-  if (!shape || r.team !== pin.team || !r.members.some((m) => m.role === "owner")) return false;
+  if (!wellFormed(r) || r.team !== pin.team) return false;
   if (prev && r.version <= prev.version) return false;
   const signedBy = async (account: string, root: string, device: string, body: string, sig: string) => {
     const [c, rv] = certs[account] ?? [[], []];
@@ -177,7 +208,7 @@ export async function follows(r: Roster, prev: Roster | null, pin: TeamPin, cert
     : [{ account: pin.founder, root: pin.founder_root }];
   for (const m of signers) if (await signedBy(m.account, m.root, r.by, body, r.sig)) return !r.redeem;
   // A presigned invite (`Roster::follows`): the version before, plus the
-  // invitee at the end, the invite spent, signed by the invitee.
+  // invitee at the end, the invite spent, signed by the one-time key.
   if (!prev || !r.redeem) return false;
   const inv = r.redeem.invite;
   const n = prev.members.length;
@@ -198,10 +229,12 @@ export async function follows(r: Roster, prev: Roster | null, pin: TeamPin, cert
     inv.team !== r.team ||
     inv.role === "owner" ||
     m.role !== inv.role ||
-    r.at > inv.expires
+    r.at > inv.expires ||
+    r.at < prev.at ||
+    r.by !== inv.key
   )
     return false;
   let byOwner = false;
   for (const o of prev.members.filter((x) => x.role === "owner")) byOwner ||= await signedBy(o.account, o.root, inv.by, inviteBody(inv), inv.sig);
-  return byOwner && (await verify(inv.key, redeemBody(inv, r.version, m), r.redeem.proof)) && (await signedBy(m.account, m.root, r.by, body, r.sig));
+  return byOwner && (await verify(inv.key, redeemBody(inv, r.version, m), r.redeem.proof)) && (await verify(inv.key, body, r.sig));
 }

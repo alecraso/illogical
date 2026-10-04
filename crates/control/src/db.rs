@@ -199,6 +199,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("daemons", "features")? {
         conn.execute_batch("ALTER TABLE daemons ADD COLUMN features TEXT")?;
     }
+    if !has("joins", "features")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN features TEXT")?;
+    }
     Ok(())
 }
 
@@ -285,6 +288,29 @@ pub struct Join {
     pub team_sig: Option<String>,
     /// Turned down, on the device named here (#100).
     pub rejected: Option<String>,
+    /// What the daemon said it understands when it asked (older ones say
+    /// nothing).
+    pub features: String,
+}
+
+/// A row that's already there (a primary key), as opposed to anything
+/// else going wrong.
+#[derive(Debug)]
+pub struct Taken;
+
+impl std::fmt::Display for Taken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("already there")
+    }
+}
+
+impl std::error::Error for Taken {}
+
+fn taken(e: rusqlite::Error) -> anyhow::Error {
+    match e {
+        rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ConstraintViolation => Taken.into(),
+        e => e.into(),
+    }
 }
 
 fn cert_of(s: String) -> rusqlite::Result<Cert> {
@@ -547,15 +573,25 @@ impl Db {
         urls: &[String],
         team: Option<&str>,
         sandbox: Option<&str>,
+        features: &str,
         now: u64,
     ) -> anyhow::Result<()> {
         let c = self.c();
         // Old ones go first; a code can be asked for again.
         c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
         c.execute(
-            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
-            params![code, serde_json::to_string(cert)?, poll_hash, serde_json::to_string(urls)?, now, team, sandbox],
+            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox, features)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8)",
+            params![
+                code,
+                serde_json::to_string(cert)?,
+                poll_hash,
+                serde_json::to_string(urls)?,
+                now,
+                team,
+                sandbox,
+                features
+            ],
         )?;
         Ok(())
     }
@@ -564,7 +600,8 @@ impl Db {
         Ok(self
             .c()
             .query_row(
-                "SELECT cert, poll_hash, urls, created, account, team, sandbox, team_sig, rejected FROM joins
+                "SELECT cert, poll_hash, urls, created, account, team, sandbox, team_sig, rejected,
+                 COALESCE(features, '') FROM joins
                  WHERE code = ?1 AND created >= ?2",
                 params![code, now.saturating_sub(JOIN_TTL_MS)],
                 |r| {
@@ -578,6 +615,7 @@ impl Db {
                         sandbox: r.get(6)?,
                         team_sig: r.get(7)?,
                         rejected: r.get(8)?,
+                        features: r.get(9)?,
                     })
                 },
             )
@@ -716,9 +754,11 @@ impl Db {
         Ok(())
     }
 
+    /// Fails with [`Taken`] when that version is already there.
     pub fn add_roster(&self, team: &str, version: u64, body: &str) -> anyhow::Result<()> {
         let c = self.c();
-        c.execute("INSERT INTO rosters (team, version, body) VALUES (?1, ?2, ?3)", params![team, version, body])?;
+        c.execute("INSERT INTO rosters (team, version, body) VALUES (?1, ?2, ?3)", params![team, version, body])
+            .map_err(taken)?;
         if let Some(name) =
             serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v["name"].as_str().map(str::to_owned))
         {
@@ -795,12 +835,14 @@ impl Db {
     }
 
     /// A presigned invite (its one-time key's public half names it), as the
-    /// owner's device signed it.
+    /// owner's device signed it. Fails with [`Taken`] for a key already used.
     pub fn add_presigned(&self, key: &str, team: &str, body: &str, expires: u64, by: &str) -> anyhow::Result<()> {
-        self.c().execute(
-            "INSERT INTO presigned_invites (key, team, body, expires, by_account) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![key, team, body, expires, by],
-        )?;
+        self.c()
+            .execute(
+                "INSERT INTO presigned_invites (key, team, body, expires, by_account) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![key, team, body, expires, by],
+            )
+            .map_err(taken)?;
         Ok(())
     }
 
@@ -900,6 +942,15 @@ impl Db {
     pub fn set_daemon_features(&self, daemon: &str, features: &str) -> anyhow::Result<()> {
         self.c().execute("UPDATE daemons SET features = ?2 WHERE id = ?1", params![daemon, features])?;
         Ok(())
+    }
+
+    /// What a daemon last said it understands ("" for an older one).
+    pub fn daemon_features(&self, daemon: &str) -> anyhow::Result<String> {
+        Ok(self
+            .c()
+            .query_row("SELECT COALESCE(features, '') FROM daemons WHERE id = ?1", params![daemon], |r| r.get(0))
+            .optional()?
+            .unwrap_or_default())
     }
 
     /// A daemon checks this team's rosters because a session was shared

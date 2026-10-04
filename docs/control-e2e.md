@@ -104,22 +104,30 @@ device nobody trusted. Now:
   is a **presigned invite**:
   - The owner's device signs `illogical team invite v1` (team, role,
     expiry, a one-time Ed25519 public key) when it makes the link. The
-    private half of that key goes only in the link's `#fragment`.
+    private half of that key goes only in the link's `#fragment`
+    (`#pinvite=<team>.<seed>`). Signing in with GitHub from the link keeps
+    the seed in the tab's `sessionStorage` rather than in the `next` URL
+    control sees, and pages from before presigned invites don't recognize
+    the fragment, so they never send the seed as an invite code.
   - The invitee's device writes the next version (`v: 2`). It is the
     previous version plus the invitee at the end, with the invite listed
     as `spent`. The one-time key signs `illogical team redeem v1` over
-    that exact member and version, and the invitee's device signs the
-    whole roster.
+    that exact member and version, and signs the whole roster too (`by` is
+    the one-time key). No device of the invitee's signs it: devices are
+    judged as of now, so revoking that device later would stop every later
+    version from checking.
   - Daemons, control and browsers accept it only when all of these hold:
     the invite is signed by a device of an owner in the previous version;
-    it isn't for an owner; it's unexpired at the version's `at`; it isn't
-    already spent; and nothing else changed.
+    it isn't for an owner; it's unexpired at the version's `at`, and that
+    `at` isn't before the previous version's; it isn't already spent; and
+    nothing else changed.
   - Control sees the proof only when the invitee submits it. Because the
     proof names that account and root, control can't move it to an
     account of its own.
   - **Accepted risks:**
     - The link is a bearer token. Whoever holds it joins, which is why it
-      lasts a day, works once and never grants owner.
+      lasts a day (control refuses longer), works once and never grants
+      owner.
     - Expiry is checked against `at`, which the invitee writes. Control
       also refuses an expired invite by its own clock, but a daemon can't
       tell.
@@ -131,7 +139,14 @@ device nobody trusted. Now:
     means the team's own machines, plus any machine that asked about the
     team in the last week because a session was shared with it. Otherwise
     the owner gets an *Ask me first* link and a note naming the machines to
-    update.
+    update. Control checks again when the invite is redeemed, since a
+    machine may have started checking the team in between.
+  - Once a team's history has a `v: 2` version, an older daemon can't
+    follow it. Control won't put one into such a team (a join or *Move
+    to…*; daemons also report their features when they ask to join and on
+    every trust refresh). A daemon that was only shared a session with the
+    team gets nothing for the team until it's updated: its members lose
+    that session there, rather than members who were removed keeping it.
 
 **Verification on the daemon:**
 

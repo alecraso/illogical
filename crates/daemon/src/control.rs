@@ -48,7 +48,10 @@ pub const KEY_FILE: &str = "daemon.key";
 const REFRESH: Duration = Duration::from_secs(60);
 /// What this daemon tells control it understands, so control offers only
 /// what every daemon checking a team can take (presigned invites' rosters).
-const FEATURES: &str = "presigned-invites";
+/// `ILLOGICAL_FEATURES` says otherwise (tests play an older daemon with "").
+fn features() -> String {
+    std::env::var("ILLOGICAL_FEATURES").unwrap_or_else(|_| "presigned-invites".into())
+}
 const WATCH: Duration = Duration::from_secs(3);
 
 /// `<state>/control.json`.
@@ -400,7 +403,7 @@ impl Control {
             #[serde(default)]
             moved: Option<Move>,
         }
-        let own: Own = self.get(&e, "/api/daemon/trust").await?;
+        let own: Own = self.get(&e, &format!("/api/daemon/trust?features={}", features())).await?;
         let mut saved = e.saved.clone();
         saved.certs = own.certs;
         saved.revocations = own.revocations;
@@ -416,7 +419,7 @@ impl Control {
                 certs: AccountCerts,
             }
             let since = saved.roster.as_ref().map_or(0, |r| r.version);
-            let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}&features={FEATURES}")).await?;
+            let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}&features={}", features())).await?;
             let mut certs = saved.team_certs.clone();
             certs.extend(t.certs);
             let mut cur = saved.roster.clone();
@@ -475,7 +478,7 @@ impl Control {
             }
             let ids: Vec<&str> = pins.keys().map(String::as_str).collect();
             let got: BTreeMap<String, Got> =
-                self.get(&e, &format!("/api/daemon/teams?ids={}&features={FEATURES}", ids.join(","))).await?;
+                self.get(&e, &format!("/api/daemon/teams?ids={}&features={}", ids.join(","), features())).await?;
             for (team, g) in got {
                 let Some(pin) = pins.get(&team) else { continue };
                 let mut cur: Option<Roster> = None;
@@ -842,7 +845,7 @@ pub async fn join(
     let http = reqwest::Client::builder().timeout(Duration::from_secs(20)).build()?;
     let res = http
         .post(format!("{url}/api/join"))
-        .json(&serde_json::json!({ "cert": ask, "urls": [], "team": team, "ticket": ticket }))
+        .json(&serde_json::json!({ "cert": ask, "urls": [], "team": team, "ticket": ticket, "features": features() }))
         .send()
         .await
         .with_context(|| format!("can't reach control at {url}"))?;

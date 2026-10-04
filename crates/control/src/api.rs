@@ -307,6 +307,23 @@ pub struct JoinReq {
     /// A hosted sandbox's one-time ticket (M20).
     #[serde(default)]
     ticket: Option<String>,
+    /// What the daemon understands, comma-separated (older ones send none).
+    #[serde(default)]
+    features: String,
+}
+
+/// A daemon that can't check this team's rosters (one was written with a
+/// presigned invite) doesn't go into it.
+fn can_follow(app: &App, team: &str, features: &str, name: &str) -> Result<(), ApiError> {
+    if !crate::teams::takes_presigned(features) && crate::teams::has_presigned(app, team)? {
+        return Err(err(
+            StatusCode::CONFLICT,
+            &format!(
+                "{name} needs an update before it can join this team (its illogical is older than the team's invites)"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn check_urls(urls: &[String]) -> Result<(), ApiError> {
@@ -334,7 +351,11 @@ pub async fn join(
     let code = join_code(&b.cert);
     let poll = token();
     let team_name = match &b.team {
-        Some(t) => Some(app.db.team(t)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?.name),
+        Some(t) => {
+            let name = app.db.team(t)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?.name;
+            can_follow(&app, t, &b.features, "this machine")?;
+            Some(name)
+        }
         None => None,
     };
     let sandbox = match &b.ticket {
@@ -343,7 +364,16 @@ pub async fn join(
         }
         None => None,
     };
-    app.db.add_join(&code, &b.cert, &hash(&poll), &b.urls, b.team.as_deref(), sandbox.as_deref(), now_ms())?;
+    app.db.add_join(
+        &code,
+        &b.cert,
+        &hash(&poll),
+        &b.urls,
+        b.team.as_deref(),
+        sandbox.as_deref(),
+        &b.features,
+        now_ms(),
+    )?;
     Ok(Json(
         json!({ "code": code, "poll": poll, "expires_in_secs": crate::db::JOIN_TTL_MS / 1000, "team_name": team_name }),
     ))
@@ -434,6 +464,7 @@ pub async fn join_approve(
     let team = match &b.team {
         Some(id) => {
             let pin = owned_team(&app, &s.account, id, "only the team's owners add its machines")?;
+            can_follow(&app, id, &j.features, &c.name)?;
             let sig = b.team_sig.as_deref().unwrap_or_default();
             let (trust, certs, revs) = trusted(&app, &s.account)?;
             let approver = trust.and_then(|t| t.evaluate(&certs, &revs).get(&c.approver).cloned());
@@ -447,6 +478,7 @@ pub async fn join_approve(
     };
     app.db.put_device(&c, true, now_ms())?;
     app.db.put_daemon(&s.account, &c.device, &c.name, &j.urls)?;
+    app.db.set_daemon_features(&c.device, &j.features)?;
     if let Some((team, _)) = &team {
         app.db.set_daemon_team(&c.device, team)?;
     }
@@ -522,6 +554,12 @@ pub async fn move_daemon(
     if pin != m.team {
         return Err(err(StatusCode::BAD_REQUEST, "that's not the team's founder"));
     }
+    if let Some(p) = &m.team
+        && now.as_ref() != Some(&p.team)
+    {
+        let name = app.db.daemon_row(&id)?.map(|(_, d)| d.name).unwrap_or_default();
+        can_follow(&app, &p.team, &app.db.daemon_features(&id)?, &name)?;
+    }
     let last = app
         .db
         .daemon_moved(&id)?
@@ -547,7 +585,8 @@ pub async fn move_daemon(
 // ---------------------------------------------------------------- daemons
 
 /// The daemon's account's certificates, to evaluate against its root.
-pub async fn daemon_trust(State(app): State<Arc<App>>, d: DaemonAuth) -> R {
+pub async fn daemon_trust(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<crate::teams::Features>) -> R {
+    app.db.set_daemon_features(&d.cert.device, &q.features)?;
     let (trust, certs, revs) = trusted(&app, &d.cert.account)?;
     // Its last move (#100), for the daemon to check and take.
     let moved: Option<Value> = app.db.daemon_moved(&d.cert.device)?.and_then(|j| serde_json::from_str(&j).ok());

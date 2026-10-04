@@ -167,9 +167,10 @@ test("two people at different companies join a team by invite", async ({ browser
 
 /** `illogicald join`, waiting for approval: its link, what it printed,
  * and how it ended. */
-async function startJoin(name: string, state: string, extra: string[] = []) {
+async function startJoin(name: string, state: string, extra: string[] = [], env: NodeJS.ProcessEnv = {}) {
   const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state, ...extra], {
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...env },
   });
   procs.push(joining);
   let out = "";
@@ -250,11 +251,11 @@ test("a presigned invite: someone already in a team joins another in one click",
   // Carol has her own team already.
   const carol = await person(browser, "carol");
   await carol.evaluate(() => window.__illogical.control!.createTeam("Carols"));
-  // A team machine that hasn't said it understands presigned invites (an
-  // older daemon; this one joined but never ran): Alice's link asks her
-  // first, and says why.
+  // A team machine that doesn't understand presigned invites (an older
+  // daemon, played by one that says it understands nothing): Alice's link
+  // asks her first, and says why.
   const old = temp("oldbox");
-  const j = await startJoin("oldbox", old, ["--team", team]);
+  const j = await startJoin("oldbox", old, ["--team", team], { ILLOGICAL_FEATURES: "" });
   await alice.goto(j.link);
   await alice.locator("[data-approve-join]").click();
   expect(await j.exited).toBe(0);
@@ -279,7 +280,7 @@ test("a presigned invite: someone already in a team joins another in one click",
   await expect(section.locator("[data-invite-why]")).toHaveCount(0);
   await expect(section).toContainText("One person can join with this link, within a day");
   const link = (await section.locator("[data-invite-link]").textContent())!;
-  expect(link).toMatch(/#invite=[0-9a-f]{16}\.[0-9a-f]{64}$/);
+  expect(link).toMatch(/#pinvite=[0-9a-f]{16}\.[0-9a-f]{64}$/);
   await alice.getByRole("button", { name: "Done" }).click();
   // A signed-out page still says who invited whom.
   const stranger = await (await browser.newContext()).newPage();
@@ -304,10 +305,28 @@ test("a presigned invite: someone already in a team joins another in one click",
   await carol.waitForFunction(() => window.__illogical?.control?.phase === "ready");
   await expect.poll(() => hostNames(carol), { timeout: 30_000 }).toContain("buildbox");
   await expect.poll(() => carol.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
-  // Once: the same link does nothing for anyone after her.
-  const dave = await person(browser, "dave");
-  await dave.goto(link);
+  // Now that the team's history has a presigned version, an older daemon
+  // can't follow it, so it can't join the team.
+  const late = spawn("../target/debug/illogicald", ["join", base, "--name", "latebox", "--state-dir", temp("latebox"), "--team", team], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: { ...process.env, ILLOGICAL_FEATURES: "" },
+  });
+  let lateErr = "";
+  late.stderr!.on("data", (d) => (lateErr += d));
+  expect(await new Promise((r) => late.on("exit", r))).not.toBe(0);
+  expect(lateErr).toContain("this machine needs an update before it can join this team");
+  // Once: the same link does nothing for anyone after her. Dave opens it
+  // signed out and signs in with GitHub: he's back at the invite, and his
+  // browser never sent its one-time key anywhere (control could use it).
+  const seed = link.split(".").at(-1)!;
+  const sent: string[] = [];
+  const dave = await person(browser, "dave", async (page) => {
+    page.on("request", (r) => sent.push(`${r.url()} ${r.postData() ?? ""}`));
+    await page.goto(link);
+  });
   await expect(dave.locator(".control-prompt .control-error")).toContainText("expired, was used, or never was");
+  expect(sent.some((r) => r.includes("/auth/github"))).toBe(true);
+  expect(sent.filter((r) => r.includes(seed))).toEqual([]);
 });
 
 test("a read-only link works logged out, and dies at expiry", async ({ browser }) => {

@@ -191,17 +191,48 @@ export async function passkeyRegister(name?: string): Promise<void> {
 
 /** What a signed-out page may know about an invite (#103): the team's
  * name and who made it. */
-export async function previewInvite(team: string, code: string): Promise<{ name: string; by: string } | null> {
-  if (isPresigned(code)) {
+export async function previewInvite(team: string, code: string, presigned: boolean): Promise<{ name: string; by: string } | null> {
+  if (presigned) {
     const key = await inviteKey(code).then((k) => k.key, () => null);
     return key ? api<{ name: string; by: string }>(`/api/presigned/${team}/${key}/preview`).catch(() => null) : null;
   }
   return api<{ name: string; by: string }>(`/api/invites/${team}/${code}/preview`).catch(() => null);
 }
 
-/** A presigned invite's link carries its one-time key's 32-byte seed; an
- * ask-first one, a 20-character code. */
-export const isPresigned = (code: string) => code.length === 64;
+/** A team invite in a link's fragment: `#invite=<team>.<code>` asks an
+ * owner first; `#pinvite=<team>.<seed>` is presigned and carries its
+ * one-time key's seed. A page from before presigned invites doesn't know
+ * the second, so it never sends the seed to control as a code. */
+export function inviteInHash(hash: string): { team: string; code: string; presigned: boolean } | null {
+  const m = /^#(p?)invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
+  return m ? { team: m[2], code: m[3], presigned: m[1] === "p" } : null;
+}
+
+const PENDING_INVITE = "illogical:presigned-invite";
+
+/** Where signing in with GitHub comes back to: this page, but never with a
+ * presigned invite's seed, which control mustn't see. That waits in this
+ * tab's sessionStorage for `restoreInvite`. */
+export function signInNext(): string {
+  if (!inviteInHash(location.hash)?.presigned) return location.pathname + location.hash;
+  try {
+    sessionStorage.setItem(PENDING_INVITE, location.hash);
+  } catch {
+    // Without storage the link has to be opened again after signing in.
+  }
+  return location.pathname;
+}
+
+/** Back from signing in: the presigned invite link `signInNext` kept. */
+export function restoreInvite() {
+  try {
+    const hash = sessionStorage.getItem(PENDING_INVITE);
+    sessionStorage.removeItem(PENDING_INVITE);
+    if (hash && !location.hash && inviteInHash(hash)?.presigned) history.replaceState(null, "", location.pathname + location.search + hash);
+  } catch {
+    // Nothing kept.
+  }
+}
 
 /** How long a presigned invite lasts unless the owner says otherwise. */
 const PRESIGNED_TTL_MS = 24 * 3600_000;
@@ -754,7 +785,7 @@ export class ControlSession {
       if (e instanceof HttpError && e.status === 409) return old(e.message);
       throw e;
     }
-    return { link: `${location.origin}/#invite=${team}.${seed}`, asks: false };
+    return { link: `${location.origin}/#pinvite=${team}.${seed}`, asks: false };
   }
 
   /** What a presigned invite link says, as control has it. */
@@ -769,7 +800,7 @@ export class ControlSession {
     for (let attempt = 0; ; attempt++) {
       const p = await this.showPresigned(team, seed);
       if (!pin(`team:${team}`, `${p.pin.founder}.${p.pin.founder_root}`)) throw new Error("this team isn't the one this browser saw before");
-      const next = await redeemInvite(p.roster, p.invite, seed, this.myMember(), this.keys);
+      const next = await redeemInvite(p.roster, p.invite, seed, this.myMember());
       const mine = await api<{ certs: Cert[]; revocations: Revocation[] }>("/api/devices");
       const certs: AccountCerts = { ...p.certs, [this.account]: [mine.certs, mine.revocations] };
       if (!(await follows(next, p.roster, p.pin, certs))) throw new Error("that invite doesn't check out");

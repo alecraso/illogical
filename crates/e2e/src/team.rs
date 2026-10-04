@@ -21,7 +21,7 @@
 //! an owner's device signs an [`Invite`] naming a one-time key whose
 //! private half lives only in the invite link, and the invitee's roster
 //! (`v: 2`) adds them, carries that key's signature over who they are, and
-//! marks the invite spent. Control never holds the one-time key, so it
+//! marks the invite spent; the one-time key signs that version too. Control never holds the one-time key, so it
 //! can't redeem an invite for an account of its own.
 
 use std::collections::HashMap;
@@ -279,6 +279,13 @@ impl Roster {
         self.sig = hex::encode(keys.signature(self.body().as_bytes()));
     }
 
+    /// Sign a version that redeems a presigned invite, with the invite's
+    /// one-time key `k`.
+    pub fn sign_redeem(&mut self, k: &DeviceKeys) {
+        self.by = hex::encode(k.sign_public());
+        self.sig = hex::encode(k.signature(self.body().as_bytes()));
+    }
+
     pub fn member(&self, account: &str) -> Option<&Member> {
         self.members.iter().find(|m| m.account == account)
     }
@@ -349,15 +356,21 @@ impl Roster {
             && inv.role != TeamRole::Owner
             && new.role == inv.role
             && self.at <= inv.expires
+            // Time only moves forward, so an expired invite can't be
+            // redeemed with a backdated version once owners drop it.
+            && self.at >= prev.at
             && prev
                 .members
                 .iter()
                 .filter(|m| m.role == TeamRole::Owner)
                 .any(|m| signed_by(&m.account, &m.root, &inv.by, &inv.body(), &inv.sig))
             // The one-time key vouches for exactly this member here, and
-            // one of the member's own devices signed the version.
+            // signs the version itself. Not the invitee's device: devices
+            // are judged as of now, so revoking that one later would stop
+            // every later version from checking, removals too.
             && verify_hex(&inv.key, inv.redeem_body(self.version, new).as_bytes(), &r.proof)
-            && signed_by(&new.account, &new.root, &self.by, &body, &self.sig)
+            && self.by == inv.key
+            && verify_hex(&inv.key, body.as_bytes(), &self.sig)
     }
 }
 
@@ -437,7 +450,7 @@ mod tests {
             redeem: Some(Redeem { invite: inv.clone(), proof }),
             ..prev.clone()
         };
-        r.sign_with(&who.keys);
+        r.sign_redeem(k);
         r
     }
 
@@ -467,6 +480,33 @@ mod tests {
     }
 
     #[test]
+    fn a_redeemed_version_still_checks_after_the_invitee_revokes_their_device() {
+        let (alice, bob) = (person("alice"), person("bob"));
+        let pin = TeamPin { team: "t1".into(), founder: "alice".into(), founder_root: alice.cert.device.clone() };
+        let v1 = roster(1, vec![member(&alice, TeamRole::Owner)], &alice);
+        let (inv, k) = invite(&alice, TeamRole::Editor, 10);
+        // Bob joins from his phone.
+        let v2 = redeem(&v1, &inv, &k, &bob);
+        let phone_keys = DeviceKeys::generate();
+        let mut phone = Cert::new(&phone_keys, "bob", Kind::Browser, "phone");
+        phone.sign_with(&bob.keys);
+        // He's removed, then takes the phone off his account: a daemon
+        // checking the team from the start still gets to the removal.
+        let mut v3 = roster(3, vec![member(&alice, TeamRole::Owner)], &alice);
+        v3.v = 2;
+        v3.spent = v2.spent.clone();
+        v3.sign_with(&alice.keys);
+        let mut all = certs(&[&alice, &bob]);
+        let (c, r) = all.get_mut("bob").unwrap();
+        c.push(phone.clone());
+        r.push(Revocation::new("bob", &phone.device, &bob.keys));
+        assert!(v2.devices("bob", &all).get(&phone.device).is_none());
+        assert!(v1.follows(None, &pin, &all));
+        assert!(v2.follows(Some(&v1), &pin, &all));
+        assert!(v3.follows(Some(&v2), &pin, &all));
+    }
+
+    #[test]
     fn a_presigned_invite_cant_be_bent() {
         let (alice, bob, mallory) = (person("alice"), person("bob"), person("mallory"));
         let pin = TeamPin { team: "t1".into(), founder: "alice".into(), founder_root: alice.cert.device.clone() };
@@ -488,19 +528,31 @@ mod tests {
         // A higher role than the invite's.
         let mut raised = good.clone();
         raised.members[1].role = TeamRole::Editor;
-        raised.sign_with(&bob.keys);
+        raised.sign_redeem(&k);
         assert!(!raised.follows(Some(&v1), &pin, &all));
         // Anything else changed on the way in: another member's role.
         let v2 = roster(2, vec![member(&alice, TeamRole::Owner), member(&mallory, TeamRole::Viewer)], &alice);
         let mut demoted = redeem(&v2, &inv, &k, &bob);
         demoted.members[1].role = TeamRole::Editor;
-        demoted.sign_with(&bob.keys);
+        demoted.sign_redeem(&k);
         assert!(!demoted.follows(Some(&v2), &pin, &all));
         // Past its expiry.
         let mut late = good.clone();
         late.at = 11;
-        late.sign_with(&bob.keys);
+        late.sign_redeem(&k);
         assert!(!late.follows(Some(&v1), &pin, &all));
+        // Backdated: before the version it follows.
+        let mut v1_later = v1.clone();
+        v1_later.at = 5;
+        v1_later.sign_with(&alice.keys);
+        let mut early = redeem(&v1_later, &inv, &k, &bob);
+        early.at = 4;
+        early.sign_redeem(&k);
+        assert!(!early.follows(Some(&v1_later), &pin, &all));
+        // Signed by the invitee's device rather than the one-time key.
+        let mut by_device = good.clone();
+        by_device.sign_with(&bob.keys);
+        assert!(!by_device.follows(Some(&v1), &pin, &all));
         // An invite signed by someone who isn't an owner.
         let (by_bob, kb) = invite(&bob, TeamRole::Viewer, 10);
         assert!(!redeem(&v1, &by_bob, &kb, &mallory).follows(Some(&v1), &pin, &all));
@@ -510,7 +562,7 @@ mod tests {
         // Not marking it spent.
         let mut unspent = good.clone();
         unspent.spent.clear();
-        unspent.sign_with(&bob.keys);
+        unspent.sign_redeem(&k);
         assert!(!unspent.follows(Some(&v1), &pin, &all));
         // An owner's version can't carry a redeem.
         let mut owner_redeem = good.clone();
@@ -519,7 +571,7 @@ mod tests {
         // A v1 roster can't carry v2's fields.
         let mut old = good.clone();
         old.v = 1;
-        old.sign_with(&bob.keys);
+        old.sign_redeem(&k);
         assert!(!old.follows(Some(&v1), &pin, &all));
     }
 

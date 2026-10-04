@@ -3,7 +3,7 @@
 // list, and how to add a machine.
 
 import { useEffect, useState } from "preact/hooks";
-import { isPresigned, passkeyRegister, passkeySignIn, previewInvite, type ControlSession, type JoinRequest } from "../control";
+import { inviteInHash, passkeyRegister, passkeySignIn, previewInvite, signInNext, type ControlSession, type JoinRequest } from "../control";
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 import { directory } from "../hosts";
@@ -37,7 +37,7 @@ export function ControlGate({ s }: { s: ControlSession }) {
       </Center>
     );
   if (s.phase === "signed-out") {
-    const next = encodeURIComponent(location.pathname + location.hash);
+    const next = encodeURIComponent(signInNext());
     return (
       <Center>
         <h1>illogical</h1>
@@ -115,7 +115,7 @@ export function ControlGate({ s }: { s: ControlSession }) {
  * survives signing in, so it opens once you're in. */
 function WhyHere() {
   const [hash, setHash] = useState(location.hash);
-  const invite = /^#invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
+  const invite = inviteInHash(hash);
   const [team, setTeam] = useState<{ name: string; by: string } | null>(null);
   useEffect(() => {
     const on = () => setHash(location.hash);
@@ -124,7 +124,7 @@ function WhyHere() {
   }, []);
   useEffect(() => {
     setTeam(null);
-    if (invite) void previewInvite(invite[1], invite[2]).then(setTeam);
+    if (invite) void previewInvite(invite.team, invite.code, invite.presigned).then(setTeam);
   }, [hash]);
   if (invite)
     return (
@@ -417,12 +417,12 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   if (s.recoveryCodes) return <RecoveryCodes s={s} />;
   const join = /^#join=([A-Za-z0-9-]+)$/.exec(hash)?.[1];
   if (join) return <JoinPrompt s={s} code={join} />;
-  const invite = /^#invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
+  const invite = inviteInHash(hash);
   if (invite)
-    return isPresigned(invite[2]) ? (
-      <PresignedPrompt s={s} team={invite[1]} seed={invite[2]} />
+    return invite.presigned ? (
+      <PresignedPrompt s={s} team={invite.team} seed={invite.code} />
     ) : (
-      <InvitePrompt s={s} team={invite[1]} code={invite[2]} />
+      <InvitePrompt s={s} team={invite.team} code={invite.code} />
     );
   // Someone used an invite to a team I own: add them (sign the roster)?
   const req = s.teams.flatMap((t) => (t.role === "owner" ? t.requests.map((r) => ({ t, r })) : []))[0];

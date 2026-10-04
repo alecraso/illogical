@@ -72,9 +72,10 @@ async fn main() -> anyhow::Result<()> {
             let v: serde_json::Value = serde_json::from_str(&s)?;
             let pin: TeamPin = serde_json::from_value(v["pin"].clone())?;
             let prev: Option<Roster> = serde_json::from_value(v["prev"].clone())?;
-            let roster: Roster = serde_json::from_value(v["roster"].clone())?;
+            // One that doesn't even parse doesn't follow.
+            let roster: Option<Roster> = serde_json::from_value(v["roster"].clone()).ok();
             let certs: AccountCerts = serde_json::from_value(v["certs"].clone())?;
-            println!("{}", roster.follows(prev.as_ref(), &pin, &certs));
+            println!("{}", roster.is_some_and(|r| r.follows(prev.as_ref(), &pin, &certs)));
         }
         Some("responder") => {
             let keys = DeviceKeys::generate();

@@ -35,6 +35,38 @@ pub const PRESIGNED_INVITES: &str = "presigned-invites";
 /// it last asked (they ask about once a minute).
 const WATCH_TTL_MS: u64 = 7 * 86_400 * 1000;
 
+/// The longest a presigned invite lasts: a day, and some slack for the
+/// owner's clock.
+const PRESIGNED_MAX_MS: u64 = 86_400 * 1000 + 10 * 60 * 1000;
+
+/// Whether a daemon said it understands presigned invites' rosters.
+pub fn takes_presigned(features: &str) -> bool {
+    features.split(',').any(|f| f == PRESIGNED_INVITES)
+}
+
+/// The machines checking this team's rosters that don't understand
+/// presigned invites: one would refuse the roster a redeem writes, and
+/// then every later one, removals too.
+fn behind(app: &App, team: &str, now: u64) -> anyhow::Result<Vec<String>> {
+    Ok(app
+        .db
+        .team_followers(team, now.saturating_sub(WATCH_TTL_MS))?
+        .into_iter()
+        .filter(|(_, f)| !takes_presigned(f))
+        .map(|(name, _)| name)
+        .collect())
+}
+
+fn need_update(names: &[String], what: &str) -> String {
+    format!("{} need{} an update before {what}", names.join(", "), if names.len() == 1 { "s" } else { "" })
+}
+
+/// Whether a version of this team's roster was written with a presigned
+/// invite: a daemon from before them can't check its history.
+pub fn has_presigned(app: &App, team: &str) -> anyhow::Result<bool> {
+    Ok(app.db.rosters(team, 0)?.iter().any(|b| parse(b).is_ok_and(|r| r.v == 2)))
+}
+
 /// An account's certificates and revocations.
 fn certs_of(app: &App, account: &str) -> anyhow::Result<(Vec<Cert>, Vec<Revocation>)> {
     Ok((app.db.devices(account)?.0, app.db.revocations(account)?))
@@ -221,12 +253,25 @@ pub async fn set_roster(
             let Some(me) = me else {
                 return Err(err(StatusCode::FORBIDDEN, "an invite adds the account that's signed in"));
             };
+            // Again now: a machine may have started checking the team
+            // since the link was made.
+            let old = behind(&app, &team, now)?;
+            if !old.is_empty() {
+                return Err(err(
+                    StatusCode::FORBIDDEN,
+                    &format!("{}; ask the team's owners for a new link", need_update(&old, "this invite works")),
+                ));
+            }
             Some(me.clone())
         }
     };
-    app.db
-        .add_roster(&team, b.roster.version, &serde_json::to_string(&b.roster)?)
-        .map_err(|_| err(StatusCode::CONFLICT, "the team changed while you were at it; try again"))?;
+    app.db.add_roster(&team, b.roster.version, &serde_json::to_string(&b.roster)?).map_err(|e| {
+        if e.is::<crate::db::Taken>() {
+            err(StatusCode::CONFLICT, "the team changed while you were at it; try again")
+        } else {
+            e.into()
+        }
+    })?;
     if let (Some(me), Some(r)) = (&joined, &b.roster.redeem) {
         app.db.drop_presigned(&r.invite.key)?;
         // Owners hear who came in on their invite, after the fact.
@@ -276,22 +321,9 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
         // writes, and then every later one: the team's members would stop
         // changing there, removals too. Only when every machine that checks
         // this team's rosters understands them.
-        let behind: Vec<String> = app
-            .db
-            .team_followers(&team, now.saturating_sub(WATCH_TTL_MS))?
-            .into_iter()
-            .filter(|(_, f)| !f.split(',').any(|f| f == PRESIGNED_INVITES))
-            .map(|(name, _)| name)
-            .collect();
-        if !behind.is_empty() {
-            return Err(err(
-                StatusCode::CONFLICT,
-                &format!(
-                    "{} need{} an update before one-click invites work in this team",
-                    behind.join(", "),
-                    if behind.len() == 1 { "s" } else { "" }
-                ),
-            ));
+        let old = behind(&app, &team, now)?;
+        if !old.is_empty() {
+            return Err(err(StatusCode::CONFLICT, &need_update(&old, "one-click invites work in this team")));
         }
         let me = r.member(&s.account).ok_or_else(|| err(StatusCode::FORBIDDEN, "owners invite"))?;
         let (c, rv) = certs_of(&app, &s.account)?;
@@ -302,15 +334,22 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
         if inv.team != team
             || inv.role == TeamRole::Owner
             || inv.expires <= now
-            || inv.expires > now + 30 * 86_400 * 1000
+            || inv.expires > now + PRESIGNED_MAX_MS
+            || !(inv.key.len() == 64 && inv.key.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')))
             || !signed
         {
             return Err(err(
                 StatusCode::BAD_REQUEST,
-                "a presigned invite is for this team, not as an owner, at most 30 days, and signed by your device",
+                "a presigned invite is for this team, not as an owner, at most a day, and signed by your device",
             ));
         }
-        app.db.add_presigned(&inv.key, &team, &serde_json::to_string(&inv)?, inv.expires, &s.account)?;
+        app.db.add_presigned(&inv.key, &team, &serde_json::to_string(&inv)?, inv.expires, &s.account).map_err(|e| {
+            if e.is::<crate::db::Taken>() {
+                err(StatusCode::CONFLICT, "that invite key is already used")
+            } else {
+                e.into()
+            }
+        })?;
         return Ok(Json(json!({ "key": inv.key, "expires": inv.expires })));
     }
     let code = token()[..20].to_owned();
@@ -443,6 +482,14 @@ pub async fn lock(State(app): State<Arc<App>>, s: Session, Path(team): Path<Stri
 
 // ---------------------------------------------------------------- daemons
 
+/// What a daemon says it understands on its calls, comma-separated (older
+/// ones send none).
+#[derive(Deserialize)]
+pub struct Features {
+    #[serde(default)]
+    pub features: String,
+}
+
 #[derive(Deserialize)]
 pub struct Since {
     #[serde(default)]
@@ -493,6 +540,12 @@ pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
         let Some(t) = app.db.team(team)? else { continue };
         let Some(latest) = app.db.latest_roster(team)? else { continue };
         if role_in(&parse(&latest)?, &owner).is_none() {
+            continue;
+        }
+        // A daemon from before presigned invites would stop at the first
+        // version one wrote and keep whoever was in then, removed or not:
+        // it gets nothing for the team instead, until it's updated.
+        if !takes_presigned(&q.features) && has_presigned(&app, team)? {
             continue;
         }
         app.db.watch_team(&d.cert.device, team, now)?;
