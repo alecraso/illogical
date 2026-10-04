@@ -109,7 +109,7 @@ Links: [ghostty](https://github.com/ghostty-org/ghostty),
 
 ## Ops on geek (checked read-only)
 
-- Tailnet name: `geek.tailb2e8f2.ts.net`. MagicDNS and HTTPS certs are enabled.
+- Tailnet name: `geek.tail1234.ts.net`. MagicDNS and HTTPS certs are enabled.
   No serve config yet, and no operator set.
 - `tailscaled.sock` is world-rw, so WhoIs works unprivileged.
 - systemd 259, linger on. The user manager env currently has `PATH`,

@@ -1,6 +1,6 @@
 # illogical: plan
 
-Written 2026-10-01 from [BRIEF.md](BRIEF.md) and [docs/research.md](docs/research.md).
+Written 2026-10-01 from the original brief and [docs/research.md](docs/research.md).
 Scope: v1 is M0 to M2 (with M2b) plus enough of M3 to `run`/`tail`/`wait`.
 Beyond v1, M3b and M3c (throwaway machines per pane and per tab), M4 (reach)
 and M6 (non-terminal blocks) are planned with their shape decisions made, and
@@ -38,7 +38,7 @@ illogicald  127.0.0.1:7681 (+ $XDG_RUNTIME_DIR/illogical/sock)
 
 **Terms.** A *block* is a leaf of the tree. It has a `type`; only `terminal`
 exists today, and a pane (`%N`) is a terminal block. This follows
-Superlogical's model ([docs/superlogical.md](docs/superlogical.md)). Inside a
+Superlogical's model. Inside a
 terminal, OSC 133 command ranges are *command marks*, never "blocks".
 
 ### Cargo workspace
@@ -155,7 +155,7 @@ Each milestone ends with a demo against the acceptance list.
 - **S2 tailnet: done 2026-10-01, passed (from geek itself).**
   - Operator set to jake.
   - `tailscale serve --bg --https=443 http://127.0.0.1:7681` is configured and persists in tailscaled.
-  - `https://geek.tailb2e8f2.ts.net` serves a valid cert.
+  - `https://geek.tail1234.ts.net` serves a valid cert.
   - A WSS echo worked through serve.
   - HTTP and WebSocket upgrade requests both carry `Tailscale-User-Login`, `-Name` and `-Profile-Pic`, plus `X-Forwarded-*`. A client-sent `Tailscale-User-Login` was replaced by the real one.
   - Still to do: open it from the phone once M0 serves a page.
@@ -391,8 +391,7 @@ It's for agents and untrusted builds: `illogical run --vm -- claude …`. The
 session log stays on the host after the machine is gone.
 
 **Two separate axes: what a block is, and where it runs.** Superlogical treats
-a terminal as one block *type* among many (see
-[docs/superlogical.md](docs/superlogical.md)). A VM is not a block type. A
+a terminal as one block *type* among many. A VM is not a block type. A
 terminal in a VM is still a terminal, with the same methods, events, snapshots
 and `tail`. So the VM is modelled as *placement*, not as a kind of pane:
 
@@ -670,7 +669,7 @@ idle, unwatched VM tabs waits for the same replay fix as M3b's.
 
 ### M4: reach (a shell on any machine or sandbox)
 
-Shape copied from Superlogical (see [docs/superlogical.md](docs/superlogical.md)):
+Shape copied from Superlogical:
 
 - Every daemon is a peer: it owns its terminals and serves the page, the
   protocol and the CLI.
@@ -750,7 +749,7 @@ instead.
    the daemon's port, and optionally open a plain exec TTY when no daemon is
    installed.
    - **First adapter: the Sprites API.** This covers Fly and wisp; the
-     endpoints are in docs/superlogical.md and ravix-hq/ravix#236.
+     endpoints are in the Sprites API docs.
    - **Later adapters:** `docker exec`, `kubectl port-forward`/`exec`.
    - Status for sleeping hosts comes from the provider API, never by
      connecting.
@@ -849,8 +848,7 @@ instead.
 
 ### M6: non-terminal blocks (after M4b; M5 is independent of it)
 
-This is Superlogical's step 2, "multiplexer for all work" (see
-[docs/superlogical.md](docs/superlogical.md)), cut down to what illogical is
+This is Superlogical's step 2, "multiplexer for all work", cut down to what illogical is
 for: agents, and the dev servers they start in throwaway machines. A terminal
 becomes one block type among several. Tabs, splits, drag, close, `host`, the
 event stream and the CLI all work the same for every type.
@@ -931,9 +929,9 @@ to it, on the desktop and the phone.
     - the domain is `illogical.widgets.wtf`: blocks are
       `b-<id>.illogical.widgets.wtf`;
     - `*.illogical.widgets.wtf` is an A record (DNS only) for
-      100.71.195.119, and resolves to nothing else (no AAAA) through 1.1.1.1
+      100.64.0.10, and resolves to nothing else (no AAAA) through 1.1.1.1
       and 8.8.8.8;
-    - the listener is `100.71.195.119:7443` (443 is serve's, 8443 wispd's);
+    - the listener is `100.64.0.10:7443` (443 is serve's, 8443 wispd's);
     - the daemon gets the wildcard certificate itself (Let's Encrypt,
       DNS-01 through Cloudflare's API with wisp's token: staging, then
       production, about 25s each) and renews it two thirds of the way
@@ -2172,7 +2170,7 @@ phone.
 
 Superlogical builds sharing in "from the start". illogical adds it as its own
 track, for a small group: a few people you'd hand a shell to, plus their
-agents. Enterprise access control stays a non-goal (BRIEF.md).
+agents. Enterprise access control stays a non-goal.
 
 **What changes from single-user:**
 - `config.owner` becomes a list of principals with roles.
@@ -3609,7 +3607,7 @@ Pull requests and issues from a git forge (Forgejo, then GitHub, then GitLab) as
 - **Read path:** `tea api`, `gh api` and `glab api` all reach the PR, reviews, checks, timeline, files and diff refs. Both CLIs that were run pass `If-None-Match` through (`gh` exits 1 on a 304).
   - The daemon should take the token from the CLI and make the requests itself with its existing `reqwest`. Tokens: `tea login helper get` (16 ms, refreshes OAuth) and `gh auth token` (39 ms). Keep them in memory only.
   - A CLI per request costs ~25 ms (`tea`) to ~150 ms (`gh`) more, and each prints headers its own way.
-- **Logins:** `tea` matches an `ssh://` remote to a login by `ssh_host`. This repo's `git.tailb2e8f2.ts.net` matches no login: the login's `ssh_host` is `git.inevitable.fyi`, and the tailnet name serves only SSH.
+- **Logins:** `tea` matches an `ssh://` remote to a login by `ssh_host`. This repo's `git.tail1234.ts.net` matches no login: the login's `ssh_host` is `git.inevitable.fyi`, and the tailnet name serves only SSH.
   - The daemon matches the remote's host against each login's URL host and `ssh_host`. If none matches, it asks each Forgejo login for `repos/{path}` and compares `ssh_url` (one request; it finds `forgejo` here).
   - The block offers a choice when no login matches, or several do. The pick is kept in config.
 - **Cost:** a full read is 7 requests on GitHub (1.4–1.6 s, 7 points) and 6 on Forgejo (0.3–0.8 s, 29 KB).
@@ -3640,7 +3638,7 @@ Answer these before M36. Each answer goes in as a fixture or a measured number:
 
 1. **The CLIs as the read path.**
    - Do `tea`, `gh` and `glab` cover what the block reads (PR, reviews, checks or statuses, timeline, diff refs) through their `api` passthroughs, with their own logins?
-   - How does each pick a login for a repo? `tea` here says "no login matched this repository" for `ssh://git@git.tailb2e8f2.ts.net/...` and falls back to login `forgejo`. Find the mapping rule (host name, SSH vs HTTPS remote) and what the block shows when it's ambiguous.
+   - How does each pick a login for a repo? `tea` here says "no login matched this repository" for `ssh://git@git.tail1234.ts.net/...` and falls back to login `forgejo`. Find the mapping rule (host name, SSH vs HTTPS remote) and what the block shows when it's ambiguous.
    - Do conditional requests (ETag, 304) go through each CLI's passthrough, or does the daemon need the token (`gh auth token`, `tea`'s config) and its own HTTP client?
 2. **Cost.** One full read of a PR (item, reviews, checks, timeline) on Forgejo and GitHub: wall time, requests, and rate-limit use. The same for an unchanged poll. Use real PRs (this repo on Forgejo; a public GitHub repo with Actions).
 3. **The normalized model.** Map one PR on each of Forgejo, GitHub and GitLab (gitlab.com, a public project) onto item / review / check / timeline event. List what doesn't fit: GitHub's check runs vs commit statuses, Forgejo Actions' statuses, GitLab pipelines and approvals, draft vs `WIP:`, review threads vs discussions.

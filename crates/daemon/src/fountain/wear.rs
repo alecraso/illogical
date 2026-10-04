@@ -1338,11 +1338,11 @@ mod tests {
     fn who_can_be_worn() {
         assert_eq!(refusal(&named("games")), None);
         assert_eq!(refusal(&named("pr-reviewer")), None);
-        let mut picard = named("captain-picard");
-        picard.metadata.insert("illogical.local".into(), json!(false));
-        assert!(refusal(&picard).unwrap().contains("for Fountain only"));
-        picard.metadata.insert("illogical.local".into(), json!("false"));
-        assert!(refusal(&picard).is_some(), "the string too");
+        let mut orch = named("orchestrator");
+        orch.metadata.insert("illogical.local".into(), json!(false));
+        assert!(refusal(&orch).unwrap().contains("for Fountain only"));
+        orch.metadata.insert("illogical.local".into(), json!("false"));
+        assert!(refusal(&orch).is_some(), "the string too");
         let codex = agents().into_iter().find(|a| a.runtime == "codex").unwrap();
         assert!(refusal(&codex).unwrap().contains("is a codex agent"));
         assert_eq!(model(&named("pr-reviewer")).as_deref(), Some("claude-sonnet-5"));

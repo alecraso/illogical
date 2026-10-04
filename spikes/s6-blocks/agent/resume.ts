@@ -2,7 +2,7 @@
 // permission request pending), then --resume it in a new process.
 import { start, log, DIR, sleep } from "./lib.ts";
 
-const BUN = "/home/jake/.local/share/mise/installs/bun/1.4.2/bin/bun";
+const BUN = "/home/me/.local/share/mise/installs/bun/1.4.2/bin/bun";
 const mcp = (tag: string, mode: string) => JSON.stringify({ mcpServers: { perm: { type: "stdio", command: BUN,
   args: [DIR + "perm-mcp.ts"], env: { PERM_MODE: mode, PERM_LOG: `${DIR}samples/${tag}.perm.ndjson` } } } });
 const flags = (tag: string, mode: string) => ["--tools", "Bash", "--mcp-config", mcp(tag, mode), "--permission-prompt-tool", "mcp__perm__approve"];

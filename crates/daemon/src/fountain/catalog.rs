@@ -349,9 +349,9 @@ mod tests {
         assert_eq!(source(named(&all, "Switchyard · games")), (Source::App, Some("switchyard".into())));
         assert_eq!(source(named(&all, "Salon · Opus 5")).1.as_deref(), Some("salon"));
         assert_eq!(source(named(&all, "Paddock")).1.as_deref(), Some("paddock"));
-        assert_eq!(source(named(&all, "Mend: github.com/jhgaylor/otfl")), (Source::App, Some("mend".into())));
-        assert_eq!(source(named(&all, "Cantor audit: github.com/jhgaylor/mend")).1.as_deref(), Some("cantor"));
-        assert_eq!(source(named(&all, "superhud-builder-repair-9a3ff2a0-f2a1-496d-a72d-0da82f4beee4")).0, Source::App);
+        assert_eq!(source(named(&all, "Mend: github.com/example-org/lists")), (Source::App, Some("mend".into())));
+        assert_eq!(source(named(&all, "Cantor audit: github.com/example-org/mend")).1.as_deref(), Some("cantor"));
+        assert_eq!(source(named(&all, "example-builder-repair-9a3ff2a0-f2a1-496d-a72d-0da82f4beee4")).0, Source::App);
         // A key an app sets wins over the name.
         let a = Agent {
             name: "x".into(),
@@ -387,7 +387,7 @@ mod tests {
         assert!(shown(&f).contains(&"pr-reviewer".to_owned()));
         let f = Filter { query: "context7".into(), ..Filter::default() };
         assert!(shown(&f).iter().all(|n| named(&all, n).mcp_servers.contains_key("context7")));
-        let f = Filter { query: "superpowers".into(), ..Filter::default() };
+        let f = Filter { query: "agent-skills".into(), ..Filter::default() };
         assert!(shown(&f).contains(&"pr-reviewer".to_owned()), "a GitHub skill's source");
         // Chips: any of the chosen, within a kind; all kinds at once.
         let mut f = Filter::default();
@@ -414,24 +414,26 @@ mod tests {
         assert_eq!((c.environment.as_deref(), c.provider.as_str(), c.local), (Some("games-env"), "default", true));
         let c = card(named(&all, "pr-reviewer"), &envs);
         assert_eq!(c.mcp, ["context7", "github", "mem0"]);
-        assert!(c.skills.contains(&"code-review".to_owned()) && c.skills.contains(&"obra/superpowers/*".to_owned()));
+        assert!(
+            c.skills.contains(&"code-review".to_owned()) && c.skills.contains(&"example-org/agent-skills/*".to_owned())
+        );
         assert!(line(&c).starts_with("pr-reviewer [claude anthropic/"), "{}", line(&c));
         // Not claude: no Run here, and no reason needed.
         let codex = all.iter().find(|a| a.runtime == "codex").unwrap();
         assert_eq!((card(codex, &envs).local, card(codex, &envs).local_why), (false, None));
         // Marked for Fountain only (M44 adds it to the orchestrators).
-        let mut picard = named(&all, "captain-picard").clone();
-        picard.metadata.insert("illogical.local".into(), json!(false));
-        let c = card(&picard, &envs);
+        let mut orch = named(&all, "orchestrator").clone();
+        orch.metadata.insert("illogical.local".into(), json!(false));
+        let c = card(&orch, &envs);
         assert!(!c.local && c.local_why.unwrap().contains("Fountain only"));
-        picard.metadata.remove("illogical.local");
-        picard.metadata.insert("illogical".into(), json!({ "local": false }));
-        assert!(!card(&picard, &envs).local);
-        picard.metadata.remove("illogical");
-        picard.metadata.insert("illogical.local".into(), json!("false"));
-        assert!(!card(&picard, &envs).local, "as a string too");
-        picard.metadata.insert("illogical.local".into(), json!("true"));
-        assert!(card(&picard, &envs).local);
+        orch.metadata.remove("illogical.local");
+        orch.metadata.insert("illogical".into(), json!({ "local": false }));
+        assert!(!card(&orch, &envs).local);
+        orch.metadata.remove("illogical");
+        orch.metadata.insert("illogical.local".into(), json!("false"));
+        assert!(!card(&orch, &envs).local, "as a string too");
+        orch.metadata.insert("illogical.local".into(), json!("true"));
+        assert!(card(&orch, &envs).local);
     }
 
     #[test]

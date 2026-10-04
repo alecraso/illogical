@@ -334,7 +334,7 @@ and the turn never ended (killed at 300s both times).
 **(a) Hook stdin** (2.1.286):
 
 ```json
-{"session_id":"47f67b40-…","transcript_path":"/home/jake/.claude/projects/…/47f67b40-….jsonl",
+{"session_id":"47f67b40-…","transcript_path":"/home/me/.claude/projects/…/47f67b40-….jsonl",
  "cwd":"…/work/tui","scratchpad_dir":"/tmp/claude-1000/…/scratchpad","prompt_id":"d765cc07-…",
  "permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion",
  "tool_input":{"questions":[

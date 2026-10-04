@@ -277,8 +277,8 @@ mod tests {
     fn remotes() {
         let r = |s: &str| parse_remote(s).map(|(h, p)| format!("{h} {p}"));
         assert_eq!(
-            r("ssh://git@git.tailb2e8f2.ts.net/jhgaylor/illogical.git").as_deref(),
-            Some("git.tailb2e8f2.ts.net jhgaylor/illogical")
+            r("ssh://git@git.tail1234.ts.net/jhgaylor/illogical.git").as_deref(),
+            Some("git.tail1234.ts.net jhgaylor/illogical")
         );
         assert_eq!(r("ssh://git@host:2222/o/r.git").as_deref(), Some("host o/r"));
         assert_eq!(r("git@codeberg.org:forgejo/forgejo.git").as_deref(), Some("codeberg.org forgejo/forgejo"));
@@ -298,7 +298,7 @@ mod tests {
         let names = |h: &str| matching(&ls, h).iter().map(|l| l.name.clone()).collect::<Vec<_>>();
         assert_eq!(names("git.inevitable.fyi"), ["pub"]);
         assert_eq!(names("codeberg.org"), ["cb"]);
-        assert!(names("git.tailb2e8f2.ts.net").is_empty());
+        assert!(names("git.tail1234.ts.net").is_empty());
         let local = [login("test", "http://127.0.0.1:3000", "")];
         assert_eq!(matching(&local, "127.0.0.1:3000").len(), 1);
         assert_eq!(matching(&local, "127.0.0.1").len(), 1, "an SSH remote has no web port");
@@ -312,10 +312,10 @@ mod tests {
             login("other", "https://x.example", ""),
         ];
         // The tailnet name serves SSH only; Forgejo says so in ssh_url.
-        let r = resolve(ls.clone(), "git.tailb2e8f2.ts.net", &|l: Login| {
+        let r = resolve(ls.clone(), "git.tail1234.ts.net", &|l: Login| {
             Box::pin(async move {
                 Ok(if l.name == "pub" {
-                    vec!["ssh://git@git.tailb2e8f2.ts.net/jhgaylor/illogical.git".into()]
+                    vec!["ssh://git@git.tail1234.ts.net/jhgaylor/illogical.git".into()]
                 } else {
                     vec![]
                 })
@@ -324,7 +324,7 @@ mod tests {
         .await;
         assert_eq!(r.login.map(|l| l.name).as_deref(), Some("pub"));
         // Kept for the host: no lookup the second time.
-        let r = resolve(ls.clone(), "git.tailb2e8f2.ts.net", &|_| Box::pin(async { Err("not asked".into()) })).await;
+        let r = resolve(ls.clone(), "git.tail1234.ts.net", &|_| Box::pin(async { Err("not asked".into()) })).await;
         assert_eq!(r.login.map(|l| l.name).as_deref(), Some("pub"));
         let r = resolve(ls.clone(), "nowhere.example", &|_| Box::pin(async { Ok(vec![]) })).await;
         assert!(r.login.is_none());

@@ -110,7 +110,7 @@ Capacity: 1,000 relayed channels at once, each typing once a second, gave
 **Pending, on Jake's phone** (results go to `fly logs -a
 illogical-s15-relay`, lines starting with `REPORT`):
 
-- `rtt.html?direct=wss://geek.tailb2e8f2.ts.net:10000/` on cellular and on
+- `rtt.html?direct=wss://geek.tail1234.ts.net:10000/` on cellular and on
   Wi-Fi;
 - `keys.html`: PRF create and authenticate, then a reload and authenticate
   again, on iOS Safari and Android Chrome;

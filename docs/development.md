@@ -70,7 +70,7 @@ and PR numbers kept.
 Nothing here has seen a real iTerm2 yet. From the Mac, against geek:
 
 1. On geek, install the build (`just install`) and check `illogical ls`
-   works. Open <https://geek.tailb2e8f2.ts.net> in a browser beside iTerm2.
+   works. Open <https://geek.tail1234.ts.net> in a browser beside iTerm2.
 2. In iTerm2: `ssh -t geek '~/.local/bin/illogical tmux -CC attach'`. A new
    iTerm2 window opens with a tab per illogical tab (the gateway window
    says "tmux mode"). The tab's shell prompt is there, with its history.

@@ -170,7 +170,7 @@ answer):
     "rawInput":{"command":"echo hi > x.txt","description":"Create file x.txt with content \"hi\""},
     "title":"echo hi > x.txt","kind":"execute",
     "content":[{"type":"content","content":{"type":"text","text":"Create file x.txt with content \"hi\""}}],
-    "locations":[{"path":"/home/jake/…/work/scratch/x.txt"}]},
+    "locations":[{"path":"/home/me/…/work/scratch/x.txt"}]},
   "_meta":{"permission":{"version":1,"title":"echo hi > x.txt"}},
   "options":[
     {"optionId":"allow-once","name":"Yes","kind":"allow_once"},
@@ -220,7 +220,7 @@ control channel.
   `{"permissions":{"allow":["Bash(echo hi *)"]}}` to
   **`<git root of the cwd>/.claude/settings.local.json`**.
   - The first time, cwd `work/scratch` was inside the illogical repo, so it
-    created `/home/jake/dev/jhgaylor/illogical/.claude/settings.local.json`.
+    created `/home/me/dev/jhgaylor/illogical/.claude/settings.local.json`.
     That file is untracked and was deleted straight away.
   - After `git init work/scratch` it wrote `work/scratch/.claude/…`.
   - It writes **even with `settingSources: []`**. The "access to scratch/"
@@ -562,7 +562,7 @@ small (`acp.ts` has it, unexercised).
   - Their four ephemeral sandboxes show `terminated`.
   - Nothing else was touched; reads were `agent list` per profile and
     `conv show`/`list`, `sandbox list`.
-- **Repo:** the stray `/home/jake/dev/jhgaylor/illogical/.claude/` (created
+- **Repo:** the stray `/home/me/dev/jhgaylor/illogical/.claude/` (created
   by allow-always, holding only `Bash(echo hi *)`) was deleted. No other file
   outside `spikes/s7-acp/` was changed. `work/scratch` has its own
   `.git` and `.claude/settings.local.json` (git-ignored scratch).

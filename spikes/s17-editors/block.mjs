@@ -18,10 +18,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire("/home/jake/dev/jhgaylor/illogical/web/package.json");
+const require = createRequire("/home/me/dev/jhgaylor/illogical/web/package.json");
 const { chromium } = require("@playwright/test");
 const [which, dir] = process.argv.slice(2);
-const repo = "/home/jake/dev/jhgaylor/illogical";
+const repo = "/home/me/dev/jhgaylor/illogical";
 const work = path.join(here, "work");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const APP = 7861, BLOCKS = 7862, ED = 7863;

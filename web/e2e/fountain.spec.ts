@@ -1,5 +1,5 @@
 // M43: the Fountain agent catalog, against a fake Fountain served here
-// (S24's recorded agents, scrubbed) and the credentials file the config
+// (synthetic agents shaped like S24's) and the credentials file the config
 // points the daemon at (this spec writes it). *Run on Fountain* runs the
 // config's stand-in `fountain`, the fake ACP agent. Nothing here reaches a
 // real Fountain.

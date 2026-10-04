@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire("/home/jake/dev/jhgaylor/illogical/web/package.json");
+const require = createRequire("/home/me/dev/jhgaylor/illogical/web/package.json");
 const { chromium } = require("@playwright/test");
 const [which, dir, cpsArg, secsArg] = process.argv.slice(2);
 const CPS = Number(cpsArg ?? 8);

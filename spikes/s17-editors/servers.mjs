@@ -24,7 +24,7 @@ const tryReq = (p) => {
   }
 };
 const { chromium } =
-  tryReq(path.join(here, "../../web/package.json")) ?? tryReq("/home/jake/dev/jhgaylor/illogical/web/package.json");
+  tryReq(path.join(here, "../../web/package.json")) ?? tryReq("/home/me/dev/jhgaylor/illogical/web/package.json");
 
 const [ovsDir, csDir, runsArg] = process.argv.slice(2);
 const RUNS = Number(runsArg ?? 3);

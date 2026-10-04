@@ -1,5 +1,5 @@
 // M45b: the Fountain runner view, against a fake Fountain served here
-// (recorded runners and sandboxes, scrubbed), the unit file this spec
+// (synthetic runners and sandboxes), the unit file this spec
 // writes, and the config's stand-in `systemctl` and `sudo` (which runs bash
 // as this user: no test runs sudo). Nothing here reaches a real Fountain.
 //

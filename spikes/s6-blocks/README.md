@@ -51,7 +51,7 @@ Details are under "Consequences for M6".
 ```sh
 SPRITE_TOKEN="$(cat ~/.local/share/wisp/token)" bun proxy.ts <sprite> 5173 18173
 tailscale serve --bg --https=10000 http://127.0.0.1:18173
-SPRITE_TOKEN=... [BROWSER=webkit DEVICE="iPhone 15" FRAME=1 FRAME_HOST=http://127.0.0.1:18174] node hmr.mjs https://geek.tailb2e8f2.ts.net:10000/b/7/
+SPRITE_TOKEN=... [BROWSER=webkit DEVICE="iPhone 15" FRAME=1 FRAME_HOST=http://127.0.0.1:18174] node hmr.mjs https://geek.tail1234.ts.net:10000/b/7/
 ```
 
 ## A. Claude Code headless as an agent block
@@ -271,11 +271,11 @@ HMR either way.
 **Vite settings:**
 
 - **Without a rewriting proxy,** Vite answers any Host other than localhost
-  with 403 `Blocked request. This host ("geek.tailb2e8f2.ts.net") is not
-  allowed`. That needs `server.allowedHosts: ["geek.tailb2e8f2.ts.net"]`.
+  with 403 `Blocked request. This host ("geek.tail1234.ts.net") is not
+  allowed`. That needs `server.allowedHosts: ["geek.tail1234.ts.net"]`.
 - **HMR needs no `hmr.clientPort/host/protocol` config.** The client builds
   its socket URL from `import.meta.url`, so through `:10000` it uses
-  `wss://geek.tailb2e8f2.ts.net:10000/?token=…`.
+  `wss://geek.tail1234.ts.net:10000/?token=…`.
 - **The `?token=` is Vite's guard against cross-site WebSocket hijacking.**
   It is in the served HTML, so other origins can't read it.
 - **Base path:** `--base /b/7/` works through a non-stripping proxy, with HMR
@@ -290,7 +290,7 @@ HMR either way.
   28ms and to `globals.css` in 31ms, and React state was kept (a counter
   stayed at 2) with no reload.
 - Through the tailnet name it needs `allowedDevOrigins:
-  ["geek.tailb2e8f2.ts.net"]`. Without it Next logs `Cross-origin access to
+  ["geek.tail1234.ts.net"]`. Without it Next logs `Cross-origin access to
   Next.js dev resources is blocked by default`, the HMR socket fails (serve
   returns 502), and edits only arrive by full reload (9.3s).
 
@@ -304,13 +304,13 @@ drops `Tailscale-*` and `X-Forwarded-*`.
 
 ### 7. Separate origin on `tailscale serve --https=10000`: works
 
-- **Certificate:** `curl https://geek.tailb2e8f2.ts.net:10000/` verified with
+- **Certificate:** `curl https://geek.tail1234.ts.net:10000/` verified with
   no `-k` (`ssl_verify_result=0`). It is the node's existing Let's Encrypt
-  cert: `CN=geek.tailb2e8f2.ts.net`, issuer `Let's Encrypt YE2`, valid to
+  cert: `CN=geek.tail1234.ts.net`, issuer `Let's Encrypt YE2`, valid to
   2026-12-30.
 - **HMR through serve:**
   - Vite: CSS 15ms, JS 16ms, no reload, socket
-    `wss://geek.tailb2e8f2.ts.net:10000/?token=…`.
+    `wss://geek.tail1234.ts.net:10000/?token=…`.
   - Next: Fast Refresh 28ms.
 - **Serve passes the upgrade through.** It adds `X-Forwarded-*` but keeps
   `Origin`.
@@ -319,7 +319,7 @@ drops `Tailscale-*` and `X-Forwarded-*`.
   `Tailscale-User-Profile-Pic`, `Tailscale-Headers-Info`, `X-Forwarded-For`,
   `X-Forwarded-Host` and `X-Forwarded-Proto`. Without stripping, the dev
   server (agent-written code) sees Jake's login, name and avatar.
-- **Host includes the port:** `Host: geek.tailb2e8f2.ts.net:10000`.
+- **Host includes the port:** `Host: geek.tail1234.ts.net:10000`.
 - **8443 is taken on geek:** `wispd` listens on `*:8443` (`--public-listen
   :8443`). The plan's example port would collide; use 10000.
 
@@ -351,7 +351,7 @@ drops `Tailscale-*` and `X-Forwarded-*`.
 served by the dev server; `attack/evil.html`):
 
 - **`new WebSocket("ws://127.0.0.1:17699/ws")`:** handshake 403. The daemon
-  logged `rejected websocket why=origin https://geek.tailb2e8f2.ts.net:10000
+  logged `rejected websocket why=origin https://geek.tail1234.ts.net:10000
   not allowed`.
 - **Chrome's Private Network Access did not block it**, so don't count on it.
 - **`fetch(…, {mode:"no-cors"})`:** the GET is sent and the response is

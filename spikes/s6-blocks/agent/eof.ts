@@ -5,7 +5,7 @@
 import { start, log, DIR, sleep } from "./lib.ts";
 
 const kind = process.argv[2] ?? "midturn";
-const BUN = "/home/jake/.local/share/mise/installs/bun/1.4.2/bin/bun";
+const BUN = "/home/me/.local/share/mise/installs/bun/1.4.2/bin/bun";
 const permLog = `${DIR}samples/eof-${kind}.perm.ndjson`;
 const mcp = JSON.stringify({ mcpServers: { perm: { type: "stdio", command: BUN, args: [DIR + "perm-mcp.ts"],
   env: { PERM_MODE: "hold:10", PERM_LOG: permLog } } } });

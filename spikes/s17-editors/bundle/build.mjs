@@ -13,7 +13,7 @@ import { build } from "vite";
 
 const here = process.cwd();
 const entries = ["monaco-full", "monaco-min", "cm6", "shiki"];
-const SAMPLE = readFileSync("/home/jake/dev/jhgaylor/illogical/crates/daemon/src/browser.rs", "utf8").slice(0, 20000);
+const SAMPLE = readFileSync("/home/me/dev/jhgaylor/illogical/crates/daemon/src/browser.rs", "utf8").slice(0, 20000);
 
 const walk = (d) => readdirSync(d).flatMap((f) => (statSync(path.join(d, f)).isDirectory() ? walk(path.join(d, f)) : [path.join(d, f)]));
 const out = {};
@@ -46,7 +46,7 @@ for (const e of entries) {
 }
 
 // First render and heap, served by vite preview-like static server.
-const require = createRequire("/home/jake/dev/jhgaylor/illogical/web/package.json");
+const require = createRequire("/home/me/dev/jhgaylor/illogical/web/package.json");
 const { chromium } = require("@playwright/test");
 const http = await import("node:http");
 const browser = await chromium.launch({ channel: "chrome" });

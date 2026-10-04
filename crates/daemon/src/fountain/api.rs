@@ -55,7 +55,7 @@ pub struct Skill {
 
 impl Skill {
     /// How a card names it: its name, else every skill of its repository
-    /// (`obra/superpowers/*`).
+    /// (`example-org/agent-skills/*`).
     pub fn label(&self) -> String {
         match (&self.name, &self.source) {
             (Some(n), _) => n.clone(),
@@ -430,7 +430,7 @@ mod tests {
         assert!(games.skills.iter().all(Skill::inline));
         let pr = agents.iter().find(|a| a.name == "pr-reviewer").unwrap();
         assert_eq!(pr.metadata["managed-by"], "chant");
-        assert!(pr.skills.iter().any(|s| s.label() == "obra/superpowers/*"));
+        assert!(pr.skills.iter().any(|s| s.label() == "example-org/agent-skills/*"));
         assert_eq!(pr.mcp_servers.keys().collect::<Vec<_>>(), ["context7", "github", "mem0"]);
         assert_eq!(pr.mcp_servers["github"].kind.as_deref(), Some("http"));
         // What isn't typed comes through.

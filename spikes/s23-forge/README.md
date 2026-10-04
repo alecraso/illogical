@@ -77,16 +77,16 @@ no forge tokens.
 - `GITEA_INSTANCE_URL` plus `GITEA_TOKEN` and `GITEA_INSTANCE_SSH_HOST` add a login from the
   environment, matched first.
 
-**Why it fails here, and the fix.** The remote is `ssh://git@git.tailb2e8f2.ts.net/…`. The login's
+**Why it fails here, and the fix.** The remote is `ssh://git@git.tail1234.ts.net/…`. The login's
 `ssh_host` is `git.inevitable.fyi` (the URL host, which `tea login add` defaulted to).
 
 - **The tailnet name serves SSH only.** HTTPS on it timed out on 443, 80 and 3000, so it can't be the
   API base. The API is `https://git.inevitable.fyi/api/v1`.
 - **Forgejo knows its SSH host.** `GET repos/jhgaylor/illogical` answers
-  `ssh_url: ssh://git@git.tailb2e8f2.ts.net/jhgaylor/illogical.git` and
+  `ssh_url: ssh://git@git.tail1234.ts.net/jhgaylor/illogical.git` and
   `clone_url: https://git.inevitable.fyi/…`.
 - **Changing `ssh_host` fixes `tea`.** Run with a copy of the config whose `ssh_host` is
-  `git.tailb2e8f2.ts.net`, `tea pulls ls` here matched the login and listed #84. The cost: a login has
+  `git.tail1234.ts.net`, `tea pulls ls` here matched the login and listed #84. The cost: a login has
   one `ssh_host`, so remotes on `git@git.inevitable.fyi:` would stop matching (there are none).
 
 **The rule for the daemon** (`forge::resolve(remote)`):
@@ -97,9 +97,9 @@ no forge tokens.
 3. If no login matches, ask each Forgejo login `GET repos/{path}` and keep the logins whose `ssh_url`
    or `clone_url` host is the remote's host. Here that takes one request (~80 ms) and finds
    `forgejo`. Cache the answer as host → login.
-4. When a remote matches no login, the block says "No tea login for git.tailb2e8f2.ts.net", with
+4. When a remote matches no login, the block says "No tea login for git.tail1234.ts.net", with
    *Add login…* and *Use login …* buttons. When it matches two or more, the block lists them to pick
-   from. A pick is kept in the daemon's config as `[forge.hosts] "git.tailb2e8f2.ts.net" = "tea:forgejo"`,
+   from. A pick is kept in the daemon's config as `[forge.hosts] "git.tail1234.ts.net" = "tea:forgejo"`,
    never guessed. A block's config holds `{provider, api, login, repo, number}`, so restoring it
    doesn't resolve again.
 

@@ -1094,7 +1094,7 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
       </ul>
       <p class="dim">
         Owners approve everyone who uses an invite. Machines join a team when an owner approves them for it.{" "}
-        <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/teams.md" target="_blank" rel="noreferrer">
+        <a href="https://github.com/arugula-salad/illogical/blob/main/docs/teams.md" target="_blank" rel="noreferrer">
           More about teams
         </a>
       </p>

@@ -1,0 +1,36 @@
+name: Bug
+description: Something doesn't work the way the docs say it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The smallest steps that show it.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `illogical --version`, or the desktop app's version.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and how you installed
+      description: e.g. macOS 15 with the desktop app; Ubuntu 24.04 with install.sh.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything relevant from `journalctl --user -u illogicald` (Linux) or `~/Library/Logs/illogicald.log` (macOS).
+      render: text

@@ -329,8 +329,8 @@ and the same delta rules (changed fields only, `null` for gone):
   "editor": "vscode",              // vscode | cursor | code-server | nvim
   "host": "geek",                  // the daemon it connected to (its socket)
   "remote": "ssh-remote",          // vscode.env.remoteName: null, ssh-remote, dev-container, …
-  "workspace": "/home/jake/dev/x", // the first workspace folder
-  "project": { "root": "/home/jake/dev/x", "name": "x" },   // M23's
+  "workspace": "/home/me/dev/x", // the first workspace folder
+  "project": { "root": "/home/me/dev/x", "name": "x" },   // M23's
   "file": "crates/control/src/auth.rs",                     // relative to project, or null
   "diag": { "e": 3, "w": 0, "i": 1 },                       // counts across the workspace
   "dirty": 1,                      // unsaved buffers

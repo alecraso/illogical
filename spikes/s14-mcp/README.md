@@ -267,8 +267,8 @@ real MCP POST, each with a 4–5s timeout:
 |---|---|
 | `10.209.0.1:7940` (the spike's `/mcp`, bound to the bridge IP; host-side curl got 200) | timed out; `curl` POST `000` |
 | `10.209.0.1:8080` (a host service on 0.0.0.0), `10.209.0.1:7880` (wispd on the bridge) | timed out |
-| `192.168.1.150:8080` (host LAN IP) | timed out |
-| `100.71.195.119:7788` (host tailnet IP) | timed out |
+| `192.168.1.10:8080` (host LAN IP) | timed out |
+| `100.64.0.10:7788` (host tailnet IP) | timed out |
 | `1.1.1.1:443`, `https://example.com` | connected, 200 |
 
 **A host-side bridge works.** `vm.sh relay` opens a **non-TTY wisp exec**

@@ -21,9 +21,9 @@ PICK = {
 
 
 def scrub(s: str) -> str:
-    s = re.sub(r"/home/jake/\.claude/projects/[^/\"]+", "/home/user/.claude/projects/-work-tui", s)
+    s = re.sub(r"/home/me/\.claude/projects/[^/\"]+", "/home/user/.claude/projects/-work-tui", s)
     s = re.sub(r"/tmp/claude-1000/[^/\"]+", "/tmp/claude-1000/-work-tui", s)
-    s = re.sub(r"/home/jake/dev/jhgaylor/illogical/\.claude/worktrees/[^/\"]+/spikes/s18-team-answers/work/tui", "/work/tui", s)
+    s = re.sub(r"/home/me/dev/jhgaylor/illogical/\.claude/worktrees/[^/\"]+/spikes/s18-team-answers/work/tui", "/work/tui", s)
     return s
 
 

@@ -9,7 +9,7 @@ A=$(cd "$(dirname "$0")" && pwd)
 W=$A/../work/pipes; mkdir -p "$W"; cd "$A/../work/claude"
 rm -f "$W/in" "$W/out"; mkfifo "$W/in" "$W/out"
 sleep 600 3<>"$W/in" 4<>"$W/out" & KEEPER=$!
-BUN=/home/jake/.local/share/mise/installs/bun/1.4.2/bin/bun
+BUN=/home/me/.local/share/mise/installs/bun/1.4.2/bin/bun
 MCP=$(jq -nc --arg b "$BUN" --arg s "$A/perm-mcp.ts" --arg l "$A/samples/held-pipes.perm.ndjson" \
   '{mcpServers:{perm:{type:"stdio",command:$b,args:[$s],env:{PERM_MODE:"hold:10",PERM_LOG:$l}}}}')
 "$A/claude.sh" -p --verbose --input-format stream-json --output-format stream-json --model haiku \

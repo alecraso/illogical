@@ -7,7 +7,7 @@ import { start, log, DIR, sleep } from "./lib.ts";
 
 const DOWN = Number(process.argv[2] ?? 20);
 const SOCK = `${DIR}../work/perm.sock`;
-const BUN = "/home/jake/.local/share/mise/installs/bun/1.4.2/bin/bun";
+const BUN = "/home/me/.local/share/mise/installs/bun/1.4.2/bin/bun";
 const daemon = (mode: string) => {
   const p = Bun.spawn([BUN, DIR + "fake-daemon.ts", SOCK, mode], { stdout: "pipe", stderr: "inherit" });
   const lines: string[] = [];

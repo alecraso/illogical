@@ -9,7 +9,7 @@ for (const grant of [false, true]) {
   p.on("console", (m) => m.type() !== "log" && console.log(`  [${m.type()}]`, m.text().slice(0, 300)));
   await p.goto("https://illogical-s15-relay.fly.dev/info");
   const r = await p.evaluate(() => new Promise((res) => {
-    const ws = new WebSocket("wss://geek.tailb2e8f2.ts.net:10000/");
+    const ws = new WebSocket("wss://geek.tail1234.ts.net:10000/");
     ws.onopen = () => res("open"); ws.onerror = () => res("error");
   }));
   console.log(`granted=${grant}: ${r}`);

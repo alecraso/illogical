@@ -5,8 +5,7 @@ durable panes, the phone and agent blocks; these add VMs, web apps beside
 your terminals, more machines, and iTerm2.
 
 Examples call the machine that serves the page `home` and the tailnet
-`<tailnet>.ts.net`; use your own names. [geek.md](geek.md) has one real
-setup as a worked example.
+`<tailnet>.ts.net`; use your own names.
 
 - [Service and logs](#service-and-logs)
 - [Pane environment](#pane-environment)

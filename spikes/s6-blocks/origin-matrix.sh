@@ -4,7 +4,7 @@
 # (101 = accepted). usage: origin-matrix.sh <port> [owner-login]
 port=${1:-17699}
 owner=${2:-owner@example.com}
-ts=geek.tailb2e8f2.ts.net
+ts=geek.tail1234.ts.net
 try() { # label host origin login
   local args=(-s -o /dev/null -w '%{http_code}' --max-time 2 --http1.1
     -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13'

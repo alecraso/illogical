@@ -260,8 +260,7 @@ layout still come back. VM tabs are Linux only.
 - [docs/cli.md](docs/cli.md): the CLI and the HTTP API.
 - [docs/development.md](docs/development.md): building, testing, the code's
   layout, and what building it taught us.
-- [BRIEF.md](BRIEF.md) and [PLAN.md](PLAN.md): why it exists, the
-  decisions and the milestones.
+- [PLAN.md](PLAN.md): the decisions and the milestones.
 
 ## License
 

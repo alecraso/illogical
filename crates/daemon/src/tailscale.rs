@@ -45,7 +45,7 @@ const APP_CLI: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 /// What Tailscale says about this machine.
 #[derive(Debug, Clone)]
 pub struct Status {
-    /// MagicDNS name, e.g. `geek.tailb2e8f2.ts.net`.
+    /// MagicDNS name, e.g. `geek.tail1234.ts.net`.
     pub host: String,
     /// The login that owns this node; `None` for a tagged node (a sandbox),
     /// which no user owns.

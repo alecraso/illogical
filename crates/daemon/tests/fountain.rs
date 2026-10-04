@@ -1,5 +1,5 @@
 //! M43: the Fountain agent catalog, against a fake Fountain served here
-//! with S24's recorded (scrubbed) agents, and a fake `~/.fountain/credentials`
+//! with synthetic agents shaped like S24's, and a fake `~/.fountain/credentials`
 //! in the daemon's scratch HOME. Nothing here talks to a real Fountain: *Run
 //! on Fountain* runs the fake ACP agent as `fountain`.
 //!
@@ -11,7 +11,7 @@
 //! `GET /api/fountain/agents`; and MCP's `list_agents` and `read_agent`
 //! from an agent.
 //!
-//! M45b's runner view, against the same fake with recorded (scrubbed)
+//! M45b's runner view, against the same fake with synthetic
 //! `/api/runners` and `/api/sandboxes`, a unit file, a stand-in
 //! `systemctl`, and a stand-in `sudo` that logs its argv and runs bash as
 //! the test's own user (no test calls sudo): status and the host's line;
@@ -1769,7 +1769,7 @@ fn what_cant_be_worn_says_why() {
     // The orchestrators are tagged in agent-specs.
     fz.f.with(|i| {
         for a in i.agents["data"].as_array_mut().unwrap() {
-            if a["name"] == "captain-picard" {
+            if a["name"] == "orchestrator" {
                 a["metadata"]["illogical.local"] = json!(false);
             }
             if a["name"] == "tech-lead" {
@@ -1784,10 +1784,10 @@ fn what_cant_be_worn_says_why() {
     let catalog = open(&d, json!({}));
     let st = read(&d, catalog);
     let card = |n: &str| st["agents"].as_array().unwrap().iter().find(|c| c["name"] == n).cloned().unwrap();
-    assert_eq!(card("captain-picard")["local"], false);
+    assert_eq!(card("orchestrator")["local"], false);
     assert_eq!(card("tech-lead")["local"], false, "the string too");
     let panes = d.get("/api/panes").as_array().unwrap().len();
-    for (agent, says) in [("captain-picard", "for Fountain only"), ("tech-lead", "for Fountain only")] {
+    for (agent, says) in [("orchestrator", "for Fountain only"), ("tech-lead", "for Fountain only")] {
         let (status, body) =
             d.raw("POST", &format!("/api/blocks/{catalog}/call/run_here"), Some(json!({ "agent": agent })));
         assert_eq!(status, 400, "{body}");
@@ -1807,13 +1807,13 @@ fn what_cant_be_worn_says_why() {
     assert_eq!(d.get("/api/panes").as_array().unwrap().len(), panes, "nothing opened");
 
     // Opened directly (`illogical agent --as`): it says why, and doesn't start.
-    let id = d.open_with(json!({ "type": "agent", "config": { "agent": "claude", "as_fountain": "captain-picard" } }));
+    let id = d.open_with(json!({ "type": "agent", "config": { "agent": "claude", "as_fountain": "orchestrator" } }));
     d.wait_for("the refusal", || d.state(id)["status"] == "exited");
     let st = d.state(id);
     assert_eq!(st["attention"], "needs_input");
     assert_eq!(st["status"], "exited");
     assert!(
-        st["error"].as_str().unwrap().contains("can't wear captain-picard: captain-picard is for Fountain only"),
+        st["error"].as_str().unwrap().contains("can't wear orchestrator: orchestrator is for Fountain only"),
         "{st}"
     );
     assert!(st["pid"].is_null());
@@ -1829,7 +1829,7 @@ fn what_cant_be_worn_says_why() {
     let plain = d.open("hello");
     assert_eq!(d.wait(plain, "idle"), "done");
     let err =
-        agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hi", "as_fountain": "captain-picard" })).unwrap_err();
+        agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hi", "as_fountain": "orchestrator" })).unwrap_err();
     assert!(err.contains("for Fountain only"), "{err}");
     let err = agent_mcp(&d, plain, "start_agent", json!({ "agent": "codex", "prompt": "hi", "as_fountain": "games" }))
         .unwrap_err();
