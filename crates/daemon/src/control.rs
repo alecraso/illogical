@@ -46,6 +46,9 @@ use crate::{
 pub const FILE: &str = "control.json";
 pub const KEY_FILE: &str = "daemon.key";
 const REFRESH: Duration = Duration::from_secs(60);
+/// What this daemon tells control it understands, so control offers only
+/// what every daemon checking a team can take (presigned invites' rosters).
+const FEATURES: &str = "presigned-invites";
 const WATCH: Duration = Duration::from_secs(3);
 
 /// `<state>/control.json`.
@@ -413,7 +416,7 @@ impl Control {
                 certs: AccountCerts,
             }
             let since = saved.roster.as_ref().map_or(0, |r| r.version);
-            let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}")).await?;
+            let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}&features={FEATURES}")).await?;
             let mut certs = saved.team_certs.clone();
             certs.extend(t.certs);
             let mut cur = saved.roster.clone();
@@ -471,7 +474,8 @@ impl Control {
                 certs: AccountCerts,
             }
             let ids: Vec<&str> = pins.keys().map(String::as_str).collect();
-            let got: BTreeMap<String, Got> = self.get(&e, &format!("/api/daemon/teams?ids={}", ids.join(","))).await?;
+            let got: BTreeMap<String, Got> =
+                self.get(&e, &format!("/api/daemon/teams?ids={}&features={FEATURES}", ids.join(","))).await?;
             for (team, g) in got {
                 let Some(pin) = pins.get(&team) else { continue };
                 let mut cur: Option<Roster> = None;

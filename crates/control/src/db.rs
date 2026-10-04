@@ -98,6 +98,12 @@ CREATE TABLE IF NOT EXISTS invites (
     expires INTEGER NOT NULL,
     by_account TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS daemon_watches (
+    daemon TEXT NOT NULL,
+    team TEXT NOT NULL,
+    seen INTEGER NOT NULL,
+    PRIMARY KEY (daemon, team)
+);
 CREATE TABLE IF NOT EXISTS presigned_invites (
     key TEXT PRIMARY KEY,
     team TEXT NOT NULL,
@@ -189,6 +195,9 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     if !has("daemons", "moved")? {
         conn.execute_batch("ALTER TABLE daemons ADD COLUMN moved TEXT")?;
+    }
+    if !has("daemons", "features")? {
+        conn.execute_batch("ALTER TABLE daemons ADD COLUMN features TEXT")?;
     }
     Ok(())
 }
@@ -886,6 +895,36 @@ impl Db {
             .flatten())
     }
 
+    /// What a daemon said it understands, on its last team call (an older
+    /// daemon says nothing).
+    pub fn set_daemon_features(&self, daemon: &str, features: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE daemons SET features = ?2 WHERE id = ?1", params![daemon, features])?;
+        Ok(())
+    }
+
+    /// A daemon checks this team's rosters because a session was shared
+    /// with it (M30), not because it's the team's.
+    pub fn watch_team(&self, daemon: &str, team: &str, now: u64) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO daemon_watches (daemon, team, seen) VALUES (?1, ?2, ?3)
+             ON CONFLICT (daemon, team) DO UPDATE SET seen = excluded.seen",
+            params![daemon, team, now],
+        )?;
+        Ok(())
+    }
+
+    /// Every daemon that checks this team's rosters: its own machines, and
+    /// those that asked about it since `since`. (name, features) each.
+    pub fn team_followers(&self, team: &str, since: u64) -> anyhow::Result<Vec<(String, String)>> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT name, COALESCE(features, '') FROM daemons WHERE team = ?1
+             OR id IN (SELECT daemon FROM daemon_watches WHERE team = ?1 AND seen > ?2) ORDER BY name",
+        )?;
+        let rows = q.query_map(params![team, since], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn team_daemons(&self, team: &str) -> anyhow::Result<Vec<String>> {
         let c = self.c();
         let mut q = c.prepare("SELECT id FROM daemons WHERE team = ?1")?;
@@ -1272,6 +1311,25 @@ mod tests {
             approver: String::new(),
             sig: String::new(),
         }
+    }
+
+    #[test]
+    fn a_teams_followers_and_what_they_understand() {
+        let db = Db::memory();
+        for (id, name) in [("d1", "buildbox"), ("d2", "laptop"), ("d3", "elsewhere")] {
+            db.put_daemon("a1", id, name, &[]).unwrap();
+        }
+        db.set_daemon_team("d1", "t1").unwrap();
+        db.watch_team("d2", "t1", 100).unwrap();
+        // An older daemon never says what it understands.
+        assert_eq!(
+            db.team_followers("t1", 0).unwrap(),
+            vec![("buildbox".to_owned(), String::new()), ("laptop".to_owned(), String::new())]
+        );
+        db.set_daemon_features("d1", "presigned-invites").unwrap();
+        assert_eq!(db.team_followers("t1", 0).unwrap()[0].1, "presigned-invites");
+        // A share that stopped asking ages out.
+        assert_eq!(db.team_followers("t1", 100).unwrap().len(), 1);
     }
 
     #[test]

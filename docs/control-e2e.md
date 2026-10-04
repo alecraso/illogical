@@ -123,8 +123,15 @@ device nobody trusted. Now:
     - Expiry is checked against `at`, which the invitee writes. Control
       also refuses an expired invite by its own clock, but a daemon can't
       tell.
-    - A roster written this way needs daemons from this version on. Older
-      ones refuse `v: 2`, and would stop updating that team's members.
+  - **Older daemons** refuse `v: 2`, and would then stop taking any later
+    version of that team's roster, removals included. So every daemon
+    tells control what it understands on each team call
+    (`features=presigned-invites`), and control makes a presigned invite
+    only when every daemon that checks the team's rosters has said so. That
+    means the team's own machines, plus any machine that asked about the
+    team in the last week because a session was shared with it. Otherwise
+    the owner gets an *Ask me first* link and a note naming the machines to
+    update.
 
 **Verification on the daemon:**
 

@@ -28,6 +28,13 @@ use crate::{
 
 type R = Result<Json<Value>, ApiError>;
 
+/// What a daemon that takes presigned invites' rosters says it understands.
+pub const PRESIGNED_INVITES: &str = "presigned-invites";
+
+/// How long a daemon counts as checking a team it was shared with, since
+/// it last asked (they ask about once a minute).
+const WATCH_TTL_MS: u64 = 7 * 86_400 * 1000;
+
 /// An account's certificates and revocations.
 fn certs_of(app: &App, account: &str) -> anyhow::Result<(Vec<Cert>, Vec<Revocation>)> {
     Ok((app.db.devices(account)?.0, app.db.revocations(account)?))
@@ -265,6 +272,27 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
     }
     if let Some(inv) = b.presigned {
         let now = illogical_e2e::now_ms();
+        // A daemon from before presigned invites refuses the roster one
+        // writes, and then every later one: the team's members would stop
+        // changing there, removals too. Only when every machine that checks
+        // this team's rosters understands them.
+        let behind: Vec<String> = app
+            .db
+            .team_followers(&team, now.saturating_sub(WATCH_TTL_MS))?
+            .into_iter()
+            .filter(|(_, f)| !f.split(',').any(|f| f == PRESIGNED_INVITES))
+            .map(|(name, _)| name)
+            .collect();
+        if !behind.is_empty() {
+            return Err(err(
+                StatusCode::CONFLICT,
+                &format!(
+                    "{} need{} an update before one-click invites work in this team",
+                    behind.join(", "),
+                    if behind.len() == 1 { "s" } else { "" }
+                ),
+            ));
+        }
         let me = r.member(&s.account).ok_or_else(|| err(StatusCode::FORBIDDEN, "owners invite"))?;
         let (c, rv) = certs_of(&app, &s.account)?;
         let signed =
@@ -419,11 +447,15 @@ pub async fn lock(State(app): State<Arc<App>>, s: Session, Path(team): Path<Stri
 pub struct Since {
     #[serde(default)]
     since: u64,
+    /// What this daemon understands, comma-separated (older ones send none).
+    #[serde(default)]
+    features: String,
 }
 
 /// A team daemon's team: rosters after the version it has, every member's
 /// certificates, and whether it's locked.
 pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<Since>) -> R {
+    app.db.set_daemon_features(&d.cert.device, &q.features)?;
     let Some(team) = app.db.daemon_team(&d.cert.device)? else { return Ok(Json(json!({ "team": null }))) };
     let t = app.db.team(&team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
     let rosters: Vec<Roster> =
@@ -443,6 +475,8 @@ pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Q
 #[derive(Deserialize)]
 pub struct TeamIds {
     ids: String,
+    #[serde(default)]
+    features: String,
 }
 
 /// Teams a member's own machine shared sessions with (M30): for each team
@@ -452,6 +486,8 @@ pub struct TeamIds {
 /// left out.
 pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<TeamIds>) -> R {
     let owner = app.db.daemon_account(&d.cert.device)?.unwrap_or_default();
+    app.db.set_daemon_features(&d.cert.device, &q.features)?;
+    let now = illogical_e2e::now_ms();
     let mut out = serde_json::Map::new();
     for team in q.ids.split(',').filter(|t| !t.is_empty()).take(50) {
         let Some(t) = app.db.team(team)? else { continue };
@@ -459,6 +495,7 @@ pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
         if role_in(&parse(&latest)?, &owner).is_none() {
             continue;
         }
+        app.db.watch_team(&d.cert.device, team, now)?;
         let rosters: Vec<Roster> = app.db.rosters(team, 0)?.iter().map(|b| parse(b)).collect::<anyhow::Result<_>>()?;
         let mut accounts: Vec<String> =
             rosters.iter().flat_map(|r| r.members.iter().map(|m| m.account.clone())).collect();

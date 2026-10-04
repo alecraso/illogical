@@ -1055,6 +1055,7 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
   // An invite that waits for an owner's yes (the old way), not presigned.
   const [askFirst, setAskFirst] = useState(false);
   const [linkAsks, setLinkAsks] = useState(false);
+  const [linkWhy, setLinkWhy] = useState("");
   // Which button waits for a second click: "lock", or a member to remove.
   const [confirming, setConfirming] = useState<string | null>(null);
   const owner = t.role === "owner";
@@ -1137,15 +1138,21 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
               disabled={t.locked}
               onClick={() =>
                 act(async () => {
-                  const l = await s.invite(t.team, role, askFirst);
-                  setLinkAsks(askFirst || role === "owner");
-                  setLink(l);
+                  const l = await s.makeInvite(t.team, role, askFirst);
+                  setLinkAsks(l.asks);
+                  setLinkWhy(l.why ?? "");
+                  setLink(l.link);
                 })
               }
             >
               Make a link
             </button>
           </div>
+          {link && linkWhy ? (
+            <p class="dim" data-invite-why>
+              {linkWhy}, so this link asks you first. Rerun the install command on them to update.
+            </p>
+          ) : null}
           {link ? (
             <p>
               {linkAsks
