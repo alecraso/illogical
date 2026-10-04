@@ -1125,8 +1125,25 @@ impl Agent {
     /// before it, else (by policy) start it again or wait.
     fn take_over(&self, inner: &mut Inner) {
         {
-            // Still running from before the restart: carry on with it.
+            // Still running from before the restart: carry on with it. One
+            // an older daemon started without illogical's token in its
+            // environment can't use the references it'd get now (#128):
+            // it starts again (its session is reopened).
+            let stale = by_reference(&inner.cfg.def, &self.ctx)
+                && self.ctx.mcp.is_some()
+                && !self.ctx.dir.join(TOKEN_IN_ENV).exists();
             if self.adopt(inner) {
+                if stale {
+                    info!(block = self.ctx.id, "agent server from an older daemon: starting it again (#128)");
+                    if let Some(l) = inner.link.take() {
+                        l.stop();
+                    }
+                    if let Some(pid) = inner.pid.take() {
+                        link::kill_group(pid, self.ctx.dir.clone());
+                    }
+                    self.spawn(inner);
+                    return;
+                }
                 if inner.status == Status::Starting && inner.cfg.session_id.is_some() && inner.ours.is_empty() {
                     inner.status = Status::Ready;
                 }
@@ -1263,12 +1280,16 @@ impl Agent {
                 if let Some(w) = &inner.worn {
                     env.extend(w.env.iter().cloned());
                 }
+                let marker = self.ctx.dir.join(TOKEN_IN_ENV);
                 if by_reference(&inner.cfg.def, &self.ctx)
                     && let Some(link) = &self.ctx.mcp
                 {
                     let token = link.tokens.block_token(self.ctx.id);
                     env.push((MCP_TOKEN_ENV.into(), token.clone()));
                     inner.token = Some(token);
+                    let _ = std::fs::write(&marker, b"");
+                } else {
+                    let _ = std::fs::remove_file(&marker);
                 }
                 // Claude Code's and Codex's adapters: say what's missing,
                 // and how to install it, rather than fail to run it (#111).
@@ -1815,11 +1836,17 @@ fn launch_meta(ctx: &BlockCtx, g: &Inner) -> Option<Value> {
 pub const MCP_TOKEN_ENV: &str = "ILLOGICAL_MCP_BLOCK_TOKEN";
 
 /// Whether this block's MCP credentials go by reference (#128, M44): a
-/// local Claude Code, which expands `${…}` in its MCP config itself.
-/// Codex and other ACP agents aren't known to, so they get values.
+/// local Claude Code (its own adapter or another command), which expands
+/// `${…}` in its MCP config itself. Codex and other ACP agents aren't
+/// known to, so they get values.
 fn by_reference(def: &Def, ctx: &BlockCtx) -> bool {
-    def.agent == Kind::Claude && ctx.sprite.is_none() && def.command.is_empty()
+    def.agent == Kind::Claude && ctx.sprite.is_none()
 }
+
+/// In the block's directory while its agent server has the token in its
+/// environment (#128): one started by an older daemon hasn't, and is
+/// started again when taken over.
+const TOKEN_IN_ENV: &str = "mcp-token-env";
 
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
     // A worn agent never opens a plain session (M44).

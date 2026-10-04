@@ -1023,6 +1023,28 @@ fn a_worn_agent_taken_over_after_a_restart() {
     }
     d.post(&format!("/api/panes/{id}/close"), json!({}));
     d.wait_for("the adapter to go", || !alive(pid));
+
+    // #128, upgrading: an ordinary Claude Code block whose adapter an older
+    // daemon started (no token in its environment, so no marker) is
+    // started again when taken over, and its illogical MCP still works.
+    let config = json!({ "agent": "claude", "cwd": w.work, "prompt": "hello" });
+    let plain = d.open_with(json!({ "type": "agent", "config": config }));
+    assert_eq!(d.wait(plain, "idle"), "done", "{}", d.state(plain));
+    let old = d.state(plain)["pid"].as_u64().unwrap();
+    let marker = d.state.join(format!("blocks/{plain}/mcp-token-env"));
+    assert!(marker.is_file(), "written when it started with the token in its environment");
+    d.restart_service();
+    d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{plain}"), None).0 == 200);
+    d.wait_for("ready", || d.state(plain)["status"] == "ready");
+    assert_eq!(d.state(plain)["pid"].as_u64(), Some(old), "with its marker: taken over");
+    std::fs::remove_file(&marker).unwrap();
+    d.restart_service();
+    d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{plain}"), None).0 == 200);
+    d.wait_for("started again", || d.state(plain)["pid"].as_u64().is_some_and(|p| p != old));
+    d.wait_for("ready", || d.state(plain)["status"] == "ready");
+    d.wait_for("the old one gone", || !alive(old));
+    assert!(marker.is_file());
+    agent_mcp(&d, plain, "list", json!({})).expect("illogical's MCP server, through the reference");
 }
 
 #[test]
