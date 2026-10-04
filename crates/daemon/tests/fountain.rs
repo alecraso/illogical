@@ -785,7 +785,10 @@ fn run_here_wears_the_agent() {
     let by = |n: &str| mcp.iter().find(|m| m["name"] == n).cloned().unwrap_or_default();
     assert_eq!(by("from-infisical")["headers"], json!([{ "name": "Authorization", "value": format!("Bearer {INF}") }]));
     assert_eq!(by("from-gh")["headers"][0]["value"], format!("Bearer {GH}"));
-    assert_eq!(by("from-shell"), json!({ "name": "from-shell", "command": "python3", "args": ["-c", "pass", SH], "env": [{ "name": "KEPT", "value": "${LITERAL}" }] }));
+    assert_eq!(
+        by("from-shell"),
+        json!({ "name": "from-shell", "command": "python3", "args": ["-c", "pass", SH], "env": [{ "name": "KEPT", "value": "${LITERAL}" }] })
+    );
     assert_eq!(by("open")["type"], "http");
     assert!(by("illogical").is_object(), "illogical's own server too");
     assert!(by("unset").is_null() && by("signs-in").is_null() && by("connected").is_null());
@@ -803,7 +806,10 @@ fn run_here_wears_the_agent() {
     assert_eq!(d.wait(plain, "idle"), "done");
     let read_output = agent_mcp(&d, plain, "read_output", json!({ "pane": id })).unwrap();
     let (_, capture) = d.raw("GET", &format!("/api/panes/{id}/capture"), None);
-    assert!(capture.contains("As the Fountain agent fixture-wearer, locally. Skills: inline-one, code-review, iterate-pr."), "{capture}");
+    assert!(
+        capture.contains("As the Fountain agent fixture-wearer, locally. Skills: inline-one, code-review, iterate-pr."),
+        "{capture}"
+    );
     assert!(capture.contains("Didn't carry over: connected"), "{capture}");
     let surfaces = [
         ("state", d.state(id).to_string()),
@@ -909,8 +915,11 @@ fn what_cant_be_worn_says_why() {
     let (_, body) =
         d.raw("POST", &format!("/api/blocks/{catalog}/call/run_here"), Some(json!({ "agent": codex["name"] })));
     assert!(body.contains("is a codex agent"), "{body}");
-    let (status, body) =
-        d.raw("POST", &format!("/api/blocks/{catalog}/call/run_here"), Some(json!({ "agent": "games", "cwd": "/nonexistent/x" })));
+    let (status, body) = d.raw(
+        "POST",
+        &format!("/api/blocks/{catalog}/call/run_here"),
+        Some(json!({ "agent": "games", "cwd": "/nonexistent/x" })),
+    );
     assert_eq!(status, 400);
     assert!(body.contains("isn't a directory"), "{body}");
     assert_eq!(d.get("/api/panes").as_array().unwrap().len(), panes, "nothing opened");
@@ -921,7 +930,10 @@ fn what_cant_be_worn_says_why() {
     let st = d.state(id);
     assert_eq!(st["attention"], "needs_input");
     assert_eq!(st["status"], "exited");
-    assert!(st["error"].as_str().unwrap().contains("can't wear captain-picard: captain-picard is for Fountain only"), "{st}");
+    assert!(
+        st["error"].as_str().unwrap().contains("can't wear captain-picard: captain-picard is for Fountain only"),
+        "{st}"
+    );
     assert!(st["pid"].is_null());
     // Not on a VM, and not for another agent.
     let (status, _) = d.raw(
@@ -934,12 +946,14 @@ fn what_cant_be_worn_says_why() {
     // start_agent: refused up front, with the reason; opened for one that can be.
     let plain = d.open("hello");
     assert_eq!(d.wait(plain, "idle"), "done");
-    let err = agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hi", "as_fountain": "captain-picard" })).unwrap_err();
-    assert!(err.contains("for Fountain only"), "{err}");
     let err =
-        agent_mcp(&d, plain, "start_agent", json!({ "agent": "codex", "prompt": "hi", "as_fountain": "games" })).unwrap_err();
+        agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hi", "as_fountain": "captain-picard" })).unwrap_err();
+    assert!(err.contains("for Fountain only"), "{err}");
+    let err = agent_mcp(&d, plain, "start_agent", json!({ "agent": "codex", "prompt": "hi", "as_fountain": "games" }))
+        .unwrap_err();
     assert!(err.contains("as_fountain is for agent claude"), "{err}");
-    let r = agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hello", "as_fountain": "games", "cwd": w.work })).unwrap();
+    let r = agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hello", "as_fountain": "games", "cwd": w.work }))
+        .unwrap();
     let games = r["block"].as_u64().unwrap();
     assert_eq!(d.wait(games, "idle"), "done", "{}", d.state(games));
     assert_eq!(d.state(games)["worn"]["skills"], json!(["love2d", "pixijs", "screenshots-in-prs"]));

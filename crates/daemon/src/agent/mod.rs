@@ -1699,8 +1699,7 @@ fn redacted<'a>(frame: &'a Value, secrets: &[String]) -> std::borrow::Cow<'a, Va
         return Cow::Borrowed(frame);
     }
     let mut f = frame.clone();
-    for s in f["params"]["mcpServers"].as_array_mut().into_iter().flatten().filter(|s| ours(s) || !secrets.is_empty())
-    {
+    for s in f["params"]["mcpServers"].as_array_mut().into_iter().flatten().filter(|s| ours(s) || !secrets.is_empty()) {
         for key in ["headers", "env"] {
             for kv in s.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
                 kv["value"] = json!("<redacted>");
@@ -1736,9 +1735,9 @@ fn imported_meta(g: &Inner) -> Option<Value> {
 }
 
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
-    let meta = imported_meta(g).or_else(|| worn_meta(ctx, g)).unwrap_or_else(|| {
-        g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default()
-    });
+    let meta = imported_meta(g)
+        .or_else(|| worn_meta(ctx, g))
+        .unwrap_or_else(|| g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default());
     let mcp = g.servers(ctx);
     g.request("session/new", json!({ "cwd": cwd, "mcpServers": mcp, "_meta": meta }));
 }

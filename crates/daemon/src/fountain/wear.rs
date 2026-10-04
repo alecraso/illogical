@@ -210,7 +210,11 @@ async fn probe_oauth(url: &str) -> bool {
 /// Why `a` can't be worn here, if it can't.
 pub fn refusal(a: &Agent) -> Option<String> {
     if a.runtime != "claude" {
-        let rt = if a.runtime.is_empty() { "an agent of another runtime".to_owned() } else { format!("a {} agent", a.runtime) };
+        let rt = if a.runtime.is_empty() {
+            "an agent of another runtime".to_owned()
+        } else {
+            format!("a {} agent", a.runtime)
+        };
         return Some(format!("{} is {rt}: Run here wears claude agents only; Run on Fountain", a.name));
     }
     if !catalog::local_ok(a) {
@@ -432,7 +436,8 @@ pub async fn resolve(names: &BTreeSet<String>, l: &Lookup<'_>) -> Found {
     }
     // 1. Infisical, through agent-specs' mapping.
     if let Some(specs) = l.specs.as_ref().filter(|d| d.join(".infisical.json").is_file()) {
-        let parsed = std::fs::read_to_string(specs.join("dist/fountain.yaml")).map(|y| parse_specs(&y)).unwrap_or_default();
+        let parsed =
+            std::fs::read_to_string(specs.join("dist/fountain.yaml")).map(|y| parse_specs(&y)).unwrap_or_default();
         let mapped = l
             .environment
             .as_ref()
@@ -447,7 +452,9 @@ pub async fn resolve(names: &BTreeSet<String>, l: &Lookup<'_>) -> Found {
                     Some(v) if v.starts_with("infisical://") => InfisicalRef::parse(v),
                     // A literal in agent-specs (a git identity): public.
                     Some(v) => return Some((name.clone(), v.clone(), "agent-specs".to_owned())),
-                    None => Some(InfisicalRef { project: None, env: "dev".into(), path: "/".into(), key: name.clone() }),
+                    None => {
+                        Some(InfisicalRef { project: None, env: "dev".into(), path: "/".into(), key: name.clone() })
+                    }
                 }?;
                 let mut argv = vec![
                     infisical,
@@ -465,7 +472,9 @@ pub async fn resolve(names: &BTreeSet<String>, l: &Lookup<'_>) -> Found {
                     argv.extend(["--projectId".into(), p.clone()]);
                 }
                 match run(&argv, Some(&specs), l.env).await {
-                    Ok(v) if !v.trim().is_empty() => Some((name.clone(), v.trim_end_matches(['\n', '\r']).to_owned(), target.label())),
+                    Ok(v) if !v.trim().is_empty() => {
+                        Some((name.clone(), v.trim_end_matches(['\n', '\r']).to_owned(), target.label()))
+                    }
                     Ok(_) => None,
                     Err(e) => {
                         info!(var = name, error = e, "not in Infisical");
@@ -564,7 +573,12 @@ fn age(p: &Path) -> Option<Duration> {
 
 /// `owner/repo`, shallow-cloned into the shared cache (fetched again once
 /// it's a day old; an offline fetch keeps what's there).
-async fn github(cache: &Path, source: &str, git_ref: Option<&str>, env: &[(String, String)]) -> Result<PathBuf, String> {
+async fn github(
+    cache: &Path,
+    source: &str,
+    git_ref: Option<&str>,
+    env: &[(String, String)],
+) -> Result<PathBuf, String> {
     static SOURCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$").unwrap());
     if !SOURCE.is_match(source) || source.contains("..") {
         return Err(format!("{source:?} isn't owner/repo"));
@@ -599,7 +613,17 @@ async fn github(cache: &Path, source: &str, git_ref: Option<&str>, env: &[(Strin
         let d = dir.display().to_string();
         let what = git_ref.unwrap_or("HEAD").to_owned();
         let fetched = run(
-            &["git".into(), "-C".into(), d.clone(), "fetch".into(), "-q".into(), "--depth".into(), "1".into(), "origin".into(), what],
+            &[
+                "git".into(),
+                "-C".into(),
+                d.clone(),
+                "fetch".into(),
+                "-q".into(),
+                "--depth".into(),
+                "1".into(),
+                "origin".into(),
+                what,
+            ],
             None,
             env,
         )
@@ -684,8 +708,11 @@ pub async fn bundle(a: &Agent, cache: &Path, env: &[(String, String)]) -> Result
         "description": format!("Skills of the Fountain agent {}, worn locally by illogical", a.name),
         "version": "0.0.0",
     });
-    std::fs::write(tmp.join("plugin/.claude-plugin/plugin.json"), serde_json::to_vec_pretty(&manifest).unwrap_or_default())
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        tmp.join("plugin/.claude-plugin/plugin.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    )
+    .map_err(|e| e.to_string())?;
     let mut c = Contents {
         agent: a.name.clone(),
         id: a.id.clone(),
@@ -750,7 +777,8 @@ pub async fn bundle(a: &Agent, cache: &Path, env: &[(String, String)]) -> Result
         }
     }
     std::fs::write(tmp.join("system.md"), &system).map_err(|e| e.to_string())?;
-    std::fs::write(tmp.join("bundle.json"), serde_json::to_vec_pretty(&c).unwrap_or_default()).map_err(|e| e.to_string())?;
+    std::fs::write(tmp.join("bundle.json"), serde_json::to_vec_pretty(&c).unwrap_or_default())
+        .map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(e) = std::fs::rename(&tmp, &dir) {
         let _ = std::fs::remove_dir_all(&tmp);
@@ -852,7 +880,11 @@ pub fn model(a: &Agent) -> Option<String> {
 
 /// Turn the agent's servers into what the session gets: substituted, those
 /// that can't come left out with why.
-pub async fn servers(a: &Agent, found: &Found, probe: bool) -> (Vec<Value>, Vec<ServerInfo>, Vec<LeftOut>, Vec<String>) {
+pub async fn servers(
+    a: &Agent,
+    found: &Found,
+    probe: bool,
+) -> (Vec<Value>, Vec<ServerInfo>, Vec<LeftOut>, Vec<String>) {
     let (mut list, mut infos, mut left, mut secrets) = (vec![], vec![], vec![], vec![]);
     let mut probes = vec![];
     for (name, s) in &a.mcp_servers {
@@ -912,7 +944,8 @@ pub async fn servers(a: &Agent, found: &Found, probe: bool) -> (Vec<Value>, Vec<
     }
     // Ask the ones without credentials whether they want an OAuth sign-in.
     let answers = futures_util::future::join_all(probes.iter().map(|(_, _, url)| probe_oauth(url))).await;
-    let out: BTreeSet<usize> = probes.iter().zip(answers).filter(|(_, oauth)| *oauth).map(|((i, _, _), _)| *i).collect();
+    let out: BTreeSet<usize> =
+        probes.iter().zip(answers).filter(|(_, oauth)| *oauth).map(|((i, _, _), _)| *i).collect();
     for i in out.iter().rev() {
         let s = list.remove(*i);
         let info = infos.remove(*i);
@@ -1089,7 +1122,9 @@ mod tests {
             json!({ "type": "http", "name": "github", "url": "https://api.githubcopilot.com/mcp/", "headers": [{ "name": "Authorization", "value": "Bearer t" }] })
         );
         assert!(has_auth(&http));
-        let stdio = acp_server("chant", &json!({ "command": "npx", "args": ["@x/chant", "serve"], "env": { "K": "v" } })).unwrap();
+        let stdio =
+            acp_server("chant", &json!({ "command": "npx", "args": ["@x/chant", "serve"], "env": { "K": "v" } }))
+                .unwrap();
         assert_eq!(
             stdio,
             json!({ "name": "chant", "command": "npx", "args": ["@x/chant", "serve"], "env": [{ "name": "K", "value": "v" }] })
@@ -1137,10 +1172,7 @@ mod tests {
     async fn servers_resolve_or_are_left_out() {
         let pr = named("pr-reviewer");
         // The fixture's variables are all ${X}.
-        let found = Found {
-            values: vars(&[("X", "fake-secret-value-123")]),
-            from: vars(&[("X", "gh auth token")]),
-        };
+        let found = Found { values: vars(&[("X", "fake-secret-value-123")]), from: vars(&[("X", "gh auth token")]) };
         let (list, infos, left, secrets) = servers(&pr, &found, false).await;
         let names: Vec<&str> = list.iter().map(|s| s["name"].as_str().unwrap()).collect();
         assert_eq!(names, ["context7", "github"]);
@@ -1173,10 +1205,7 @@ mod tests {
         assert_eq!(eng["GIT_AUTHOR_NAME"], "someone");
         assert_eq!(s.secrets[&("Vault".to_owned(), "v".to_owned())]["GITHUB_TOKEN"], "infisical:///dev/OTHER");
         let r = InfisicalRef::parse(&eng["GITHUB_TOKEN"]).unwrap();
-        assert_eq!(
-            r,
-            InfisicalRef { project: None, env: "dev".into(), path: "/".into(), key: "GITHUB_TOKEN".into() }
-        );
+        assert_eq!(r, InfisicalRef { project: None, env: "dev".into(), path: "/".into(), key: "GITHUB_TOKEN".into() });
         assert_eq!(r.label(), "Infisical dev/GITHUB_TOKEN");
         let deep = InfisicalRef::parse(&eng["DEEP"]).unwrap();
         assert_eq!(
