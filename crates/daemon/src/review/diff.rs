@@ -1,10 +1,18 @@
 //! Diff blocks (M11): what changed in a git repository on the block's
 //! host, read-only.
 //!
-//! Config `{repo, rev_a?, rev_b?}`. No revisions: the working tree
-//! (staged, unstaged and untracked) against `HEAD`; one: that revision
-//! against the working tree (untracked too); two: the range. `repo` is any
+//! Config `{repo, rev_a?, rev_b?, run_as?}`. No revisions: the working
+//! tree (staged, unstaged and untracked) against `HEAD`; one: that revision
+//! against the working tree (untracked too); two: the range. A revision may
+//! be a tree (git's empty tree: everything in the repository). `repo` is any
 //! directory in the repository.
+//!
+//! `run_as: "fountain"` (M45b, from the Fountain runner view's *Changes*):
+//! git runs as the runner's user, through `sudo -n -u fountain /bin/bash
+//! -c` (the one form M45a's sudoers rule allows), for a sandbox illogicald
+//! can't read itself. Only that user, only on this host, and `repo` must be
+//! an absolute path; only the owner opens blocks other than agents, so only
+//! the owner can ask for it.
 //!
 //! One `sh -c` on the host does the lot (one exec on a VM): find the
 //! repository's top, check the revisions, `git diff -M`, then each
@@ -48,6 +56,8 @@ const UNTRACKED_MAX: usize = 200;
 const OPEN_MAX: usize = 12;
 /// How often it looks again while drawn, here (a machine: every 3s).
 const POLL: Duration = Duration::from_secs(2);
+/// How often a `run_as` diff looks again while drawn.
+const SUDO_POLL: Duration = Duration::from_secs(15);
 /// git's empty tree: what a repository with no commits is compared with.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -63,7 +73,7 @@ cd -- "$r" 2>/dev/null || { printf 'err no such directory: %s\n' "$r"; exit 0; }
 command -v git >/dev/null 2>&1 || { echo "err git isn't installed here"; exit 0; }
 top=$(git rev-parse --show-toplevel 2>&1) || { printf 'err %s\n' "$(printf '%s\n' "$top" | head -n 1)"; exit 0; }
 cd -- "$top" || exit 0
-for x; do git rev-parse -q --verify "$x^{commit}" >/dev/null 2>&1 || { printf 'err no such revision: %s\n' "$x"; exit 0; }; done
+for x; do git rev-parse -q --verify "$x^{tree}" >/dev/null 2>&1 || { printf 'err no such revision: %s\n' "$x"; exit 0; }; done
 if [ $# -eq 0 ]; then
   if git rev-parse -q --verify HEAD >/dev/null 2>&1; then set -- HEAD; else set -- EMPTY; fi
 fi
@@ -103,6 +113,9 @@ struct Config {
     /// Files open when it was saved.
     #[serde(default)]
     open: Vec<String>,
+    /// Run git as this user (only `fountain`, M45b).
+    #[serde(default)]
+    run_as: Option<String>,
 }
 
 /// One file in the diff.
@@ -149,6 +162,9 @@ struct State {
     rev_b: Option<String>,
     /// What it's compared with, in words.
     against: String,
+    /// Whose git it runs (M45b: `fountain`), when not yours.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_as: Option<String>,
     files: Vec<Value>,
     add: u32,
     del: u32,
@@ -197,13 +213,38 @@ impl Diff {
         }
         let repo = config.repo.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| "~".into());
         let runner = Runner::of(&ctx);
-        // Here, the same places are refused as for `/api/fs`.
-        if let Ok(Runner::Local { .. }) = &runner
+        if let Some(user) = &config.run_as {
+            if user != crate::fountain::runner::USER {
+                return Err(format!("a diff runs git as you, or as {} (not {user})", crate::fountain::runner::USER));
+            }
+            if ctx.sprite.is_some() {
+                return Err(format!("run_as {user} is for this host's sandboxes"));
+            }
+            if !repo.starts_with('/') || repo.split('/').any(|c| c == "..") {
+                return Err(format!("run_as {user} needs an absolute directory: {repo}"));
+            }
+            // Only inside the runner's sandboxes (the scripts check the
+            // real path too).
+            let root = crate::fountain::runner::unit()
+                .and_then(|u| u.root)
+                .ok_or_else(|| format!("run_as {user} needs this host's fountain-runner unit and its --root"))?;
+            // The root as written, or its canonical path (macOS's /var is
+            // /private/var; Changes passes real paths). Canonicalizing may
+            // fail here (the root is fountain's): then as written only.
+            let under = |r: &str| repo.starts_with(&format!("{}/", r.trim_end_matches('/')));
+            let canonical = std::fs::canonicalize(&root).ok().map(|p| p.display().to_string());
+            if !under(&root) && !canonical.as_deref().is_some_and(under) {
+                return Err(format!("run_as {user} is for the runner's sandboxes, under {root}: not {repo}"));
+            }
+        } else if let Ok(Runner::Local { .. }) = &runner
             && !ctx.restoring
         {
+            // Here, the same places are refused as for `/api/fs`.
             ctx.fs.resolve(&repo).map_err(|e| e.to_string())?;
         }
+        let empty = |r: &str| r == EMPTY_TREE;
         let against = match (&config.rev_a, &config.rev_b) {
+            (Some(a), None) if empty(a) => "everything in it (against an empty tree)".to_owned(),
             (None, _) => "the working tree against HEAD".to_owned(),
             (Some(a), None) => format!("the working tree against {a}"),
             (Some(a), Some(b)) => format!("{a}..{b}"),
@@ -212,6 +253,7 @@ impl Diff {
             rev_a: config.rev_a.clone(),
             rev_b: config.rev_b.clone(),
             against,
+            run_as: config.run_as.clone(),
             loading: !ctx.restoring,
             ..Default::default()
         };
@@ -256,7 +298,23 @@ impl Diff {
             OUT_MAX.to_string(),
         ];
         args.extend(self.config.rev_a.iter().chain(self.config.rev_b.iter()).cloned());
-        let (out, _) = match runner.sh(&script(), &args).await {
+        let run = match &self.config.run_as {
+            // Through sudo, with git hardened (no global or system config,
+            // hooks, fsmonitor, pager, external diff, filters), and only
+            // inside the runner's root, really.
+            Some(_) => {
+                let root = crate::fountain::runner::unit().and_then(|u| u.root).unwrap_or_default();
+                let s = format!(
+                    "{}{}{}",
+                    crate::fountain::runner::GIT_SAFE,
+                    crate::fountain::runner::inside_prelude(&root),
+                    script()
+                );
+                crate::fountain::runner::sudo_sh(&s, &args).await
+            }
+            None => runner.sh(&script(), &args).await,
+        };
+        let (out, _) = match run {
             Ok(o) => o,
             Err(e) => return self.failed(e),
         };
@@ -362,7 +420,11 @@ impl Diff {
     /// Poll while drawn.
     fn watch(&self, round: u64) {
         let Some(me) = self.me.upgrade() else { return };
-        let every = super::every(self.runner.as_ref().is_ok_and(Runner::local), POLL);
+        // As `fountain` (M45b) every read is a sudo, which sudo logs: less often.
+        let every = match self.config.run_as {
+            Some(_) => SUDO_POLL,
+            None => super::every(self.runner.as_ref().is_ok_and(Runner::local), POLL),
+        };
         self.ctx.rt.spawn(async move {
             while me.live.on(round) {
                 me.load().await;
@@ -378,12 +440,16 @@ impl Block for Diff {
     }
 
     fn config(&self) -> Value {
-        json!({
+        let mut v = json!({
             "repo": self.config.repo,
             "rev_a": self.config.rev_a,
             "rev_b": self.config.rev_b,
             "open": *self.open.lock().unwrap(),
-        })
+        });
+        if let Some(u) = &self.config.run_as {
+            v["run_as"] = json!(u);
+        }
+        v
     }
 
     fn state(&self) -> Value {
@@ -455,10 +521,15 @@ impl Block for Diff {
     fn summary(&self) -> Summary {
         let st = self.state.lock().unwrap();
         let local = self.runner.as_ref().is_ok_and(Runner::local);
-        let cwd = st.repo.clone().or_else(|| self.config.repo.clone());
+        // A sandbox's directory isn't one of yours to start things in.
+        let cwd = match self.config.run_as {
+            Some(_) => None,
+            None => st.repo.clone().or_else(|| self.config.repo.clone()),
+        };
+        let who = self.config.run_as.as_deref().map(|u| format!(" (as {u})")).unwrap_or_default();
         Summary {
-            project: cwd.as_deref().and_then(|c| super::project(c, local)),
-            title: Some(format!("Changes in {}", st.name.as_deref().unwrap_or("…"))),
+            project: cwd.as_deref().and_then(|c| super::project(c, local && self.config.run_as.is_none())),
+            title: Some(format!("Changes in {}{who}", st.name.as_deref().unwrap_or("…"))),
             cwd,
             ..Default::default()
         }

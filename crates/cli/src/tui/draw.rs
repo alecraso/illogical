@@ -166,19 +166,41 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 // the filter.
                 let s = app.blocks.get(&pid);
                 let at = |k: &str| s.and_then(|s| s[k].as_str().map(str::to_owned));
-                let shown = s.and_then(|s| s["agents"].as_array().map(Vec::len)).unwrap_or(0);
-                let total = s.and_then(|s| s["total"].as_u64()).unwrap_or(0);
-                let line = match (at("error"), s.is_some_and(|s| s["loading"] == true)) {
-                    (Some(e), _) => format!("%{pid} Fountain agents: {e}"),
-                    (None, true) => format!("%{pid} Fountain agents: reading…"),
-                    (None, false) if shown as u64 == total => {
-                        format!("%{pid} Fountain agents: {total}  (`illogical capture %{pid}`)")
-                    }
-                    (None, false) => {
-                        format!("%{pid} Fountain agents: {shown} of {total}  (`illogical capture %{pid}`)")
-                    }
-                };
-                note(buf, r, &line);
+                // M45b: the runner view, on one line: this host's runner,
+                // its sandboxes, and what wants you.
+                if let Some(rv) = s.filter(|s| s["view"] == "runner").map(|s| &s["runner"]) {
+                    let this = &rv["this"];
+                    let line = match (at("error"), rv.is_object(), this.is_object()) {
+                        (Some(e), _, _) => format!("%{pid} Fountain runner: {e}"),
+                        (None, false, _) => format!("%{pid} Fountain runner: reading…"),
+                        (None, true, false) => match rv["unit"]["name"].as_str() {
+                            Some(n) => format!("%{pid} Fountain runner {n}: not on Fountain"),
+                            None => format!("%{pid} Fountain runners: this host runs none"),
+                        },
+                        (None, true, true) => format!(
+                            "%{pid} Fountain runner {}: {} · {} sandboxes{}  (`illogical capture %{pid}`)",
+                            this["name"].as_str().unwrap_or("?"),
+                            if this["online"] == true { "online" } else { "offline" },
+                            rv["sandboxes"].as_array().map_or(0, Vec::len),
+                            rv["attention"].as_str().map(|a| format!(" · {a}")).unwrap_or_default()
+                        ),
+                    };
+                    note(buf, r, &line);
+                } else {
+                    let shown = s.and_then(|s| s["agents"].as_array().map(Vec::len)).unwrap_or(0);
+                    let total = s.and_then(|s| s["total"].as_u64()).unwrap_or(0);
+                    let line = match (at("error"), s.is_some_and(|s| s["loading"] == true)) {
+                        (Some(e), _) => format!("%{pid} Fountain agents: {e}"),
+                        (None, true) => format!("%{pid} Fountain agents: reading…"),
+                        (None, false) if shown as u64 == total => {
+                            format!("%{pid} Fountain agents: {total}  (`illogical capture %{pid}`)")
+                        }
+                        (None, false) => {
+                            format!("%{pid} Fountain agents: {shown} of {total}  (`illogical capture %{pid}`)")
+                        }
+                    };
+                    note(buf, r, &line);
+                }
             }
             Some(BlockType::Forge) => {
                 // M36: the PR on one line, then what waits on you, each a

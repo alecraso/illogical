@@ -1,0 +1,17 @@
+{
+ "data": [
+  {
+   "arch": "amd64",
+   "connected_at": "2026-10-04T00:37:51Z",
+   "created_at": "2026-10-04T00:37:51Z",
+   "hostname": null,
+   "id": "edbc518d-70b9-4f45-8db2-73f57b1de3f0",
+   "last_seen_at": "2026-10-04T01:05:12Z",
+   "name": "runner-1",
+   "online": true,
+   "os": "linux",
+   "root": "/srv/fountain/sandboxes",
+   "version": "v0.21.0"
+  }
+ ]
+}

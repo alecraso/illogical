@@ -92,6 +92,19 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   process.env.ILLOGICAL_FOUNTAIN_BIN = join(dir, "fountain");
   for (const k of ["FOUNTAIN_API_KEY", "FOUNTAIN_BASE_URL", "FOUNTAIN_PROFILE"]) delete process.env[k];
   process.env.ILLOGICAL_FOUNTAIN_POLL_MS ??= "1500";
+  // M45b: the runner view's unit file (fountain-runner.spec.ts writes it;
+  // without it this host isn't a runner), a `systemctl` that says active,
+  // and a `sudo` that runs bash as this user: no test runs sudo.
+  process.env.ILLOGICAL_FOUNTAIN_UNIT_FILE = join(dir, "fountain-runner.service");
+  writeFileSync(join(dir, "systemctl"), `#!/bin/sh\n[ "$1 $2" = "is-active fountain-runner" ] && echo active\n`);
+  chmodSync(join(dir, "systemctl"), 0o755);
+  process.env.ILLOGICAL_FOUNTAIN_SYSTEMCTL = join(dir, "systemctl");
+  writeFileSync(
+    join(dir, "sudo"),
+    `#!/bin/sh\n[ "$1 $2 $3 $4" = "-n -u fountain /bin/bash" ] || { echo "sudo: a password is required" >&2; exit 1; }\nshift 4\nexec /bin/bash "$@"\n`,
+  );
+  chmodSync(join(dir, "sudo"), 0o755);
+  process.env.ILLOGICAL_FOUNTAIN_SUDO = join(dir, "sudo");
   // M44: a worn agent's variables never reach the person's Infisical or
   // gh (and its bundle goes in the run's own cache: the daemon's command).
   process.env.ILLOGICAL_INFISICAL_BIN = "/bin/false";

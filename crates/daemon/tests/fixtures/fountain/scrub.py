@@ -2,6 +2,14 @@
 """Make the Fountain fixtures from raw API answers (M43).
 
     scrub.py AGENTS.json [RUNNERS.json] [ENVIRONMENTS.json]
+    scrub.py --runner-view RUNNERS.json SANDBOXES.json
+
+The second form (M45b) writes runner-view-runners.json and
+runner-view-sandboxes.json: the runners as the first runner's host sees
+them, and the sandboxes (`GET /api/sandboxes?status=...`) on runners plus a
+few others. Runners keep their roots (home directories scrubbed, so a
+sandbox's path stays under its runner's root); conversation titles become
+"conversation N".
 
 Each input is what `GET /api/<thing>` (or `fountain agent list --json`)
 returned: `{"data": [...]}` or a bare list. Writes agents.json, runners.json
@@ -180,10 +188,43 @@ def write(name, data):
     print(f"wrote {name}: {len(data)} rows, {len(out)} bytes")
 
 
+def view_runner(r, n):
+    r = deep(dict(r))
+    r["name"] = f"runner-{n}"
+    r["hostname"] = None
+    return r
+
+
+def view_sandboxes(rows_, names):
+    out, others = [], 0
+    for s in rows_:
+        if s.get("provider") != "runner":
+            others += 1
+            if others > 2:
+                continue
+        s = deep(dict(s))
+        r = s.get("runner")
+        if isinstance(r, dict):
+            r["hostname"] = None
+            if r.get("id"):
+                r["name"] = names.get(r["id"], "runner-x")
+        for n, c in enumerate(s.get("conversations") or [], 1):
+            if c.get("title"):
+                c["title"] = f"conversation {n}"
+        out.append(s)
+    return out
+
+
 def main():
     args = sys.argv[1:]
     if not args:
         sys.exit(__doc__)
+    if args[0] == "--runner-view":
+        runners = [view_runner(r, n) for n, r in enumerate(rows(args[1]), 1)]
+        names = {r["id"]: r["name"] for r in runners}
+        write("runner-view-runners.json", runners)
+        write("runner-view-sandboxes.json", view_sandboxes(rows(args[2]), names))
+        return
     write("agents.json", [agent(a) for a in rows(args[0])])
     if len(args) > 1:
         write("runners.json", [runner(r, n) for n, r in enumerate(rows(args[1]), 1)])

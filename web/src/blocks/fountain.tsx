@@ -10,6 +10,14 @@
 // with the reason for the ones written for Fountain only) and *Spec* (the
 // agent-specs file, else Fountain's page). Everything drawn
 // comes from the daemon's state; viewers get the list without the buttons.
+//
+// `view: runner` (M45b): this host as the account's Fountain runner. Its
+// status (online, version against the installed CLI, last seen, how many
+// sandboxes), the other runners, what wants you (the rail's line), and its
+// sandboxes with their conversations: *Follow* (an agent block on the
+// conversation), *Changes* (a diff per git checkout, read as `fountain`)
+// and *Shell* (a terminal as `fountain` in the sandbox). Those three are
+// the owner's: an editor sees the list.
 
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -25,17 +33,34 @@ interface Card {
   source: Source | null; app: string | null; local: boolean; local_why: string | null;
 }
 interface Filter { query?: string; sources?: Source[]; runtimes?: string[]; providers?: string[] }
+interface RunnerRow {
+  id: string; name: string; online: boolean; version: string | null; os: string | null; arch: string | null;
+  root: string | null; last_seen_at: string | null; last_seen_ms: number | null;
+}
+interface Conversation { id: string; status: string; mid_turn: boolean; runtime: string | null; title: string | null; inserted_at: string | null }
+interface SandboxRow {
+  id: string; name: string; status: string; parked: boolean; path: string | null; agent_id: string | null; agent: string | null;
+  mode: string | null; inserted_at: string | null; conversations: Conversation[];
+}
+interface RunnerView {
+  unit: { name: string; root: string | null; bin: string | null } | null; unit_active: boolean | null; local_version: string | null;
+  this: RunnerRow | null; others: RunnerRow[]; sandboxes: SandboxRow[]; sandboxes_error: string | null; attention: string | null;
+  offline_since_ms: number | null; note: string;
+}
 export interface FountainState {
-  view: "catalog"; profile: string | null; profiles: string[]; base_url: string | null; key_from: "env" | "file" | null;
+  view: "catalog" | "runner";
+  runner?: RunnerView; profile: string | null; profiles: string[]; base_url: string | null; key_from: "env" | "file" | null;
   loading: boolean; error: string | null; agents: Card[]; total: number; unreadable?: number; unreadable_note?: string | null; filter: Filter;
   counts: { source: Record<string, number>; runtime: Record<string, number>; provider: Record<string, number> };
   specs: string | null; specs_why: string | null; here?: string | null; updated_ms: number; polls: number; watching?: boolean; said: string | null;
 }
 
-/** "Fountain agents…": the catalog beside `split`, or in a new tab of `session`. */
-export async function openFountain(client: Client, where: { split?: PaneId; session?: number }) {
+/** "Fountain agents…" (or, M45b, "Fountain runner…"): the block beside
+ * `split`, or in a new tab of `session`. */
+export async function openFountain(client: Client, where: { split?: PaneId; session?: number }, view: "catalog" | "runner" = "catalog") {
   const place = where.split !== undefined ? { split: where.split, from_pane: where.split } : { session: where.session !== undefined ? String(where.session) : undefined };
-  await client.openBlock({ type: "fountain", config: { view: "catalog" }, local: true, ...place }, "couldn't open the Fountain catalog");
+  const failure = view === "runner" ? "couldn't open the Fountain runner" : "couldn't open the Fountain catalog";
+  await client.openBlock({ type: "fountain", config: { view }, local: true, ...place }, failure);
 }
 
 const SOURCES: { key: Source; label: string }[] = [
@@ -69,8 +94,36 @@ function sourceLabel(c: Card): string {
   return c.source ?? "";
 }
 
+function seenAgo(ms: number | null): string {
+  if (ms == null) return "";
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return `${Math.round(s)}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+function versionLine(runner: string | null, local: string | null): string {
+  if (runner && local) return runner === local ? `${runner} (as installed)` : `${runner} (installed fountain is ${local})`;
+  if (runner) return runner;
+  return local ? `version unknown (installed fountain is ${local})` : "version unknown";
+}
+
+function plainRunner(s: FountainState): string {
+  const r = s.runner;
+  const lines = [`Fountain runner${s.base_url ? ` on ${s.base_url}` : ""}`];
+  if (s.error) lines.push(s.error);
+  if (!r) return lines.join("\n");
+  if (r.attention) lines.push(`! ${r.attention}`);
+  if (r.this) lines.push(`${r.this.name}: ${r.this.online ? "online" : "offline"}, ${versionLine(r.this.version, r.local_version)}, ${r.sandboxes.length} sandboxes`);
+  for (const o of r.others) lines.push(`${o.name}: ${o.online ? "online" : "offline"}`);
+  for (const b of r.sandboxes) lines.push(`${b.name} ${b.parked ? "parked" : b.status} ${b.agent ?? ""} ${b.path ?? ""}`);
+  return lines.join("\n");
+}
+
 function plain(s: FountainState | null): string {
   if (!s) return "";
+  if (s.view === "runner") return plainRunner(s);
   const lines = [`Fountain agents${s.base_url ? ` on ${s.base_url}` : ""}`];
   if (s.error) lines.push(s.error);
   lines.push(`${s.agents.length} of ${s.total}`);
@@ -101,7 +154,149 @@ function Chips({ kind, counts, chosen, labels, toggle, disabled }: {
   );
 }
 
+function RunnerBlock({ client, id, s }: { client: Client; id: PaneId; s: FountainState }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const session = client.sessionOfTab(client.tabOfPane(id)?.id ?? -1) ?? null;
+  const role = client.role(session);
+  const mayAct = role !== "viewer";
+  const mayOwn = role === "owner";
+  const call = async (method: string, args: unknown, failure: string, key = method) => {
+    setBusy(key);
+    const ok = await client.api(`/api/blocks/${id}/call/${method}`, args, failure);
+    setBusy(null);
+    return ok;
+  };
+  const r = s.runner;
+  const t = r?.this ?? null;
+  return (
+    <div class="review ws fountain fountain-runner" data-fountain-block={id} data-fountain-view="runner">
+      <div class="review-bar">
+        <span class="review-path" title={s.base_url ?? ""}>
+          <b>Fountain runner</b> {t ? t.name : r?.unit?.name ?? ""} {hostOf(s.base_url)}
+        </span>
+        {t && (
+          <span class={`ws-tag fountain-runner-state ${t.online ? "on" : "off"}`} data-runner-online={String(t.online)}>
+            {t.online ? "online" : "offline"}
+          </span>
+        )}
+        {mayOwn && (
+          <button title="The agent catalog" data-fountain-view-catalog disabled={busy !== null} onClick={() => void call("view", { view: "catalog" }, "couldn't show the catalog")}>
+            Agents
+          </button>
+        )}
+        {mayAct && (
+          <button title="Read it again" data-fountain-refresh disabled={busy !== null} onClick={() => void call("refresh", {}, "couldn't read the runner")}>
+            {busy === "refresh" ? "…" : "↻"}
+          </button>
+        )}
+        <span class={`review-live ${s.watching ? "on" : ""}`}>{s.watching ? "live" : "paused"}</span>
+      </div>
+      {s.error && (
+        <div class="browser-card" data-fountain-error>
+          <p>Can't read your Fountain runners</p>
+          <p class="dim">{s.error}</p>
+        </div>
+      )}
+      {r?.attention && (
+        <p class="fountain-said fountain-attention" data-runner-attention>
+          {r.attention}
+        </p>
+      )}
+      {s.said && <p class="dim fountain-said">{s.said}</p>}
+      <div class="review-body">
+        {!r && !s.error && <p class="dim fountain-empty">Reading the runners…</p>}
+        {r && (
+          <div class="fountain-card fountain-this" data-runner-this={t?.name ?? ""}>
+            {r.unit ? (
+              <>
+                <div class="fountain-card-head">
+                  <b class="fountain-name">This host: {r.unit.name}</b>
+                  <span class="ws-tag" data-unit-active={String(r.unit_active)}>
+                    unit {r.unit_active === true ? "active" : r.unit_active === false ? "not active" : "unknown"}
+                  </span>
+                </div>
+                {t ? (
+                  <div class="dim fountain-meta">
+                    {t.online ? "online" : "offline"} · {versionLine(t.version, r.local_version)}
+                    {t.last_seen_ms != null && ` · last seen ${seenAgo(t.last_seen_ms)}`}
+                    {` · ${r.sandboxes.length} sandbox${r.sandboxes.length === 1 ? "" : "es"}`}
+                    {t.root && ` · ${t.root}`}
+                  </div>
+                ) : (
+                  <div class="dim fountain-meta">Fountain doesn't list a runner named {r.unit.name}</div>
+                )}
+              </>
+            ) : (
+              <div class="dim fountain-meta">This host runs no fountain-runner unit (`illogical fountain runner install` makes it one).</div>
+            )}
+          </div>
+        )}
+        {r && r.others.length > 0 && (
+          <div class="fountain-others">
+            <b>Other runners</b>
+            <ul>
+              {r.others.map((o) => (
+                <li key={o.id} data-runner-other={o.name} data-online={String(o.online)}>
+                  {o.name} <span class="dim">{o.online ? "online" : "offline"}{o.version ? ` · ${o.version}` : ""}{o.last_seen_ms != null ? ` · last seen ${seenAgo(o.last_seen_ms)}` : ""}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {r?.sandboxes_error && <p class="fountain-said">Sandboxes: {r.sandboxes_error}</p>}
+        {r && t && (
+          <>
+            <p class="dim fountain-said" data-runner-note>{r.note}</p>
+            {r.sandboxes.length === 0 && <p class="dim fountain-empty">No sandboxes on {t.name}</p>}
+            <ul class="fountain-cards fountain-sandboxes">
+              {r.sandboxes.map((b) => (
+                <li key={b.id} class="fountain-card" data-sandbox={b.name} data-parked={String(b.parked)}>
+                  <div class="fountain-card-head">
+                    <b class="fountain-name" title={b.id}>{b.agent ?? "agent?"}</b>
+                    <span class="ws-tag">{b.parked ? "parked" : b.status}</span>
+                  </div>
+                  <div class="dim fountain-meta" title={b.path ?? ""}>
+                    {b.path ?? "no directory"}
+                    {b.inserted_at && ` · ${ago(b.inserted_at)}`}
+                  </div>
+                  <ul class="fountain-convs">
+                    {b.conversations.map((c) => (
+                      <li key={c.id} data-conversation={c.id}>
+                        <span>{c.title ?? c.id.slice(0, 8)}</span> <span class="dim">{c.status}{c.mid_turn ? " · mid-turn" : ""}</span>
+                        {mayOwn && (
+                          <button data-follow={c.id} disabled={busy !== null || !b.agent} title={b.agent ? "An agent block on this conversation (fountain acp, session/load)" : "Fountain didn't say its agent"} onClick={() => void call("follow", { conversation: c.id }, "couldn't follow it", `follow:${c.id}`)}>
+                            Follow
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {mayOwn && (
+                    <div class="ws-actions fountain-actions">
+                      <button data-changes={b.name} disabled={busy !== null || !b.path} title="A diff per git checkout in it, read as fountain" onClick={() => void call("changes", { sandbox: b.id }, "couldn't show its changes", `changes:${b.id}`)}>
+                        Changes
+                      </button>
+                      <button data-shell={b.name} disabled={busy !== null || !b.path} title={`A shell as fountain in ${b.path ?? "it"}. ${r.note}`} onClick={() => void call("shell", { sandbox: b.id }, "couldn't open a shell there", `shell:${b.id}`)}>
+                        Shell
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FountainBlock({ client, id, s }: { client: Client; id: PaneId; s: FountainState | null }) {
+  if (s?.view === "runner") return <RunnerBlock client={client} id={id} s={s} />;
+  return <CatalogBlock client={client} id={id} s={s} />;
+}
+
+function CatalogBlock({ client, id, s }: { client: Client; id: PaneId; s: FountainState | null }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState(s?.filter.query ?? "");
   const typing = useRef<number | null>(null);
@@ -296,7 +491,7 @@ registerBlock("fountain", (client, id): BlockView => {
       state = s as FountainState;
       draw();
     },
-    title: () => "Fountain agents",
+    title: () => (state?.view === "runner" ? "Fountain runner" : "Fountain agents"),
     text: () => plain(state),
     focus: () => host.querySelector<HTMLElement>("input")?.focus(),
     dispose: () => {

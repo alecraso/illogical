@@ -182,6 +182,50 @@ loginctl enable-linger $USER
    same tools by themselves, limited to their own tab. Over HTTP, tokens,
    and the tools: [MCP](docs/cli.md#mcp).
 
+## A Fountain runner (Linux)
+
+A machine can be your Fountain account's runner (M45): Fountain's runner
+conversations then run there, in sandboxes illogical can open a shell on,
+diff and follow.
+
+1. Once, with root, from a checkout:
+   `sudo bash scripts/fountain-runner-setup.sh --fountain "$(command -v fountain)" --node "$(node -p process.execPath)"`.
+   It makes a `fountain` user (its sandboxes under
+   `/home/fountain/sandboxes`), the `fountain-runner` systemd unit, and a
+   sudoers rule: you may run `/bin/bash` as `fountain`, and
+   `systemctl start|stop|restart|status fountain-runner` as root.
+2. Then, as you: `illogical fountain runner install` (makes the runner's key
+   without printing it, and starts the unit); `illogical fountain runner
+   status` shows it.
+3. `illogical fountain --view runner` (or *Fountain runner…* in a pane's
+   menu) shows it as a block: online or not, the other runners, and its
+   sandboxes, each with *Follow*, *Changes* and *Shell*.
+
+Checking it by hand, after a setup (none of this is automated, since the
+tests never run sudo or reach Fountain):
+
+- [ ] `illogical fountain runner status`: the unit is active, and Fountain
+      lists only this runner, online.
+- [ ] The runner view says this host's runner is online, its version
+      matches `fountain --version`, and no attention is raised.
+- [ ] A conversation with an agent on the runner provider appears under
+      the runner's sandboxes, with its directory and agent.
+- [ ] *Changes* opens a diff of each git checkout in its sandbox (one with
+      nothing upstream is diffed from an empty tree, so all of it shows).
+- [ ] *Shell* opens a terminal (bash without profile or rc files, and
+      outside the runner's sandboxing, as its card says) where `whoami;
+      pwd` prints `fountain` and the sandbox's directory; there, `cat ~YOU/.ssh/id_ed25519` and
+      `illogical --socket <your daemon's socket> ls` both fail.
+- [ ] A sandbox agent can't see other users' processes: asked to run
+      `ls /proc | wc -l` (or `ps aux`), a conversation's agent sees only
+      the runner's own processes (the unit has `ProtectProc=invisible`).
+      Ask the agent: illogical's *Shell* isn't in the unit, so it sees
+      everything, as any shell of yours would.
+- [ ] *Follow* opens an agent block with the conversation so far.
+- [ ] `sudo systemctl stop fountain-runner`: within about 5 minutes the
+      rail (and the phone) says *Fountain runner offline*; `sudo systemctl
+      start fountain-runner` clears it.
+
 ## On macOS
 
 Everything above works, except that restarting or upgrading the daemon

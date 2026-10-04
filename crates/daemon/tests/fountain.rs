@@ -11,6 +11,15 @@
 //! `GET /api/fountain/agents`; and MCP's `list_agents` and `read_agent`
 //! from an agent.
 //!
+//! M45b's runner view, against the same fake with recorded (scrubbed)
+//! `/api/runners` and `/api/sandboxes`, a unit file, a stand-in
+//! `systemctl`, and a stand-in `sudo` that logs its argv and runs bash as
+//! the test's own user (no test calls sudo): status and the host's line;
+//! sandbox → directory; *Shell*'s exact command with a hostile path;
+//! *Changes*' git through the sudo form; *Follow*'s `session/load`;
+//! attention for an offline runner and for another one online; and every
+//! one of them refused to an editor.
+//!
 //! M44 (wearing an agent here): *Run here*, `start_agent {as_fountain}`
 //! and `as_fountain` on a new block run the fake ACP agent as Claude Code's
 //! adapter; it records the `_meta` and MCP servers its `session/new` got.
@@ -62,6 +71,12 @@ struct Inner {
     deny: bool,
     /// Rows served after the recorded ones (odd-agents.json's).
     extra: Vec<Value>,
+    /// M45b: `/api/runners` and `/api/sandboxes`, and the queries asked.
+    runners: Value,
+    sandboxes: Value,
+    queries: Vec<String>,
+    /// `/api/runners` answers 500.
+    fail_runners: bool,
     /// MCP probes (M44), by path.
     probes: Vec<String>,
 }
@@ -115,6 +130,27 @@ async fn agent(State(f): State<Fake>, h: HeaderMap, UrlPath(id): UrlPath<String>
     }
 }
 
+async fn runners(State(f): State<Fake>, h: HeaderMap) -> Response {
+    if let Some(r) = guard(&f, &h, "runners") {
+        return r;
+    }
+    if f.with(|i| i.fail_runners) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "down" }))).into_response();
+    }
+    Json(f.with(|i| i.runners.clone())).into_response()
+}
+
+async fn sandboxes(State(f): State<Fake>, h: HeaderMap, q: axum::extract::RawQuery) -> Response {
+    if let Some(r) = guard(&f, &h, "sandboxes") {
+        return r;
+    }
+    Json(f.with(|i| {
+        i.queries.push(q.0.unwrap_or_default());
+        i.sandboxes.clone()
+    }))
+    .into_response()
+}
+
 async fn environments(State(f): State<Fake>, h: HeaderMap) -> Response {
     if let Some(r) = guard(&f, &h, "environments") {
         return r;
@@ -157,6 +193,8 @@ impl Fountain {
                 .route("/api/agents", get(agents))
                 .route("/api/agents/{id}", get(agent))
                 .route("/api/environments", get(environments))
+                .route("/api/runners", get(runners))
+                .route("/api/sandboxes", get(sandboxes))
                 .route("/oauth-mcp", axum::routing::post(oauth_mcp))
                 .route("/open-mcp", axum::routing::post(open_mcp))
                 .with_state(f.clone());
@@ -178,7 +216,14 @@ impl Fountain {
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let fountain = bin.join("fountain");
-        std::fs::write(&fountain, format!("#!/bin/sh\nexec python3 {} \"$@\"\n", fake())).unwrap();
+        std::fs::write(
+            &fountain,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = --version ] && {{ echo 'fountain version v0.21.0'; exit 0; }}\nexec python3 {} \"$@\"\n",
+                fake()
+            ),
+        )
+        .unwrap();
         std::fs::set_permissions(&fountain, std::fs::Permissions::from_mode(0o755)).unwrap();
         Self { _rt: rt, f, origin, home, bin }
     }
@@ -580,6 +625,688 @@ fn a_new_login_never_gets_the_old_list() {
     assert_eq!(fz.f.gets("agents"), 2);
 }
 
+// ---------------------------------------------------------------- M45b: the runner view
+
+/// This host's runner in the recorded fixture.
+const RUNNER: &str = "edbc518d-70b9-4f45-8db2-73f57b1de3f0";
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// A runner host in a scratch directory: its unit file, a `systemctl` that
+/// says what `unit-state` holds, a `sudo` that logs its argv (one JSON list
+/// a line) and runs bash as this user, and the recorded runner and
+/// sandboxes with their directories under `root`.
+struct RunnerHost {
+    root: PathBuf,
+    sudo: PathBuf,
+    log: PathBuf,
+    state: PathBuf,
+    env: Vec<(String, String)>,
+}
+
+impl RunnerHost {
+    fn new(dir: &Path, fz: &Fountain) -> Self {
+        let root = dir.join("sandboxes");
+        std::fs::create_dir_all(&root).unwrap();
+        let unit = dir.join("fountain-runner.service");
+        std::fs::write(
+            &unit,
+            format!(
+                "[Service]\nUser=fountain\nExecStart=/usr/local/bin/fountain runner --name runner-1 --root {}\n",
+                root.display()
+            ),
+        )
+        .unwrap();
+        let state = dir.join("unit-state");
+        std::fs::write(&state, "active\n").unwrap();
+        let script = |name: &str, body: String| {
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        let systemctl = script(
+            "systemctl",
+            format!("#!/bin/sh\n[ \"$1 $2\" = 'is-active fountain-runner' ] || exit 4\ncat '{}'\n", state.display()),
+        );
+        let log = dir.join("sudo.log");
+        let sudo = script(
+            "sudo",
+            format!(
+                "#!/bin/sh\npython3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \"$@\" >> '{}'\n[ \"$1 $2 $3 $4\" = '-n -u fountain /bin/bash' ] || {{ echo 'sudo: a password is required' >&2; exit 1; }}\nshift 4\nexec /bin/bash \"$@\"\n",
+                log.display()
+            ),
+        );
+        let mut runners = fixture("runner-view-runners.json");
+        runners["data"][0]["root"] = json!(root.display().to_string());
+        let text = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/fountain/runner-view-sandboxes.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
+        .replace("/srv/fountain/sandboxes", &root.display().to_string());
+        let sandboxes: Value = serde_json::from_str(&text).unwrap();
+        for s in sandboxes["data"].as_array().unwrap() {
+            if let Some(p) = s["runner"]["path"].as_str() {
+                std::fs::create_dir_all(p).unwrap();
+            }
+        }
+        fz.f.with(|i| {
+            i.runners = runners;
+            i.sandboxes = sandboxes;
+        });
+        let env = vec![
+            ("ILLOGICAL_FOUNTAIN_UNIT_FILE".into(), unit.display().to_string()),
+            ("ILLOGICAL_FOUNTAIN_SYSTEMCTL".into(), systemctl.display().to_string()),
+            ("ILLOGICAL_FOUNTAIN_SUDO".into(), sudo.display().to_string()),
+            ("ILLOGICAL_FOUNTAIN_POLL_MS".into(), "300".into()),
+            ("ILLOGICAL_FOUNTAIN_RUNNER_GRACE_MS".into(), "1500".into()),
+        ];
+        Self { root, sudo, log, state, env }
+    }
+
+    fn daemon(&self, fz: &Fountain) -> Daemon {
+        let env: Vec<(&str, &str)> = self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        fz.daemon(&env)
+    }
+
+    /// Every sudo call so far, as its argv.
+    fn sudo_calls(&self) -> Vec<Vec<String>> {
+        std::fs::read_to_string(&self.log)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+}
+
+/// `s` as one shell word, as the daemon quotes it.
+fn quoted(s: &str) -> String {
+    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"_./-:=@%+,".contains(&b)) {
+        return s.to_owned();
+    }
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "init.defaultBranch=main"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+fn runner_view(d: &Daemon) -> (u64, Value) {
+    let block = open(d, json!({ "view": "runner" }));
+    d.wait_for("the runner read", || d.state(block)["runner"].is_object());
+    (block, d.state(block))
+}
+
+fn capture(d: &Daemon, pane: u64) -> String {
+    d.raw("GET", &format!("/api/panes/{pane}/capture"), None).1
+}
+
+#[test]
+fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
+    let dir = Scratch::new("fountain-runner");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    // A hostile directory name: quotes, a command substitution, a space.
+    let hostile_name = format!("runner-{}-it's $(touch pwned) x", RUNNER.replace('-', ""));
+    let hostile = host.root.join(&hostile_name);
+    std::fs::create_dir_all(&hostile).unwrap();
+    fz.f.with(|i| {
+        i.sandboxes["data"].as_array_mut().unwrap().push(json!({
+            "id": "s-hostile", "sprite_name": hostile_name, "status": "suspended", "provider": "runner",
+            "mode": "ephemeral", "agent_id": null, "inserted_at": "2026-10-04T00:00:00Z",
+            "runner": { "id": RUNNER, "name": "runner-1", "path": hostile.display().to_string(), "online": true },
+            "conversations": []
+        }))
+    });
+    let d = host.daemon(&fz);
+    let (block, st) = runner_view(&d);
+    let r = &st["runner"];
+    assert_eq!(st["error"], Value::Null, "{st}");
+    assert_eq!((r["this"]["name"].as_str(), r["this"]["online"].as_bool()), (Some("runner-1"), Some(true)), "{r}");
+    assert_eq!((r["unit"]["name"].as_str(), r["unit_active"].as_bool()), (Some("runner-1"), Some(true)));
+    assert_eq!((r["this"]["version"].as_str(), r["local_version"].as_str()), (Some("v0.21.0"), Some("v0.21.0")));
+    assert_eq!(r["others"], json!([]));
+    assert_eq!(r["attention"], Value::Null);
+    // Sandbox → directory: this runner's only (two recorded, the hostile one).
+    let sbs = r["sandboxes"].as_array().unwrap();
+    assert_eq!(sbs.len(), 3, "{r}");
+    for s in sbs {
+        assert_eq!(s["path"], host.root.join(s["name"].as_str().unwrap()).display().to_string());
+    }
+    let a = sbs.iter().find(|s| s["name"].as_str().unwrap().ends_with("-2972e1a2")).unwrap().clone();
+    let b = sbs.iter().find(|s| s["name"].as_str().unwrap().ends_with("-9ef02d05")).unwrap().clone();
+    assert_eq!(a["agent"], "hud-playground", "its agent's name, from /api/agents/ID");
+    assert!(sbs.iter().any(|s| s["parked"] == true));
+    assert!(r["note"].as_str().unwrap().contains("parking the sandbox doesn't stop it"));
+    // Only sandboxes that may have a directory are asked for.
+    assert!(fz.f.with(|i| i.queries.iter().all(|q| q == "status=pending,starting,ready,suspended")));
+    // capture --text.
+    let text = capture(&d, block);
+    assert!(
+        text.contains("this host: runner-1 (unit fountain-runner active), online, v0.21.0 (as installed)"),
+        "{text}"
+    );
+    assert!(text.contains("3 sandboxes") && text.contains("other runners: none"), "{text}");
+    assert!(text.contains(&format!(
+        "  {} ready hud-playground {}",
+        a["name"].as_str().unwrap(),
+        a["path"].as_str().unwrap()
+    )));
+    // The machine's line.
+    d.wait_for("the host's line", || d.get("/api/host")["fountain_runner"]["sandboxes"] == 3);
+    let h = d.get("/api/host")["fountain_runner"].clone();
+    assert_eq!(
+        (h["name"].as_str(), h["online"].as_bool(), h["version"].as_str()),
+        (Some("runner-1"), Some(true), Some("v0.21.0"))
+    );
+    // Nothing went through sudo just to look.
+    assert!(host.sudo_calls().is_empty(), "{:?}", host.sudo_calls());
+
+    // Shell: the exact command, the hostile path one quoted word.
+    let out = d.call(block, "shell", json!({ "sandbox": "s-hostile" }));
+    let cmd = out["command"].as_str().unwrap();
+    let head = format!(
+        "exec {} -n -u fountain /bin/bash -c 'real=$(cd -P -- \"$2\"",
+        quoted(&host.sudo.display().to_string())
+    );
+    let tail = format!(
+        "HOME=/home/fountain INPUTRC=/dev/null HISTFILE=/dev/null exec bash --noprofile --norc' _ {} {}",
+        quoted(&host.root.display().to_string()),
+        quoted(&hostile.display().to_string())
+    );
+    assert!(cmd.starts_with(&head) && cmd.ends_with(&tail), "{cmd}");
+    assert_eq!(out["parked"], true);
+    let pane = out["pane"].as_u64().unwrap();
+    assert_eq!(info(&d, pane)["tab"], info(&d, block)["tab"], "beside the view");
+    d.wait_for("the shell's sudo", || !host.sudo_calls().is_empty());
+    let call = host.sudo_calls()[0].clone();
+    assert_eq!(&call[..5], ["-n", "-u", "fountain", "/bin/bash", "-c"]);
+    assert!(
+        call[5].ends_with(
+            "cd -- \"$real\" && HOME=/home/fountain INPUTRC=/dev/null HISTFILE=/dev/null exec bash --noprofile --norc"
+        ),
+        "{call:?}"
+    );
+    assert_eq!(&call[6..], ["_", host.root.to_str().unwrap(), hostile.to_str().unwrap()]);
+    let at = format!("at={} home=/home/fountain", hostile.display());
+    d.wait_for("the shell's prompt", || !capture(&d, pane).trim().is_empty());
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    d.post(&format!("/api/panes/{pane}/send"), json!({ "text": "echo \"at=$(pwd) home=$HOME\"", "enter": true }));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !capture(&d, pane).replace('\n', "").contains(&at) {
+        assert!(std::time::Instant::now() < deadline, "the shell in the sandbox: {}", capture(&d, pane));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(!hostile.join("pwned").exists() && !dir.join("pwned").exists(), "the path ran as a command");
+
+    // Changes: a checkout of the agent's own (all of it is its edits) and a
+    // clone (its edits since upstream), git run through the sudo form.
+    let a_dir = PathBuf::from(a["path"].as_str().unwrap());
+    let repo = a_dir.join("r1-check");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("hello.txt"), "hello\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "first"]);
+    std::fs::write(repo.join("new.txt"), "untracked\n").unwrap();
+    let out = d.call(block, "changes", json!({ "sandbox": a["id"] }));
+    let co = out["checkouts"].as_array().unwrap();
+    assert_eq!(co.len(), 1, "{out}");
+    assert_eq!((co[0]["repo"].as_str(), co[0]["rev_a"].as_str()), (Some(repo.to_str().unwrap()), Some(EMPTY_TREE)));
+    let diff = co[0]["block"].as_u64().unwrap();
+    d.wait_for("the diff", || d.state(diff)["files"].as_array().is_some_and(|f| f.len() == 2));
+    let ds = d.state(diff);
+    let files: Vec<(String, String)> = ds["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["path"].as_str().unwrap().to_owned(), f["status"].as_str().unwrap().to_owned()))
+        .collect();
+    assert_eq!(files, [("hello.txt".into(), "added".into()), ("new.txt".into(), "untracked".into())], "{ds}");
+    assert_eq!(ds["run_as"], "fountain");
+    assert_eq!(info(&d, diff)["tab"], info(&d, block)["tab"]);
+    d.wait_for("the diff's config saved", || layout_config(&d, diff)["run_as"] == "fountain");
+    let calls = host.sudo_calls();
+    let find = calls.iter().find(|c| c[5].contains("find . -maxdepth 3 -name .git")).expect("the checkouts' search");
+    assert_eq!(
+        (&find[..5], &find[6..]),
+        (
+            &["-n", "-u", "fountain", "/bin/bash", "-c"].map(String::from)[..],
+            &["_", host.root.to_str().unwrap(), a_dir.to_str().unwrap()].map(String::from)[..]
+        )
+    );
+    assert!(find[5].starts_with("export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1"), "hardened git");
+    let g = calls
+        .iter()
+        .find(|c| c[5].contains("illogical-untracked") && c[5].starts_with("export GIT_CONFIG_GLOBAL=/dev/null"))
+        .expect("the diff's git, hardened");
+    assert_eq!(
+        (g[0].as_str(), g[2].as_str(), g[3].as_str(), g[7].as_str()),
+        ("-n", "fountain", "/bin/bash", repo.to_str().unwrap())
+    );
+    assert_eq!(g.last().unwrap(), EMPTY_TREE);
+    // A clone: counted from its upstream.
+    let b_dir = PathBuf::from(b["path"].as_str().unwrap());
+    git(&b_dir, &["clone", "-q", repo.to_str().unwrap(), "clone"]);
+    let clone = b_dir.join("clone");
+    let base = git(&clone, &["rev-parse", "HEAD"]);
+    std::fs::write(clone.join("hello.txt"), "hello, edited\n").unwrap();
+    git(&clone, &["commit", "-qam", "edit"]);
+    let out = d.call(block, "changes", json!({ "sandbox": b["name"] }));
+    let co = out["checkouts"].as_array().unwrap();
+    assert_eq!((co.len(), co[0]["rev_a"].as_str()), (1, Some(base.as_str())), "{out}");
+    let diff = co[0]["block"].as_u64().unwrap();
+    d.wait_for("the clone's diff", || d.state(diff)["files"].as_array().is_some_and(|f| f.len() == 1));
+    assert_eq!(d.state(diff)["files"][0]["path"], "hello.txt");
+    // No checkout: said so.
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{block}/call/changes"), Some(json!({ "sandbox": "s-hostile" })));
+    assert_eq!(status, 400);
+    assert!(body.contains("no git checkout"), "{body}");
+    // run_as: only fountain, only an absolute directory.
+    for config in [json!({ "repo": repo, "run_as": "root" }), json!({ "repo": "rel/dir", "run_as": "fountain" })] {
+        let (status, body) =
+            d.raw("POST", "/api/blocks", Some(json!({ "type": "diff", "config": config, "local": true })));
+        assert_eq!(status, 400, "{config}: {body}");
+    }
+
+    // Follow: an agent block on the conversation, through session/load.
+    let conv = a["conversations"][0]["id"].as_str().unwrap().to_owned();
+    std::fs::write(
+        d.sessions.join(format!("{conv}.json")),
+        json!({ "updates": [{ "sessionUpdate": "agent_message_chunk", "messageId": "m1",
+            "content": { "type": "text", "text": "made r1-check" } }], "cwd": "/" })
+        .to_string(),
+    )
+    .unwrap();
+    let out = d.call(block, "follow", json!({ "conversation": conv }));
+    assert_eq!(out["agent"], "hud-playground");
+    let agent = out["block"].as_u64().unwrap();
+    d.wait_for("the conversation loaded", || {
+        entries(&d.state(agent)).iter().any(|e| e["text"].as_str().is_some_and(|t| t.contains("made r1-check")))
+    });
+    d.wait_for("the agent's config saved", || layout_config(&d, agent)["session_id"] == conv.as_str());
+    assert_eq!(layout_config(&d, agent)["fountain_agent"], "hud-playground");
+    let (status, _) =
+        d.raw("POST", &format!("/api/blocks/{block}/call/follow"), Some(json!({ "conversation": "nope" })));
+    assert_eq!(status, 400);
+
+    // MCP: open_fountain with view "runner", beside an agent.
+    let me = d.open("hello");
+    assert_eq!(d.wait(me, "idle"), "done");
+    let r = agent_mcp(&d, me, "open_fountain", json!({ "view": "runner" })).unwrap();
+    assert!(r["text"].as_str().unwrap().contains("this host: runner-1 (unit fountain-runner active), online"), "{r}");
+    let rb = r["block"].as_u64().unwrap();
+    d.wait_for("its view saved", || layout_config(&d, rb)["view"] == "runner");
+    assert!(agent_mcp(&d, me, "open_fountain", json!({ "view": "nope" })).is_err());
+}
+
+#[test]
+fn runner_attention_offline_and_another_online() {
+    let dir = Scratch::new("fountain-runner-attention");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    // Offline, with no last-seen time: counted from when the view saw it.
+    fz.f.with(|i| {
+        i.runners["data"][0]["online"] = false.into();
+        i.runners["data"][0]["last_seen_at"] = Value::Null;
+    });
+    let d = host.daemon(&fz);
+    let (block, st) = runner_view(&d);
+    assert_eq!(st["runner"]["attention"], Value::Null, "within the grace: {st}");
+    assert!(st["runner"]["offline_since_ms"].is_u64());
+    // Nobody draws it: it still reads, and raises once the grace is over.
+    d.wait_for("offline attention", || info(&d, block)["reason"]["kind"] == "failed");
+    let r = info(&d, block)["reason"].clone();
+    assert_eq!(r["bundle"], "failed:fountain-runner");
+    assert_eq!(r["headline"], "Fountain runner offline: runner-1 (its fountain-runner unit is active)");
+    assert!(capture(&d, block).contains("! Fountain runner offline: runner-1"));
+    assert!(d.get("/api/host")["fountain_runner"]["problem"].as_str().is_some_and(|p| p.contains("offline")));
+    // Back: cleared.
+    fz.f.with(|i| i.runners["data"][0]["online"] = true.into());
+    d.wait_for("cleared", || info(&d, block)["reason"].is_null());
+    // Another runner online would win placement.
+    fz.f.with(|i| {
+        let mut other = fixture("runners.json")["data"][0].clone();
+        other["name"] = "laptop".into();
+        i.runners["data"].as_array_mut().unwrap().push(other);
+    });
+    d.wait_for("another runner's attention", || {
+        info(&d, block)["reason"]["headline"]
+            == "Another Fountain runner is online: laptop (it would win placement over runner-1)"
+    });
+    assert_eq!(info(&d, block)["reason"]["bundle"], "failed:fountain-runner");
+    let st = d.state(block);
+    assert_eq!(st["runner"]["others"][0]["name"], "laptop");
+    // The unit stopped on purpose and the other gone: nothing wants anyone.
+    fz.f.with(|i| {
+        i.runners["data"].as_array_mut().unwrap().truncate(1);
+        i.runners["data"][0]["online"] = false.into();
+    });
+    std::fs::write(&host.state, "inactive\n").unwrap();
+    d.wait_for("nothing raised", || {
+        info(&d, block)["reason"].is_null() && d.state(block)["runner"]["unit_active"] == false
+    });
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    assert!(info(&d, block)["reason"].is_null());
+    assert!(host.sudo_calls().is_empty());
+}
+
+#[test]
+fn an_editor_cant_reach_the_runner() {
+    let dir = Scratch::new("fountain-runner-editor");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    let d = host.daemon(&fz);
+    let (block, st) = runner_view(&d);
+    let a = st["runner"]["sandboxes"][0].clone();
+    let session = info(&d, block)["session"].as_u64().unwrap();
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "editor" }));
+    let call = |m: &str, args: Value| as_friend(&d, "POST", &format!("/api/blocks/{block}/call/{m}"), args);
+    let (status, body) = call("refresh", json!({}));
+    assert_eq!(status, 200, "{body}");
+    let panes = d.get("/api/panes").as_array().unwrap().len();
+    for (m, args) in [
+        ("shell", json!({ "sandbox": a["id"] })),
+        ("changes", json!({ "sandbox": a["id"] })),
+        ("follow", json!({ "conversation": a["conversations"][0]["id"] })),
+        ("view", json!({ "view": "catalog" })),
+    ] {
+        let (status, body) = call(m, args);
+        assert_eq!(status, 403, "{m}: {body}");
+    }
+    // Nor a diff of its own as fountain: guests open agents only.
+    let (status, _) = as_friend(
+        &d,
+        "POST",
+        "/api/blocks",
+        json!({ "type": "diff", "config": { "repo": a["path"], "run_as": "fountain" }, "split": block }),
+    );
+    assert!(status == 400 || status == 403, "{status}");
+    assert_eq!(d.get("/api/panes").as_array().unwrap().len(), panes, "nothing opened");
+    assert!(host.sudo_calls().is_empty(), "no sudo for an editor");
+    // The owner may.
+    let out = d.call(block, "shell", json!({ "sandbox": a["id"] }));
+    assert!(out["pane"].is_u64(), "{out}");
+}
+
+#[test]
+fn a_hostile_repository_runs_nothing_and_paths_stay_in_the_root() {
+    let dir = Scratch::new("fountain-runner-hostile");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    // Markers any of its commands would leave.
+    let marks = dir.join("marks");
+    std::fs::create_dir_all(&marks).unwrap();
+    let evil = dir.join("evil.sh");
+    std::fs::write(
+        &evil,
+        format!("#!/bin/sh\ntouch '{}'/\"$1\"\ncase $1 in lazyfetch) exit 1 ;; esac\ncat\n", marks.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&evil, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let e = |what: &str| format!("{} {what}", evil.display());
+    // A global config (the daemon's HOME) that would run one too.
+    std::fs::write(fz.home.join(".gitconfig"), format!("[core]\n\tfsmonitor = {}\n", e("global"))).unwrap();
+    let sbs = fz.f.with(|i| i.sandboxes.clone());
+    let a = sbs["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["sprite_name"].as_str().unwrap().ends_with("-2972e1a2"))
+        .unwrap()
+        .clone();
+    let repo = PathBuf::from(a["runner"]["path"].as_str().unwrap()).join("evil");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    for f in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(repo.join(f), "one\n").unwrap();
+    }
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "first"]);
+    // Now the repository turns hostile: filters, fsmonitor, pager, external
+    // diff and textconv, each a command that leaves a marker.
+    for (k, v) in [
+        ("filter.evil.clean", e("clean")),
+        ("filter.evil.smudge", e("smudge")),
+        ("filter.evil.required", "true".into()),
+        ("filter.Proc.process", e("process")),
+        ("core.fsmonitor", e("fsmonitor")),
+        ("core.pager", e("pager")),
+        ("diff.external", e("external")),
+        ("diff.evil.textconv", e("textconv")),
+        ("diff.evil.command", e("command")),
+    ] {
+        git(&repo, &["config", k, &v]);
+    }
+    std::fs::write(
+        repo.join(".gitattributes"),
+        "a.txt filter=evil diff=evil\nb.txt filter=Proc\n*.new filter=evil diff=evil\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    std::fs::write(repo.join("b.txt"), "two\n").unwrap();
+    std::fs::write(repo.join("u.new"), "untracked\n").unwrap();
+    // A partial clone whose missing blobs a read would fetch, through an
+    // upload-pack that leaves a marker.
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "-q"]);
+    std::fs::write(src.join("p.txt"), "promised\n").unwrap();
+    git(&src, &["add", "."]);
+    git(&src, &["commit", "-qm", "src"]);
+    git(&src, &["config", "uploadpack.allowFilter", "true"]);
+    let part = repo.parent().unwrap().join("part");
+    git(
+        repo.parent().unwrap(),
+        &["clone", "-q", "--no-checkout", "--filter=blob:none", &format!("file://{}", src.display()), "part"],
+    );
+    git(&part, &["config", "remote.origin.uploadpack", &e("lazyfetch")]);
+    // It is hostile: a plain `git diff` runs its clean filter, and the
+    // partial clone's read fetches.
+    let _ = std::process::Command::new("git").args(["diff", "--stat"]).current_dir(&repo).output();
+    assert!(marks.join("clean").exists(), "the fixture's filter didn't run: the test proves nothing");
+    let _ = std::process::Command::new("git").args(["diff", "HEAD"]).current_dir(&part).output();
+    assert!(marks.join("lazyfetch").exists(), "the partial clone didn't fetch: the test proves nothing");
+    std::fs::remove_dir_all(&marks).unwrap();
+    std::fs::create_dir_all(&marks).unwrap();
+    // Touch them again, so git must look (stat-dirty).
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(repo.join("a.txt"), "three\n").unwrap();
+    std::fs::write(repo.join("b.txt"), "three\n").unwrap();
+
+    // Hostile places: a path Fountain gives outside the root, and a sandbox
+    // that is a symlink out of it.
+    let id = RUNNER.replace('-', "");
+    let outside = dir.join("outside");
+    std::fs::create_dir_all(outside.join("r/.git")).unwrap();
+    let link = host.root.join(format!("runner-{id}-link"));
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    fz.f.with(|i| {
+        let data = i.sandboxes["data"].as_array_mut().unwrap();
+        for (sid, name, path) in [
+            ("s-elsewhere", format!("runner-{id}-elsewhere"), "/etc".to_owned()),
+            ("s-link", format!("runner-{id}-link"), link.display().to_string()),
+        ] {
+            data.push(json!({ "id": sid, "sprite_name": name, "status": "ready", "provider": "runner",
+                "runner": { "id": RUNNER, "path": path }, "conversations": [] }));
+        }
+    });
+    let d = host.daemon(&fz);
+    let (block, st) = runner_view(&d);
+    let rows = st["runner"]["sandboxes"].as_array().unwrap();
+    let row = |id: &str| rows.iter().find(|r| r["id"] == id).unwrap().clone();
+    assert_eq!(row("s-elsewhere")["path"], Value::Null, "Fountain's /etc isn't the root's");
+    assert_eq!(row("s-link")["path"], link.display().to_string());
+
+    // Changes: the hostile repository's diff, and none of its commands.
+    let out = d.call(block, "changes", json!({ "sandbox": a["id"] }));
+    let co = out["checkouts"].as_array().unwrap();
+    let evil_co = co.iter().find(|c| c["repo"] == repo.display().to_string()).expect("the hostile checkout");
+    let diff = evil_co["block"].as_u64().unwrap();
+    d.wait_for("the hostile diff", || d.state(diff)["files"].as_array().is_some_and(|f| f.len() >= 4));
+    for f in ["a.txt", "b.txt"] {
+        d.call(diff, "file", json!({ "path": f, "open": true }));
+    }
+    d.call(diff, "refresh", json!({}));
+    let files: Vec<String> =
+        d.state(diff)["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap().to_owned()).collect();
+    assert!(["a.txt", "b.txt", "u.new"].iter().all(|f| files.contains(&f.to_string())), "{files:?}");
+    // The partial clone: read, and nothing fetched.
+    let part_co = co.iter().find(|c| c["repo"] == part.display().to_string()).expect("the partial clone");
+    let pd = part_co["block"].as_u64().unwrap();
+    d.wait_for("the partial clone's diff read", || d.state(pd)["loading"] == false);
+    d.call(pd, "refresh", json!({})).to_string();
+    let ran: Vec<_> = std::fs::read_dir(&marks).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(ran.is_empty(), "the repository ran {ran:?}");
+    // Its summary has no cwd (a sandbox isn't yours to start things in).
+    let p = d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == diff).cloned().unwrap();
+    assert!(p["cwd"].is_null(), "{p}");
+
+    // Outside the root: refused by name, and by real path.
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{block}/call/changes"), Some(json!({ "sandbox": "s-elsewhere" })));
+    assert_eq!(status, 400, "{body}");
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{block}/call/changes"), Some(json!({ "sandbox": "s-link" })));
+    assert_eq!(status, 400);
+    assert!(body.contains("inside the runner's sandboxes"), "{body}");
+    let out = d.call(block, "shell", json!({ "sandbox": "s-link" }));
+    let pane = out["pane"].as_u64().unwrap();
+    assert!(pane > 0);
+    // Its sudo call, run again here: it refuses before any cd.
+    let shell_call = || {
+        host.sudo_calls()
+            .into_iter()
+            .find(|c| c[5].contains("--noprofile") && c.last() == Some(&link.display().to_string()))
+    };
+    d.wait_for("the shell's sudo", || shell_call().is_some());
+    let call = shell_call().unwrap();
+    let out = std::process::Command::new("/bin/bash").args(&call[4..]).output().unwrap();
+    assert!(!out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("not inside the runner's sandboxes"), "{out:?}");
+    // A diff as fountain outside the root can't even be opened.
+    let (status, body) = d.raw(
+        "POST",
+        "/api/blocks",
+        Some(json!({ "type": "diff", "config": { "repo": outside.join("r"), "run_as": "fountain" }, "local": true })),
+    );
+    assert_eq!(status, 400, "{body}");
+}
+
+#[test]
+fn a_failing_runners_read_doesnt_spin() {
+    let dir = Scratch::new("fountain-runner-spin");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    // Offline with no last-seen time: an early re-read is due at the grace.
+    fz.f.with(|i| {
+        i.runners["data"][0]["online"] = false.into();
+        i.runners["data"][0]["last_seen_at"] = Value::Null;
+    });
+    let d = host.daemon(&fz);
+    let (block, _) = runner_view(&d);
+    fz.f.with(|i| i.fail_runners = true);
+    d.wait_for("a failed read", || d.state(block)["error"].is_string());
+    let before = fz.f.gets("runners");
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    let n = fz.f.gets("runners") - before;
+    // Not drawn: every 1.5 s at most (5 × the 300 ms poll).
+    assert!(n <= 4, "{n} reads of /api/runners in 4 s");
+    // Back: it reads again, and judges.
+    fz.f.with(|i| i.fail_runners = false);
+    d.wait_for("read again", || d.state(block)["error"].is_null());
+}
+
+#[test]
+fn follow_never_starts_a_new_conversation() {
+    let dir = Scratch::new("fountain-follow");
+    let fz = Fountain::start(&dir);
+    let d = fz.daemon(&[]);
+    let news = |d: &Daemon| {
+        std::fs::read_dir(&d.sessions)
+            .map(|r| r.filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with("fake-")).count())
+            .unwrap_or(0)
+    };
+    for (agent, why) in [("hud-playground", "couldn't load the conversation"), ("no-load-session", "no loadSession")] {
+        let block = d.post(
+            "/api/blocks",
+            json!({ "type": "agent", "local": true, "config": {
+                "agent": "fountain", "fountain_agent": agent, "session_id": "no-such-conversation", "follow": true } }),
+        )["block"]
+            .as_u64()
+            .unwrap();
+        d.wait_for("it stopped", || d.state(block)["status"] == "exited");
+        let st = d.state(block);
+        let err = st["error"].as_str().unwrap_or_default();
+        assert!(err.contains(why) && err.contains("Follow never starts a new conversation"), "{agent}: {st}");
+        assert!(entries(&st).iter().any(|e| e["text"].as_str().is_some_and(|t| t.contains(why))), "{st}");
+        assert_eq!(st["session_id"], "no-such-conversation");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert_eq!(news(&d), 0, "{agent}: a new session was made");
+        assert_eq!(d.state(block)["status"], "exited");
+    }
+}
+
+#[test]
+fn a_root_reached_through_a_symlink_still_works() {
+    // As on macOS, where /var is /private/var: the unit names the root by a
+    // path through a symlink, and the scripts see real paths.
+    let dir = Scratch::new("fountain-runner-alias");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    let alias = dir.join("alias");
+    std::os::unix::fs::symlink(&host.root, &alias).unwrap();
+    let unit = PathBuf::from(&host.env.iter().find(|(k, _)| k == "ILLOGICAL_FOUNTAIN_UNIT_FILE").unwrap().1);
+    let text = std::fs::read_to_string(&unit).unwrap().replace(host.root.to_str().unwrap(), alias.to_str().unwrap());
+    std::fs::write(&unit, text).unwrap();
+    fz.f.with(|i| {
+        let t = i.sandboxes.to_string().replace(host.root.to_str().unwrap(), alias.to_str().unwrap());
+        i.sandboxes = serde_json::from_str(&t).unwrap();
+    });
+    let d = host.daemon(&fz);
+    let (block, st) = runner_view(&d);
+    let a = st["runner"]["sandboxes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"].as_str().unwrap().ends_with("-2972e1a2"))
+        .unwrap()
+        .clone();
+    assert!(a["path"].as_str().unwrap().starts_with(alias.to_str().unwrap()), "{a}");
+    let repo = host.root.join(a["name"].as_str().unwrap()).join("r");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("x.txt"), "x\n").unwrap();
+    // Changes: found by its real path, and its diff (under the canonical
+    // root) opens and reads.
+    let out = d.call(block, "changes", json!({ "sandbox": a["id"] }));
+    let co = &out["checkouts"][0];
+    assert_eq!(co["repo"], repo.display().to_string(), "{out}");
+    let diff = co["block"].as_u64().unwrap();
+    d.wait_for("the diff", || d.state(diff)["files"].as_array().is_some_and(|f| f.len() == 1));
+    // Shell: its check passes (run here, as its sudo would).
+    d.call(block, "shell", json!({ "sandbox": a["id"] }));
+    let call = || host.sudo_calls().into_iter().find(|c| c[5].contains("--noprofile"));
+    d.wait_for("the shell's sudo", || call().is_some());
+    let mut argv = call().unwrap()[4..].to_vec();
+    argv[1] = argv[1].replace("exec bash --noprofile --norc", "pwd -P");
+    let out = std::process::Command::new("/bin/bash").args(&argv).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        host.root.join(a["name"].as_str().unwrap()).display().to_string(),
+        "{out:?}"
+    );
+}
+
 // ---------------------------------------------------------------- M44
 
 /// Known fake secrets: one from Infisical, one from `gh auth token`, one
@@ -600,18 +1327,6 @@ struct Wear {
 fn script(path: &Path, body: &str) {
     std::fs::write(path, body).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let ok = std::process::Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap()
-        .status
-        .success();
-    assert!(ok, "git {args:?}");
 }
 
 impl Wear {

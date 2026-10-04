@@ -210,7 +210,12 @@ function TopBar({
               // M37: an issue, in a tab of its own.
               ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { session: session.id }) } as MenuItem] : []),
               // M43: the Fountain agent catalog, in a tab of its own.
-              ...(!client.state?.roles ? [{ label: "Fountain agents…", run: () => void openFountain(client, { session: session.id }) } as MenuItem] : []),
+              ...(!client.state?.roles
+                ? [
+                    { label: "Fountain agents…", run: () => void openFountain(client, { session: session.id }) } as MenuItem,
+                    { label: "Fountain runner…", run: () => void openFountain(client, { session: session.id }, "runner") } as MenuItem,
+                  ]
+                : []),
               // #17: a tab here whose shell runs on another host.
               ...remoteHosts().map((h): MenuItem => ({ label: `New tab on ${h}`, run: () => void newRemote(client, h, { session: session.id }) })),
             ])
@@ -583,7 +588,12 @@ function PaneSlot({
       // M37: an issue beside it (N: in its repository).
       ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { split: id, dir: cwd }) } as MenuItem] : []),
       // M43: the Fountain agent catalog beside it.
-      ...(!client.state?.roles ? [{ label: "Fountain agents…", run: () => void openFountain(client, { split: id }) } as MenuItem] : []),
+      ...(!client.state?.roles
+        ? [
+            { label: "Fountain agents…", run: () => void openFountain(client, { split: id }) } as MenuItem,
+            { label: "Fountain runner…", run: () => void openFountain(client, { split: id }, "runner") } as MenuItem,
+          ]
+        : []),
       // M27: VS Code where this pane runs, in its directory. The owner's,
       // like ports.
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),

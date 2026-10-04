@@ -485,9 +485,13 @@ def handle(m):
         return
     if method == "initialize":
         caps.update(p.get("clientCapabilities") or {})
-        send({"id": mid, "result": {"protocolVersion": 1, "agentCapabilities": {
-            "loadSession": True, "sessionCapabilities": {"resume": {}, "fork": {}},
-            "mcpCapabilities": {"http": True}},
+        # Run as `fountain acp --agent no-load-session`: an agent that can't
+        # load or resume a session (M45b's Follow refuses it).
+        no_load = "--agent" in sys.argv[:-1] and sys.argv[sys.argv.index("--agent") + 1] == "no-load-session"
+        agent_caps = {"mcpCapabilities": {"http": True}}
+        if not no_load:
+            agent_caps.update({"loadSession": True, "sessionCapabilities": {"resume": {}, "fork": {}}})
+        send({"id": mid, "result": {"protocolVersion": 1, "agentCapabilities": agent_caps,
             "agentInfo": {"name": "fake-acp", "version": "1"}, "authMethods": []}})
     elif method == "session/new":
         sid = f"fake-{os.getpid()}-{int(time.time() * 1000)}"

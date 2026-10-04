@@ -74,6 +74,11 @@ fn policy(method: &Method, path: &str) -> Policy {
         ["api", "blocks", _, "call", "profile" | "specs" | "run" | "run_fountain" | "spec" | "run_here"] => {
             Policy::Owner
         }
+        // M45b: the runner view and what it opens: an agent block on a
+        // runner conversation (the owner's login), a diff whose git runs
+        // as `fountain` through the owner's sudoers rule, a shell as
+        // `fountain`, and which view (the runner's reads the unit).
+        ["api", "blocks", _, "call", "view" | "follow" | "changes" | "shell"] => Policy::Owner,
         ["api", "blocks", id, "call", _] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         // M24: the handler shows each person what they may read, and checks
         // each pane acted on.

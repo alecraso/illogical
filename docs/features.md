@@ -663,6 +663,65 @@ the daemon stopping, crashing, or the machine rebooting:
     reason. After a restart the block puts the agent on again before it
     takes over the agent still running (or starts it again).
 
+- **This machine as the Fountain runner** (M45). The setup (the README's
+  *A Fountain runner*) makes a `fountain` user, the `fountain-runner`
+  systemd unit and a sudoers rule. A Fountain block's `view: runner`
+  (*Fountain runner…* in a pane's or the `+` button's menu, `illogical
+  fountain --view runner`, MCP's `open_fountain {view: "runner"}`) shows:
+  - **The runner.** This host's (the unit's `--name`): online or offline,
+    its version against the installed `fountain --version`, when Fountain
+    last saw it, and how many sandboxes it holds; then every other runner
+    on the account. Read from `GET /api/runners` every minute while it's on
+    screen and every 5 minutes otherwise, so its attention still fires.
+  - **Attention** (`failed`, one *Fountain runner* card on the rail):
+    the unit is active (`systemctl is-active`) but Fountain has said the
+    runner is offline for 5 minutes; or another runner is online, which
+    would win placement (Fountain puts a runner conversation on the most
+    recently connected one). It's raised once per change and clears by
+    itself.
+  - **Its sandboxes**, newest first (`GET /api/sandboxes`, this runner's),
+    each with its directory, agent and conversations. A parked
+    (suspended) one still opens:
+    - ***Follow*** opens an agent block on a conversation: `fountain acp
+      --agent NAME`, which loads it (`session/load`) and replays it. The
+      block is marked `follow`: if the conversation can't be loaded (or the
+      agent can't load one), it stops and says why; it never starts a new
+      conversation.
+    - ***Changes*** opens a diff block for each git checkout up to two
+      levels down in the sandbox, from its upstream's merge base (else
+      `origin/HEAD`'s, else an empty tree: everything in it).
+    - ***Shell*** opens a terminal as `fountain` in the sandbox, with
+      `HOME` the `fountain` user's own (`/home/fountain`), reading no
+      profile, rc, inputrc or history file (`bash --noprofile --norc`,
+      `INPUTRC` and `HISTFILE` `/dev/null`: the sandbox's agent may have
+      written them). It runs outside
+      the runner's sandboxing (the unit's protections don't apply) and it
+      isn't Fountain's, so parking the sandbox doesn't stop it; the block
+      says so.
+  - **Read as `fountain`.** The sandboxes are the `fountain` user's (mode
+    0700), so every read and shell goes through `sudo -n -u fountain
+    /bin/bash -c SCRIPT _ ROOT DIR`, the one command the sudoers rule
+    allows, with the directories as arguments, never in the script.
+    - A sandbox's directory is the unit's `--root` and its name, only: a
+      path Fountain gives must be exactly that, and each script checks the
+      directory's real path is inside the root (a symlink out is refused).
+    - Every git there reads only: no global or system config, no hooks,
+      fsmonitor, pager, external diff or textconv, no remote contacted (no
+      lazy fetch of a partial clone's objects, every protocol refused), and
+      every filter driver
+      the repository's config names emptied, so a repository's own config
+      can't run anything when it's read.
+    - A diff block takes `run_as: "fountain"` for this: only that user,
+      only on this host, only under the unit's root. It has no *Open file*
+      (that would read the sandbox's files as you).
+  - **The machine's line.** `GET /api/host` has `fountain_runner` (name,
+    online, version, sandboxes, and what wants you) on a host with the
+    unit, from what was last read (never Fountain on the request). The
+    host menu, the phone's host list and the swarm's bar show it.
+  - **The owner's.** *Follow*, *Changes*, *Shell* and switching the view
+    are the owner's; an editor sees the list. `capture --text` is the
+    view as text.
+
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's

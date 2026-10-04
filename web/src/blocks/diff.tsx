@@ -40,6 +40,9 @@ export interface DiffState {
   error: string | null;
   watching: boolean;
   updated_ms: number;
+  /** M45b: git run as this user (a Fountain runner's sandbox). Its files
+   * aren't yours to read, so there's no *Open file*. */
+  run_as?: string | null;
 }
 
 /** What changed where `from` runs (its repository, on its machine), in a
@@ -84,11 +87,11 @@ function useCode() {
   return mod;
 }
 
-function Hunks({ f, can, open }: { f: DiffFile; can: boolean; open: (line: number) => void }) {
+function Hunks({ f, can, open }: { f: DiffFile; can: boolean; open?: (line: number) => void }) {
   const code = useCode();
   const lit = useMemo(() => (code && f.hunks ? f.hunks.map((h) => code.highlightLines(f.path, h.lines.map((l) => l[3]))) : null), [code, f.hunks, f.path]);
   if (f.binary) return <div class="diff-note">Binary file</div>;
-  if (f.big) return <div class="diff-note">Too big to show here: open the file.</div>;
+  if (f.big) return <div class="diff-note">{open ? "Too big to show here: open the file." : "Too big to show here."}</div>;
   if (!f.hunks?.length) return <div class="diff-note">{f.status === "mode" ? "Only its mode changed." : "No changes to show."}</div>;
   const gone = f.status === "deleted";
   return (
@@ -101,7 +104,7 @@ function Hunks({ f, can, open }: { f: DiffFile; can: boolean; open: (line: numbe
             const spans: Span[] | undefined = lit?.[i]?.[j] ?? undefined;
             const kind = k === "+" ? "add" : k === "-" ? "del" : k === "\\" ? "eol" : "ctx";
             const at = k === "\\" ? null : n;
-            const go = can && !gone && at !== null ? () => open(at) : undefined;
+            const go = can && open && !gone && at !== null ? () => open(at) : undefined;
             return (
               <div key={j} class={`dl ${kind}${go ? " go" : ""}`} data-line={at ?? undefined} onClick={go} title={go ? `Open ${f.path} at line ${at}` : undefined}>
                 <span class="ln">{k === "+" || k === "\\" ? "" : o}</span>
@@ -129,6 +132,11 @@ function DiffBlock({ client, id, s }: { client: Client; id: PaneId; s: DiffState
     <div class="review" data-diff={id}>
       <div class="review-bar">
         <b class="review-name">{s.name ?? "…"}</b>
+        {s.run_as && (
+          <span class="host-tag" data-run-as={s.run_as} title={`git runs as ${s.run_as} (a Fountain runner's sandbox); its files open from a shell there`}>
+            as {s.run_as}
+          </span>
+        )}
         {machine && (
           <span class="host-tag" title={`on ${machine.name ?? machine.sprite}`}>
             VM
@@ -181,7 +189,7 @@ function DiffBlock({ client, id, s }: { client: Client; id: PaneId; s: DiffState
                     </>
                   )}
                 </button>
-                {f.open && <Hunks f={f} can={can} open={(line) => void openFile(client, id, where(f.path), line)} />}
+                {f.open && <Hunks f={f} can={can} open={s.run_as ? undefined : (line) => void openFile(client, id, where(f.path), line)} />}
               </div>
             );
           })

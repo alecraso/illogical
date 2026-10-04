@@ -201,7 +201,6 @@ pub struct Environment {
 
 /// A self-hosted runner (`GET /api/runners`; M45 shows them).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[allow(dead_code)] // M45's runner view reads these.
 pub struct Runner {
     pub id: String,
     /// The `--name` it connected with.
@@ -231,7 +230,6 @@ pub struct Runner {
 
 /// Where a runner sandbox lives (`provider: runner`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[allow(dead_code)] // M45.
 pub struct SandboxRunner {
     #[serde(default)]
     pub id: Option<String>,
@@ -248,7 +246,6 @@ pub struct SandboxRunner {
 
 /// A conversation on a sandbox, newest first.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[allow(dead_code)] // M45.
 pub struct SandboxConversation {
     pub id: String,
     /// pending, running, idle, failed or terminated.
@@ -266,7 +263,6 @@ pub struct SandboxConversation {
 
 /// A sandbox and its conversations (`GET /api/sandboxes`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[allow(dead_code)] // M45.
 pub struct Sandbox {
     pub id: String,
     /// Its name on the provider (`runner-<runner id>-<short>` on a runner).
@@ -387,7 +383,6 @@ impl Client {
     }
 
     /// One agent, by id.
-    #[allow(dead_code)] // M44 reads one fresh before wearing it.
     pub async fn agent(&self, id: &str) -> Result<Agent, Error> {
         self.get(&format!("/api/agents/{id}")).await
     }
@@ -401,14 +396,12 @@ impl Client {
         Ok(rows(self.get::<Vec<Value>>("/api/vaults").await?).items)
     }
 
-    #[allow(dead_code)] // M45.
     pub async fn runners(&self) -> Result<Listing<Runner>, Error> {
         Ok(rows(self.get::<Vec<Value>>("/api/runners").await?))
     }
 
     /// Sandboxes, with their conversations; `status`: comma-separated
     /// states to keep.
-    #[allow(dead_code)] // M45.
     pub async fn sandboxes(&self, status: Option<&str>) -> Result<Listing<Sandbox>, Error> {
         let path = match status {
             Some(s) => format!("/api/sandboxes?status={s}"),

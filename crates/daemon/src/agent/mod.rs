@@ -121,6 +121,10 @@ pub struct Config {
     /// when the fork is made.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fork: bool,
+    /// Following a conversation that exists (M45b: a Fountain runner's):
+    /// it's loaded, or the block stops with the reason. Never a new session.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow: bool,
 }
 
 /// Where an opened conversation came from (M33). Until it's continued the
@@ -514,7 +518,10 @@ impl Inner {
                 self.adapter = None;
                 let just_continued =
                     matches!(self.t.entries.last(), Some(Entry::Note { text, .. }) if text == "Continued in illogical");
-                if e["resume"].as_bool() == Some(true) && !just_continued {
+                // A block opened on a session it has no transcript of (M45b's
+                // *Follow*: a Fountain conversation) didn't start before: it
+                // loads the session, which replays it.
+                if e["resume"].as_bool() == Some(true) && !just_continued && !self.t.entries.is_empty() {
                     self.t.note("Started the agent again", at);
                 }
             }
@@ -1705,8 +1712,19 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
                     let p = with_meta(json!({ "sessionId": sid, "cwd": cwd, "mcpServers": mcp }), g);
                     g.request("session/load", p);
                 }
+                _ if g.cfg.follow => {
+                    let why = if g.cfg.session_id.is_none() {
+                        "it has no conversation to follow".to_owned()
+                    } else {
+                        "this agent can't load a conversation (no loadSession)".to_owned()
+                    };
+                    follow_failed(g, &why);
+                }
                 _ => new_session(ctx, g, &cwd),
             }
+        }
+        Effect::SessionLost(why) if g.cfg.follow => {
+            follow_failed(g, &format!("couldn't load the conversation ({why})"));
         }
         Effect::SessionLost(why) => {
             g.t.note(format!("Couldn't reopen the session ({why}); starting a new one"), now_ms());
@@ -1823,6 +1841,18 @@ fn imported_meta(g: &Inner) -> Option<Value> {
             "settings": { "disableAllHooks": true },
         } } })
     })
+}
+
+/// A followed conversation that can't be loaded: the agent stops, saying
+/// why, and nothing new is started.
+fn follow_failed(g: &mut Inner, why: &str) {
+    warn!(why, "following a conversation");
+    if let Some(l) = g.link.take() {
+        l.stop();
+    }
+    // Its process's own exit (the signal) isn't news: this is why it stopped.
+    g.generation += 1;
+    g.note(json!({ "e": "exit", "why": format!("stopped: {why}; Follow never starts a new conversation") }));
 }
 
 /// The agent's own `_meta` (Claude's `settingSources: []`), if it has one.

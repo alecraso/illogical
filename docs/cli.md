@@ -70,6 +70,9 @@ illogical fountain agents frontend-design     # ...or listed here, one line each
 illogical call %10 run '{"agent":"games"}'    # Run on Fountain (an agent block beside it); spec '{"agent":"pr-reviewer"}'
 illogical call %10 run_here '{"agent":"games","cwd":"~/w"}'  # Run here: Claude Code wearing it, in ~/w
 illogical call %10 filter '{"source":"agent-specs","query":"review"}'  # the block's filter ("clear": true)
+illogical fountain --view runner              # this machine as the Fountain runner: status, other runners, its sandboxes
+illogical call %11 shell '{"sandbox":"ID"}'   # a terminal as fountain in a sandbox; changes '{"sandbox":…}' (a diff per checkout),
+                                              #   follow '{"conversation":"ID"}' (an agent block on it); view '{"view":"catalog"}'
 illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused while it's open elsewhere)
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
@@ -165,7 +168,7 @@ The tools:
 | `issue_comment`, `issue_new` | Draft a comment on an issue block, or a new issue (a block beside you holding the draft): a card the user sends, edits or drops | no |
 | `list_agents` | The user's Fountain agents, one compact row each (`query` over names, descriptions, skills and servers; `source`: agent-specs, hand or app) | yes |
 | `read_agent` | One Fountain agent's whole recipe (prompt, skills, MCP servers, model, metadata), its servers' credentials as `${VAR}`s | yes |
-| `open_fountain` | The Fountain agent catalog as a block beside a pane (`query`, `source`); returns the list | no |
+| `open_fountain` | The Fountain agent catalog as a block beside a pane (`query`, `source`); returns the list. `view: "runner"`: this host as the Fountain runner and its sandboxes instead | no |
 | `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
 
 Resources: `illogical://history`, and the templates
