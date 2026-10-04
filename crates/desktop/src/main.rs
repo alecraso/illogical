@@ -148,9 +148,56 @@ fn target() -> WebviewUrl {
     }
 }
 
+/// The daemon's page and the app's own pages stay in the window.
+fn ours(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "about" | "blob" | "data" => true,
+        "http" | "https" => url.host_str().zip(url.port_or_known_default()).is_some_and(|(h, p)| {
+            let at = format!("{h}:{p}");
+            at == addr() || (h == "tauri.localhost") || (h == "localhost" && addr().ends_with(&format!(":{p}")))
+        }),
+        _ => false,
+    }
+}
+
+/// Another site, in the person's own browser: control's approval page,
+/// Tailscale's admin console, docs.
+fn open_outside(url: &tauri::Url) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    if let Err(e) = std::process::Command::new(opener).arg(url.as_str()).spawn() {
+        eprintln!("illogical: opening {url}: {e}");
+    }
+}
+
 fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::WebviewWindow> {
     let n = WINDOWS.fetch_add(1, Ordering::SeqCst);
-    let w = WebviewWindowBuilder::new(app, format!("w{n}"), url).title("illogical").inner_size(1280.0, 820.0).build()?;
+    let handle = app.clone();
+    let w = WebviewWindowBuilder::new(app, format!("w{n}"), url)
+        .title("illogical")
+        .inner_size(1280.0, 820.0)
+        // A link with target=_blank: the client's own pages in a window of
+        // ours, anything else in the browser. A webview drops these unless
+        // the app handles them.
+        .on_new_window(move |url, _| {
+            if ours(&url) {
+                let h = handle.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    let _ = open_window(&h, WebviewUrl::External(url));
+                });
+            } else {
+                open_outside(&url);
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        // Following a link away from the daemon: the browser takes it.
+        .on_navigation(|url| {
+            if ours(url) {
+                return true;
+            }
+            open_outside(url);
+            false
+        })
+        .build()?;
     let _ = w.set_focus();
     Ok(w)
 }
