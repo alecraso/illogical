@@ -608,6 +608,48 @@ the daemon stopping, crashing, or the machine rebooting:
     agent see the team, and `start_agent` with a Fountain agent hands one a
     task.
 
+- **This machine as the Fountain runner** (M45). The setup (the README's
+  *A Fountain runner*) makes a `fountain` user, the `fountain-runner`
+  systemd unit and a sudoers rule. A Fountain block's `view: runner`
+  (*Fountain runner…* in a pane's or the `+` button's menu, `illogical
+  fountain --view runner`, MCP's `open_fountain {view: "runner"}`) shows:
+  - **The runner.** This host's (the unit's `--name`): online or offline,
+    its version against the installed `fountain --version`, when Fountain
+    last saw it, and how many sandboxes it holds; then every other runner
+    on the account. Read from `GET /api/runners` every minute while it's on
+    screen and every 5 minutes otherwise, so its attention still fires.
+  - **Attention** (`failed`, one *Fountain runner* card on the rail):
+    the unit is active (`systemctl is-active`) but Fountain has said the
+    runner is offline for 5 minutes; or another runner is online, which
+    would win placement (Fountain puts a runner conversation on the most
+    recently connected one). It's raised once per change and clears by
+    itself.
+  - **Its sandboxes**, newest first (`GET /api/sandboxes`, this runner's),
+    each with its directory, agent and conversations. A parked
+    (suspended) one still opens:
+    - ***Follow*** opens an agent block on a conversation: `fountain acp
+      --agent NAME`, which loads it (`session/load`) and replays it.
+    - ***Changes*** opens a diff block for each git checkout up to two
+      levels down in the sandbox, from its upstream's merge base (else
+      `origin/HEAD`'s, else an empty tree: everything in it).
+    - ***Shell*** opens a terminal as `fountain` in the sandbox, with
+      `HOME` there. It isn't Fountain's, so parking the sandbox doesn't
+      stop it; the block says so.
+  - **Read as `fountain`.** The sandboxes are the `fountain` user's (mode
+    0700), so every read and shell goes through `sudo -n -u fountain
+    /bin/bash -c SCRIPT _ DIR`, the one command the sudoers rule allows,
+    with the directory as an argument, never in the script. A diff block
+    takes `run_as: "fountain"` for this: only that user, only on this
+    host, only an absolute directory. (*Open file* from such a diff reads
+    as you, so it can't open the sandbox's files.)
+  - **The machine's line.** `GET /api/host` has `fountain_runner` (name,
+    online, version, sandboxes, and what wants you) on a host with the
+    unit, from what was last read (never Fountain on the request). The
+    host menu, the phone's host list and the swarm's bar show it.
+  - **The owner's.** *Follow*, *Changes*, *Shell* and switching the view
+    are the owner's; an editor sees the list. `capture --text` is the
+    view as text.
+
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's
