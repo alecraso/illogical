@@ -4037,6 +4037,35 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
   - a scoped runner key (the key is readable by the runner's own agents);
   - the `games` environment's broken `love` package.
 
+### Desktop track (S25, M46–M48, added 2026-10-04)
+
+A desktop app for macOS and Linux: the web UI in a native window, with the app installing, supervising and upgrading `illogicald`. Control stays the SaaS layer, and the browser and phone clients stay as they are. The full plan is #130.
+
+**Decisions (2026-10-03, Jake):**
+
+- **The daemon stays a separate service.** The app bundles `illogicald` and `illogical`, registers the service and upgrades it in place. Sessions outlive the window; if the app owned the PTYs, quitting it would end every pane.
+- **Tauri 2, decided by S25.** Electron is the fallback if WebKitGTK isn't usable on geek.
+- **macOS and Linux together.** No Windows: it has no daemon.
+- **Unsigned macOS builds for now** (ad-hoc signed). Notarization waits for a Developer ID.
+
+**Order:** S25, then M46 (window, installer, supervisor, packaging), then M47 (Finder and Nautilus) and M48 (connections in Rust, the device key in the Keychain or Secret Service).
+
+#### S25: desktop shell spike
+
+A Tauri 2 shell (`spikes/s25-desktop`) that loads the client from the local daemon, run on geek (WebKitGTK) and jake-mini (WKWebView). It measures xterm WebGL against Chrome on the same machine, whether every chord reaches the page, IME, the clipboard and OSC 52, native notifications, multiple windows and titlebar tabs, bundle size and cold start. **Go** if WebKitGTK is usable for daily work on geek; otherwise the same checks run in Electron.
+
+#### M46: the app as window, installer and supervisor
+
+See #130.
+
+#### M47: OS integration
+
+See #130.
+
+#### M48: native transport
+
+See #130.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
