@@ -70,6 +70,8 @@ pub struct Access {
     /// This node's MagicDNS name, when tailscaled told us (#109): where
     /// `tailscale serve` puts the app.
     tailnet: Option<String>,
+    /// The port it listens on (what `tailscale serve` points at).
+    port: u16,
 }
 
 impl Access {
@@ -99,7 +101,11 @@ impl Access {
             None => format!("http://127.0.0.1:{port}"),
         };
         let hosts = loopback.into_iter().chain(public.iter().cloned()).chain(direct).collect();
-        Self { hosts, public: public.into_iter().collect(), origins, owner, page, tunnel: None, tailnet: None }
+        Self { hosts, public: public.into_iter().collect(), origins, owner, page, tunnel: None, tailnet: None, port }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     /// This node's MagicDNS name, from tailscaled.

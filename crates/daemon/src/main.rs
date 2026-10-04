@@ -42,6 +42,7 @@ mod review;
 mod sandbox;
 mod seal;
 mod server;
+mod setup;
 mod share;
 mod shellenv;
 mod shellint;

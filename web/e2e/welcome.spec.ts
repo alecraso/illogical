@@ -8,23 +8,37 @@ import { reset } from "./helpers";
 // screen); these pretend to be a person.
 const person = () => Object.defineProperty(Navigator.prototype, "webdriver", { get: () => false });
 
-test("opens once on first run, then from the session menu", async ({ browser }) => {
+test("opens once on first run, a step at a time, then from the session menu", async ({ browser }) => {
   const ctx = await browser.newContext();
   await ctx.addInitScript(person);
   const page = await ctx.newPage();
   await reset(page);
   const panel = page.getByRole("dialog", { name: "Getting started" });
   await expect(panel).toBeVisible();
-  for (const h of ["Right-click anything", "On your phone", "From anywhere, or with your team", "Agents", "Claude Code", "In a terminal"]) {
-    await expect(panel.getByRole("heading", { name: h })).toBeVisible();
-  }
-  await expect(panel.locator("[data-serve-command]")).toHaveText(/^tailscale serve --bg --https=443 http:\/\/127\.0\.0\.1:\d+$/);
-  await expect(panel.locator("[data-join-command]")).toHaveText("illogicald join https://control.illogical.widgets.wtf");
-  await expect(panel.locator("[data-mcp-command]")).toHaveText("claude mcp add illogical -- illogical mcp");
-  // The test daemon isn't on a tailnet or joined: no done marks.
-  await expect(panel.locator(".start-done")).toHaveCount(0);
-  await panel.getByRole("button", { name: "Close" }).click();
+  const progress = panel.locator("[data-start-progress]");
+  await expect(progress).toHaveText("Step 1 / 5 · Welcome");
+  await expect(panel.getByRole("heading", { name: "Right-click anything" })).toBeVisible();
+
+  // Next walks the steps; the rail jumps to one.
+  await panel.locator("[data-start-next]").click();
+  await expect(progress).toHaveText("Step 2 / 5 · Phone");
+  // What the daemon says about Tailscale: the test machine may or may not
+  // have it, but the button is there until it serves this daemon.
+  await expect(panel.locator("[data-start-serve]")).toBeVisible();
+  await panel.locator("[data-start-next]").click();
+  await expect(progress).toHaveText("Step 3 / 5 · Cloud");
+  await expect(panel.locator("[data-start-connect]")).toHaveText("Connect to illogical cloud");
+  await panel.locator("[data-start-next]").click();
+  await expect(progress).toHaveText("Step 4 / 5 · Agents");
+  await expect(panel.locator("[data-start-agent]")).toBeVisible();
+  await panel.locator('[data-start-seg="ready"]').click();
+  await expect(progress).toHaveText("Step 5 / 5 · Ready");
+  // The test daemon isn't joined or served: those are still to do.
+  await expect(panel.locator('[data-check="todo"]').first()).toBeVisible();
+  await panel.getByRole("button", { name: "Done" }).click();
   await expect(panel).toBeHidden();
+  // Closing says where it went.
+  await expect(page.locator("[data-start-toast]")).toHaveText("Getting started is in the session menu, any time.");
 
   // Remembered: not again on reload.
   await page.reload();
@@ -32,14 +46,27 @@ test("opens once on first run, then from the session menu", async ({ browser }) 
   await expect(page.locator(".session-button")).toBeVisible();
   await expect(panel).toBeHidden();
 
-  // Always in the session menu.
+  // Always in the session menu, from the start.
   await page.locator(".session-button").click();
   await page.getByRole("menuitem", { name: "Getting started" }).click();
   await expect(panel).toBeVisible();
-  // Its agents link opens the agent dialog.
+  await expect(progress).toHaveText("Step 1 / 5 · Welcome");
+  // Its agents step opens the agent dialog.
+  await panel.locator('[data-start-seg="agents"]').click();
   await panel.locator("[data-start-agent]").click();
   await expect(panel).toBeHidden();
   await ctx.close();
+});
+
+test("the daemon's setup status, and the cheap poll for a join", async ({ page }) => {
+  await reset(page);
+  const status = await page.evaluate(async () => (await fetch("/api/setup")).json());
+  expect(["missing", "stopped", "needs-login", "running"]).toContain(status.tailscale.state);
+  expect(status.control.url).toBe("https://control.illogical.widgets.wtf");
+  expect(typeof status.claude.installed).toBe("boolean");
+  // Polling while a join waits asks for the cheap part only.
+  const control = await page.evaluate(async () => (await fetch("/api/setup?part=control")).json());
+  expect(Object.keys(control)).toEqual(["control"]);
 });
 
 test.describe("phone", () => {
