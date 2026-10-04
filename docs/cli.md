@@ -55,6 +55,9 @@ illogical studio follower pinboard            # keep its box's hud follower link
 illogical pr 84                               # a pull request as a block (in this repo; or a URL, OWNER/REPO#N)
 illogical pr comment %7 "LGTM"                # comment; review %7 approve|request_changes|comment [TEXT]; merge %7
                                               #   (under CLAUDECODE or AI_AGENT: a draft a person sends)
+illogical fountain runner install             # after sudo bash scripts/fountain-runner-setup.sh: this machine as the Fountain runner
+illogical fountain runner status              # its unit, and every runner Fountain lists
+illogical fountain runner adopt hud-playground  # an agent onto the runner provider (chant's: change agent-specs instead)
 illogical issue 89                            # an issue as a block (or a URL, OWNER/REPO#N)
 illogical issue agent %8                      # an agent on it: worktree + branch i89-…, the two in a tab
 illogical issue new -t "Frobs leak" -b "…"    # open one here (under an agent: a draft a person sends)

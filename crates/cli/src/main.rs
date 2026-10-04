@@ -5,6 +5,7 @@
 
 mod ask;
 mod attach;
+mod fountain_runner;
 mod fs;
 mod hook;
 mod hosts;
@@ -228,6 +229,13 @@ enum Command {
     /// comment|review|merge|rerun %N`
     /// write to it; run by an agent (CLAUDECODE or AI_AGENT set), a write
     /// is a draft that waits for a person to send it.
+    /// Fountain: `fountain runner install|status|adopt` makes this machine
+    /// the account's runner (M45; the root half is
+    /// `scripts/fountain-runner-setup.sh`).
+    Fountain {
+        #[command(subcommand)]
+        cmd: FountainCmd,
+    },
     #[command(args_conflicts_with_subcommands = true)]
     Pr {
         #[command(subcommand)]
@@ -662,6 +670,16 @@ enum ClaudeCmd {
     },
 }
 
+/// `illogical fountain ...`.
+#[derive(Subcommand)]
+enum FountainCmd {
+    /// This machine as the account's Fountain runner (M45).
+    Runner {
+        #[command(subcommand)]
+        cmd: fountain_runner::RunnerCmd,
+    },
+}
+
 /// Writes to a PR block (M36).
 #[derive(Subcommand)]
 enum PrCmd {
@@ -1070,6 +1088,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
     }
     if let Command::Inbox = cli.cmd {
         return Ok(hook::inbox(http::Target::Socket(socket(&cli))));
+    }
+    if let Command::Fountain { cmd: FountainCmd::Runner { cmd } } = &cli.cmd {
+        // Fountain's API and this host's unit: no daemon involved.
+        return fountain_runner::run(cmd, cli.json);
     }
     // `claude ls --host all` (#78): every host's, as each answers.
     if cli.host.as_deref() == Some("all")
@@ -2245,7 +2267,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 request(&sock, "POST", &format!("/api/panes/{}/close", p.0), None)?.json()?;
             }
         }
-        Command::Ask | Command::Hook | Command::Inbox => unreachable!("handled first"),
+        Command::Ask | Command::Hook | Command::Inbox | Command::Fountain { .. } => unreachable!("handled first"),
         Command::Attention { state: None, .. } => {
             let v = request(&sock, "GET", "/api/attention", None)?.json()?;
             if json_out {
