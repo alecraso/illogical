@@ -1,0 +1,4003 @@
+{
+ "data": [
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [
+    "8ebd8a41-ae87-4601-ab3c-37a9983b6725"
+   ],
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "",
+   "environment_id": "8f79e5a9-f506-4cea-926c-ccf680af574c",
+   "id": "75faf9e6-fb02-44e0-b449-95bbce794be8",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-30T04:56:38Z",
+   "mcp_servers": {
+    "hud": {
+     "type": "http",
+     "url": "http://127.0.0.1:4832/mcp"
+    }
+   },
+   "metadata": {
+    "box": "app-44aeaba6",
+    "part-of": "planter"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "planter-app-44aeaba6",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the agent in a studio box: a machine that holds one app, whose owner and",
+   "updated_at": "2026-09-30T04:56:38Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [
+    "0641dd09-5229-45a7-8e8a-a6b4348c53e1"
+   ],
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "",
+   "environment_id": "6272205f-c955-485e-9ae3-14e4225cf004",
+   "id": "98984a82-8000-49e0-832e-b500475b4d2d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-30T02:58:36Z",
+   "mcp_servers": {
+    "hud": {
+     "type": "http",
+     "url": "http://127.0.0.1:4832/mcp"
+    }
+   },
+   "metadata": {
+    "box": "app-f5829d8e",
+    "part-of": "planter"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "planter-app-f5829d8e",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the agent in a studio box: a machine that holds one app, whose owner and",
+   "updated_at": "2026-09-30T02:58:36Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "The GrokBot2 house bot.",
+   "environment_id": null,
+   "id": "841cd441-47c2-403b-9f6c-165b46434916",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-23T21:58:36Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-fable-5-1",
+   "name": "grokbot2",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are GrokBot2, the house bot of a small chat app. Answer the person directly ",
+   "updated_at": "2026-09-23T21:58:36Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "",
+   "environment_id": "a4e4eb98-aa38-4733-9851-a7a47c596336",
+   "id": "a4f41603-fb47-4434-a057-0c92c9c59b17",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T23:39:26Z",
+   "mcp_servers": {},
+   "metadata": {
+    "attemptId": "18fa5fd8-cb90-4918-9236-2ba75762d42e",
+    "project": "project-ba40a05e-6adc-4ff5-9192-5ee08b4855b7",
+    "purpose": "own-app-demo"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Community Tool Library dedicated builder 18fa5fd8",
+   "permission_policy": {
+    "default": "auto_deny",
+    "edit": "auto_allow",
+    "execute": "auto_allow",
+    "read": "auto_allow",
+    "search": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "Work only in /srv/sprite/project-ba40a05e-6adc-4ff5-9192-5ee08b4855b7. This is a",
+   "updated_at": "2026-09-21T23:39:26Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "#2479 second run: a codex turn on the deployment's ChatGPT account",
+   "environment_id": null,
+   "id": "d684be57-6503-45e1-b397-fbd135db04fa",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T22:32:06Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "openai/gpt-6-astra",
+   "name": "adr-0047-prod-proof-2",
+   "permission_policy": {},
+   "runtime": "codex",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "Answer directly and briefly. Do not clone or modify any repository.\n",
+   "updated_at": "2026-09-21T22:32:06Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": "bc35fcb8-94c4-4b04-9854-3f85e3eec16b",
+   "id": "9cb99e55-7b0a-4cc7-8925-98bcabc1d018",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T21:40:20Z",
+   "mcp_servers": {},
+   "metadata": {
+    "attemptId": "8758a451-13c8-4bec-95a0-9487df468d01",
+    "project": "project-fbdaeace-88dd-4daa-8455-53f8ebc60759",
+    "purpose": "own-app-demo"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Tool lending library dedicated builder 8758a451",
+   "permission_policy": {
+    "default": "auto_deny",
+    "edit": "auto_allow",
+    "execute": "auto_allow",
+    "read": "auto_allow",
+    "search": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "Work only in /srv/sprite/project-fbdaeace-88dd-4daa-8455-53f8ebc60759. This is a",
+   "updated_at": "2026-09-21T21:40:20Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": "5470f5af-4a43-40fe-8ddc-5c74ea2d2886",
+   "id": "c3e4e293-de57-4399-ba00-9ba87636689f",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T21:23:14Z",
+   "mcp_servers": {},
+   "metadata": {
+    "attemptId": "fe3a7ccc-bbb3-449c-887c-81cf0be9f607",
+    "project": "project-2e84a608-b2bb-445b-9257-fd738de7509c",
+    "purpose": "own-app-demo"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Own app demo dedicated builder fe3a7ccc",
+   "permission_policy": {
+    "default": "auto_deny",
+    "edit": "auto_allow",
+    "execute": "auto_allow",
+    "read": "auto_allow",
+    "search": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "Work only in /srv/sprite/project-2e84a608-b2bb-445b-9257-fd738de7509c. This is a",
+   "updated_at": "2026-09-21T21:23:14Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": "7676b471-d484-4796-90ba-4e478c6dd0fe",
+   "id": "bd74d0ae-e4fc-496f-a455-a4f085831d76",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T08:46:56Z",
+   "mcp_servers": {},
+   "metadata": {
+    "attemptId": "19b9bd9a-19b4-45eb-84ef-964376200a2f",
+    "project": "superhud",
+    "purpose": "persistent-teammate"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Superhud builder 19b9bd9a",
+   "permission_policy": {
+    "default": "auto_deny",
+    "edit": "auto_allow",
+    "execute": "auto_allow",
+    "read": "auto_allow",
+    "search": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "Author only the requested new Chirp application in /srv/sprite/chirp-initial. Do",
+   "updated_at": "2026-09-21T08:59:19Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": "96ffdc2b-330a-45d6-a99e-41a20852e9d5",
+   "id": "ad405c16-dad6-4364-8429-1148298f1bfa",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T08:46:56Z",
+   "mcp_servers": {},
+   "metadata": {
+    "attemptId": "19b9bd9a-19b4-45eb-84ef-964376200a2f",
+    "project": "superhud",
+    "purpose": "persistent-teammate"
+   },
+   "model": null,
+   "name": "Superhud operations steward 19b9bd9a",
+   "permission_policy": {
+    "default": "auto_deny"
+   },
+   "runtime": "acp",
+   "runtime_command": "node -e 'const fs=require('\\''node:fs'\\''),p=require('\\''node:path'\\''),cp=requi",
+   "sandbox_mode": "persistent",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "",
+   "updated_at": "2026-09-21T19:36:36Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": "7676b471-d484-4796-90ba-4e478c6dd0fe",
+   "id": "679e21f6-afd6-46a5-aba3-41598785adf1",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T08:17:23Z",
+   "mcp_servers": {},
+   "metadata": {
+    "project": "superhud",
+    "purpose": "reviewed-worker-repair"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "superhud-builder-repair-9a3ff2a0-f2a1-496d-a72d-0da82f4beee4",
+   "permission_policy": {
+    "default": "auto_deny",
+    "edit": "auto_allow",
+    "execute": "auto_allow",
+    "read": "auto_allow",
+    "search": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "Work only on the bounded repair requested in /workspace/chirp-repair. Do not dep",
+   "updated_at": "2026-09-21T08:17:23Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 4,
+   "description": "",
+   "environment_id": "96ffdc2b-330a-45d6-a99e-41a20852e9d5",
+   "id": "27f51e30-011f-4275-86d8-6ae1703e15de",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-21T07:45:46Z",
+   "mcp_servers": {},
+   "metadata": {
+    "project": "superhud",
+    "purpose": "isolated-acp-check"
+   },
+   "model": null,
+   "name": "superhud-acp-check-982aa71d-f792-4122-b415-9276fb10db98",
+   "permission_policy": {
+    "default": "auto_deny"
+   },
+   "runtime": "acp",
+   "runtime_command": "cd /workspace/superhud-acp && exec ./node_modules/.bin/chant acp",
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "",
+   "updated_at": "2026-09-21T07:45:46Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 7,
+   "description": "Builds single-file multiplayer HTML games for Jino chats (live-games POC)",
+   "environment_id": "9ad41a86-3bb6-4449-968b-d1278afde9ec",
+   "id": "58168edf-c994-4568-8c65-f746fc339587",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-19T00:33:25Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "jino-games",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "You build small multiplayer party games that a group of friends will play\ntogeth",
+   "updated_at": "2026-09-19T01:36:38Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 5,
+   "description": "Grows the blank-slate app scaffolded by `hud init --blank`",
+   "environment_id": "f74d891d-31eb-417f-8cac-695c6d689b2a",
+   "id": "5e6c7e70-9ff3-4822-821c-2d996529f4f8",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-18T22:12:20Z",
+   "mcp_servers": {
+    "hud": {
+     "type": "http",
+     "url": "http://127.0.0.1:4832/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "hud-playground",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "runner",
+   "session_config": {},
+   "skills": [],
+   "system": "You are pair-programming with a human who is watching this app live in\ntheir bro",
+   "updated_at": "2026-09-18T22:12:20Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 64,
+   "description": "Private deterministic-workflow navigation adviser.",
+   "environment_id": "3ecf7ab7-4c65-4e5b-857f-ba3771234063",
+   "id": "f2fa2423-f4a9-46d8-a272-e7eccb2b1532",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-09T10:28:36Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "holiday-guide",
+   "permission_policy": {
+    "default": "auto_deny"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "You are the navigation adviser for Holiday, a user-operated password-management ",
+   "updated_at": "2026-09-10T03:12:24Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 0,
+   "description": "Private holiday checkpoint decisions from sanitized extension observations",
+   "environment_id": "a3218cb2-b67f-4eb7-ade5-58639c4396c0",
+   "id": "d7782b5a-b43d-40ee-acd1-6fca5d80c34e",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-09T09:17:03Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "holiday-late-fill",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You advise the trusted holiday extension on a browser checkpoint. You receive on",
+   "updated_at": "2026-09-09T09:17:03Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Private holiday browser task experiment",
+   "environment_id": "a3218cb2-b67f-4eb7-ade5-58639c4396c0",
+   "id": "5b0a37b7-20d6-48ef-a067-4aa7303d40ee",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-08T10:49:42Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "holiday",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You choose the next bounded browser operation for an explicitly authorized holid",
+   "updated_at": "2026-09-08T10:49:42Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "",
+   "environment_id": "bba0e025-f556-46f2-9e7e-c6caf051b203",
+   "id": "b5208e32-c0bc-40c8-bf70-b5ebce3562a6",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-07T10:14:30Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "f253def8-caa2-4186-bbc3-ddae9e797320"
+    }
+   },
+   "model": "openai/gpt-6-astra",
+   "name": "Switchyard · review-loop",
+   "permission_policy": {},
+   "runtime": "codex",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"review-loop\"",
+   "updated_at": "2026-09-07T10:14:30Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": [],
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [],
+   "avatar_media_type": null,
+   "conversation_count": 7,
+   "description": "Makes self-contained OpenSCAD and STL objects for PrintIt.",
+   "environment_id": "2b35df5a-c122-4308-bd81-9c013288158a",
+   "id": "099631eb-6df8-4351-a35e-4d29af41298e",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-07T04:17:57Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "printit-modeler",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "sprites",
+   "session_config": {},
+   "skills": [],
+   "system": "You make original 3D-printable objects for a family's PrintIt app.\nTurn the user",
+   "updated_at": "2026-09-07T04:17:57Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 7,
+   "description": "The agent working on BinaryBourbon/fountain.",
+   "environment_id": "d6bdf621-21dd-4f29-ae3d-72243685d370",
+   "id": "226585e2-3172-41b6-bc5f-63a84b98a31e",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-06T09:59:23Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "c4d71904-ee89-45ad-9ea8-7a5436a68903"
+    }
+   },
+   "model": "openai/gpt-6-astra",
+   "name": "Switchyard · fountain",
+   "permission_policy": {},
+   "runtime": "codex",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"fountain\".\n\n",
+   "updated_at": "2026-09-06T10:02:44Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 56,
+   "description": "",
+   "environment_id": "4d028fe2-5a8d-4acb-aa3d-9aa499cd5dc8",
+   "id": "1a8a398a-a857-4ea7-9954-6c94c0460fd7",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-06T07:58:10Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "b1c4be57-6a72-42c0-a2e4-9a17a6a73ba5"
+    }
+   },
+   "model": "openai/gpt-6-astra",
+   "name": "Switchyard · Switchyard",
+   "permission_policy": {},
+   "runtime": "codex",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"Switchyard\".",
+   "updated_at": "2026-09-06T07:58:10Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "The agent working on managoat/switchyard-expo-hello.",
+   "environment_id": "fbab85fa-cf39-4c5e-989d-d1c6477e9aa8",
+   "id": "087abf30-c1e8-41c2-8352-aff46b265bdd",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-06T01:00:46Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "e96fc271-182f-44df-a097-55db90ed2932"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · switchyard-expo-hello",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"switchyard-e",
+   "updated_at": "2026-09-06T01:00:46Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "The agent working on raunaksingwi/raunaksingwi.github.io.",
+   "environment_id": "a685518a-2e2c-46d0-8ce0-23efc94953d2",
+   "id": "17ef31c7-dd70-4f27-87a9-37e8d8f3a767",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-05T06:03:11Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "a4be0ac5-04df-4508-9710-9b78e121610c"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · raunaksingwi.github.io",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"raunaksingwi",
+   "updated_at": "2026-09-05T06:03:11Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "The agent working on jhgaylor/games.",
+   "environment_id": "c84bfb18-8253-4619-8b4a-1be6d427c49e",
+   "id": "e3e7dc3c-f401-47a7-b21f-abc62fd6e476",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T22:39:39Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "3844626c-0c15-48e6-9531-d006d14aff05"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · games",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"games\".\n\n## ",
+   "updated_at": "2026-09-04T22:39:39Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "The agent working on akeemjenkins/startrekdiary.com.",
+   "environment_id": "9a863de8-de50-436d-a658-db913d26f1cd",
+   "id": "0f8dc3fe-c030-4f85-a086-c049472f11d6",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T22:10:37Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "7fb26391-db20-4106-8573-e35c7a8b9890"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · startrekdiary.com",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"startrekdiar",
+   "updated_at": "2026-09-04T22:10:37Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "The agent working on jhgaylor/across-the-eras.",
+   "environment_id": "b1d60503-c148-4a3c-b767-4e0d41c1357a",
+   "id": "4a3aab6e-cd3c-45ca-a36c-60b999391ba7",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T20:23:36Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "2032cbc4-a227-4a65-bc03-07046d82830c"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · across-the-eras",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"across-the-e",
+   "updated_at": "2026-09-04T20:25:23Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "The agent working on jhgaylor/kistulentz.",
+   "environment_id": "2159b282-0d7c-4e13-a3cb-211ad356c081",
+   "id": "b329cebe-7fa8-487e-b04d-0eaf0674403c",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T19:57:47Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "ec354279-92da-4729-9969-c3d6e1573543"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · kistulentz",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"kistulentz\".",
+   "updated_at": "2026-09-04T19:57:47Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "The agent working on jhgaylor/chant.",
+   "environment_id": "6ae7496b-341f-4cd2-917b-b66f71a26e29",
+   "id": "820bbc4d-d1b5-443c-8955-5a4012782759",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T19:53:42Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "653c3f2a-e51b-455c-8440-4c9686ed4414"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · chant",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"chant\".\n\n## ",
+   "updated_at": "2026-09-04T19:53:42Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "The agent working on jhgaylor/jhgaylor.github.io.",
+   "environment_id": "6d3112b4-51e9-40ec-9887-a325b82058aa",
+   "id": "fcac3c57-10c4-4dc5-98e0-fed1d0e4c6a3",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T19:33:34Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "a292df91-be4f-43fa-92f4-05a153de388d"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · jhgaylor.github.io",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"jhgaylor.git",
+   "updated_at": "2026-09-04T19:33:34Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 16,
+   "description": "The agent working on managoat/demos.",
+   "environment_id": "69f09e21-205c-4fe0-9ba9-a6f28d2c4fc1",
+   "id": "4b0ada6a-0417-4ef7-a30b-8753e93d485a",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T17:52:45Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "47648684-c5a0-455c-847d-5befd274dc9f"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · demos",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"demos\".\n\n## ",
+   "updated_at": "2026-09-04T17:52:45Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [
+    "59ee36c8-5bfe-4da6-8cb6-d34fd6bd0f11"
+   ],
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Drydock project \"home-cloud\" on jhgaylor/home-cloud.",
+   "environment_id": "27960331-2308-4f8c-9457-2651a6e4b9ea",
+   "id": "d4d896e6-b657-4366-8136-e2e43705957d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T17:33:43Z",
+   "mcp_servers": {},
+   "metadata": {
+    "drydock": {
+     "owner": "jhgaylor",
+     "project": "891d7ffa-458d-430b-8e41-2e391cab68d3"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "drydock-agent-home-cloud-891d7ffa",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on a drydock machine for the project \"home-cloud\".\n\nThi",
+   "updated_at": "2026-09-04T17:33:43Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 4,
+   "description": "The agent working on jhgaylor/swift-goat.",
+   "environment_id": "16c30c95-a7a8-491c-b6f4-b9692a8055d9",
+   "id": "bf623879-38f3-43b2-b84d-711d203fca38",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T17:05:36Z",
+   "mcp_servers": {},
+   "metadata": {
+    "switchyard": {
+     "project": "785232c0-33a7-4622-8413-3e54e939baa7"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Switchyard · swift-goat",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the coding agent on the switchyard machine for the project \"swift-goat\".",
+   "updated_at": "2026-09-04T17:11:10Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "The agent that lives on your Paddock machine.",
+   "environment_id": "9a887352-4817-4f48-af5d-050e84bf63b6",
+   "id": "41f3bfd8-0ad8-4d68-93f3-6430873c0a1a",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T11:30:51Z",
+   "mcp_servers": {},
+   "metadata": {
+    "paddock": {
+     "identity": true,
+     "rev": 1,
+     "workspace": "IyvbYWacAqW5"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Paddock IyvbYWacAqW5",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the agent on someone's personal cloud machine, reached through Paddock.\n",
+   "updated_at": "2026-09-04T11:30:51Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 6,
+   "description": "The agent that lives on your Paddock machine.",
+   "environment_id": "e21d0b8a-1b31-49ac-8212-e5b11c9e62e0",
+   "id": "67b9dc58-5b90-4b63-9705-07763aa7fe91",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-04T08:49:56Z",
+   "mcp_servers": {},
+   "metadata": {
+    "paddock": {
+     "identity": true,
+     "rev": 2,
+     "workspace": "_rY2KFwfUKCi"
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Paddock",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "name": "pdf",
+     "source": "anthropics/skills"
+    }
+   ],
+   "system": "You are the agent on someone's personal cloud machine, reached through Paddock.\n",
+   "updated_at": "2026-09-04T11:30:29Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": null,
+   "id": "8b708842-be23-47c9-8867-4cd4274f9a98",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-03T05:44:24Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "google/gemini-3.1-pro-preview",
+   "name": "probe-1460-opencode-google",
+   "permission_policy": {},
+   "runtime": "opencode",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "Answer in one short sentence.",
+   "updated_at": "2026-09-03T05:44:24Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": null,
+   "id": "21ce4284-32b7-4e72-a258-97e1e058fd8b",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T11:01:13Z",
+   "mcp_servers": {
+    "salon": {
+     "headers": {
+      "Authorization": "Bearer $${X}",
+      "X-Fountain-Conversation-Id": "$${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-1.example.com/mcp"
+    }
+   },
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:2535c87305c644c1",
+     "tuple": {
+      "connectors": [],
+      "environment": "28c2eb67-9600-4447-99f8-f7f2c26964b4",
+      "model": "anthropic/claude-opus-5",
+      "preset": null,
+      "runtime": "claude",
+      "skills": [],
+      "vault": null
+     }
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Salon · Opus 5 · on swift-goat",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-02T11:01:13Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": null,
+   "id": "e871e55e-fcc7-4103-bba2-59bfe58d32dd",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T09:51:32Z",
+   "mcp_servers": {},
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:9f7b1b7d7239908c",
+     "tuple": {
+      "connectors": [],
+      "environment": "0675f253-b85a-4a4b-94a7-34c8d6c9160c",
+      "model": "openai/gpt-5.3-codex",
+      "preset": null,
+      "runtime": "codex",
+      "skills": [],
+      "vault": null
+     }
+    }
+   },
+   "model": "openai/gpt-6-astra",
+   "name": "Salon · GPT-5.3 Codex · on fountain",
+   "permission_policy": {},
+   "runtime": "codex",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 5,
+   "description": "",
+   "environment_id": null,
+   "id": "e4fde71e-9c98-45fe-8cf5-cf18113314c7",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T09:40:41Z",
+   "mcp_servers": {
+    "salon": {
+     "headers": {
+      "Authorization": "Bearer $${X}",
+      "X-Fountain-Conversation-Id": "$${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-1.example.com/mcp"
+    }
+   },
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:48c0cda67ccf3d09",
+     "tuple": {
+      "connectors": [],
+      "environment": "0675f253-b85a-4a4b-94a7-34c8d6c9160c",
+      "model": "anthropic/claude-opus-5",
+      "preset": null,
+      "runtime": "claude",
+      "skills": [],
+      "vault": null
+     }
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Salon · Opus 5 · on fountain",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-02T09:40:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 4,
+   "description": "",
+   "environment_id": null,
+   "id": "07309849-7805-46f5-b799-f2b2431056c9",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T05:37:58Z",
+   "mcp_servers": {
+    "salon": {
+     "headers": {
+      "Authorization": "Bearer $${X}",
+      "X-Fountain-Conversation-Id": "$${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-2.example.com/mcp"
+    }
+   },
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:c279ca8e117af2b8",
+     "tuple": {
+      "connectors": [],
+      "environment": "77c32a7b-dd55-433e-a5b0-f30ce29e8d0a",
+      "model": "anthropic/claude-opus-5",
+      "preset": null,
+      "runtime": "claude",
+      "skills": [],
+      "vault": null
+     }
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Salon · Opus 5 · on salon",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-02T05:37:58Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": null,
+   "id": "a1e1230f-74d9-447e-970d-83b559fc0ca0",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T05:22:45Z",
+   "mcp_servers": {
+    "salon": {
+     "headers": {
+      "Authorization": "Bearer $${X}",
+      "X-Fountain-Conversation-Id": "$${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-2.example.com/mcp"
+    }
+   },
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:61ae0fae9fcd782c",
+     "tuple": {
+      "connectors": [],
+      "environment": "aa563e32-9e83-4235-85f8-f7c154d7a4a8",
+      "model": "anthropic/claude-opus-5",
+      "preset": null,
+      "runtime": "claude",
+      "skills": [],
+      "vault": null
+     }
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Salon · Opus 5 · on aa563e32",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-02T05:22:45Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "Smoke test for the workbench's snapshot hook. Does exactly what the prompt says in /srv/sprite/work/fountain-workbench and never pushes.\n",
+   "environment_id": "2039536f-4b1e-4e9a-be1d-1e1a10218ba7",
+   "id": "715cd4f3-ed3c-4fe8-a24d-c903247219f1",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T05:20:53Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-3.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "workbench-snapshot-smoke",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are a smoke test. The checkout is at /srv/sprite/work/fountain-workbench.\nDo",
+   "updated_at": "2026-09-02T09:24:50Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 4,
+   "description": "",
+   "environment_id": null,
+   "id": "a6c0766c-c934-453c-81b0-d3f3111a8848",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T00:44:15Z",
+   "mcp_servers": {
+    "salon": {
+     "headers": {
+      "Authorization": "Bearer $${X}",
+      "X-Fountain-Conversation-Id": "$${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-1.example.com/mcp"
+    }
+   },
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:2a0e3e5ebee0b96c",
+     "tuple": {
+      "connectors": [],
+      "environment": null,
+      "model": "anthropic/claude-opus-5",
+      "preset": null,
+      "runtime": "claude",
+      "skills": [],
+      "vault": null
+     }
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Salon · Opus 5",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-02T00:44:15Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "",
+   "environment_id": null,
+   "id": "3067e553-a14c-4d23-9fd3-56a403cff1fa",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-02T00:13:31Z",
+   "mcp_servers": {
+    "salon": {
+     "headers": {
+      "Authorization": "Bearer $${X}",
+      "X-Fountain-Conversation-Id": "$${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-4.example.com/mcp"
+    }
+   },
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:78827a96d1a71598",
+     "tuple": {
+      "connectors": [],
+      "environment": null,
+      "model": "anthropic/claude-sonnet-5",
+      "preset": null,
+      "runtime": "claude",
+      "skills": [],
+      "vault": null
+     }
+    }
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Salon · Sonnet 5",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-02T00:13:31Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": null,
+   "id": "2d15926f-2266-4f00-8ab8-436fe29b9cce",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-01T23:45:39Z",
+   "mcp_servers": {
+    "gmail": {
+     "connection": "592671c2-f0de-46fa-be27-c892e714cb1c"
+    }
+   },
+   "metadata": {
+    "salon": {
+     "key": "salon:v2:deaa4bbb860cbddf",
+     "tuple": {
+      "connectors": [
+       "592671c2-f0de-46fa-be27-c892e714cb1c"
+      ],
+      "environment": null,
+      "model": "anthropic/claude-opus-5",
+      "preset": null,
+      "runtime": "claude",
+      "skills": [
+       "pdf"
+      ],
+      "vault": null
+     }
+    }
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "Salon · Opus 5 · gmail, pdf",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "name": "pdf",
+     "ref": "53048666b05b4799081517d00e09e0a2dd688678",
+     "source": "anthropics/skills"
+    }
+   ],
+   "system": "You are the assistant in a group chat. Be friendly, concise and plain-spoken: sh",
+   "updated_at": "2026-09-01T23:45:39Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "Reads a real repository in a Fountain sandbox",
+   "environment_id": "763f7de4-f204-4932-9620-9fb9ea6ad64d",
+   "id": "d451906f-cb4f-4933-8c25-5e100e7364b0",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-01T19:26:53Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "fountain-reader",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "Work in /workspace/fountain. Inspect the repository before you answer.\nDo not ed",
+   "updated_at": "2026-09-01T19:26:53Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 5,
+   "description": "",
+   "environment_id": null,
+   "id": "879c77f4-08d3-4b02-b7b0-f64b6274158a",
+   "inference_credential_id": null,
+   "inserted_at": "2026-09-01T07:54:30Z",
+   "mcp_servers": {
+    "gmail": {
+     "connection": "592671c2-f0de-46fa-be27-c892e714cb1c"
+    },
+    "slack": {
+     "args": [
+      "-y",
+      "@modelcontextprotocol/server-slack"
+     ],
+     "command": "npx",
+     "env": {
+      "SLACK_BOT_TOKEN": "${X}"
+     }
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "trifecta-tester",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Runs a read-only chant audit over intentius/chant on request. Holds no credential and proposes nothing.",
+   "environment_id": "48c6a7a1-4a8f-4f19-84d5-66b8c735365f",
+   "id": "a71e198f-617c-4f8c-b592-8159cd9aa9a1",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-30T20:57:19Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Cantor audit: github.com/intentius/chant",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Cantor's public audit for intentius/chant (",
+   "updated_at": "2026-08-30T20:57:19Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [
+    "d27165a1-da4c-4ae6-8c7c-fa3d24b6e97f"
+   ],
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Opens small pull requests for the Fountain terminal cast",
+   "environment_id": "92b5365f-482a-4ece-baff-9d208169e03a",
+   "id": "67cd000a-2b49-4bc1-b066-16e684dc9d48",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-30T03:27:14Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "openai/gpt-5.5",
+   "name": "tour-contributor",
+   "permission_policy": {},
+   "runtime": "codex",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You work in /work/app, a git repository. Make the smallest change that satisfies",
+   "updated_at": "2026-08-30T03:51:45Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Audits jhgaylor/3d-models with chant on a schedule and proposes the pull requests.",
+   "environment_id": "48c6a7a1-4a8f-4f19-84d5-66b8c735365f",
+   "id": "66a4e14f-7ecd-42d2-9136-6a4829383d47",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-29T08:17:56Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Cantor: github.com/jhgaylor/jhgaylor/3d-models",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Cantor for jhgaylor/3d-models (https://github.com/jhgaylor/3d-models). Y",
+   "updated_at": "2026-08-29T08:17:56Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Runs a read-only chant audit over codeberg.org/WencesByte/pages on request. Holds no credential and proposes nothing.",
+   "environment_id": "48c6a7a1-4a8f-4f19-84d5-66b8c735365f",
+   "id": "a8ec701d-8d49-478d-8bd9-dfba985ab1e0",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-29T02:28:30Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Cantor audit: codeberg.org/WencesByte/pages",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Cantor's public audit for codeberg.org/WencesByte/pages (",
+   "updated_at": "2026-08-29T02:28:30Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Runs a read-only chant audit over codeberg.org/adamlui/chatgpt-infinity on request. Holds no credential and proposes nothing.",
+   "environment_id": "48c6a7a1-4a8f-4f19-84d5-66b8c735365f",
+   "id": "168f816c-8790-4076-91d6-76e9aa078891",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-29T02:19:06Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Cantor audit: codeberg.org/adamlui/chatgpt-infinity",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Cantor's public audit for codeberg.org/adamlui/chatgpt-infinity (",
+   "updated_at": "2026-08-29T02:19:06Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Audits jhgaylor/jhgaylor.github.io with chant on a schedule and proposes the pull requests.",
+   "environment_id": "48c6a7a1-4a8f-4f19-84d5-66b8c735365f",
+   "id": "f78ac6f0-c4da-4acc-a89f-31aeabf4ec32",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-29T01:45:45Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Cantor: github.com/jhgaylor/jhgaylor/jhgaylor.github.io",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Cantor for jhgaylor/jhgaylor.github.io (",
+   "updated_at": "2026-08-29T01:45:45Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Runs a read-only chant audit over jhgaylor/mend on request. Holds no credential and proposes nothing.",
+   "environment_id": "48c6a7a1-4a8f-4f19-84d5-66b8c735365f",
+   "id": "f2391122-e8d6-4898-b416-51225828abfe",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-29T01:12:33Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Cantor audit: github.com/jhgaylor/mend",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Cantor's public audit for jhgaylor/mend (",
+   "updated_at": "2026-08-29T01:12:33Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Runs a read-only chant audit over jhgaylor/jhgaylor.github.io on request. Holds no credential and proposes nothing.",
+   "environment_id": "48c6a7a1-4a8f-4f19-84d5-66b8c735365f",
+   "id": "d06d1dc8-fe89-42f8-94e8-14a1e8fe1955",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-29T00:52:46Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Cantor audit: github.com/jhgaylor/jhgaylor.github.io",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Cantor's public audit for jhgaylor/jhgaylor.github.io (",
+   "updated_at": "2026-08-29T00:52:46Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Throwaway: proves the Firecracker runner backend end to end. Delete when done.",
+   "environment_id": "3101d2cb-e70e-4a87-9119-3b0e9d2b39e7",
+   "id": "289d17ab-c99f-4e94-9d9e-062da59fad2d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-27T07:22:28Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "fireball-smoke",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "runner",
+   "session_config": {},
+   "skills": [],
+   "system": "You are a smoke test. Run exactly what you are asked, print the raw output, and ",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 6,
+   "description": "Markets Fountain — BinaryBourbon/fountain. Positioning, landing and docs copy, competitive analysis, pricing and packaging, launches. Works in the repo, clears the docs and code gates, opens one pull request.\n",
+   "environment_id": "e88f0cb1-0477-41bf-b267-d298aa0feb0d",
+   "id": "0b26fe3a-c1cf-4f10-bc7c-9830801d2ff4",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-27T00:09:44Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-9.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "fountain-marketing",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "name": "product-marketing",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "customer-research",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "competitor-profiling",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "competitors",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "pricing",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "marketing-plan",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "copywriting",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "copy-editing",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "content-strategy",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "marketing-psychology",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "seo-audit",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "ai-seo",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "launch",
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "marketing-council",
+     "source": "coreyhaines31/marketingskills"
+    }
+   ],
+   "system": "You are the marketer for Fountain, and Fountain is the product in\ngithub.com/Bin",
+   "updated_at": "2026-08-27T00:35:39Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 8,
+   "description": "",
+   "environment_id": null,
+   "id": "cf1687c6-fe9e-41e9-8455-ce33ffba3732",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-25T13:35:16Z",
+   "mcp_servers": {
+    "gmail": {
+     "connection": "592671c2-f0de-46fa-be27-c892e714cb1c"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "gmail-tester",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You have Gmail tools from the gmail MCP server. Do exactly what the prompt asks ",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": [
+    "67dd2a9b-600d-455c-a6a4-e7d16b6a3880"
+   ],
+   "avatar_media_type": null,
+   "conversation_count": 18,
+   "description": "Reflex: a personal assistant with its own computer.",
+   "environment_id": null,
+   "id": "d25b1530-8e1c-43df-9a04-2248cccf0fda",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-25T12:03:40Z",
+   "mcp_servers": {
+    "gmail": {
+     "connection": "592671c2-f0de-46fa-be27-c892e714cb1c"
+    },
+    "memory": {
+     "headers": {},
+     "type": "http",
+     "url": "https://mcp-10.example.com/api/mcp/memory"
+    },
+    "messages": {
+     "headers": {},
+     "type": "http",
+     "url": "https://mcp-10.example.com/api/mcp/messages"
+    },
+    "signal": {
+     "headers": {},
+     "type": "http",
+     "url": "https://mcp-10.example.com/api/mcp/signal"
+    },
+    "whatsapp": {
+     "headers": {},
+     "type": "http",
+     "url": "https://mcp-10.example.com/api/mcp/whatsapp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "reflex-1",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "persistent",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Reflex, the owner's personal assistant. You are not a chatbot: you have ",
+   "updated_at": "2026-09-02T01:16:15Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Builds small games in jhgaylor/games — LÖVE (Lua) and PixiJS (JS/Vite) — and shows them off. Runs the gate, screenshots what it built, and opens one pull request with the pictures in it.\n",
+   "environment_id": "800e1537-a865-41bf-a86e-651af5c0503f",
+   "id": "02fb18b8-fd17-4689-bbe3-3fe0c2dc6a3f",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-24T07:41:18Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "games",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "content": "---\nname: love2d\ndescription: Writing a LÖVE (love2d) game in Lua that runs head",
+     "name": "love2d"
+    },
+    {
+     "content": "---\nname: pixijs\ndescription: Writing a PixiJS v8 game (JavaScript, Vite) that b",
+     "name": "pixijs"
+    },
+    {
+     "content": "---\nname: screenshots-in-prs\ndescription: Putting screenshots of a game into a G",
+     "name": "screenshots-in-prs"
+    }
+   ],
+   "system": "You build games in github.com/jhgaylor/games: small, self-contained\ngames, one d",
+   "updated_at": "2026-09-02T09:40:03Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 0,
+   "description": "Works on ravioli-hq/ravioli-web-ui — the static React SPA for Ravioli web chat, where Jino is in every thread. Reads the README first, runs the gate, opens one pull request.\n",
+   "environment_id": "3017d60a-ad4f-424c-800a-b6a8a542f658",
+   "id": "e31d250d-2a2c-403c-883a-ceefff9efa6d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-24T04:23:27Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-9.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "ravioli-web-ui",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You work on Ravioli's web chat: github.com/ravioli-hq/ravioli-web-ui, a\nstatic R",
+   "updated_at": "2026-08-24T09:49:57Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 30,
+   "description": "Works on ravioli-hq/ravioli-backend — Ravioli, the Python/FastAPI backend and LiveKit voice worker behind Jino. Reads CLAUDE.md first, runs the gate, opens one pull request.\n",
+   "environment_id": "eb7d6e19-1723-4277-ac1c-954e31ee69c1",
+   "id": "d54af5b5-15b2-44de-b781-22cb521f0aa7",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-24T04:23:27Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-9.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "ravioli-backend",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You work on Ravioli's backend: github.com/ravioli-hq/ravioli-backend, the\nPython",
+   "updated_at": "2026-08-24T09:49:56Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 0,
+   "description": "Works on ravioli-hq/ravioli-waitlist — the tryravioli.com landing page, static assets on Cloudflare. Reads the README first, runs the tests, opens one pull request.\n",
+   "environment_id": "3b61fa6d-4eed-4344-924c-f3c9a0e547bb",
+   "id": "93d93685-3f87-40fb-9504-44be2d87ff41",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-24T04:23:27Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-9.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "ravioli-waitlist",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You work on Ravioli's landing page: github.com/ravioli-hq/ravioli-waitlist,\nlive",
+   "updated_at": "2026-08-24T09:49:57Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 0,
+   "description": "Works on ravioli-hq/ravioli-client — the Expo / React Native app for Jino (text chat and LiveKit voice). Reads CLAUDE.md first, runs the gate, opens one pull request.\n",
+   "environment_id": "7a6dd207-fe59-4df0-b432-0e0a6d10e558",
+   "id": "92b214bd-e47f-4b91-a496-d531ccae985a",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-24T04:23:27Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-9.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "ravioli-client",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You work on Ravioli's native client: github.com/ravioli-hq/ravioli-client,\nan Ex",
+   "updated_at": "2026-08-24T09:49:57Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 0,
+   "description": "Works on ravioli-hq/ravioli-legal — the public legal pages (privacy policy, account deletion) for the Ravioli app, on GitHub Pages.\n",
+   "environment_id": "b25fecbb-ea60-41a4-a10c-b96792418a02",
+   "id": "1c4b4bf0-82aa-46cb-85d4-8e3800da2c1b",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-24T04:23:27Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-9.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "ravioli-legal",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You work on Ravioli's public legal pages: github.com/ravioli-hq/ravioli-legal,\ns",
+   "updated_at": "2026-08-24T09:49:57Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 45,
+   "description": "Works on jhgaylor/fountain-workbench — the shared dev workstation on the Fountain API (Bun server + React SPA). Reads the README first, runs the gate, opens one pull request.\n",
+   "environment_id": "5120a0cd-218c-4922-b0f9-f91d93fff309",
+   "id": "8e6292a6-30e6-4277-a732-1e5e4feef732",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-24T03:17:35Z",
+   "mcp_servers": {
+    "workbench": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp-16.example.com/mcp"
+    }
+   },
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "fountain-workbench",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You work on Fountain Workbench: a Bun server (server/) and a React SPA\n(src/) on",
+   "updated_at": "2026-09-02T09:40:02Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Works on BinaryBourbon/fountain the way a maintainer does: reads CLAUDE.md and the ADRs first, runs the full local gate, opens one pull request.\n",
+   "environment_id": "59b44097-adad-4ed3-a47e-204cb9a995e2",
+   "id": "51804cd9-37c8-4ecd-a289-f651b858fa24",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-23T21:24:55Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "fountain-contributor",
+   "permission_policy": {
+    "default": "auto_allow"
+   },
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You contribute to Fountain. The checkout is at /workspace/fountain, and it\nis no",
+   "updated_at": "2026-08-23T21:24:55Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Audits BinaryBourbon/fountain with chant on a schedule and proposes the pull requests.",
+   "environment_id": "a98327fb-b7a1-4e43-9e36-3b559d9ce1d8",
+   "id": "0b6ca839-bcd2-402d-b190-538da11f84f3",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-21T05:49:42Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Ward: github.com/BinaryBourbon/BinaryBourbon/fountain",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Ward for BinaryBourbon/fountain (",
+   "updated_at": "2026-08-21T05:49:42Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Audits jhgaylor/rounds with chant on a schedule and proposes the pull requests.",
+   "environment_id": "b65069f0-12c5-46da-bbb9-90bd052a6ac4",
+   "id": "f7dce4ea-1f2f-4c62-b7e3-7afa3b4425a9",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-21T00:37:04Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Rounds: github.com/jhgaylor/rounds",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Rounds for jhgaylor/rounds (https://github.com/jhgaylor/rounds). You run",
+   "updated_at": "2026-08-21T03:39:26Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Audits jhgaylor/mend with chant on a schedule and proposes the pull requests.",
+   "environment_id": "b65069f0-12c5-46da-bbb9-90bd052a6ac4",
+   "id": "a272cb87-e239-4149-8e59-91ad98e564f2",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-21T00:08:17Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Rounds: github.com/jhgaylor/mend",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Rounds for jhgaylor/mend (https://github.com/jhgaylor/mend). You run una",
+   "updated_at": "2026-08-21T03:39:26Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "Audits jhgaylor/express-mcp-handler with chant on a schedule and proposes the pull requests.",
+   "environment_id": "b65069f0-12c5-46da-bbb9-90bd052a6ac4",
+   "id": "02a0be0e-4bd8-47eb-9d55-0f378b69c8e3",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T20:24:14Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Rounds: github.com/jhgaylor/express-mcp-handler",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Rounds for jhgaylor/express-mcp-handler (",
+   "updated_at": "2026-08-21T03:39:26Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Audits jhgaylor/express-mcp-handler with chant and mends what it finds — quick wins applied, judgement calls proposed, one patch back.",
+   "environment_id": "4f7f1d45-6582-4c52-b8b9-57174135db22",
+   "id": "45955372-8473-4849-8a30-652e08937f50",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T20:20:09Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Mend: github.com/jhgaylor/express-mcp-handler",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Mend for jhgaylor/express-mcp-handler (",
+   "updated_at": "2026-08-20T20:20:09Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Audits jhgaylor/home-cloud with chant on a schedule and proposes the pull requests.",
+   "environment_id": "b65069f0-12c5-46da-bbb9-90bd052a6ac4",
+   "id": "127b8e5d-8aa7-4b4d-84c8-f394f7d1b8c9",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T19:37:15Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Rounds: github.com/jhgaylor/home-cloud",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Rounds for jhgaylor/home-cloud (",
+   "updated_at": "2026-08-21T03:39:26Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Audits engrambrain/engram with chant and mends what it finds — quick wins applied, judgement calls proposed, one patch back.",
+   "environment_id": "4f7f1d45-6582-4c52-b8b9-57174135db22",
+   "id": "5902fa32-e838-43d9-8b38-77bae04d0aa9",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T17:59:00Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Mend: github.com/engrambrain/engram",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Mend for engrambrain/engram (https://github.com/engrambrain/engram), a p",
+   "updated_at": "2026-08-20T17:59:00Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Audits aspitz/open-brain-cf with chant and mends what it finds — quick wins applied, judgement calls proposed, one patch back.",
+   "environment_id": "4f7f1d45-6582-4c52-b8b9-57174135db22",
+   "id": "7712c10f-7f83-48fd-a0a8-69b51efe739d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T17:53:50Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Mend: github.com/aspitz/open-brain-cf",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Mend for aspitz/open-brain-cf (",
+   "updated_at": "2026-08-20T19:16:12Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Audits jhgaylor/otfl with chant and mends what it finds — quick wins applied, judgement calls proposed, one patch back.",
+   "environment_id": "4f7f1d45-6582-4c52-b8b9-57174135db22",
+   "id": "ba4fbd40-ba35-486b-a12b-bdc5199c4d04",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T16:39:50Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Mend: github.com/jhgaylor/otfl",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Mend for jhgaylor/otfl (https://github.com/jhgaylor/otfl), a public repo",
+   "updated_at": "2026-08-20T19:32:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "Audits BinaryBourbon/fountain with chant and mends what it finds — quick wins applied, judgement calls proposed, one patch back.",
+   "environment_id": "4f7f1d45-6582-4c52-b8b9-57174135db22",
+   "id": "55592e84-0c59-4438-82aa-a543923eabb2",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T15:43:02Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Mend: github.com/BinaryBourbon/fountain",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Mend for BinaryBourbon/fountain (",
+   "updated_at": "2026-08-20T19:38:05Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Mission coordinator: decomposes a mission into tasks for worker agents, then synthesizes their results into one report. Plans and writes; never executes tasks itself.",
+   "environment_id": null,
+   "id": "c55c21d9-a106-478a-bb0d-1afd347e196d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T13:03:35Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Mission Control",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Mission Control, the coordinator of a fleet of worker agents. You are dr",
+   "updated_at": "2026-08-20T13:03:35Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 0,
+   "description": "Mission task worker: completes one self-contained brief on a fresh computer and reports a machine-readable result.",
+   "environment_id": null,
+   "id": "8e50f8c0-377e-466b-85f9-724a44d905ef",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T13:03:35Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Mission Worker",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are a Mission Worker. Each conversation you get is exactly one task from a l",
+   "updated_at": "2026-08-20T13:03:35Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "A contender in the Arena: answers one prompt head-to-head against other models, judged side by side.",
+   "environment_id": null,
+   "id": "f0577ee9-a870-433e-a866-5f4e96e93826",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T03:50:59Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-haiku-4-5",
+   "name": "Arena anthropic/claude-haiku-4-5",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are a contender in a model arena. The same prompt goes to several models at ",
+   "updated_at": "2026-08-20T03:50:59Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "A contender in the Arena: answers one prompt head-to-head against other models, judged side by side.",
+   "environment_id": null,
+   "id": "d7a895b4-40ec-4361-a81c-437857cf47ed",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T03:50:58Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Arena anthropic/claude-sonnet-5",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are a contender in a model arena. The same prompt goes to several models at ",
+   "updated_at": "2026-08-20T03:50:58Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 4,
+   "description": "A contender in the Arena: answers one prompt head-to-head against other models, judged side by side.",
+   "environment_id": null,
+   "id": "665cf573-a65f-4536-a2e3-791e45211fbf",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T03:50:58Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-opus-5",
+   "name": "Arena anthropic/claude-opus-5",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are a contender in a model arena. The same prompt goes to several models at ",
+   "updated_at": "2026-08-20T03:50:58Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "A friendly data analyst: give it a CSV, get charts and plain-English insights, keep asking questions.",
+   "environment_id": null,
+   "id": "9ba95f66-3150-4d14-9884-9c3164f67b62",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T03:47:00Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "table-talk",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the analyst behind Table Talk, an app for people who are not technical. ",
+   "updated_at": "2026-08-20T03:47:00Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "An SRE teammate on a schedule: probes every site on the watchlist with real tools and reports uptime, latency, TLS expiry and DNS as machine-readable blocks.",
+   "environment_id": null,
+   "id": "7f05cf08-f7ee-4f56-99ca-41244484b5f9",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T03:47:00Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "watchtower",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Watchtower, a site-reliability teammate who watches the owner's sites. Y",
+   "updated_at": "2026-08-20T03:47:00Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "Answers questions about jhgaylor/dns-desk from a real clone, with file-and-line citations.",
+   "environment_id": null,
+   "id": "77f9769e-c21d-4c1c-8d26-00c06b120657",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T03:47:00Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "Sage: jhgaylor/dns-desk",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are Repo Sage for jhgaylor/dns-desk, a public GitHub repository. You run on ",
+   "updated_at": "2026-08-20T03:47:00Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "A researcher with its own computer: reads real sources on the open web and returns clean, sourced briefs.",
+   "environment_id": null,
+   "id": "6f698525-1ab5-4de2-b55f-383c02248994",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-20T03:47:00Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "briefing-room",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are the Briefing Room researcher. The owner asks to get up to speed on a top",
+   "updated_at": "2026-08-20T03:47:00Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 3,
+   "description": "A dedicated DNS operator for Cloudflare zones. Reads freely; never mutates without an approved plan.",
+   "environment_id": null,
+   "id": "d7be8379-7da8-4034-9757-bc31ede0fe9c",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-19T22:58:59Z",
+   "mcp_servers": {},
+   "metadata": {},
+   "model": "anthropic/claude-sonnet-5",
+   "name": "dns-desk",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are DNS Desk, a dedicated DNS operator for the owner's Cloudflare zones. You",
+   "updated_at": "2026-08-20T00:39:12Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "Builds and fixes jhgaylor/fountain-team (Vite + React + TS on the Fountain API) as PRs; bun test / tsc / build green before it asks for review.",
+   "environment_id": "8be1bc8e-47c9-4451-883b-fa10f65a87f6",
+   "id": "d025598c-afac-4ac9-96a4-882a65398690",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-19T13:45:45Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "fountain-team-dev",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are fountain-team-dev, the engineer for jhgaylor/fountain-team — a static, o",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 8,
+   "description": "Jake's gateway to the team: knows every teammate, routes and frames work to them over the Fountain team API, follows up, and reports back in one place.",
+   "environment_id": "83fd178b-920e-4bd7-9cc9-deec5ea77047",
+   "id": "d01efaaa-34d3-4cef-bd02-fb4aaeb8aa14",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-19T13:45:45Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "team-lead",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are team-lead, Jake's single point of contact for his Fountain team. You kno",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 30,
+   "description": "Maintains BinaryBourbon/fountain — fixes, features, API additions, docs — as reviewed PRs that pass mix precommit.",
+   "environment_id": "fecf95a7-f8b2-40d5-af87-fa34665eef75",
+   "id": "8635eb76-8b15-43c4-acb0-f00fa8d4e0b6",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-19T13:45:45Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "fountain-maintainer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are fountain-maintainer, the engineer who keeps BinaryBourbon/fountain healt",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 5,
+   "description": "Maintains jhgaylor/home-cloud (the k3s estate's GitOps repo): platform and app changes, upgrades, docs — as PRs Flux applies after a human merges.",
+   "environment_id": "3101d2cb-e70e-4a87-9119-3b0e9d2b39e7",
+   "id": "7d5712a5-c1b7-4433-89bd-40142dee1132",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-19T13:45:45Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "home-cloud-steward",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": "runner",
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are home-cloud-steward: you keep jhgaylor/home-cloud — the GitOps repo for J",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 4,
+   "description": "Triages BinaryBourbon/fountain-support-issues: labels, dedupes, and files or links an issue on the right repo (fountain / fountain-team / home-cloud); closes the loop on the inbox.",
+   "environment_id": "3190e51d-ed04-4ccc-8fbf-a295f0c105a8",
+   "id": "184e013f-4028-4aa3-9e96-c0accd7eeec6",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-19T13:45:45Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "support-triager",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are support-triager. Your inbox is the private repo $SUPPORT_INBOX_REPO (Bin",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 5,
+   "description": "",
+   "environment_id": "66b425ae-6402-46a6-bdb1-1a7479cca5d0",
+   "id": "a42e20f6-45e8-4d89-b24a-c428c8cc853c",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-18T06:57:54Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "homelab-builder",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are homelab-builder: you take a request like \\\"I want to build a BLAH that d",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 7,
+   "description": "",
+   "environment_id": "e13d0dd6-85c4-41d9-a299-02630360096c",
+   "id": "f8844f9d-98ba-4393-ab31-d5f5044c3fd5",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-17T06:32:14Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "show-curator",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are the show curator for Across the Eras (https://mcp-34.example.com a rewat",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 297,
+   "description": "Diagnoses a degraded component in the behold-served demo estate and heals it through a PR + human-gated apply. Part of the behold × fountain demo.",
+   "environment_id": "a3dff285-17fd-4e57-8ae3-268d913db975",
+   "id": "c351658c-1ba5-4728-9a6b-5c5fa54a5515",
+   "inference_credential_id": null,
+   "inserted_at": "2026-08-11T19:53:10Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "estate-medic",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [],
+   "system": "You are estate-medic, the on-call diagnostician for the home-cloud estate: a k3s",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 26,
+   "description": "",
+   "environment_id": "e1b46674-85d9-4222-83bd-825c5454495a",
+   "id": "c159c93c-922f-496f-a142-5a1f559db92c",
+   "inference_credential_id": null,
+   "inserted_at": "2026-07-31T21:04:11Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0-mcp": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "philosoraptor",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a research assistant. You investigate topics, summarize sources, and ass",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 19,
+   "description": "",
+   "environment_id": "e1b46674-85d9-4222-83bd-825c5454495a",
+   "id": "7ac00900-358e-4b0d-9121-45b8c70afb5d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-07-31T21:04:11Z",
+   "mcp_servers": {},
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "ideator",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "Lets brainstorm the users input. if they mentioned a git repo, clone it from git",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 11,
+   "description": "",
+   "environment_id": "12d3e2e0-90c9-4627-bdf4-0d98894ad239",
+   "id": "af96a93c-15dc-48d3-ae4b-fb4be1cc044d",
+   "inference_credential_id": null,
+   "inserted_at": "2026-07-21T02:11:04Z",
+   "mcp_servers": {
+    "chant": {
+     "args": [
+      "@intentius/chant",
+      "serve",
+      "mcp"
+     ],
+     "command": "npx"
+    },
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "chant-engineer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    },
+    {
+     "content": "---\\nname: chant-k8s\\ndescription: Build, validate, and deploy Kubernetes manife",
+     "name": "chant-k8s"
+    }
+   ],
+   "system": "You are a chant engineer — a specialist in chant, the TypeScript-to-Kubernetes-Y",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": "e3a3d655-eecf-43ce-9e65-5d12a576fbd4",
+   "id": "ad152440-2e12-4623-9654-ad18c2c45f98",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-19T01:23:56Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "honeycomb": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.honeycomb.io/mcp"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    },
+    "render": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.render.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "fountain-docs-writer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a documentation agent for Fountain\\n(github.com/BinaryBourbon/fountain, ",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": null,
+   "conversation_count": 2,
+   "description": "",
+   "environment_id": "72be819f-321e-44d6-88da-db827ec7e8a9",
+   "id": "2ab136af-079c-41a2-8c31-f14b2779d972",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-19T01:23:56Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "openscad-modeler",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a 3D modeling specialist whose tool of choice is OpenSCAD. Your job is t",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 18,
+   "description": "",
+   "environment_id": "d034a2eb-2505-4b75-a46d-d025def74706",
+   "id": "9def6d98-cbd1-4972-aa01-8a49a0b82cc4",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:25Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "captain-picard",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    },
+    {
+     "name": "internal-comms",
+     "source": "anthropics/skills"
+    }
+   ],
+   "system": "You are Captain Picard — a long-running orchestration role for a Fountain team b",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 0,
+   "description": "",
+   "environment_id": "5858a0d1-8dc5-4f0c-a046-1144a5045436",
+   "id": "0d31b822-5f68-4b40-9665-10bf62e14d95",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:25Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-opus-5",
+   "name": "tech-lead",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    },
+    {
+     "name": "internal-comms",
+     "source": "anthropics/skills"
+    }
+   ],
+   "system": "You are the tech lead for The Product — a long-running orchestration role for a ",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 8,
+   "description": "",
+   "environment_id": "deebdabe-0e25-4783-bc0b-cb0b9947a3b9",
+   "id": "9eba643b-3156-474d-99c9-4a38c3d152f3",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:24Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "customer-researcher",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "internal-comms",
+     "source": "anthropics/skills"
+    },
+    {
+     "source": "posthog/skills"
+    },
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a customer researcher for a product-led-growth team. Your job is to turn",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 1,
+   "description": "",
+   "environment_id": "b9b6e0fa-6818-410b-b2a2-a9c2ea865324",
+   "id": "9828dba1-39b0-4314-a343-5a0ddaacdd94",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:24Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "honeycomb": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.honeycomb.io/mcp"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    },
+    "render": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.render.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "release-validator",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "name": "webapp-testing",
+     "source": "anthropics/skills"
+    },
+    {
+     "source": "addyosmani/web-quality-skills"
+    },
+    {
+     "name": "find-bugs",
+     "source": "getsentry/skills"
+    },
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a release validator. Your job is to answer one question for any given re",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 3,
+   "description": "",
+   "environment_id": "deebdabe-0e25-4783-bc0b-cb0b9947a3b9",
+   "id": "6d3dcb73-ba69-44f1-bf04-ad9ab043b49e",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:24Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "honeycomb": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.honeycomb.io/mcp"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "product-analyst",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "posthog/skills"
+    },
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a product analyst for a product-led-growth team. Your job is to turn que",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 2,
+   "description": "",
+   "environment_id": "deebdabe-0e25-4783-bc0b-cb0b9947a3b9",
+   "id": "458f49f4-af95-4d3a-830c-d7c5f5467af7",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:24Z",
+   "mcp_servers": {
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "growth-marketer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "coreyhaines31/marketingskills"
+    },
+    {
+     "name": "internal-comms",
+     "source": "anthropics/skills"
+    },
+    {
+     "name": "canvas-design",
+     "source": "anthropics/skills"
+    },
+    {
+     "name": "blog-writing-guide",
+     "source": "getsentry/skills"
+    },
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a growth marketer for a product-led-growth team. Your job is to land one",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 23,
+   "description": "",
+   "environment_id": "b9b6e0fa-6818-410b-b2a2-a9c2ea865324",
+   "id": "1d4ff093-b1ec-4dd0-bde5-a382e39d2dca",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:24Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "pr-reviewer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "name": "code-review",
+     "source": "getsentry/skills"
+    },
+    {
+     "name": "security-review",
+     "source": "getsentry/skills"
+    },
+    {
+     "name": "gha-security-review",
+     "source": "getsentry/skills"
+    },
+    {
+     "name": "iterate-pr",
+     "source": "getsentry/skills"
+    },
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a code reviewer. Your job is to give one focused, actionable review on a",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 0,
+   "description": "",
+   "environment_id": "b9b6e0fa-6818-410b-b2a2-a9c2ea865324",
+   "id": "1c3b0c99-5282-4963-99a2-a5ebd838a6b0",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:24Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "honeycomb": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.honeycomb.io/mcp"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    },
+    "render": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.render.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "reliability-engineer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "name": "find-bugs",
+     "source": "getsentry/skills"
+    },
+    {
+     "name": "code-review",
+     "source": "getsentry/skills"
+    },
+    {
+     "source": "posthog/skills"
+    },
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a reliability engineer. Your job is to investigate \\\"something is wrong ",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 2,
+   "description": "",
+   "environment_id": "b9b6e0fa-6818-410b-b2a2-a9c2ea865324",
+   "id": "f117593a-5913-4ef7-a6b5-534e40751753",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:23Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "designer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "name": "frontend-design",
+     "source": "anthropics/skills"
+    },
+    {
+     "name": "web-artifacts-builder",
+     "source": "anthropics/skills"
+    },
+    {
+     "name": "theme-factory",
+     "source": "anthropics/skills"
+    },
+    {
+     "name": "brand-guidelines",
+     "source": "anthropics/skills"
+    },
+    {
+     "source": "vercel-labs/agent-skills"
+    },
+    {
+     "name": "accessibility",
+     "source": "addyosmani/web-quality-skills"
+    },
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a product designer working alongside engineers on a product-led-growth t",
+   "updated_at": "2026-09-06T10:58:41Z"
+  },
+  {
+   "acp": true,
+   "allowed_environment_ids": null,
+   "allowed_inference_credential_ids": null,
+   "allowed_vault_ids": null,
+   "avatar_media_type": "image/png",
+   "conversation_count": 216,
+   "description": "",
+   "environment_id": "b9b6e0fa-6818-410b-b2a2-a9c2ea865324",
+   "id": "9d3da851-7ccb-4629-b7e1-4b0a675dbd5c",
+   "inference_credential_id": null,
+   "inserted_at": "2026-05-10T11:40:23Z",
+   "mcp_servers": {
+    "context7": {
+     "type": "http",
+     "url": "https://mcp.context7.com/mcp"
+    },
+    "github": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "honeycomb": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.honeycomb.io/mcp"
+    },
+    "mem0": {
+     "type": "http",
+     "url": "https://mcp.mem0.ai/mcp"
+    },
+    "posthog": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.posthog.com/mcp"
+    },
+    "render": {
+     "headers": {
+      "Authorization": "Bearer ${X}"
+     },
+     "type": "http",
+     "url": "https://mcp.render.com/mcp"
+    }
+   },
+   "metadata": {
+    "managed-by": "chant"
+   },
+   "model": "anthropic/claude-sonnet-5",
+   "name": "general-purpose-engineer",
+   "permission_policy": {},
+   "runtime": "claude",
+   "runtime_command": null,
+   "sandbox_mode": "ephemeral",
+   "sandbox_provider": null,
+   "session_config": {},
+   "skills": [
+    {
+     "source": "obra/superpowers"
+    }
+   ],
+   "system": "You are a general-purpose software engineer working across the ravi-hq codebase.",
+   "updated_at": "2026-09-06T10:58:41Z"
+  }
+ ]
+}

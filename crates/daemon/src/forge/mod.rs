@@ -321,7 +321,9 @@ pub trait Adapter: Send + Sync {
     }
 }
 
-fn http() -> reqwest::Client {
+/// The HTTP client forge blocks (and M43's Fountain client) use: a
+/// timeout, and illogical's own User-Agent.
+pub(crate) fn http() -> reqwest::Client {
     static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     C.get_or_init(|| {
         reqwest::Client::builder()
