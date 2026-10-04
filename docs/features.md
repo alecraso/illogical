@@ -620,7 +620,9 @@ the daemon stopping, crashing, or the machine rebooting:
     owner's machine with their secrets (an editor's *Run here*, or a
     block of theirs with `as_fountain`, is refused).
   - **The bundle**, built from the agent's recipe and cached in
-    `~/.cache/illogical/fountain/<agent id>/<updated_at>/` for a day: a
+    `~/.cache/illogical/fountain/<agent id>/<updated_at>/` for a day (a new
+    version beside the old ones, which stay a week for blocks still on
+    them): a
     plugin (`fountain-<name>`) whose skills are the agent's (inline ones
     written out; GitHub ones copied from shallow clones kept in
     `…/fountain/github/`, fetched again daily), and the system prompt,
@@ -632,12 +634,23 @@ the daemon stopping, crashing, or the machine rebooting:
   - **MCP servers** come with their `${VAR}`s resolved by Fountain's rules
     (`$$` is a literal `$`; values aren't expanded again). Each variable's
     value comes from, in order: Infisical (in your agent-specs checkout,
-    through the agent's environment in `dist/fountain.yaml` to its
-    `infisical://` URI, read with your `infisical` login; a variable it
-    doesn't map is tried as itself in env `dev`), your shell's environment,
-    then `gh auth token` for `GITHUB_TOKEN`. Values are held in memory and
-    passed only to Claude Code: never in the layout, the block's log or
-    state, `capture`, MCP results or the web (the log shows `<redacted>`).
+    through the agent's environment in `dist/fountain.yaml`, and its vault
+    over that (`--vault`, or the only one it may use), to an `infisical://`
+    URI, read with your `infisical` login; a variable neither maps is
+    tried as itself in env `dev`, and the header says so), your shell's
+    environment, then `gh auth token` for `GITHUB_TOKEN`.
+  - **Never on a command line.** Claude Code's SDK puts the session's MCP
+    config on `claude`'s command line, which anyone on the machine can
+    read. So the session gets references (`${ILLOGICAL_FTN_…}`, which
+    Claude Code expands itself), and the values are in the adapter's
+    environment, readable only by you. A server whose command or arguments
+    hold a variable is left out (its own command line would show it), as
+    is one with a literal `${…}` (Fountain's `$$`), which Claude Code would
+    expand. illogical's own MCP token goes the same way for every local
+    Claude Code block (#128). Values are held in memory: never in the
+    layout, the block's log or state, `capture`, MCP results or the web
+    (the log shows `<redacted>`). Note that the agent's own commands
+    inherit that environment.
   - **What doesn't carry over** is named in the block's header, which
     says "as NAME" with the skills and servers that came: a server with a
     variable nothing has, one that needs an OAuth sign-in (a headless
@@ -647,7 +660,8 @@ the daemon stopping, crashing, or the machine rebooting:
   - **Not wearable:** agents of another runtime (*Run on Fountain*), and
     ones whose metadata says `illogical.local: false` (the orchestrators,
     written for Fountain's sandboxes); the card greys *Run here* with the
-    reason. After a restart the block puts the agent on again.
+    reason. After a restart the block puts the agent on again before it
+    takes over the agent still running (or starts it again).
 
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on

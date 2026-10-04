@@ -45,7 +45,8 @@ illogical agent "fix the failing test"        # Claude Code here; prints %N (--c
                                               #   --acp CMD, --vm, --machine m3, --model haiku,
                                               #   --cwd d, --wait)
 illogical agent --as pr-reviewer "review this" # Claude Code here wearing a Fountain agent: its prompt,
-                                              #   skills and MCP servers (M44; not for illogical.local: false)
+                                              #   skills and MCP servers (M44; not for illogical.local: false;
+                                              #   --vault V: its secrets' mapping)
 illogical claude ls [--live] [--all] [words]  # Claude Code conversations here: terminal and desktop app
 illogical claude open 3fa9c1                  # one as a stopped agent block, following it; prints %N
 illogical studio login https://studio.example # keep a studio token in the daemon (read from stdin)

@@ -63,6 +63,9 @@ credentials.\n\n---\n\n";
 /// A bundle older than this is built again (GitHub skills move).
 const FRESH: Duration = Duration::from_secs(24 * 3600);
 
+/// A bundle version this old is removed (no block runs that long on one).
+const OLD: Duration = Duration::from_secs(7 * 24 * 3600);
+
 /// How long one `infisical`, `gh` or `git` may take.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -369,6 +372,9 @@ pub struct Lookup<'a> {
     pub specs: Option<PathBuf>,
     /// The agent's environment's name, for the agent-specs mapping.
     pub environment: Option<String>,
+    /// Its vault's, whose secrets win over the environment's (as on
+    /// Fountain).
+    pub vault: Option<String>,
 }
 
 impl Lookup<'_> {
@@ -438,24 +444,23 @@ pub async fn resolve(names: &BTreeSet<String>, l: &Lookup<'_>) -> Found {
     if let Some(specs) = l.specs.as_ref().filter(|d| d.join(".infisical.json").is_file()) {
         let parsed =
             std::fs::read_to_string(specs.join("dist/fountain.yaml")).map(|y| parse_specs(&y)).unwrap_or_default();
-        let mapped = l
-            .environment
-            .as_ref()
-            .and_then(|e| parsed.secrets.get(&("Environment".to_owned(), e.clone())))
-            .cloned()
-            .unwrap_or_default();
+        let of = |kind: &str, name: &Option<String>| {
+            name.as_ref().and_then(|n| parsed.secrets.get(&(kind.to_owned(), n.clone()))).cloned().unwrap_or_default()
+        };
+        let mut mapped = of("Environment", &l.environment);
+        mapped.extend(of("Vault", &l.vault));
         let infisical = setting(l.env, "ILLOGICAL_INFISICAL_BIN", "infisical");
         let jobs = names.iter().map(|name| {
             let (specs, infisical, mapped) = (specs.clone(), infisical.clone(), &mapped);
             async move {
-                let target = match mapped.get(name) {
-                    Some(v) if v.starts_with("infisical://") => InfisicalRef::parse(v),
+                let (target, fallback) = match mapped.get(name) {
+                    Some(v) if v.starts_with("infisical://") => (InfisicalRef::parse(v)?, false),
                     // A literal in agent-specs (a git identity): public.
                     Some(v) => return Some((name.clone(), v.clone(), "agent-specs".to_owned())),
                     None => {
-                        Some(InfisicalRef { project: None, env: "dev".into(), path: "/".into(), key: name.clone() })
+                        (InfisicalRef { project: None, env: "dev".into(), path: "/".into(), key: name.clone() }, true)
                     }
-                }?;
+                };
                 let mut argv = vec![
                     infisical,
                     "secrets".into(),
@@ -473,7 +478,12 @@ pub async fn resolve(names: &BTreeSet<String>, l: &Lookup<'_>) -> Found {
                 }
                 match run(&argv, Some(&specs), l.env).await {
                     Ok(v) if !v.trim().is_empty() => {
-                        Some((name.clone(), v.trim_end_matches(['\n', '\r']).to_owned(), target.label()))
+                        let from = if fallback {
+                            format!("{} (not mapped in agent-specs: tried as itself)", target.label())
+                        } else {
+                            target.label()
+                        };
+                        Some((name.clone(), v.trim_end_matches(['\n', '\r']).to_owned(), from))
                     }
                     Ok(_) => None,
                     Err(e) => {
@@ -583,6 +593,12 @@ async fn github(
     if !SOURCE.is_match(source) || source.contains("..") {
         return Err(format!("{source:?} isn't owner/repo"));
     }
+    // A ref is a ref, never an option.
+    if let Some(r) = git_ref
+        && (r.is_empty() || r.starts_with('-') || r.chars().any(|c| c.is_control() || c.is_whitespace()))
+    {
+        return Err(format!("{r:?} isn't a git ref"));
+    }
     let name = match git_ref {
         Some(r) => format!("{}@{}", source.replace('/', "__"), component(r)),
         None => source.replace('/', "__"),
@@ -598,7 +614,7 @@ async fn github(
         if let Some(r) = git_ref {
             argv.extend(["--branch".into(), r.to_owned()]);
         }
-        argv.extend([url.clone(), tmp.display().to_string()]);
+        argv.extend(["--end-of-options".into(), url.clone(), tmp.display().to_string()]);
         let r = run(&argv, None, env).await;
         if let Err(e) = r {
             let _ = std::fs::remove_dir_all(&tmp);
@@ -621,6 +637,7 @@ async fn github(
                 "-q".into(),
                 "--depth".into(),
                 "1".into(),
+                "--end-of-options".into(),
                 "origin".into(),
                 what,
             ],
@@ -685,21 +702,27 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 /// Build `a`'s bundle under `cache` (or take the one there, if it's
 /// fresh and whole): the plugin with its skills, and the system prompt.
 pub async fn bundle(a: &Agent, cache: &Path, env: &[(String, String)]) -> Result<Bundle, String> {
-    let dir = cache.join(component(&a.id)).join(component(a.updated_at.as_deref().unwrap_or("unknown")));
-    let plugin = dir.join("plugin");
+    // `<id>/<updated_at>/` holds versions (`v<built_ms>-<pid>/`) and
+    // `current`, naming the newest. A new one never replaces a folder a
+    // running block may be reading its skills from.
+    let parent = cache.join(component(&a.id)).join(component(a.updated_at.as_deref().unwrap_or("unknown")));
     let system = format!("{}{}", PREAMBLE.replace("{name}", &a.name), a.system.as_deref().unwrap_or(""));
-    if let Ok(text) = std::fs::read_to_string(dir.join("bundle.json"))
+    if let Ok(cur) = std::fs::read_to_string(parent.join("current"))
+        && let dir = parent.join(component(cur.trim()))
+        && let Ok(text) = std::fs::read_to_string(dir.join("bundle.json"))
         && let Ok(c) = serde_json::from_str::<Contents>(&text)
+        // A day, skills that didn't come too (they're tried again then).
         && now_ms().saturating_sub(c.built_ms) < FRESH.as_millis() as u64
-        // One that's missing skills (built offline, say) is tried again.
-        && c.skills_missing.is_empty()
-        && plugin.join("skills").is_dir()
+        && dir.join("plugin/skills").is_dir()
     {
+        let plugin = dir.join("plugin");
         return Ok(Bundle { dir, plugin, system, contents: c });
     }
-    let parent = dir.parent().ok_or("no cache directory")?.to_owned();
     std::fs::create_dir_all(&parent).map_err(|e| format!("can't make {}: {e}", parent.display()))?;
-    let tmp = parent.join(format!(".build-{}-{}", std::process::id(), now_ms()));
+    let version = format!("v{}-{}", now_ms(), std::process::id());
+    let dir = parent.join(&version);
+    let plugin = dir.join("plugin");
+    let tmp = parent.join(format!(".build-{version}"));
     let _ = std::fs::remove_dir_all(&tmp);
     let skills = tmp.join("plugin/skills");
     std::fs::create_dir_all(&skills).map_err(|e| e.to_string())?;
@@ -781,12 +804,19 @@ pub async fn bundle(a: &Agent, cache: &Path, env: &[(String, String)]) -> Result
     std::fs::write(tmp.join("system.md"), &system).map_err(|e| e.to_string())?;
     std::fs::write(tmp.join("bundle.json"), serde_json::to_vec_pretty(&c).unwrap_or_default())
         .map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_dir_all(&dir);
     if let Err(e) = std::fs::rename(&tmp, &dir) {
         let _ = std::fs::remove_dir_all(&tmp);
-        // Another wear built it at the same moment: theirs will do.
-        if !dir.join("bundle.json").is_file() {
-            return Err(format!("can't keep the bundle in {}: {e}", dir.display()));
+        return Err(format!("can't keep the bundle in {}: {e}", dir.display()));
+    }
+    let pointer = parent.join(format!(".current-{version}"));
+    std::fs::write(&pointer, &version)
+        .and_then(|_| std::fs::rename(&pointer, parent.join("current")))
+        .map_err(|e| format!("can't point at the bundle: {e}"))?;
+    // Older versions go once nothing could still be on them (a week).
+    for e in std::fs::read_dir(&parent).into_iter().flatten().flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n != version && n.starts_with('v') && age(&e.path()).is_some_and(|a| a > OLD) {
+            let _ = std::fs::remove_dir_all(e.path());
         }
     }
     Ok(Bundle { dir, plugin, system, contents: c })
@@ -851,8 +881,10 @@ pub struct Worn {
     pub info: Info,
     pub system: String,
     pub plugin: PathBuf,
-    /// ACP's shape, values resolved.
+    /// ACP's shape, each credential a reference into `env`.
     pub servers: Vec<Value>,
+    /// What the references are: the adapter's environment.
+    pub env: Vec<(String, String)>,
     /// Every value that went into them which may be secret, to keep out of
     /// logs.
     pub secrets: Vec<String>,
@@ -880,18 +912,128 @@ pub fn model(a: &Agent) -> Option<String> {
     (!m.is_empty() && !m.contains('/')).then(|| m.to_owned())
 }
 
-/// Turn the agent's servers into what the session gets: substituted, those
-/// that can't come left out with why.
-pub async fn servers(
-    a: &Agent,
-    found: &Found,
-    probe: bool,
-) -> (Vec<Value>, Vec<ServerInfo>, Vec<LeftOut>, Vec<String>) {
-    let (mut list, mut infos, mut left, mut secrets) = (vec![], vec![], vec![], vec![]);
+/// What the session gets of the agent's servers.
+#[derive(Default)]
+pub struct Served {
+    /// ACP's shape, every credential a `${ILLOGICAL_FTN_…}` reference.
+    pub list: Vec<Value>,
+    /// What those references are: the adapter's environment (owner-only,
+    /// unlike a command line).
+    pub env: Vec<(String, String)>,
+    pub infos: Vec<ServerInfo>,
+    pub left: Vec<LeftOut>,
+    /// Every value that may be secret, to keep out of logs.
+    pub secrets: Vec<String>,
+}
+
+/// An environment variable's name for one value of a server (stable, so a
+/// restart names it the same).
+fn env_name(server: &str, part: &str, key: &str, taken: &[(String, String)]) -> String {
+    let clean = |s: &str| -> String {
+        s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect()
+    };
+    let base = if key.is_empty() {
+        format!("ILLOGICAL_FTN_{}_{part}", clean(server))
+    } else {
+        format!("ILLOGICAL_FTN_{}_{part}_{}", clean(server), clean(key))
+    };
+    let mut name = base.clone();
+    let mut n = 2;
+    while taken.iter().any(|(k, _)| *k == name) {
+        name = format!("{base}_{n}");
+        n += 1;
+    }
+    name
+}
+
+/// What Claude Code's own `${…}` expansion would take hold of.
+fn expandable(s: &str) -> bool {
+    s.contains("${")
+}
+
+const LITERAL: &str =
+    "it holds a literal ${…} (Fountain's $$ escape), which Claude Code would expand, so it can't be passed on as it is";
+
+/// One server as the session gets it: `resolved` (substituted) in ACP's
+/// shape, with each header and env value (and a URL that had a variable)
+/// moved into `env` and replaced by a reference that Claude Code expands
+/// itself (S24/M44: it does, in headers, URLs and a stdio server's env).
+/// The SDK puts the whole config on `claude`'s command line, where any
+/// local user can read it: so only references go there. A variable in a
+/// stdio server's command or arguments would land on that server's own
+/// command line, so such a server is left out.
+fn by_reference(
+    name: &str,
+    raw: &Value,
+    resolved: &Value,
+    env: &mut Vec<(String, String)>,
+) -> Result<(Value, Value), String> {
+    // Why not, from the recipe as written (never from a resolved value).
+    acp_server(name, raw)?;
+    let full = acp_server(name, resolved)?;
+    let mut acp = full.clone();
+    let mut added: Vec<(String, String)> = vec![];
+    let move_value = |part: &str, key: &str, v: &str, added: &mut Vec<(String, String)>| -> Result<String, String> {
+        if expandable(v) {
+            return Err(LITERAL.into());
+        }
+        let all: Vec<(String, String)> = env.iter().chain(added.iter()).cloned().collect();
+        let n = env_name(name, part, key, &all);
+        added.push((n.clone(), v.to_owned()));
+        Ok(format!("${{{n}}}"))
+    };
+    if acp.get("url").is_some() {
+        let url = full["url"].as_str().unwrap_or_default();
+        let mut had = BTreeSet::new();
+        refs(raw["url"].as_str().unwrap_or_default(), &mut had);
+        if !had.is_empty() {
+            acp["url"] = json!(move_value("URL", "", url, &mut added)?);
+        } else if expandable(url) {
+            return Err(LITERAL.into());
+        }
+        for h in acp["headers"].as_array_mut().into_iter().flatten() {
+            let k = h["name"].as_str().unwrap_or_default().to_owned();
+            let v = h["value"].as_str().unwrap_or_default().to_owned();
+            h["value"] = json!(move_value("H", &k, &v, &mut added)?);
+        }
+    } else {
+        let mut had = BTreeSet::new();
+        refs(raw["command"].as_str().unwrap_or_default(), &mut had);
+        for a in raw["args"].as_array().into_iter().flatten() {
+            refs(a.as_str().unwrap_or_default(), &mut had);
+        }
+        if !had.is_empty() {
+            let vars: Vec<String> = had.iter().map(|v| format!("${{{v}}}")).collect();
+            return Err(format!(
+                "{} in its command line would be readable by anyone on this machine (ps)",
+                vars.join(", ")
+            ));
+        }
+        let cmd = std::iter::once(&full["command"]).chain(full["args"].as_array().into_iter().flatten());
+        if cmd.filter_map(Value::as_str).any(expandable) {
+            return Err(LITERAL.into());
+        }
+        for e in acp["env"].as_array_mut().into_iter().flatten() {
+            let k = e["name"].as_str().unwrap_or_default().to_owned();
+            let v = e["value"].as_str().unwrap_or_default().to_owned();
+            e["value"] = json!(move_value("E", &k, &v, &mut added)?);
+        }
+    }
+    env.extend(added);
+    Ok((acp, full))
+}
+
+/// Turn the agent's servers into what the session gets: substituted, each
+/// credential passed by reference ([`by_reference`]), those that can't come
+/// left out with why.
+pub async fn servers(a: &Agent, found: &Found, probe: bool) -> Served {
+    let mut out = Served::default();
     let mut probes = vec![];
+    let mut fulls: Vec<Value> = vec![];
+    let mut keys: Vec<Vec<String>> = vec![];
     for (name, s) in &a.mcp_servers {
         if name == crate::mcp::SERVER_NAME {
-            left.push(LeftOut { name: name.clone(), why: "illogical's own server has that name".into() });
+            out.left.push(LeftOut { name: name.clone(), why: "illogical's own server has that name".into() });
             continue;
         }
         let raw = serde_json::to_value(s).unwrap_or_default();
@@ -908,60 +1050,75 @@ pub async fn servers(
                         names.iter().map(|n| format!("${{{n}}}")).collect::<Vec<_>>().join(", ")
                     ),
                 };
-                left.push(LeftOut { name: name.clone(), why });
+                out.left.push(LeftOut { name: name.clone(), why });
                 continue;
             }
         };
-        let acp = match acp_server(name, &resolved) {
+        let mut env = out.env.clone();
+        let (acp, full) = match by_reference(name, &raw, &resolved, &mut env) {
             Ok(v) => v,
             Err(why) => {
-                left.push(LeftOut { name: name.clone(), why });
+                out.left.push(LeftOut { name: name.clone(), why });
                 continue;
             }
         };
-        // Values that may be secret: resolved ones, and any typed in
-        // literally (as M43's recipes hide them).
-        for v in used.iter().filter_map(|k| found.values.get(k)) {
-            secrets.push(v.clone());
-        }
-        for (_, v) in s.headers.iter().chain(s.env.iter()) {
-            if !super::api::is_reference(v) {
-                secrets.push(v.clone());
-            }
-        }
         let kind = acp["type"].as_str().unwrap_or("stdio").to_owned();
         if kind != "stdio" && !has_auth(&acp) {
-            let url = acp["url"].as_str().unwrap_or("").to_owned();
+            let url = full["url"].as_str().unwrap_or("").to_owned();
             if let Some(h) = oauth_host(&url) {
-                left.push(LeftOut { name: name.clone(), why: format!("it needs an OAuth sign-in ({h})") });
+                out.left.push(LeftOut { name: name.clone(), why: format!("it needs an OAuth sign-in ({h})") });
                 continue;
             }
             if probe {
-                probes.push((list.len(), name.clone(), url));
+                probes.push((out.list.len(), url));
+            }
+        }
+        // Values that may be secret: resolved ones, any typed in literally
+        // (as M43's recipes hide them), and everything moved to the env.
+        for v in used.iter().filter_map(|k| found.values.get(k)) {
+            out.secrets.push(v.clone());
+        }
+        for (_, v) in s.headers.iter().chain(s.env.iter()) {
+            if !super::api::is_reference(v) {
+                out.secrets.push(v.clone());
             }
         }
         let vars = used.iter().map(|k| format!("{k} from {}", found.from.get(k).map_or("?", String::as_str))).collect();
-        infos.push(ServerInfo { name: name.clone(), kind, vars });
-        list.push(acp);
+        keys.push(env[out.env.len()..].iter().map(|(k, _)| k.clone()).collect());
+        out.env = env;
+        out.infos.push(ServerInfo { name: name.clone(), kind, vars });
+        out.list.push(acp);
+        fulls.push(full);
     }
     // Ask the ones without credentials whether they want an OAuth sign-in.
-    let answers = futures_util::future::join_all(probes.iter().map(|(_, _, url)| probe_oauth(url))).await;
-    let out: BTreeSet<usize> =
-        probes.iter().zip(answers).filter(|(_, oauth)| *oauth).map(|((i, _, _), _)| *i).collect();
-    for i in out.iter().rev() {
-        let s = list.remove(*i);
-        let info = infos.remove(*i);
-        let host = url::Url::parse(s["url"].as_str().unwrap_or("")).ok().and_then(|u| u.host_str().map(str::to_owned));
-        left.push(LeftOut {
+    let answers = futures_util::future::join_all(probes.iter().map(|(_, url)| probe_oauth(url))).await;
+    let gone: BTreeSet<usize> = probes.iter().zip(answers).filter(|(_, oauth)| *oauth).map(|((i, _), _)| *i).collect();
+    for i in gone.iter().rev() {
+        out.list.remove(*i);
+        let full = fulls.remove(*i);
+        let info = out.infos.remove(*i);
+        // Its references go with it.
+        let mine = keys.remove(*i);
+        out.env.retain(|(k, _)| !mine.contains(k));
+        let host =
+            url::Url::parse(full["url"].as_str().unwrap_or("")).ok().and_then(|u| u.host_str().map(str::to_owned));
+        out.left.push(LeftOut {
             name: info.name,
             why: format!("it needs an OAuth sign-in{}", host.map(|h| format!(" ({h})")).unwrap_or_default()),
         });
     }
-    left.sort_by(|a, b| a.name.cmp(&b.name));
-    secrets.retain(|s| s.len() >= 6);
-    secrets.sort();
-    secrets.dedup();
-    (list, infos, left, secrets)
+    out.left.sort_by(|a, b| a.name.cmp(&b.name));
+    out.secrets.extend(out.env.iter().map(|(_, v)| v.clone()));
+    out.secrets.retain(|s| s.len() >= 6);
+    out.secrets.sort();
+    out.secrets.dedup();
+    // A reason never carries a value.
+    for l in &mut out.left {
+        if let Some(clean) = scrub(&l.why, &out.secrets) {
+            l.why = clean;
+        }
+    }
+    out
 }
 
 /// Read `which` from the account (with `profile`'s login on `runner`), and
@@ -980,7 +1137,13 @@ pub async fn find(runner: &Runner, profile: Option<&str>, which: &str) -> Result
 /// Wear `which` on this host: read it (fresh), build or take its bundle,
 /// and resolve its MCP servers. `specs` is the agent-specs checkout
 /// (`~/…` allowed; the default one if it's there).
-pub async fn wear(runner: &Runner, profile: Option<&str>, specs: Option<&str>, which: &str) -> Result<Worn, String> {
+pub async fn wear(
+    runner: &Runner,
+    profile: Option<&str>,
+    specs: Option<&str>,
+    vault: Option<&str>,
+    which: &str,
+) -> Result<Worn, String> {
     let Runner::Local { env, home } = runner else {
         return Err("a worn Fountain agent runs on this host, not on a machine".into());
     };
@@ -1022,14 +1185,31 @@ pub async fn wear(runner: &Runner, profile: Option<&str>, specs: Option<&str>, w
             environment = parse_specs(&y).environments.get(&a.name).cloned();
         }
     }
-    let lookup = Lookup { env, home, specs: specs_dir, environment };
+    // Its vault: the one asked for, else the only one it may use.
+    let mut vault = vault.map(str::to_owned);
+    if vault.is_none() && !names.is_empty() {
+        let allowed: Vec<&str> = a
+            .extra
+            .get("allowed_vault_ids")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        if let [one] = allowed.as_slice()
+            && let Ok(vaults) = client.vaults().await
+        {
+            vault = vaults.into_iter().find(|v| v.id == *one).map(|v| v.name).filter(|n| !n.is_empty());
+        }
+    }
+    let lookup = Lookup { env, home, specs: specs_dir, environment, vault };
     let found = resolve(&names, &lookup).await;
-    let (servers, infos, left_out, secrets) = servers(&a, &found, true).await;
+    let served = servers(&a, &found, true).await;
     info!(
         agent = a.name,
         skills = b.contents.skills.len(),
-        servers = infos.len(),
-        left_out = left_out.len(),
+        servers = served.infos.len(),
+        left_out = served.left.len(),
         "wearing a Fountain agent"
     );
     Ok(Worn {
@@ -1041,13 +1221,14 @@ pub async fn wear(runner: &Runner, profile: Option<&str>, specs: Option<&str>, w
             bundle: b.dir.display().to_string(),
             skills: b.contents.skills.clone(),
             skills_missing: b.contents.skills_missing.clone(),
-            servers: infos,
-            left_out,
+            servers: served.infos,
+            left_out: served.left,
         },
         system: b.system,
         plugin: b.plugin,
-        servers,
-        secrets,
+        servers: served.list,
+        env: served.env,
+        secrets: served.secrets,
     })
 }
 
@@ -1169,32 +1350,98 @@ mod tests {
     }
 
     /// pr-reviewer as the fixture has it: github through a variable,
-    /// context7 open, mem0 OAuth.
+    /// context7 open, mem0 OAuth. Credentials go by reference.
     #[tokio::test]
     async fn servers_resolve_or_are_left_out() {
         let pr = named("pr-reviewer");
         // The fixture's variables are all ${X}.
         let found = Found { values: vars(&[("X", "fake-secret-value-123")]), from: vars(&[("X", "gh auth token")]) };
-        let (list, infos, left, secrets) = servers(&pr, &found, false).await;
-        let names: Vec<&str> = list.iter().map(|s| s["name"].as_str().unwrap()).collect();
+        let out = servers(&pr, &found, false).await;
+        let names: Vec<&str> = out.list.iter().map(|s| s["name"].as_str().unwrap()).collect();
         assert_eq!(names, ["context7", "github"]);
-        assert_eq!(list[1]["headers"][0]["value"], "Bearer fake-secret-value-123");
-        assert_eq!(infos[1].vars, ["X from gh auth token"]);
-        assert_eq!(left, [LeftOut { name: "mem0".into(), why: "it needs an OAuth sign-in (mcp.mem0.ai)".into() }]);
-        assert_eq!(secrets, ["fake-secret-value-123"]);
+        assert_eq!(out.list[1]["headers"][0]["value"], "${ILLOGICAL_FTN_GITHUB_H_AUTHORIZATION}");
+        assert_eq!(
+            out.env,
+            [("ILLOGICAL_FTN_GITHUB_H_AUTHORIZATION".to_owned(), "Bearer fake-secret-value-123".to_owned())]
+        );
+        assert!(!serde_json::to_string(&out.list).unwrap().contains("fake-secret"), "only references");
+        assert_eq!(out.infos[1].vars, ["X from gh auth token"]);
+        assert_eq!(out.left, [LeftOut { name: "mem0".into(), why: "it needs an OAuth sign-in (mcp.mem0.ai)".into() }]);
+        assert_eq!(out.secrets, ["Bearer fake-secret-value-123", "fake-secret-value-123"]);
         // Unset: left out, saying which.
-        let (list, _, left, secrets) = servers(&pr, &Found::default(), false).await;
-        assert_eq!(list.len(), 1);
-        assert_eq!(left[0].name, "github");
-        assert!(left[0].why.contains("${X} isn't set"), "{left:?}");
-        assert!(secrets.is_empty());
-        // A Fountain connection, and illogical's own name.
+        let out = servers(&pr, &Found::default(), false).await;
+        assert_eq!(out.list.len(), 1);
+        assert_eq!(out.left[0].name, "github");
+        assert!(out.left[0].why.contains("${X} isn't set"), "{:?}", out.left);
+        assert!(out.secrets.is_empty() && out.env.is_empty());
+        // A Fountain connection, illogical's own name, a variable on a
+        // command line, a literal ${…}, a URL with a variable, and a type
+        // that's wrong (said from the recipe, not its values).
         let mut odd = Agent { name: "odd".into(), ..Agent::default() };
-        odd.mcp_servers.insert("gmail".into(), serde_json::from_value(json!({ "connection": "c" })).unwrap());
-        odd.mcp_servers.insert("illogical".into(), serde_json::from_value(json!({ "command": "x" })).unwrap());
-        let (list, _, left, _) = servers(&odd, &Found::default(), false).await;
-        assert!(list.is_empty());
-        assert_eq!(left.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["gmail", "illogical"]);
+        let mut add = |n: &str, v: Value| {
+            odd.mcp_servers.insert(n.into(), serde_json::from_value(v).unwrap());
+        };
+        add("gmail", json!({ "connection": "c" }));
+        add("illogical", json!({ "command": "x" }));
+        add("argv", json!({ "command": "tool", "args": ["--key", "${X}"] }));
+        add("escaped", json!({ "type": "http", "url": "https://h.example.com/mcp", "headers": { "A": "$${KEEP}" } }));
+        add(
+            "in-url",
+            json!({ "type": "http", "url": "https://h.example.com/mcp?k=${X}", "headers": { "Authorization": "t" } }),
+        );
+        add("weird", json!({ "type": "${X}", "url": "https://h.example.com/mcp" }));
+        add("stdio-env", json!({ "command": "tool", "args": ["serve"], "env": { "TOKEN": "${X}" } }));
+        let out = servers(&odd, &found, false).await;
+        let left: Vec<(&str, &str)> = out.left.iter().map(|l| (l.name.as_str(), l.why.as_str())).collect();
+        assert_eq!(left.iter().map(|l| l.0).collect::<Vec<_>>(), ["argv", "escaped", "gmail", "illogical", "weird"]);
+        assert!(left[0].1.contains("${X} in its command line"), "{left:?}");
+        assert!(left[1].1.contains("literal ${"), "{left:?}");
+        assert_eq!(left[4].1, "its type \"${X}\" isn't one Claude Code takes", "the recipe's, not the value");
+        let url = out.list.iter().find(|s| s["name"] == "in-url").unwrap();
+        assert_eq!(url["url"], "${ILLOGICAL_FTN_IN_URL_URL}");
+        let stdio = out.list.iter().find(|s| s["name"] == "stdio-env").unwrap();
+        assert_eq!(stdio["env"][0]["value"], "${ILLOGICAL_FTN_STDIO_ENV_E_TOKEN}");
+        assert!(out.env.iter().any(|(k, v)| k == "ILLOGICAL_FTN_IN_URL_URL" && v.ends_with("k=fake-secret-value-123")));
+        assert!(!serde_json::to_string(&out.list).unwrap().contains("fake-secret"));
+        assert!(!format!("{:?}", out.left).contains("fake-secret"));
+    }
+
+    /// Infisical through agent-specs: the environment's mapping, the
+    /// vault's over it, and a variable neither maps tried as itself.
+    #[tokio::test]
+    async fn resolving_through_environment_then_vault() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join(format!("illogical-resolve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let specs = tmp.join("specs");
+        std::fs::create_dir_all(specs.join("dist")).unwrap();
+        std::fs::write(specs.join(".infisical.json"), "{}").unwrap();
+        std::fs::write(
+            specs.join("dist/fountain.yaml"),
+            "kind: Environment\nspec:\n  name: e\n  secrets:\n    - key: TOKEN\n      value: \"infisical:///dev/ENV_KEY\"\n    - key: ONLY_ENV\n      value: \"infisical:///dev/ONLY_ENV_KEY\"\n---\nkind: Vault\nspec:\n  name: v\n  secrets:\n    - key: TOKEN\n      value: \"infisical:///dev/VAULT_KEY\"\n",
+        )
+        .unwrap();
+        let fake = tmp.join("infisical");
+        std::fs::write(&fake, "#!/bin/sh\necho \"value-of-$3\"\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = vec![("ILLOGICAL_INFISICAL_BIN".to_owned(), fake.display().to_string())];
+        let names: BTreeSet<String> = ["TOKEN", "ONLY_ENV", "OTHER"].map(str::to_owned).into();
+        let lookup = |vault: Option<&str>| Lookup {
+            env: &env,
+            home: &tmp,
+            specs: Some(specs.clone()),
+            environment: Some("e".into()),
+            vault: vault.map(str::to_owned),
+        };
+        let f = resolve(&names, &lookup(Some("v"))).await;
+        assert_eq!(f.values["TOKEN"], "value-of-VAULT_KEY", "the vault wins");
+        assert_eq!(f.from["TOKEN"], "Infisical dev/VAULT_KEY");
+        assert_eq!(f.values["ONLY_ENV"], "value-of-ONLY_ENV_KEY");
+        assert_eq!(f.values["OTHER"], "value-of-OTHER");
+        assert_eq!(f.from["OTHER"], "Infisical dev/OTHER (not mapped in agent-specs: tried as itself)");
+        let f = resolve(&names, &lookup(None)).await;
+        assert_eq!(f.values["TOKEN"], "value-of-ENV_KEY");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -1284,26 +1531,38 @@ mod tests {
             serde_json::from_slice(&std::fs::read(b.plugin.join(".claude-plugin/plugin.json")).unwrap()).unwrap();
         assert_eq!(manifest["name"], "fountain-games");
         assert!(b.system.starts_with("You are running as the Fountain agent \"games\", but locally"));
-        assert!(b.dir.ends_with(format!("{}/2026-09-02T09-40-03Z", a.id)), "{}", b.dir.display());
+        let versions = cache.join(&a.id).join("2026-09-02T09-40-03Z");
+        assert_eq!(b.dir.parent(), Some(versions.as_path()), "{}", b.dir.display());
+        assert_eq!(
+            std::fs::read_to_string(versions.join("current")).unwrap(),
+            b.dir.file_name().unwrap().to_string_lossy()
+        );
         assert!(cache.join("github/acme__skills/.git").is_dir(), "one shared clone");
-        // Missing skills: built again.
+        // Fresh: taken as it is, skills that didn't come too (for a day).
         std::fs::write(skills.join("love2d/marker"), "").unwrap();
         let again = bundle(&a, &cache, &env).await.unwrap();
-        assert!(!again.plugin.join("skills/love2d/marker").exists());
-        // Whole and fresh: taken as it is.
-        a.skills.truncate(5);
-        let whole = bundle(&a, &cache, &env).await.unwrap();
-        assert!(whole.contents.skills_missing.is_empty());
-        let skills = whole.plugin.join("skills");
-        std::fs::write(skills.join("love2d/marker"), "").unwrap();
-        let again = bundle(&a, &cache, &env).await.unwrap();
+        assert_eq!(again.dir, b.dir);
         assert!(again.plugin.join("skills/love2d/marker").is_file());
-        // A day old: built again.
+        // A day old: a new version, and the old one stays for blocks on it.
         let mut c = again.contents.clone();
         c.built_ms -= FRESH.as_millis() as u64 + 1;
         std::fs::write(again.dir.join("bundle.json"), serde_json::to_vec(&c).unwrap()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
         let rebuilt = bundle(&a, &cache, &env).await.unwrap();
+        assert_ne!(rebuilt.dir, b.dir);
         assert!(!rebuilt.plugin.join("skills/love2d/marker").exists());
+        assert!(b.plugin.join("skills/love2d/marker").is_file(), "the old version is kept");
+        assert_eq!(
+            std::fs::read_to_string(versions.join("current")).unwrap(),
+            rebuilt.dir.file_name().unwrap().to_string_lossy()
+        );
+        // A ref is never an option.
+        let mut opt = named("games");
+        opt.skills =
+            vec![serde_json::from_value(json!({ "source": "acme/skills", "ref": "--upload-pack=x" })).unwrap()];
+        opt.id = "opt".into();
+        let o = bundle(&opt, &cache, &env).await.unwrap();
+        assert!(o.contents.skills_missing[0].contains("isn't a git ref"), "{:?}", o.contents.skills_missing);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

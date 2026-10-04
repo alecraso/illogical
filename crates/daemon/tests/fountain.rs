@@ -183,6 +183,19 @@ impl Fountain {
         Self { _rt: rt, f, origin, home, bin }
     }
 
+    /// As [`Fountain::daemon`], under systemd (agents outlive a restart).
+    fn service(&self, env: &[(&str, &str)]) -> Option<Daemon> {
+        let home = self.home.display().to_string();
+        let bin = self.bin.join("fountain").display().to_string();
+        let mut all = vec![
+            ("HOME", home.as_str()),
+            ("ILLOGICAL_FOUNTAIN_BIN", bin.as_str()),
+            ("ILLOGICAL_FOUNTAIN_POLL_MS", "60000"),
+        ];
+        all.extend_from_slice(env);
+        Daemon::service_env(&all)
+    }
+
     fn daemon(&self, env: &[(&str, &str)]) -> Daemon {
         let home = self.home.display().to_string();
         let bin = self.bin.join("fountain").display().to_string();
@@ -677,7 +690,9 @@ fn wearer(origin: &str) -> Value {
         "mcp_servers": {
             "from-infisical": { "type": "http", "url": format!("{origin}/open-mcp"), "headers": { "Authorization": "Bearer ${FAKE_WEAR_TOKEN}" } },
             "from-gh": { "type": "http", "url": format!("{origin}/open-mcp"), "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } },
-            "from-shell": { "command": "python3", "args": ["-c", "pass", "${SHELL_ONLY}"], "env": { "KEPT": "$${LITERAL}" } },
+            "from-shell": { "command": "python3", "args": ["-c", "pass"], "env": { "TOKEN": "${SHELL_ONLY}" } },
+            "on-argv": { "command": "python3", "args": ["-c", "pass", "${SHELL_ONLY}"] },
+            "escaped": { "command": "python3", "env": { "KEPT": "$${LITERAL}" } },
             "unset": { "type": "http", "url": format!("{origin}/open-mcp"), "headers": { "X-Key": "${NOT_SET_ANYWHERE}" } },
             "signs-in": { "type": "http", "url": format!("{origin}/oauth-mcp") },
             "open": { "type": "http", "url": format!("{origin}/open-mcp") },
@@ -707,6 +722,32 @@ fn files_with(dir: &Path, needle: &str) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// A process's environment.
+fn proc_env(pid: u64) -> HashMap<String, String> {
+    let raw = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+    raw.split(|b| *b == 0)
+        .filter_map(|kv| String::from_utf8_lossy(kv).split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
+        .collect()
+}
+
+/// What a test expects in the adapter's environment, where /proc can't say.
+fn secrets_env() -> HashMap<String, String> {
+    [
+        ("ILLOGICAL_FTN_FROM_INFISICAL_H_AUTHORIZATION", format!("Bearer {INF}")),
+        ("ILLOGICAL_FTN_FROM_GH_H_AUTHORIZATION", format!("Bearer {GH}")),
+        ("ILLOGICAL_FTN_FROM_SHELL_E_TOKEN", SH.to_owned()),
+        ("ILLOGICAL_MCP_BLOCK_TOKEN", "ilb_".to_owned()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v))
+    .collect()
+}
+
+/// Its command line, arguments joined by spaces.
+fn proc_cmdline(pid: u64) -> String {
+    String::from_utf8_lossy(&std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default()).replace('\0', " ")
 }
 
 /// What the fake adapter's session was opened with (its saved session).
@@ -756,15 +797,23 @@ fn run_here_wears_the_agent() {
         .iter()
         .map(|l| (l["name"].as_str().unwrap().to_owned(), l["why"].as_str().unwrap().to_owned()))
         .collect();
-    assert_eq!(left.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(), ["connected", "signs-in", "unset"], "{left:?}");
+    assert_eq!(
+        left.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(),
+        ["connected", "escaped", "on-argv", "signs-in", "unset"],
+        "{left:?}"
+    );
     assert!(left[0].1.contains("Fountain connection"), "{left:?}");
-    assert!(left[1].1.starts_with("it needs an OAuth sign-in"), "{left:?}");
-    assert!(left[2].1.contains("${NOT_SET_ANYWHERE} isn't set"), "{left:?}");
+    assert!(left[1].1.contains("literal ${"), "{left:?}");
+    assert!(left[2].1.contains("${SHELL_ONLY} in its command line"), "{left:?}");
+    assert!(left[3].1.starts_with("it needs an OAuth sign-in"), "{left:?}");
+    assert!(left[4].1.contains("${NOT_SET_ANYWHERE} isn't set"), "{left:?}");
     // Infisical was asked in the checkout, mapped through the agent's
     // environment, and for the unmapped ones as themselves in dev.
     let asked = std::fs::read_to_string(&w.infisical_log).unwrap();
     assert!(asked.contains(&format!("{} secrets get WEAR_KEY --env dev --path / --plain --silent", w.specs.display())));
     assert!(asked.contains("secrets get GITHUB_TOKEN --env dev"), "{asked}");
+    // A fallback to the variable's own name in dev would say so.
+    assert!(!vars("from-infisical")[0].as_str().unwrap().contains("not mapped"));
     assert!(!asked.contains("FAKE_WEAR_TOKEN"), "mapped, not asked as itself: {asked}");
 
     // What the adapter's session/new got.
@@ -781,16 +830,40 @@ fn run_here_wears_the_agent() {
     let system = meta["systemPrompt"]["append"].as_str().unwrap();
     assert!(system.starts_with("You are running as the Fountain agent \"fixture-wearer\", but locally"), "{system}");
     assert!(system.ends_with("You review fixtures."));
+    // session/new carries references only (the SDK puts it on `claude`'s
+    // command line); the values are in the adapter's environment.
     let mcp = s["mcp"].as_array().unwrap();
     let by = |n: &str| mcp.iter().find(|m| m["name"] == n).cloned().unwrap_or_default();
-    assert_eq!(by("from-infisical")["headers"], json!([{ "name": "Authorization", "value": format!("Bearer {INF}") }]));
-    assert_eq!(by("from-gh")["headers"][0]["value"], format!("Bearer {GH}"));
+    assert_eq!(
+        by("from-infisical")["headers"],
+        json!([{ "name": "Authorization", "value": "${ILLOGICAL_FTN_FROM_INFISICAL_H_AUTHORIZATION}" }])
+    );
+    assert_eq!(by("from-gh")["headers"][0]["value"], "${ILLOGICAL_FTN_FROM_GH_H_AUTHORIZATION}");
     assert_eq!(
         by("from-shell"),
-        json!({ "name": "from-shell", "command": "python3", "args": ["-c", "pass", SH], "env": [{ "name": "KEPT", "value": "${LITERAL}" }] })
+        json!({ "name": "from-shell", "command": "python3", "args": ["-c", "pass"], "env": [{ "name": "TOKEN", "value": "${ILLOGICAL_FTN_FROM_SHELL_E_TOKEN}" }] })
     );
     assert_eq!(by("open")["type"], "http");
-    assert!(by("illogical").is_object(), "illogical's own server too");
+    // #128: illogical's own token too.
+    assert_eq!(by("illogical")["headers"][0]["value"], "Bearer ${ILLOGICAL_MCP_BLOCK_TOKEN}");
+    let pid = d.state(id)["pid"].as_u64().unwrap();
+    // (Linux: /proc. The rest holds everywhere.)
+    let environ = if Path::new("/proc/self/environ").exists() { proc_env(pid) } else { secrets_env() };
+    assert_eq!(
+        environ.get("ILLOGICAL_FTN_FROM_INFISICAL_H_AUTHORIZATION").map(String::as_str),
+        Some(format!("Bearer {INF}").as_str())
+    );
+    assert_eq!(
+        environ.get("ILLOGICAL_FTN_FROM_GH_H_AUTHORIZATION").map(String::as_str),
+        Some(format!("Bearer {GH}").as_str())
+    );
+    assert_eq!(environ.get("ILLOGICAL_FTN_FROM_SHELL_E_TOKEN").map(String::as_str), Some(SH));
+    assert!(environ.get("ILLOGICAL_MCP_BLOCK_TOKEN").is_some_and(|t| t.starts_with("ilb_")));
+    let token = environ["ILLOGICAL_MCP_BLOCK_TOKEN"].clone();
+    for secret in [INF, GH, SH, token.as_str()] {
+        assert!(!proc_cmdline(pid).contains(secret), "{secret} on the adapter's command line");
+        assert!(!s.to_string().contains(secret), "{secret} in session/new");
+    }
     assert!(by("unset").is_null() && by("signs-in").is_null() && by("connected").is_null());
     assert!(fz.f.with(|i| i.probes.contains(&"oauth".to_owned())), "probed");
 
@@ -831,8 +904,13 @@ fn run_here_wears_the_agent() {
         assert_eq!(files_with(&d.state, secret), Vec::<PathBuf>::new(), "{secret} in the state dir");
         assert_eq!(files_with(&w.cache, secret), Vec::<PathBuf>::new(), "{secret} in the cache");
     }
-    // ...but the adapter did get them (its sessions dir is the fake's own).
-    assert!(!files_with(&d.sessions, INF).is_empty());
+    // Nor in what the adapter was sent: session/new's servers, as it
+    // recorded them (its environment has the values).
+    let sid = d.state(id)["session_id"].as_str().unwrap().to_owned();
+    let sent = std::fs::read_to_string(d.sessions.join(format!("mcp-{sid}.json"))).unwrap();
+    for secret in [INF, GH, SH] {
+        assert!(!sent.contains(secret), "{secret} in session/new's mcpServers");
+    }
     // The block's log has the session/new frame, its values redacted.
     let logs = files_with(&d.state, "\"session/new\"");
     assert!(!logs.is_empty(), "session/new is in a log");
@@ -863,10 +941,28 @@ fn a_worn_agent_is_put_on_again_after_a_reboot() {
     let config = json!({ "agent": "claude", "as_fountain": "fixture-wearer", "specs": w.specs, "cwd": w.work, "prompt": "remember kestrel" });
     let id = d.open_with(json!({ "type": "agent", "config": config }));
     assert_eq!(d.wait(id, "idle"), "done", "{}", d.state(id));
+    // #127: an ordinary Claude Code block, beside it.
+    let plain_config = json!({ "agent": "claude", "cwd": w.work, "prompt": "hello" });
+    let plain = d.open_with(json!({ "type": "agent", "split": id, "config": plain_config }));
+    assert_eq!(d.wait(plain, "idle"), "done", "{}", d.state(plain));
+    // #128: its illogical MCP server works through the reference.
+    agent_mcp(&d, plain, "list", json!({})).expect("illogical's MCP server, through ${ILLOGICAL_MCP_BLOCK_TOKEN}");
+    // Forget what each session was opened with, to see what reopening sends.
+    let forget = |b: u64| {
+        let sid = d.state(b)["session_id"].as_str().unwrap().to_owned();
+        let path = d.sessions.join(format!("{sid}.json"));
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["meta"] = Value::Null;
+        std::fs::write(&path, v.to_string()).unwrap();
+    };
+    forget(id);
+    forget(plain);
     d.stop();
     d.start();
-    d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{id}"), None).0 == 200);
-    d.wait_for("the session", || d.state(id)["status"] == "ready");
+    for b in [id, plain] {
+        d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{b}"), None).0 == 200);
+        d.wait_for("the session", || d.state(b)["status"] == "ready");
+    }
     let st = d.state(id);
     assert_eq!(st["worn"]["agent"], "fixture-wearer", "put on again: {st}");
     d.call(id, "send", json!({ "text": "recall" }));
@@ -877,7 +973,56 @@ fn a_worn_agent_is_put_on_again_after_a_reboot() {
     assert_eq!(s["meta"]["claudeCode"]["options"]["settingSources"], json!([]));
     assert!(s["meta"]["systemPrompt"]["append"].as_str().unwrap().ends_with("You review fixtures."));
     assert!(s["mcp"].as_array().unwrap().iter().any(|m| m["name"] == "from-infisical"));
+    // #127: and the ordinary one kept settingSources: [] on resume.
+    assert_eq!(session(&d, plain)["meta"], json!({ "claudeCode": { "options": { "settingSources": [] } } }));
+
+    // A session that can't be reopened: the new one is still the agent's.
+    let pid = d.state(id)["pid"].as_u64().unwrap();
+    let old = d.state(id)["session_id"].as_str().unwrap().to_owned();
+    d.stop();
+    std::fs::remove_file(d.sessions.join(format!("{old}.json"))).unwrap();
+    d.wait_for("the agent to go", || !alive(pid));
+    d.start();
+    d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{id}"), None).0 == 200);
+    d.wait_for("a new session", || d.state(id)["session_id"].as_str().is_some_and(|s| s != old));
+    let s = session(&d, id);
+    assert!(s["meta"]["systemPrompt"]["append"].as_str().unwrap().ends_with("You review fixtures."), "{s}");
+    assert!(s["mcp"].as_array().unwrap().iter().any(|m| m["name"] == "from-infisical"), "{s}");
     assert_eq!(files_with(&d.state, INF), Vec::<PathBuf>::new());
+}
+
+/// Under systemd: the daemon restarts and takes over the adapter still
+/// running from before. It puts the agent on again before it reads a word
+/// from it: the secrets it scrubs are back, and a new session is worn.
+#[test]
+fn a_worn_agent_taken_over_after_a_restart() {
+    let dir = Scratch::new("fountain-wear-takeover");
+    let fz = Fountain::start(&dir);
+    fz.f.with(|i| i.extra = vec![wearer(&fz.origin)]);
+    let w = Wear::new(&dir);
+    let env = w.env(&dir);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let Some(d) = fz.service(&env) else { return };
+    let config = json!({ "agent": "claude", "as_fountain": "fixture-wearer", "specs": w.specs, "cwd": w.work, "prompt": "hello" });
+    let id = d.open_with(json!({ "type": "agent", "config": config }));
+    assert_eq!(d.wait(id, "idle"), "done", "{}", d.state(id));
+    let pid = d.state(id)["pid"].as_u64().unwrap();
+
+    d.restart_service();
+    d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{id}"), None).0 == 200);
+    d.wait_for("worn again", || d.state(id)["worn"]["agent"] == "fixture-wearer");
+    d.wait_for("taken over", || d.state(id)["status"] == "ready");
+    assert_eq!(d.state(id)["pid"].as_u64(), Some(pid), "the same adapter");
+    // What it says is scrubbed as before.
+    d.call(id, "send", json!({ "text": "servers" }));
+    assert_eq!(d.wait(id, "idle"), "done");
+    let said = last_reply(&d.state(id));
+    assert!(said.contains("<redacted>") && !said.contains(INF) && !said.contains(GH), "{said}");
+    for secret in [INF, GH, SH] {
+        assert_eq!(files_with(&d.state, secret), Vec::<PathBuf>::new(), "{secret} in the state dir");
+    }
+    d.post(&format!("/api/panes/{id}/close"), json!({}));
+    d.wait_for("the adapter to go", || !alive(pid));
 }
 
 #[test]

@@ -357,8 +357,9 @@ enum Command {
         /// Codex instead of Claude Code.
         #[arg(long)]
         codex: bool,
-        /// Fountain: a vault for its secrets.
-        #[arg(long, requires = "fountain")]
+        /// Fountain: a vault for its secrets (with `--as`: whose agent-specs
+        /// mapping its `${VAR}`s go through, over its environment's).
+        #[arg(long)]
         vault: Option<String>,
         /// A model to switch to (e.g. `haiku`).
         #[arg(long)]
@@ -1931,10 +1932,13 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 (_, Some(name)) => json!({ "agent": "fountain", "fountain_agent": name, "vault": vault }),
                 _ if codex => json!({ "agent": "codex" }),
                 _ => match &as_fountain {
-                    Some(name) => json!({ "agent": "claude", "as_fountain": name }),
+                    Some(name) => json!({ "agent": "claude", "as_fountain": name, "vault": vault }),
                     None => json!({ "agent": "claude" }),
                 },
             };
+            if vault.is_some() && fountain.is_none() && as_fountain.is_none() {
+                anyhow::bail!("--vault goes with --fountain or --as");
+            }
             // A VM has none of this host's directories.
             let cwd = if vm || machine.is_some() {
                 cwd

@@ -312,6 +312,9 @@ struct Inner {
     worn: Option<Arc<crate::fountain::wear::Worn>>,
     /// Putting it on now.
     wearing: bool,
+    /// #128: illogical's own MCP token, when it goes by reference (a local
+    /// Claude Code), to keep out of logs too.
+    token: Option<String>,
 }
 
 enum Msg {
@@ -376,6 +379,7 @@ impl Inner {
             adapter: None,
             worn: None,
             wearing: false,
+            token: None,
         }
     }
 
@@ -423,7 +427,16 @@ impl Inner {
             list.push(crate::mcp::relay::server_entry(ctx.id));
             return list;
         }
-        let token = link.tokens.block_token(ctx.id);
+        // #128: the SDK puts Claude Code's MCP config on its command line,
+        // which anyone on the machine can read; Claude Code expands `${…}`
+        // there itself (M44), so a local Claude Code gets a reference, and
+        // the token is in its adapter's environment ([`MCP_TOKEN_ENV`]).
+        // Other agents get the token itself, as before.
+        let token = if by_reference(&self.cfg.def, ctx) {
+            format!("${{{MCP_TOKEN_ENV}}}")
+        } else {
+            link.tokens.block_token(ctx.id)
+        };
         list.push(if self.caps["mcpCapabilities"]["http"] == true {
             json!({
                 "type": "http",
@@ -442,10 +455,18 @@ impl Inner {
         list
     }
 
+    /// What never goes into the log or the transcript: a worn agent's
+    /// secrets, and illogical's own token where it went by reference.
+    fn secrets(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.worn.as_ref().map(|w| w.secrets.clone()).unwrap_or_default();
+        out.extend(self.token.clone());
+        out
+    }
+
     /// Send a frame: log it, account for it, then write it.
     fn out(&mut self, frame: Value) {
-        let secrets = self.worn.as_ref().map(|w| w.secrets.as_slice()).unwrap_or_default();
-        self.write_log("out", &redacted(&frame, secrets));
+        let secrets = self.secrets();
+        self.write_log("out", &redacted(&frame, &secrets));
         self.on_out(&frame, now_ms());
         if let Some(link) = &self.link {
             link.send(frame.to_string().into_bytes());
@@ -1056,6 +1077,11 @@ impl Agent {
         }
         inner.log = Some(log);
         inner.live = true;
+        if by_reference(&inner.cfg.def, &ctx)
+            && let Some(link) = &ctx.mcp
+        {
+            inner.token = Some(link.tokens.block_token(ctx.id));
+        }
         let (tx, rx) = mpsc::unbounded_channel();
         let agent = Arc::new(Agent { ctx: ctx.clone(), inner: Arc::new(Mutex::new(inner)), tx });
         agent.begin();
@@ -1082,8 +1108,25 @@ impl Agent {
             }
         }
         if self.ctx.restoring {
+            // M44: a worn agent is put on again before anything it says is
+            // read (its secrets to scrub, its _meta and servers for a new
+            // session), then taken over.
+            if inner.cfg.def.as_fountain.is_some() && inner.worn.is_none() {
+                self.wear(&mut inner, true);
+                return;
+            }
+            self.take_over(&mut inner);
+            return;
+        }
+        self.spawn(&mut inner);
+    }
+
+    /// After a restart: carry on with the agent server still running from
+    /// before it, else (by policy) start it again or wait.
+    fn take_over(&self, inner: &mut Inner) {
+        {
             // Still running from before the restart: carry on with it.
-            if self.adopt(&mut inner) {
+            if self.adopt(inner) {
                 if inner.status == Status::Starting && inner.cfg.session_id.is_some() && inner.ours.is_empty() {
                     inner.status = Status::Ready;
                 }
@@ -1099,7 +1142,7 @@ impl Agent {
                 return;
             }
         }
-        self.spawn(&mut inner);
+        self.spawn(inner);
     }
 
     fn sink(&self, generation: u64) -> Sink {
@@ -1110,15 +1153,15 @@ impl Agent {
                 let mut g = inner.as_ref().map(|i| i.lock().unwrap());
                 // M44: a worn agent's secrets never get past here (into the
                 // log, the transcript, clients).
-                let line = match g.as_ref().and_then(|g| g.worn.clone()) {
-                    Some(w) if !w.secrets.is_empty() => {
-                        let text = String::from_utf8_lossy(&line);
-                        match crate::fountain::wear::scrub(&text, &w.secrets) {
-                            Some(t) => t.into_bytes(),
-                            None => line,
-                        }
+                let secrets = g.as_ref().map(|g| g.secrets()).unwrap_or_default();
+                let line = if secrets.is_empty() {
+                    line
+                } else {
+                    let text = String::from_utf8_lossy(&line);
+                    match crate::fountain::wear::scrub(&text, &secrets) {
+                        Some(t) => t.into_bytes(),
+                        None => line,
                     }
-                    _ => line,
                 };
                 let v: Value = match serde_json::from_slice(&line) {
                     Ok(v) => v,
@@ -1197,7 +1240,7 @@ impl Agent {
         // M44: put the Fountain agent on first (its bundle, its servers'
         // secrets), then start.
         if inner.cfg.def.as_fountain.is_some() && inner.worn.is_none() {
-            self.wear(inner);
+            self.wear(inner, false);
             return;
         }
         let vm = self.ctx.sprite.is_some();
@@ -1214,6 +1257,19 @@ impl Agent {
                 let cwd = inner.cfg.cwd.clone().map(PathBuf::from).unwrap_or_else(|| self.ctx.home.clone());
                 let mut env = self.ctx.env.clone();
                 env.extend(launch.env.iter().cloned());
+                // M44 and #128: what the session's `${…}`s stand for, in the
+                // adapter's environment (its own and its children's: never
+                // on a command line).
+                if let Some(w) = &inner.worn {
+                    env.extend(w.env.iter().cloned());
+                }
+                if by_reference(&inner.cfg.def, &self.ctx)
+                    && let Some(link) = &self.ctx.mcp
+                {
+                    let token = link.tokens.block_token(self.ctx.id);
+                    env.push((MCP_TOKEN_ENV.into(), token.clone()));
+                    inner.token = Some(token);
+                }
                 // Claude Code's and Codex's adapters: say what's missing,
                 // and how to install it, rather than fail to run it (#111).
                 if inner.cfg.def.command.is_empty()
@@ -1294,7 +1350,7 @@ impl Agent {
 
     /// Put on the Fountain agent it wears (M44), then start it; or say why
     /// it can't be.
-    fn wear(&self, inner: &mut Inner) {
+    fn wear(&self, inner: &mut Inner, take_over: bool) {
         if inner.wearing {
             return;
         }
@@ -1307,7 +1363,8 @@ impl Agent {
             let which = def.as_fountain.clone().unwrap_or_default();
             let worn = match Runner::user(&agent.ctx).await {
                 Ok(runner) => {
-                    crate::fountain::wear::wear(&runner, def.profile.as_deref(), def.specs.as_deref(), &which).await
+                    let (profile, specs, vault) = (def.profile.as_deref(), def.specs.as_deref(), def.vault.as_deref());
+                    crate::fountain::wear::wear(&runner, profile, specs, vault, &which).await
                 }
                 Err(e) => Err(e),
             };
@@ -1319,9 +1376,19 @@ impl Agent {
             match worn {
                 Ok(w) => {
                     g.worn = Some(Arc::new(w));
-                    agent.spawn(&mut g);
+                    if take_over {
+                        agent.take_over(&mut g);
+                    } else {
+                        agent.spawn(&mut g);
+                    }
                 }
-                Err(e) => agent.failed(&mut g, format!("can't wear {which}: {e}")),
+                Err(e) => {
+                    // One left running from before can't be followed unworn.
+                    if take_over && let Some(pid) = link::alive_pid(&agent.ctx.dir) {
+                        link::kill_group(pid, agent.ctx.dir.clone());
+                    }
+                    agent.failed(&mut g, format!("can't wear {which}: {e}"))
+                }
             }
             drop(g);
             agent.changed();
@@ -1586,7 +1653,10 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             let load = g.caps["loadSession"].as_bool() == Some(true);
             let fork = g.caps["sessionCapabilities"]["fork"].is_object();
             let with_meta = |mut p: Value, g: &Inner| {
-                if let Some(m) = imported_meta(g).or_else(|| worn_meta(ctx, g)) {
+                // #127: an ordinary block's too, so a reopened Claude
+                // session keeps `settingSources: []`.
+                let m = imported_meta(g).or_else(|| worn_meta(ctx, g)).or_else(|| launch_meta(ctx, g));
+                if let Some(m) = m {
                     p["_meta"] = m;
                 }
                 p
@@ -1734,7 +1804,29 @@ fn imported_meta(g: &Inner) -> Option<Value> {
     })
 }
 
+/// The agent's own `_meta` (Claude's `settingSources: []`), if it has one.
+fn launch_meta(ctx: &BlockCtx, g: &Inner) -> Option<Value> {
+    let m = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).ok()?.meta;
+    m.as_object().is_some_and(|o| !o.is_empty()).then_some(m)
+}
+
+/// The adapter's environment variable that holds illogical's MCP token
+/// (#128).
+pub const MCP_TOKEN_ENV: &str = "ILLOGICAL_MCP_BLOCK_TOKEN";
+
+/// Whether this block's MCP credentials go by reference (#128, M44): a
+/// local Claude Code, which expands `${…}` in its MCP config itself.
+/// Codex and other ACP agents aren't known to, so they get values.
+fn by_reference(def: &Def, ctx: &BlockCtx) -> bool {
+    def.agent == Kind::Claude && ctx.sprite.is_none() && def.command.is_empty()
+}
+
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
+    // A worn agent never opens a plain session (M44).
+    if g.cfg.def.as_fountain.is_some() && g.worn.is_none() {
+        g.note(json!({ "e": "error", "message": "The Fountain agent isn't worn yet: no session opened" }));
+        return;
+    }
     let meta = imported_meta(g)
         .or_else(|| worn_meta(ctx, g))
         .unwrap_or_else(|| g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default());

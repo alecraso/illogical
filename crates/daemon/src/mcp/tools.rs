@@ -2143,13 +2143,15 @@ impl<'a> Call<'a> {
             Some(b) => self.readable(b).await?.info.host,
             None => None,
         };
+        let caller_on_machine = match self.me() {
+            Some(me) => self.readable(me).await?.info.host.is_some(),
+            None => false,
+        };
+        may_start(caller_on_machine, host.is_some(), a.vm, a.as_fountain.is_some())?;
         if let Some(name) = a.as_fountain.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             // M44: it runs on this host with the owner's secrets.
             if !matches!(a.agent, AgentKind::Claude) {
                 return Err("as_fountain is for agent claude: a Claude Code wears the Fountain agent".into());
-            }
-            if a.vm || host.is_some() {
-                return Err("a worn Fountain agent runs on this host, not on a machine".into());
             }
             // Refused up front, with the reason (an orchestrator, a codex agent).
             let runner = crate::fountain::local_runner(&self.app.mux.shell_env).await;
@@ -2503,8 +2505,39 @@ fn ago(ms: u64) -> String {
     }
 }
 
+/// Whether `start_agent` may start this agent: an agent on a machine (a
+/// guest's, say) starts agents on its own machine or a new VM, never on
+/// this host, where it would run as the owner (with the owner's secrets,
+/// for a worn Fountain agent); and a worn one runs on this host only.
+fn may_start(caller_on_machine: bool, on_machine: bool, vm: bool, worn: bool) -> Result<(), String> {
+    if caller_on_machine && !on_machine && !vm {
+        return Err("an agent on a machine starts agents on its machine (or a new VM), not on this host".into());
+    }
+    if worn && (on_machine || vm) {
+        return Err("a worn Fountain agent runs on this host, not on a machine".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn who_may_start_what_where() {
+        use super::may_start;
+        // The owner's agents (and the CLI), here.
+        assert!(may_start(false, false, false, true).is_ok());
+        assert!(may_start(false, false, false, false).is_ok());
+        assert!(may_start(false, true, false, false).is_ok());
+        // A guest's VM agent: on its machine or a VM, never here.
+        assert!(may_start(true, true, false, false).is_ok());
+        assert!(may_start(true, false, true, false).is_ok());
+        assert!(may_start(true, false, false, false).unwrap_err().contains("not on this host"));
+        assert!(may_start(true, false, false, true).unwrap_err().contains("not on this host"));
+        // A worn agent never goes on a machine.
+        assert!(may_start(false, true, false, true).is_err());
+        assert!(may_start(false, false, true, true).is_err());
+    }
+
     use super::*;
 
     #[test]
