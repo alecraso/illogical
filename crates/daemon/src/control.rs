@@ -288,6 +288,11 @@ impl Control {
         me
     }
 
+    /// Where `control.json` and the device key live.
+    pub fn state_dir(&self) -> &Path {
+        &self.state_dir
+    }
+
     pub fn enrolled(&self) -> Option<Arc<Enrolled>> {
         self.now.read().unwrap().clone()
     }
@@ -818,17 +823,47 @@ fn whose(s: &Saved) -> String {
     }
 }
 
-/// `illogicald join URL [--team ID]`: ask, show the code, wait, pin, save.
-/// The person approving picks their account or a team they own; `--team`
-/// picks one ahead. A hosted sandbox (M20) joins with the `ticket` control
-/// gave it.
-pub async fn join(
+/// A join control has started: the code someone approves, and what
+/// [`join_finish`] needs to wait for it.
+pub struct JoinPending {
+    pub url: String,
+    pub code: String,
+    pub expires_in_secs: u64,
+    /// The team `--team` named, by name.
+    pub team_name: Option<String>,
+    poll: String,
+    ask: Cert,
+    http: reqwest::Client,
+}
+
+impl JoinPending {
+    /// Where a signed-in device approves it.
+    pub fn approve_url(&self) -> String {
+        format!("{}/#join={}", self.url, self.code)
+    }
+}
+
+/// A finished join: where this machine went, and who approved it.
+pub struct Joined {
+    /// "the team X" or "your account".
+    pub place: String,
+    pub approver: String,
+    /// The team asked for, when the approver kept it to their account.
+    pub not_team: Option<String>,
+    pub key: String,
+    pub root: String,
+}
+
+/// Ask control to add this machine: the code to approve. The person
+/// approving picks their account or a team they own; `team` picks one
+/// ahead. A hosted sandbox (M20) joins with the `ticket` control gave it.
+pub async fn join_start(
     url: &str,
     name: &str,
     team: Option<&str>,
     ticket: Option<&str>,
     state_dir: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<JoinPending> {
     let url = url.trim_end_matches('/').to_owned();
     if !url.starts_with("https://") && !private_http(&url) {
         bail!("control's URL must be https:// (or http on loopback or a private network, for testing)");
@@ -859,40 +894,40 @@ pub async fn join(
     }
     let started: JoinStarted = res.json().await?;
     debug_assert_eq!(started.code, join_code(&ask));
-    let to = match &started.team_name {
-        Some(t) => format!("the team {t}"),
-        None => "your account".into(),
-    };
-    let mins = started.expires_in_secs / 60;
-    println!();
-    println!("  To add this machine ({name}) to {to}, open");
-    println!();
-    println!("    {url}/#join={}", started.code);
-    println!();
-    println!("  on a device that's signed in, and check the code there is {}.", started.code);
-    println!("  Or sign in at {url} and type the code.");
-    if team.is_none() {
-        println!("  Whoever approves picks their account or a team they own (--team ID picks one ahead).");
-    }
-    println!();
-    println!("  Waiting for approval (the code lasts {mins} minutes)…");
-    let deadline = std::time::Instant::now() + Duration::from_secs(started.expires_in_secs);
+    Ok(JoinPending {
+        url,
+        code: started.code,
+        expires_in_secs: started.expires_in_secs,
+        team_name: started.team_name,
+        poll: started.poll,
+        ask,
+        http,
+    })
+}
+
+/// Wait for someone to approve it, check the approval, pin the team the
+/// approving device chose, and save `control.json` (which a running
+/// daemon picks up).
+pub async fn join_finish(p: JoinPending, state_dir: &Path) -> anyhow::Result<Joined> {
+    let JoinPending { url, code, expires_in_secs, team_name, poll, ask, http } = p;
+    let mins = expires_in_secs / 60;
+    let deadline = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
     let got = loop {
         if std::time::Instant::now() > deadline {
-            bail!("nobody approved it in {mins} minutes; run join again for a new code");
+            bail!("nobody approved it in {mins} minutes; ask again for a new code");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let res = http.get(format!("{url}/api/join/{}?poll={}", started.code, started.poll)).send().await;
+        let res = http.get(format!("{url}/api/join/{code}?poll={poll}")).send().await;
         let Ok(res) = res else { continue };
         if res.status() == reqwest::StatusCode::NOT_FOUND {
-            bail!("the code expired; run join again for a new one");
+            bail!("the code expired; ask again for a new one");
         }
         if !res.status().is_success() {
             bail!("{}", control_said(res).await);
         }
         let Ok(p) = res.json::<JoinPoll>().await else { continue };
         if let Some(on) = p.rejected {
-            bail!("turned down on {on}; run join again to ask again");
+            bail!("turned down on {on}; ask again to try again");
         }
         if p.approved {
             break p;
@@ -942,19 +977,51 @@ pub async fn join(
         moved_at: 0,
     };
     write_saved(state_dir, &saved)?;
-    let approver = approver.map(|c| c.name.clone()).unwrap_or_default();
-    let place = match &got.team {
-        Some(t) => format!("the team {}", t.name),
+    Ok(Joined {
+        place: match &got.team {
+            Some(t) => format!("the team {}", t.name),
+            None => "your account".into(),
+        },
+        approver: approver.map(|c| c.name.clone()).unwrap_or_default(),
+        not_team: team_name.filter(|_| got.team.is_none()),
+        key: fingerprint(&cert.device),
+        root: fingerprint(&trust.root),
+    })
+}
+
+/// `illogicald join URL [--team ID]`: ask, show the code, wait, pin, save.
+pub async fn join(
+    url: &str,
+    name: &str,
+    team: Option<&str>,
+    ticket: Option<&str>,
+    state_dir: &Path,
+) -> anyhow::Result<()> {
+    let p = join_start(url, name, team, ticket, state_dir).await?;
+    let to = match &p.team_name {
+        Some(t) => format!("the team {t}"),
         None => "your account".into(),
     };
     println!();
-    println!("  Joined. This machine is in {place}, approved on \"{approver}\".");
-    if got.team.is_none()
-        && let Some(t) = &started.team_name
-    {
+    println!("  To add this machine ({name}) to {to}, open");
+    println!();
+    println!("    {}", p.approve_url());
+    println!();
+    println!("  on a device that's signed in, and check the code there is {}.", p.code);
+    println!("  Or sign in at {} and type the code.", p.url);
+    if team.is_none() {
+        println!("  Whoever approves picks their account or a team they own (--team ID picks one ahead).");
+    }
+    println!();
+    println!("  Waiting for approval (the code lasts {} minutes)…", p.expires_in_secs / 60);
+    let url = p.url.clone();
+    let j = join_finish(p, state_dir).await?;
+    println!();
+    println!("  Joined. This machine is in {}, approved on \"{}\".", j.place, j.approver);
+    if let Some(t) = &j.not_team {
         println!("  (Not the team {t}: the approver kept it to their account.)");
     }
-    println!("  Its key is {}; the account's first device is {}.", fingerprint(&cert.device), fingerprint(&trust.root));
+    println!("  Its key is {}; the account's first device is {}.", j.key, j.root);
     println!("  Open {url}; it's in the host menu.");
     Ok(())
 }

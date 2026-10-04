@@ -77,7 +77,9 @@ impl LocalApi {
     async fn cli(&self, cli: &Path, args: &[&str]) -> anyhow::Result<Result<Vec<u8>, String>> {
         let out = tokio::time::timeout(
             Duration::from_secs(5),
-            tokio::process::Command::new(cli).args(args).kill_on_drop(true).output(),
+            // The app's binary acts as the CLI only when told so; started
+            // from a service (launchd) it tries to open the GUI instead.
+            tokio::process::Command::new(cli).args(args).env("TAILSCALE_BE_CLI", "1").kill_on_drop(true).output(),
         )
         .await
         .context("tailscale didn't answer")?

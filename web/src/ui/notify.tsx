@@ -61,7 +61,7 @@ async function toggle(client: Client) {
 
 export function notificationItems(client: Client): MenuItem[] {
   const blocked = notifyBlocker();
-  // Plain http: the fix is a command, which the Getting started panel has.
+  // Plain http: the fix is Tailscale, a button in Getting started's phone step.
   if (push === "insecure") return [{ label: `${blocked}…`, run: () => openGettingStarted("phone") }];
   if (blocked) return [{ label: blocked, disabled: true, run: () => {} }];
   return [{ label: "Notify this device", checked: push === "on", run: () => void toggle(client) }];

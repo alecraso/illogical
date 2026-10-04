@@ -9873,6 +9873,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### qrcode-generator 2.0.4 (MIT)
+
+```
+MIT
+```
+
 ### style-mod 4.1.4 (MIT)
 
 ```
