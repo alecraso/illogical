@@ -275,6 +275,9 @@ never mixes with whatever the driver has half typed. It's recorded as its
 sender's input. Who may send one is who may drive the pane: on someone's
 own machine a teammate needs their trust first (the card offers to ask for
 30 minutes); on a team's machine or a VM, team editors send straight away.
+A session nobody drives (`claude -p`, the Agent SDK: Claude Code sets
+`CLAUDE_CODE_SESSION_ATTENDED=0`) gets no follow-ups, and the hook leaves it
+at once, so the same settings don't hold a headless run.
 
 **From a script:**
 

@@ -495,7 +495,8 @@ enum Command {
     Hook,
     /// Claude Code's background (asyncRewake) `Stop` and `SessionStart`
     /// hook: wait for a follow-up someone sends the agent, and wake it with
-    /// it (exit 2).
+    /// it (exit 2). A session nobody drives (`claude -p`, the SDK) isn't
+    /// held: it exits 0 at once.
     Inbox,
     /// What wants you, and why (M24); or, given a state, tell illogical
     /// whether this pane needs you (for agent hooks, which pass their JSON
