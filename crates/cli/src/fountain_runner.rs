@@ -508,19 +508,41 @@ mod tests {
             std::fs::set_permissions(exe, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         }
         let root = tmp.join("root");
-        let out = Command::new("bash")
-            .arg(&script)
-            .args(["--user", "sam", "--name", "geek", "--dry-run"])
-            .arg(&root)
-            .arg("--fountain")
-            .arg(&fountain)
-            .arg("--node")
-            .arg(&node)
-            .env_remove("SUDO_USER")
-            .output()
-            .unwrap();
+        // The interim hardening drop-in: the unit replaces it.
+        let dropin = root.join("etc/systemd/system/fountain-runner.service.d");
+        std::fs::create_dir_all(&dropin).unwrap();
+        std::fs::write(dropin.join("10-protect-proc.conf"), "[Service]\nProtectProc=invisible\n").unwrap();
+        let setup = |extra: &[&str]| {
+            Command::new("bash")
+                .arg(&script)
+                .args(["--user", "sam", "--name", "geek", "--dry-run"])
+                .arg(&root)
+                .arg("--fountain")
+                .arg(&fountain)
+                .arg("--node")
+                .arg(&node)
+                .args(extra)
+                .env_remove("SUDO_USER")
+                .output()
+                .unwrap()
+        };
+        let out = setup(&[]);
         let said = String::from_utf8_lossy(&out.stdout);
         assert!(out.status.success(), "{said}{}", String::from_utf8_lossy(&out.stderr));
+        let removes = [
+            format!("+ rm -f {}", dropin.join("10-protect-proc.conf").display()),
+            format!("+ rmdir --ignore-fail-on-non-empty {}", dropin.display()),
+        ];
+        for r in &removes {
+            assert!(said.lines().any(|l| l == r), "{r} in\n{said}");
+        }
+        // ...and on --uninstall.
+        let out = setup(&["--uninstall"]);
+        let undone = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{undone}{}", String::from_utf8_lossy(&out.stderr));
+        for r in &removes {
+            assert!(undone.lines().any(|l| l == r), "{r} in\n{undone}");
+        }
         assert!(said.contains("+ usermod --append --groups fountain sam"), "{said}");
         assert!(said.contains("+ install -d -m 2750 -o fountain -g fountain"), "{said}");
 
@@ -534,11 +556,12 @@ mod tests {
             "ConditionPathExists=/home/fountain/.fountain/credentials",
             // Sandbox agents can't read other users' /proc/PID/cmdline.
             "ProtectProc=invisible",
-            "ProcSubset=pid",
         ] {
             assert!(unit.lines().any(|l| l == line), "{line} in\n{unit}");
         }
         assert_eq!(runner_name(Some(&unit)), "geek");
+        // Not ProcSubset=pid: node reads /proc/cpuinfo and meminfo.
+        assert!(!unit.lines().any(|l| l.starts_with("ProcSubset")), "{unit}");
 
         let sudoers = std::fs::read_to_string(root.join("etc/sudoers.d/illogical-fountain")).unwrap();
         let rules: Vec<&str> = sudoers.lines().filter(|l| !l.starts_with('#')).collect();

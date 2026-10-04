@@ -217,9 +217,9 @@ tests never run sudo or reach Fountain):
       `illogical --socket <your daemon's socket> ls` both fail.
 - [ ] A sandbox agent can't see other users' processes: asked to run
       `ls /proc | wc -l` (or `ps aux`), a conversation's agent sees only
-      the runner's own processes (the unit has `ProtectProc=invisible` and
-      `ProcSubset=pid`). Ask the agent: illogical's *Shell* isn't in the
-      unit, so it sees everything, as any shell of yours would.
+      the runner's own processes (the unit has `ProtectProc=invisible`).
+      Ask the agent: illogical's *Shell* isn't in the unit, so it sees
+      everything, as any shell of yours would.
 - [ ] *Follow* opens an agent block with the conversation so far.
 - [ ] `sudo systemctl stop fountain-runner`: within about 5 minutes the
       rail (and the phone) says *Fountain runner offline*; `sudo systemctl

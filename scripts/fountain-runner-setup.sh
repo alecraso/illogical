@@ -23,9 +23,11 @@
 #     and as root `systemctl start|stop|restart|status fountain-runner`,
 #     nothing else;
 #   - /etc/systemd/system/fountain-runner.service (User=fountain,
-#     Restart=always, UMask=0027 so the group can read; ProtectProc=invisible
-#     and ProcSubset=pid, so its agents can't read other users' processes'
-#     command lines in /proc; systemd 247 or later), enabled. It starts
+#     Restart=always, UMask=0027 so the group can read; ProtectProc=invisible,
+#     so its agents can't read other users' processes' command lines in
+#     /proc; systemd 247 or later), enabled. The unit is the one source of
+#     truth: an interim drop-in (fountain-runner.service.d/10-protect-proc.conf)
+#     is removed, with its directory if that leaves it empty. It starts
 #     once its key exists (ConditionPathExists), so at boot without one it's
 #     skipped rather than failing in a loop.
 #
@@ -119,9 +121,9 @@ RestartSec=10
 NoNewPrivileges=yes
 PrivateTmp=yes
 # The runner's agents see only their own processes in /proc: not other
-# users' command lines (an MCP config on claude's argv, say), nor theirs.
+# users' command lines (an MCP config on claude's argv, say). Not
+# ProcSubset=pid: it hides /proc/cpuinfo and meminfo (node's os.cpus()).
 ProtectProc=invisible
-ProcSubset=pid
 InaccessiblePaths=-$user_home -/run/user/$user_uid
 
 [Install]
@@ -139,6 +141,15 @@ $user ALL=(fountain) NOPASSWD: /bin/bash
 # The runner's unit, and nothing else as root:
 $user ALL=(root) NOPASSWD: $sc start $svc, $sc stop $svc, $sc restart $svc, $sc status $svc
 EOF
+}
+
+# The interim hardening drop-in, now in the unit itself.
+dropin_dir=/etc/systemd/system/$svc.service.d
+drop_interim() {
+  run rm -f "$(at "$dropin_dir/10-protect-proc.conf")"
+  if [ -d "$(at "$dropin_dir")" ]; then
+    run rmdir --ignore-fail-on-non-empty "$(at "$dropin_dir")"
+  fi
 }
 
 valid_name() { [[ "$1" =~ ^[a-z_][a-z0-9_.-]*$ ]]; }
@@ -159,6 +170,7 @@ if [ -n "$uninstall" ]; then
   say "Removing the Fountain runner setup."
   run_ok systemctl disable --now "$svc"
   run rm -f "$(at "$unit")" "$(at "$sudoers")" "$(at "$bin")"
+  drop_interim
   run rm -rf "$(at "$node_dir")"
   run systemctl daemon-reload
   if [ -n "$purge" ]; then
@@ -235,6 +247,7 @@ install -m 0440 "$tmp" "$(at "$sudoers")"
 mkdir -p "$(at /etc/systemd/system)"
 render_unit >"$(at "$unit")"
 chmod 0644 "$(at "$unit")"
+drop_interim
 run systemctl daemon-reload
 run systemctl enable "$svc"
 # Running already (this is an upgrade): pick up the new binary and unit.
