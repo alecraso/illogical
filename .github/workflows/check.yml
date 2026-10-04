@@ -19,8 +19,8 @@ jobs:
       - run: just check-macos
       - name: The desktop app
         run: just desktop-check
-      - name: install.sh
-        run: shellcheck -s sh scripts/install.sh
+      - name: install.sh and the release's glibc check
+        run: shellcheck -s sh scripts/install.sh scripts/glibc-floor
       - name: THIRD_PARTY.md is current
         run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
       - name: No secrets

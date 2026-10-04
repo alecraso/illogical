@@ -77,32 +77,59 @@ dist:
 # run anywhere) or `just build` (macOS). Writes dist/illogical-desktop-*,
 # named without the version so the site's download links always find the
 # latest release.
+# On Linux the app builds in an Ubuntu 22.04 container (podman or docker,
+# packaging/desktop/Containerfile) so it runs on glibc 2.35 and newer, and
+# the build fails if anything in the bundles needs more (#170).
 desktop:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "^2" --locked
-    case "$(uname -s)" in
-      Linux) src={{target_dir}}/x86_64-unknown-linux-musl/release; bundles=deb,appimage ;;
-      Darwin) src={{target_dir}}/release; bundles=app ;;
-    esac
-    cd crates/desktop
-    host=$(rustc -vV | sed -n 's/^host: //p')
-    mkdir -p binaries
-    for b in illogicald illogical; do install -m 755 "$src/$b" "binaries/$b-$host"; done
-    cargo tauri build --bundles "$bundles"
-    out=${CARGO_TARGET_DIR:-$PWD/target}/release/bundle
-    dist={{justfile_directory()}}/dist
+    root={{justfile_directory()}}
+    dist=$root/dist
     mkdir -p "$dist"
-    # This version's bundles: a kept target dir (CI) holds older ones too.
-    v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+    v=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
     case "$(uname -s)" in
       Linux)
+        # The oldest glibc the app runs on: Ubuntu 22.04's, the container's.
+        floor=2.35
+        src={{target_dir}}/x86_64-unknown-linux-musl/release
+        host=x86_64-unknown-linux-gnu
+        mkdir -p crates/desktop/binaries
+        for b in illogicald illogical; do install -m 755 "$src/$b" "crates/desktop/binaries/$b-$host"; done
+        engine=$(command -v podman || command -v docker) || { echo "the Linux desktop build needs podman or docker" >&2; exit 1; }
+        toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
+        image=illogical-desktop-build:jammy-$toolchain
+        "$engine" build -q -t "$image" --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
+        # Its own target dir: build scripts built against 22.04's glibc
+        # don't mix with the host's.
+        target={{target_dir}}/desktop-jammy
+        mkdir -p "$target"
+        "$engine" run --rm --security-opt label=disable \
+          -v "$root:/src" -v "$target:/target" -v illogical-desktop-cargo:/opt/cargo/registry -v illogical-desktop-tauri:/root/.cache/tauri \
+          -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
+          "$image" cargo tauri build --bundles deb,appimage
+        out=$target/release/bundle
+        # This version's bundles: a kept target dir (CI) holds older ones too.
         cp "$out/deb/illogical_${v}_amd64.deb" "$dist/illogical-desktop-linux-x86_64.deb"
-        cp "$out/appimage/illogical_${v}_amd64.AppImage" "$dist/illogical-desktop-linux-x86_64.AppImage" ;;
+        cp "$out/appimage/illogical_${v}_amd64.AppImage" "$dist/illogical-desktop-linux-x86_64.AppImage"
+        scripts/glibc-floor "$floor" "$dist/illogical-desktop-linux-x86_64.deb" "$dist/illogical-desktop-linux-x86_64.AppImage"
+        dpkg-deb -f "$dist/illogical-desktop-linux-x86_64.deb" Depends | grep -q "libc6 (>= $floor)" \
+          || { echo "the .deb should depend on libc6 (>= $floor): crates/desktop/tauri.conf.json" >&2; exit 1; } ;;
       Darwin)
+        command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "^2" --locked
+        cd crates/desktop
+        host=$(rustc -vV | sed -n 's/^host: //p')
+        mkdir -p binaries
+        for b in illogicald illogical; do install -m 755 "{{target_dir}}/release/$b" "binaries/$b-$host"; done
+        cargo tauri build --bundles app
+        out=${CARGO_TARGET_DIR:-$PWD/target}/release/bundle
         # A zip of the app: ditto keeps its signature and symlinks.
-        rm -f "$dist/illogical-desktop-macos-arm64.zip"
-        ditto -c -k --keepParent "$out/macos/illogical.app" "$dist/illogical-desktop-macos-arm64.zip" ;;
+        # --norsrc: no ._* AppleDouble files for xattrs like
+        # com.apple.provenance, which a command-line unzip leaves in the
+        # bundle (#177). The signature lives in the bundle, not in xattrs.
+        zip=$dist/illogical-desktop-macos-arm64.zip
+        rm -f "$zip"
+        ditto -c -k --norsrc --keepParent "$out/macos/illogical.app" "$zip"
+        if zipinfo -1 "$zip" | grep -E '(^|/)\._'; then echo "AppleDouble files in $zip" >&2; exit 1; fi ;;
     esac
     ls -la "$dist"/illogical-desktop-*
 

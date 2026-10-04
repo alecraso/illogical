@@ -1,0 +1,38 @@
+#!/bin/sh
+# glibc-floor VERSION FILE...: fail if any ELF inside these .deb or
+# .AppImage files (or the files themselves) needs a glibc newer than
+# VERSION, e.g. `scripts/glibc-floor 2.35 dist/*.deb dist/*.AppImage`.
+# The desktop app is built on Ubuntu 22.04 for this (#170).
+set -eu
+floor=$1
+shift
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+bad=0
+newer() { printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1; }
+for f in "$@"; do
+  d=$tmp/$(basename "$f")
+  mkdir -p "$d"
+  case "$f" in
+    *.deb) dpkg-deb -x "$f" "$d" ;;
+    *.AppImage)
+      # The AppImage runtime is static: it unpacks itself here.
+      cp "$f" "$d/app" && chmod +x "$d/app"
+      (cd "$d" && ./app --appimage-extract >/dev/null) ;;
+    *) cp "$f" "$d/" ;;
+  esac
+  need=0
+  find "$d" -type f > "$tmp/files"
+  while IFS= read -r e; do
+    [ "$(head -c 4 "$e" | od -An -c | tr -d ' ')" = '177ELF' ] || continue
+    v=$(objdump -T "$e" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+    [ -n "$v" ] || continue
+    if [ "$(newer "$floor" "$v")" != "$floor" ]; then
+      echo "$(basename "$f"): ${e#"$d"/} needs GLIBC_$v (floor $floor)" >&2
+      bad=1
+    fi
+    need=$(newer "$need" "$v")
+  done < "$tmp/files"
+  echo "$(basename "$f"): needs at most GLIBC_$need"
+done
+exit $bad

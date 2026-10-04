@@ -11,7 +11,6 @@
 set -eu
 
 repo=https://github.com/arugula-salad/illogical
-api=https://api.github.com/repos/arugula-salad/illogical
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'illogical: %s\n' "$*" >&2; exit 1; }
@@ -30,8 +29,14 @@ esac
 
 version=${ILLOGICAL_VERSION:-}
 if [ -z "$version" ]; then
-  version=$(curl -fsSL "$api/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
-  [ -n "$version" ] || die "couldn't find the latest release at $repo/releases"
+  # releases/latest redirects to releases/tag/<tag>. Not GitHub's API: its
+  # unauthenticated limit (60 an hour) is shared by everyone behind an IP.
+  latest=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$repo/releases/latest") || latest=""
+  version=${latest##*/releases/tag/}
+  case "$version" in
+    v[0-9]*) ;;
+    *) die "couldn't find the latest release at $repo/releases" ;;
+  esac
 fi
 
 name="illogical-${version#v}-$target"

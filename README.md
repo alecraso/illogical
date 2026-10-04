@@ -60,7 +60,8 @@ your terminals.
 [illogical.widgets.wtf](https://illogical.widgets.wtf) or the
 [latest release](https://github.com/arugula-salad/illogical/releases/latest):
 `illogical-desktop-macos-arm64.zip`, `illogical-desktop-linux-x86_64.AppImage`
-or `.deb`. The first time it opens it installs `illogicald` and `illogical` in
+or `.deb` (the Linux app runs on Ubuntu 22.04, Debian 12, Fedora 36 or
+newer: glibc 2.35 and up). The first time it opens it installs `illogicald` and `illogical` in
 `~/.local/bin` and starts the daemon as a service, then *Getting started*
 sets up your phone, the cloud and Claude Code, a click each. Once the
 machine is in illogical cloud, the app signs in through your browser

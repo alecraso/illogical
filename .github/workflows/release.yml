@@ -22,6 +22,8 @@ jobs:
       - run: just static x86_64
       - run: just static aarch64
       - run: just dist
+      # In an Ubuntu 22.04 container (podman); fails if the bundles need a
+      # newer glibc than 2.35 (#170).
       - run: just desktop
       - run: scripts/release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/illogical-desktop-*
         env:
