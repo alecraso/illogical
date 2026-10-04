@@ -73,6 +73,93 @@ export class TerminalView {
     this.watchCommands();
     this.term.attachCustomKeyEventHandler((e) => this.clipboardKeys(e));
     this.term.open(this.host);
+    this.touchScroll();
+  }
+
+  /** xterm.js 6 scrolls on the wheel only (its viewport is VS Code's
+   * scrollable element, which ignores touch), so a swipe does nothing.
+   * Turn vertical swipes into scrolling: the scrollback directly, or wheel
+   * events when a program wants them (mouse reports, alt-screen arrows).
+   * A tap stays a tap, so it still focuses and brings up the keyboard. */
+  private touchScroll() {
+    const SLOP = 8; // px before a touch counts as a swipe
+    let lastY = 0;
+    let startY = 0;
+    let x = 0;
+    let acc = 0; // px not yet scrolled, under one row
+    let swiping = false;
+    let velocity = 0; // px per ms, for the fling
+    let lastT = 0;
+    let fling = 0;
+
+    const scrollPx = (dy: number) => {
+      const row = this.cellSize()?.height;
+      if (!row) return;
+      acc += dy;
+      const lines = Math.trunc(acc / row);
+      if (!lines) return;
+      acc -= lines * row;
+      // Finger down shows older lines: scroll up.
+      if (this.term.buffer.active.type === "normal" && !this.mouseTracking) {
+        this.term.scrollLines(-lines);
+        return;
+      }
+      const screen = this.host.querySelector(".xterm-screen");
+      screen?.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -lines,
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          clientX: x,
+          clientY: lastY,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    };
+
+    this.host.addEventListener(
+      "touchstart",
+      (e) => {
+        cancelAnimationFrame(fling);
+        const t = e.touches[0];
+        startY = lastY = t.clientY;
+        x = t.clientX;
+        acc = 0;
+        velocity = 0;
+        lastT = e.timeStamp;
+        swiping = false;
+      },
+      { passive: true },
+    );
+    this.host.addEventListener(
+      "touchmove",
+      (e) => {
+        const t = e.touches[0];
+        if (!swiping && Math.abs(t.clientY - startY) < SLOP) return;
+        swiping = true;
+        e.preventDefault();
+        const dy = t.clientY - lastY;
+        const dt = Math.max(1, e.timeStamp - lastT);
+        velocity = 0.8 * (dy / dt) + 0.2 * velocity;
+        lastY = t.clientY;
+        lastT = e.timeStamp;
+        scrollPx(dy);
+      },
+      { passive: false },
+    );
+    this.host.addEventListener("touchend", () => {
+      if (!swiping) return;
+      let prev = performance.now();
+      const step = (now: number) => {
+        const dt = now - prev;
+        prev = now;
+        velocity *= Math.pow(0.995, dt);
+        if (Math.abs(velocity) < 0.05) return;
+        scrollPx(velocity * dt);
+        fling = requestAnimationFrame(step);
+      };
+      fling = requestAnimationFrame(step);
+    });
   }
 
   /** The daemon's terminal answers queries (device attributes, cursor
