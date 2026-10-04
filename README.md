@@ -67,7 +67,7 @@ Run it again to upgrade. `ILLOGICAL_VERSION=vX.Y.Z` picks a version.
 **Homebrew** (macOS, Linux):
 
 ```
-brew tap jhgaylor/tap https://git.inevitable.fyi/jhgaylor/homebrew-tap
+brew tap arugula-salad/tap
 brew install illogical
 illogicald install
 ```

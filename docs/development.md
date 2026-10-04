@@ -36,24 +36,34 @@ tests use a stand-in chant). `just screenshots` regenerates the images in
 1. Set the version in the workspace `Cargo.toml` and commit (`just
    notices` if dependencies changed; CI fails if THIRD_PARTY.md is stale).
 2. `git tag -a vX.Y.Z -m "illogical X.Y.Z" && git push origin vX.Y.Z`.
-   `.forgejo/workflows/release.yml` builds the Linux tarballs on geek and
+   `.github/workflows/release.yml` builds the Linux tarballs on geek and
    the macOS one on jake-mini, attaches them and `SHA256SUMS` to the
-   release, and bumps the formula in `jhgaylor/homebrew-tap`
+   GitHub release, and bumps the formula in `arugula-salad/homebrew-tap`
    (`scripts/release`; the tap's deploy key is the `HOMEBREW_TAP_KEY`
    secret).
 3. `install.sh` picks up the latest release by itself. If the page
    changed, `just site-deploy` publishes it (wrangler's login on geek).
 
-CI runs on two self-hosted Forgejo runners: geek (`linux-x86_64`, a
-systemd user service, `~/.config/systemd/user/forgejo-runner.service`) and
-jake-mini (`macos-arm64`, a launchd agent,
-`~/Library/LaunchAgents/fyi.inevitable.forgejo-runner.plist`, with
-`ProcessType` Interactive: launchd's throttling of background agents made
-daemon tests time out). Both use the host executor and keep their build in
-`~/.cache/illogical-ci/`, which each job deletes first once it passes 30 GB
-(`scripts/ci-cap-target`): cargo never prunes it, and on 2026-10-02 it grew
-to 136 GB, filled jake-mini's disk and took the home cluster down. Workflows run on pushes and tags only, never on
-pull requests, since they run on those hosts.
+CI runs on two self-hosted GitHub Actions runners in the arugula-salad
+org's `illogical` runner group, which only this repo may use: geek
+(`linux-x86_64`, a systemd user service,
+`~/.config/systemd/user/actions-runner-illogical.service`, runner in
+`~/.local/share/actions-runner-illogical`) and jake-mini (`macos-arm64`, a
+launchd agent, `~/Library/LaunchAgents/illogical.actions-runner.plist`,
+with `ProcessType` Interactive: launchd's throttling of background agents
+made daemon tests time out). Both run jobs on the host and keep their
+build in `~/.cache/illogical-ci/`, which each job deletes first once it
+passes 30 GB (`scripts/ci-cap-target`): cargo never prunes it, and on
+2026-10-02 it grew to 136 GB, filled jake-mini's disk and took the home
+cluster down. Workflows run on pushes and tags only, never on pull
+requests, since they run on those hosts; and the repo asks for approval
+before any outside contributor's workflow runs, so a fork's PR can't add
+a trigger of its own and reach them. A job's log: `gh run view --log
+<run id>` (or `--log-failed`).
+
+The repo moved from Forgejo (`git.inevitable.fyi/jhgaylor/illogical`,
+archived; v0.1.0–v0.12.0 assets are still there) on 2026-10-03, with issue
+and PR numbers kept.
 
 ## Testing iTerm2
 

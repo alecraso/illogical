@@ -10,8 +10,8 @@
 # ILLOGICAL_NO_START=1      install the service without starting it
 set -eu
 
-repo=https://git.inevitable.fyi/jhgaylor/illogical
-api=https://git.inevitable.fyi/api/v1/repos/jhgaylor/illogical
+repo=https://github.com/arugula-salad/illogical
+api=https://api.github.com/repos/arugula-salad/illogical
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'illogical: %s\n' "$*" >&2; exit 1; }
@@ -25,12 +25,12 @@ case "$(uname -s)/$(uname -m)" in
   Linux/x86_64 | Linux/amd64) target=x86_64-unknown-linux-musl ;;
   Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-musl ;;
   Darwin/arm64) target=aarch64-apple-darwin ;;
-  *) die "no release for $(uname -s) $(uname -m); build from source: $repo/src/branch/main/docs/development.md" ;;
+  *) die "no release for $(uname -s) $(uname -m); build from source: $repo/blob/main/docs/development.md" ;;
 esac
 
 version=${ILLOGICAL_VERSION:-}
 if [ -z "$version" ]; then
-  version=$(curl -fsSL "$api/releases/latest" | sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p')
+  version=$(curl -fsSL "$api/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
   [ -n "$version" ] || die "couldn't find the latest release at $repo/releases"
 fi
 

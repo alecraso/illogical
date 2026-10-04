@@ -1,5 +1,5 @@
 # The illogical formula, written by scripts/release into the
-# jhgaylor/homebrew-tap repo on each release. Don't edit the copy there.
+# arugula-salad/homebrew-tap repo on each release. Don't edit the copy there.
 class Illogical < Formula
   desc "Terminal multiplexer whose sessions outlive the window, the daemon and the reboot"
   homepage "https://illogical.widgets.wtf"
@@ -8,18 +8,18 @@ class Illogical < Formula
 
   on_macos do
     on_arm do
-      url "https://git.inevitable.fyi/jhgaylor/illogical/releases/download/v@VERSION@/illogical-@VERSION@-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/arugula-salad/illogical/releases/download/v@VERSION@/illogical-@VERSION@-aarch64-apple-darwin.tar.gz"
       sha256 "@SHA_MAC@"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://git.inevitable.fyi/jhgaylor/illogical/releases/download/v@VERSION@/illogical-@VERSION@-x86_64-unknown-linux-musl.tar.gz"
+      url "https://github.com/arugula-salad/illogical/releases/download/v@VERSION@/illogical-@VERSION@-x86_64-unknown-linux-musl.tar.gz"
       sha256 "@SHA_LINUX_X86@"
     end
     on_arm do
-      url "https://git.inevitable.fyi/jhgaylor/illogical/releases/download/v@VERSION@/illogical-@VERSION@-aarch64-unknown-linux-musl.tar.gz"
+      url "https://github.com/arugula-salad/illogical/releases/download/v@VERSION@/illogical-@VERSION@-aarch64-unknown-linux-musl.tar.gz"
       sha256 "@SHA_LINUX_ARM@"
     end
   end

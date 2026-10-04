@@ -225,8 +225,8 @@
     <a class="brand" href="/"><img src="icon.svg" alt="">illogical</a>
     <nav class="seg" aria-label="Site">
       <a class="on" href="#install">install</a>
-      <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">docs</a>
-      <a href="https://git.inevitable.fyi/jhgaylor/illogical">source</a>
+      <a href="https://github.com/arugula-salad/illogical#quickstart">docs</a>
+      <a href="https://github.com/arugula-salad/illogical">source</a>
     </nav>
   </header>
 </div>
@@ -438,8 +438,7 @@
         <div class="card" style="--c: var(--k-shell)">
           <div class="ch"><b>Homebrew</b></div>
           <div class="cm">brew · linux · macos</div>
-          <pre id="way2">brew tap jhgaylor/tap \
-  https://git.inevitable.fyi/jhgaylor/homebrew-tap
+          <pre id="way2">brew tap arugula-salad/tap
 brew install illogical
 illogicald install</pre>
           <div class="ca"><button type="button" class="pri copy" data-copy="way2">Copy</button></div>
@@ -447,11 +446,11 @@ illogicald install</pre>
         <div class="card" style="--c: var(--k-shell)">
           <div class="ch"><b>From source</b></div>
           <div class="cm">rustup · mise · just · node · pnpm</div>
-          <pre id="way3">git clone https://git.inevitable.fyi/jhgaylor/illogical
+          <pre id="way3">git clone https://github.com/arugula-salad/illogical
 cd illogical
 just bootstrap && just install</pre>
           <p>On macOS, the Xcode command line tools too.</p>
-          <div class="ca"><button type="button" class="pri copy" data-copy="way3">Copy</button><a class="ghost" href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/development.md#build-from-source">Details</a></div>
+          <div class="ca"><button type="button" class="pri copy" data-copy="way3">Copy</button><a class="ghost" href="https://github.com/arugula-salad/illogical/blob/main/docs/development.md#build-from-source">Details</a></div>
         </div>
       </div>
       <p class="meta then-meta"><i style="background:var(--k-agent)"></i>then</p>
@@ -469,23 +468,23 @@ just bootstrap && just install</pre>
           <div class="cm">illogical control · teams</div>
           <pre id="next-join">illogicald join https://control.illogical.widgets.wtf</pre>
           <p>Join illogical control to reach it from any browser, no tailnet needed. Make a team there, invite people, and pick the team when you approve a machine.</p>
-          <div class="ca"><button type="button" class="pri copy" data-copy="next-join">Copy</button><a class="ghost" href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/teams.md">Your machines, your team</a></div>
+          <div class="ca"><button type="button" class="pri copy" data-copy="next-join">Copy</button><a class="ghost" href="https://github.com/arugula-salad/illogical/blob/main/docs/teams.md">Your machines, your team</a></div>
         </div>
         <div class="card" style="--c: var(--k-shell)">
           <div class="ch"><b>Agents &amp; Claude Code</b></div>
           <div class="cm">mcp · start an agent</div>
           <pre id="next-mcp">claude mcp add illogical -- illogical mcp</pre>
           <p>Builds and dev servers in panes you can watch and take over. Or <em>Start an agent…</em> in any pane's menu.</p>
-          <div class="ca"><button type="button" class="pri copy" data-copy="next-mcp">Copy</button><a class="ghost" href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">Allowlist and more</a></div>
+          <div class="ca"><button type="button" class="pri copy" data-copy="next-mcp">Copy</button><a class="ghost" href="https://github.com/arugula-salad/illogical#quickstart">Allowlist and more</a></div>
         </div>
       </div>
-      <p class="after">The <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
+      <p class="after">The <a href="https://github.com/arugula-salad/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://github.com/arugula-salad/illogical/blob/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
 
       <div class="card done runs">
         <div class="ch"><b>Runs on your own machines</b></div>
         <div class="cm">tailscale · encrypted relay · your hardware</div>
         <div class="cq">Connect through Tailscale or an encrypted relay. Layout and scrollback survive reboots; running processes don’t.</div>
-        <div class="ca"><a class="pri" href="https://git.inevitable.fyi/jhgaylor/illogical/src/branch/main/docs/features.md">Features, integrations and restart behavior</a></div>
+        <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/blob/main/docs/features.md">Features, integrations and restart behavior</a></div>
       </div>
     </section>
   </div>
@@ -497,7 +496,7 @@ just bootstrap && just install</pre>
       <span><i style="background:var(--k-shell)"></i>shell</span><span><i style="background:var(--k-build)"></i>build</span><span><i style="background:var(--k-test)"></i>test</span><span><i style="background:var(--k-agent)"></i>agent</span><span><i style="background:var(--k-server)"></i>server</span><span><i style="background:var(--k-logs)"></i>logs</span><span><i style="background:var(--k-editor)"></i>editor</span>
     </div>
     <p>Built by <a href="https://jakegaylor.com">Jake Gaylor</a> for your machines and the people you share them with.</p>
-    <p>Terminal emulation by <a href="https://ghostty.org">libghostty</a> and <a href="https://xtermjs.org">xterm.js</a>. <a href="https://git.inevitable.fyi/jhgaylor/illogical#quickstart">Docs</a> · <a href="https://git.inevitable.fyi/jhgaylor/illogical">Source</a> · <a href="https://git.inevitable.fyi/jhgaylor/illogical/releases">Releases</a> · MIT or Apache-2.0.</p>
+    <p>Terminal emulation by <a href="https://ghostty.org">libghostty</a> and <a href="https://xtermjs.org">xterm.js</a>. <a href="https://github.com/arugula-salad/illogical#quickstart">Docs</a> · <a href="https://github.com/arugula-salad/illogical">Source</a> · <a href="https://github.com/arugula-salad/illogical/releases">Releases</a> · MIT or Apache-2.0.</p>
   </div>
 </footer>
 
