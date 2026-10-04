@@ -81,7 +81,11 @@ addEventListener("keydown", (e) => {
   const el = $("k-" + c);
   if (el) { el.classList.add("ok"); results.chords[c] = true; }
   else if (!results.extra.includes(c)) { results.extra.push(c); $("extra").textContent = results.extra.join(" "); }
-  e.preventDefault();
+  // Like the client: chords are taken, plain typing (and IME) goes to xterm.
+  if (e.isComposing || e.keyCode === 229) return;
+  // Paste chords stay with the engine, as the client leaves them (xterm reads the paste event).
+  if (e.ctrlKey && (e.code === "KeyV" || (e.shiftKey && e.code === "KeyV"))) return;
+  if (e.ctrlKey || e.altKey || e.metaKey || /^(F\d+|Tab)$/.test(e.code)) e.preventDefault();
 }, true);
 
 // ---- terminal with local echo, to see IME go through xterm's textarea
@@ -141,6 +145,57 @@ Object.assign(results.env, {
 for (const [k, v] of Object.entries(results.env)) $("env").insertAdjacentHTML("beforeend", `<tr><td>${k}</td><td>${v}</td></tr>`);
 $("report").onclick = () => invoke("s25_report", { json: JSON.stringify(results) }).catch(() => console.log(JSON.stringify(results)));
 window.__s25probe = results;
+
+// ---- S25_AUTO: everything that needs no hands, and a log of every key for
+// drive.py, which presses real keys through uinput.
+if (window.__S25_FLAGS?.auto) {
+  const L = (o) => invoke("s25_log", { line: JSON.stringify({ t: Math.round(performance.now()), ...o }) });
+  const within = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`no answer in ${ms} ms`)), ms))]);
+  const rustRead = () => invoke("plugin:clipboard-manager|read_text");
+  const rustWrite = (text) => invoke("plugin:clipboard-manager|write_text", { text });
+  let saved = null;
+  const restore = () => (saved !== null ? rustWrite(saved).catch((err) => L({ clip: "restore", error: String(err) })) : null);
+  addEventListener("keydown", (e) => {
+    if (/^(Control|Shift|Alt|Meta)(Left|Right)$/.test(e.code)) return;
+    L({ key: chordOf(e), composing: e.isComposing, focus: document.hasFocus() });
+    if (e.code === "KeyG" && e.ctrlKey && e.altKey) {
+      // A keydown is a user gesture: the clipboard as a click would use it.
+      (async () => {
+        try { await within(navigator.clipboard.writeText("s25-gesture"), 3000); L({ clip: "navigator write (gesture)", ok: (await rustRead()) === "s25-gesture" }); }
+        catch (err) { L({ clip: "navigator write (gesture)", error: String(err) }); }
+        try { await rustWrite("s25-from-rust"); L({ clip: "navigator read (gesture)", ok: (await within(navigator.clipboard.readText(), 3000)) === "s25-from-rust" }); }
+        catch (err) { L({ clip: "navigator read (gesture)", error: String(err) }); }
+        await restore();
+        L({ clip: "restored" });
+      })();
+    }
+    if (e.code === "KeyP" && e.ctrlKey && e.altKey) rustWrite("s25-paste").then(() => L({ paste: "armed" }), (err) => L({ paste: String(err) }));
+    if (e.code === "KeyO" && e.ctrlKey && e.altKey) invoke("s25_new_window").then(() => L({ window: "opened" }), (err) => L({ window: String(err) }));
+  }, true);
+  for (const ev of ["compositionstart", "compositionupdate", "compositionend"]) ta.addEventListener(ev, (e) => L({ ime: ev, data: e.data }));
+  addEventListener("paste", (e) => L({ paste: e.clipboardData.getData("text/plain") }), true);
+  term.onData((d) => { if (/[^\x00-\x7f]/.test(d)) L({ onData: d }); });
+  window.__TAURI__.event.listen("s25-notification-click", (e) => L({ note: "clicked", tag: e.payload, focus: document.hasFocus() }));
+  (async () => {
+    try { saved = await rustRead(); } catch { saved = ""; }
+    term.focus();
+    await new Promise((r) => setTimeout(r, 300));
+    L({ ready: true, focus: document.hasFocus(), env: results.env, note: results.note });
+    try { await within(navigator.clipboard.writeText("s25-no-gesture"), 3000); L({ clip: "navigator write (no gesture)", ok: (await rustRead()) === "s25-no-gesture" }); }
+    catch (err) { L({ clip: "navigator write (no gesture)", error: String(err) }); }
+    try { await rustWrite("s25-rust"); L({ clip: "Rust write + read", ok: (await rustRead()) === "s25-rust" }); }
+    catch (err) { L({ clip: "Rust write + read", error: String(err) }); }
+    try { L({ clip: "navigator read (no gesture)", ok: (await within(navigator.clipboard.readText(), 3000)) === "s25-rust" }); }
+    catch (err) { L({ clip: "navigator read (no gesture)", error: String(err) }); }
+    await restore();
+    try { L({ note: "web requestPermission", result: await within(Notification.requestPermission(), 5000) }); }
+    catch (err) { L({ note: "web requestPermission", error: String(err) }); }
+    try { L({ note: "native shown", id: await invoke("s25_notify", { title: "illogical", body: "S25 probe: pane %3 needs you", tag: "3" }) }); }
+    catch (err) { L({ note: "native", error: String(err) }); }
+    try { await invoke("s25_badge", { count: 3 }); L({ badge: "set" }); } catch (err) { L({ badge: String(err) }); }
+    L({ autodone: true });
+  })();
+}
 </script>
 </body>
 </html>

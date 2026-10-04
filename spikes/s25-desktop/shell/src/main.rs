@@ -15,6 +15,9 @@
 //!   the page.
 //! - `S25_AUTO=1`: the bench runs on load. `S25_EXIT=1`: quit after a report.
 //! - `S25_OUT=path`: where the bench writes its results (also printed).
+//! - `S25_LOG=path`: the probe's event log, one JSON object a line. With
+//!   `S25_AUTO=1` the probe runs what needs no hands and logs every key,
+//!   for `drive.py` to press chords against.
 
 use std::{
     sync::OnceLock,
@@ -100,6 +103,17 @@ fn s25_report(app: AppHandle, json: String) {
     }
 }
 
+/// One line of the probe's event log (`S25_LOG`), which a driver tails.
+#[tauri::command]
+fn s25_log(line: String) {
+    use std::io::Write;
+    if let Ok(path) = std::env::var("S25_LOG") {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 #[tauri::command]
 fn s25_badge(app: AppHandle, count: u32) {
     // The dock badge (macOS) and the tray tooltip: the "needs you" count.
@@ -115,7 +129,7 @@ fn s25_badge(app: AppHandle, count: u32) {
 /// A native notification. On Linux it carries a default action, and a
 /// click is sent back to the window that asked as `s25-notification-click`.
 #[tauri::command]
-fn s25_notify(window: tauri::WebviewWindow, title: String, body: String, tag: String) -> Result<(), String> {
+fn s25_notify(window: tauri::WebviewWindow, title: String, body: String, tag: String) -> Result<u32, String> {
     #[cfg(target_os = "linux")]
     {
         let handle = notify_rust::Notification::new()
@@ -125,6 +139,8 @@ fn s25_notify(window: tauri::WebviewWindow, title: String, body: String, tag: St
             .action("default", "Open")
             .show()
             .map_err(|e| e.to_string())?;
+        let id = handle.id();
+        println!("s25: notification {tag} is id {id}");
         std::thread::spawn(move || {
             handle.wait_for_action(|action| {
                 println!("s25: notification {tag} action {action:?}");
@@ -134,13 +150,14 @@ fn s25_notify(window: tauri::WebviewWindow, title: String, body: String, tag: St
                 }
             });
         });
-        Ok(())
+        Ok(id)
     }
     #[cfg(not(target_os = "linux"))]
     {
         use tauri_plugin_notification::NotificationExt;
         let _ = tag;
-        window.app_handle().notification().builder().title(title).body(body).show().map_err(|e| e.to_string())
+        window.app_handle().notification().builder().title(title).body(body).show().map_err(|e| e.to_string())?;
+        Ok(0)
     }
 }
 
@@ -150,7 +167,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .invoke_handler(tauri::generate_handler![s25_new_window, s25_report, s25_notify, s25_badge])
+        .invoke_handler(tauri::generate_handler![s25_new_window, s25_report, s25_notify, s25_badge, s25_log])
         .menu(|app| {
             // macOS needs an Edit menu for Cmd-C/V/A to reach a WKWebView at
             // all; Linux shows no menu. Tauri's default menu also binds
