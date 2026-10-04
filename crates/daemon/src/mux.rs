@@ -2349,6 +2349,9 @@ impl Daemon {
         if req.kind != BlockType::Agent {
             return Err("guests can start agents; other blocks are the owner's".into());
         }
+        if !req.config["as_fountain"].is_null() {
+            return Err("only the owner can wear a Fountain agent here".into());
+        }
         let pane = req.split.or(req.from_pane).ok_or("start it beside a pane")?;
         let session = self.session_of(pane).ok_or("no such pane")?;
         if self.config.acl.role(who, session).is_none_or(|r| r < Role::Editor) {

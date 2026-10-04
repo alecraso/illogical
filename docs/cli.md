@@ -44,6 +44,9 @@ illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
                                               #   --acp CMD, --vm, --machine m3, --model haiku,
                                               #   --cwd d, --wait)
+illogical agent --as pr-reviewer "review this" # Claude Code here wearing a Fountain agent: its prompt,
+                                              #   skills and MCP servers (M44; not for illogical.local: false;
+                                              #   --vault V: its secrets' mapping)
 illogical claude ls [--live] [--all] [words]  # Claude Code conversations here: terminal and desktop app
 illogical claude open 3fa9c1                  # one as a stopped agent block, following it; prints %N
 illogical studio login https://studio.example # keep a studio token in the daemon (read from stdin)
@@ -65,6 +68,7 @@ illogical issue comment %8 "On it"            # comment (under an agent: a draft
 illogical fountain                            # your Fountain agents as a catalog block (-q WORDS, --source agent-specs)
 illogical fountain agents frontend-design     # ...or listed here, one line each
 illogical call %10 run '{"agent":"games"}'    # Run on Fountain (an agent block beside it); spec '{"agent":"pr-reviewer"}'
+illogical call %10 run_here '{"agent":"games","cwd":"~/w"}'  # Run here: Claude Code wearing it, in ~/w
 illogical call %10 filter '{"source":"agent-specs","query":"review"}'  # the block's filter ("clear": true)
 illogical fountain --view runner              # this machine as the Fountain runner: status, other runners, its sandboxes
 illogical call %11 shell '{"sandbox":"ID"}'   # a terminal as fountain in a sandbox; changes '{"sandbox":…}' (a diff per checkout),
@@ -149,7 +153,7 @@ The tools:
 | `search` | Lines of output matching a regex | yes |
 | `open_port` | A browser block on a port of a pane's machine, beside it | no |
 | `open_app` | One of the user's studio apps as an app block, beside a pane; without `app`, their apps | no |
-| `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt | no |
+| `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt; `as_fountain` (Claude Code): wear one of the user's Fountain agents here | no |
 | `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
 | `list_conversations` | Claude Code conversations here (a terminal's, the desktop app's): `query`, `cwd`, `live`, `all` | yes |
 | `open_conversation` | One as an agent block beside a pane; `then`: `continue` or `fork` | no |

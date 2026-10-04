@@ -1105,6 +1105,26 @@ button {
   flex: 1;
 }
 
+/* M44: a worn Fountain agent: what it brought, and what didn't come. */
+.agent-worn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+}
+
+.agent-worn-as {
+  font-weight: 600;
+}
+
+.agent-worn-missing {
+  color: var(--dim);
+}
+
 .agent-cost {
   color: var(--dim);
   font-variant-numeric: tabular-nums;

@@ -23,6 +23,9 @@
 //!   runs in a throwaway wisp VM pane (needs wisp).
 //! - `claude`: Claude Code through the pinned `claude-agent-acp`, on your
 //!   own login, in a scratch git repo: a command it asks to run, approved.
+//!   And (M44) Claude Code wearing your Fountain account's `games` agent
+//!   (read with your `fountain` login; inline skills only, no MCP, so no
+//!   secrets): it names its three skills.
 //! - `codex`: `codex-acp` against your `codex`.
 //! - `fountain`: the Fountain agent in `ILLOGICAL_FOUNTAIN_AGENT` (an
 //!   existing one; nothing is created but a conversation, deleted after).
@@ -99,6 +102,28 @@ fn claude_code_asks_and_runs() {
     assert_eq!(s["server"]["name"], "@agentclientprotocol/claude-agent-acp");
     assert!(s["cost"]["last_turn"].as_f64().unwrap() > 0.0, "{s}");
     assert!(!PathBuf::from(&cwd).join(".claude/settings.local.json").exists(), "never the agent's allow_always");
+}
+
+/// M44: a Fountain agent worn here: `games`' skills come as a plugin.
+#[test]
+fn claude_code_wears_games() {
+    if !wanted("claude") || !adapter("claude", "claude-agent-acp") {
+        return;
+    }
+    let d = Daemon::child();
+    let cwd = scratch(&d);
+    let prompt = "Without using any tools: list, one per line, the names of the skills you can use whose names \
+                  contain love, pixi or screenshot. Then say DONE.";
+    let config = json!({ "agent": "claude", "as_fountain": "games", "model": "haiku", "cwd": cwd, "prompt": prompt });
+    let id = d.open_with(json!({ "type": "agent", "config": config }));
+    assert_eq!(d.wait_secs(id, "idle", 180), "done", "{}", text(&d, id));
+    let s = d.state(id);
+    assert_eq!(s["worn"]["skills"], json!(["love2d", "pixijs", "screenshots-in-prs"]), "{s}");
+    let t = text(&d, id);
+    let reply = t.rsplit("## You").next().unwrap_or("");
+    for skill in ["love2d", "pixijs", "screenshots-in-prs"] {
+        assert!(reply.contains(skill), "{skill} not named: {t}");
+    }
 }
 
 #[test]

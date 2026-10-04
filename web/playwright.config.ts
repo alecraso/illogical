@@ -105,6 +105,10 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   );
   chmodSync(join(dir, "sudo"), 0o755);
   process.env.ILLOGICAL_FOUNTAIN_SUDO = join(dir, "sudo");
+  // M44: a worn agent's variables never reach the person's Infisical or
+  // gh (and its bundle goes in the run's own cache: the daemon's command).
+  process.env.ILLOGICAL_INFISICAL_BIN = "/bin/false";
+  process.env.ILLOGICAL_GH_BIN = "/bin/false";
 }
 
 // By default runs against a throwaway debug daemon on 7683 (which serves
@@ -136,7 +140,8 @@ export default defineConfig({
   webServer: external
     ? undefined
     : {
-        command: `RUST_LOG=illogicald=debug ../target/debug/illogicald --listen 127.0.0.1:${port} --shell "bash --norc --noprofile" --no-manager-env --state-dir "${runDir("ILLOGICAL_E2E_STATE", "illogical-e2e-")}"${log}`,
+        // Only the daemon's cache: Playwright keeps its browsers in XDG_CACHE_HOME.
+        command: `XDG_CACHE_HOME="${runDir("ILLOGICAL_E2E_CACHE", "illogical-e2e-cache-")}" RUST_LOG=illogicald=debug ../target/debug/illogicald --listen 127.0.0.1:${port} --shell "bash --norc --noprofile" --no-manager-env --state-dir "${runDir("ILLOGICAL_E2E_STATE", "illogical-e2e-")}"${log}`,
         url: `http://127.0.0.1:${port}/`,
         reuseExistingServer: false,
         stdout: "ignore",
