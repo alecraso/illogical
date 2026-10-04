@@ -396,6 +396,11 @@ impl Client {
         Ok(rows(self.get::<Vec<Value>>("/api/environments").await?).items)
     }
 
+    /// The account's vaults, by name only (M44: a worn agent's secrets).
+    pub async fn vaults(&self) -> Result<Vec<Environment>, Error> {
+        Ok(rows(self.get::<Vec<Value>>("/api/vaults").await?).items)
+    }
+
     #[allow(dead_code)] // M45.
     pub async fn runners(&self) -> Result<Listing<Runner>, Error> {
         Ok(rows(self.get::<Vec<Value>>("/api/runners").await?))

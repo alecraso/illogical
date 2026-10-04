@@ -277,6 +277,10 @@ pub struct StartAgentArgs {
     /// For fountain: the agent's name or id.
     #[serde(default)]
     pub fountain_agent: Option<String>,
+    /// For claude: wear this Fountain agent (name or id), on this host: its
+    /// system prompt, skills and MCP servers (list_agents lists them).
+    #[serde(default)]
+    pub as_fountain: Option<String>,
     /// A model to switch to (`haiku`, ...).
     #[serde(default)]
     pub model: Option<String>,
@@ -688,7 +692,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "start_agent",
             title: "Start an agent",
-            description: "Start an agent (Claude Code, Codex, a Fountain agent, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user.",
+            description: "Start an agent (Claude Code, Codex, a Fountain agent, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user. {agent: claude, as_fountain: NAME} is a Claude Code here wearing one of the user's Fountain agents (its prompt, skills and MCP servers).",
             schema: schema_for_type::<StartAgentArgs>,
             read_only: false,
             destructive: false,
@@ -1099,6 +1103,15 @@ impl<'a> Call<'a> {
         self.app.mux.api(Api::Panes).await.unwrap_or_default()
     }
 
+    /// Whether this caller is an agent on a machine (a guest's, say): what
+    /// it creates must land on a machine too ([`confine`]).
+    async fn on_machine(&self) -> Result<bool, String> {
+        match self.me() {
+            Some(me) => Ok(self.readable(me).await?.info.host.is_some()),
+            None => Ok(false),
+        }
+    }
+
     /// The block whose token this is.
     fn me(&self) -> Option<PaneId> {
         match self.caller.scope {
@@ -1271,6 +1284,7 @@ impl<'a> Call<'a> {
                 req.from_pane = req.split;
             }
         }
+        confine(self.on_machine().await?, run_lands_on_machine(&req))?;
         let on_vm = a.vm || a.vm_tab || a.machine.is_some() || req.join;
         let pane = match self.app.mux.api(|r| Api::Run(req, r)).await {
             Some(Ok(p)) => p,
@@ -2112,6 +2126,7 @@ impl<'a> Call<'a> {
     }
 
     async fn open(&self, req: OpenRequest) -> Result<PaneId, String> {
+        confine(self.on_machine().await?, open_lands_on_machine(&req))?;
         match self.app.mux.api(|r| Api::Open(req, None, r)).await {
             Some(Ok(b)) => {
                 self.started(b).await;
@@ -2139,6 +2154,16 @@ impl<'a> Call<'a> {
             Some(b) => self.readable(b).await?.info.host,
             None => None,
         };
+        may_start(self.on_machine().await?, host.is_some(), a.vm, a.as_fountain.is_some())?;
+        if let Some(name) = a.as_fountain.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            // M44: it runs on this host with the owner's secrets.
+            if !matches!(a.agent, AgentKind::Claude) {
+                return Err("as_fountain is for agent claude: a Claude Code wears the Fountain agent".into());
+            }
+            // Refused up front, with the reason (an orchestrator, a codex agent).
+            let runner = crate::fountain::local_runner(&self.app.mux.shell_env).await;
+            crate::fountain::wear::find(&runner, None, name).await?;
+        }
         if host.is_some() {
             self.share_my_machine().await;
         }
@@ -2154,6 +2179,9 @@ impl<'a> Call<'a> {
         }
         if let Some(f) = &a.fountain_agent {
             config["fountain_agent"] = json!(f);
+        }
+        if let Some(f) = a.as_fountain.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            config["as_fountain"] = json!(f);
         }
         if let Some(m) = &a.model {
             config["model"] = json!(m);
@@ -2201,6 +2229,8 @@ impl<'a> Call<'a> {
     }
 
     async fn open_conversation(&self, a: OpenConversationArgs) -> Out {
+        // Conversations are this host's, and continue as a Claude Code here.
+        confine(self.on_machine().await?, false)?;
         let beside = match (a.beside.as_ref().map(PaneArg::id).transpose()?, self.me()) {
             (Some(b), _) => Some(b),
             (None, me) => me,
@@ -2484,8 +2514,90 @@ fn ago(ms: u64) -> String {
     }
 }
 
+/// The one rule for every tool that creates something (a shell, an agent,
+/// a block): an agent on a machine (a guest's, say) creates things on a
+/// machine, never on this host, where they'd run as the owner (with the
+/// owner's logins and, for a worn Fountain agent, secrets).
+fn confine(caller_on_machine: bool, lands_on_machine: bool) -> Result<(), String> {
+    if caller_on_machine && !lands_on_machine {
+        return Err("an agent on a machine creates things on its machine (or a new VM), not on this host".into());
+    }
+    Ok(())
+}
+
+/// Where `run` puts its shell: a machine when it joins one or makes one.
+fn run_lands_on_machine(req: &RunRequest) -> bool {
+    req.join || req.vm || req.vm_tab || req.sandbox.is_some()
+}
+
+/// Where a block opens: a machine when it has one or makes one.
+fn open_lands_on_machine(req: &OpenRequest) -> bool {
+    req.vm || req.host.is_some()
+}
+
+/// Whether `start_agent` may start this agent ([`confine`]), and a worn
+/// Fountain agent on this host only.
+fn may_start(caller_on_machine: bool, on_machine: bool, vm: bool, worn: bool) -> Result<(), String> {
+    confine(caller_on_machine, on_machine || vm)?;
+    if worn && (on_machine || vm) {
+        return Err("a worn Fountain agent runs on this host, not on a machine".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn who_may_start_what_where() {
+        use super::may_start;
+        // The owner's agents (and the CLI), here.
+        assert!(may_start(false, false, false, true).is_ok());
+        assert!(may_start(false, false, false, false).is_ok());
+        assert!(may_start(false, true, false, false).is_ok());
+        // A guest's VM agent: on its machine or a VM, never here.
+        assert!(may_start(true, true, false, false).is_ok());
+        assert!(may_start(true, false, true, false).is_ok());
+        assert!(may_start(true, false, false, false).unwrap_err().contains("not on this host"));
+        assert!(may_start(true, false, false, true).unwrap_err().contains("not on this host"));
+        // A worn agent never goes on a machine.
+        assert!(may_start(false, true, false, true).is_err());
+        assert!(may_start(false, false, true, true).is_err());
+    }
+
+    /// run, open (open_app, open_port, show_file, open_workspace, open_pr,
+    /// open_fountain, start_agent's block…) and open_conversation all go
+    /// through `confine`.
+    #[test]
+    fn an_agent_on_a_machine_creates_on_machines() {
+        use super::*;
+        // run: a split of the owner's local pane is a shell here.
+        let here = RunRequest { split: Some(3), join: false, ..Default::default() };
+        let there = RunRequest { split: Some(4), join: true, ..Default::default() };
+        let vm = RunRequest { vm: true, ..Default::default() };
+        assert!(confine(true, run_lands_on_machine(&here)).unwrap_err().contains("not on this host"));
+        assert!(confine(true, run_lands_on_machine(&there)).is_ok());
+        assert!(confine(true, run_lands_on_machine(&vm)).is_ok());
+        assert!(confine(false, run_lands_on_machine(&here)).is_ok(), "the owner's agents, as before");
+        // open: a block without a machine is this host's.
+        let block = |host: Option<u32>, vm: bool| OpenRequest {
+            kind: BlockType::Agent,
+            config: json!({}),
+            session: None,
+            split: Some(3),
+            from_pane: Some(3),
+            vm,
+            image: None,
+            host,
+            local: host.is_none(),
+        };
+        assert!(confine(true, open_lands_on_machine(&block(None, false))).is_err());
+        assert!(confine(true, open_lands_on_machine(&block(Some(2), false))).is_ok());
+        assert!(confine(true, open_lands_on_machine(&block(None, true))).is_ok());
+        assert!(confine(false, open_lands_on_machine(&block(None, false))).is_ok());
+        // open_conversation: always this host's.
+        assert!(confine(true, false).is_err() && confine(false, false).is_ok());
+    }
+
     use super::*;
 
     #[test]

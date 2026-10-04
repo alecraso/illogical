@@ -771,6 +771,14 @@ async fn open_block(
     Json(mut req): Json<illogical_proto::api::OpenRequest>,
 ) -> Res<Json<serde_json::Value>> {
     let who = who.map(|axum::Extension(w)| w);
+    // M44: a worn Fountain agent runs on this host with the owner's
+    // secrets: the owner's alone.
+    if req.kind == illogical_proto::BlockType::Agent
+        && !req.config["as_fountain"].is_null()
+        && who.as_ref().is_some_and(|w| !w.is_owner())
+    {
+        return Err(ApiError(StatusCode::FORBIDDEN, "only the owner can wear a Fountain agent here".into()));
+    }
     // A studio box (M35), by its app's name: where it is, from studio.
     if req.kind == illogical_proto::BlockType::App {
         req.config = app_config(&req.config).await.map_err(bad)?;

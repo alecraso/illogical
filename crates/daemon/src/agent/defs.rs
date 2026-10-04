@@ -72,6 +72,16 @@ pub struct Def {
     /// A model to switch to after the session starts (`haiku`, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// M44: Claude Code wearing this Fountain agent (name or id): its
+    /// system prompt, skills and MCP servers, on this host. Read with
+    /// `profile`'s login. Only the name is kept: the bundle is in the
+    /// cache, and its secrets in memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_fountain: Option<String>,
+    /// M44: the agent-specs checkout whose Infisical mapping a worn agent's
+    /// `${VAR}`s go through (`~/…` allowed; the default one if it's there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub specs: Option<String>,
 }
 
 /// How to start the agent server.
@@ -110,7 +120,10 @@ fn installed(home: &Path, name: &str) -> String {
 impl Def {
     pub fn label(&self) -> String {
         match self.agent {
-            Kind::Claude => "Claude Code".into(),
+            Kind::Claude => match &self.as_fountain {
+                Some(a) => format!("Claude Code as {a}"),
+                None => "Claude Code".into(),
+            },
             Kind::Codex => "Codex".into(),
             Kind::Fountain => format!("Fountain {}", self.fountain_agent.as_deref().unwrap_or("agent")),
             Kind::Acp => self.command.first().map(|c| c.rsplit('/').next().unwrap_or(c).to_owned()).unwrap_or_default(),
@@ -123,6 +136,12 @@ impl Def {
                 Err("a Fountain agent block needs the agent's name or id".into())
             }
             Kind::Acp if self.command.is_empty() => Err("an ACP agent block needs a command".into()),
+            _ if self.as_fountain.is_some() && self.agent != Kind::Claude => {
+                Err("only Claude Code wears a Fountain agent (agent: claude)".into())
+            }
+            _ if self.as_fountain.as_deref().is_some_and(|a| a.trim().is_empty()) => {
+                Err("as_fountain needs the Fountain agent's name or id".into())
+            }
             _ => Ok(()),
         }
     }
@@ -174,6 +193,31 @@ impl Def {
             l.argv = self.command.clone();
         }
         Ok(l)
+    }
+}
+
+/// M44: a worn Fountain agent on Claude's `session/new` `_meta`: its
+/// system prompt appended, its skills as a local plugin, its model. The
+/// rest stays, `settingSources: []` above all (without it the user's own
+/// hooks fire inside the block, S24).
+pub fn wear_meta(meta: &mut Value, system: &str, plugin: &Path, model: Option<&str>) {
+    if !meta.is_object() {
+        *meta = json!({});
+    }
+    meta["systemPrompt"] = json!({ "append": system });
+    if !meta["claudeCode"].is_object() {
+        meta["claudeCode"] = json!({});
+    }
+    if !meta["claudeCode"]["options"].is_object() {
+        meta["claudeCode"]["options"] = json!({});
+    }
+    let o = &mut meta["claudeCode"]["options"];
+    o["plugins"] = json!([{ "type": "local", "path": plugin.display().to_string() }]);
+    if let Some(m) = model {
+        o["model"] = json!(m);
+    }
+    if o.get("settingSources").is_none() {
+        o["settingSources"] = json!([]);
     }
 }
 
@@ -233,6 +277,33 @@ mod tests {
 
         let codex = Def { agent: Kind::Codex, ..Default::default() }.launch(home, false).unwrap();
         assert_eq!(codex.env, vec![("CODEX_PATH".into(), "codex".into())]);
+    }
+
+    #[test]
+    fn a_worn_agent_on_the_meta() {
+        let home = Path::new("/nonexistent-home");
+        let def = Def { as_fountain: Some("games".into()), ..Default::default() };
+        assert_eq!(def.label(), "Claude Code as games");
+        let mut meta = def.launch(home, false).unwrap().meta;
+        wear_meta(&mut meta, "be games", Path::new("/c/plugin"), Some("claude-opus-5"));
+        assert_eq!(
+            meta,
+            json!({
+                "systemPrompt": { "append": "be games" },
+                "claudeCode": { "options": {
+                    "settingSources": [],
+                    "plugins": [{ "type": "local", "path": "/c/plugin" }],
+                    "model": "claude-opus-5",
+                } },
+            })
+        );
+        // Even from nothing, the user's settings stay out.
+        let mut bare = Value::Null;
+        wear_meta(&mut bare, "x", Path::new("/p"), None);
+        assert_eq!(bare["claudeCode"]["options"]["settingSources"], json!([]));
+        assert!(bare["claudeCode"]["options"].get("model").is_none());
+        assert!(Def { agent: Kind::Codex, as_fountain: Some("x".into()), ..Default::default() }.check().is_err());
+        assert!(Def { as_fountain: Some(" ".into()), ..Default::default() }.check().is_err());
     }
 
     #[test]

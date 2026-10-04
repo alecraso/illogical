@@ -9,8 +9,10 @@
 // agent by its skill, and *Run on Fountain* opens an agent block beside the
 // catalog that answers a prompt.
 
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { menu, paneEl, panes, reset } from "./helpers";
 import { listen } from "./ports";
@@ -80,9 +82,9 @@ test("the catalog filters, and Run on Fountain opens an agent block beside it", 
   const blockState = (b: number) =>
     page.evaluate((b) => window.__illogical.client.request("GET", `/api/blocks/${b}`).then((r) => r.json<{ state: Record<string, any> }>()), b).then((v) => v.state);
   await expect.poll(() => blockState(block).then((s) => s.filter.query)).toBe("frontend-design");
-  // Run here waits for M44; Spec is offered.
+  // Run here (M44) and Spec are offered.
   const designer = el.locator('.fountain-card[data-agent="designer"]');
-  await expect(designer.locator("[data-run-here]")).toBeDisabled();
+  await expect(designer.locator("[data-run-here]")).toBeEnabled();
   await expect(designer.locator("[data-spec]")).toBeEnabled();
 
   // Clear, then find games and run it on Fountain.
@@ -100,4 +102,34 @@ test("the catalog filters, and Run on Fountain opens an agent block beside it", 
   await a.locator(".agent-composer textarea").fill("hello");
   await a.locator(".agent-composer textarea").press("Enter");
   await expect(a.locator(".agent-msg").last()).toHaveText("Hello! I am fake.");
+});
+
+// M44: *Run here* asks for a folder and opens a Claude Code block beside
+// the catalog wearing the agent (here Claude Code's adapter is the fake ACP
+// agent): its header says what it wears. games has inline skills only and
+// no MCP servers, so nothing here reaches Infisical, gh or GitHub.
+test("Run here wears the agent in a Claude Code block", async ({ page }) => {
+  const block = await openCatalog(page);
+  const el = page.locator(`[data-fountain-block="${block}"]`);
+  await el.locator(".fountain-search").fill("games");
+  const games = el.locator('.fountain-card[data-agent="games"]');
+  await expect(games).toBeVisible();
+  await games.locator("[data-run-here]").click();
+  const dir = mkdtempSync(join(tmpdir(), "illogical-e2e-wear-"));
+  try {
+    await page.locator(".prompt input").fill(dir);
+    await page.locator(".prompt input").press("Enter");
+    await expect.poll(async () => (await panes(page)).length).toBe(3);
+    const agent = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "agent")!.id);
+    const a = paneEl(page, agent);
+    const worn = a.locator('[data-worn="games"]');
+    await expect(worn).toContainText("as games", { timeout: 15_000 });
+    for (const s of ["love2d", "pixijs", "screenshots-in-prs"]) await expect(worn.locator(`[data-worn-skill="${s}"]`)).toBeVisible();
+    await expect(a.locator(".agent-name")).toHaveText("Claude Code as games");
+    await a.locator(".agent-composer textarea").fill("hello");
+    await a.locator(".agent-composer textarea").press("Enter");
+    await expect(a.locator(".agent-msg").last()).toHaveText("Hello! I am fake.");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

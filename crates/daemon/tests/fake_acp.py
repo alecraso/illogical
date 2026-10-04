@@ -22,6 +22,9 @@ Prompts:
                  the accept
   codex ask      Codex's plan-mode question form
   meta           says the _meta its session was last opened or forked with
+  servers        says the MCP servers its session got, ${VAR}s expanded from
+                 its environment (as an agent that leaks what it was given
+                 would)
   model          says the model set_config_option chose
   mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
                  one, as illogical passes local agents, M16; or a stdio one,
@@ -41,6 +44,7 @@ others get "I don't have access to an AskUserQuestion tool" (S13).
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -265,12 +269,25 @@ def ask_user(sid, s, n, questions, msg):
     return "end_turn"
 
 
+def expand(v):
+    """${VAR}s from our environment, as Claude Code expands them in its MCP
+    config (M44, #128: illogical passes Claude Code references)."""
+    if isinstance(v, str):
+        return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: os.environ.get(m.group(1), m.group(0)), v)
+    if isinstance(v, list):
+        return [expand(x) for x in v]
+    if isinstance(v, dict):
+        return {k: expand(x) for k, x in v.items()}
+    return v
+
+
 def mcp_call(servers, tool, args):
     """A tool call over Streamable HTTP, as an MCP client: initialize (a
     2025-06-18 session), then tools/call; answers come as SSE."""
     srv = next((x for x in servers or [] if x.get("name") == "illogical"), None)
     if srv is None:
         return {"error": "no illogical server in this session"}
+    srv = expand(srv)
     if srv.get("type") != "http":
         return mcp_call_stdio(srv, tool, args)
     base = {h["name"]: h["value"] for h in srv.get("headers", [])}
@@ -442,6 +459,8 @@ def prompt(mid, p):
         msg("MCP " + json.dumps(mcp_call(s.get("mcp"), tool, args)))
     elif text == "meta":
         msg("META " + json.dumps(s.get("meta"), sort_keys=True))
+    elif text == "servers":
+        msg("SERVERS " + json.dumps(expand(s.get("mcp")), sort_keys=True))
     elif text == "model":
         msg(f"Model: {s.get('model', 'default')}")
     elif text == "crash":
@@ -472,7 +491,7 @@ def handle(m):
             "agentInfo": {"name": "fake-acp", "version": "1"}, "authMethods": []}})
     elif method == "session/new":
         sid = f"fake-{os.getpid()}-{int(time.time() * 1000)}"
-        save(sid, {"updates": [], "cwd": p.get("cwd"), "mcp": p.get("mcpServers")})
+        save(sid, {"updates": [], "cwd": p.get("cwd"), "mcp": p.get("mcpServers"), "meta": p.get("_meta")})
         with open(os.path.join(DIR, f"mcp-{sid}.json"), "w") as f:
             json.dump(p.get("mcpServers"), f)
         send({"id": mid, "result": {"sessionId": sid}})

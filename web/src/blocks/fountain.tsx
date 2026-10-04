@@ -5,8 +5,10 @@
 // a search box and chips for source, runtime and sandbox provider. The
 // filters are the block's (kept in its config), so every client and the
 // phone see the same list. Each card: *Run on Fountain* (an agent block
-// beside it), *Run here* (M44; shown for claude agents, greyed until then)
-// and *Spec* (the agent-specs file, else Fountain's page). Everything drawn
+// beside it), *Run here* (M44, the owner's: a Claude Code on this host
+// wearing the agent, in a folder asked for; shown for claude agents, greyed
+// with the reason for the ones written for Fountain only) and *Spec* (the
+// agent-specs file, else Fountain's page). Everything drawn
 // comes from the daemon's state; viewers get the list without the buttons.
 
 import { render } from "preact";
@@ -27,7 +29,7 @@ export interface FountainState {
   view: "catalog"; profile: string | null; profiles: string[]; base_url: string | null; key_from: "env" | "file" | null;
   loading: boolean; error: string | null; agents: Card[]; total: number; unreadable?: number; unreadable_note?: string | null; filter: Filter;
   counts: { source: Record<string, number>; runtime: Record<string, number>; provider: Record<string, number> };
-  specs: string | null; specs_why: string | null; updated_ms: number; polls: number; watching?: boolean; said: string | null;
+  specs: string | null; specs_why: string | null; here?: string | null; updated_ms: number; polls: number; watching?: boolean; said: string | null;
 }
 
 /** "Fountain agents…": the catalog beside `split`, or in a new tab of `session`. */
@@ -139,6 +141,10 @@ function FountainBlock({ client, id, s }: { client: Client; id: PaneId; s: Fount
   const toggle = (key: "sources" | "runtimes" | "providers", arg: string) => (k: string) => {
     const now = (f[key] ?? []) as string[];
     filter({ [arg]: now.includes(k) ? now.filter((x) => x !== k) : [...now, k] });
+  };
+  const runHere = async (name: string) => {
+    const cwd = await askText(`Run ${name} here, in`, s.here ?? "~", "a folder on this machine (a worktree)");
+    if (cwd?.trim()) await call("run_here", { agent: name, cwd: cwd.trim() }, `couldn't run ${name} here`);
   };
   const pickSpecs = async () => {
     const dir = await askText("Your agent-specs checkout", s.specs ?? "", "~/dev/…/agent-specs");
@@ -254,7 +260,12 @@ function FountainBlock({ client, id, s }: { client: Client; id: PaneId; s: Fount
                     Run on Fountain
                   </button>
                   {c.runtime === "claude" && (
-                    <button data-run-here={c.name} disabled title={c.local_why ?? "Run here comes with M44: this agent, worn by a Claude Code on this machine"}>
+                    <button
+                      data-run-here={c.name}
+                      disabled={busy !== null || !c.local || !mayOwn}
+                      title={c.local_why ?? (mayOwn ? "A Claude Code on this machine wearing this agent: its prompt, skills and MCP servers" : "Only the owner runs agents here")}
+                      onClick={() => void runHere(c.name)}
+                    >
                       Run here
                     </button>
                   )}

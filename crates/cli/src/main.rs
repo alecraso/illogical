@@ -350,11 +350,16 @@ enum Command {
         /// A Fountain agent (name or id), run in Fountain's sandbox.
         #[arg(long, conflicts_with = "codex")]
         fountain: Option<String>,
+        /// Claude Code wearing a Fountain agent (name or id), on this host:
+        /// its system prompt, skills and MCP servers (M44).
+        #[arg(long = "as", value_name = "AGENT", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine"])]
+        as_fountain: Option<String>,
         /// Codex instead of Claude Code.
         #[arg(long)]
         codex: bool,
-        /// Fountain: a vault for its secrets.
-        #[arg(long, requires = "fountain")]
+        /// Fountain: a vault for its secrets (with `--as`: whose agent-specs
+        /// mapping its `${VAR}`s go through, over its environment's).
+        #[arg(long)]
         vault: Option<String>,
         /// A model to switch to (e.g. `haiku`).
         #[arg(long)]
@@ -375,11 +380,11 @@ enum Command {
         cwd: Option<String>,
         /// Continue a Claude Code conversation from a terminal or the
         /// desktop app (its id, or the start of it; `illogical claude ls`).
-        #[arg(long, value_name = "ID", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine", "fork"])]
+        #[arg(long, value_name = "ID", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine", "fork", "as_fountain"])]
         resume: Option<String>,
         /// Fork a Claude Code conversation and go on in the fork (for one
         /// that's still open somewhere else).
-        #[arg(long, value_name = "ID", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine"])]
+        #[arg(long, value_name = "ID", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine", "as_fountain"])]
         fork: Option<String>,
         #[arg(long)]
         session: Option<String>,
@@ -1908,6 +1913,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         Command::Agent {
             acp,
             fountain,
+            as_fountain,
             codex,
             vault,
             model,
@@ -1925,8 +1931,14 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 (Some(cmd), _) => json!({ "agent": "acp", "command": cmd }),
                 (_, Some(name)) => json!({ "agent": "fountain", "fountain_agent": name, "vault": vault }),
                 _ if codex => json!({ "agent": "codex" }),
-                _ => json!({ "agent": "claude" }),
+                _ => match &as_fountain {
+                    Some(name) => json!({ "agent": "claude", "as_fountain": name, "vault": vault }),
+                    None => json!({ "agent": "claude" }),
+                },
             };
+            if vault.is_some() && fountain.is_none() && as_fountain.is_none() {
+                anyhow::bail!("--vault goes with --fountain or --as");
+            }
             // A VM has none of this host's directories.
             let cwd = if vm || machine.is_some() {
                 cwd
