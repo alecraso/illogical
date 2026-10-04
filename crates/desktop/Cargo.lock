@@ -1780,14 +1780,14 @@ dependencies = [
 
 [[package]]
 name = "illogical-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "illogical-desktop"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "gtk",
@@ -1805,7 +1805,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-proto"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "illogical-core",
  "serde",
