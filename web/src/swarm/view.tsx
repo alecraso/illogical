@@ -21,6 +21,7 @@ import { usePhone, useSubscribe } from "../ui/hooks";
 import { Field, type FieldHooks, type FieldPane, type HistoryRun, type SwarmScene } from "./field";
 import { FollowView, appName } from "./follow";
 import { DiffCard } from "../ui/diff-card";
+import { runnerLabel, runners, subscribeRunners, watchRunners } from "../runners";
 import { activityOf, bundleOf, cardTitle, followable, GROUPINGS, groupOf, isPresence, kindOf, KINDS, REASON_COL, reasonOf, type GroupBy } from "./model";
 
 const BY_KEY = "illogical.swarm.by";
@@ -95,6 +96,8 @@ export function SwarmView({
   focus?: { host: string; pane: number } | null;
 }) {
   useSubscribe((fn) => fleet.subscribe(fn));
+  useSubscribe((fn) => subscribeRunners(fn));
+  useEffect(() => watchRunners(fleet), [fleet]);
   const phone = usePhone();
   const [by, setBy] = useState<GroupBy>(savedBy);
   const [theme, setTheme] = useState<Theme>(savedTheme);
@@ -342,6 +345,8 @@ export function SwarmView({
   const busy = panes.filter((p) => activityOf(p) > 0.3).length;
   const need = panes.filter((p) => reasonOf(p)).length;
   const clusters = field.current?.clusters ?? [];
+  // M45b: a machine that is the account's Fountain runner says so.
+  const fountainRunners = runners();
 
   return (
     <div class={`swarm${phone ? " phone" : ""}`} data-swarm={by} data-theme={theme}>
@@ -370,6 +375,11 @@ export function SwarmView({
           <div class="needs">
             <b data-stat="need">{need}</b>need you
           </div>
+          {fountainRunners.map(([host, r]) => (
+            <div key={host} class={`swarm-runner${r.problem ? " needs" : ""}`} data-stat="fountain-runner" data-runner={r.name} title={r.problem ?? `${host}: ${runnerLabel(r)}`}>
+              <b>{r.name}</b>Fountain runner {r.online === true ? "online" : r.online === false ? "offline" : "…"}
+            </div>
+          ))}
         </div>
         <div class="swarm-spacer" />
         <div>

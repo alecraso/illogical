@@ -3981,3 +3981,44 @@ button {
   padding: 8px 14px;
   font-size: 14px;
 }
+
+/* M45b: the Fountain runner view, and a runner's machine line. */
+.fountain-runner-state.on {
+  color: var(--accent);
+}
+.fountain-runner-state.off,
+.fountain-attention,
+.host-runner.problem {
+  color: var(--danger);
+}
+.swarm-runner.needs b {
+  color: var(--s-fail);
+}
+.fountain-this {
+  margin-bottom: 10px;
+}
+.fountain-others ul,
+.fountain-convs {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+}
+.fountain-others li,
+.fountain-convs li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  min-width: 0;
+}
+.fountain-convs li > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fountain-sandboxes .fountain-meta {
+  overflow-wrap: anywhere;
+}
+.swarm-runner b {
+  font-size: 14px;
+}

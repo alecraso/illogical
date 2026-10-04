@@ -7,6 +7,7 @@ import type { Fleet } from "../fleet";
 import { useSubscribe } from "./hooks";
 import { openMenu, type MenuItem } from "./menu";
 import { openSwarm } from "../swarm/route";
+import { runnerLabel, runnerOf, subscribeRunners, watchRunners } from "../runners";
 
 function seen(name: string): string {
   const h = directory.find(name);
@@ -24,6 +25,14 @@ let fleet: Fleet | null = null;
 /** M25: every host's summary connection, for what the menu says of each. */
 export function setFleet(f: Fleet) {
   fleet = f;
+  // M45b: which machines are Fountain runners, for their lines here.
+  watchRunners(f);
+}
+
+/** M45b: " · Fountain runner geek online · v0.21.0", for a runner's host. */
+function runnerSuffix(name: string): string {
+  const r = runnerOf(name);
+  return r ? ` · ${runnerLabel(r)}` : "";
 }
 
 /** The fleet, if this page has one (#78: every host's conversations). */
@@ -68,6 +77,7 @@ export function setHostMenuExtras(f: () => MenuItem[]) {
 function useHosts(): boolean {
   useSubscribe((fn) => directory.subscribe(fn));
   useSubscribe((fn) => fleet?.subscribe(fn) ?? (() => {}));
+  useSubscribe((fn) => subscribeRunners(fn));
   return directory.control || directory.names.length > 1 || directory.shown !== null;
 }
 
@@ -77,7 +87,7 @@ export function HostButton() {
   const open = (e: MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const item = (name: string): MenuItem => ({
-      label: `${name === directory.current ? "✓ " : "    "}${name}${name === directory.home ? " (home)" : ""}  · ${fleetLabel(name) ?? seen(name)}`,
+      label: `${name === directory.current ? "✓ " : "    "}${name}${name === directory.home ? " (home)" : ""}  · ${fleetLabel(name) ?? seen(name)}${runnerSuffix(name)}`,
       run: () => directory.select(name),
     });
     // M30: grouped by whose they are (yours, each teammate's, each team's)
@@ -165,6 +175,11 @@ export function HostSection({ close }: { close: () => void }) {
             {name === directory.home ? "home · " : ""}
             {fleetLabel(name) ?? seen(name)}
           </span>
+          {runnerOf(name) && (
+            <span class={`host-seen host-runner${runnerOf(name)!.problem ? " problem" : ""}`} data-fountain-runner={runnerOf(name)!.name} title={runnerOf(name)!.problem ?? ""}>
+              {runnerLabel(runnerOf(name)!)}
+            </span>
+          )}
         </button>
       ))}
       {extras().flatMap((item) =>
