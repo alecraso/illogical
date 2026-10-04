@@ -831,6 +831,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "s26-ffi"
+version = "0.1.0"
+dependencies = [
+ "s26-core",
+]
+
+[[package]]
 name = "s26-gtk"
 version = "0.1.0"
 dependencies = [

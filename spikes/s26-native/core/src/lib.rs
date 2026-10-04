@@ -237,8 +237,13 @@ impl Pane {
     /// Linux evdev code (the X11/GDK keycode minus 8); `text` is what the
     /// keyboard layout produced, without control characters.
     pub fn key(&mut self, code: u32, press: bool, mods: Mods, text: Option<&str>) -> &[u8] {
+        self.key_as(evdev_key(code), press, mods, text)
+    }
+
+    /// The same, for a key already identified (macOS key codes go through
+    /// [`mac_key`]).
+    pub fn key_as(&mut self, k: Key, press: bool, mods: Mods, text: Option<&str>) -> &[u8] {
         self.buf.clear();
-        let k = evdev_key(code);
         let ucp = text.and_then(|t| t.chars().next()).filter(|c| !c.is_control()).map(|c| c.to_ascii_lowercase()).unwrap_or('\0');
         let mut consumed = Mods::empty();
         if ucp != '\0' && mods.contains(Mods::SHIFT) {
@@ -275,6 +280,24 @@ pub fn evdev_key(code: u32) -> Key {
         59 => F1, 60 => F2, 61 => F3, 62 => F4, 63 => F5, 64 => F6, 65 => F7, 66 => F8, 67 => F9, 68 => F10, 87 => F11, 88 => F12,
         97 => ControlRight, 100 => AltRight, 102 => Home, 103 => ArrowUp, 104 => PageUp, 105 => ArrowLeft, 106 => ArrowRight,
         107 => End, 108 => ArrowDown, 109 => PageDown, 110 => Insert, 111 => Delete, 125 => MetaLeft, 126 => MetaRight,
+        _ => Unidentified,
+    }
+}
+
+/// macOS virtual key codes (Carbon's kVK_*) to W3C key codes.
+pub fn mac_key(code: u16) -> Key {
+    use Key::*;
+    match code {
+        0x00 => A, 0x01 => S, 0x02 => D, 0x03 => F, 0x04 => H, 0x05 => G, 0x06 => Z, 0x07 => X, 0x08 => C, 0x09 => V,
+        0x0B => B, 0x0C => Q, 0x0D => W, 0x0E => E, 0x0F => R, 0x10 => Y, 0x11 => T, 0x12 => Digit1, 0x13 => Digit2,
+        0x14 => Digit3, 0x15 => Digit4, 0x16 => Digit6, 0x17 => Digit5, 0x18 => Equal, 0x19 => Digit9, 0x1A => Digit7,
+        0x1B => Minus, 0x1C => Digit8, 0x1D => Digit0, 0x1E => BracketRight, 0x1F => O, 0x20 => U, 0x21 => BracketLeft,
+        0x22 => I, 0x23 => P, 0x24 => Enter, 0x25 => L, 0x26 => J, 0x27 => Quote, 0x28 => K, 0x29 => Semicolon,
+        0x2A => Backslash, 0x2B => Comma, 0x2C => Slash, 0x2D => N, 0x2E => M, 0x2F => Period, 0x30 => Tab, 0x31 => Space,
+        0x32 => Backquote, 0x33 => Backspace, 0x35 => Escape, 0x60 => F5, 0x61 => F6, 0x62 => F7, 0x63 => F3, 0x64 => F8,
+        0x65 => F9, 0x67 => F11, 0x6D => F10, 0x6F => F12, 0x73 => Home, 0x74 => PageUp, 0x75 => Delete, 0x76 => F4,
+        0x77 => End, 0x78 => F2, 0x79 => PageDown, 0x7A => F1, 0x7B => ArrowLeft, 0x7C => ArrowRight, 0x7D => ArrowDown,
+        0x7E => ArrowUp,
         _ => Unidentified,
     }
 }
