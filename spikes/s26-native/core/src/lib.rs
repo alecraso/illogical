@@ -26,6 +26,7 @@ use libghostty_vt::{
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use tungstenite::{Message, WebSocket};
 
+pub use illogical_proto as proto;
 pub use libghostty_vt;
 
 #[derive(Debug)]
@@ -185,6 +186,19 @@ fn run(
         match ws.flush() {
             Err(tungstenite::Error::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
             r => r?,
+        }
+    }
+}
+
+/// The daemon's layout (sessions, tabs, panes), from its hello.
+pub fn hello(sock: &Path) -> Result<proto::State> {
+    let stream = UnixStream::connect(sock).with_context(|| format!("no daemon at {}", sock.display()))?;
+    let (mut ws, _) = tungstenite::client("ws://localhost/ws", stream).map_err(|e| anyhow::anyhow!("handshake: {e}"))?;
+    loop {
+        if let Message::Text(t) = ws.read()?
+            && let Ok(ServerMsg::Hello { state, .. }) = serde_json::from_str(&t)
+        {
+            return Ok(state);
         }
     }
 }
