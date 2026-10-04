@@ -316,6 +316,8 @@ struct Inner {
     worn: Option<Arc<crate::fountain::wear::Worn>>,
     /// Putting it on now.
     wearing: bool,
+    /// #161: waiting for this host's shell environment before spawning.
+    awaiting_shell: bool,
     /// #128: illogical's own MCP token, when it goes by reference (a local
     /// Claude Code), to keep out of logs too.
     token: Option<String>,
@@ -383,6 +385,7 @@ impl Inner {
             adapter: None,
             worn: None,
             wearing: false,
+            awaiting_shell: false,
             token: None,
         }
     }
@@ -1267,6 +1270,12 @@ impl Agent {
             self.wear(inner, false);
             return;
         }
+        // #161: a local agent runs with the user's shell environment, which
+        // is still being resolved just after the daemon starts.
+        if self.ctx.sprite.is_none() && self.ctx.shell_env.local_now().is_none() {
+            self.await_shell_env(inner);
+            return;
+        }
         let vm = self.ctx.sprite.is_some();
         let launch = match inner.cfg.def.launch(&self.ctx.home, vm) {
             Ok(l) => l,
@@ -1279,7 +1288,11 @@ impl Agent {
         match &self.ctx.sprite {
             None => {
                 let cwd = inner.cfg.cwd.clone().map(PathBuf::from).unwrap_or_else(|| self.ctx.home.clone());
-                let mut env = self.ctx.env.clone();
+                // #161: the user's shell environment over the daemon's, as a
+                // pane gets it, so the adapter finds the user's node (nvm,
+                // Homebrew), not only what a launchd or systemd PATH has.
+                let shell = self.ctx.shell_env.local_now().unwrap_or_default();
+                let mut env = crate::shellenv::merge(&self.ctx.env, &shell, self.ctx.launch.exe.parent());
                 env.extend(launch.env.iter().cloned());
                 // M44 and #128: what the session's `${…}`s stand for, in the
                 // adapter's environment (its own and its children's: never
@@ -1378,6 +1391,28 @@ impl Agent {
 
     /// Put on the Fountain agent it wears (M44), then start it; or say why
     /// it can't be.
+    /// #161: spawn once this host's shell environment is resolved.
+    fn await_shell_env(&self, inner: &mut Inner) {
+        if inner.awaiting_shell {
+            return;
+        }
+        inner.awaiting_shell = true;
+        inner.status = Status::Starting;
+        inner.error = None;
+        let agent = Agent { ctx: self.ctx.clone(), inner: self.inner.clone(), tx: self.tx.clone() };
+        self.ctx.rt.spawn(async move {
+            agent.ctx.shell_env.local().await;
+            let mut g = agent.inner.lock().unwrap();
+            g.awaiting_shell = false;
+            if g.closing {
+                return;
+            }
+            agent.spawn(&mut g);
+            drop(g);
+            agent.changed();
+        });
+    }
+
     fn wear(&self, inner: &mut Inner, take_over: bool) {
         if inner.wearing {
             return;

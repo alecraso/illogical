@@ -111,6 +111,11 @@ impl ShellEnv {
         self.start();
     }
 
+    /// This host's if it's resolved already, without waiting.
+    pub fn local_now(&self) -> Option<Arc<Resolved>> {
+        self.local.lock().unwrap().get().cloned()
+    }
+
     /// This host's, waiting for it if it's still being resolved.
     pub async fn local(&self) -> Arc<Resolved> {
         let slot = self.local.lock().unwrap().clone();
@@ -349,7 +354,9 @@ mod tests {
         let home =
             Home::new("path", "echo 'hello from bashrc'\nprintf 'A=B\\0'\nexport PATH=\"$HOME/tools/bin:$PATH\"\n");
         let s = ShellEnv::new("bash".into(), vec![], home.0.clone(), home.env(), Duration::from_secs(10));
+        assert!(s.local_now().is_none(), "not resolved until asked");
         let r = s.local().await;
+        assert!(Arc::ptr_eq(&r, &s.local_now().unwrap()));
         assert_eq!(r.error, None);
         let path = r.get("PATH").expect("PATH changed");
         assert!(path.split(':').next() == Some(&format!("{}/tools/bin", home.0.display())), "{path}");

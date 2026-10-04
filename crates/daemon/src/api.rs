@@ -1801,10 +1801,14 @@ async fn diff_of(
 
 /// Home and the environment an agent block gets.
 async fn agent_env(app: &App) -> Res<(std::path::PathBuf, Vec<(String, String)>)> {
-    app.mux
+    let (home, env) = app
+        .mux
         .api(Api::AgentEnv)
         .await
-        .ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into()))
+        .ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into()))?;
+    // #161: as an agent block gets it, with the user's shell environment.
+    let shell = app.mux.shell_env.local().await;
+    Ok((home, crate::shellenv::merge(&env, &shell, None)))
 }
 
 /// `GET /api/agents/adapters` (#111): whether Claude Code's and Codex's
