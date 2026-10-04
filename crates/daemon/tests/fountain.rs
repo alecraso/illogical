@@ -765,11 +765,11 @@ fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
     let out = d.call(block, "shell", json!({ "sandbox": "s-hostile" }));
     let cmd = out["command"].as_str().unwrap();
     let head = format!(
-        "exec {} -n -u fountain /bin/bash -c 'real=$(realpath -e -- \"$2\"",
+        "exec {} -n -u fountain /bin/bash -c 'real=$(cd -P -- \"$2\"",
         quoted(&host.sudo.display().to_string())
     );
     let tail = format!(
-        "exec bash --noprofile --norc' _ {} {}",
+        "HOME=/home/fountain INPUTRC=/dev/null HISTFILE=/dev/null exec bash --noprofile --norc' _ {} {}",
         quoted(&host.root.display().to_string()),
         quoted(&hostile.display().to_string())
     );
@@ -780,9 +780,14 @@ fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
     d.wait_for("the shell's sudo", || !host.sudo_calls().is_empty());
     let call = host.sudo_calls()[0].clone();
     assert_eq!(&call[..5], ["-n", "-u", "fountain", "/bin/bash", "-c"]);
-    assert!(call[5].ends_with("exec bash --noprofile --norc"), "{call:?}");
+    assert!(
+        call[5].ends_with(
+            "cd -- \"$real\" && HOME=/home/fountain INPUTRC=/dev/null HISTFILE=/dev/null exec bash --noprofile --norc"
+        ),
+        "{call:?}"
+    );
     assert_eq!(&call[6..], ["_", host.root.to_str().unwrap(), hostile.to_str().unwrap()]);
-    let at = format!("at={} home={}", hostile.display(), hostile.display());
+    let at = format!("at={} home=/home/fountain", hostile.display());
     d.wait_for("the shell's prompt", || !capture(&d, pane).trim().is_empty());
     std::thread::sleep(std::time::Duration::from_millis(300));
     d.post(&format!("/api/panes/{pane}/send"), json!({ "text": "echo \"at=$(pwd) home=$HOME\"", "enter": true }));
@@ -993,7 +998,11 @@ fn a_hostile_repository_runs_nothing_and_paths_stay_in_the_root() {
     let marks = dir.join("marks");
     std::fs::create_dir_all(&marks).unwrap();
     let evil = dir.join("evil.sh");
-    std::fs::write(&evil, format!("#!/bin/sh\ntouch '{}'/\"$1\"\ncat\n", marks.display())).unwrap();
+    std::fs::write(
+        &evil,
+        format!("#!/bin/sh\ntouch '{}'/\"$1\"\ncase $1 in lazyfetch) exit 1 ;; esac\ncat\n", marks.display()),
+    )
+    .unwrap();
     std::fs::set_permissions(&evil, std::fs::Permissions::from_mode(0o755)).unwrap();
     let e = |what: &str| format!("{} {what}", evil.display());
     // A global config (the daemon's HOME) that would run one too.
@@ -1037,9 +1046,27 @@ fn a_hostile_repository_runs_nothing_and_paths_stay_in_the_root() {
     std::fs::write(repo.join("a.txt"), "two\n").unwrap();
     std::fs::write(repo.join("b.txt"), "two\n").unwrap();
     std::fs::write(repo.join("u.new"), "untracked\n").unwrap();
-    // It is hostile: a plain `git diff` runs its clean filter.
+    // A partial clone whose missing blobs a read would fetch, through an
+    // upload-pack that leaves a marker.
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "-q"]);
+    std::fs::write(src.join("p.txt"), "promised\n").unwrap();
+    git(&src, &["add", "."]);
+    git(&src, &["commit", "-qm", "src"]);
+    git(&src, &["config", "uploadpack.allowFilter", "true"]);
+    let part = repo.parent().unwrap().join("part");
+    git(
+        repo.parent().unwrap(),
+        &["clone", "-q", "--no-checkout", "--filter=blob:none", &format!("file://{}", src.display()), "part"],
+    );
+    git(&part, &["config", "remote.origin.uploadpack", &e("lazyfetch")]);
+    // It is hostile: a plain `git diff` runs its clean filter, and the
+    // partial clone's read fetches.
     let _ = std::process::Command::new("git").args(["diff", "--stat"]).current_dir(&repo).output();
     assert!(marks.join("clean").exists(), "the fixture's filter didn't run: the test proves nothing");
+    let _ = std::process::Command::new("git").args(["diff", "HEAD"]).current_dir(&part).output();
+    assert!(marks.join("lazyfetch").exists(), "the partial clone didn't fetch: the test proves nothing");
     std::fs::remove_dir_all(&marks).unwrap();
     std::fs::create_dir_all(&marks).unwrap();
     // Touch them again, so git must look (stat-dirty).
@@ -1084,8 +1111,16 @@ fn a_hostile_repository_runs_nothing_and_paths_stay_in_the_root() {
     let files: Vec<String> =
         d.state(diff)["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap().to_owned()).collect();
     assert!(["a.txt", "b.txt", "u.new"].iter().all(|f| files.contains(&f.to_string())), "{files:?}");
+    // The partial clone: read, and nothing fetched.
+    let part_co = co.iter().find(|c| c["repo"] == part.display().to_string()).expect("the partial clone");
+    let pd = part_co["block"].as_u64().unwrap();
+    d.wait_for("the partial clone's diff read", || d.state(pd)["loading"] == false);
+    d.call(pd, "refresh", json!({})).to_string();
     let ran: Vec<_> = std::fs::read_dir(&marks).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert!(ran.is_empty(), "the repository ran {ran:?}");
+    // Its summary has no cwd (a sandbox isn't yours to start things in).
+    let p = d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == diff).cloned().unwrap();
+    assert!(p["cwd"].is_null(), "{p}");
 
     // Outside the root: refused by name, and by real path.
     let (status, body) =
@@ -1097,9 +1132,18 @@ fn a_hostile_repository_runs_nothing_and_paths_stay_in_the_root() {
     assert!(body.contains("inside the runner's sandboxes"), "{body}");
     let out = d.call(block, "shell", json!({ "sandbox": "s-link" }));
     let pane = out["pane"].as_u64().unwrap();
-    d.wait_for("the shell refused", || {
-        capture(&d, pane).replace('\n', "").contains("not inside the runner's sandboxes")
-    });
+    assert!(pane > 0);
+    // Its sudo call, run again here: it refuses before any cd.
+    let shell_call = || {
+        host.sudo_calls()
+            .into_iter()
+            .find(|c| c[5].contains("--noprofile") && c.last() == Some(&link.display().to_string()))
+    };
+    d.wait_for("the shell's sudo", || shell_call().is_some());
+    let call = shell_call().unwrap();
+    let out = std::process::Command::new("/bin/bash").args(&call[4..]).output().unwrap();
+    assert!(!out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("not inside the runner's sandboxes"), "{out:?}");
     // A diff as fountain outside the root can't even be opened.
     let (status, body) = d.raw(
         "POST",
@@ -1161,4 +1205,55 @@ fn follow_never_starts_a_new_conversation() {
         assert_eq!(news(&d), 0, "{agent}: a new session was made");
         assert_eq!(d.state(block)["status"], "exited");
     }
+}
+
+#[test]
+fn a_root_reached_through_a_symlink_still_works() {
+    // As on macOS, where /var is /private/var: the unit names the root by a
+    // path through a symlink, and the scripts see real paths.
+    let dir = Scratch::new("fountain-runner-alias");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    let alias = dir.join("alias");
+    std::os::unix::fs::symlink(&host.root, &alias).unwrap();
+    let unit = PathBuf::from(&host.env.iter().find(|(k, _)| k == "ILLOGICAL_FOUNTAIN_UNIT_FILE").unwrap().1);
+    let text = std::fs::read_to_string(&unit).unwrap().replace(host.root.to_str().unwrap(), alias.to_str().unwrap());
+    std::fs::write(&unit, text).unwrap();
+    fz.f.with(|i| {
+        let t = i.sandboxes.to_string().replace(host.root.to_str().unwrap(), alias.to_str().unwrap());
+        i.sandboxes = serde_json::from_str(&t).unwrap();
+    });
+    let d = host.daemon(&fz);
+    let (block, st) = runner_view(&d);
+    let a = st["runner"]["sandboxes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"].as_str().unwrap().ends_with("-2972e1a2"))
+        .unwrap()
+        .clone();
+    assert!(a["path"].as_str().unwrap().starts_with(alias.to_str().unwrap()), "{a}");
+    let repo = host.root.join(a["name"].as_str().unwrap()).join("r");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("x.txt"), "x\n").unwrap();
+    // Changes: found by its real path, and its diff (under the canonical
+    // root) opens and reads.
+    let out = d.call(block, "changes", json!({ "sandbox": a["id"] }));
+    let co = &out["checkouts"][0];
+    assert_eq!(co["repo"], repo.display().to_string(), "{out}");
+    let diff = co["block"].as_u64().unwrap();
+    d.wait_for("the diff", || d.state(diff)["files"].as_array().is_some_and(|f| f.len() == 1));
+    // Shell: its check passes (run here, as its sudo would).
+    d.call(block, "shell", json!({ "sandbox": a["id"] }));
+    let call = || host.sudo_calls().into_iter().find(|c| c[5].contains("--noprofile"));
+    d.wait_for("the shell's sudo", || call().is_some());
+    let mut argv = call().unwrap()[4..].to_vec();
+    argv[1] = argv[1].replace("exec bash --noprofile --norc", "pwd -P");
+    let out = std::process::Command::new("/bin/bash").args(&argv).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        host.root.join(a["name"].as_str().unwrap()).display().to_string(),
+        "{out:?}"
+    );
 }

@@ -636,8 +636,10 @@ the daemon stopping, crashing, or the machine rebooting:
       levels down in the sandbox, from its upstream's merge base (else
       `origin/HEAD`'s, else an empty tree: everything in it).
     - ***Shell*** opens a terminal as `fountain` in the sandbox, with
-      `HOME` there, reading no profile or rc file (`bash --noprofile
-      --norc`: the sandbox's agent may have written them). It runs outside
+      `HOME` the `fountain` user's own (`/home/fountain`), reading no
+      profile, rc, inputrc or history file (`bash --noprofile --norc`,
+      `INPUTRC` and `HISTFILE` `/dev/null`: the sandbox's agent may have
+      written them). It runs outside
       the runner's sandboxing (the unit's protections don't apply) and it
       isn't Fountain's, so parking the sandbox doesn't stop it; the block
       says so.
@@ -649,7 +651,9 @@ the daemon stopping, crashing, or the machine rebooting:
       path Fountain gives must be exactly that, and each script checks the
       directory's real path is inside the root (a symlink out is refused).
     - Every git there reads only: no global or system config, no hooks,
-      fsmonitor, pager, external diff or textconv, and every filter driver
+      fsmonitor, pager, external diff or textconv, no remote contacted (no
+      lazy fetch of a partial clone's objects, every protocol refused), and
+      every filter driver
       the repository's config names emptied, so a repository's own config
       can't run anything when it's read.
     - A diff block takes `run_as: "fountain"` for this: only that user,

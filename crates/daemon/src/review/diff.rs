@@ -228,7 +228,12 @@ impl Diff {
             let root = crate::fountain::runner::unit()
                 .and_then(|u| u.root)
                 .ok_or_else(|| format!("run_as {user} needs this host's fountain-runner unit and its --root"))?;
-            if !repo.starts_with(&format!("{}/", root.trim_end_matches('/'))) {
+            // The root as written, or its canonical path (macOS's /var is
+            // /private/var; Changes passes real paths). Canonicalizing may
+            // fail here (the root is fountain's): then as written only.
+            let under = |r: &str| repo.starts_with(&format!("{}/", r.trim_end_matches('/')));
+            let canonical = std::fs::canonicalize(&root).ok().map(|p| p.display().to_string());
+            if !under(&root) && !canonical.as_deref().is_some_and(under) {
                 return Err(format!("run_as {user} is for the runner's sandboxes, under {root}: not {repo}"));
             }
         } else if let Ok(Runner::Local { .. }) = &runner
@@ -516,7 +521,11 @@ impl Block for Diff {
     fn summary(&self) -> Summary {
         let st = self.state.lock().unwrap();
         let local = self.runner.as_ref().is_ok_and(Runner::local);
-        let cwd = st.repo.clone().or_else(|| self.config.repo.clone());
+        // A sandbox's directory isn't one of yours to start things in.
+        let cwd = match self.config.run_as {
+            Some(_) => None,
+            None => st.repo.clone().or_else(|| self.config.repo.clone()),
+        };
         let who = self.config.run_as.as_deref().map(|u| format!(" (as {u})")).unwrap_or_default();
         Summary {
             project: cwd.as_deref().and_then(|c| super::project(c, local && self.config.run_as.is_none())),

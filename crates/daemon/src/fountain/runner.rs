@@ -187,8 +187,13 @@ pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// *Shell*: bash as `fountain` in a sandbox, `HOME` there, reading no
-/// profile or rc file (the sandbox's agent could have written them). `$1` is
+/// The runner user's home: a shell's `HOME` (never the sandbox's, whose
+/// dotfiles its agent writes).
+pub const FOUNTAIN_HOME: &str = "/home/fountain";
+
+/// *Shell*: bash as `fountain` in a sandbox, `HOME` the runner user's own,
+/// reading no profile, rc, inputrc or history file (the sandbox's agent
+/// could have written them). `$1` is
 /// the unit's root and `$2` the directory, never part of the script; its
 /// real path must be inside the root. It runs outside the runner's unit, so
 /// none of the unit's protections apply to it.
@@ -196,7 +201,9 @@ pub fn shell_command(root: &str, dir: &str) -> String {
     format!(
         "exec {} -n -u {USER} /bin/bash -c {} _ {} {}",
         quote(&sudo_bin()),
-        quote(&format!("{INSIDE}\ncd -- \"$real\" && HOME=\"$real\" exec bash --noprofile --norc")),
+        quote(&format!(
+            "{INSIDE}\ncd -- \"$real\" && HOME={FOUNTAIN_HOME} INPUTRC=/dev/null HISTFILE=/dev/null exec bash --noprofile --norc"
+        )),
         quote(root),
         quote(dir)
     )
@@ -204,17 +211,21 @@ pub fn shell_command(root: &str, dir: &str) -> String {
 
 /// `$1` the root, `$2` a directory: `$real` is the directory's real path,
 /// or it says why not and exits (it must be inside the root, not the root).
-const INSIDE: &str = r#"real=$(realpath -e -- "$2" 2>/dev/null) && top=$(realpath -e -- "$1" 2>/dev/null) && case $real/ in "$top"/?*/) true ;; *) false ;; esac || { printf 'err not inside the runner'\''s sandboxes (%s): %s\n' "$1" "$2"; exit 1; }"#;
+/// Both sides are canonical (`cd -P`, `pwd -P`: macOS's `realpath` has no
+/// `-e`, and its `/var` is `/private/var`).
+const INSIDE: &str = r#"real=$(cd -P -- "$2" 2>/dev/null && pwd -P) && top=$(cd -P -- "$1" 2>/dev/null && pwd -P) && case $real/ in "$top"/?*/) true ;; *) false ;; esac || { printf 'err not inside the runner'\''s sandboxes (%s): %s\n' "$1" "$2"; exit 1; }"#;
 
 /// Every git a script run as `fountain` uses reads only: no global or
 /// system config, no hooks, fsmonitor, pager, external diff or askpass,
-/// and every filter driver the repository's own config names made inert
+/// no remote ever contacted (no lazy fetch of a partial clone's missing
+/// objects, every protocol refused), and every filter driver the
+/// repository's own config names made inert
 /// (its clean, smudge and process emptied), so a repository can't make a
 /// read run its commands. Needs bash.
-pub const GIT_SAFE: &str = r#"export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat
+pub const GIT_SAFE: &str = r#"export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat
 unset GIT_EXTERNAL_DIFF GIT_DIR GIT_WORK_TREE GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND
 git() {
-  local o=(-c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -c diff.external= -c core.untrackedCache=false -c core.sshCommand= -c core.askPass=)
+  local o=(-c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -c diff.external= -c core.untrackedCache=false -c core.sshCommand= -c core.askPass= -c protocol.allow=never)
   local k n
   while IFS= read -r k; do
     [ -n "$k" ] || continue
@@ -231,7 +242,7 @@ git() {
 /// what its edits are counted from (the upstream's merge base, else
 /// `origin/HEAD`'s, else git's empty tree: everything in it is the
 /// agent's). `err WHY` if it can't. Run after [`GIT_SAFE`].
-pub const CHECKOUTS: &str = r#"real=$(realpath -e -- "$2" 2>/dev/null) && top=$(realpath -e -- "$1" 2>/dev/null) && case $real/ in "$top"/?*/) true ;; *) false ;; esac || { printf 'err %s: no such directory inside the runner'\''s sandboxes (%s)\n' "$2" "$1"; exit 0; }
+pub const CHECKOUTS: &str = r#"real=$(cd -P -- "$2" 2>/dev/null && pwd -P) && top=$(cd -P -- "$1" 2>/dev/null && pwd -P) && case $real/ in "$top"/?*/) true ;; *) false ;; esac || { printf 'err %s: no such directory inside the runner'\''s sandboxes (%s)\n' "$2" "$1"; exit 0; }
 cd -- "$real" || exit 0
 echo ok
 find . -maxdepth 3 -name .git -prune -print 2>/dev/null | LC_ALL=C sort | head -n 20 | while IFS= read -r g; do
@@ -243,10 +254,10 @@ find . -maxdepth 3 -name .git -prune -print 2>/dev/null | LC_ALL=C sort | head -
 done"#;
 
 /// The diff block's prelude for `run_as`: `$1` (the repository) must be
-/// inside `root`, really.
+/// inside `root`, really, and becomes that real path.
 pub fn inside_prelude(root: &str) -> String {
     format!(
-        "real=$(realpath -e -- \"$1\" 2>/dev/null) && top=$(realpath -e -- {} 2>/dev/null) && case $real/ in \"$top\"/?*/) true ;; *) false ;; esac || {{ printf 'err not inside the runner'\\''s sandboxes: %s\\n' \"$1\"; exit 0; }}\n",
+        "real=$(cd -P -- \"$1\" 2>/dev/null && pwd -P) && top=$(cd -P -- {} 2>/dev/null && pwd -P) && case $real/ in \"$top\"/?*/) true ;; *) false ;; esac || {{ printf 'err not inside the runner'\\''s sandboxes: %s\\n' \"$1\"; exit 0; }}\nset -- \"$real\" \"${{@:2}}\"\n",
         quote(root)
     )
 }
@@ -811,10 +822,10 @@ mod tests {
         assert_eq!(quote("it's $(x)"), r#"'it'\''s $(x)'"#);
         assert_eq!(quote(""), "''");
         let cmd = shell_command("/srv/fountain/sandboxes", "/srv/fountain/sandboxes/runner-ab-12");
-        assert!(cmd.starts_with("exec sudo -n -u fountain /bin/bash -c 'real=$(realpath -e -- \"$2\""), "{cmd}");
+        assert!(cmd.starts_with("exec sudo -n -u fountain /bin/bash -c 'real=$(cd -P -- \"$2\""), "{cmd}");
         assert!(
             cmd.ends_with(
-                "exec bash --noprofile --norc' _ /srv/fountain/sandboxes /srv/fountain/sandboxes/runner-ab-12"
+                "cd -- \"$real\" && HOME=/home/fountain INPUTRC=/dev/null HISTFILE=/dev/null exec bash --noprofile --norc' _ /srv/fountain/sandboxes /srv/fountain/sandboxes/runner-ab-12"
             ),
             "{cmd}"
         );
