@@ -4002,6 +4002,41 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
 
 **Done when:** `/api/runners` lists only geek, online. A conversation with `hud-playground` lands on geek; from its card, *Changes* shows its edits and *Shell* opens in its sandbox as `fountain`. That user can't read `~jake/.ssh` or connect to illogical's socket. Stopping the unit puts *Fountain runner offline* on the rail within about 5 minutes.
 
+#### M45: as built
+
+**Done 2026-10-03: M45a (4aa386f), M45b (308afb8).**
+
+- **Setup:**
+  - `scripts/fountain-runner-setup.sh` (root) creates the `fountain` user, `/home/fountain/sandboxes` (2750), a root-owned node and npm in `/opt/fountain-node`, `/usr/local/bin/fountain`, and a sudoers file allowing bash as fountain plus start, stop, restart and status of `fountain-runner`. It also writes the systemd unit: `User=fountain`, `UMask=0027`, `NoNewPrivileges`, `PrivateTmp`, `InaccessiblePaths` over the user's home and `/run/user/<uid>`, and `ProtectProc=invisible`.
+  - `illogical fountain runner install | status | adopt` does the rest without root. The key from `fountain keys create` is never printed.
+  - jake-air's launchd runner was removed, and the `jake-air`, `jake-mbair` and `fireball` registrations were deleted.
+  - hud-playground, fireball-smoke and home-cloud-steward run on geek (the last by a direct PATCH; agent-specs doesn't declare it).
+- **The runner view** (`view: runner` on the Fountain block, `illogical fountain --view runner`):
+  - the runner's status, version and sandboxes;
+  - `HostInfo.fountain_runner`;
+  - attention `failed:fountain-runner` when the unit is active but Fountain says it's offline for 5 minutes, or when another runner is online. A deliberately stopped unit raises nothing.
+- **Runner conversations:**
+  - *Follow* `session/load`s the conversation and never starts a new one.
+  - *Changes* is a `run_as: fountain` diff.
+  - *Shell* opens a terminal as fountain.
+  - Every sudo read is hardened against what a sandbox controls: global and system config are off; hooks, fsmonitor, pagers, external diffs, textconv and every filter driver are disabled; there's no lazy fetch (`protocol.allow=never`); and paths are confined to the unit's root, canonicalized (macOS's `/private/var`).
+  - *Shell* runs `bash --noprofile --norc` with `HOME=/home/fountain`, and says it's outside the unit's protections.
+  - *Open file* is off for `run_as` diffs.
+- **Security found along the way:**
+  - claude-agent-sdk puts MCP config on `claude`'s argv, and `/proc` was readable by `fountain`. It was fixed at the source by M44 (#128). `ProtectProc=invisible` on the unit is the second layer: inside a sandbox, `ls /proc` shows only its own 9 PIDs, and Jake's home, `/run/user/1000` and illogical's state are unreachable.
+  - The two M45b reviews also found code execution through repo config and lazy fetch in the sudo paths. Both are closed, with a hostile-repo test.
+- **R1 and R4 on geek:**
+  - A hud-playground conversation ran as fountain in `/home/fountain/sandboxes/runner-<id>-<short>`.
+  - The runner view lists geek online and its 4 sandboxes.
+  - *Changes* showed `r1-check/hello.txt`.
+  - *Shell* opened as fountain in the sandbox, with `HOME=/home/fountain`, and couldn't open `/home/jake`.
+  - With the unit stopped and a stand-in `systemctl` reporting "active", *Fountain runner offline* fired after the grace period. It cleared about 80 s after the runner reconnected.
+  - The phone wasn't checked: that needs the daily daemon on this release.
+- **Still Fountain's (Jake):**
+  - runner pinning (`agents.runner_id`);
+  - a scoped runner key (the key is readable by the runner's own agents);
+  - the `games` environment's broken `love` package.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
