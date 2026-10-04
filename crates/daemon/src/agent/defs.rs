@@ -82,6 +82,14 @@ pub struct Def {
     /// `${VAR}`s go through (`~/…` allowed; the default one if it's there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub specs: Option<String>,
+    /// #163: the permission mode to put the session in once it's open
+    /// (`acceptEdits`, `auto`, …), by the agent's `session/set_mode`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    /// #163: Claude Code with your settings (allow and deny lists, default
+    /// mode, `CLAUDE.md`) but none of their hooks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub user_settings: bool,
 }
 
 /// How to start the agent server.
@@ -142,6 +150,12 @@ impl Def {
             _ if self.as_fountain.as_deref().is_some_and(|a| a.trim().is_empty()) => {
                 Err("as_fountain needs the Fountain agent's name or id".into())
             }
+            _ if self.user_settings && self.agent != Kind::Claude => {
+                Err("user_settings is Claude Code's (agent: claude)".into())
+            }
+            Kind::Fountain if self.permission_mode.is_some() => {
+                Err("a Fountain agent takes permission, not permission_mode".into())
+            }
             _ => Ok(()),
         }
     }
@@ -160,7 +174,11 @@ impl Def {
                 l.remove = CLAUDE_ENV_REMOVE.iter().map(|s| s.to_string()).collect();
                 // Without this, your Claude Code settings and hooks (M3's
                 // attention hooks too) fire inside the block.
-                l.meta = json!({ "claudeCode": { "options": { "settingSources": [] } } });
+                l.meta = if self.user_settings {
+                    user_settings_meta()
+                } else {
+                    json!({ "claudeCode": { "options": { "settingSources": [] } } })
+                };
                 l.npm = Some(CLAUDE_ACP);
             }
             Kind::Codex => {
@@ -194,6 +212,17 @@ impl Def {
         }
         Ok(l)
     }
+}
+
+/// Claude's `_meta` with your settings, skills and `CLAUDE.md` but every
+/// hook off (S20 Q3: `project` is what loads `CLAUDE.md`, and it brings the
+/// project's hooks): an opened conversation's (M33), or a block's that asked
+/// for them (#163).
+pub fn user_settings_meta() -> Value {
+    json!({ "claudeCode": { "options": {
+        "settingSources": ["user", "project", "local"],
+        "settings": { "disableAllHooks": true },
+    } } })
 }
 
 /// M44: a worn Fountain agent on Claude's `session/new` `_meta`: its
@@ -261,6 +290,11 @@ mod tests {
         assert_eq!(claude.argv, vec!["claude-agent-acp"]);
         assert_eq!(claude.meta["claudeCode"]["options"]["settingSources"], json!([]));
         assert!(claude.remove.iter().any(|r| r == "CLAUDECODE"));
+        // #163: your settings, never your hooks.
+        let mine = Def { user_settings: true, ..Default::default() }.launch(home, false).unwrap();
+        assert_eq!(mine.meta["claudeCode"]["options"]["settingSources"], json!(["user", "project", "local"]));
+        assert_eq!(mine.meta["claudeCode"]["options"]["settings"]["disableAllHooks"], json!(true));
+        assert!(Def { agent: Kind::Codex, user_settings: true, ..Default::default() }.launch(home, false).is_err());
 
         let f = Def {
             agent: Kind::Fountain,

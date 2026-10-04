@@ -472,6 +472,20 @@ fn one_agent_starts_another_and_answers_its_question() {
     // Who answered is on record.
     let s = d.state(b);
     assert!(s.to_string().contains("mcp:fake-agent"), "{s}");
+
+    // #163: it hands out tools and a mode, but never every check off.
+    let start = |mode: &str| {
+        let args = json!({ "agent": "acp", "command": format!("python3 {}", fake()), "prompt": "mode",
+            "allow": ["Bash"], "permission_mode": mode });
+        agent_mcp(&d, a, "start_agent", args)
+    };
+    let e = start("bypassPermissions").unwrap_err();
+    assert!(e.contains("only the user"), "{e}");
+    let c = start("auto").unwrap()["block"].as_u64().unwrap();
+    d.wait(c, "idle");
+    let s = d.state(c);
+    assert_eq!((s["allow"].clone(), s["permission_mode"].as_str()), (json!([{ "tool": "Bash" }]), Some("auto")));
+    assert!(entries(&s).iter().any(|e| e["text"] == "Mode: auto"), "{s}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

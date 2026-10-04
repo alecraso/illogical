@@ -26,6 +26,8 @@ Prompts:
                  its environment (as an agent that leaks what it was given
                  would)
   model          says the model set_config_option chose
+  mode           says the permission mode session/set_mode chose (it knows
+                 claude-agent-acp's: default, acceptEdits, plan, auto)
   mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
                  one, as illogical passes local agents, M16; or a stdio one,
                  as it passes agents in a VM, #59) with JSON as its
@@ -463,6 +465,8 @@ def prompt(mid, p):
         msg("SERVERS " + json.dumps(expand(s.get("mcp")), sort_keys=True))
     elif text == "model":
         msg(f"Model: {s.get('model', 'default')}")
+    elif text == "mode":
+        msg(f"Mode: {s.get('mode', 'default')}")
     elif text == "crash":
         msg("bye")
         os._exit(3)
@@ -528,6 +532,14 @@ def handle(m):
             s["model"] = p.get("value")
             save(p["sessionId"], s)
         send({"id": mid, "result": {"configOptions": CONFIG_OPTIONS}})
+    elif method == "session/set_mode":
+        s = load(p.get("sessionId", ""))
+        if s is None or p.get("modeId") not in ("default", "acceptEdits", "plan", "auto"):
+            send({"id": mid, "error": {"code": -32602, "message": "Invalid Mode"}})
+            return
+        s["mode"] = p["modeId"]
+        save(p["sessionId"], s)
+        send({"id": mid, "result": {}})
     elif method == "session/prompt":
         threading.Thread(target=prompt, args=(mid, p), daemon=True).start()
     elif method == "session/cancel":

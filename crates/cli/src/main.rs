@@ -374,6 +374,18 @@ enum Command {
         /// repeated). Its forms and sign-in links show as cards.
         #[arg(long = "mcp", value_name = "NAME=COMMAND")]
         mcp: Vec<String>,
+        /// Approve this tool's requests without asking (`Read`, `Edit`,
+        /// `Bash`, …; may be repeated), as "always" on its card does.
+        #[arg(long, value_name = "TOOL")]
+        allow: Vec<String>,
+        /// The permission mode its session starts in: `default`,
+        /// `acceptEdits`, `plan`, `auto` (Claude Code's), or the agent's own.
+        #[arg(long, value_name = "MODE", conflicts_with = "fountain")]
+        permission_mode: Option<String>,
+        /// Claude Code with your settings (allow and deny lists, default
+        /// mode, `CLAUDE.md`), but none of their hooks.
+        #[arg(long, conflicts_with_all = ["acp", "fountain", "codex"])]
+        user_settings: bool,
         /// On a new throwaway VM of its own.
         #[arg(long, conflicts_with = "machine")]
         vm: bool,
@@ -1927,6 +1939,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             vault,
             model,
             mcp,
+            allow,
+            permission_mode,
+            user_settings,
             vm,
             machine,
             cwd,
@@ -1958,6 +1973,14 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             config["model"] = json!(model);
             if !mcp.is_empty() {
                 config["mcp_servers"] = json!(mcp);
+            }
+            // #163: what it may do without a card.
+            if !allow.is_empty() {
+                config["allow"] = allow.iter().map(|t| json!({ "tool": t })).collect();
+            }
+            config["permission_mode"] = json!(permission_mode);
+            if user_settings {
+                config["user_settings"] = json!(true);
             }
             let prompt = prompt.join(" ");
             if !prompt.is_empty() {

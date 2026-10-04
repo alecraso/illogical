@@ -264,6 +264,12 @@ the daemon stopping, crashing, or the machine rebooting:
     it; it never picks the agent's own "always", which would write
     `.claude/settings.local.json` into your repo. Claude Code runs with no
     settings sources, so your own hooks don't fire inside it.
+  - A block can start with rules and a mode (#163): `illogical agent
+    --allow Bash --permission-mode auto`, or `allow` and `permission_mode`
+    on MCP `start_agent`, so a lead pre-authorizes its subagents (an agent
+    can't start one in `bypassPermissions`). `--user-settings` gives Claude
+    Code your settings (allow and deny lists, default mode, `CLAUDE.md`)
+    with every hook off, as an opened conversation has.
   - The block's log is the JSON-RPC stream; `capture` is the transcript as
     Markdown, `history` lists the agent's commands and turns, `search`
     covers what agents said and ran.

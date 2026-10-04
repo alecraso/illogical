@@ -44,6 +44,9 @@ const WAIT_MAX: Duration = Duration::from_secs(3600);
 const PROGRESS_EVERY: Duration = Duration::from_secs(15);
 /// The last lines a finished command's result carries.
 const TAIL_LINES: usize = 40;
+/// Permission modes that approve everything (Claude Code's, codex-acp's):
+/// start_agent won't start an agent in one (#163).
+const SKIPS_CHECKS: &[&str] = &["bypassPermissions", "full-access"];
 
 fn progress_every() -> Duration {
     // Tests make it short.
@@ -287,6 +290,19 @@ pub struct StartAgentArgs {
     /// Where it works.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Tools whose requests it may make without asking (`Read`, `Edit`,
+    /// `Bash`, ...), as "always" on a card.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// The permission mode its session starts in: `default`, `acceptEdits`,
+    /// `plan`, `auto` (Claude Code's), or the agent's own. Not one that
+    /// skips every check: the user picks that.
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    /// For claude: the user's Claude Code settings (allow and deny lists,
+    /// default mode, CLAUDE.md), without their hooks.
+    #[serde(default)]
+    pub user_settings: bool,
     /// Open it beside this pane (an agent block's token: beside itself).
     #[serde(default)]
     pub beside: Option<PaneArg>,
@@ -2173,6 +2189,10 @@ impl<'a> Call<'a> {
             None => None,
         };
         may_start(self.on_machine().await?, host.is_some(), a.vm, a.as_fountain.is_some())?;
+        // An agent doesn't hand another one every check switched off.
+        if let Some(m) = a.permission_mode.as_deref().filter(|m| SKIPS_CHECKS.contains(m)) {
+            return Err(format!("permission_mode {m} skips every check: only the user starts an agent like that"));
+        }
         if let Some(name) = a.as_fountain.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             // M44: it runs on this host with the owner's secrets.
             if !matches!(a.agent, AgentKind::Claude) {
@@ -2206,6 +2226,16 @@ impl<'a> Call<'a> {
         }
         if let Some(c) = &a.cwd {
             config["cwd"] = json!(c);
+        }
+        // #163: a lead pre-authorizing what it hands out.
+        if !a.allow.is_empty() {
+            config["allow"] = a.allow.iter().map(|t| json!({ "tool": t })).collect();
+        }
+        if let Some(m) = &a.permission_mode {
+            config["permission_mode"] = json!(m);
+        }
+        if a.user_settings {
+            config["user_settings"] = json!(true);
         }
         let req = OpenRequest {
             kind: BlockType::Agent,

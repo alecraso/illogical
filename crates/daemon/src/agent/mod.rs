@@ -235,6 +235,7 @@ enum Purpose {
     /// `session/fork` (M33): reopen the new session when it answers.
     Fork,
     SetModel,
+    SetMode(String),
     Prompt,
     Other,
 }
@@ -637,6 +638,7 @@ impl Inner {
                     "session/resume" => Purpose::Resume,
                     "session/fork" => Purpose::Fork,
                     "session/set_config_option" => Purpose::SetModel,
+                    "session/set_mode" => Purpose::SetMode(m["params"]["modeId"].as_str().unwrap_or("").to_owned()),
                     "session/prompt" => {
                         let text: String = m["params"]["prompt"]
                             .as_array()
@@ -775,6 +777,10 @@ impl Inner {
                         self.pending.clear();
                         self.asks.clear();
                         fx.push(Effect::TurnEnded);
+                    }
+                    (Purpose::SetMode(mode), Some(e)) => {
+                        self.t.note(format!("Couldn't switch to permission mode {mode}: {e}"), at);
+                        self.error = Some(format!("permission mode {mode}: {e}"));
                     }
                     (Purpose::Init | Purpose::New, Some(e)) => {
                         self.t.note(format!("The agent couldn't start a session: {e}"), at);
@@ -1021,6 +1027,8 @@ impl Inner {
             "turns": self.turns.len(),
             "recent_turns": self.turns.iter().rev().take(20).collect::<Vec<_>>(),
             "allow": self.cfg.allow,
+            "permission_mode": self.cfg.def.permission_mode,
+            "user_settings": self.cfg.def.user_settings,
             // M44: what it wears (nothing secret), or that it's putting it on.
             "as_fountain": self.cfg.def.as_fountain,
             "worn": self.worn.as_ref().map(|w| &w.info),
@@ -1781,6 +1789,12 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
                     json!({ "sessionId": session, "configId": "model", "value": model }),
                 );
             }
+            // #163: after the model, which decides whether `auto` is there.
+            // Again on each reopen: a resumed session starts in its default.
+            if let Some(mode) = g.cfg.def.permission_mode.clone() {
+                let session = g.session();
+                g.request("session/set_mode", json!({ "sessionId": session, "modeId": mode }));
+            }
             if g.status == Status::Starting {
                 g.status = Status::Ready;
             }
@@ -1867,15 +1881,9 @@ fn worn_meta(ctx: &BlockCtx, g: &Inner) -> Option<Value> {
 }
 
 /// An imported conversation's `_meta` (M33): your settings, skills and
-/// `CLAUDE.md`, as it had where it started, with every hook off (S20 Q3:
-/// `project` is what loads `CLAUDE.md`, and it brings the project's hooks).
+/// `CLAUDE.md`, as it had where it started, with every hook off.
 fn imported_meta(g: &Inner) -> Option<Value> {
-    (g.cfg.import.is_some() && g.cfg.def.agent == Kind::Claude).then(|| {
-        json!({ "claudeCode": { "options": {
-            "settingSources": ["user", "project", "local"],
-            "settings": { "disableAllHooks": true },
-        } } })
-    })
+    (g.cfg.import.is_some() && g.cfg.def.agent == Kind::Claude).then(defs::user_settings_meta)
 }
 
 /// A followed conversation that can't be loaded: the agent stops, saying

@@ -116,6 +116,32 @@ fn an_agent_block_runs_turns_and_asks_before_it_acts() {
 }
 
 #[test]
+fn a_block_starts_with_the_rules_and_mode_it_was_given() {
+    // #163: a lead pre-authorizes its subagent's tools and mode.
+    let d = Daemon::child();
+    let config = json!({
+        "agent": "acp", "command": ["python3", fake()], "cwd": d.sessions, "prompt": "mode",
+        "allow": [{ "tool": "Bash" }], "permission_mode": "acceptEdits",
+    });
+    let id = d.open_with(json!({ "type": "agent", "config": config }));
+    assert_eq!(d.wait(id, "idle"), "done");
+    let s = d.state(id);
+    assert!(entries(&s).iter().any(|e| e["text"] == "Mode: acceptEdits"), "{s}");
+    assert_eq!((s["permission_mode"].as_str(), s["allow"].clone()), (Some("acceptEdits"), json!([{ "tool": "Bash" }])));
+    d.call(id, "send", json!({ "text": "run cargo test" }));
+    assert_eq!(d.wait(id, "idle"), "done", "never asked");
+    assert!(entries(&d.state(id)).iter().any(|e| e["text"] == "Allowed cargo test (always allowed)"));
+
+    // A mode the agent doesn't have is said, not swallowed.
+    let config = json!({ "agent": "acp", "command": ["python3", fake()], "cwd": d.sessions, "prompt": "mode", "permission_mode": "yolo" });
+    let id = d.open_with(json!({ "type": "agent", "config": config }));
+    d.wait(id, "idle");
+    let s = d.state(id);
+    assert!(entries(&s).iter().any(|e| e["text"] == "Couldn't switch to permission mode yolo: Invalid Mode"), "{s}");
+    assert!(entries(&s).iter().any(|e| e["text"] == "Mode: default"), "{s}");
+}
+
+#[test]
 fn after_a_reboot_the_transcript_is_back_and_the_session_resumes() {
     let mut d = Daemon::child();
     let id = d.open("remember kestrel");

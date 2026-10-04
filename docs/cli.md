@@ -44,6 +44,10 @@ illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
                                               #   --acp CMD, --vm, --machine m3, --model haiku,
                                               #   --cwd d, --wait)
+illogical agent --allow Read --allow Edit --permission-mode acceptEdits "…"
+                                              # pre-approve tools and pick its mode (#163);
+                                              #   --user-settings: your Claude Code allow/deny
+                                              #   lists and default mode, never your hooks
 illogical agent --as pr-reviewer "review this" # Claude Code here wearing a Fountain agent: its prompt,
                                               #   skills and MCP servers (M44; not for illogical.local: false;
                                               #   --vault V: its secrets' mapping)
