@@ -1397,8 +1397,6 @@ impl Agent {
         );
     }
 
-    /// Put on the Fountain agent it wears (M44), then start it; or say why
-    /// it can't be.
     /// #161: spawn once this host's shell environment is resolved.
     fn await_shell_env(&self, inner: &mut Inner) {
         if inner.awaiting_shell {
@@ -1421,6 +1419,8 @@ impl Agent {
         });
     }
 
+    /// Put on the Fountain agent it wears (M44), then start it; or say why
+    /// it can't be.
     fn wear(&self, inner: &mut Inner, take_over: bool) {
         if inner.wearing {
             return;
