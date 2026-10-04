@@ -164,6 +164,11 @@ async fn run(app: &App, bin: &Path, args: &[&str], timeout: Duration) -> Result<
     if let Some(p) = shell.get("PATH") {
         cmd.env("PATH", p);
     }
+    if bin.to_string_lossy().contains("Tailscale.app") {
+        // The macOS app's binary is the CLI only when told so: started
+        // from a service, it tries to open the GUI and fails.
+        cmd.env("TAILSCALE_BE_CLI", "1");
+    }
     match tokio::time::timeout(timeout, cmd.output()).await {
         Err(_) => Err(format!("{} didn't finish in {} s", bin.display(), timeout.as_secs())),
         Ok(Err(e)) => Err(format!("{}: {e}", bin.display())),
