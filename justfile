@@ -93,10 +93,12 @@ desktop:
     out=${CARGO_TARGET_DIR:-$PWD/target}/release/bundle
     dist={{justfile_directory()}}/dist
     mkdir -p "$dist"
+    # This version's bundles: a kept target dir (CI) holds older ones too.
+    v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
     case "$(uname -s)" in
       Linux)
-        cp "$out"/deb/*.deb "$dist/illogical-desktop-linux-x86_64.deb"
-        cp "$out"/appimage/*.AppImage "$dist/illogical-desktop-linux-x86_64.AppImage" ;;
+        cp "$out/deb/illogical_${v}_amd64.deb" "$dist/illogical-desktop-linux-x86_64.deb"
+        cp "$out/appimage/illogical_${v}_amd64.AppImage" "$dist/illogical-desktop-linux-x86_64.AppImage" ;;
       Darwin)
         # A zip of the app: ditto keeps its signature and symlinks.
         rm -f "$dist/illogical-desktop-macos-arm64.zip"
