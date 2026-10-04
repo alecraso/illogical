@@ -55,6 +55,9 @@ illogical studio follower pinboard            # keep its box's hud follower link
 illogical pr 84                               # a pull request as a block (in this repo; or a URL, OWNER/REPO#N)
 illogical pr comment %7 "LGTM"                # comment; review %7 approve|request_changes|comment [TEXT]; merge %7
                                               #   (under CLAUDECODE or AI_AGENT: a draft a person sends)
+illogical fountain runner install             # after sudo bash scripts/fountain-runner-setup.sh: this machine as the Fountain runner
+illogical fountain runner status              # its unit, and every runner Fountain lists
+illogical fountain runner adopt hud-playground  # an agent onto the runner provider (chant's: change agent-specs instead)
 illogical issue 89                            # an issue as a block (or a URL, OWNER/REPO#N)
 illogical issue agent %8                      # an agent on it: worktree + branch i89-…, the two in a tab
 illogical issue new -t "Frobs leak" -b "…"    # open one here (under an agent: a draft a person sends)
@@ -282,6 +285,9 @@ never mixes with whatever the driver has half typed. It's recorded as its
 sender's input. Who may send one is who may drive the pane: on someone's
 own machine a teammate needs their trust first (the card offers to ask for
 30 minutes); on a team's machine or a VM, team editors send straight away.
+A session nobody drives (`claude -p`, the Agent SDK: Claude Code sets
+`CLAUDE_CODE_SESSION_ATTENDED=0`) gets no follow-ups, and the hook leaves it
+at once, so the same settings don't hold a headless run.
 
 **From a script:**
 

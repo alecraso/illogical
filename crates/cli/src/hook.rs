@@ -15,7 +15,11 @@
 //! `SessionStart`: it waits for a follow-up someone sends the agent, and
 //! exits 2 with it, which wakes Claude Code and runs it as the next
 //! instruction. It never types into the prompt, so it never mixes with
-//! what the driver has half typed.
+//! what the driver has half typed. A session nobody drives (`claude -p`,
+//! the Agent SDK) gets no follow-ups, so `inbox` leaves it at once: Claude
+//! Code waits for a SessionStart hook before a headless session's first
+//! turn, so waiting there would hold `claude -p` for the hook's 24 hours
+//! (#124).
 //!
 //! Outside an illogical pane both do nothing.
 
@@ -80,6 +84,10 @@ pub fn run(sock: Target) -> i32 {
 /// over or there's nothing to wait for.
 pub fn inbox(sock: Target) -> i32 {
     let Some((pane, hook)) = stdin_hook() else { return 0 };
+    let env = |k| std::env::var(k).ok();
+    if !driven(env("CLAUDE_CODE_SESSION_ATTENDED").as_deref(), env("CLAUDE_CODE_ENTRYPOINT").as_deref()) {
+        return 0;
+    }
     loop {
         match request(&sock, "POST", &format!("/api/panes/{pane}/inbox"), Some(&hook)) {
             Ok(res) if res.status == 503 => {}
@@ -100,5 +108,44 @@ pub fn inbox(sock: Target) -> i32 {
             Err(_) => {}
         }
         std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
+/// Whether a person drives this Claude Code session, from what Claude Code
+/// (2.1.289) sets in its hooks' environment. Seen on SessionStart and Stop
+/// (#124):
+///
+/// | session | `CLAUDE_CODE_SESSION_ATTENDED` | `CLAUDE_CODE_ENTRYPOINT` |
+/// |---|---|---|
+/// | `claude` in a terminal | `1` | `cli` |
+/// | `claude -p` | `0` | `sdk-cli` |
+/// | the Agent SDK (TypeScript) | `0` | `sdk-ts` |
+///
+/// The hook's stdin doesn't tell them apart reliably (the interactive one
+/// adds `model` and `scratchpad_dir`, which isn't a promise). `ATTENDED`
+/// says it outright, so it wins; an older Claude Code without it falls back
+/// to the entrypoint, where every SDK one starts `sdk-`. With neither, it's
+/// taken as driven, which is how `inbox` behaved before.
+fn driven(attended: Option<&str>, entrypoint: Option<&str>) -> bool {
+    match attended {
+        Some("0") => false,
+        Some("1") => true,
+        _ => !entrypoint.is_some_and(|e| e.starts_with("sdk-")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::driven;
+
+    #[test]
+    fn only_a_session_someone_drives_waits_for_follow_ups() {
+        assert!(driven(Some("1"), Some("cli")), "a terminal claude");
+        assert!(!driven(Some("0"), Some("sdk-cli")), "claude -p");
+        assert!(!driven(Some("0"), Some("sdk-ts")), "the Agent SDK");
+        assert!(!driven(Some("0"), Some("cli")), "attended wins");
+        assert!(!driven(None, Some("sdk-py")), "an older SDK");
+        assert!(driven(None, Some("cli")), "an older terminal claude");
+        assert!(driven(None, None), "no word either way: wait, as before");
     }
 }
