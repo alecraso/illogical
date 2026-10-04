@@ -4048,15 +4048,30 @@ A desktop app for macOS and Linux: the web UI in a native window, with the app i
 - **macOS and Linux together.** No Windows: it has no daemon.
 - **Unsigned macOS builds for now** (ad-hoc signed). Notarization waits for a Developer ID.
 
-**Order:** S25, then M46 (window, installer, supervisor, packaging), then M47 (Finder and Nautilus) and M48 (connections in Rust, the device key in the Keychain or Secret Service).
+**Order:** S25 (done, go), then M46 (window, installer, supervisor, packaging), then M47 (Finder and Nautilus) and M48 (connections in Rust, the device key in the Keychain or Secret Service).
 
 #### S25: desktop shell spike
 
-A Tauri 2 shell (`spikes/s25-desktop`) that loads the client from the local daemon, run on geek (WebKitGTK) and jake-mini (WKWebView). It measures xterm WebGL against Chrome on the same machine, whether every chord reaches the page, IME, the clipboard and OSC 52, native notifications, multiple windows and titlebar tabs, bundle size and cold start. **Go** if WebKitGTK is usable for daily work on geek; otherwise the same checks run in Electron.
+**Done 2026-10-04: go** (see [spikes/s25-desktop](spikes/s25-desktop/README.md)), on geek's run. Jake called it before the macOS half; those checks are in M46's done-when.
+
+- **WebGL xterm works in WebKitGTK 2.52.** Idle write-to-paint matches Chrome (7 ms). Under full-screen redraws WebKitGTK paints at about 60 fps where Chrome follows geek's 240 Hz display (33 ms against 8 ms); Jake didn't notice it in use.
+- **48 of 49 chords reach the page**, Ctrl-W/T/N/Q/Tab included. F10 is GTK's menu-bar key.
+- **IME:** Mozc and Hangul commit through xterm.
+- **Clipboard:** Ctrl-Shift-C/V work as in Chrome. The page can't write without a gesture, so OSC 52 writes through Rust.
+- **No `PushManager`** in the webview: notifications come from Rust.
+- Start to the daemon's page: about 280 ms on geek, 215–310 ms on jake-mini. `.deb` 5.8 MB before the daemon.
 
 #### M46: the app as window, installer and supervisor
 
-See #130.
+See #130. From S25:
+
+- The window loads the UI from the local daemon (`http://127.0.0.1:7681`, already an accepted origin).
+- Notifications from Rust, off the attention events the window already gets; the click opens the pane.
+- An OSC 52 handler in the client, writing through Rust in the app.
+- Clear GTK's F10 binding. On Linux, window buttons in the client's bar when the titlebar is the client's (`data-tauri-drag-region`), in place of the PWA's `env(titlebar-area-*)`.
+- macOS: an Edit-only menu (copy, paste, select all), so Cmd-W, T, N and Q reach the page.
+
+**Also done when (S25's macOS half):** on jake-mini, the bench against Chrome; Cmd-W, T, N, Q, H and M reach the page; Japanese and Korean IME; a notification click opens the pane; the dock badge shows the needs-you count. And on geek, a notification click opens the pane.
 
 #### M47: OS integration
 

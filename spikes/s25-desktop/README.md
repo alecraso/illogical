@@ -3,7 +3,7 @@
 Run 2026-10-04 on geek (Ubuntu 26.04, GNOME on Wayland, Radeon 8060S, a 240 Hz display, WebKitGTK
 2.52.6) and jake-mini (macOS 15.5, arm64). The question (#130): is a Tauri 2 window around the
 existing web client good enough to build the desktop app on, or does it have to be Electron?
-**Result on geek: go.** Jake ran the real UI in the shell (with the HUD and the overlay titlebar)
+**Result: go (Jake, 2026-10-04), on geek's run.** The macOS checks moved into M46's done-when. Jake ran the real UI in the shell (with the HUD and the overlay titlebar)
 and it "went fine": no lag he noticed next to Chrome. Every check passed except two that are fixable in
 the app (F10, and notifications need a native path, which M46 planned anyway).
 
@@ -111,7 +111,7 @@ for current Tauri, and its CI runner uses the default).
 
 - From launch to the daemon's page loaded: **215–310 ms** (three runs); setup at 75–100 ms.
   Binary 13.6 MB.
-- **Still to run, with the screen unlocked** (a locked Mac throttles the window's frames, so the
+- **Not run; moved to M46's done-when** (Jake called S25 on geek's result). They need the screen unlocked (a locked Mac throttles the window's frames, so the
   bench never finished):
   - the bench, against Chrome on the same Mac;
   - chords, which on macOS is the real question: with the Edit-only menu, does Cmd-W, T, N, Q, H
