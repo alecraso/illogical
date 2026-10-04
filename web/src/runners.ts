@@ -53,12 +53,14 @@ async function ask(fleet: Fleet) {
     fleet.list
       .filter((h) => h.state === "connected" && now - (known.get(h.name)?.at ?? 0) >= EVERY - 1000)
       .map(async (h) => {
+        // Asked once a minute, answered or not.
+        const was = known.get(h.name)?.info ?? null;
+        known.set(h.name, { info: was, at: now });
         try {
           const res = await fleet.request(h.name, "GET", "/api/host");
           if (!res.ok) return;
           const v = await res.json<{ fountain_runner?: FountainRunnerInfo }>();
           const info = v.fountain_runner ?? null;
-          const was = known.get(h.name)?.info ?? null;
           known.set(h.name, { info, at: now });
           if (JSON.stringify(was) !== JSON.stringify(info)) changed = true;
         } catch {

@@ -741,7 +741,7 @@ mod tests {
             "provider": "runner", "runner": { "id": null, "path": null }, "conversations": []
         }))
         .unwrap();
-        let r = rows(&[parked.clone()], id, Some("/srv/fountain/sandboxes/"));
+        let r = rows(std::slice::from_ref(&parked), id, Some("/srv/fountain/sandboxes/"));
         assert_eq!(r[0].path.as_deref(), Some(format!("/srv/fountain/sandboxes/{}", parked.sprite_name).as_str()));
         assert!(r[0].parked);
         // Odd paths and names are refused.
@@ -767,9 +767,9 @@ mod tests {
             sudo_argv("echo hi", &["/x y".into()]),
             ["sudo", "-n", "-u", "fountain", "/bin/bash", "-c", "echo hi", "_", "/x y"]
         );
-        let out = format!("ok\nrepo EMPTY\t/s/r1\nrepo 0123456789abcdef\t/s/a/b c\nrepo $(rm)\t/s/x\n");
+        let out = "ok\nrepo EMPTY\t/s/r1\nrepo 0123456789abcdef\t/s/a/b c\nrepo $(rm)\t/s/x\n";
         assert_eq!(
-            parse_checkouts(&out).unwrap(),
+            parse_checkouts(out).unwrap(),
             [("/s/r1".to_owned(), EMPTY_TREE.to_owned()), ("/s/a/b c".to_owned(), "0123456789abcdef".to_owned())]
         );
         assert!(parse_checkouts("err fountain has no directory /x\n").unwrap_err().contains("no directory"));

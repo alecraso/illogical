@@ -56,6 +56,8 @@ const UNTRACKED_MAX: usize = 200;
 const OPEN_MAX: usize = 12;
 /// How often it looks again while drawn, here (a machine: every 3s).
 const POLL: Duration = Duration::from_secs(2);
+/// How often a `run_as` diff looks again while drawn.
+const SUDO_POLL: Duration = Duration::from_secs(15);
 /// git's empty tree: what a repository with no commits is compared with.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -396,7 +398,11 @@ impl Diff {
     /// Poll while drawn.
     fn watch(&self, round: u64) {
         let Some(me) = self.me.upgrade() else { return };
-        let every = super::every(self.runner.as_ref().is_ok_and(Runner::local), POLL);
+        // As `fountain` (M45b) every read is a sudo, which sudo logs: less often.
+        let every = match self.config.run_as {
+            Some(_) => SUDO_POLL,
+            None => super::every(self.runner.as_ref().is_ok_and(Runner::local), POLL),
+        };
         self.ctx.rt.spawn(async move {
             while me.live.on(round) {
                 me.load().await;
