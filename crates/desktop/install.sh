@@ -1,19 +1,30 @@
 #!/bin/sh
 # Builds the desktop app and installs it for this user, without sudo.
-#   Linux: ~/.local/bin/illogical-desktop, its icons, and a launcher entry.
-#   macOS: ~/Applications/illogical.app (ad-hoc signed).
-# The daemon stays its own service (`illogicald install`); the app finds it.
+#   Linux: ~/.local/lib/illogical-desktop (the app and the illogicald and
+#          illogical it carries), ~/.local/bin/illogical-desktop, its icons
+#          and a launcher entry.
+#   macOS: ~/Applications/illogical.app (ad-hoc signed, carrying both).
+# The daemon stays its own service: the app starts the installed one, or
+# installs the one it carries (`illogicald install`) when there is none.
+# The carried binaries come from ./sidecars.sh (built when missing; it needs
+# web/dist and Zig), or put prebuilt ones in binaries/NAME-TRIPLE yourself.
 # Needs cargo-tauri (`cargo install tauri-cli --version "^2"`), and on Linux
 # libwebkit2gtk-4.1-dev, libayatana-appindicator3-dev, librsvg2-dev.
 set -e
 cd "$(dirname "$0")"
+triple=$(rustc -vV | sed -n 's/^host: //p')
+[ -f "binaries/illogicald-$triple" ] && [ -f "binaries/illogical-$triple" ] || ./sidecars.sh
 case "$(uname -s)" in
 Linux)
   cargo tauri build --bundles deb
   bin="$HOME/.local/bin"
+  lib="$HOME/.local/lib/illogical-desktop"
   share="$HOME/.local/share"
-  mkdir -p "$bin" "$share/applications"
-  install -m 755 target/release/illogical-desktop "$bin/illogical-desktop"
+  mkdir -p "$bin" "$lib" "$share/applications"
+  install -m 755 target/release/illogical-desktop "$lib/illogical-desktop"
+  install -m 755 "binaries/illogicald-$triple" "$lib/illogicald"
+  install -m 755 "binaries/illogical-$triple" "$lib/illogical"
+  ln -sf "$lib/illogical-desktop" "$bin/illogical-desktop"
   for size in 32x32 128x128 512x512; do
     mkdir -p "$share/icons/hicolor/$size/apps"
   done

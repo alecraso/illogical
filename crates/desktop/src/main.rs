@@ -3,9 +3,15 @@
 //!
 //! - **The daemon stays a separate service**, so panes outlive the window.
 //!   The app finds the local one (`ILLOGICAL_URL`, else the address in the
-//!   state directory's `listen` file, else `127.0.0.1:7681`), starts it with
-//!   `illogicald install` when it's installed but not running, and loads its
+//!   state directory's `listen` file, else `127.0.0.1:7681`) and loads its
 //!   page: the UI and the daemon always match. Loopback auth is unchanged.
+//! - **It installs the daemon when there is none.** The bundle carries
+//!   `illogicald` and `illogical` (sidecars, built by `sidecars.sh`). With no
+//!   daemon answering, the window opens on a setup page that runs
+//!   `illogicald install`: the installed one if there is one (it restarts the
+//!   service), else the bundled one, which copies itself to `~/.local/bin`
+//!   and registers the launchd agent or systemd unit. The bundled CLI goes
+//!   to `~/.local/bin` too, unless an `illogical` is already installed.
 //! - **Every key reaches the page** (S25): on macOS the menu is Edit only,
 //!   so Cmd-W, T, N and Q are the client's; on Linux GTK's F10 menu-bar key
 //!   is turned off.
@@ -66,47 +72,79 @@ fn reachable() -> bool {
     TcpStream::connect_timeout(&sa, Duration::from_millis(400)).is_ok()
 }
 
-fn find_illogicald() -> Option<PathBuf> {
+/// An installed copy of `name`: `~/.local/bin`, Homebrew, then `PATH`.
+fn installed(name: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let mut candidates: Vec<PathBuf> = home.iter().map(|h| h.join(".local/bin/illogicald")).collect();
-    candidates.extend(["/opt/homebrew/bin/illogicald", "/usr/local/bin/illogicald", "/usr/bin/illogicald"].map(PathBuf::from));
+    let mut candidates: Vec<PathBuf> = home.iter().map(|h| h.join(".local/bin").join(name)).collect();
+    candidates.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(|d| PathBuf::from(d).join(name)));
     if let Some(path) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&path).map(|d| d.join("illogicald")));
+        candidates.extend(std::env::split_paths(&path).map(|d| d.join(name)));
     }
-    candidates.into_iter().find(|p| p.is_file())
+    let ours = bundled(name);
+    candidates.into_iter().find(|p| p.is_file() && Some(p) != ours.as_ref())
 }
 
-/// Reach the daemon, starting it if it's installed. Never starts a second
-/// one: `illogicald install` (re)starts the installed service.
+/// The copy of `name` this app carries, next to its own executable.
+fn bundled(name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    Some(exe.parent()?.join(name)).filter(|p| p.is_file())
+}
+
+/// The bundled CLI into `~/.local/bin`, when no `illogical` is installed.
+fn install_cli() -> Option<PathBuf> {
+    if installed("illogical").is_some() {
+        return None;
+    }
+    let src = bundled("illogical")?;
+    let dir = PathBuf::from(std::env::var_os("HOME")?).join(".local/bin");
+    std::fs::create_dir_all(&dir).ok()?;
+    let dst = dir.join("illogical");
+    std::fs::copy(&src, &dst).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755));
+    }
+    Some(dst)
+}
+
+/// Reach the daemon: start the installed one, or install the bundled one.
+/// Never starts a second daemon: `illogicald install` (re)starts the one
+/// service.
 fn ensure_daemon() -> Result<(), String> {
     if reachable() {
         return Ok(());
     }
-    let Some(bin) = find_illogicald() else {
-        return Err(format!("Nothing answers at {} and illogicald isn't installed.", addr()));
+    let Some(bin) = installed("illogicald").or_else(|| bundled("illogicald")) else {
+        return Err(format!("Nothing answers at {}, illogicald isn't installed, and this app doesn't carry one.", addr()));
     };
     let out = std::process::Command::new(&bin).arg("install").output().map_err(|e| format!("{}: {e}", bin.display()))?;
-    for _ in 0..40 {
+    let cli = install_cli();
+    for _ in 0..60 {
         if reachable() {
+            if let Some(cli) = cli {
+                eprintln!("illogical: installed the CLI at {}", cli.display());
+            }
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(250));
     }
     Err(format!(
-        "Started {} install, but nothing answers at {}.\n{}",
+        "Ran {} install, but nothing answers at {}.\n{}{}",
         bin.display(),
         addr(),
+        String::from_utf8_lossy(&out.stdout).trim(),
         String::from_utf8_lossy(&out.stderr).trim()
     ))
 }
 
+/// The daemon's page when it answers; otherwise the setup page, which
+/// installs or starts it (`retry`) and then goes there.
 fn target() -> WebviewUrl {
-    match ensure_daemon() {
-        Ok(()) => WebviewUrl::External(page().parse().unwrap()),
-        Err(why) => {
-            *STATUS.lock().unwrap() = why;
-            WebviewUrl::App("index.html".into())
-        }
+    if reachable() {
+        WebviewUrl::External(page().parse().unwrap())
+    } else {
+        WebviewUrl::App("index.html".into())
     }
 }
 
@@ -147,12 +185,22 @@ fn open_pane(app: &AppHandle, pane: u32) {
 
 #[tauri::command]
 fn daemon_status() -> String {
-    STATUS.lock().unwrap().clone()
+    let why = STATUS.lock().unwrap().clone();
+    if !why.is_empty() {
+        return why;
+    }
+    match installed("illogicald") {
+        Some(bin) => format!("Starting {}…", bin.display()),
+        None if bundled("illogicald").is_some() => "Installing illogicald (a service that starts at login)…".into(),
+        None => format!("Nothing answers at {}.", addr()),
+    }
 }
 
 #[tauri::command]
 async fn retry(window: tauri::WebviewWindow) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(ensure_daemon).await.map_err(|e| e.to_string())??;
+    let r = tauri::async_runtime::spawn_blocking(ensure_daemon).await.map_err(|e| e.to_string())?;
+    *STATUS.lock().unwrap() = r.clone().err().unwrap_or_default();
+    r?;
     window.navigate(page().parse().unwrap()).map_err(|e| e.to_string())
 }
 
