@@ -1,0 +1,225 @@
+{
+ "data": [
+  {
+   "agent_id": "5e6c7e70-9ff3-4822-821c-2d996529f4f8",
+   "checkpoint": null,
+   "conversations": [
+    {
+     "id": "97551863-1d76-4d25-a85b-f35a97b51ca8",
+     "inserted_at": "2026-10-04T00:56:51Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "idle",
+     "title": "conversation 1"
+    }
+   ],
+   "environment_id": "f74d891d-31eb-417f-8cac-695c6d689b2a",
+   "id": "f15f5ac7-e4bf-4ae9-8be3-6ed1ee0fb20c",
+   "inserted_at": "2026-10-04T00:56:51Z",
+   "last_resumed_at": null,
+   "mode": "ephemeral",
+   "provider": "runner",
+   "runner": {
+    "hostname": null,
+    "id": "edbc518d-70b9-4f45-8db2-73f57b1de3f0",
+    "name": "runner-1",
+    "online": true,
+    "path": "/srv/fountain/sandboxes/runner-edbc518d70b94f458db273f57b1de3f0-9ef02d05"
+   },
+   "sprite_name": "runner-edbc518d70b94f458db273f57b1de3f0-9ef02d05",
+   "status": "ready",
+   "url": null,
+   "vault_id": null
+  },
+  {
+   "agent_id": "5e6c7e70-9ff3-4822-821c-2d996529f4f8",
+   "checkpoint": null,
+   "conversations": [
+    {
+     "id": "9a0a1991-15b7-42fb-af40-24c45408a2fa",
+     "inserted_at": "2026-10-04T00:38:24Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "idle",
+     "title": "conversation 1"
+    }
+   ],
+   "environment_id": "f74d891d-31eb-417f-8cac-695c6d689b2a",
+   "id": "638780b9-17fb-46a7-b453-2b0abd7410bf",
+   "inserted_at": "2026-10-04T00:38:24Z",
+   "last_resumed_at": null,
+   "mode": "ephemeral",
+   "provider": "runner",
+   "runner": {
+    "hostname": null,
+    "id": "edbc518d-70b9-4f45-8db2-73f57b1de3f0",
+    "name": "runner-1",
+    "online": true,
+    "path": "/srv/fountain/sandboxes/runner-edbc518d70b94f458db273f57b1de3f0-2972e1a2"
+   },
+   "sprite_name": "runner-edbc518d70b94f458db273f57b1de3f0-2972e1a2",
+   "status": "ready",
+   "url": null,
+   "vault_id": null
+  },
+  {
+   "agent_id": "575c1746-184b-4ba4-b2c8-b02030a20ba7",
+   "checkpoint": null,
+   "conversations": [
+    {
+     "id": "89df5304-94dd-4795-8372-9880f19c121c",
+     "inserted_at": "2026-10-04T00:06:19Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "idle",
+     "title": "conversation 1"
+    }
+   ],
+   "environment_id": null,
+   "id": "fbc50a23-f455-4879-8cfd-70ca2ed2c37f",
+   "inserted_at": "2026-10-04T00:06:19Z",
+   "last_resumed_at": null,
+   "mode": "persistent",
+   "provider": "e2b",
+   "runner": null,
+   "sprite_name": "fountain-50e06232-792918fa",
+   "status": "ready",
+   "url": null,
+   "vault_id": null
+  },
+  {
+   "agent_id": "8efac82b-dfb9-4e63-8ca0-b39c9da5c44a",
+   "checkpoint": null,
+   "conversations": [
+    {
+     "id": "328769d5-914a-4521-b386-95cb3fbfd0d7",
+     "inserted_at": "2026-10-04T00:06:19Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "idle",
+     "title": "conversation 1"
+    }
+   ],
+   "environment_id": null,
+   "id": "8a0f4e04-5b42-45dd-94fb-8938948f3e23",
+   "inserted_at": "2026-10-04T00:06:19Z",
+   "last_resumed_at": null,
+   "mode": "persistent",
+   "provider": "sprites",
+   "runner": null,
+   "sprite_name": "fountain-50e06232-a8c53c17",
+   "status": "ready",
+   "url": "https://mcp-1.example.com",
+   "vault_id": null
+  },
+  {
+   "agent_id": "5e6c7e70-9ff3-4822-821c-2d996529f4f8",
+   "checkpoint": null,
+   "conversations": [
+    {
+     "id": "7c71ed12-08d8-43c4-a22c-6d433ec9c4b3",
+     "inserted_at": "2026-09-19T00:14:34Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "idle",
+     "title": "conversation 1"
+    }
+   ],
+   "environment_id": "f74d891d-31eb-417f-8cac-695c6d689b2a",
+   "id": "2cad682f-26a9-4252-b575-eddb2e67424a",
+   "inserted_at": "2026-09-19T00:14:34Z",
+   "last_resumed_at": null,
+   "mode": "ephemeral",
+   "provider": "runner",
+   "runner": {
+    "hostname": null,
+    "id": null,
+    "name": null,
+    "online": false,
+    "path": null
+   },
+   "sprite_name": "runner-ce9ff49f5da0433ba7a0a9839ce66e02-a31b4e2a",
+   "status": "suspended",
+   "url": null,
+   "vault_id": "3305cc83-c14c-4acd-a98f-8a9719a79db9"
+  },
+  {
+   "agent_id": "5e6c7e70-9ff3-4822-821c-2d996529f4f8",
+   "checkpoint": null,
+   "conversations": [
+    {
+     "id": "752c6ab7-2e07-4347-afb6-19542580085f",
+     "inserted_at": "2026-09-19T00:05:19Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "idle",
+     "title": "conversation 1"
+    }
+   ],
+   "environment_id": "f74d891d-31eb-417f-8cac-695c6d689b2a",
+   "id": "6376cbfe-e9c0-471c-b511-79eddde357c0",
+   "inserted_at": "2026-09-19T00:05:19Z",
+   "last_resumed_at": null,
+   "mode": "ephemeral",
+   "provider": "runner",
+   "runner": {
+    "hostname": null,
+    "id": null,
+    "name": null,
+    "online": false,
+    "path": null
+   },
+   "sprite_name": "runner-ce9ff49f5da0433ba7a0a9839ce66e02-db6b9c29",
+   "status": "suspended",
+   "url": null,
+   "vault_id": "3305cc83-c14c-4acd-a98f-8a9719a79db9"
+  },
+  {
+   "agent_id": "7d5712a5-c1b7-4433-89bd-40142dee1132",
+   "checkpoint": null,
+   "conversations": [
+    {
+     "id": "084419b7-b2a8-42ea-bfb0-ff69b327a07c",
+     "inserted_at": "2026-08-19T16:33:21Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "idle",
+     "title": null
+    },
+    {
+     "id": "779bfb82-c0c3-4439-8b78-2fb1e101490e",
+     "inserted_at": "2026-08-19T15:44:49Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "terminated",
+     "title": null
+    },
+    {
+     "id": "6aa36c19-6c41-4fcf-b5fa-1c8f6c29b016",
+     "inserted_at": "2026-08-19T14:02:13Z",
+     "mid_turn": false,
+     "runtime": "claude",
+     "status": "terminated",
+     "title": null
+    }
+   ],
+   "environment_id": "3101d2cb-e70e-4a87-9119-3b0e9d2b39e7",
+   "id": "b547bab6-0c19-4601-ace3-4ef2b560e467",
+   "inserted_at": "2026-08-19T14:02:13Z",
+   "last_resumed_at": "2026-08-19T19:31:17Z",
+   "mode": "ephemeral",
+   "provider": "runner",
+   "runner": {
+    "hostname": null,
+    "id": null,
+    "name": null,
+    "online": false,
+    "path": null
+   },
+   "sprite_name": "runner-ce9ff49f5da0433ba7a0a9839ce66e02-2e72617e",
+   "status": "suspended",
+   "url": null,
+   "vault_id": null
+  }
+ ]
+}

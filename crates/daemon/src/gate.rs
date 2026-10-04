@@ -105,7 +105,7 @@ fn plain(s: &str) -> String {
 
 /// `2026-10-02T21:09:51.548Z` as ms since the epoch (UTC only, as chant
 /// writes them).
-fn rfc3339_ms(s: &str) -> Option<u64> {
+pub(crate) fn rfc3339_ms(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || !s.ends_with('Z') {
         return None;

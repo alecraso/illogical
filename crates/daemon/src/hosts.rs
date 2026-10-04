@@ -501,6 +501,8 @@ async fn host(State(app): AppState) -> Json<HostInfo> {
         // The team's name once its roster is in, else its id.
         team: saved
             .and_then(|s| s.roster.as_ref().map(|r| r.name.clone()).or_else(|| Some(s.team.as_ref()?.team.clone()))),
+        // M45b: only where the runner's unit is; from what was last read.
+        fountain_runner: crate::fountain::runner::host_info(&app.mux.shell_env),
     })
 }
 
