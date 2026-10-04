@@ -15,8 +15,9 @@
 //! read-only: agent-specs stays the one place a curated agent is edited.
 //!
 //! **Actions:** `run {agent}` (*Run on Fountain*: an agent block running
-//! `fountain acp --agent NAME`, beside this one); `run_here` (*Run here*,
-//! M44: refused until then, with the reason); `spec {agent}` (the
+//! `fountain acp --agent NAME`, beside this one); `run_here {agent, cwd?,
+//! prompt?}` (*Run here*, M44: a Claude Code agent block on this host
+//! wearing the agent, in `cwd`, beside this one; [`wear`]); `spec {agent}` (the
 //! agent-specs file that declares a `managed-by: chant` agent, as a file
 //! block; for any other, or with no checkout, Fountain's page for it in a
 //! browser block). `filter {...}` changes the filters, `profile {name}` the
@@ -93,6 +94,9 @@ struct Config {
     /// The agent-specs checkout (`~/…` allowed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     specs: Option<String>,
+    /// Where *Run here* last ran one (M44), to offer again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    here: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -119,6 +123,8 @@ struct State {
     /// The agent-specs checkout *Spec* uses, and when there's none, why.
     specs: Option<String>,
     specs_why: Option<String>,
+    /// Where *Run here* last ran one.
+    here: Option<String>,
     updated_ms: u64,
     polls: u64,
     watching: bool,
@@ -275,6 +281,7 @@ impl FountainBlock {
             profile: config.profile.clone(),
             filter: config.filter.clone(),
             specs: config.specs.clone(),
+            here: config.here.clone(),
             loading: true,
             ..State::default()
         };
@@ -450,18 +457,53 @@ impl FountainBlock {
         Ok(json!({ "block": block, "agent": a.name }))
     }
 
-    /// *Run here*: M44 wears the agent in a local Claude Code.
-    fn run_here(&self, args: &Value) -> Result<Value, String> {
+    /// *Run here* (M44): a Claude Code agent block on this host wearing the
+    /// agent (its prompt, skills and MCP servers), in `cwd`, beside the
+    /// catalog. Refused, with the reason, for an agent that can't be worn.
+    async fn run_here(&self, args: Value) -> Result<Value, String> {
         let which = args["agent"].as_str().filter(|a| !a.is_empty()).ok_or("run_here needs {\"agent\": NAME}")?;
         let a = self.agent(which)?;
-        let c = catalog::card(&a, &BTreeMap::new());
-        if a.runtime != "claude" {
-            return Err(format!("{} is a {} agent: Run here is for claude agents; Run on Fountain", a.name, a.runtime));
+        if let Some(why) = wear::refusal(&a) {
+            return Err(why);
         }
-        if let Some(why) = c.local_why {
-            return Err(format!("{}: {why}; Run on Fountain", a.name));
+        if self.ctx.sprite.is_some() {
+            return Err("Run here wears an agent on this host: open the catalog on it".into());
         }
-        Err(format!("Run here comes in M44 (wearing {} in a Claude Code here); Run on Fountain for now", a.name))
+        let given = args["cwd"].as_str().map(str::trim).filter(|c| !c.is_empty()).map(str::to_owned);
+        let cwd = given.clone().or_else(|| self.config.lock().unwrap().here.clone());
+        let cwd = match cwd {
+            Some(c) => {
+                let p = wear::expand(&c, &self.ctx.home);
+                if !p.is_dir() {
+                    return Err(format!("{c} isn't a directory here"));
+                }
+                Some(p.display().to_string())
+            }
+            None => None,
+        };
+        let (profile, specs) = {
+            let c = self.config.lock().unwrap();
+            (c.profile.clone(), c.specs.clone())
+        };
+        let mut config = json!({ "agent": "claude", "as_fountain": a.name, "cwd": cwd });
+        if let Some(p) = profile {
+            config["profile"] = json!(p);
+        }
+        if let Some(s) = specs {
+            config["specs"] = json!(s);
+        }
+        if let Some(p) = args["prompt"].as_str().filter(|p| !p.is_empty()) {
+            config["prompt"] = json!(p);
+        }
+        let block = self.ctx.open(self.beside(BlockType::Agent, config)).await?;
+        if given.is_some() {
+            self.config.lock().unwrap().here = cwd.clone();
+            self.state.lock().unwrap().here = cwd.clone();
+        }
+        crate::review::log(&self.ctx, &json!({ "e": "run_here", "agent": a.name, "block": block, "cwd": cwd }));
+        let at = cwd.as_deref().map(|c| format!(" in {c}")).unwrap_or_default();
+        self.said(format!("{} is worn by a Claude Code here{at}, in %{block}", a.name));
+        Ok(json!({ "block": block, "agent": a.name, "cwd": cwd }))
     }
 
     /// *Spec*: the file that declares a chant-managed agent, else its page
@@ -629,7 +671,7 @@ impl Block for FountainBlock {
                 }
             }),
             "run" | "run_fountain" => Box::pin(async move { me.ok_or("closed")?.run_fountain(args).await }),
-            "run_here" => Box::pin(async move { me.ok_or("closed")?.run_here(&args) }),
+            "run_here" => Box::pin(async move { me.ok_or("closed")?.run_here(args).await }),
             "spec" => Box::pin(async move { me.ok_or("closed")?.spec(args).await }),
             "agents" => Box::pin(async move {
                 let me = me.ok_or("closed")?;

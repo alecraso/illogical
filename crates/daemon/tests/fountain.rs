@@ -10,6 +10,16 @@
 //! its reason; *Spec* opening the agent-specs file, or Fountain's page;
 //! `GET /api/fountain/agents`; and MCP's `list_agents` and `read_agent`
 //! from an agent.
+//!
+//! M44 (wearing an agent here): *Run here*, `start_agent {as_fountain}`
+//! and `as_fountain` on a new block run the fake ACP agent as Claude Code's
+//! adapter; it records the `_meta` and MCP servers its `session/new` got.
+//! Infisical, `gh` and GitHub are fakes too (a script each, and local git
+//! repositories). What's checked: the bundle, the `_meta` (prompt, plugin,
+//! model, `settingSources: []`), the servers with their variables resolved
+//! in order and the ones left out with why, refusals, a restart, that a
+//! known secret is on no surface but the adapter's stdin, and that editors
+//! can't wear one.
 
 mod agentd;
 
@@ -52,6 +62,8 @@ struct Inner {
     deny: bool,
     /// Rows served after the recorded ones (odd-agents.json's).
     extra: Vec<Value>,
+    /// MCP probes (M44), by path.
+    probes: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -94,7 +106,9 @@ async fn agent(State(f): State<Fake>, h: HeaderMap, UrlPath(id): UrlPath<String>
     if let Some(r) = guard(&f, &h, "agent") {
         return r;
     }
-    let a = f.with(|i| i.agents["data"].as_array().unwrap().iter().find(|a| a["id"] == id.as_str()).cloned());
+    let a = f.with(|i| {
+        i.agents["data"].as_array().unwrap().iter().chain(i.extra.iter()).find(|a| a["id"] == id.as_str()).cloned()
+    });
     match a {
         Some(a) => Json(json!({ "data": a })).into_response(),
         None => (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response(),
@@ -106,6 +120,18 @@ async fn environments(State(f): State<Fake>, h: HeaderMap) -> Response {
         return r;
     }
     Json(f.with(|i| i.envs.clone())).into_response()
+}
+
+/// An MCP server that wants an OAuth sign-in (M44's probe).
+async fn oauth_mcp(State(f): State<Fake>) -> Response {
+    f.with(|i| i.probes.push("oauth".into()));
+    (StatusCode::UNAUTHORIZED, [("www-authenticate", "Bearer resource_metadata=\"x\"")], "").into_response()
+}
+
+/// One that doesn't (an initialize gets an answer).
+async fn open_mcp(State(f): State<Fake>) -> Response {
+    f.with(|i| i.probes.push("open".into()));
+    Json(json!({ "jsonrpc": "2.0", "id": 1, "result": {} })).into_response()
 }
 
 /// The fake Fountain, on a runtime of its own, and a scratch HOME whose
@@ -131,6 +157,8 @@ impl Fountain {
                 .route("/api/agents", get(agents))
                 .route("/api/agents/{id}", get(agent))
                 .route("/api/environments", get(environments))
+                .route("/oauth-mcp", axum::routing::post(oauth_mcp))
+                .route("/open-mcp", axum::routing::post(open_mcp))
                 .with_state(f.clone());
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let at = format!("http://{}", l.local_addr().unwrap());
@@ -265,11 +293,7 @@ fn the_catalog_filters_and_runs() {
     let (status, _) = d.raw("POST", &format!("/api/blocks/{block}/call/run"), Some(json!({ "agent": "nobody" })));
     assert_eq!(status, 400);
 
-    // Run here: M44's. Until then it says so, and why not for some.
-    let (status, body) =
-        d.raw("POST", &format!("/api/blocks/{block}/call/run_here"), Some(json!({ "agent": "games" })));
-    assert_eq!(status, 400);
-    assert!(body.contains("M44"), "{body}");
+    // Run here: not for some (the rest is in M44's tests below).
     let codex = d.state(block)["agents"].as_array().unwrap().iter().find(|c| c["runtime"] == "codex").cloned().unwrap();
     let (_, body) =
         d.raw("POST", &format!("/api/blocks/{block}/call/run_here"), Some(json!({ "agent": codex["name"] })));
@@ -462,6 +486,8 @@ fn an_editor_filters_but_runs_nothing() {
     for (m, args) in [
         ("run", json!({ "agent": "games" })),
         ("run_fountain", json!({ "agent": "games" })),
+        // M44: a Claude Code here, with the owner's secrets.
+        ("run_here", json!({ "agent": "games" })),
         ("spec", json!({ "agent": "pr-reviewer" })),
         ("profile", json!({ "name": "other" })),
         ("specs", json!({ "dir": "/" })),
@@ -469,6 +495,15 @@ fn an_editor_filters_but_runs_nothing() {
         let (status, body) = call(m, args);
         assert_eq!(status, 403, "{m}: {body}");
     }
+    // Nor wear one through a block of their own (which would go on a VM
+    // of theirs, but with the owner's secrets).
+    let (status, body) = as_friend(
+        &d,
+        "POST",
+        "/api/blocks",
+        json!({ "type": "agent", "split": block, "config": { "agent": "claude", "as_fountain": "games" } }),
+    );
+    assert_eq!(status, 403, "{body}");
     assert_eq!(d.get("/api/panes").as_array().unwrap().len(), panes, "nothing opened");
     // The owner may.
     let out = d.call(block, "run", json!({ "agent": "games" }));
@@ -530,4 +565,383 @@ fn a_new_login_never_gets_the_old_list() {
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("Fountain refused the key"), "{body}");
     assert_eq!(fz.f.gets("agents"), 2);
+}
+
+// ---------------------------------------------------------------- M44
+
+/// Known fake secrets: one from Infisical, one from `gh auth token`, one
+/// from the shell environment.
+const INF: &str = "fake-infisical-secret-4401";
+const GH: &str = "fake-gh-token-4402";
+const SH: &str = "fake-shell-secret-4403";
+
+/// M44's stand-ins, under the test's scratch dir.
+struct Wear {
+    specs: PathBuf,
+    work: PathBuf,
+    cache: PathBuf,
+    /// What the fake `infisical` was asked, and where.
+    infisical_log: PathBuf,
+}
+
+fn script(path: &Path, body: &str) {
+    std::fs::write(path, body).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let ok = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    assert!(ok, "git {args:?}");
+}
+
+impl Wear {
+    fn new(dir: &Path) -> Self {
+        // Claude Code's adapter: the fake ACP agent.
+        let bin = dir.join("agents/claude/node_modules/.bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        script(&bin.join("claude-agent-acp"), &format!("#!/bin/sh\nexec python3 {} \"$@\"\n", fake()));
+        // Infisical has one secret, in env dev, asked for in the checkout.
+        let tools = dir.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let infisical_log = dir.join("infisical.log");
+        script(
+            &tools.join("infisical"),
+            &format!(
+                "#!/bin/sh\necho \"$(pwd) $*\" >> {log}\n[ \"$1 $2 $3 $4 $5 $6 $7\" = \"secrets get WEAR_KEY --env dev --path /\" ] && {{ echo {INF}; exit 0; }}\necho 'Secret not found' >&2\nexit 1\n",
+                log = infisical_log.display()
+            ),
+        );
+        script(&tools.join("gh"), &format!("#!/bin/sh\n[ \"$1 $2\" = \"auth token\" ] && echo {GH}\n"));
+        // GitHub: a repository of skills.
+        let repo = dir.join("git/acme/skills");
+        for s in ["code-review", "iterate-pr"] {
+            std::fs::create_dir_all(repo.join(s)).unwrap();
+            std::fs::write(repo.join(s).join("SKILL.md"), format!("---\nname: {s}\ndescription: {s}\n---\n")).unwrap();
+        }
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "skills"]);
+        // agent-specs: the agent's environment maps FAKE_WEAR_TOKEN.
+        let specs = dir.join("agent-specs");
+        std::fs::create_dir_all(specs.join("dist")).unwrap();
+        std::fs::write(specs.join(".infisical.json"), "{\"workspaceId\": \"fake\"}\n").unwrap();
+        std::fs::write(
+            specs.join("dist/fountain.yaml"),
+            "apiVersion: fountain.dev/v1\nkind: Agent\nmetadata:\n  name: fixture-wearer\nspec:\n  name: fixture-wearer\n  runtime: claude\n  environment: fixture-env\n---\napiVersion: fountain.dev/v1\nkind: Environment\nmetadata:\n  name: fixture-env\nspec:\n  name: fixture-env\n  secrets:\n    - key: FAKE_WEAR_TOKEN\n      value: \"infisical:///dev/WEAR_KEY\"\n",
+        )
+        .unwrap();
+        let work = dir.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let cache = dir.join("cache");
+        Self { specs, work, cache, infisical_log }
+    }
+
+    fn env(&self, dir: &Path) -> Vec<(&'static str, String)> {
+        vec![
+            ("ILLOGICAL_AGENTS_DIR", dir.join("agents").display().to_string()),
+            ("ILLOGICAL_INFISICAL_BIN", dir.join("tools/infisical").display().to_string()),
+            ("ILLOGICAL_GH_BIN", dir.join("tools/gh").display().to_string()),
+            ("ILLOGICAL_FOUNTAIN_GIT_BASE", format!("file://{}/", dir.join("git").display())),
+            ("XDG_CACHE_HOME", self.cache.display().to_string()),
+            ("SHELL_ONLY", SH.to_owned()),
+            // Not the runner's own.
+            ("GITHUB_TOKEN", String::new()),
+            ("GH_TOKEN", String::new()),
+        ]
+    }
+}
+
+/// An agent made to be worn: inline and GitHub skills, and a server for
+/// each way a variable resolves or a server is left out.
+fn wearer(origin: &str) -> Value {
+    json!({
+        "id": "00000000-0000-4000-8000-000000000044",
+        "name": "fixture-wearer",
+        "runtime": "claude",
+        "model": "anthropic/claude-haiku-4-5",
+        "system": "You review fixtures.",
+        "updated_at": "2026-10-03T00:00:00Z",
+        "environment_id": "not-a-known-environment",
+        "skills": [
+            { "name": "inline-one", "content": "---\nname: inline-one\ndescription: one\n---\nDo one thing.\n" },
+            { "source": "acme/skills", "name": "code-review" },
+            { "source": "acme/skills" }
+        ],
+        "mcp_servers": {
+            "from-infisical": { "type": "http", "url": format!("{origin}/open-mcp"), "headers": { "Authorization": "Bearer ${FAKE_WEAR_TOKEN}" } },
+            "from-gh": { "type": "http", "url": format!("{origin}/open-mcp"), "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } },
+            "from-shell": { "command": "python3", "args": ["-c", "pass", "${SHELL_ONLY}"], "env": { "KEPT": "$${LITERAL}" } },
+            "unset": { "type": "http", "url": format!("{origin}/open-mcp"), "headers": { "X-Key": "${NOT_SET_ANYWHERE}" } },
+            "signs-in": { "type": "http", "url": format!("{origin}/oauth-mcp") },
+            "open": { "type": "http", "url": format!("{origin}/open-mcp") },
+            "connected": { "connection": "c-1" }
+        },
+        "metadata": { "managed-by": "chant" }
+    })
+}
+
+/// Every file under `dir` that holds `needle`.
+fn files_with(dir: &Path, needle: &str) -> Vec<PathBuf> {
+    let mut out = vec![];
+    let mut stack = vec![dir.to_owned()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let Ok(t) = e.file_type() else { continue };
+            if t.is_dir() {
+                stack.push(p);
+            } else if t.is_file()
+                && let Ok(bytes) = std::fs::read(&p)
+                && bytes.windows(needle.len()).any(|w| w == needle.as_bytes())
+            {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// What the fake adapter's session was opened with (its saved session).
+fn session(d: &Daemon, block: u64) -> Value {
+    let sid = d.state(block)["session_id"].as_str().unwrap().to_owned();
+    serde_json::from_str(&std::fs::read_to_string(d.sessions.join(format!("{sid}.json"))).unwrap()).unwrap()
+}
+
+fn last_reply(st: &Value) -> String {
+    entries(st).iter().rev().find(|e| e["type"] == "agent").and_then(|e| e["text"].as_str()).unwrap_or("").to_owned()
+}
+
+#[test]
+fn run_here_wears_the_agent() {
+    let dir = Scratch::new("fountain-wear");
+    let fz = Fountain::start(&dir);
+    fz.f.with(|i| i.extra = vec![wearer(&fz.origin)]);
+    let w = Wear::new(&dir);
+    let env = w.env(&dir);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let d = fz.daemon(&env);
+    let catalog = open(&d, json!({ "specs": w.specs }));
+    read(&d, catalog);
+
+    // Run here, in a folder: a Claude Code block beside the catalog.
+    let out = d.call(catalog, "run_here", json!({ "agent": "fixture-wearer", "cwd": w.work, "prompt": "hello" }));
+    let id = out["block"].as_u64().unwrap();
+    assert_eq!(out["cwd"], w.work.display().to_string());
+    assert_eq!(d.wait(id, "idle"), "done", "{}", d.state(id));
+    assert_eq!(info(&d, id)["tab"], info(&d, catalog)["tab"], "beside the catalog");
+    let st = d.state(id);
+    assert_eq!(st["label"], "Claude Code as fixture-wearer");
+    assert_eq!(st["cwd"], w.work.display().to_string());
+    let worn = &st["worn"];
+    assert_eq!(worn["agent"], "fixture-wearer");
+    assert_eq!(worn["model"], "claude-haiku-4-5");
+    assert_eq!(worn["skills"], json!(["inline-one", "code-review", "iterate-pr"]), "{worn}");
+    let servers: Vec<&str> = worn["servers"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(servers, ["from-gh", "from-infisical", "from-shell", "open"], "{worn}");
+    let vars = |n: &str| worn["servers"].as_array().unwrap().iter().find(|s| s["name"] == n).unwrap()["vars"].clone();
+    assert_eq!(vars("from-infisical"), json!(["FAKE_WEAR_TOKEN from Infisical dev/WEAR_KEY"]));
+    assert_eq!(vars("from-gh"), json!(["GITHUB_TOKEN from gh auth token"]));
+    assert_eq!(vars("from-shell"), json!(["SHELL_ONLY from shell environment"]));
+    let left: Vec<(String, String)> = worn["left_out"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["name"].as_str().unwrap().to_owned(), l["why"].as_str().unwrap().to_owned()))
+        .collect();
+    assert_eq!(left.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(), ["connected", "signs-in", "unset"], "{left:?}");
+    assert!(left[0].1.contains("Fountain connection"), "{left:?}");
+    assert!(left[1].1.starts_with("it needs an OAuth sign-in"), "{left:?}");
+    assert!(left[2].1.contains("${NOT_SET_ANYWHERE} isn't set"), "{left:?}");
+    // Infisical was asked in the checkout, mapped through the agent's
+    // environment, and for the unmapped ones as themselves in dev.
+    let asked = std::fs::read_to_string(&w.infisical_log).unwrap();
+    assert!(asked.contains(&format!("{} secrets get WEAR_KEY --env dev --path / --plain --silent", w.specs.display())));
+    assert!(asked.contains("secrets get GITHUB_TOKEN --env dev"), "{asked}");
+    assert!(!asked.contains("FAKE_WEAR_TOKEN"), "mapped, not asked as itself: {asked}");
+
+    // What the adapter's session/new got.
+    let s = session(&d, id);
+    let meta = &s["meta"];
+    let opts = &meta["claudeCode"]["options"];
+    assert_eq!(opts["settingSources"], json!([]), "the user's hooks stay out: {meta}");
+    assert_eq!(opts["model"], "claude-haiku-4-5");
+    let plugin = opts["plugins"][0]["path"].as_str().unwrap().to_owned();
+    assert_eq!(opts["plugins"][0]["type"], "local");
+    assert!(plugin.starts_with(&w.cache.join("illogical/fountain").display().to_string()), "{plugin}");
+    assert!(Path::new(&plugin).join("skills/code-review/SKILL.md").is_file());
+    assert!(Path::new(&plugin).join("skills/inline-one/SKILL.md").is_file());
+    let system = meta["systemPrompt"]["append"].as_str().unwrap();
+    assert!(system.starts_with("You are running as the Fountain agent \"fixture-wearer\", but locally"), "{system}");
+    assert!(system.ends_with("You review fixtures."));
+    let mcp = s["mcp"].as_array().unwrap();
+    let by = |n: &str| mcp.iter().find(|m| m["name"] == n).cloned().unwrap_or_default();
+    assert_eq!(by("from-infisical")["headers"], json!([{ "name": "Authorization", "value": format!("Bearer {INF}") }]));
+    assert_eq!(by("from-gh")["headers"][0]["value"], format!("Bearer {GH}"));
+    assert_eq!(by("from-shell"), json!({ "name": "from-shell", "command": "python3", "args": ["-c", "pass", SH], "env": [{ "name": "KEPT", "value": "${LITERAL}" }] }));
+    assert_eq!(by("open")["type"], "http");
+    assert!(by("illogical").is_object(), "illogical's own server too");
+    assert!(by("unset").is_null() && by("signs-in").is_null() && by("connected").is_null());
+    assert!(fz.f.with(|i| i.probes.contains(&"oauth".to_owned())), "probed");
+
+    // A known secret is on no surface: the agent says its servers back,
+    // as one that leaks what it got would.
+    d.call(id, "send", json!({ "text": "servers" }));
+    assert_eq!(d.wait(id, "idle"), "done");
+    let said = last_reply(&d.state(id));
+    assert!(said.starts_with("SERVERS ") && said.contains("<redacted>"), "{said}");
+    // An agent in the same tab reads it through MCP.
+    let config = json!({ "agent": "acp", "command": ["python3", fake()], "cwd": d.sessions, "prompt": "hello" });
+    let plain = d.open_with(json!({ "type": "agent", "split": id, "config": config }));
+    assert_eq!(d.wait(plain, "idle"), "done");
+    let read_output = agent_mcp(&d, plain, "read_output", json!({ "pane": id })).unwrap();
+    let (_, capture) = d.raw("GET", &format!("/api/panes/{id}/capture"), None);
+    assert!(capture.contains("As the Fountain agent fixture-wearer, locally. Skills: inline-one, code-review, iterate-pr."), "{capture}");
+    assert!(capture.contains("Didn't carry over: connected"), "{capture}");
+    let surfaces = [
+        ("state", d.state(id).to_string()),
+        ("block", d.raw("GET", &format!("/api/blocks/{id}"), None).1),
+        ("panes", d.raw("GET", "/api/panes", None).1),
+        ("capture", capture),
+        ("tail", d.raw("GET", &format!("/api/panes/{id}/tail"), None).1),
+        ("history", d.raw("GET", &format!("/api/history?pane={id}"), None).1),
+        ("search", d.raw("GET", "/api/search?re=fake-", None).1),
+        ("read_output", read_output.to_string()),
+        ("catalog", d.state(catalog).to_string()),
+    ];
+    for secret in [INF, GH, SH] {
+        for (what, text) in &surfaces {
+            assert!(!text.contains(secret), "{secret} in {what}: {text}");
+        }
+        // layout.json, the block's log, everything the daemon keeps; the
+        // bundle cache too.
+        assert_eq!(files_with(&d.state, secret), Vec::<PathBuf>::new(), "{secret} in the state dir");
+        assert_eq!(files_with(&w.cache, secret), Vec::<PathBuf>::new(), "{secret} in the cache");
+    }
+    // ...but the adapter did get them (its sessions dir is the fake's own).
+    assert!(!files_with(&d.sessions, INF).is_empty());
+    // The block's log has the session/new frame, its values redacted.
+    let logs = files_with(&d.state, "\"session/new\"");
+    assert!(!logs.is_empty(), "session/new is in a log");
+    for l in &logs {
+        let text = String::from_utf8_lossy(&std::fs::read(l).unwrap()).into_owned();
+        assert!(text.contains("from-infisical") && text.contains("<redacted>"), "{}", l.display());
+    }
+    // Only the name in the saved config.
+    d.wait_for("the config saved", || layout_config(&d, id)["as_fountain"] == "fixture-wearer");
+    let saved = layout_config(&d, id);
+    assert_eq!(saved["agent"], "claude");
+    assert_eq!(saved["specs"], w.specs.display().to_string());
+    assert!(saved.get("mcp_servers").is_none(), "{saved}");
+    // The catalog remembers where it ran one.
+    assert_eq!(d.state(catalog)["here"], w.work.display().to_string());
+}
+
+#[test]
+fn a_worn_agent_is_put_on_again_after_a_reboot() {
+    let dir = Scratch::new("fountain-wear-reboot");
+    let fz = Fountain::start(&dir);
+    fz.f.with(|i| i.extra = vec![wearer(&fz.origin)]);
+    let w = Wear::new(&dir);
+    let env = w.env(&dir);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let mut d = fz.daemon(&env);
+    // As `illogical agent --as` opens it.
+    let config = json!({ "agent": "claude", "as_fountain": "fixture-wearer", "specs": w.specs, "cwd": w.work, "prompt": "remember kestrel" });
+    let id = d.open_with(json!({ "type": "agent", "config": config }));
+    assert_eq!(d.wait(id, "idle"), "done", "{}", d.state(id));
+    d.stop();
+    d.start();
+    d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{id}"), None).0 == 200);
+    d.wait_for("the session", || d.state(id)["status"] == "ready");
+    let st = d.state(id);
+    assert_eq!(st["worn"]["agent"], "fixture-wearer", "put on again: {st}");
+    d.call(id, "send", json!({ "text": "recall" }));
+    assert_eq!(d.wait(id, "idle"), "done");
+    assert_eq!(last_reply(&d.state(id)), "You said kestrel.");
+    // The session reopened as the agent, with its servers.
+    let s = session(&d, id);
+    assert_eq!(s["meta"]["claudeCode"]["options"]["settingSources"], json!([]));
+    assert!(s["meta"]["systemPrompt"]["append"].as_str().unwrap().ends_with("You review fixtures."));
+    assert!(s["mcp"].as_array().unwrap().iter().any(|m| m["name"] == "from-infisical"));
+    assert_eq!(files_with(&d.state, INF), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn what_cant_be_worn_says_why() {
+    let dir = Scratch::new("fountain-wear-refused");
+    let fz = Fountain::start(&dir);
+    // The orchestrators are tagged in agent-specs.
+    fz.f.with(|i| {
+        for a in i.agents["data"].as_array_mut().unwrap() {
+            if a["name"] == "captain-picard" {
+                a["metadata"]["illogical.local"] = json!(false);
+            }
+            if a["name"] == "tech-lead" {
+                a["metadata"]["illogical.local"] = json!("false");
+            }
+        }
+    });
+    let w = Wear::new(&dir);
+    let env = w.env(&dir);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let d = fz.daemon(&env);
+    let catalog = open(&d, json!({}));
+    let st = read(&d, catalog);
+    let card = |n: &str| st["agents"].as_array().unwrap().iter().find(|c| c["name"] == n).cloned().unwrap();
+    assert_eq!(card("captain-picard")["local"], false);
+    assert_eq!(card("tech-lead")["local"], false, "the string too");
+    let panes = d.get("/api/panes").as_array().unwrap().len();
+    for (agent, says) in [("captain-picard", "for Fountain only"), ("tech-lead", "for Fountain only")] {
+        let (status, body) =
+            d.raw("POST", &format!("/api/blocks/{catalog}/call/run_here"), Some(json!({ "agent": agent })));
+        assert_eq!(status, 400, "{body}");
+        assert!(body.contains(says) && body.contains("Run on Fountain"), "{body}");
+    }
+    let codex = st["agents"].as_array().unwrap().iter().find(|c| c["runtime"] == "codex").cloned().unwrap();
+    let (_, body) =
+        d.raw("POST", &format!("/api/blocks/{catalog}/call/run_here"), Some(json!({ "agent": codex["name"] })));
+    assert!(body.contains("is a codex agent"), "{body}");
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{catalog}/call/run_here"), Some(json!({ "agent": "games", "cwd": "/nonexistent/x" })));
+    assert_eq!(status, 400);
+    assert!(body.contains("isn't a directory"), "{body}");
+    assert_eq!(d.get("/api/panes").as_array().unwrap().len(), panes, "nothing opened");
+
+    // Opened directly (`illogical agent --as`): it says why, and doesn't start.
+    let id = d.open_with(json!({ "type": "agent", "config": { "agent": "claude", "as_fountain": "captain-picard" } }));
+    d.wait_for("the refusal", || d.state(id)["status"] == "exited");
+    let st = d.state(id);
+    assert_eq!(st["attention"], "needs_input");
+    assert_eq!(st["status"], "exited");
+    assert!(st["error"].as_str().unwrap().contains("can't wear captain-picard: captain-picard is for Fountain only"), "{st}");
+    assert!(st["pid"].is_null());
+    // Not on a VM, and not for another agent.
+    let (status, _) = d.raw(
+        "POST",
+        "/api/blocks",
+        Some(json!({ "type": "agent", "config": { "agent": "codex", "as_fountain": "games" } })),
+    );
+    assert_eq!(status, 400);
+
+    // start_agent: refused up front, with the reason; opened for one that can be.
+    let plain = d.open("hello");
+    assert_eq!(d.wait(plain, "idle"), "done");
+    let err = agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hi", "as_fountain": "captain-picard" })).unwrap_err();
+    assert!(err.contains("for Fountain only"), "{err}");
+    let err =
+        agent_mcp(&d, plain, "start_agent", json!({ "agent": "codex", "prompt": "hi", "as_fountain": "games" })).unwrap_err();
+    assert!(err.contains("as_fountain is for agent claude"), "{err}");
+    let r = agent_mcp(&d, plain, "start_agent", json!({ "prompt": "hello", "as_fountain": "games", "cwd": w.work })).unwrap();
+    let games = r["block"].as_u64().unwrap();
+    assert_eq!(d.wait(games, "idle"), "done", "{}", d.state(games));
+    assert_eq!(d.state(games)["worn"]["skills"], json!(["love2d", "pixijs", "screenshots-in-prs"]));
+    d.wait_for("its config saved", || layout_config(&d, games)["as_fountain"] == "games");
 }

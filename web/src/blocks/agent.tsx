@@ -80,6 +80,11 @@ export interface AgentState {
   tokens: { total: number; last_turn: Record<string, number> | null };
   turns: number;
   allow: { tool: string; title?: string }[];
+  /** M44: the Fountain agent it wears (by name), what came along, and
+   *  what didn't. */
+  as_fountain?: string | null;
+  worn?: Worn | null;
+  wearing?: boolean;
   /** A Claude Code conversation this block opened (M33). */
   import: {
     source: "terminal" | "desktop" | "other";
@@ -92,6 +97,53 @@ export interface AgentState {
   } | null;
   entries_from: number;
   entries: Entry[];
+}
+
+interface Worn {
+  agent: string;
+  model: string | null;
+  plugin: string;
+  skills: string[];
+  skills_missing: string[];
+  servers: { name: string; kind: string; vars: string[] }[];
+  left_out: { name: string; why: string }[];
+}
+
+/** M44: what a worn Fountain agent brought (its skills and MCP servers),
+ *  and what didn't carry over. */
+function WornBar({ s }: { s: AgentState }) {
+  if (!s.as_fountain) return null;
+  const w = s.worn;
+  if (!w) {
+    return (
+      <div class="agent-worn" data-worn={s.as_fountain}>
+        <span class="agent-worn-as">as {s.as_fountain}</span> <span class="dim">{s.wearing ? "putting it on…" : ""}</span>
+      </div>
+    );
+  }
+  const missing = [...w.left_out.map((l) => `${l.name}: ${l.why}`), ...w.skills_missing.map((m) => `skill ${m}`)];
+  return (
+    <div class="agent-worn" data-worn={w.agent}>
+      <span class="agent-worn-as" title={`Fountain's ${w.agent}, worn here${w.model ? ` (${w.model})` : ""}`}>as {w.agent}</span>
+      <span class="ws-tags">
+        {w.skills.map((k) => (
+          <span key={`s-${k}`} class="ws-tag" title={`skill (${w.plugin}:${k})`} data-worn-skill={k}>
+            {k}
+          </span>
+        ))}
+        {w.servers.map((m) => (
+          <span key={`m-${m.name}`} class="ws-tag fountain-mcp" title={m.vars.length ? m.vars.join("\n") : "MCP server"} data-worn-server={m.name}>
+            ⚙ {m.name}
+          </span>
+        ))}
+      </span>
+      {missing.length > 0 && (
+        <span class="agent-worn-missing" data-worn-missing title={missing.join("\n")}>
+          didn't carry over: {[...w.left_out.map((l) => l.name), ...w.skills_missing.map((m) => m.split(" ")[0])].join(", ")}
+        </span>
+      )}
+    </div>
+  );
 }
 
 const STATUS: Record<AgentState["status"], string> = {
@@ -342,6 +394,7 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
           </button>
         )}
       </div>
+      <WornBar s={s} />
       {opened && (
         <div class="agent-import">
           A Claude Code conversation from {s.import!.source === "desktop" ? "the desktop app" : s.import!.source === "terminal" ? "a terminal" : "elsewhere"}

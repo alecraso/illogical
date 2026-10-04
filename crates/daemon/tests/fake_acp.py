@@ -22,6 +22,8 @@ Prompts:
                  the accept
   codex ask      Codex's plan-mode question form
   meta           says the _meta its session was last opened or forked with
+  servers        says the MCP servers its session got, values and all (as
+                 an agent that leaks what it was given would)
   model          says the model set_config_option chose
   mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
                  one, as illogical passes local agents, M16; or a stdio one,
@@ -442,6 +444,8 @@ def prompt(mid, p):
         msg("MCP " + json.dumps(mcp_call(s.get("mcp"), tool, args)))
     elif text == "meta":
         msg("META " + json.dumps(s.get("meta"), sort_keys=True))
+    elif text == "servers":
+        msg("SERVERS " + json.dumps(s.get("mcp"), sort_keys=True))
     elif text == "model":
         msg(f"Model: {s.get('model', 'default')}")
     elif text == "crash":
@@ -472,7 +476,7 @@ def handle(m):
             "agentInfo": {"name": "fake-acp", "version": "1"}, "authMethods": []}})
     elif method == "session/new":
         sid = f"fake-{os.getpid()}-{int(time.time() * 1000)}"
-        save(sid, {"updates": [], "cwd": p.get("cwd"), "mcp": p.get("mcpServers")})
+        save(sid, {"updates": [], "cwd": p.get("cwd"), "mcp": p.get("mcpServers"), "meta": p.get("_meta")})
         with open(os.path.join(DIR, f"mcp-{sid}.json"), "w") as f:
             json.dump(p.get("mcpServers"), f)
         send({"id": mid, "result": {"sessionId": sid}})

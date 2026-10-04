@@ -277,6 +277,10 @@ pub struct StartAgentArgs {
     /// For fountain: the agent's name or id.
     #[serde(default)]
     pub fountain_agent: Option<String>,
+    /// For claude: wear this Fountain agent (name or id), on this host: its
+    /// system prompt, skills and MCP servers (list_agents lists them).
+    #[serde(default)]
+    pub as_fountain: Option<String>,
     /// A model to switch to (`haiku`, ...).
     #[serde(default)]
     pub model: Option<String>,
@@ -688,7 +692,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "start_agent",
             title: "Start an agent",
-            description: "Start an agent (Claude Code, Codex, a Fountain agent, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user.",
+            description: "Start an agent (Claude Code, Codex, a Fountain agent, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user. {agent: claude, as_fountain: NAME} is a Claude Code here wearing one of the user's Fountain agents (its prompt, skills and MCP servers).",
             schema: schema_for_type::<StartAgentArgs>,
             read_only: false,
             destructive: false,
@@ -2139,6 +2143,18 @@ impl<'a> Call<'a> {
             Some(b) => self.readable(b).await?.info.host,
             None => None,
         };
+        if let Some(name) = a.as_fountain.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            // M44: it runs on this host with the owner's secrets.
+            if !matches!(a.agent, AgentKind::Claude) {
+                return Err("as_fountain is for agent claude: a Claude Code wears the Fountain agent".into());
+            }
+            if a.vm || host.is_some() {
+                return Err("a worn Fountain agent runs on this host, not on a machine".into());
+            }
+            // Refused up front, with the reason (an orchestrator, a codex agent).
+            let runner = crate::fountain::local_runner(&self.app.mux.shell_env).await;
+            crate::fountain::wear::find(&runner, None, name).await?;
+        }
         if host.is_some() {
             self.share_my_machine().await;
         }
@@ -2154,6 +2170,9 @@ impl<'a> Call<'a> {
         }
         if let Some(f) = &a.fountain_agent {
             config["fountain_agent"] = json!(f);
+        }
+        if let Some(f) = a.as_fountain.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            config["as_fountain"] = json!(f);
         }
         if let Some(m) = &a.model {
             config["model"] = json!(m);
