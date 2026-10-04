@@ -250,14 +250,33 @@ test("a presigned invite: someone already in a team joins another in one click",
   // Carol has her own team already.
   const carol = await person(browser, "carol");
   await carol.evaluate(() => window.__illogical.control!.createTeam("Carols"));
-  // Alice makes a presigned link (the default) for someone who watches.
+  // A team machine that hasn't said it understands presigned invites (an
+  // older daemon; this one joined but never ran): Alice's link asks her
+  // first, and says why.
+  const old = temp("oldbox");
+  const j = await startJoin("oldbox", old, ["--team", team]);
+  await alice.goto(j.link);
+  await alice.locator("[data-approve-join]").click();
+  expect(await j.exited).toBe(0);
   await alice.goto("/");
   await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
-  await alice.evaluate(() => window.dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
   const section = alice.locator(`[data-team="${team}"]`);
+  // The panel opens once the page's control overlay is listening.
+  await expect(async () => {
+    await alice.evaluate(() => window.dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+    await expect(section).toBeVisible({ timeout: 500 });
+  }).toPass({ timeout: 15_000 });
   await section.locator(`[data-invite-role="${team}"]`).selectOption("viewer");
   await expect(section.locator("[data-invite-ask-first]")).not.toBeChecked();
   await alice.locator(`[data-invite="${team}"]`).click();
+  await expect(section.locator("[data-invite-why]")).toContainText("oldbox needs an update before one-click invites work in this team");
+  await expect(section).toContainText("Anyone with this link can ask to join");
+  // Once it's gone, presigned links are back (buildbox understands them).
+  const left = spawn("../target/debug/illogicald", ["leave", "--state-dir", old], { stdio: "ignore" });
+  expect(await new Promise((r) => left.on("exit", r))).toBe(0);
+  // Alice makes a presigned link (the default) for someone who watches.
+  await alice.locator(`[data-invite="${team}"]`).click();
+  await expect(section.locator("[data-invite-why]")).toHaveCount(0);
   await expect(section).toContainText("One person can join with this link, within a day");
   const link = (await section.locator("[data-invite-link]").textContent())!;
   expect(link).toMatch(/#invite=[0-9a-f]{16}\.[0-9a-f]{64}$/);

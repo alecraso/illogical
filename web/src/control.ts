@@ -734,14 +734,27 @@ export class ControlSession {
    * device signs it now, and whoever opens it is in as soon as they accept.
    * The one-time key's seed goes only into the link's fragment. */
   async invite(team: string, role: TeamRole, askFirst = false): Promise<string> {
-    if (askFirst || role === "owner") {
+    return (await this.makeInvite(team, role, askFirst)).link;
+  }
+
+  /** As `invite`, saying whether the link asks an owner first, and why
+   * when it does though it wasn't asked to: control makes a presigned one
+   * only once every machine checking the team's rosters understands it. */
+  async makeInvite(team: string, role: TeamRole, askFirst = false): Promise<{ link: string; asks: boolean; why?: string }> {
+    const old = async (why?: string) => {
       const r = await api<{ link: string }>(`/api/teams/${team}/invites`, { role });
-      return r.link;
-    }
+      return { link: r.link, asks: true, why };
+    };
+    if (askFirst || role === "owner") return old();
     const { seed, key } = await newInviteKey();
     const presigned = await signInvite({ team, role, expires: Date.now() + PRESIGNED_TTL_MS, key }, this.keys);
-    await api(`/api/teams/${team}/invites`, { role, presigned });
-    return `${location.origin}/#invite=${team}.${seed}`;
+    try {
+      await api(`/api/teams/${team}/invites`, { role, presigned });
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 409) return old(e.message);
+      throw e;
+    }
+    return { link: `${location.origin}/#invite=${team}.${seed}`, asks: false };
   }
 
   /** What a presigned invite link says, as control has it. */

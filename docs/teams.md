@@ -52,6 +52,8 @@ A team shares its machines with its members.
      carries a one-time key that never reaches control. The person's own
      device adds them to the member list with that key, so control still
      can't add anyone by itself ([control-e2e.md](control-e2e.md)).
+   - If a machine in the team runs an older illogical, the link asks you
+     first instead, and says which machine to update.
    - **Ask me first** (and every owner invite) makes the old kind of link:
      it lasts a week, anyone with it can ask to join, and each request
      waits for an owner.
