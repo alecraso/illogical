@@ -63,6 +63,12 @@
   .hero .row { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: end; }
   .hero .row > * { min-width: 0; }
   .hero p.lede { font-size: clamp(18px, 2.2vw, 21px); color: var(--body); margin: 0; max-width: 34ch; }
+  .dl { display: inline-flex; flex-direction: column; gap: 3px; padding: 14px 22px 13px; border-radius: 6px; background: var(--ink); color: var(--void); text-decoration: none; box-shadow: 0 0 28px color-mix(in srgb, var(--k-agent) 35%, transparent); transition: box-shadow .2s, transform .2s; }
+  .dl:hover { box-shadow: 0 0 40px color-mix(in srgb, var(--k-agent) 55%, transparent); transform: translateY(-1px); }
+  .dl b { font: 800 24px/1 var(--f-display); text-transform: uppercase; letter-spacing: 0.01em; }
+  .dl span { font: 500 12px/1 var(--f-mono); color: #3a4152; }
+  .dl-alt { margin-top: 10px; }
+  .dl-alt a { color: var(--ink); }
   .install { display: flex; align-items: center; gap: 10px; background: rgba(11,14,22,0.9); border: 1px solid var(--line); border-radius: 6px; padding: 10px 10px 10px 16px; position: relative; }
   .install::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--k-shell); }
   .install code { min-width: 0; flex: 1; background: none; padding: 0; font-size: 14px; overflow-x: auto; white-space: nowrap; }
@@ -237,11 +243,9 @@
     <div class="row">
       <p class="lede">See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.</p>
       <div>
-        <div class="install">
-          <code id="oneliner">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</code>
-          <button class="copy" type="button" data-copy="oneliner">Copy</button>
-        </div>
-        <p class="small">free and open source · linux x86_64, arm64 · macos apple silicon</p>
+        <a class="dl" id="dl-main" href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip"><b>Download for macOS</b><span>Apple silicon · free</span></a>
+        <p class="small dl-alt" id="dl-alt">Linux: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a> · <a href="#install">servers, without a screen</a></p>
+        <p class="small">free and open source · the app sets up everything it needs</p>
       </div>
     </div>
   </div>
@@ -425,17 +429,39 @@
     </section>
 
     <section class="get" id="install">
-      <p class="meta"><i style="background:var(--k-shell)"></i>your machine · 3 ways</p>
-      <h2 class="cl">Install illogical.</h2>
+      <p class="meta"><i style="background:var(--k-shell)"></i>your machine · the desktop app</p>
+      <h2 class="cl">Get illogical.</h2>
       <div class="ways">
+        <div class="card" style="--c: var(--k-agent)">
+          <div class="ch"><b>macOS</b></div>
+          <div class="cm">apple silicon · .zip</div>
+          <p>Unzip it and drag <em>illogical</em> to Applications. It isn't notarized yet: the first time, open it, then choose <em>Open Anyway</em> in System Settings › Privacy &amp; Security.</p>
+          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip" data-dl="mac">Download for macOS</a></div>
+        </div>
+        <div class="card" style="--c: var(--k-agent)">
+          <div class="ch"><b>Linux</b></div>
+          <div class="cm">x86_64 · AppImage · .deb</div>
+          <p>The AppImage runs as is (<code>chmod +x</code> it first); the .deb puts it in your apps. It uses WebKitGTK, which desktops have.</p>
+          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage" data-dl="linux">AppImage</a><a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a></div>
+        </div>
         <div class="card" style="--c: var(--k-shell)">
+          <div class="ch"><b>It sets itself up</b></div>
+          <div class="cm">service · cli · getting started</div>
+          <p>The first time it opens, the app installs <code>illogicald</code>, the background service that keeps terminals running when windows close, and the <code>illogical</code> CLI. Then <em>Getting started</em> puts it on your phone, in the cloud and in Claude Code: a click each.</p>
+          <div class="ca"><a class="ghost" href="https://github.com/arugula-salad/illogical/releases">All releases</a></div>
+        </div>
+      </div>
+      <p class="meta then-meta"><i style="background:var(--k-server)"></i>servers and machines without a screen</p>
+      <p class="after">No desktop? Install the service from a terminal, then open it from a browser on your phone or another machine.</p>
+      <div class="ways">
+        <div class="card" style="--c: var(--k-server)">
           <div class="ch"><b>One command</b></div>
           <div class="cm">shell · linux · macos</div>
           <pre id="way1">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</pre>
           <p>Installs illogical and starts its background service. Run again to upgrade.</p>
           <div class="ca"><button type="button" class="pri copy" data-copy="way1">Copy</button></div>
         </div>
-        <div class="card" style="--c: var(--k-shell)">
+        <div class="card" style="--c: var(--k-server)">
           <div class="ch"><b>Homebrew</b></div>
           <div class="cm">brew · linux · macos</div>
           <pre id="way2">brew tap arugula-salad/tap
@@ -443,7 +469,7 @@ brew install illogical
 illogicald install</pre>
           <div class="ca"><button type="button" class="pri copy" data-copy="way2">Copy</button></div>
         </div>
-        <div class="card" style="--c: var(--k-shell)">
+        <div class="card" style="--c: var(--k-server)">
           <div class="ch"><b>From source</b></div>
           <div class="cm">rustup · mise · just · node · pnpm</div>
           <pre id="way3">git clone https://github.com/arugula-salad/illogical
@@ -453,31 +479,7 @@ just bootstrap && just install</pre>
           <div class="ca"><button type="button" class="pri copy" data-copy="way3">Copy</button><a class="ghost" href="https://github.com/arugula-salad/illogical/blob/main/docs/development.md#build-from-source">Details</a></div>
         </div>
       </div>
-      <p class="meta then-meta"><i style="background:var(--k-agent)"></i>then</p>
-      <p class="after">Open <a href="http://127.0.0.1:7681"><code>http://127.0.0.1:7681</code></a> on that machine. From there:</p>
-      <div class="ways">
-        <div class="card" style="--c: var(--k-shell)">
-          <div class="ch"><b>On your phone</b></div>
-          <div class="cm">tailscale · https</div>
-          <pre id="next-phone">tailscale serve --bg --https=443 http://127.0.0.1:7681</pre>
-          <p>Over <a href="https://tailscale.com">Tailscale</a>, then open <code>https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code> and add it to the home screen. The first time, turn on HTTPS certificates in the tailnet's <a href="https://login.tailscale.com/admin/dns">DNS settings</a>.</p>
-          <div class="ca"><button type="button" class="pri copy" data-copy="next-phone">Copy</button></div>
-        </div>
-        <div class="card" style="--c: var(--k-shell)">
-          <div class="ch"><b>Anywhere, or with your team</b></div>
-          <div class="cm">illogical control · teams</div>
-          <pre id="next-join">illogicald join https://control.illogical.widgets.wtf</pre>
-          <p>Join illogical control to reach it from any browser, no tailnet needed. Make a team there, invite people, and pick the team when you approve a machine.</p>
-          <div class="ca"><button type="button" class="pri copy" data-copy="next-join">Copy</button><a class="ghost" href="https://github.com/arugula-salad/illogical/blob/main/docs/teams.md">Your machines, your team</a></div>
-        </div>
-        <div class="card" style="--c: var(--k-shell)">
-          <div class="ch"><b>Agents &amp; Claude Code</b></div>
-          <div class="cm">mcp · start an agent</div>
-          <pre id="next-mcp">claude mcp add illogical -- illogical mcp</pre>
-          <p>Builds and dev servers in panes you can watch and take over. Or <em>Start an agent…</em> in any pane's menu.</p>
-          <div class="ca"><button type="button" class="pri copy" data-copy="next-mcp">Copy</button><a class="ghost" href="https://github.com/arugula-salad/illogical#quickstart">Allowlist and more</a></div>
-        </div>
-      </div>
+      <p class="after">On a server, Getting started's steps are commands: <code>tailscale serve --bg --https=443 http://127.0.0.1:7681</code> for your phone, <code>illogicald join https://control.illogical.widgets.wtf</code> for the cloud, and <code>claude mcp add illogical -- illogical mcp</code> for Claude Code.</p>
       <p class="after">The <a href="https://github.com/arugula-salad/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://github.com/arugula-salad/illogical/blob/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
 
       <div class="card done runs">
@@ -512,6 +514,15 @@ just bootstrap && just install</pre>
       }
       setTimeout(() => (b.textContent = "Copy"), 1600);
     });
+  }
+
+  // The hero's button is for the visitor's own system: macOS unless it's Linux.
+  if (/Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)) {
+    const main = document.getElementById("dl-main");
+    main.href = "https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage";
+    main.innerHTML = "<b>Download for Linux</b><span>x86_64 AppImage · free</span>";
+    document.getElementById("dl-alt").innerHTML =
+      'Also: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip">macOS</a> · <a href="#install">servers, without a screen</a>';
   }
 
   const live = document.documentElement.classList.contains("live");

@@ -72,11 +72,57 @@ dist:
     done
     (cd dist && (sha256sum *.tar.gz 2>/dev/null || shasum -a 256 *.tar.gz) > SHA256SUMS)
 
+# The desktop app (crates/desktop, M46), carrying this build's illogicald
+# and illogical: run after `just static x86_64` (Linux; the static binaries
+# run anywhere) or `just build` (macOS). Writes dist/illogical-desktop-*,
+# named without the version so the site's download links always find the
+# latest release.
+desktop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "^2" --locked
+    case "$(uname -s)" in
+      Linux) src={{target_dir}}/x86_64-unknown-linux-musl/release; bundles=deb,appimage ;;
+      Darwin) src={{target_dir}}/release; bundles=app ;;
+    esac
+    cd crates/desktop
+    host=$(rustc -vV | sed -n 's/^host: //p')
+    mkdir -p binaries
+    for b in illogicald illogical; do install -m 755 "$src/$b" "binaries/$b-$host"; done
+    cargo tauri build --bundles "$bundles"
+    out=${CARGO_TARGET_DIR:-$PWD/target}/release/bundle
+    dist={{justfile_directory()}}/dist
+    mkdir -p "$dist"
+    case "$(uname -s)" in
+      Linux)
+        cp "$out"/deb/*.deb "$dist/illogical-desktop-linux-x86_64.deb"
+        cp "$out"/appimage/*.AppImage "$dist/illogical-desktop-linux-x86_64.AppImage" ;;
+      Darwin)
+        # A zip of the app: ditto keeps its signature and symlinks.
+        rm -f "$dist/illogical-desktop-macos-arm64.zip"
+        ditto -c -k --keepParent "$out/macos/illogical.app" "$dist/illogical-desktop-macos-arm64.zip" ;;
+    esac
+    ls -la "$dist"/illogical-desktop-*
+
+# Lint the desktop app (its own workspace) without building its sidecars.
+desktop-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd crates/desktop
+    host=$(rustc -vV | sed -n 's/^host: //p')
+    mkdir -p binaries
+    # tauri-build wants the sidecars to exist; empty stand-ins do for a lint.
+    for b in illogicald illogical; do [ -e "binaries/$b-$host" ] || : > "binaries/$b-$host"; done
+    cargo fmt --check
+    cargo clippy -- -D warnings
+
 # THIRD_PARTY.md: notices for the Rust crates (cargo-about) and the npm
-# packages bundled into the web client.
+# packages bundled into the web client; crates/desktop/THIRD_PARTY.md for
+# the desktop app's own crates (its about.toml also accepts MPL-2.0).
 notices:
     cargo about generate about.hbs > THIRD_PARTY.md
     scripts/web-notices >> THIRD_PARTY.md
+    cd crates/desktop && cargo about generate -c about.toml ../../about.hbs > THIRD_PARTY.md
 
 # All tests.
 test: web

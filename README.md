@@ -56,6 +56,18 @@ your terminals.
 
 ## Install
 
+**The desktop app** (macOS on Apple silicon, Linux x86_64), from
+[illogical.widgets.wtf](https://illogical.widgets.wtf) or the
+[latest release](https://github.com/arugula-salad/illogical/releases/latest):
+`illogical-desktop-macos-arm64.zip`, `illogical-desktop-linux-x86_64.AppImage`
+or `.deb`. The first time it opens it installs `illogicald` and `illogical` in
+`~/.local/bin` and starts the daemon as a service, then *Getting started*
+sets up your phone, the cloud and Claude Code, a click each. The macOS app
+isn't notarized yet: the first time, open it, then choose *Open Anyway* in
+System Settings › Privacy & Security.
+
+**Servers and machines without a screen:**
+
 ```
 curl -fsSL https://illogical.widgets.wtf/install.sh | sh
 ```

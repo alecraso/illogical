@@ -20,7 +20,7 @@ ensure_release() {
   local tag=$1
   gh release view "$tag" -R "$repo" >/dev/null 2>&1 && return
   gh release create "$tag" -R "$repo" --verify-tag --title "illogical ${tag#v}" \
-    --notes "Install: curl -fsSL https://illogical.widgets.wtf/install.sh | sh" >/dev/null 2>&1 \
+    --notes "Download the desktop app at https://illogical.widgets.wtf (it installs the daemon). Servers and headless machines: curl -fsSL https://illogical.widgets.wtf/install.sh | sh" >/dev/null 2>&1 \
     || gh release view "$tag" -R "$repo" >/dev/null
 }
 
@@ -30,6 +30,9 @@ case "${1:-}" in
   check-version)
     v=$(version)
     [ "$2" = "v$v" ] || { echo "tag $2 doesn't match the workspace version $v" >&2; exit 1; }
+    # The desktop app is its own workspace: its version is kept in step.
+    d=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
+    [ "$d" = "$v" ] || { echo "crates/desktop is $d, not $v: bump it too" >&2; exit 1; }
     ;;
   upload)
     tag=$2; shift 2
@@ -40,10 +43,12 @@ case "${1:-}" in
   sums)
     ensure_release "$2"
     dir=$(mktemp -d)
-    gh release download "$2" -R "$repo" -p '*.tar.gz' -D "$dir"
+    gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-desktop-*' -D "$dir"
     n=$(find "$dir" -name "*.tar.gz" | wc -l | tr -d " ")
     [ "$n" = 3 ] || { echo "expected 3 tarballs, found $n" >&2; exit 1; }
-    (cd "$dir" && sha256sum -- *.tar.gz > SHA256SUMS && cat SHA256SUMS)
+    d=$(find "$dir" -name "illogical-desktop-*" | wc -l | tr -d " ")
+    [ "$d" = 3 ] || { echo "expected 3 desktop downloads (deb, AppImage, macOS zip), found $d" >&2; exit 1; }
+    (cd "$dir" && sha256sum -- *.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
     ;;
   homebrew)

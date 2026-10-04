@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "illogical",
-  "version": "0.13.0",
   "identifier": "wtf.widgets.illogical",
   "build": {
     "frontendDist": "dist"
@@ -43,6 +42,13 @@
     "externalBin": [
       "binaries/illogicald",
       "binaries/illogical"
-    ]
+    ],
+    "resources": {
+      "THIRD_PARTY.md": "THIRD_PARTY.md",
+      "../../THIRD_PARTY.md": "THIRD_PARTY-daemon.md",
+      "../../LICENSE-MIT": "LICENSE-MIT",
+      "../../LICENSE-APACHE": "LICENSE-APACHE"
+    },
+    "copyright": "MIT OR Apache-2.0"
   }
 }

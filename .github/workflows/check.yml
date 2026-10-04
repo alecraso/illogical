@@ -17,10 +17,12 @@ jobs:
       - run: just bootstrap
       - run: just check
       - run: just check-macos
+      - name: The desktop app
+        run: just desktop-check
       - name: install.sh
         run: shellcheck -s sh scripts/install.sh
       - name: THIRD_PARTY.md is current
-        run: just notices && git diff --exit-code THIRD_PARTY.md
+        run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
       - name: No secrets
         run: gitleaks git --no-banner --redact .
 

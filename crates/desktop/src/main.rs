@@ -26,7 +26,10 @@ use std::{
     collections::HashMap,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::PathBuf,
-    sync::{Mutex, OnceLock, atomic::{AtomicUsize, Ordering}},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -90,6 +93,15 @@ fn bundled(name: &str) -> Option<PathBuf> {
     Some(exe.parent()?.join(name)).filter(|p| p.is_file())
 }
 
+/// macOS: a downloaded app's files carry the quarantine flag, and a copy
+/// out of the bundle keeps it, which can stop launchd from running the
+/// daemon. The person already allowed the app; clear it on what we copy.
+fn unquarantine(path: &std::path::Path) {
+    if cfg!(target_os = "macos") {
+        let _ = std::process::Command::new("xattr").args(["-d", "com.apple.quarantine"]).arg(path).output();
+    }
+}
+
 /// The bundled CLI into `~/.local/bin`, when no `illogical` is installed.
 fn install_cli() -> Option<PathBuf> {
     if installed("illogical").is_some() {
@@ -100,6 +112,7 @@ fn install_cli() -> Option<PathBuf> {
     std::fs::create_dir_all(&dir).ok()?;
     let dst = dir.join("illogical");
     std::fs::copy(&src, &dst).ok()?;
+    unquarantine(&dst);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -116,9 +129,20 @@ fn ensure_daemon() -> Result<(), String> {
         return Ok(());
     }
     let Some(bin) = installed("illogicald").or_else(|| bundled("illogicald")) else {
-        return Err(format!("Nothing answers at {}, illogicald isn't installed, and this app doesn't carry one.", addr()));
+        return Err(format!(
+            "Nothing answers at {}, illogicald isn't installed, and this app doesn't carry one.",
+            addr()
+        ));
     };
-    let out = std::process::Command::new(&bin).arg("install").output().map_err(|e| format!("{}: {e}", bin.display()))?;
+    let out =
+        std::process::Command::new(&bin).arg("install").output().map_err(|e| format!("{}: {e}", bin.display()))?;
+    // `install` copied itself to ~/.local/bin (and restarted the service).
+    if let Some(home) = std::env::var_os("HOME") {
+        let copied = PathBuf::from(home).join(".local/bin/illogicald");
+        if copied != bin {
+            unquarantine(&copied);
+        }
+    }
     let cli = install_cli();
     for _ in 0..60 {
         if reachable() {
@@ -141,11 +165,7 @@ fn ensure_daemon() -> Result<(), String> {
 /// The daemon's page when it answers; otherwise the setup page, which
 /// installs or starts it (`retry`) and then goes there.
 fn target() -> WebviewUrl {
-    if reachable() {
-        WebviewUrl::External(page().parse().unwrap())
-    } else {
-        WebviewUrl::App("index.html".into())
-    }
+    if reachable() { WebviewUrl::External(page().parse().unwrap()) } else { WebviewUrl::App("index.html".into()) }
 }
 
 /// The daemon's page and the app's own pages stay in the window.
@@ -296,7 +316,11 @@ fn set_count(app: &AppHandle, count: usize) {
             let _ = w.set_badge_count(if count == 0 { None } else { Some(count as i64) });
         }
         if let Some(tray) = app2.tray_by_id("illogical") {
-            let _ = tray.set_tooltip(Some(if count == 0 { "illogical".to_string() } else { format!("illogical: {count} need you") }));
+            let _ = tray.set_tooltip(Some(if count == 0 {
+                "illogical".to_string()
+            } else {
+                format!("illogical: {count} need you")
+            }));
             let _ = tray.set_title(Some(if count == 0 { String::new() } else { count.to_string() }));
         }
     });
@@ -335,13 +359,13 @@ fn watch_once(app: &AppHandle) -> anyhow::Result<()> {
         }
         let Some(state) = state.as_ref() else { continue };
         let now: HashMap<u32, bool> =
-            state.panes.iter().map(|p| (u32::from(p.id), p.attention == Attention::NeedsInput)).collect();
+            state.panes.iter().map(|p| (p.id, p.attention == Attention::NeedsInput)).collect();
         if let Some(before) = &seen {
             // ILLOGICAL_NOTIFY_FOCUSED=1 notifies even with a window focused (for testing).
             let focused = std::env::var_os("ILLOGICAL_NOTIFY_FOCUSED").is_none()
                 && app.webview_windows().values().any(|w| w.is_focused().unwrap_or(false));
             for p in &state.panes {
-                let id = u32::from(p.id);
+                let id = p.id;
                 if now[&id] && !before.get(&id).copied().unwrap_or(false) && !focused {
                     let what = p
                         .reason
@@ -370,7 +394,8 @@ fn main() {
                 // Edit only (copy, paste, select all, which WKWebView needs
                 // a menu for): Tauri's default menu takes Cmd-W/Q/H/M.
                 use tauri::menu::{PredefinedMenuItem, Submenu};
-                let app_menu = Submenu::with_items(app, "illogical", true, &[&PredefinedMenuItem::about(app, None, None)?])?;
+                let app_menu =
+                    Submenu::with_items(app, "illogical", true, &[&PredefinedMenuItem::about(app, None, None)?])?;
                 let edit = Submenu::with_items(
                     app,
                     "Edit",

@@ -1,0 +1,4 @@
+# Tauri 2 needs a newer Rust than the main workspace (macOS runners default
+# to an older one); rustup fetches this when the app builds.
+[toolchain]
+channel = "1.98"
