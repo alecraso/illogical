@@ -1,0 +1,33 @@
+[package]
+name = "illogical-desktop"
+version = "0.13.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "illogical's desktop app: the web client in a native window, with native notifications"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+illogical-proto = { path = "../proto" }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tungstenite = "0.30"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# For click handling, which tauri-plugin-notification doesn't expose on desktop.
+notify-rust = "4"
+gtk = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6"
+
+# Its own workspace, out of the main build: Tauri needs WebKitGTK headers
+# that CI's runners don't have (M46).
+[workspace]
+
+[profile.release]
+strip = true
+lto = "thin"

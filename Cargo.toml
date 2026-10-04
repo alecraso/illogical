@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["vendor/libghostty-vt-sys"]
+exclude = ["vendor/libghostty-vt-sys", "crates/desktop"]
 
 # libghostty-vt-sys with Ghostty patched at build time (M9): see
 # vendor/libghostty-vt-sys/patches.

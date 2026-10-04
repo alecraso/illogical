@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>illogical</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; height: 100vh; display: grid; place-items: center; background: #1e1e2e; color: #cdd6f4; font: 14px system-ui, sans-serif; }
+  main { max-width: 34rem; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { line-height: 1.5; color: #bac2de; }
+  code { background: #11111b; padding: 2px 6px; border-radius: 4px; }
+  pre { background: #11111b; padding: 10px; border-radius: 6px; white-space: pre-wrap; color: #a6adc8; }
+  button { background: #cba6f7; color: #1e1e2e; border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Setting up illogical</h1>
+  <p>The app shows <code>illogicald</code>, the daemon on this machine that keeps your terminals running when
+    windows close. It isn't answering, so the app is starting it, or installing the copy it carries
+    (to <code>~/.local/bin</code>, as a service that starts at login).</p>
+  <pre id="why">…</pre>
+  <button id="retry" hidden>Retry</button>
+</main>
+<script>
+  const invoke = window.__TAURI__.core.invoke;
+  const why = document.getElementById("why");
+  const button = document.getElementById("retry");
+  const go = async () => {
+    button.hidden = true;
+    why.textContent = await invoke("daemon_status");
+    try {
+      await invoke("retry");
+    } catch (e) {
+      // Stays here: say why, and offer another go.
+      why.textContent = String(e);
+      button.hidden = false;
+    }
+  };
+  button.onclick = go;
+  go();
+</script>
+</body>
+</html>
