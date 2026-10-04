@@ -30,6 +30,7 @@
 pub mod api;
 pub mod catalog;
 pub mod login;
+pub mod wear;
 
 use std::{
     collections::{BTreeMap, HashMap},

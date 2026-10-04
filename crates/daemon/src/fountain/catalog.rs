@@ -77,12 +77,17 @@ pub fn source(a: &Agent) -> (Source, Option<String>) {
     (Source::Hand, None)
 }
 
-/// `metadata.illogical.local` (flat or nested): `false` says it's for
-/// Fountain only, not to be worn here (M44).
+/// `metadata.illogical.local` (flat or nested): `false` (or `"false"`, as
+/// some metadata keeps every value a string) says it's for Fountain only,
+/// not to be worn here (M44).
 pub fn local_ok(a: &Agent) -> bool {
     let flat = a.metadata.get("illogical.local");
     let nested = a.metadata.get("illogical").and_then(|v| v.get("local"));
-    !matches!(flat.or(nested), Some(Value::Bool(false)))
+    match flat.or(nested) {
+        Some(Value::Bool(false)) => false,
+        Some(Value::String(s)) => !s.trim().eq_ignore_ascii_case("false"),
+        _ => true,
+    }
 }
 
 /// How a sandbox provider is named on a chip (null: Fountain's default).
@@ -422,6 +427,11 @@ mod tests {
         picard.metadata.remove("illogical.local");
         picard.metadata.insert("illogical".into(), json!({ "local": false }));
         assert!(!card(&picard, &envs).local);
+        picard.metadata.remove("illogical");
+        picard.metadata.insert("illogical.local".into(), json!("false"));
+        assert!(!card(&picard, &envs).local, "as a string too");
+        picard.metadata.insert("illogical.local".into(), json!("true"));
+        assert!(card(&picard, &envs).local);
     }
 
     #[test]

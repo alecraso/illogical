@@ -74,6 +74,7 @@ use self::{
 };
 use crate::{
     block::{Block, BlockCtx, no_method},
+    review::Runner,
     store::{Event, PaneLog, now_ms},
 };
 
@@ -306,6 +307,11 @@ struct Inner {
     /// Its adapter isn't installed, or has no Node (#111): what to show
     /// (`adapters::Status::json`), until it starts.
     adapter: Option<Value>,
+    /// M44: the Fountain agent it wears, once put on (in memory only: its
+    /// MCP servers' values may be secrets). Put on again after a restart.
+    worn: Option<Arc<crate::fountain::wear::Worn>>,
+    /// Putting it on now.
+    wearing: bool,
 }
 
 enum Msg {
@@ -368,6 +374,8 @@ impl Inner {
             follow: Default::default(),
             config_options: Value::Null,
             adapter: None,
+            worn: None,
+            wearing: false,
         }
     }
 
@@ -401,6 +409,12 @@ impl Inner {
     /// agent (it runs in Fountain's sandbox).
     fn servers(&self, ctx: &BlockCtx) -> Vec<Value> {
         let mut list = self.cfg.mcp_servers.clone();
+        // M44: a worn Fountain agent's, values resolved.
+        if let Some(w) = &self.worn {
+            let extra: Vec<Value> =
+                w.servers.iter().filter(|s| !list.iter().any(|o| o["name"] == s["name"])).cloned().collect();
+            list.extend(extra);
+        }
         let Some(link) = &ctx.mcp else { return list };
         if self.cfg.def.agent == Kind::Fountain || list.iter().any(|s| s["name"] == crate::mcp::SERVER_NAME) {
             return list;
@@ -430,7 +444,8 @@ impl Inner {
 
     /// Send a frame: log it, account for it, then write it.
     fn out(&mut self, frame: Value) {
-        self.write_log("out", &redacted(&frame));
+        let secrets = self.worn.as_ref().map(|w| w.secrets.as_slice()).unwrap_or_default();
+        self.write_log("out", &redacted(&frame, secrets));
         self.on_out(&frame, now_ms());
         if let Some(link) = &self.link {
             link.send(frame.to_string().into_bytes());
@@ -975,6 +990,10 @@ impl Inner {
             "turns": self.turns.len(),
             "recent_turns": self.turns.iter().rev().take(20).collect::<Vec<_>>(),
             "allow": self.cfg.allow,
+            // M44: what it wears (nothing secret), or that it's putting it on.
+            "as_fountain": self.cfg.def.as_fountain,
+            "worn": self.worn.as_ref().map(|w| &w.info),
+            "wearing": self.wearing,
             "import": self.cfg.import.as_ref().map(|i| json!({
                 "source": i.source,
                 "path": i.path,
@@ -1020,6 +1039,9 @@ impl Agent {
         }
         if vm && cfg.def.agent == Kind::Fountain {
             return Err("Fountain agents run in Fountain's sandboxes, not in a VM here".into());
+        }
+        if vm && cfg.def.as_fountain.is_some() {
+            return Err("a worn Fountain agent runs on this host (with your secrets), not in a VM".into());
         }
         let log = ctx.log().map_err(|e| format!("agent log: {e}"))?;
         let _ = std::fs::write(ctx.dir.join("kind"), "agent\n");
@@ -1084,6 +1106,20 @@ impl Agent {
         let (inner, tx) = (Arc::downgrade(&self.inner), self.tx.clone());
         Arc::new(move |f| match f {
             FromAgent::Line(line) => {
+                let inner = inner.upgrade();
+                let mut g = inner.as_ref().map(|i| i.lock().unwrap());
+                // M44: a worn agent's secrets never get past here (into the
+                // log, the transcript, clients).
+                let line = match g.as_ref().and_then(|g| g.worn.clone()) {
+                    Some(w) if !w.secrets.is_empty() => {
+                        let text = String::from_utf8_lossy(&line);
+                        match crate::fountain::wear::scrub(&text, &w.secrets) {
+                            Some(t) => t.into_bytes(),
+                            None => line,
+                        }
+                    }
+                    _ => line,
+                };
                 let v: Value = match serde_json::from_slice(&line) {
                     Ok(v) => v,
                     Err(_) => {
@@ -1092,12 +1128,12 @@ impl Agent {
                     }
                 };
                 // Logged before it's taken off the pipe.
-                if let Some(inner) = inner.upgrade() {
-                    let mut inner = inner.lock().unwrap();
-                    if inner.generation == generation {
-                        inner.write_log("in", &v);
-                    }
+                if let Some(g) = g.as_mut()
+                    && g.generation == generation
+                {
+                    g.write_log("in", &v);
                 }
+                drop(g);
                 let _ = tx.send(Msg::Frame(generation, v));
             }
             FromAgent::Closed(why) => {
@@ -1157,6 +1193,12 @@ impl Agent {
     fn spawn(&self, inner: &mut Inner) {
         if let Some(old) = inner.link.take() {
             old.stop();
+        }
+        // M44: put the Fountain agent on first (its bundle, its servers'
+        // secrets), then start.
+        if inner.cfg.def.as_fountain.is_some() && inner.worn.is_none() {
+            self.wear(inner);
+            return;
         }
         let vm = self.ctx.sprite.is_some();
         let launch = match inner.cfg.def.launch(&self.ctx.home, vm) {
@@ -1248,6 +1290,42 @@ impl Agent {
                 "clientInfo": { "name": "illogical", "version": env!("CARGO_PKG_VERSION") },
             }),
         );
+    }
+
+    /// Put on the Fountain agent it wears (M44), then start it; or say why
+    /// it can't be.
+    fn wear(&self, inner: &mut Inner) {
+        if inner.wearing {
+            return;
+        }
+        inner.wearing = true;
+        inner.status = Status::Starting;
+        inner.error = None;
+        let def = inner.cfg.def.clone();
+        let agent = Agent { ctx: self.ctx.clone(), inner: self.inner.clone(), tx: self.tx.clone() };
+        self.ctx.rt.spawn(async move {
+            let which = def.as_fountain.clone().unwrap_or_default();
+            let worn = match Runner::user(&agent.ctx).await {
+                Ok(runner) => {
+                    crate::fountain::wear::wear(&runner, def.profile.as_deref(), def.specs.as_deref(), &which).await
+                }
+                Err(e) => Err(e),
+            };
+            let mut g = agent.inner.lock().unwrap();
+            g.wearing = false;
+            if g.closing {
+                return;
+            }
+            match worn {
+                Ok(w) => {
+                    g.worn = Some(Arc::new(w));
+                    agent.spawn(&mut g);
+                }
+                Err(e) => agent.failed(&mut g, format!("can't wear {which}: {e}")),
+            }
+            drop(g);
+            agent.changed();
+        });
     }
 
     /// It couldn't start: said once, as "the agent couldn't start: …".
@@ -1508,7 +1586,7 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             let load = g.caps["loadSession"].as_bool() == Some(true);
             let fork = g.caps["sessionCapabilities"]["fork"].is_object();
             let with_meta = |mut p: Value, g: &Inner| {
-                if let Some(m) = imported_meta(g) {
+                if let Some(m) = imported_meta(g).or_else(|| worn_meta(ctx, g)) {
                     p["_meta"] = m;
                 }
                 p
@@ -1610,22 +1688,39 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
     }
 }
 
-/// A frame as the log keeps it: without illogical's MCP token (M16).
-fn redacted(frame: &Value) -> std::borrow::Cow<'_, Value> {
+/// A frame as the log keeps it: without illogical's MCP token (M16), and
+/// (M44) without a worn Fountain agent's secrets: its servers' headers and
+/// env, and any of `secrets` anywhere else.
+fn redacted<'a>(frame: &'a Value, secrets: &[String]) -> std::borrow::Cow<'a, Value> {
     use std::borrow::Cow;
     let ours = |s: &Value| s["name"] == crate::mcp::SERVER_NAME;
-    if !frame["params"]["mcpServers"].as_array().is_some_and(|l| l.iter().any(ours)) {
+    let servers = frame["params"]["mcpServers"].as_array();
+    if !servers.is_some_and(|l| l.iter().any(ours)) && secrets.is_empty() {
         return Cow::Borrowed(frame);
     }
     let mut f = frame.clone();
-    for s in f["params"]["mcpServers"].as_array_mut().into_iter().flatten().filter(|s| ours(s)) {
+    for s in f["params"]["mcpServers"].as_array_mut().into_iter().flatten().filter(|s| ours(s) || !secrets.is_empty())
+    {
         for key in ["headers", "env"] {
             for kv in s.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
                 kv["value"] = json!("<redacted>");
             }
         }
     }
+    if !secrets.is_empty()
+        && let Some(text) = crate::fountain::wear::scrub(&f.to_string(), secrets)
+    {
+        f = serde_json::from_str(&text).unwrap_or_else(|_| json!({ "redacted": true, "method": frame["method"] }));
+    }
     Cow::Owned(f)
+}
+
+/// A worn Fountain agent's `_meta` (M44): Claude's, dressed as the agent.
+fn worn_meta(ctx: &BlockCtx, g: &Inner) -> Option<Value> {
+    let w = g.worn.as_ref()?;
+    let mut meta = g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default();
+    w.dress(&mut meta);
+    Some(meta)
 }
 
 /// An imported conversation's `_meta` (M33): your settings, skills and
@@ -1641,8 +1736,9 @@ fn imported_meta(g: &Inner) -> Option<Value> {
 }
 
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
-    let meta = imported_meta(g)
-        .unwrap_or_else(|| g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default());
+    let meta = imported_meta(g).or_else(|| worn_meta(ctx, g)).unwrap_or_else(|| {
+        g.cfg.def.launch(&ctx.home, ctx.sprite.is_some()).map(|l| l.meta).unwrap_or_default()
+    });
     let mcp = g.servers(ctx);
     g.request("session/new", json!({ "cwd": cwd, "mcpServers": mcp, "_meta": meta }));
 }
@@ -1931,6 +2027,9 @@ impl Block for Agent {
         let mut head = format!("# {}", g.title.clone().unwrap_or_else(|| g.cfg.def.label()));
         if let Some(cwd) = &g.cfg.cwd {
             head.push_str(&format!(" in {cwd}"));
+        }
+        if let Some(w) = &g.worn {
+            head.push_str(&format!("\n\n_{}_", w.info.text()));
         }
         let mut out = format!("{head}\n\n{}", g.t.markdown());
         for p in &g.pending {
