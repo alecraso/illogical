@@ -247,10 +247,16 @@ enum Command {
     /// card per agent, where it comes from (agent-specs, hand-made, an
     /// app), filters, and Run on Fountain / Spec. Prints the block, then the
     /// list. `fountain agents [QUERY]` lists them here without a block.
+    /// `fountain --view runner` (M45b): this host as the account's runner
+    /// instead, with its sandboxes (Follow, Changes, Shell).
     #[command(args_conflicts_with_subcommands = true)]
     Fountain {
         #[command(subcommand)]
         cmd: Option<FountainCmd>,
+        /// What the block shows: catalog (the agents) or runner (this host
+        /// as the Fountain runner, its status and its sandboxes).
+        #[arg(long, value_parser = ["catalog", "runner"], default_value = "catalog")]
+        view: String,
         /// Start with this search (names, descriptions, skills, MCP servers).
         #[arg(long, short)]
         query: Option<String>,
@@ -1642,7 +1648,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 println!("{line}");
             }
         }
-        Command::Fountain { cmd: None, query, source, profile, split, session } => {
+        Command::Fountain { cmd: None, view, query, source, profile, split, session } => {
+            if view == "runner" && (query.is_some() || source.is_some()) {
+                bail!("--query and --source filter the catalog, not the runner view");
+            }
             let mut filter = json!({});
             if let Some(q) = query {
                 filter["query"] = json!(q);
@@ -1652,7 +1661,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             }
             let body = json!({
                 "type": "fountain",
-                "config": { "profile": profile, "view": "catalog", "filter": filter },
+                "config": { "profile": profile, "view": view, "filter": filter },
                 "split": split_of(split.as_deref())?,
                 "session": session,
                 "from_pane": env_pane(),

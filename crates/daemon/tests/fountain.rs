@@ -876,6 +876,15 @@ fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
     let (status, _) =
         d.raw("POST", &format!("/api/blocks/{block}/call/follow"), Some(json!({ "conversation": "nope" })));
     assert_eq!(status, 400);
+
+    // MCP: open_fountain with view "runner", beside an agent.
+    let me = d.open("hello");
+    assert_eq!(d.wait(me, "idle"), "done");
+    let r = agent_mcp(&d, me, "open_fountain", json!({ "view": "runner" })).unwrap();
+    assert!(r["text"].as_str().unwrap().contains("this host: runner-1 (unit fountain-runner active), online"), "{r}");
+    let rb = r["block"].as_u64().unwrap();
+    d.wait_for("its view saved", || layout_config(&d, rb)["view"] == "runner");
+    assert!(agent_mcp(&d, me, "open_fountain", json!({ "view": "nope" })).is_err());
 }
 
 #[test]
