@@ -223,6 +223,14 @@ impl Diff {
             if !repo.starts_with('/') || repo.split('/').any(|c| c == "..") {
                 return Err(format!("run_as {user} needs an absolute directory: {repo}"));
             }
+            // Only inside the runner's sandboxes (the scripts check the
+            // real path too).
+            let root = crate::fountain::runner::unit()
+                .and_then(|u| u.root)
+                .ok_or_else(|| format!("run_as {user} needs this host's fountain-runner unit and its --root"))?;
+            if !repo.starts_with(&format!("{}/", root.trim_end_matches('/'))) {
+                return Err(format!("run_as {user} is for the runner's sandboxes, under {root}: not {repo}"));
+            }
         } else if let Ok(Runner::Local { .. }) = &runner
             && !ctx.restoring
         {
@@ -286,9 +294,18 @@ impl Diff {
         ];
         args.extend(self.config.rev_a.iter().chain(self.config.rev_b.iter()).cloned());
         let run = match &self.config.run_as {
-            // Through sudo, whose environment is reset: no lock taken there either.
+            // Through sudo, with git hardened (no global or system config,
+            // hooks, fsmonitor, pager, external diff, filters), and only
+            // inside the runner's root, really.
             Some(_) => {
-                crate::fountain::runner::sudo_sh(&format!("export GIT_OPTIONAL_LOCKS=0\n{}", script()), &args).await
+                let root = crate::fountain::runner::unit().and_then(|u| u.root).unwrap_or_default();
+                let s = format!(
+                    "{}{}{}",
+                    crate::fountain::runner::GIT_SAFE,
+                    crate::fountain::runner::inside_prelude(&root),
+                    script()
+                );
+                crate::fountain::runner::sudo_sh(&s, &args).await
             }
             None => runner.sh(&script(), &args).await,
         };

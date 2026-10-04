@@ -47,7 +47,7 @@ const POLL: Duration = Duration::from_secs(60);
 /// The bundle every runner reason goes in (one card on the rail).
 pub const BUNDLE: &str = "failed:fountain-runner";
 /// What the view says about a shell it opens.
-pub const PARK_NOTE: &str = "A shell opened here runs as fountain in the sandbox's directory; it isn't Fountain's, so parking the sandbox doesn't stop it.";
+pub const PARK_NOTE: &str = "A shell opened here runs as fountain in the sandbox's directory, outside the runner's sandboxing: the fountain-runner unit's protections (hidden processes, no access to your home) don't apply to it. It isn't Fountain's, so parking the sandbox doesn't stop it.";
 /// The sandbox states that may have a directory on the runner.
 pub const LIVE_STATES: &str = "pending,starting,ready,suspended";
 
@@ -187,31 +187,69 @@ pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// *Shell*: a login bash as `fountain` in `dir`, with `HOME` set to it. The
-/// directory is bash's `$1`, never part of the script.
-pub fn shell_command(dir: &str) -> String {
+/// *Shell*: bash as `fountain` in a sandbox, `HOME` there, reading no
+/// profile or rc file (the sandbox's agent could have written them). `$1` is
+/// the unit's root and `$2` the directory, never part of the script; its
+/// real path must be inside the root. It runs outside the runner's unit, so
+/// none of the unit's protections apply to it.
+pub fn shell_command(root: &str, dir: &str) -> String {
     format!(
-        "exec {} -n -u {USER} /bin/bash -c {} _ {}",
+        "exec {} -n -u {USER} /bin/bash -c {} _ {} {}",
         quote(&sudo_bin()),
-        quote(r#"cd -- "$1" && HOME="$1" exec bash -l"#),
+        quote(&format!("{INSIDE}\ncd -- \"$real\" && HOME=\"$real\" exec bash --noprofile --norc")),
+        quote(root),
         quote(dir)
     )
 }
 
-/// *Changes*: `$1` the sandbox. `ok`, then a line per git checkout up to two
-/// levels down: `repo BASE<TAB>DIR`, where BASE is what its edits are
-/// counted from (the upstream's merge base, else `origin/HEAD`'s, else git's
-/// empty tree: everything in it is the agent's). `err WHY` if it can't.
-pub const CHECKOUTS: &str = r#"cd -- "$1" 2>/dev/null || { printf 'err %s has no directory %s (or it can'\''t be read)\n' "$(id -un)" "$1"; exit 0; }
+/// `$1` the root, `$2` a directory: `$real` is the directory's real path,
+/// or it says why not and exits (it must be inside the root, not the root).
+const INSIDE: &str = r#"real=$(realpath -e -- "$2" 2>/dev/null) && top=$(realpath -e -- "$1" 2>/dev/null) && case $real/ in "$top"/?*/) true ;; *) false ;; esac || { printf 'err not inside the runner'\''s sandboxes (%s): %s\n' "$1" "$2"; exit 1; }"#;
+
+/// Every git a script run as `fountain` uses reads only: no global or
+/// system config, no hooks, fsmonitor, pager, external diff or askpass,
+/// and every filter driver the repository's own config names made inert
+/// (its clean, smudge and process emptied), so a repository can't make a
+/// read run its commands. Needs bash.
+pub const GIT_SAFE: &str = r#"export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat
+unset GIT_EXTERNAL_DIFF GIT_DIR GIT_WORK_TREE GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND
+git() {
+  local o=(-c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -c diff.external= -c core.untrackedCache=false -c core.sshCommand= -c core.askPass=)
+  local k n
+  while IFS= read -r k; do
+    [ -n "$k" ] || continue
+    n=${k#filter.}; n=${n%.*}
+    case $n in *=*) return 1 ;; esac
+    o+=(-c "filter.$n.clean=" -c "filter.$n.smudge=" -c "filter.$n.process=" -c "filter.$n.required=false")
+  done < <(command git config --name-only --get-regexp '^filter\.' 2>/dev/null)
+  command git "${o[@]}" "$@"
+}
+"#;
+
+/// *Changes*: `$1` the unit's root, `$2` the sandbox. `ok`, then a line per
+/// git checkout up to two levels down: `repo BASE<TAB>DIR`, where BASE is
+/// what its edits are counted from (the upstream's merge base, else
+/// `origin/HEAD`'s, else git's empty tree: everything in it is the
+/// agent's). `err WHY` if it can't. Run after [`GIT_SAFE`].
+pub const CHECKOUTS: &str = r#"real=$(realpath -e -- "$2" 2>/dev/null) && top=$(realpath -e -- "$1" 2>/dev/null) && case $real/ in "$top"/?*/) true ;; *) false ;; esac || { printf 'err %s: no such directory inside the runner'\''s sandboxes (%s)\n' "$2" "$1"; exit 0; }
+cd -- "$real" || exit 0
 echo ok
 find . -maxdepth 3 -name .git -prune -print 2>/dev/null | LC_ALL=C sort | head -n 20 | while IFS= read -r g; do
-  d=${g%/.git}; d=${d#.}; top=$1$d
-  gi() { git -c core.fsmonitor=false -C "$top" "$@" 2>/dev/null; }
+  d=${g%/.git}; d=${d#.}; top=$real$d
   base=
-  if u=$(gi rev-parse -q --verify '@{upstream}'); then base=$(gi merge-base HEAD "$u"); fi
-  if [ -z "$base" ] && o=$(gi rev-parse -q --verify refs/remotes/origin/HEAD); then base=$(gi merge-base HEAD "$o"); fi
+  if u=$(cd -- "$top" && git rev-parse -q --verify '@{upstream}' 2>/dev/null); then base=$(cd -- "$top" && git merge-base HEAD "$u" 2>/dev/null); fi
+  if [ -z "$base" ] && o=$(cd -- "$top" && git rev-parse -q --verify refs/remotes/origin/HEAD 2>/dev/null); then base=$(cd -- "$top" && git merge-base HEAD "$o" 2>/dev/null); fi
   printf 'repo %s\t%s\n' "${base:-EMPTY}" "$top"
 done"#;
+
+/// The diff block's prelude for `run_as`: `$1` (the repository) must be
+/// inside `root`, really.
+pub fn inside_prelude(root: &str) -> String {
+    format!(
+        "real=$(realpath -e -- \"$1\" 2>/dev/null) && top=$(realpath -e -- {} 2>/dev/null) && case $real/ in \"$top\"/?*/) true ;; *) false ;; esac || {{ printf 'err not inside the runner'\\''s sandboxes: %s\\n' \"$1\"; exit 0; }}\n",
+        quote(root)
+    )
+}
 
 /// git's empty tree, which a checkout with nothing upstream is diffed from.
 pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -368,22 +406,24 @@ pub fn ours(s: &Sandbox, runner: &str) -> bool {
         && s.sprite_name.strip_prefix(&format!("runner-{}-", compact(runner))).is_some_and(|rest| !rest.is_empty())
 }
 
-/// Its directory on this host: what Fountain says, else the runner's root
-/// (Fountain's, else the unit's) and its name. `None` for anything odd (a
-/// relative path, `..`, a name with a slash).
+/// Its directory on this host: the unit's `--root` and its name, only.
+/// Fountain's own root is ignored, and a path Fountain gives must be exactly
+/// that. `None` for anything else (no root, a name with a slash or `..`, a
+/// path elsewhere). The scripts that use it check its real path too.
 pub fn sandbox_dir(s: &Sandbox, root: Option<&str>) -> Option<String> {
     let clean = |p: &str| {
         p.starts_with('/') && !p.split('/').any(|c| c == ".." || c == ".") && !p.chars().any(char::is_control)
     };
-    if let Some(p) = s.runner.as_ref().and_then(|r| r.path.as_deref()).filter(|p| clean(p)) {
-        return Some(p.trim_end_matches('/').to_owned());
-    }
     let name = &s.sprite_name;
-    if name.is_empty() || name.contains('/') || name == ".." || name == "." {
+    if name.is_empty() || name.contains('/') || name == ".." || name == "." || name.chars().any(char::is_control) {
         return None;
     }
-    let root = root.filter(|r| clean(r))?;
-    Some(format!("{}/{name}", root.trim_end_matches('/')))
+    let root = root.filter(|r| clean(r))?.trim_end_matches('/');
+    let dir = format!("{root}/{name}");
+    match s.runner.as_ref().and_then(|r| r.path.as_deref()) {
+        Some(p) if p.trim_end_matches('/') != dir => None,
+        _ => Some(dir),
+    }
 }
 
 /// A sandbox on this runner, as the view lists it.
@@ -735,6 +775,8 @@ mod tests {
             assert!(r.name.starts_with(&format!("runner-{}-", compact(id))));
             assert_eq!(r.conversations.len(), 1);
         }
+        // Fountain's root is ignored: only the unit's.
+        assert!(rows(&sb, id, None).iter().all(|r| r.path.is_none()));
         // A parked one that lost its runner: by its name, under the root.
         let parked: Sandbox = serde_json::from_value(serde_json::json!({
             "id": "s9", "sprite_name": format!("runner-{}-abcd1234", compact(id)), "status": "suspended",
@@ -744,12 +786,21 @@ mod tests {
         let r = rows(std::slice::from_ref(&parked), id, Some("/srv/fountain/sandboxes/"));
         assert_eq!(r[0].path.as_deref(), Some(format!("/srv/fountain/sandboxes/{}", parked.sprite_name).as_str()));
         assert!(r[0].parked);
-        // Odd paths and names are refused.
-        let odd: Sandbox = serde_json::from_value(serde_json::json!({
-            "id": "s8", "sprite_name": "../etc", "runner": { "id": id, "path": "/srv/../etc" }
-        }))
-        .unwrap();
-        assert_eq!(sandbox_dir(&odd, Some("/srv")), None);
+        // Odd paths and names are refused: a path Fountain gives that isn't
+        // the root's own, a name that climbs.
+        let odd = |name: &str, path: &str| -> Sandbox {
+            serde_json::from_value(serde_json::json!({
+                "id": "s8", "sprite_name": name, "runner": { "id": id, "path": path }
+            }))
+            .unwrap()
+        };
+        assert_eq!(sandbox_dir(&odd("../etc", "/srv/../etc"), Some("/srv")), None);
+        assert_eq!(sandbox_dir(&odd("runner-x-1", "/etc"), Some("/srv")), None);
+        assert_eq!(sandbox_dir(&odd("runner-x-1", "/srv/runner-x-2"), Some("/srv")), None);
+        assert_eq!(
+            sandbox_dir(&odd("runner-x-1", "/srv/runner-x-1/"), Some("/srv")).as_deref(),
+            Some("/srv/runner-x-1")
+        );
         assert_eq!(sandbox_dir(&parked, None), None);
         assert_eq!(sandbox_dir(&parked, Some("relative")), None);
     }
@@ -759,10 +810,15 @@ mod tests {
         assert_eq!(quote("/srv/a-b_c.d"), "/srv/a-b_c.d");
         assert_eq!(quote("it's $(x)"), r#"'it'\''s $(x)'"#);
         assert_eq!(quote(""), "''");
-        assert_eq!(
-            shell_command("/srv/fountain/sandboxes/runner-ab-12"),
-            r#"exec sudo -n -u fountain /bin/bash -c 'cd -- "$1" && HOME="$1" exec bash -l' _ /srv/fountain/sandboxes/runner-ab-12"#
+        let cmd = shell_command("/srv/fountain/sandboxes", "/srv/fountain/sandboxes/runner-ab-12");
+        assert!(cmd.starts_with("exec sudo -n -u fountain /bin/bash -c 'real=$(realpath -e -- \"$2\""), "{cmd}");
+        assert!(
+            cmd.ends_with(
+                "exec bash --noprofile --norc' _ /srv/fountain/sandboxes /srv/fountain/sandboxes/runner-ab-12"
+            ),
+            "{cmd}"
         );
+        assert!(!cmd.contains("bash -l"));
         assert_eq!(
             sudo_argv("echo hi", &["/x y".into()]),
             ["sudo", "-n", "-u", "fountain", "/bin/bash", "-c", "echo hi", "_", "/x y"]

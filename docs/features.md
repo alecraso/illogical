@@ -628,20 +628,33 @@ the daemon stopping, crashing, or the machine rebooting:
     each with its directory, agent and conversations. A parked
     (suspended) one still opens:
     - ***Follow*** opens an agent block on a conversation: `fountain acp
-      --agent NAME`, which loads it (`session/load`) and replays it.
+      --agent NAME`, which loads it (`session/load`) and replays it. The
+      block is marked `follow`: if the conversation can't be loaded (or the
+      agent can't load one), it stops and says why; it never starts a new
+      conversation.
     - ***Changes*** opens a diff block for each git checkout up to two
       levels down in the sandbox, from its upstream's merge base (else
       `origin/HEAD`'s, else an empty tree: everything in it).
     - ***Shell*** opens a terminal as `fountain` in the sandbox, with
-      `HOME` there. It isn't Fountain's, so parking the sandbox doesn't
-      stop it; the block says so.
+      `HOME` there, reading no profile or rc file (`bash --noprofile
+      --norc`: the sandbox's agent may have written them). It runs outside
+      the runner's sandboxing (the unit's protections don't apply) and it
+      isn't Fountain's, so parking the sandbox doesn't stop it; the block
+      says so.
   - **Read as `fountain`.** The sandboxes are the `fountain` user's (mode
     0700), so every read and shell goes through `sudo -n -u fountain
-    /bin/bash -c SCRIPT _ DIR`, the one command the sudoers rule allows,
-    with the directory as an argument, never in the script. A diff block
-    takes `run_as: "fountain"` for this: only that user, only on this
-    host, only an absolute directory. (*Open file* from such a diff reads
-    as you, so it can't open the sandbox's files.)
+    /bin/bash -c SCRIPT _ ROOT DIR`, the one command the sudoers rule
+    allows, with the directories as arguments, never in the script.
+    - A sandbox's directory is the unit's `--root` and its name, only: a
+      path Fountain gives must be exactly that, and each script checks the
+      directory's real path is inside the root (a symlink out is refused).
+    - Every git there reads only: no global or system config, no hooks,
+      fsmonitor, pager, external diff or textconv, and every filter driver
+      the repository's config names emptied, so a repository's own config
+      can't run anything when it's read.
+    - A diff block takes `run_as: "fountain"` for this: only that user,
+      only on this host, only under the unit's root. It has no *Open file*
+      (that would read the sandbox's files as you).
   - **The machine's line.** `GET /api/host` has `fountain_runner` (name,
     online, version, sandboxes, and what wants you) on a host with the
     unit, from what was last read (never Fountain on the request). The

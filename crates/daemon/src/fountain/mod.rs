@@ -578,6 +578,9 @@ impl FountainBlock {
     /// Read `/api/runners` and this runner's sandboxes, and judge.
     async fn read_runner(&self) {
         let _one = self.reading.lock().await;
+        // Only a read that judges sets when to read again early: a failed
+        // one leaves the ordinary interval (no spinning on a stale time).
+        *self.due.lock().unwrap() = None;
         if self.live.closed() {
             return;
         }
@@ -627,7 +630,8 @@ impl FountainBlock {
         let (mut rows, sandboxes_error) = match (&this, sandboxes) {
             (None, _) => (vec![], None),
             (Some(t), Ok(l)) => {
-                let root = t.root.clone().or_else(|| unit.as_ref().and_then(|u| u.root.clone()));
+                // The unit's root only: never one Fountain names.
+                let root = unit.as_ref().and_then(|u| u.root.clone());
                 (runner::rows(&l.items, &t.id, root.as_deref()), None)
             }
             (Some(_), Err(e)) => (vec![], Some(e.to_string())),
@@ -753,6 +757,16 @@ impl FountainBlock {
             .ok_or_else(|| format!("no sandbox or conversation {which:?} on this runner"))
     }
 
+    /// The unit's `--root`, which every sandbox must be inside.
+    fn unit_root(&self) -> Result<String, String> {
+        let st = self.state.lock().unwrap();
+        st.runner
+            .as_ref()
+            .and_then(|r| r.unit.as_ref())
+            .and_then(|u| u.root.clone())
+            .ok_or_else(|| format!("the {} unit names no --root", runner::UNIT))
+    }
+
     /// `view {view}`: catalog or runner.
     async fn set_view(&self, args: &Value) -> Result<Value, String> {
         let view: View = serde_json::from_value(args["view"].clone())
@@ -798,7 +812,8 @@ impl FountainBlock {
             .cloned()
             .ok_or_else(|| format!("{conv:?} is a sandbox: follow takes one of its conversations' ids"))?;
         let agent = row.agent.clone().ok_or("Fountain didn't say this sandbox's agent's name: Follow needs it")?;
-        let mut config = json!({ "agent": "fountain", "fountain_agent": agent, "session_id": conv.id });
+        // `follow`: it loads this conversation or stops; never a new one.
+        let mut config = json!({ "agent": "fountain", "fountain_agent": agent, "session_id": conv.id, "follow": true });
         if let Some(p) = self.config.lock().unwrap().profile.clone() {
             config["profile"] = json!(p);
         }
@@ -818,7 +833,9 @@ impl FountainBlock {
         let which = args["sandbox"].as_str().filter(|s| !s.is_empty()).ok_or("changes needs {\"sandbox\": ID}")?;
         let row = self.sandbox(which)?;
         let dir = row.path.clone().ok_or("Fountain doesn't say where this sandbox is")?;
-        let (out, _) = runner::sudo_sh(runner::CHECKOUTS, std::slice::from_ref(&dir)).await?;
+        let root = self.unit_root()?;
+        let script = format!("{}{}", runner::GIT_SAFE, runner::CHECKOUTS);
+        let (out, _) = runner::sudo_sh(&script, &[root, dir.clone()]).await?;
         let found = runner::parse_checkouts(&String::from_utf8_lossy(&out))?;
         if found.is_empty() {
             let e = format!("no git checkout in {dir} (looked two levels down)");
@@ -842,7 +859,7 @@ impl FountainBlock {
         let which = args["sandbox"].as_str().filter(|s| !s.is_empty()).ok_or("shell needs {\"sandbox\": ID}")?;
         let row = self.sandbox(which)?;
         let dir = row.path.clone().ok_or("Fountain doesn't say where this sandbox is")?;
-        let command = runner::shell_command(&dir);
+        let command = runner::shell_command(&self.unit_root()?, &dir);
         let req = RunRequest {
             command: Some(command.clone()),
             split: Some(self.ctx.id),

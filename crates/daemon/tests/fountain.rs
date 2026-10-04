@@ -65,6 +65,8 @@ struct Inner {
     runners: Value,
     sandboxes: Value,
     queries: Vec<String>,
+    /// `/api/runners` answers 500.
+    fail_runners: bool,
 }
 
 #[derive(Clone, Default)]
@@ -117,6 +119,9 @@ async fn agent(State(f): State<Fake>, h: HeaderMap, UrlPath(id): UrlPath<String>
 async fn runners(State(f): State<Fake>, h: HeaderMap) -> Response {
     if let Some(r) = guard(&f, &h, "runners") {
         return r;
+    }
+    if f.with(|i| i.fail_runners) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "down" }))).into_response();
     }
     Json(f.with(|i| i.runners.clone())).into_response()
 }
@@ -758,29 +763,25 @@ fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
 
     // Shell: the exact command, the hostile path one quoted word.
     let out = d.call(block, "shell", json!({ "sandbox": "s-hostile" }));
-    let want = format!(
-        "exec {} -n -u fountain /bin/bash -c 'cd -- \"$1\" && HOME=\"$1\" exec bash -l' _ {}",
-        quoted(&host.sudo.display().to_string()),
+    let cmd = out["command"].as_str().unwrap();
+    let head = format!(
+        "exec {} -n -u fountain /bin/bash -c 'real=$(realpath -e -- \"$2\"",
+        quoted(&host.sudo.display().to_string())
+    );
+    let tail = format!(
+        "exec bash --noprofile --norc' _ {} {}",
+        quoted(&host.root.display().to_string()),
         quoted(&hostile.display().to_string())
     );
-    assert_eq!(out["command"], want);
+    assert!(cmd.starts_with(&head) && cmd.ends_with(&tail), "{cmd}");
     assert_eq!(out["parked"], true);
     let pane = out["pane"].as_u64().unwrap();
     assert_eq!(info(&d, pane)["tab"], info(&d, block)["tab"], "beside the view");
     d.wait_for("the shell's sudo", || !host.sudo_calls().is_empty());
-    assert_eq!(
-        host.sudo_calls()[0],
-        [
-            "-n",
-            "-u",
-            "fountain",
-            "/bin/bash",
-            "-c",
-            "cd -- \"$1\" && HOME=\"$1\" exec bash -l",
-            "_",
-            &hostile.display().to_string()
-        ]
-    );
+    let call = host.sudo_calls()[0].clone();
+    assert_eq!(&call[..5], ["-n", "-u", "fountain", "/bin/bash", "-c"]);
+    assert!(call[5].ends_with("exec bash --noprofile --norc"), "{call:?}");
+    assert_eq!(&call[6..], ["_", host.root.to_str().unwrap(), hostile.to_str().unwrap()]);
     let at = format!("at={} home={}", hostile.display(), hostile.display());
     d.wait_for("the shell's prompt", || !capture(&d, pane).trim().is_empty());
     std::thread::sleep(std::time::Duration::from_millis(300));
@@ -822,10 +823,17 @@ fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
     let calls = host.sudo_calls();
     let find = calls.iter().find(|c| c[5].contains("find . -maxdepth 3 -name .git")).expect("the checkouts' search");
     assert_eq!(
-        (&find[..5], find[6].as_str(), find[7].as_str()),
-        (&["-n", "-u", "fountain", "/bin/bash", "-c"].map(String::from)[..], "_", a_dir.to_str().unwrap())
+        (&find[..5], &find[6..]),
+        (
+            &["-n", "-u", "fountain", "/bin/bash", "-c"].map(String::from)[..],
+            &["_", host.root.to_str().unwrap(), a_dir.to_str().unwrap()].map(String::from)[..]
+        )
     );
-    let g = calls.iter().find(|c| c[5].starts_with("export GIT_OPTIONAL_LOCKS=0\n")).expect("the diff's git");
+    assert!(find[5].starts_with("export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1"), "hardened git");
+    let g = calls
+        .iter()
+        .find(|c| c[5].contains("illogical-untracked") && c[5].starts_with("export GIT_CONFIG_GLOBAL=/dev/null"))
+        .expect("the diff's git, hardened");
     assert_eq!(
         (g[0].as_str(), g[2].as_str(), g[3].as_str(), g[7].as_str()),
         ("-n", "fountain", "/bin/bash", repo.to_str().unwrap())
@@ -974,4 +982,183 @@ fn an_editor_cant_reach_the_runner() {
     // The owner may.
     let out = d.call(block, "shell", json!({ "sandbox": a["id"] }));
     assert!(out["pane"].is_u64(), "{out}");
+}
+
+#[test]
+fn a_hostile_repository_runs_nothing_and_paths_stay_in_the_root() {
+    let dir = Scratch::new("fountain-runner-hostile");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    // Markers any of its commands would leave.
+    let marks = dir.join("marks");
+    std::fs::create_dir_all(&marks).unwrap();
+    let evil = dir.join("evil.sh");
+    std::fs::write(&evil, format!("#!/bin/sh\ntouch '{}'/\"$1\"\ncat\n", marks.display())).unwrap();
+    std::fs::set_permissions(&evil, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let e = |what: &str| format!("{} {what}", evil.display());
+    // A global config (the daemon's HOME) that would run one too.
+    std::fs::write(fz.home.join(".gitconfig"), format!("[core]\n\tfsmonitor = {}\n", e("global"))).unwrap();
+    let sbs = fz.f.with(|i| i.sandboxes.clone());
+    let a = sbs["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["sprite_name"].as_str().unwrap().ends_with("-2972e1a2"))
+        .unwrap()
+        .clone();
+    let repo = PathBuf::from(a["runner"]["path"].as_str().unwrap()).join("evil");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    for f in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(repo.join(f), "one\n").unwrap();
+    }
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "first"]);
+    // Now the repository turns hostile: filters, fsmonitor, pager, external
+    // diff and textconv, each a command that leaves a marker.
+    for (k, v) in [
+        ("filter.evil.clean", e("clean")),
+        ("filter.evil.smudge", e("smudge")),
+        ("filter.evil.required", "true".into()),
+        ("filter.Proc.process", e("process")),
+        ("core.fsmonitor", e("fsmonitor")),
+        ("core.pager", e("pager")),
+        ("diff.external", e("external")),
+        ("diff.evil.textconv", e("textconv")),
+        ("diff.evil.command", e("command")),
+    ] {
+        git(&repo, &["config", k, &v]);
+    }
+    std::fs::write(
+        repo.join(".gitattributes"),
+        "a.txt filter=evil diff=evil\nb.txt filter=Proc\n*.new filter=evil diff=evil\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    std::fs::write(repo.join("b.txt"), "two\n").unwrap();
+    std::fs::write(repo.join("u.new"), "untracked\n").unwrap();
+    // It is hostile: a plain `git diff` runs its clean filter.
+    let _ = std::process::Command::new("git").args(["diff", "--stat"]).current_dir(&repo).output();
+    assert!(marks.join("clean").exists(), "the fixture's filter didn't run: the test proves nothing");
+    std::fs::remove_dir_all(&marks).unwrap();
+    std::fs::create_dir_all(&marks).unwrap();
+    // Touch them again, so git must look (stat-dirty).
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(repo.join("a.txt"), "three\n").unwrap();
+    std::fs::write(repo.join("b.txt"), "three\n").unwrap();
+
+    // Hostile places: a path Fountain gives outside the root, and a sandbox
+    // that is a symlink out of it.
+    let id = RUNNER.replace('-', "");
+    let outside = dir.join("outside");
+    std::fs::create_dir_all(outside.join("r/.git")).unwrap();
+    let link = host.root.join(format!("runner-{id}-link"));
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    fz.f.with(|i| {
+        let data = i.sandboxes["data"].as_array_mut().unwrap();
+        for (sid, name, path) in [
+            ("s-elsewhere", format!("runner-{id}-elsewhere"), "/etc".to_owned()),
+            ("s-link", format!("runner-{id}-link"), link.display().to_string()),
+        ] {
+            data.push(json!({ "id": sid, "sprite_name": name, "status": "ready", "provider": "runner",
+                "runner": { "id": RUNNER, "path": path }, "conversations": [] }));
+        }
+    });
+    let d = host.daemon(&fz);
+    let (block, st) = runner_view(&d);
+    let rows = st["runner"]["sandboxes"].as_array().unwrap();
+    let row = |id: &str| rows.iter().find(|r| r["id"] == id).unwrap().clone();
+    assert_eq!(row("s-elsewhere")["path"], Value::Null, "Fountain's /etc isn't the root's");
+    assert_eq!(row("s-link")["path"], link.display().to_string());
+
+    // Changes: the hostile repository's diff, and none of its commands.
+    let out = d.call(block, "changes", json!({ "sandbox": a["id"] }));
+    let co = out["checkouts"].as_array().unwrap();
+    let evil_co = co.iter().find(|c| c["repo"] == repo.display().to_string()).expect("the hostile checkout");
+    let diff = evil_co["block"].as_u64().unwrap();
+    d.wait_for("the hostile diff", || d.state(diff)["files"].as_array().is_some_and(|f| f.len() >= 4));
+    for f in ["a.txt", "b.txt"] {
+        d.call(diff, "file", json!({ "path": f, "open": true }));
+    }
+    d.call(diff, "refresh", json!({}));
+    let files: Vec<String> =
+        d.state(diff)["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap().to_owned()).collect();
+    assert!(["a.txt", "b.txt", "u.new"].iter().all(|f| files.contains(&f.to_string())), "{files:?}");
+    let ran: Vec<_> = std::fs::read_dir(&marks).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(ran.is_empty(), "the repository ran {ran:?}");
+
+    // Outside the root: refused by name, and by real path.
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{block}/call/changes"), Some(json!({ "sandbox": "s-elsewhere" })));
+    assert_eq!(status, 400, "{body}");
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{block}/call/changes"), Some(json!({ "sandbox": "s-link" })));
+    assert_eq!(status, 400);
+    assert!(body.contains("inside the runner's sandboxes"), "{body}");
+    let out = d.call(block, "shell", json!({ "sandbox": "s-link" }));
+    let pane = out["pane"].as_u64().unwrap();
+    d.wait_for("the shell refused", || {
+        capture(&d, pane).replace('\n', "").contains("not inside the runner's sandboxes")
+    });
+    // A diff as fountain outside the root can't even be opened.
+    let (status, body) = d.raw(
+        "POST",
+        "/api/blocks",
+        Some(json!({ "type": "diff", "config": { "repo": outside.join("r"), "run_as": "fountain" }, "local": true })),
+    );
+    assert_eq!(status, 400, "{body}");
+}
+
+#[test]
+fn a_failing_runners_read_doesnt_spin() {
+    let dir = Scratch::new("fountain-runner-spin");
+    let fz = Fountain::start(&dir);
+    let host = RunnerHost::new(&dir, &fz);
+    // Offline with no last-seen time: an early re-read is due at the grace.
+    fz.f.with(|i| {
+        i.runners["data"][0]["online"] = false.into();
+        i.runners["data"][0]["last_seen_at"] = Value::Null;
+    });
+    let d = host.daemon(&fz);
+    let (block, _) = runner_view(&d);
+    fz.f.with(|i| i.fail_runners = true);
+    d.wait_for("a failed read", || d.state(block)["error"].is_string());
+    let before = fz.f.gets("runners");
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    let n = fz.f.gets("runners") - before;
+    // Not drawn: every 1.5 s at most (5 × the 300 ms poll).
+    assert!(n <= 4, "{n} reads of /api/runners in 4 s");
+    // Back: it reads again, and judges.
+    fz.f.with(|i| i.fail_runners = false);
+    d.wait_for("read again", || d.state(block)["error"].is_null());
+}
+
+#[test]
+fn follow_never_starts_a_new_conversation() {
+    let dir = Scratch::new("fountain-follow");
+    let fz = Fountain::start(&dir);
+    let d = fz.daemon(&[]);
+    let news = |d: &Daemon| {
+        std::fs::read_dir(&d.sessions)
+            .map(|r| r.filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with("fake-")).count())
+            .unwrap_or(0)
+    };
+    for (agent, why) in [("hud-playground", "couldn't load the conversation"), ("no-load-session", "no loadSession")] {
+        let block = d.post(
+            "/api/blocks",
+            json!({ "type": "agent", "local": true, "config": {
+                "agent": "fountain", "fountain_agent": agent, "session_id": "no-such-conversation", "follow": true } }),
+        )["block"]
+            .as_u64()
+            .unwrap();
+        d.wait_for("it stopped", || d.state(block)["status"] == "exited");
+        let st = d.state(block);
+        let err = st["error"].as_str().unwrap_or_default();
+        assert!(err.contains(why) && err.contains("Follow never starts a new conversation"), "{agent}: {st}");
+        assert!(entries(&st).iter().any(|e| e["text"].as_str().is_some_and(|t| t.contains(why))), "{st}");
+        assert_eq!(st["session_id"], "no-such-conversation");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert_eq!(news(&d), 0, "{agent}: a new session was made");
+        assert_eq!(d.state(block)["status"], "exited");
+    }
 }

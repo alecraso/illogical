@@ -212,8 +212,9 @@ tests never run sudo or reach Fountain):
       the runner's sandboxes, with its directory and agent.
 - [ ] *Changes* opens a diff of each git checkout in its sandbox (one with
       nothing upstream is diffed from an empty tree, so all of it shows).
-- [ ] *Shell* opens a terminal where `whoami; pwd` prints `fountain` and
-      the sandbox's directory; there, `cat ~YOU/.ssh/id_ed25519` and
+- [ ] *Shell* opens a terminal (bash without profile or rc files, and
+      outside the runner's sandboxing, as its card says) where `whoami;
+      pwd` prints `fountain` and the sandbox's directory; there, `cat ~YOU/.ssh/id_ed25519` and
       `illogical --socket <your daemon's socket> ls` both fail.
 - [ ] A sandbox agent can't see other users' processes: asked to run
       `ls /proc | wc -l` (or `ps aux`), a conversation's agent sees only
