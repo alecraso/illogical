@@ -4427,3 +4427,58 @@ button {
 .swarm-runner b {
   font-size: 14px;
 }
+
+/* A newer release (#176): a chip in the top bar, the command in a popover. */
+.update {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-right: 6px;
+}
+
+.update-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.update-chip:hover {
+  background: var(--raised);
+}
+
+.update-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(420px, calc(100vw - 16px));
+  padding: 10px 12px;
+  background: var(--raised);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px #000a;
+  line-height: 1.45;
+}
+
+.update-pop p {
+  margin: 0 0 8px;
+}
+
+.update-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.update-actions a {
+  color: var(--accent);
+}
+
+.update-actions button {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--raised-hover);
+}

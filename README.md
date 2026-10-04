@@ -95,6 +95,20 @@ On Linux, let it start at boot, before you log in:
 loginctl enable-linger $USER
 ```
 
+**Updating.** When a newer release is out, the top bar says so, with the
+command for how you installed it. Panes keep running while the daemon
+restarts.
+
+- install.sh: run it again.
+- Homebrew: `brew upgrade illogical && illogicald install`.
+- The desktop app: download the new one and open it. When it finds an
+  older daemon running as the service, it puts its own in its place,
+  keeping the daemon's flags and your panes.
+
+The daemon finds out by asking GitHub where its latest release is, at
+most twice a day; nothing else is sent. `illogicald install --
+--no-update-check` turns that off.
+
 ## Quickstart
 
 1. Open <http://127.0.0.1:7681>. Right-click a pane or a tab for

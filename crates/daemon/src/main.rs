@@ -53,6 +53,7 @@ mod sync;
 mod sys;
 mod tailscale;
 mod tls;
+mod update;
 mod workspace;
 
 use std::{net::SocketAddr, path::PathBuf};
@@ -276,6 +277,14 @@ struct RunArgs {
     /// else ~/.claude/ide].
     #[arg(long, env = "ILLOGICAL_CLAUDE_IDE_DIR", hide = true)]
     claude_ide_dir: Option<PathBuf>,
+    /// Don't check for a newer release. Otherwise, at most twice a day,
+    /// the daemon asks GitHub which release is the latest (nothing else is
+    /// sent) and the web client offers the command that updates.
+    #[arg(long, env = "ILLOGICAL_NO_UPDATE_CHECK")]
+    no_update_check: bool,
+    /// Where the latest release is looked up (tests point it at a fake).
+    #[arg(long, env = "ILLOGICAL_UPDATE_URL", default_value = update::LATEST, hide = true)]
+    update_url: String,
 
     #[command(flatten)]
     blocks: BlockArgs,
@@ -794,6 +803,11 @@ async fn run(
         // closed block's extension host goes.
         grace: 300,
         launch: launch.clone(),
+    });
+    update::start(update::Settings {
+        state_dir: state_dir.clone(),
+        url: args.update_url.clone(),
+        enabled: !args.no_update_check,
     });
     let subject = format!("mailto:{}", owner_login.clone().unwrap_or_else(|| "illogical@localhost".into()));
     let push = match push::Push::open(state_dir.join("push"), subject) {

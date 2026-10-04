@@ -12,6 +12,10 @@
 //!   service), else the bundled one, which copies itself to `~/.local/bin`
 //!   and registers the launchd agent or systemd unit. The bundled CLI goes
 //!   to `~/.local/bin` too, unless an `illogical` is already installed.
+//! - **It updates an older daemon** (#176): when the daemon's service runs
+//!   an older version than the one bundled, the setup page runs the
+//!   bundled `illogicald install`, which keeps its flags and its panes
+//!   (`upgrade.rs`).
 //! - **Every key reaches the page** (S25): on macOS the menu is Edit only,
 //!   so Cmd-W, T, N and Q are the client's; on Linux GTK's F10 menu-bar key
 //!   is turned off.
@@ -26,6 +30,7 @@
 //!   second launch opens a window in the first).
 
 mod cloud;
+mod upgrade;
 
 use std::{
     collections::HashMap,
@@ -130,8 +135,12 @@ fn install_cli() -> Option<PathBuf> {
 /// Never starts a second daemon: `illogicald install` (re)starts the one
 /// service.
 fn ensure_daemon() -> Result<(), String> {
+    // One at a time: a second window's setup page waits for the first's.
+    static ONE: Mutex<()> = Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
     if reachable() {
-        return Ok(());
+        // Answering, but older than ours: replace it.
+        return upgrade::run();
     }
     let Some(bin) = installed("illogicald").or_else(|| bundled("illogicald")) else {
         return Err(format!(
@@ -168,13 +177,13 @@ fn ensure_daemon() -> Result<(), String> {
 }
 
 /// Where a new window starts:
-/// - no daemon answering: the setup page, which installs or starts it
-///   (`retry`) and then comes back here;
+/// - no daemon answering, or an older one to update: the setup page, which
+///   installs, starts or updates it (`retry`) and then comes back here;
 /// - joined to control and signed in: control's client, every machine;
 /// - joined, not signed in: the app's sign-in page;
 /// - otherwise (or "just this machine"): the daemon's own page.
 fn target(app: &AppHandle) -> WebviewUrl {
-    if !reachable() {
+    if !reachable() || upgrade::pending().is_some() {
         return WebviewUrl::App("index.html".into());
     }
     WebviewUrl::External(home(app))
@@ -314,6 +323,9 @@ fn daemon_status() -> String {
     let why = STATUS.lock().unwrap().clone();
     if !why.is_empty() {
         return why;
+    }
+    if let Some(updating) = upgrade::pending() {
+        return updating;
     }
     match installed("illogicald") {
         Some(bin) => format!("Starting {}…", bin.display()),
@@ -486,6 +498,7 @@ fn main() {
                     s.set_property("gtk-menu-bar-accel", "");
                 }
             }
+            upgrade::check();
             open_window(app.handle(), target(app.handle()))?;
             let open = MenuItem::with_id(app, "open", "Open illogical", true, None::<&str>)?;
             let new = MenuItem::with_id(app, "new", "New window", true, None::<&str>)?;

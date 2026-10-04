@@ -43,6 +43,16 @@ it. Flags after `--` are passed to the daemon on every start
 - **Without systemd on Linux** (a container, a box with another init): pass
   `--keep-panes` for the same behaviour.
 
+**Updates.** At most every 12 hours the daemon asks where GitHub's
+`releases/latest` redirects to (one request, with nothing about you or the
+machine in it) and keeps the answer in `update-check.json` in the state
+directory. When it's newer, the web client's top bar offers the command for
+this install (`GET /api/update` says it too). `--no-update-check`
+(`ILLOGICAL_NO_UPDATE_CHECK=true`) turns it off; a daemon run from where it
+was built (`target/`) doesn't check. The desktop app replaces an older
+daemon with the one it carries when that daemon runs as the service
+(`ILLOGICAL_NO_DAEMON_UPGRADE=1` stops it).
+
 State (layout, logs, checkpoints) is in `~/.local/state/illogical`, private
 to you (0700/0600). `--state-dir` moves it.
 

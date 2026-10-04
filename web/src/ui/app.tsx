@@ -21,6 +21,7 @@ import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
 import { agentNotifyItems, InstallHint, notificationItems } from "./notify";
 import { GettingStartedLayer, openGettingStarted, useFirstRun } from "./welcome";
+import { UpdateChip } from "./update";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -225,6 +226,7 @@ function TopBar({
         </button>
       </div>
       <div class="bar-fill" />
+      <UpdateChip client={client} />
       <PeopleBar client={client} />
     </header>
   );
