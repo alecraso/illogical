@@ -92,6 +92,11 @@ test("the runner view shows this host's runner; Changes and Shell open beside it
   await expect.poll(async () => (await panes(page)).length).toBe(3);
   const diff = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "diff")!.id);
   await expect(paneEl(page, diff)).toContainText("hello.txt");
+  // Its files are fountain's: no Open file from its lines.
+  await expect(paneEl(page, diff).locator('[data-run-as="fountain"]')).toBeVisible();
+  await paneEl(page, diff).locator('.diff-file[data-file="hello.txt"] .diff-file-head').click();
+  await expect(paneEl(page, diff).locator(".dl.add").first()).toBeVisible();
+  await expect(paneEl(page, diff).locator(".dl.go")).toHaveCount(0);
 
   // Shell: a terminal in the sandbox's directory.
   await r1.locator("[data-shell]").click();
