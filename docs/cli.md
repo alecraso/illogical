@@ -62,6 +62,10 @@ illogical issue 89                            # an issue as a block (or a URL, O
 illogical issue agent %8                      # an agent on it: worktree + branch i89-…, the two in a tab
 illogical issue new -t "Frobs leak" -b "…"    # open one here (under an agent: a draft a person sends)
 illogical issue comment %8 "On it"            # comment (under an agent: a draft)
+illogical fountain                            # your Fountain agents as a catalog block (-q WORDS, --source agent-specs)
+illogical fountain agents frontend-design     # ...or listed here, one line each
+illogical call %10 run '{"agent":"games"}'    # Run on Fountain (an agent block beside it); spec '{"agent":"pr-reviewer"}'
+illogical call %10 filter '{"source":"agent-specs","query":"review"}'  # the block's filter ("clear": true)
 illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused while it's open elsewhere)
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
@@ -155,6 +159,9 @@ The tools:
 | `open_issue` | An issue (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
 | `read_issue` | An issue block as text: linked PRs, the agent on it and its PR, what it waits on the user for, your drafts | yes |
 | `issue_comment`, `issue_new` | Draft a comment on an issue block, or a new issue (a block beside you holding the draft): a card the user sends, edits or drops | no |
+| `list_agents` | The user's Fountain agents, one compact row each (`query` over names, descriptions, skills and servers; `source`: agent-specs, hand or app) | yes |
+| `read_agent` | One Fountain agent's whole recipe (prompt, skills, MCP servers, model, metadata), its servers' credentials as `${VAR}`s | yes |
+| `open_fountain` | The Fountain agent catalog as a block beside a pane (`query`, `source`); returns the list | no |
 | `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
 
 Resources: `illogical://history`, and the templates

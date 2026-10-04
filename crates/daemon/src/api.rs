@@ -82,6 +82,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/blocks/{id}/call/{method}", post(call))
         .route("/api/studio", get(studio_status).post(studio_login).delete(studio_logout))
         .route("/api/studio/apps", get(studio_apps))
+        .route("/api/fountain/agents", get(fountain_agents))
         .route("/api/studio/followers/{app}", axum::routing::put(studio_follower).delete(studio_unfollow))
         .route("/api/machines", get(machines))
         .route("/api/machines/{id}/reset", post(reset_machine))
@@ -2044,6 +2045,27 @@ async fn studio_logout() -> Res<Json<serde_json::Value>> {
 }
 
 /// The person's apps, from studio, with the app blocks that show them.
+#[derive(Debug, Default, Deserialize)]
+pub struct FountainQuery {
+    pub query: Option<String>,
+    pub source: Option<String>,
+    pub profile: Option<String>,
+}
+
+/// M43: the person's Fountain agents, read with their own login on this
+/// host (`illogical fountain agents`): compact cards, filtered.
+async fn fountain_agents(State(app): AppState, Query(q): Query<FountainQuery>) -> Res<Json<serde_json::Value>> {
+    let mut f = crate::fountain::catalog::Filter::default();
+    f.apply(&serde_json::json!({ "query": q.query, "source": q.source })).map_err(bad)?;
+    let runner = crate::fountain::local_runner(&app.mux.shell_env).await;
+    let got = crate::fountain::agents_for(&runner, q.profile.as_deref()).await.map_err(bad)?;
+    let rows = crate::fountain::rows(&got.agents, &f);
+    Ok(Json(serde_json::json!({
+        "base_url": got.login.base_url, "profile": got.login.profile, "total": got.agents.len(), "filter": f,
+        "agents": rows, "unreadable": got.unreadable,
+    })))
+}
+
 async fn studio_apps(State(app): AppState) -> Res<Json<serde_json::Value>> {
     let s = studio()?;
     let apps = s.apps().await.map_err(bad)?;

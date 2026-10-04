@@ -15,6 +15,7 @@ mod dial;
 mod e2e;
 mod editor;
 mod forge;
+mod fountain;
 mod fs;
 mod gate;
 mod heap;

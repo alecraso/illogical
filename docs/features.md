@@ -566,6 +566,48 @@ the daemon stopping, crashing, or the machine rebooting:
     Comments on issues (`issue_comment`, `illogical issue comment %N`) are
     drafts from agents too, as on a PR.
 
+- **Fountain agents** (M43). The agents on your Fountain account as a
+  catalog block: a card each, filters, and ways to run one.
+  - **Opening it.** *Fountain agents…* (a pane's menu, the `+` button's
+    menu; *Fountain agents* in the phone's sheet), `illogical fountain`
+    (`-q WORDS`, `--source agent-specs`, `--profile P`), or MCP's
+    `open_fountain`. `illogical fountain agents [WORDS]` lists them in the
+    terminal without a block.
+  - **Your login.** It reads with your own `fountain` CLI login, on this
+    host with your shell's environment: `FOUNTAIN_API_KEY` (and
+    `FOUNTAIN_BASE_URL`), else the profile's `api_key` and `base_url` in
+    `~/.fountain/credentials` (`FOUNTAIN_PROFILE`, else `default`; the
+    block's owner can pick another). The key is held in memory only. A host
+    with no login says so on the block.
+  - **The cards.** Name, where it comes from, runtime and model, its
+    environment, sandbox provider and mode, conversations, when it last
+    changed, the description, skills and MCP servers. Read when it opens,
+    then every 3 minutes while it's on screen, and on *Refresh*.
+  - **Where an agent comes from.** *agent-specs*: `managed-by: chant` in
+    its metadata (the curated ones). *App-made*: `switchyard`, `salon`,
+    `paddock`, `drydock`, `part-of` or `attemptId` in its metadata, a name
+    ending in a UUID, or a name an app gives (`Mend: github.com/…`).
+    *Hand-made*: the rest. Every agent is listed: app-made ones are
+    filtered, never hidden.
+  - **Filters.** A search over names, descriptions, skills and MCP
+    servers, and chips for source, runtime and sandbox provider. They're
+    the block's (kept in its config), so the phone and every client see
+    the same list, and `capture --text` is that list.
+  - ***Run on Fountain*** opens an agent block running it on Fountain
+    (`fountain acp --agent NAME`) beside the catalog. ***Run here*** (for
+    `claude` agents) comes with M44. ***Spec*** opens the agent-specs file
+    that declares a `managed-by: chant` agent (a `.ts` under `src/agents`
+    with its `name:`) as a file block; it looks in the checkout you pick
+    (`~/dev/jhgaylor/agent-specs` if it's there). Any other agent, or with
+    no checkout, opens its page on Fountain.
+  - **Read-only.** agent-specs stays the one place a curated agent is
+    edited; the catalog never writes to Fountain.
+  - **For agents.** MCP's `list_agents {query?, source?}` (compact rows)
+    and `read_agent {name}` (the whole recipe; a server's credentials show
+    as their `${VAR}`s, since Fountain never returns a secret) let a local
+    agent see the team, and `start_agent` with a Fountain agent hands one a
+    task.
+
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's

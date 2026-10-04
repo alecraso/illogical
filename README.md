@@ -163,7 +163,7 @@ loginctl enable-linger $USER
          "mcp__illogical__read_output", "mcp__illogical__capture_screen", "mcp__illogical__wait",
          "mcp__illogical__list", "mcp__illogical__history", "mcp__illogical__search",
          "mcp__illogical__list_conversations", "mcp__illogical__read_pr", "mcp__illogical__read_issue",
-         "mcp__illogical__read_file"
+         "mcp__illogical__list_agents", "mcp__illogical__read_agent", "mcp__illogical__read_file"
        ],
        "ask": [
          "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__close",
@@ -171,7 +171,8 @@ loginctl enable-linger $USER
          "mcp__illogical__open_conversation", "mcp__illogical__agent_respond", "mcp__illogical__show_changes",
          "mcp__illogical__show_file", "mcp__illogical__open_workspace", "mcp__illogical__open_pr",
          "mcp__illogical__pr_comment", "mcp__illogical__pr_review", "mcp__illogical__pr_merge",
-         "mcp__illogical__open_issue", "mcp__illogical__issue_comment", "mcp__illogical__issue_new"
+         "mcp__illogical__open_issue", "mcp__illogical__issue_comment", "mcp__illogical__issue_new",
+         "mcp__illogical__open_fountain"
        ]
      }
    }

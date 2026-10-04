@@ -65,6 +65,12 @@ fn policy(method: &Method, path: &str) -> Policy {
         // M37: an agent on an issue works in the owner's clone, as them.
         // M40: a webhook on the repository (*Live updates*) is the owner's.
         ["api", "blocks", _, "call", "login" | "diff" | "checkout" | "agent" | "live"] => Policy::Owner,
+        // M43: which Fountain login a catalog reads with, and which of the
+        // owner's checkouts it opens specs from, are the owner's. So are
+        // running an agent from it (a `fountain acp` on this host, with the
+        // owner's login: a guest's agents go on VMs) and Spec (file and
+        // browser blocks on the owner's host).
+        ["api", "blocks", _, "call", "profile" | "specs" | "run" | "run_fountain" | "spec"] => Policy::Owner,
         ["api", "blocks", id, "call", _] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         // M24: the handler shows each person what they may read, and checks
         // each pane acted on.

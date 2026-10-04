@@ -155,7 +155,10 @@ impl Def {
                 if vm {
                     return Err("Fountain agents run in Fountain's sandboxes, not in a VM here".into());
                 }
-                l.argv = vec![installed(home, "fountain")];
+                // Tests put a stand-in there (M43's e2e: the fake ACP agent),
+                // so no test reaches a real Fountain.
+                let bin = std::env::var("ILLOGICAL_FOUNTAIN_BIN").ok().filter(|b| !b.is_empty());
+                l.argv = vec![bin.unwrap_or_else(|| installed(home, "fountain"))];
                 if let Some(p) = &self.profile {
                     l.argv.extend(["--profile".into(), p.clone()]);
                 }

@@ -9,7 +9,7 @@ import type { FieldHooks, FieldPane, SwarmScene } from "./field";
 
 /** Kinds that run until stopped (or aren't processes): no command that
  * finishes, so nothing grows. The city's `LONG`. */
-export const UNTIL_STOPPED: ReadonlySet<WorkKind> = new Set<WorkKind>(["server", "logs", "app", "editor", "pr", "issue"]);
+export const UNTIL_STOPPED: ReadonlySet<WorkKind> = new Set<WorkKind>(["server", "logs", "app", "editor", "pr", "issue", "fountain"]);
 
 export const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));

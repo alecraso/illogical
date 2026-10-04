@@ -1,0 +1,43 @@
+{
+ "data": [
+  {
+   "arch": "arm64",
+   "connected_at": "2026-10-03T23:48:45Z",
+   "created_at": "2026-08-19T08:51:38Z",
+   "hostname": null,
+   "id": "ce9ff49f-5da0-433b-a7a0-a9839ce66e02",
+   "last_seen_at": "2026-10-03T23:56:06Z",
+   "name": "runner-1",
+   "online": true,
+   "os": "darwin",
+   "root": "/srv/fountain/runner-1/sandboxes",
+   "version": "runner-d0b9597"
+  },
+  {
+   "arch": "arm64",
+   "connected_at": "2026-09-01T07:29:19Z",
+   "created_at": "2026-09-01T07:29:19Z",
+   "hostname": null,
+   "id": "daac9be8-1c72-45fa-91db-ad972ea7dce7",
+   "last_seen_at": "2026-09-01T07:29:39Z",
+   "name": "runner-2",
+   "online": false,
+   "os": "darwin",
+   "root": "/srv/fountain/runner-2/sandboxes",
+   "version": "v0.13.0"
+  },
+  {
+   "arch": "amd64",
+   "connected_at": "2026-08-27T07:21:05Z",
+   "created_at": "2026-08-27T07:20:37Z",
+   "hostname": null,
+   "id": "21d3255d-8a91-4c39-8943-f4ac40465b10",
+   "last_seen_at": "2026-08-27T07:32:05Z",
+   "name": "runner-3",
+   "online": false,
+   "os": "linux",
+   "root": "/srv/fountain/runner-3/sandboxes",
+   "version": "fcb65a99"
+  }
+ ]
+}
