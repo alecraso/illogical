@@ -92,6 +92,11 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   process.env.ILLOGICAL_FOUNTAIN_BIN = join(dir, "fountain");
   for (const k of ["FOUNTAIN_API_KEY", "FOUNTAIN_BASE_URL", "FOUNTAIN_PROFILE"]) delete process.env[k];
   process.env.ILLOGICAL_FOUNTAIN_POLL_MS ??= "1500";
+  // M44: a worn agent's bundle goes in the run's own cache, and its
+  // variables never reach the person's Infisical or gh.
+  process.env.XDG_CACHE_HOME = runDir("ILLOGICAL_E2E_CACHE", "illogical-e2e-cache-");
+  process.env.ILLOGICAL_INFISICAL_BIN = "/bin/false";
+  process.env.ILLOGICAL_GH_BIN = "/bin/false";
 }
 
 // By default runs against a throwaway debug daemon on 7683 (which serves

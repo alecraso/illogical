@@ -595,7 +595,8 @@ the daemon stopping, crashing, or the machine rebooting:
     the same list, and `capture --text` is that list.
   - ***Run on Fountain*** opens an agent block running it on Fountain
     (`fountain acp --agent NAME`) beside the catalog. ***Run here*** (for
-    `claude` agents) comes with M44. ***Spec*** opens the agent-specs file
+    `claude` agents; below) wears it in a Claude Code on this host.
+    ***Spec*** opens the agent-specs file
     that declares a `managed-by: chant` agent (a `.ts` under `src/agents`
     with its `name:`) as a file block; it looks in the checkout you pick
     (`~/dev/jhgaylor/agent-specs` if it's there). Any other agent, or with
@@ -607,6 +608,46 @@ the daemon stopping, crashing, or the machine rebooting:
     as their `${VAR}`s, since Fountain never returns a secret) let a local
     agent see the team, and `start_agent` with a Fountain agent hands one a
     task.
+
+- **Wearing a Fountain agent here** (M44). A Claude Code agent block on
+  this host, configured as one of your Fountain agents: its system prompt,
+  its skills and its MCP servers, working in a folder of yours (a worktree)
+  with your own tools.
+  - **Ways in.** *Run here* on a catalog card (it asks for the folder, and
+    offers the last one next time), `illogical agent --as NAME "prompt"`
+    (in the current directory, or `--cwd`), and MCP's `start_agent {agent:
+    claude, as_fountain: NAME}`. Only the owner can: it runs on the
+    owner's machine with their secrets (an editor's *Run here*, or a
+    block of theirs with `as_fountain`, is refused).
+  - **The bundle**, built from the agent's recipe and cached in
+    `~/.cache/illogical/fountain/<agent id>/<updated_at>/` for a day: a
+    plugin (`fountain-<name>`) whose skills are the agent's (inline ones
+    written out; GitHub ones copied from shallow clones kept in
+    `…/fountain/github/`, fetched again daily), and the system prompt,
+    after a short preamble saying it runs locally (where it mentions
+    `/home/sprite`, `/workspace`, vaults or spawning, those describe the
+    sandbox). The session gets them as `_meta.systemPrompt.append` and
+    `_meta.claudeCode.options.plugins`, the agent's model (`anthropic/`
+    taken off), and still no settings sources, so your own hooks stay out.
+  - **MCP servers** come with their `${VAR}`s resolved by Fountain's rules
+    (`$$` is a literal `$`; values aren't expanded again). Each variable's
+    value comes from, in order: Infisical (in your agent-specs checkout,
+    through the agent's environment in `dist/fountain.yaml` to its
+    `infisical://` URI, read with your `infisical` login; a variable it
+    doesn't map is tried as itself in env `dev`), your shell's environment,
+    then `gh auth token` for `GITHUB_TOKEN`. Values are held in memory and
+    passed only to Claude Code: never in the layout, the block's log or
+    state, `capture`, MCP results or the web (the log shows `<redacted>`).
+  - **What doesn't carry over** is named in the block's header, which
+    says "as NAME" with the skills and servers that came: a server with a
+    variable nothing has, one that needs an OAuth sign-in (a headless
+    Claude Code can't: no credentials, and a known OAuth host such as
+    mem0's, or a `401` with `WWW-Authenticate`), a Fountain connection,
+    and GitHub skills that couldn't be fetched.
+  - **Not wearable:** agents of another runtime (*Run on Fountain*), and
+    ones whose metadata says `illogical.local: false` (the orchestrators,
+    written for Fountain's sandboxes); the card greys *Run here* with the
+    reason. After a restart the block puts the agent on again.
 
 - **Other hosts** (M4a). Every daemon is a peer; the one the page comes
   from (the "home daemon") keeps a list of the others and checks on
