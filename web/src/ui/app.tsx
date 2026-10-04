@@ -383,7 +383,13 @@ export function TabArea({ client, tab, cell, phone }: { client: Client; tab: Tab
 
   useLayoutEffect(() => {
     const el = ref.current!;
-    const measure = () => setArea({ w: el.clientWidth, h: el.clientHeight });
+    // Inside its padding: the grid keeps clear of the window's edges (#164).
+    const measure = () => {
+      const s = getComputedStyle(el);
+      const padX = parseFloat(s.paddingLeft) + parseFloat(s.paddingRight);
+      const padY = parseFloat(s.paddingTop) + parseFloat(s.paddingBottom);
+      setArea({ w: el.clientWidth - padX, h: el.clientHeight - padY });
+    };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     measure();
@@ -434,7 +440,7 @@ export function TabArea({ client, tab, cell, phone }: { client: Client; tab: Tab
   const elsewhere = tab.owner !== null && tab.owner !== client.clientId;
 
   return (
-    <div class="tab-area" ref={ref}>
+    <div class={scale < 1 ? "tab-area scaled" : "tab-area"} ref={ref}>
       <div
         class="grid"
         style={{ width: len(gridW), height: len(gridH), transform: scale < 1 ? `scale(${scale})` : undefined }}

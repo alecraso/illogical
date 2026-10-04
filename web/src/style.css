@@ -178,7 +178,8 @@ button {
   outline: none;
 }
 
-/* ---- tab area: the daemon's cell grid, centered and scaled to fit */
+/* ---- tab area: the daemon's cell grid, centered and scaled to fit,
+   inset from the window's edges (#164) */
 
 .main {
   flex: 1;
@@ -189,10 +190,17 @@ button {
 .tab-area {
   position: absolute;
   inset: 0;
+  padding: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  background: var(--bg);
+}
+
+/* Sized for another window: the letterbox shows around the scaled grid. */
+.tab-area.scaled {
+  background: none;
 }
 
 .grid {

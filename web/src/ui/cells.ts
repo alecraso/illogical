@@ -16,8 +16,13 @@ export async function measureCell(): Promise<Cell> {
   box.appendChild(probe.host);
   document.body.appendChild(box);
   probe.resize(10, 4);
+  // With the renderer panes draw with: WebGL snaps a cell to whole device
+  // pixels, so the DOM renderer's width is too wide and a pane's last
+  // columns come up short, leaving a gap at its right (#164).
+  probe.setVisible(true);
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   const cell = probe.cellSize() ?? { width: 8.4, height: 17 };
+  probe.setVisible(false);
   probe.dispose();
   box.remove();
   return cell;
