@@ -261,6 +261,55 @@ test("a phone needs the laptop's approval", async ({ browser }) => {
   await shell(phone, "phone");
 });
 
+test("the desktop app signs in through the browser, then is approved as a device (M48)", async ({ browser }) => {
+  // The app asks for a ticket, and opens its page in the person's browser.
+  const ask = await fetch(`${base}/auth/app`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "illogical app on test-mac" }),
+  });
+  expect(ask.status).toBe(200);
+  const t = (await ask.json()) as { ticket: string; secret: string; code: string; url: string };
+  expect(t.url).toBe(`${base}/#app=${t.ticket}`);
+  const poll = async (secret = t.secret) => ((await (await fetch(`${base}/auth/app/${t.ticket}/poll?secret=${secret}`)).json()) as { state: string }).state;
+  expect(await poll()).toBe("waiting");
+  // A redeem before the person allows it gets nothing.
+  expect((await fetch(`${base}/auth/app/${t.ticket}/redeem?secret=${t.secret}`, { redirect: "manual" })).status).toBe(404);
+
+  // In the browser (signed in), the same code, and Allow.
+  await laptop.goto(t.url);
+  await expect(laptop.locator("[data-app-login-name]")).toHaveText("illogical app on test-mac");
+  await expect(laptop.locator("[data-app-login-code]")).toHaveText(t.code);
+  await laptop.locator("[data-app-login-allow]").click();
+  await expect(laptop.locator("[data-app-login-done]")).toBeVisible();
+  expect(await poll()).toBe("allowed");
+  expect(await poll("0".repeat(64))).toBe("expired");
+
+  // The app's window redeems it: signed in, then a new device to approve.
+  const app = await (await browser.newContext()).newPage();
+  await app.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "illogical app on test-mac" } }));
+  await app.goto(`${base}/auth/app/${t.ticket}/redeem?secret=${t.secret}`);
+  await expect(app).toHaveURL(`${base}/`);
+  await expect(app.getByText("Approve this browser")).toBeVisible();
+  const fp = await app.locator("[data-fingerprint]").getAttribute("data-fingerprint");
+  await expect(laptop.locator(`[data-pending="${fp}"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(laptop.locator(".prompt")).toContainText("illogical app on test-mac");
+  await laptop.locator("[data-approve]").click();
+  await expect.poll(() => hostNames(app), { timeout: 20_000 }).toEqual(["box", "mac"]);
+  await showHost(app, "mac");
+  await shell(app, "app");
+
+  // Single use.
+  expect((await fetch(`${base}/auth/app/${t.ticket}/redeem?secret=${t.secret}`, { redirect: "manual" })).status).toBe(404);
+  expect(await poll()).toBe("expired");
+
+  // Removing the app's device in control cuts it off at once.
+  const id = await app.evaluate(() => window.__illogical.control!.keys.id);
+  await laptop.evaluate((d) => window.__illogical.control!.revoke(d), id);
+  await expect.poll(() => connected(app), { timeout: 5_000, intervals: [200] }).toBe(false);
+  await app.context().close();
+});
+
 test("with every device lost, a recovery code lets a new browser in, once", async ({ browser }) => {
   const fresh = await (await browser.newContext()).newPage();
   await signIn(fresh);
