@@ -8,6 +8,7 @@
 //! by the account's own devices, so it can refuse service but can't read.
 
 mod api;
+mod app_login;
 mod auth;
 mod billing;
 mod db;
@@ -177,6 +178,8 @@ pub struct App {
     /// The GitHub App (M40), and daemons' subscriptions to its webhooks.
     pub github_app: Option<forge::GithubApp>,
     pub forge: forge::Watches,
+    /// The desktop app's sign-ins in progress (M48).
+    pub app_logins: app_login::Tickets,
 }
 
 /// An API error: `{"error": "..."}` with a status.
@@ -228,6 +231,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/auth/github", get(auth::github_start))
         .route("/auth/github/callback", get(auth::github_callback))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/app", post(app_login::ask))
+        .route("/auth/app/{id}/poll", get(app_login::poll))
+        .route("/auth/app/{id}/redeem", get(app_login::redeem))
+        .route("/api/app-login/{id}", get(app_login::show))
+        .route("/api/app-login/{id}/allow", post(app_login::allow))
         .route("/auth/passkey/register", post(passkey::register_start))
         .route("/auth/passkey/register/finish", post(passkey::register_finish))
         .route("/auth/passkey/login", post(passkey::login_start))
@@ -461,6 +469,7 @@ async fn main() -> anyhow::Result<()> {
         stripe,
         github_app,
         forge: Default::default(),
+        app_logins: Default::default(),
     });
     if app.github_app.is_some() {
         tokio::spawn(forge::heartbeat(app.clone(), std::time::Duration::from_secs(a.forge_heartbeat_secs.max(1))));

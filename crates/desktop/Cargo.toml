@@ -11,10 +11,13 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow = "1"
 illogical-proto = { path = "../proto" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tungstenite = "0.30"
+# Control's ticket for signing in (M48), and the local daemon's /api/host.
+ureq = { version = "3", features = ["json"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # For click handling, which tauri-plugin-notification doesn't expose on desktop.

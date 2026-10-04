@@ -144,6 +144,7 @@ async fn waiting_devices_and_requests_push_their_owners() {
         stripe: None,
         github_app: None,
         forge: Default::default(),
+        app_logins: Default::default(),
     };
     let jake = person(&app, "github", "1", "jhgaylor", "a1jake");
     let ada = person(&app, "passkey", "p2", "", "a2ada");

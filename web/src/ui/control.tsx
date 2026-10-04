@@ -145,6 +145,12 @@ function WhyHere() {
         Sign in to approve this machine.
       </p>
     );
+  if (/^#app=/.test(hash))
+    return (
+      <p class="control-why" data-why="app">
+        Sign in to let the illogical app use your account.
+      </p>
+    );
   return null;
 }
 
@@ -417,6 +423,10 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   if (s.recoveryCodes) return <RecoveryCodes s={s} />;
   const join = /^#join=([A-Za-z0-9-]+)$/.exec(hash)?.[1];
   if (join) return <JoinPrompt s={s} code={join} />;
+  // The app's device asking to be approved comes first: it's the next step
+  // after allowing its sign-in.
+  const appLogin = /^#app=([0-9a-f]{16,128})$/.exec(hash)?.[1];
+  if (appLogin && !s.pending[0]) return <AppLoginPrompt s={s} id={appLogin} />;
   const invite = inviteInHash(hash);
   if (invite)
     return invite.presigned ? (
@@ -547,6 +557,68 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
           Approve
         </button>
       </div>
+    </Modal>
+  );
+}
+
+/** M48: the desktop app asks to sign in as this account. Its device key
+ * is approved separately afterwards (the "New device?" prompt), so this
+ * only lets it ask. */
+function AppLoginPrompt({ s, id }: { s: ControlSession; id: string }) {
+  const [a, setA] = useState<{ name: string; code: string; allowed: boolean } | null>(null);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    s.showAppLogin(id).then(setA, (e: Error) => setErr(e.message));
+  }, [id]);
+  return (
+    <Modal close={clearHash}>
+      <h2>Sign in the app?</h2>
+      {err ? <p class="control-error" data-app-login-error>{err}</p> : null}
+      {done || a?.allowed ? (
+        <>
+          <p data-app-login-done>
+            Signed in. Next the app asks to be approved as a new device: the prompt shows here in a moment. Then it reaches your machines.
+          </p>
+          <div class="prompt-buttons">
+            <button class="primary" onClick={clearHash}>
+              Done
+            </button>
+          </div>
+        </>
+      ) : a ? (
+        <>
+          <p>
+            <b data-app-login-name>{a.name}</b> asks to sign in as you. Check the app shows <b data-app-login-code={a.code}>{a.code}</b>.
+          </p>
+          <p class="dim">If you didn't just press Sign in in the illogical app, cancel: someone may have sent you this link.</p>
+          <div class="prompt-buttons">
+            <button onClick={clearHash}>Cancel</button>
+            <button
+              class="primary"
+              data-app-login-allow
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await s.allowAppLogin(id);
+                  setDone(true);
+                  // Out of the way of the device prompt that follows.
+                  setTimeout(clearHash, 4000);
+                } catch (e) {
+                  setErr((e as Error).message);
+                }
+                setBusy(false);
+              }}
+            >
+              Allow
+            </button>
+          </div>
+        </>
+      ) : err ? null : (
+        <p class="dim">Looking it up…</p>
+      )}
     </Modal>
   );
 }

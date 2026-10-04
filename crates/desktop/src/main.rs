@@ -19,8 +19,13 @@
 //!   follows the daemon's state, notifies when a pane starts needing you and
 //!   no window has focus, and a click opens that pane. The needs-you count
 //!   goes on the dock badge (macOS) and the tray.
-//! - A tray icon with *New window*; one instance (a second launch opens a
-//!   window in the first).
+//! - **Every machine, through illogical cloud** (M48, #159): once this
+//!   machine is joined, the window is control's own client, signed in
+//!   through the person's browser (`cloud.rs`).
+//! - A tray icon with *New window* and *This machine*; one instance (a
+//!   second launch opens a window in the first).
+
+mod cloud;
 
 use std::{
     collections::HashMap,
@@ -162,20 +167,48 @@ fn ensure_daemon() -> Result<(), String> {
     ))
 }
 
-/// The daemon's page when it answers; otherwise the setup page, which
-/// installs or starts it (`retry`) and then goes there.
-fn target() -> WebviewUrl {
-    if reachable() { WebviewUrl::External(page().parse().unwrap()) } else { WebviewUrl::App("index.html".into()) }
+/// Where a new window starts:
+/// - no daemon answering: the setup page, which installs or starts it
+///   (`retry`) and then comes back here;
+/// - joined to control and signed in: control's client, every machine;
+/// - joined, not signed in: the app's sign-in page;
+/// - otherwise (or "just this machine"): the daemon's own page.
+fn target(app: &AppHandle) -> WebviewUrl {
+    if !reachable() {
+        return WebviewUrl::App("index.html".into());
+    }
+    WebviewUrl::External(home(app))
 }
 
-/// The daemon's page and the app's own pages stay in the window.
+fn home(app: &AppHandle) -> tauri::Url {
+    let local = cloud::local();
+    match local.control {
+        Some(c) if !cloud::local_only() => {
+            if cloud::signed_in(app, &c) {
+                format!("{c}/").parse().unwrap()
+            } else {
+                cloud::app_url(cloud::SIGNIN)
+            }
+        }
+        _ => page().parse().unwrap(),
+    }
+}
+
+/// The daemon's page, control's page and the app's own pages stay in the
+/// window.
 fn ours(url: &tauri::Url) -> bool {
     match url.scheme() {
         "tauri" | "about" | "blob" | "data" => true,
-        "http" | "https" => url.host_str().zip(url.port_or_known_default()).is_some_and(|(h, p)| {
-            let at = format!("{h}:{p}");
-            at == addr() || (h == "tauri.localhost") || (h == "localhost" && addr().ends_with(&format!(":{p}")))
-        }),
+        "http" | "https" => {
+            let control = cloud::control().and_then(|c| c.parse::<tauri::Url>().ok());
+            if control.is_some_and(|c| c.origin() == url.origin()) {
+                return true;
+            }
+            url.host_str().zip(url.port_or_known_default()).is_some_and(|(h, p)| {
+                let at = format!("{h}:{p}");
+                at == addr() || (h == "tauri.localhost") || (h == "localhost" && addr().ends_with(&format!(":{p}")))
+            })
+        }
         _ => false,
     }
 }
@@ -183,6 +216,14 @@ fn ours(url: &tauri::Url) -> bool {
 /// Another site, in the person's own browser: control's approval page,
 /// Tailscale's admin console, docs.
 fn open_outside(url: &tauri::Url) {
+    // For tests: write the URL down instead of opening a browser.
+    if let Some(log) = std::env::var_os("ILLOGICAL_OPEN_LOG") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
+            let _ = writeln!(f, "{url}");
+        }
+        return;
+    }
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     if let Err(e) = std::process::Command::new(opener).arg(url.as_str()).spawn() {
         eprintln!("illogical: opening {url}: {e}");
@@ -191,10 +232,13 @@ fn open_outside(url: &tauri::Url) {
 
 fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::WebviewWindow> {
     let n = WINDOWS.fetch_add(1, Ordering::SeqCst);
+    let label = format!("w{n}");
     let handle = app.clone();
-    let w = WebviewWindowBuilder::new(app, format!("w{n}"), url)
+    let nav = (app.clone(), label.clone());
+    let w = WebviewWindowBuilder::new(app, label, url)
         .title("illogical")
         .inner_size(1280.0, 820.0)
+        .initialization_script(cloud::init_script())
         // A link with target=_blank: the client's own pages in a window of
         // ours, anything else in the browser. A webview drops these unless
         // the app handles them.
@@ -209,8 +253,23 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
             }
             tauri::webview::NewWindowResponse::Deny
         })
-        // Following a link away from the daemon: the browser takes it.
-        .on_navigation(|url| {
+        // Control's own sign-in (GitHub) can't finish in the window: the
+        // app's sign-in takes over. A link away from the daemon and control:
+        // the browser takes it.
+        .on_navigation(move |url| {
+            if cloud::is_control_signin(url) {
+                let (app, label) = nav.clone();
+                if let Some(c) = cloud::control() {
+                    cloud::set_signed_in(&app, &c, false);
+                }
+                let a = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(w) = a.get_webview_window(&label) {
+                        let _ = w.navigate(cloud::app_url(cloud::SIGNIN));
+                    }
+                });
+                return false;
+            }
             if ours(url) {
                 return true;
             }
@@ -230,7 +289,7 @@ fn focus_or_open(app: &AppHandle) {
             let _ = w.set_focus();
         }
         None => {
-            let _ = open_window(app, target());
+            let _ = open_window(app, target(app));
         }
     }
 }
@@ -264,11 +323,12 @@ fn daemon_status() -> String {
 }
 
 #[tauri::command]
-async fn retry(window: tauri::WebviewWindow) -> Result<(), String> {
+async fn retry(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     let r = tauri::async_runtime::spawn_blocking(ensure_daemon).await.map_err(|e| e.to_string())?;
     *STATUS.lock().unwrap() = r.clone().err().unwrap_or_default();
     r?;
-    window.navigate(page().parse().unwrap()).map_err(|e| e.to_string())
+    let to = tauri::async_runtime::spawn_blocking(move || home(&app)).await.map_err(|e| e.to_string())?;
+    window.navigate(to).map_err(|e| e.to_string())
 }
 
 // ---- notifications
@@ -385,9 +445,15 @@ fn watch_once(app: &AppHandle) -> anyhow::Result<()> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = open_window(app, target());
+            let _ = open_window(app, target(app));
         }))
-        .invoke_handler(tauri::generate_handler![daemon_status, retry])
+        .invoke_handler(tauri::generate_handler![
+            daemon_status,
+            retry,
+            cloud::cloud_status,
+            cloud::cloud_signin,
+            cloud::cloud_local
+        ])
         .menu(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -420,18 +486,23 @@ fn main() {
                     s.set_property("gtk-menu-bar-accel", "");
                 }
             }
-            open_window(app.handle(), target())?;
+            open_window(app.handle(), target(app.handle()))?;
             let open = MenuItem::with_id(app, "open", "Open illogical", true, None::<&str>)?;
             let new = MenuItem::with_id(app, "new", "New window", true, None::<&str>)?;
+            let this = MenuItem::with_id(app, "this", "This machine", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             TrayIconBuilder::with_id("illogical")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("illogical")
-                .menu(&Menu::with_items(app, &[&open, &new, &quit])?)
+                .menu(&Menu::with_items(app, &[&open, &new, &this, &quit])?)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => focus_or_open(app),
                     "new" => {
-                        let _ = open_window(app, target());
+                        let _ = open_window(app, target(app));
+                    }
+                    // The daemon's own page, whatever the window shows.
+                    "this" => {
+                        let _ = open_window(app, WebviewUrl::External(page().parse().unwrap()));
                     }
                     "quit" => app.exit(0),
                     _ => {}

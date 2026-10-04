@@ -290,6 +290,9 @@ const NO_NOISE = "0".repeat(64);
 
 /** A browser's name in its account's device list. */
 function deviceName(): string {
+  // M48: the desktop app says what it is ("illogical app on jake-air").
+  const app0 = (globalThis as { __illogicalApp?: { name?: string } }).__illogicalApp?.name;
+  if (app0) return app0;
   const ua = navigator.userAgent;
   const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "browser";
   const app = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
@@ -931,6 +934,15 @@ export class ControlSession {
   }
 
   /** Turn a daemon's join down: it stops waiting. */
+  /** M48: a desktop app asking to sign in as this account (`#app=`). */
+  async showAppLogin(id: string): Promise<{ name: string; code: string; allowed: boolean }> {
+    return api(`/api/app-login/${encodeURIComponent(id)}`);
+  }
+
+  async allowAppLogin(id: string) {
+    await api(`/api/app-login/${encodeURIComponent(id)}/allow`, {});
+  }
+
   async rejectJoin(code: string) {
     await api(`/api/joins/${code}/reject`, { device: this.keys.id });
   }

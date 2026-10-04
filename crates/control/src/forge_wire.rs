@@ -188,6 +188,7 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
             forge::parse_pem(&pem).unwrap(),
         )),
         forge: Default::default(),
+        app_logins: Default::default(),
     });
     // Jake signed in with GitHub; a stranger did too; someone else only
     // with a passkey.
