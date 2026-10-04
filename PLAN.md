@@ -3899,6 +3899,33 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
 
 **Done when:** on geek, the catalog shows all of Jake's agents. Filtering to agent-specs leaves the ~23 curated ones. *Run on Fountain* on `games` opens a working block. *Spec* on `pr-reviewer` opens its agent-specs file. And a Claude block's `list_agents` finds `designer` by the skill `frontend-design`.
 
+#### M43: as built
+
+**Done 2026-10-03 (f77ece0).**
+
+- **Module:** `crates/daemon/src/fountain/`: `api.rs`, `login.rs`, `catalog.rs`, `mod.rs`. `BlockType::Fountain {profile, view}`, where `view` is an enum ready for M45b's `runner`. A `WorkKind::Fountain` swarm kind.
+- **Fountain's API:**
+  - `GET /api/agents`, `/api/environments`, `/api/runners` and `/api/sandboxes` all answer `{data: …}`. Sandboxes carry `runner {id, name, path}` and their conversations.
+  - An agent's `model` can be null.
+  - Lists are parsed row by row, so a bad row is counted as unreadable and never empties the list.
+- **Sources:** app-made also counts `drydock` metadata and names like `Mend: …`, `Rounds: …` and `Cantor audit: …`; without them about 50 app agents read as hand-made. agent-specs is 23 either way.
+- **The review found** (and the branch fixed before merging):
+  - an editor could `run` (a local `fountain acp` on the owner's login) or `spec`. `run`, `run_fountain` and `spec` are now owner-only, with `profile` and `specs`;
+  - `read_agent` returned literal header and env values. Anything without a `${…}` is now `<redacted>`;
+  - null fields broke the whole list;
+  - the cache wasn't keyed on host and key;
+  - an explicitly picked profile now uses its own key.
+- **Fixtures:**
+  - The first push carried private MCP hostnames and prompt excerpts. The remote branch was deleted and its history rewritten.
+  - `scrub.py` now maps every non-public host to `mcp-N.example.com`, cuts prompts to 80 characters, and refuses to write if anything private is left.
+- **R2 on geek** (a dev daemon, the real account):
+  - 110 agents, matching `fountain agent list`; agent-specs gives 23; `frontend-design` finds `designer`.
+  - *Spec* on `pr-reviewer` opens `agent-specs/src/agents/specialists/engineering/pr-reviewer.ts` at line 5.
+  - *Run on Fountain* on `hud-playground` answered in 30 s from geek's runner.
+  - A real Claude block found "designer, from agent-specs" through `list_agents`.
+  - `games` couldn't be used: its Fountain environment's apt package `love` fails in postinst, so every `games` sandbox fails to provision. That's for Fountain, not illogical.
+- **Merging with M45a:** both added `illogical fountain`. There's now one command, with `runner` and `agents` under it.
+
 #### M44: wear a Fountain agent locally (#122)
 
 `illogical agent --as <fountain agent>`, and *Run here* in M43: a Claude agent block on this host, in a worktree (or the current directory), configured as that agent. A terminal `claude` launched from the picker as *Claude Code as…* gets the same bundle through flags.
