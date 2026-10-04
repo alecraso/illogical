@@ -683,7 +683,7 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// Build `a`'s bundle under `cache` (or take the one there, if it's
-/// fresh): the plugin with its skills, and the system prompt.
+/// fresh and whole): the plugin with its skills, and the system prompt.
 pub async fn bundle(a: &Agent, cache: &Path, env: &[(String, String)]) -> Result<Bundle, String> {
     let dir = cache.join(component(&a.id)).join(component(a.updated_at.as_deref().unwrap_or("unknown")));
     let plugin = dir.join("plugin");
@@ -691,6 +691,8 @@ pub async fn bundle(a: &Agent, cache: &Path, env: &[(String, String)]) -> Result
     if let Ok(text) = std::fs::read_to_string(dir.join("bundle.json"))
         && let Ok(c) = serde_json::from_str::<Contents>(&text)
         && now_ms().saturating_sub(c.built_ms) < FRESH.as_millis() as u64
+        // One that's missing skills (built offline, say) is tried again.
+        && c.skills_missing.is_empty()
         && plugin.join("skills").is_dir()
     {
         return Ok(Bundle { dir, plugin, system, contents: c });
@@ -1284,7 +1286,15 @@ mod tests {
         assert!(b.system.starts_with("You are running as the Fountain agent \"games\", but locally"));
         assert!(b.dir.ends_with(format!("{}/2026-09-02T09-40-03Z", a.id)), "{}", b.dir.display());
         assert!(cache.join("github/acme__skills/.git").is_dir(), "one shared clone");
-        // Fresh: taken as it is.
+        // Missing skills: built again.
+        std::fs::write(skills.join("love2d/marker"), "").unwrap();
+        let again = bundle(&a, &cache, &env).await.unwrap();
+        assert!(!again.plugin.join("skills/love2d/marker").exists());
+        // Whole and fresh: taken as it is.
+        a.skills.truncate(5);
+        let whole = bundle(&a, &cache, &env).await.unwrap();
+        assert!(whole.contents.skills_missing.is_empty());
+        let skills = whole.plugin.join("skills");
         std::fs::write(skills.join("love2d/marker"), "").unwrap();
         let again = bundle(&a, &cache, &env).await.unwrap();
         assert!(again.plugin.join("skills/love2d/marker").is_file());
