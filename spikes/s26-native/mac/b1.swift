@@ -121,6 +121,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 }
 
+setvbuf(stdout, nil, _IOLBF, 0)  // lines reach a log file at once
 if ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) != 0 { print("ghostty_init failed"); exit(1) }
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)

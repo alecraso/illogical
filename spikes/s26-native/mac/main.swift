@@ -54,6 +54,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 }
 
+setvbuf(stdout, nil, _IOLBF, 0)  // lines reach a log file at once
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let delegate = Delegate()
