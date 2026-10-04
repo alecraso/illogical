@@ -3832,3 +3832,152 @@ button {
   color: var(--letterbox);
   font-weight: 600;
 }
+
+/* M43: the Fountain agent catalog: the filter bar, then cards in a grid
+ * (a list in a narrow pane and on the phone). */
+.fountain-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+}
+
+.fountain-search {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--divider);
+  background: var(--raised);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.fountain-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fountain-chip,
+.fountain-clear {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--divider);
+  background: transparent;
+  color: var(--fg);
+}
+
+.fountain-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--letterbox);
+}
+
+.fountain-chip.on .dim {
+  color: var(--letterbox);
+}
+
+.fountain-said,
+.fountain-empty {
+  font-size: 12px;
+  margin: 4px 10px;
+}
+
+.fountain-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  font-size: 12px;
+}
+
+.fountain-profile {
+  background: var(--raised);
+  color: var(--fg);
+  border: 0;
+  border-radius: 4px;
+  font-size: 12px;
+  height: 26px;
+}
+
+.fountain-cards {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.fountain-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  min-width: 0;
+}
+
+.fountain-card-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fountain-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fountain-src.agent-specs {
+  background: var(--accent);
+  color: var(--letterbox);
+}
+
+.fountain-meta {
+  font-size: 11px;
+}
+
+.fountain-desc {
+  margin: 0;
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fountain-mcp {
+  border: 1px solid var(--divider);
+}
+
+.fountain-actions {
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.phone .fountain-cards {
+  grid-template-columns: 1fr;
+  gap: 0;
+  padding: 0;
+}
+
+.phone .fountain-card {
+  border-radius: 0;
+  border-width: 0 0 1px;
+}
+
+.phone .fountain-actions button {
+  padding: 8px 14px;
+  font-size: 14px;
+}

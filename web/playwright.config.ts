@@ -80,6 +80,20 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   process.env.ILLOGICAL_FORGE_POLL_MS ??= "300,1500";
 }
 
+// M43: Fountain blocks read the credentials file fountain.spec.ts writes
+// (pointing at its fake Fountain), never ~/.fountain; and *Run on
+// Fountain* runs a stand-in `fountain` that is the fake ACP agent.
+{
+  const dir = runDir("ILLOGICAL_E2E_FOUNTAIN_DIR", "illogical-e2e-fountain-");
+  process.env.ILLOGICAL_FOUNTAIN_CREDENTIALS = join(dir, "credentials");
+  const fake = fileURLToPath(new URL("../crates/daemon/tests/fake_acp.py", import.meta.url));
+  writeFileSync(join(dir, "fountain"), `#!/bin/sh\nexec python3 ${fake} "$@"\n`);
+  chmodSync(join(dir, "fountain"), 0o755);
+  process.env.ILLOGICAL_FOUNTAIN_BIN = join(dir, "fountain");
+  for (const k of ["FOUNTAIN_API_KEY", "FOUNTAIN_BASE_URL", "FOUNTAIN_PROFILE"]) delete process.env[k];
+  process.env.ILLOGICAL_FOUNTAIN_POLL_MS ??= "1500";
+}
+
 // By default runs against a throwaway debug daemon on 7683 (which serves
 // web/dist from disk), driving the system Chrome; `*.webkit.spec.ts` drive
 // Playwright's WebKit (#94: Safari's engine, where device keys behave

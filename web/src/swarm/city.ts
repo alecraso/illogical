@@ -32,11 +32,11 @@ import { KINDS } from "./model";
 
 type Shape = "box" | "hex" | "pent" | "drum" | "slab";
 const SHAPE: Record<WorkKind, Shape> = {
-  shell: "box", build: "box", test: "box", agent: "hex", server: "drum", logs: "drum", app: "drum", editor: "pent", pr: "slab", issue: "slab",
+  shell: "box", build: "box", test: "box", agent: "hex", server: "drum", logs: "drum", app: "drum", editor: "pent", pr: "slab", issue: "slab", fountain: "slab",
 };
 /** Runs until stopped (or isn't a process at all): a fixed height, never a
  * lit roof. */
-const LONG: Partial<Record<WorkKind, number>> = { server: 1.5, logs: 0.9, app: 1.8, editor: 0.7, pr: 0.35, issue: 0.35 };
+const LONG: Partial<Record<WorkKind, number>> = { server: 1.5, logs: 0.9, app: 1.8, editor: 0.7, pr: 0.35, issue: 0.35, fountain: 0.35 };
 
 const STEP = 1.2;
 const STREET = 4.4;

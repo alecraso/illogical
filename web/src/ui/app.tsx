@@ -13,7 +13,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
-import { newRemote, openChanges, openEditor, openIssue, openPort, openPr, openWorkspace, remoteHosts, useWorkspaceDir } from "../blocks";
+import { newRemote, openChanges, openEditor, openFountain, openIssue, openPort, openPr, openWorkspace, remoteHosts, useWorkspaceDir } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { ConversationsLayer, pickConversation } from "./conversations";
 import { AppsLayer, pickApp } from "./apps";
@@ -209,6 +209,8 @@ function TopBar({
               ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { session: session.id }) } as MenuItem] : []),
               // M37: an issue, in a tab of its own.
               ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { session: session.id }) } as MenuItem] : []),
+              // M43: the Fountain agent catalog, in a tab of its own.
+              ...(!client.state?.roles ? [{ label: "Fountain agents…", run: () => void openFountain(client, { session: session.id }) } as MenuItem] : []),
               // #17: a tab here whose shell runs on another host.
               ...remoteHosts().map((h): MenuItem => ({ label: `New tab on ${h}`, run: () => void newRemote(client, h, { session: session.id }) })),
             ])
@@ -580,6 +582,8 @@ function PaneSlot({
       ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { split: id, dir: cwd }) } as MenuItem] : []),
       // M37: an issue beside it (N: in its repository).
       ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { split: id, dir: cwd }) } as MenuItem] : []),
+      // M43: the Fountain agent catalog beside it.
+      ...(!client.state?.roles ? [{ label: "Fountain agents…", run: () => void openFountain(client, { split: id }) } as MenuItem] : []),
       // M27: VS Code where this pane runs, in its directory. The owner's,
       // like ports.
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),
