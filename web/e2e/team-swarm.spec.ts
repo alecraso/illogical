@@ -175,7 +175,7 @@ test("two teammates with two machines each and a team box", async ({ browser }) 
   alice = await person(browser, "alice");
   await alice.evaluate(() => window.__illogical.control!.createTeam("Acme"));
   team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
-  const link = await alice.evaluate((t) => window.__illogical.control!.invite(t, "editor"), team);
+  const link = await alice.evaluate((t) => window.__illogical.control!.invite(t, "editor", true), team);
   bob = await person(browser, "bob");
   await bob.goto(link);
   await bob.locator("[data-accept-invite]").click();

@@ -4,7 +4,8 @@
 // one runs a build on it. A read-only link works in a logged-out browser
 // and dies at expiry. Removing a member cuts them off within a second.
 // Joining (#100): the approver sees the team, picks it or Just me, and only
-// its owners can approve; Cancel turns the daemon down.
+// its owners can approve; Cancel turns the daemon down. A presigned invite
+// lets someone already in another team in with one click, no owner's yes.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -123,8 +124,10 @@ test("two people at different companies join a team by invite", async ({ browser
   expect(await alice.evaluate(() => window.__illogical.control!.teams[0].locked)).toBe(false);
   // The invite's role is picked in the team's own section (default: drives).
   await expect(alice.locator(`[data-invite-role="${team}"]`)).toHaveValue("editor");
-  await alice.locator(`[data-invite="${team}"]`).click();
+  // This one waits for her yes (the presigned kind is below).
   const section = alice.locator(`[data-team="${team}"]`);
+  await section.locator("[data-invite-ask-first]").check();
+  await alice.locator(`[data-invite="${team}"]`).click();
   await expect(section.locator("[data-invite-link]")).toContainText("#invite=");
   const link = (await section.locator("[data-invite-link]").textContent())!;
   await expect(section.locator("[data-invite-link] + [data-copy]")).toBeVisible();
@@ -164,9 +167,10 @@ test("two people at different companies join a team by invite", async ({ browser
 
 /** `illogicald join`, waiting for approval: its link, what it printed,
  * and how it ended. */
-async function startJoin(name: string, state: string, extra: string[] = []) {
+async function startJoin(name: string, state: string, extra: string[] = [], env: NodeJS.ProcessEnv = {}) {
   const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state, ...extra], {
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...env },
   });
   procs.push(joining);
   let out = "";
@@ -241,6 +245,88 @@ test("a team-owned box joins; both use it through the relay and pass control", a
   await bob.evaluate((p) => window.__illogical.client.paneOp(p, { op: "request_control" }), pane);
   await alice.locator("[data-give]").click();
   await run(bob, pane, "echo bob-$((6*7))", "bob-42");
+});
+
+test("a presigned invite: someone already in a team joins another in one click", async ({ browser }) => {
+  // Carol has her own team already.
+  const carol = await person(browser, "carol");
+  await carol.evaluate(() => window.__illogical.control!.createTeam("Carols"));
+  // A team machine that doesn't understand presigned invites (an older
+  // daemon, played by one that says it understands nothing): Alice's link
+  // asks her first, and says why.
+  const old = temp("oldbox");
+  const j = await startJoin("oldbox", old, ["--team", team], { ILLOGICAL_FEATURES: "" });
+  await alice.goto(j.link);
+  await alice.locator("[data-approve-join]").click();
+  expect(await j.exited).toBe(0);
+  await alice.goto("/");
+  await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  const section = alice.locator(`[data-team="${team}"]`);
+  // The panel opens once the page's control overlay is listening.
+  await expect(async () => {
+    await alice.evaluate(() => window.dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+    await expect(section).toBeVisible({ timeout: 500 });
+  }).toPass({ timeout: 15_000 });
+  await section.locator(`[data-invite-role="${team}"]`).selectOption("viewer");
+  await expect(section.locator("[data-invite-ask-first]")).not.toBeChecked();
+  await alice.locator(`[data-invite="${team}"]`).click();
+  await expect(section.locator("[data-invite-why]")).toContainText("oldbox needs an update before one-click invites work in this team");
+  await expect(section).toContainText("Anyone with this link can ask to join");
+  // Once it's gone, presigned links are back (buildbox understands them).
+  const left = spawn("../target/debug/illogicald", ["leave", "--state-dir", old], { stdio: "ignore" });
+  expect(await new Promise((r) => left.on("exit", r))).toBe(0);
+  // Alice makes a presigned link (the default) for someone who watches.
+  await alice.locator(`[data-invite="${team}"]`).click();
+  await expect(section.locator("[data-invite-why]")).toHaveCount(0);
+  await expect(section).toContainText("One person can join with this link, within a day");
+  const link = (await section.locator("[data-invite-link]").textContent())!;
+  expect(link).toMatch(/#pinvite=[0-9a-f]{16}\.[0-9a-f]{64}$/);
+  await alice.getByRole("button", { name: "Done" }).click();
+  // A signed-out page still says who invited whom.
+  const stranger = await (await browser.newContext()).newPage();
+  await stranger.goto(link);
+  await expect(stranger.locator("[data-why=invite]")).toContainText("alice invited you to Acme.");
+  // Carol opens it: one button, and she's in, with no visit from Alice.
+  await carol.goto(link);
+  await expect(carol.locator("[data-invite-team]")).toHaveText("Acme");
+  await expect(carol.locator(".control-prompt")).toContainText("Joining adds you right away");
+  await carol.locator("[data-accept-invite]").click();
+  await expect(carol.locator("[data-invite-joined]")).toBeVisible({ timeout: 15_000 });
+  const mine = await carol.evaluate(() => window.__illogical.control!.teams.map((t) => `${t.roster.name}:${t.role}`).sort());
+  expect(mine).toEqual(["Acme:viewer", "Carols:owner"]);
+  await carol.getByRole("button", { name: "Done" }).click();
+  // Alice's browser checks the version Carol wrote, as daemons do.
+  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await expect
+    .poll(() => alice.evaluate(() => window.__illogical.control!.teams.find((t) => t.roster.name === "Acme")!.roster.members.map((m) => `${m.name}:${m.role}`)))
+    .toEqual(["alice:owner", "bob:editor", "carol:viewer"]);
+  // The team's box takes the new roster: Carol reaches it.
+  await carol.goto("/");
+  await carol.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await expect.poll(() => hostNames(carol), { timeout: 30_000 }).toContain("buildbox");
+  await expect.poll(() => carol.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
+  // Now that the team's history has a presigned version, an older daemon
+  // can't follow it, so it can't join the team.
+  const late = spawn("../target/debug/illogicald", ["join", base, "--name", "latebox", "--state-dir", temp("latebox"), "--team", team], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: { ...process.env, ILLOGICAL_FEATURES: "" },
+  });
+  let lateErr = "";
+  late.stderr!.on("data", (d) => (lateErr += d));
+  expect(await new Promise((r) => late.on("exit", r))).not.toBe(0);
+  expect(lateErr).toContain("this machine needs an update before it can join this team");
+  // Once: the same link does nothing for anyone after her. Dave opens it
+  // signed out and signs in with GitHub: he's back at the invite, and his
+  // browser never sent its one-time key anywhere (control could use it).
+  const seed = link.split(".").at(-1)!;
+  const sent: string[] = [];
+  const dave = await person(browser, "dave", async (page) => {
+    page.on("request", (r) => sent.push(`${r.url()} ${r.postData() ?? ""}`));
+    await page.goto(link);
+  });
+  await expect(dave.locator(".control-prompt .control-error")).toContainText("expired, was used, or never was");
+  expect(sent.some((r) => r.includes("/auth/github"))).toBe(true);
+  expect(sent.filter((r) => r.includes(seed))).toEqual([]);
 });
 
 test("a read-only link works logged out, and dies at expiry", async ({ browser }) => {

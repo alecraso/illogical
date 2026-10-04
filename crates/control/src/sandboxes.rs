@@ -116,7 +116,7 @@ async fn provision(app: &App, id: &str, _ticket: &str) -> anyhow::Result<()> {
     let cert = req.ok_or_else(|| anyhow::anyhow!("the daemon didn't ask to join"))?;
     cert.check_request()?;
     let code = illogical_e2e::cert::join_code(&cert);
-    app.db.add_join(&code, &cert, &hash(&token()), &[], None, Some(id), now_ms())?;
+    app.db.add_join(&code, &cert, &hash(&token()), &[], None, Some(id), "", now_ms())?;
     app.db.set_sandbox_state(id, "approving")?;
     Ok(())
 }

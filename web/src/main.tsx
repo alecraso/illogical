@@ -9,7 +9,7 @@ import { App } from "./ui/app";
 import { remotes } from "./blocks";
 import { measureCell } from "./ui/cells";
 import { enableControlPush, registerWorker, setPushBackend } from "./push";
-import { ControlSession, detectControl } from "./control";
+import { ControlSession, detectControl, restoreInvite } from "./control";
 import { ControlGate, ControlOverlay, controlMenuItems, NoMachines, useControl } from "./ui/control";
 import { setFleet, setHostMenuExtras } from "./ui/hosts";
 import { setControlSession } from "./ui/people";
@@ -24,6 +24,8 @@ import { closeSwarm, onSwarmRoute, swarmRoute } from "./swarm/route";
 // browser, and reach daemons through end-to-end channels. A read-only link
 // (M19, `#link=…`) needs no account: its key is in the fragment.
 const info = await detectControl();
+// Back from signing in with a presigned invite's link (kept off control).
+if (info) restoreInvite();
 const linkMatch = /^#link=([0-9a-f]+)\.([0-9a-f]{64})\.([0-9a-f]{64})\.([0-9a-f]{64})$/.exec(location.hash);
 const session = info && !linkMatch ? new ControlSession(info) : null;
 setControlSession(session);

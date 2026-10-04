@@ -98,6 +98,19 @@ CREATE TABLE IF NOT EXISTS invites (
     expires INTEGER NOT NULL,
     by_account TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS daemon_watches (
+    daemon TEXT NOT NULL,
+    team TEXT NOT NULL,
+    seen INTEGER NOT NULL,
+    PRIMARY KEY (daemon, team)
+);
+CREATE TABLE IF NOT EXISTS presigned_invites (
+    key TEXT PRIMARY KEY,
+    team TEXT NOT NULL,
+    body TEXT NOT NULL,
+    expires INTEGER NOT NULL,
+    by_account TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS team_requests (
     team TEXT NOT NULL,
     account TEXT NOT NULL,
@@ -182,6 +195,12 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     if !has("daemons", "moved")? {
         conn.execute_batch("ALTER TABLE daemons ADD COLUMN moved TEXT")?;
+    }
+    if !has("daemons", "features")? {
+        conn.execute_batch("ALTER TABLE daemons ADD COLUMN features TEXT")?;
+    }
+    if !has("joins", "features")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN features TEXT")?;
     }
     Ok(())
 }
@@ -269,6 +288,29 @@ pub struct Join {
     pub team_sig: Option<String>,
     /// Turned down, on the device named here (#100).
     pub rejected: Option<String>,
+    /// What the daemon said it understands when it asked (older ones say
+    /// nothing).
+    pub features: String,
+}
+
+/// A row that's already there (a primary key), as opposed to anything
+/// else going wrong.
+#[derive(Debug)]
+pub struct Taken;
+
+impl std::fmt::Display for Taken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("already there")
+    }
+}
+
+impl std::error::Error for Taken {}
+
+fn taken(e: rusqlite::Error) -> anyhow::Error {
+    match e {
+        rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ConstraintViolation => Taken.into(),
+        e => e.into(),
+    }
 }
 
 fn cert_of(s: String) -> rusqlite::Result<Cert> {
@@ -531,15 +573,25 @@ impl Db {
         urls: &[String],
         team: Option<&str>,
         sandbox: Option<&str>,
+        features: &str,
         now: u64,
     ) -> anyhow::Result<()> {
         let c = self.c();
         // Old ones go first; a code can be asked for again.
         c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
         c.execute(
-            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7)",
-            params![code, serde_json::to_string(cert)?, poll_hash, serde_json::to_string(urls)?, now, team, sandbox],
+            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox, features)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8)",
+            params![
+                code,
+                serde_json::to_string(cert)?,
+                poll_hash,
+                serde_json::to_string(urls)?,
+                now,
+                team,
+                sandbox,
+                features
+            ],
         )?;
         Ok(())
     }
@@ -548,7 +600,8 @@ impl Db {
         Ok(self
             .c()
             .query_row(
-                "SELECT cert, poll_hash, urls, created, account, team, sandbox, team_sig, rejected FROM joins
+                "SELECT cert, poll_hash, urls, created, account, team, sandbox, team_sig, rejected,
+                 COALESCE(features, '') FROM joins
                  WHERE code = ?1 AND created >= ?2",
                 params![code, now.saturating_sub(JOIN_TTL_MS)],
                 |r| {
@@ -562,6 +615,7 @@ impl Db {
                         sandbox: r.get(6)?,
                         team_sig: r.get(7)?,
                         rejected: r.get(8)?,
+                        features: r.get(9)?,
                     })
                 },
             )
@@ -700,9 +754,11 @@ impl Db {
         Ok(())
     }
 
+    /// Fails with [`Taken`] when that version is already there.
     pub fn add_roster(&self, team: &str, version: u64, body: &str) -> anyhow::Result<()> {
         let c = self.c();
-        c.execute("INSERT INTO rosters (team, version, body) VALUES (?1, ?2, ?3)", params![team, version, body])?;
+        c.execute("INSERT INTO rosters (team, version, body) VALUES (?1, ?2, ?3)", params![team, version, body])
+            .map_err(taken)?;
         if let Some(name) =
             serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v["name"].as_str().map(str::to_owned))
         {
@@ -778,9 +834,39 @@ impl Db {
             .optional()?)
     }
 
+    /// A presigned invite (its one-time key's public half names it), as the
+    /// owner's device signed it. Fails with [`Taken`] for a key already used.
+    pub fn add_presigned(&self, key: &str, team: &str, body: &str, expires: u64, by: &str) -> anyhow::Result<()> {
+        self.c()
+            .execute(
+                "INSERT INTO presigned_invites (key, team, body, expires, by_account) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![key, team, body, expires, by],
+            )
+            .map_err(taken)?;
+        Ok(())
+    }
+
+    /// (team, invite JSON, who made it) for a live presigned invite.
+    pub fn presigned(&self, key: &str, now: u64) -> anyhow::Result<Option<(String, String, String)>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT team, body, by_account FROM presigned_invites WHERE key = ?1 AND expires > ?2",
+                params![key, now],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn drop_presigned(&self, key: &str) -> anyhow::Result<()> {
+        self.c().execute("DELETE FROM presigned_invites WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
     pub fn drop_invites(&self, team: &str) -> anyhow::Result<()> {
         let c = self.c();
         c.execute("DELETE FROM invites WHERE team = ?1", params![team])?;
+        c.execute("DELETE FROM presigned_invites WHERE team = ?1", params![team])?;
         c.execute("DELETE FROM team_requests WHERE team = ?1", params![team])?;
         Ok(())
     }
@@ -849,6 +935,45 @@ impl Db {
             .query_row("SELECT team FROM daemons WHERE id = ?1", params![daemon], |r| r.get(0))
             .optional()?
             .flatten())
+    }
+
+    /// What a daemon said it understands, on its last team call (an older
+    /// daemon says nothing).
+    pub fn set_daemon_features(&self, daemon: &str, features: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE daemons SET features = ?2 WHERE id = ?1", params![daemon, features])?;
+        Ok(())
+    }
+
+    /// What a daemon last said it understands ("" for an older one).
+    pub fn daemon_features(&self, daemon: &str) -> anyhow::Result<String> {
+        Ok(self
+            .c()
+            .query_row("SELECT COALESCE(features, '') FROM daemons WHERE id = ?1", params![daemon], |r| r.get(0))
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// A daemon checks this team's rosters because a session was shared
+    /// with it (M30), not because it's the team's.
+    pub fn watch_team(&self, daemon: &str, team: &str, now: u64) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO daemon_watches (daemon, team, seen) VALUES (?1, ?2, ?3)
+             ON CONFLICT (daemon, team) DO UPDATE SET seen = excluded.seen",
+            params![daemon, team, now],
+        )?;
+        Ok(())
+    }
+
+    /// Every daemon that checks this team's rosters: its own machines, and
+    /// those that asked about it since `since`. (name, features) each.
+    pub fn team_followers(&self, team: &str, since: u64) -> anyhow::Result<Vec<(String, String)>> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT name, COALESCE(features, '') FROM daemons WHERE team = ?1
+             OR id IN (SELECT daemon FROM daemon_watches WHERE team = ?1 AND seen > ?2) ORDER BY name",
+        )?;
+        let rows = q.query_map(params![team, since], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn team_daemons(&self, team: &str) -> anyhow::Result<Vec<String>> {
@@ -1237,6 +1362,25 @@ mod tests {
             approver: String::new(),
             sig: String::new(),
         }
+    }
+
+    #[test]
+    fn a_teams_followers_and_what_they_understand() {
+        let db = Db::memory();
+        for (id, name) in [("d1", "buildbox"), ("d2", "laptop"), ("d3", "elsewhere")] {
+            db.put_daemon("a1", id, name, &[]).unwrap();
+        }
+        db.set_daemon_team("d1", "t1").unwrap();
+        db.watch_team("d2", "t1", 100).unwrap();
+        // An older daemon never says what it understands.
+        assert_eq!(
+            db.team_followers("t1", 0).unwrap(),
+            vec![("buildbox".to_owned(), String::new()), ("laptop".to_owned(), String::new())]
+        );
+        db.set_daemon_features("d1", "presigned-invites").unwrap();
+        assert_eq!(db.team_followers("t1", 0).unwrap()[0].1, "presigned-invites");
+        // A share that stopped asking ages out.
+        assert_eq!(db.team_followers("t1", 100).unwrap().len(), 1);
     }
 
     #[test]

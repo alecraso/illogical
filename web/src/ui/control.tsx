@@ -3,7 +3,7 @@
 // list, and how to add a machine.
 
 import { useEffect, useState } from "preact/hooks";
-import { passkeyRegister, passkeySignIn, previewInvite, type ControlSession, type JoinRequest } from "../control";
+import { inviteInHash, passkeyRegister, passkeySignIn, previewInvite, signInNext, type ControlSession, type JoinRequest } from "../control";
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 import { directory } from "../hosts";
@@ -37,7 +37,7 @@ export function ControlGate({ s }: { s: ControlSession }) {
       </Center>
     );
   if (s.phase === "signed-out") {
-    const next = encodeURIComponent(location.pathname + location.hash);
+    const next = encodeURIComponent(signInNext());
     return (
       <Center>
         <h1>illogical</h1>
@@ -115,7 +115,7 @@ export function ControlGate({ s }: { s: ControlSession }) {
  * survives signing in, so it opens once you're in. */
 function WhyHere() {
   const [hash, setHash] = useState(location.hash);
-  const invite = /^#invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
+  const invite = inviteInHash(hash);
   const [team, setTeam] = useState<{ name: string; by: string } | null>(null);
   useEffect(() => {
     const on = () => setHash(location.hash);
@@ -124,7 +124,7 @@ function WhyHere() {
   }, []);
   useEffect(() => {
     setTeam(null);
-    if (invite) void previewInvite(invite[1], invite[2]).then(setTeam);
+    if (invite) void previewInvite(invite.team, invite.code, invite.presigned).then(setTeam);
   }, [hash]);
   if (invite)
     return (
@@ -417,8 +417,13 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   if (s.recoveryCodes) return <RecoveryCodes s={s} />;
   const join = /^#join=([A-Za-z0-9-]+)$/.exec(hash)?.[1];
   if (join) return <JoinPrompt s={s} code={join} />;
-  const invite = /^#invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
-  if (invite) return <InvitePrompt s={s} team={invite[1]} code={invite[2]} />;
+  const invite = inviteInHash(hash);
+  if (invite)
+    return invite.presigned ? (
+      <PresignedPrompt s={s} team={invite.team} seed={invite.code} />
+    ) : (
+      <InvitePrompt s={s} team={invite.team} code={invite.code} />
+    );
   // Someone used an invite to a team I own: add them (sign the roster)?
   const req = s.teams.flatMap((t) => (t.role === "owner" ? t.requests.map((r) => ({ t, r })) : []))[0];
   if (req) return <AdmitPrompt s={s} team={req.t} req={req.r} />;
@@ -931,6 +936,50 @@ function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code
   );
 }
 
+/** A presigned invite: accepting it is the whole of joining. */
+function PresignedPrompt({ s, team, seed }: { s: ControlSession; team: string; seed: string }) {
+  const [info, setInfo] = useState<{ name: string; role: TeamRole } | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  // In it, whether by this click or before (the page may redraw this
+  // prompt as the team's machines arrive).
+  const member = s.teams.find((t) => t.team === team && t.role);
+  useEffect(() => {
+    if (member) return;
+    s.showPresigned(team, seed).then(
+      (p) => setInfo({ name: p.name, role: p.invite.role }),
+      (e: Error) => setErr(e.message),
+    );
+  }, [team, seed]);
+  const join = () => {
+    setBusy(true);
+    s.redeem(team, seed)
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Modal close={clearHash}>
+      <h2>{member ? `You're in ${member.roster.name}` : `Join ${info?.name ?? "a team"}?`}</h2>
+      {err ? <p class="control-error">{err}</p> : null}
+      {member ? (
+        <p data-invite-joined>Its machines appear in the host menu.</p>
+      ) : info ? (
+        <p>
+          You're invited to <b data-invite-team={team}>{info.name}</b> {roleAs(info.role)}. Joining adds you right away; its owners are told.
+        </p>
+      ) : null}
+      <div class="prompt-buttons">
+        <button onClick={clearHash}>{member ? "Done" : "Not now"}</button>
+        {!member ? (
+          <button class="primary" data-accept-invite disabled={!info || busy} onClick={join}>
+            {busy ? "Joining…" : `Join ${info?.name ?? ""}`.trim()}
+          </button>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
 function AdmitPrompt({ s, team, req }: { s: ControlSession; team: Team; req: Team["requests"][number] }) {
   const [err, setErr] = useState("");
   return (
@@ -1003,6 +1052,10 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
 function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () => Promise<unknown>) => void }) {
   const [role, setRole] = useState<TeamRole>("editor");
   const [link, setLink] = useState<string | null>(null);
+  // An invite that waits for an owner's yes (the old way), not presigned.
+  const [askFirst, setAskFirst] = useState(false);
+  const [linkAsks, setLinkAsks] = useState(false);
+  const [linkWhy, setLinkWhy] = useState("");
   // Which button waits for a second click: "lock", or a member to remove.
   const [confirming, setConfirming] = useState<string | null>(null);
   const owner = t.role === "owner";
@@ -1076,13 +1129,35 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
                 ))}
               </select>
             </label>
-            <button data-invite={t.team} disabled={t.locked} onClick={() => act(async () => setLink(await s.invite(t.team, role)))}>
+            <label class="control-check" title="Each person waits for an owner's yes, as before">
+              <input type="checkbox" data-invite-ask-first checked={askFirst || role === "owner"} disabled={role === "owner"} onChange={(e) => setAskFirst((e.target as HTMLInputElement).checked)} />{" "}
+              Ask me first
+            </label>
+            <button
+              data-invite={t.team}
+              disabled={t.locked}
+              onClick={() =>
+                act(async () => {
+                  const l = await s.makeInvite(t.team, role, askFirst);
+                  setLinkAsks(l.asks);
+                  setLinkWhy(l.why ?? "");
+                  setLink(l.link);
+                })
+              }
+            >
               Make a link
             </button>
           </div>
+          {link && linkWhy ? (
+            <p class="dim" data-invite-why>
+              {linkWhy}, so this link asks you first. Rerun the install command on them to update.
+            </p>
+          ) : null}
           {link ? (
             <p>
-              Anyone with this link can ask to join (for a week); you approve each:
+              {linkAsks
+                ? "Anyone with this link can ask to join (for a week); you approve each:"
+                : "One person can join with this link, within a day, and you're told when they do. Send it only to them:"}
               <CopyText text={link} share data-invite-link />
             </p>
           ) : null}

@@ -4,6 +4,8 @@
 //!   JSON, for the TS code to evaluate the same way;
 //! - `check`: read a certificate chain the TS code signed from stdin, and
 //!   say which devices Rust trusts;
+//! - `roster`: read `{pin, prev, roster, certs}` from stdin and say whether
+//!   the roster follows (a team's next version, a presigned invite's too);
 //! - `responder ADDR`: a WebSocket daemon stand-in that answers the Noise
 //!   handshake and echoes text and binary messages, and answers requests
 //!   with their method, path and body.
@@ -15,6 +17,7 @@ use illogical_e2e::{
     Cert, DeviceKeys, Kind, Revocation, Trust,
     cert::join_code,
     channel::{Msg, Responder, ResponseHead, prologue},
+    team::{AccountCerts, Roster, TeamPin},
 };
 use tokio_tungstenite::tungstenite::Message;
 
@@ -63,6 +66,17 @@ async fn main() -> anyhow::Result<()> {
             ids.sort();
             println!("{}", serde_json::to_string(&ids)?);
         }
+        Some("roster") => {
+            let mut s = String::new();
+            std::io::stdin().read_to_string(&mut s)?;
+            let v: serde_json::Value = serde_json::from_str(&s)?;
+            let pin: TeamPin = serde_json::from_value(v["pin"].clone())?;
+            let prev: Option<Roster> = serde_json::from_value(v["prev"].clone())?;
+            // One that doesn't even parse doesn't follow.
+            let roster: Option<Roster> = serde_json::from_value(v["roster"].clone()).ok();
+            let certs: AccountCerts = serde_json::from_value(v["certs"].clone())?;
+            println!("{}", roster.is_some_and(|r| r.follows(prev.as_ref(), &pin, &certs)));
+        }
         Some("responder") => {
             let keys = DeviceKeys::generate();
             let l = tokio::net::TcpListener::bind(args.get(1).map(String::as_str).unwrap_or("127.0.0.1:0")).await?;
@@ -100,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
         }
-        _ => anyhow::bail!("usage: interop fixtures|check|responder [ADDR]"),
+        _ => anyhow::bail!("usage: interop fixtures|check|roster|responder [ADDR]"),
     }
     Ok(())
 }

@@ -12,7 +12,22 @@
 import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
 import { forget, loadEnrollment, loadKeys, saveEnrollment, saveWorkerDirectory, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
-import { follows, moveBody, signRoster, teamJoinBody, word, type AccountCerts, type Roster, type TeamPin, type TeamRole } from "./e2e/team.ts";
+import {
+  follows,
+  inviteKey,
+  moveBody,
+  newInviteKey,
+  redeemInvite,
+  signInvite,
+  signRoster,
+  teamJoinBody,
+  word,
+  type AccountCerts,
+  type Invite,
+  type Roster,
+  type TeamPin,
+  type TeamRole,
+} from "./e2e/team.ts";
 
 export interface ControlInfo {
   control: true;
@@ -176,9 +191,51 @@ export async function passkeyRegister(name?: string): Promise<void> {
 
 /** What a signed-out page may know about an invite (#103): the team's
  * name and who made it. */
-export async function previewInvite(team: string, code: string): Promise<{ name: string; by: string } | null> {
+export async function previewInvite(team: string, code: string, presigned: boolean): Promise<{ name: string; by: string } | null> {
+  if (presigned) {
+    const key = await inviteKey(code).then((k) => k.key, () => null);
+    return key ? api<{ name: string; by: string }>(`/api/presigned/${team}/${key}/preview`).catch(() => null) : null;
+  }
   return api<{ name: string; by: string }>(`/api/invites/${team}/${code}/preview`).catch(() => null);
 }
+
+/** A team invite in a link's fragment: `#invite=<team>.<code>` asks an
+ * owner first; `#pinvite=<team>.<seed>` is presigned and carries its
+ * one-time key's seed. A page from before presigned invites doesn't know
+ * the second, so it never sends the seed to control as a code. */
+export function inviteInHash(hash: string): { team: string; code: string; presigned: boolean } | null {
+  const m = /^#(p?)invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
+  return m ? { team: m[2], code: m[3], presigned: m[1] === "p" } : null;
+}
+
+const PENDING_INVITE = "illogical:presigned-invite";
+
+/** Where signing in with GitHub comes back to: this page, but never with a
+ * presigned invite's seed, which control mustn't see. That waits in this
+ * tab's sessionStorage for `restoreInvite`. */
+export function signInNext(): string {
+  if (!inviteInHash(location.hash)?.presigned) return location.pathname + location.hash;
+  try {
+    sessionStorage.setItem(PENDING_INVITE, location.hash);
+  } catch {
+    // Without storage the link has to be opened again after signing in.
+  }
+  return location.pathname;
+}
+
+/** Back from signing in: the presigned invite link `signInNext` kept. */
+export function restoreInvite() {
+  try {
+    const hash = sessionStorage.getItem(PENDING_INVITE);
+    sessionStorage.removeItem(PENDING_INVITE);
+    if (hash && !location.hash && inviteInHash(hash)?.presigned) history.replaceState(null, "", location.pathname + location.search + hash);
+  } catch {
+    // Nothing kept.
+  }
+}
+
+/** How long a presigned invite lasts unless the owner says otherwise. */
+const PRESIGNED_TTL_MS = 24 * 3600_000;
 
 export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "lost-key" | "ready" | "error";
 
@@ -679,8 +736,20 @@ export class ControlSession {
     const t = this.teams.find((x) => x.team === team);
     if (!t) throw new Error("no such team");
     const prev = t.roster;
+    // Used presigned invites stay listed until they'd have expired anyway,
+    // so none works twice.
+    const now = Date.now();
+    const spent = (prev.spent ?? []).filter((x) => x.expires > now);
     const next = await signRoster(
-      { v: 1, team, name: name ?? prev.name, version: prev.version + 1, at: Date.now(), members: change(prev.members.map((m) => ({ ...m }))) },
+      {
+        v: spent.length ? 2 : 1,
+        team,
+        name: name ?? prev.name,
+        version: prev.version + 1,
+        at: now,
+        members: change(prev.members.map((m) => ({ ...m }))),
+        ...(spent.length ? { spent } : {}),
+      },
       this.keys,
     );
     if (!(await follows(next, prev, t.pin, t.certs))) throw new Error("that change doesn't check out (are you an owner here?)");
@@ -692,9 +761,58 @@ export class ControlSession {
     await this.changeTeam(team, (ms) => [...ms.filter((m) => m.account !== req.account), { account: req.account, root: req.root, role: req.role, name: word(req.name) }]);
   }
 
-  async invite(team: string, role: TeamRole): Promise<string> {
-    const r = await api<{ link: string }>(`/api/teams/${team}/invites`, { role });
-    return r.link;
+  /** An invite link. Presigned unless `askFirst` (or for an owner): this
+   * device signs it now, and whoever opens it is in as soon as they accept.
+   * The one-time key's seed goes only into the link's fragment. */
+  async invite(team: string, role: TeamRole, askFirst = false): Promise<string> {
+    return (await this.makeInvite(team, role, askFirst)).link;
+  }
+
+  /** As `invite`, saying whether the link asks an owner first, and why
+   * when it does though it wasn't asked to: control makes a presigned one
+   * only once every machine checking the team's rosters understands it. */
+  async makeInvite(team: string, role: TeamRole, askFirst = false): Promise<{ link: string; asks: boolean; why?: string }> {
+    const old = async (why?: string) => {
+      const r = await api<{ link: string }>(`/api/teams/${team}/invites`, { role });
+      return { link: r.link, asks: true, why };
+    };
+    if (askFirst || role === "owner") return old();
+    const { seed, key } = await newInviteKey();
+    const presigned = await signInvite({ team, role, expires: Date.now() + PRESIGNED_TTL_MS, key }, this.keys);
+    try {
+      await api(`/api/teams/${team}/invites`, { role, presigned });
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 409) return old(e.message);
+      throw e;
+    }
+    return { link: `${location.origin}/#pinvite=${team}.${seed}`, asks: false };
+  }
+
+  /** What a presigned invite link says, as control has it. */
+  async showPresigned(team: string, seed: string) {
+    const { key } = await inviteKey(seed);
+    return api<{ invite: Invite; name: string; pin: TeamPin; roster: Roster; certs: AccountCerts }>(`/api/presigned/${team}/${key}`);
+  }
+
+  /** Join a team with a presigned invite: write its next version, adding
+   * this account, signed here and by the link's one-time key. */
+  async redeem(team: string, seed: string) {
+    for (let attempt = 0; ; attempt++) {
+      const p = await this.showPresigned(team, seed);
+      if (!pin(`team:${team}`, `${p.pin.founder}.${p.pin.founder_root}`)) throw new Error("this team isn't the one this browser saw before");
+      const next = await redeemInvite(p.roster, p.invite, seed, this.myMember());
+      const mine = await api<{ certs: Cert[]; revocations: Revocation[] }>("/api/devices");
+      const certs: AccountCerts = { ...p.certs, [this.account]: [mine.certs, mine.revocations] };
+      if (!(await follows(next, p.roster, p.pin, certs))) throw new Error("that invite doesn't check out");
+      try {
+        await api(`/api/teams/${team}/roster`, { roster: next });
+        break;
+      } catch (e) {
+        // Someone else joined first: build on their version.
+        if (!(e instanceof HttpError && e.status === 409) || attempt >= 2) throw e;
+      }
+    }
+    await this.refresh();
   }
 
   async showInvite(team: string, code: string) {
