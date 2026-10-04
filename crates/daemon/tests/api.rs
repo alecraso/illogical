@@ -314,6 +314,40 @@ fn events_stream_and_attention() {
 }
 
 #[test]
+fn an_idle_agent_redrawing_wants_you_once_a_turn() {
+    let d = start();
+    // A stand-in agent: answers a line, then redraws itself after a while,
+    // as Claude Code does on a resize or for its status line.
+    let bin = d.state.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let agent = bin.join("claude");
+    std::fs::write(&agent, "#!/bin/bash\nwhile read -r l; do echo \"ok $l\"; sleep 4; echo redraw; done\n").unwrap();
+    std::fs::set_permissions(&agent, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let needs = || d.pane(1)["attention"] == "needs_input";
+    let wait = |secs| {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < deadline {
+            assert!(!needs(), "an idle agent wanted you again");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+
+    d.send(1, &agent.display().to_string());
+    d.wait_for(needs);
+    d.post("/api/panes/1/attention", json!({"state": "idle"}));
+    // A turn: it goes quiet after answering, and wants you.
+    d.send(1, "go");
+    d.wait_for(needs);
+    d.post("/api/panes/1/attention", json!({"state": "idle"}));
+    // Its redraw (4 s on) and the quiet after it don't want you again.
+    wait(7);
+    assert_eq!(d.pane(1)["attention"], "idle");
+    // The next turn does.
+    d.send(1, "again");
+    d.wait_for(needs);
+}
+
+#[test]
 fn the_api_over_tcp_refuses_other_sites() {
     let d = start();
     let mut s = std::net::TcpStream::connect(("127.0.0.1", d.port)).unwrap();

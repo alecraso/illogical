@@ -506,6 +506,10 @@ struct Daemon {
     attention: HashMap<PaneId, Attention>,
     /// Why each pane wants you (M24), as recorded when it started to.
     reasons: HashMap<PaneId, Reason>,
+    /// Panes whose agent may be said to have gone quiet: once per turn,
+    /// armed by input or a new command, so an idle agent redrawing itself
+    /// (a resize, its status line) doesn't want you again and again.
+    quiet_armed: std::collections::HashSet<PaneId>,
     clients: HashMap<ClientId, Subscriber>,
     /// The pane each client's focused window is looking at.
     focus: HashMap<ClientId, PaneId>,
@@ -661,6 +665,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         meta: HashMap::new(),
         attention: HashMap::new(),
         reasons: HashMap::new(),
+        quiet_armed: Default::default(),
         clients: HashMap::new(),
         focus: HashMap::new(),
         refused: HashMap::new(),
@@ -1564,6 +1569,7 @@ impl Daemon {
                     m.hold = false;
                 }
                 self.set_attention(pane, Attention::Idle, "started");
+                self.quiet_armed.insert(pane);
                 self.changed();
             }
             What::Busy(true) => {
@@ -1581,7 +1587,12 @@ impl Daemon {
                     && self.looks_like_agent(pane)
                     && self.attention.get(&pane) == Some(&Attention::Working)
                 {
-                    self.set_attention(pane, Attention::NeedsInput, "an agent went quiet");
+                    // Once a turn: after that it's an idle agent redrawing.
+                    if self.quiet_armed.remove(&pane) {
+                        self.set_attention(pane, Attention::NeedsInput, "an agent went quiet");
+                    } else {
+                        self.set_attention(pane, Attention::Idle, "quiet");
+                    }
                 }
             }
             What::Signal(signal) => match signal {
@@ -1595,6 +1606,7 @@ impl Daemon {
                 Signal::CommandStart => {
                     let text = self.panes.get(&pane).and_then(|h| h.status().current.and_then(|c| c.text));
                     self.emit(Some(pane), EventKind::CommandStart { text });
+                    self.quiet_armed.insert(pane);
                     self.set_attention(pane, Attention::Working, "command started");
                     self.touch(pane);
                 }
@@ -1742,9 +1754,14 @@ impl Daemon {
     /// Someone typed in a pane: whatever it wanted, it has their attention.
     fn input(&mut self, pane: PaneId, data: Vec<u8>, by: Option<String>) {
         let Some(p) = self.panes.get(&pane) else { return };
+        // A window gaining or losing focus (focus reporting) isn't a turn.
+        let turn = !matches!(&data[..], b"\x1b[I" | b"\x1b[O");
         match by {
             Some(by) => p.input_by(data, by),
             None => p.input(data),
+        }
+        if turn {
+            self.quiet_armed.insert(pane);
         }
         // A question open beside it still wants an answer (typing in Claude
         // Code's prompt box doesn't answer it).
@@ -3013,6 +3030,7 @@ impl Daemon {
                     self.sizes.remove(&pane);
                     self.meta.remove(&pane);
                     self.attention.remove(&pane);
+                    self.quiet_armed.remove(&pane);
                     if let Some(a) = self.asks.remove(&pane) {
                         let _ = a.reply.send((AskReply::Withdrawn, None));
                     }
