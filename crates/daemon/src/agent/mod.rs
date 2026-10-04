@@ -478,7 +478,10 @@ impl Inner {
                 self.adapter = None;
                 let just_continued =
                     matches!(self.t.entries.last(), Some(Entry::Note { text, .. }) if text == "Continued in illogical");
-                if e["resume"].as_bool() == Some(true) && !just_continued {
+                // A block opened on a session it has no transcript of (M45b's
+                // *Follow*: a Fountain conversation) didn't start before: it
+                // loads the session, which replays it.
+                if e["resume"].as_bool() == Some(true) && !just_continued && !self.t.entries.is_empty() {
                     self.t.note("Started the agent again", at);
                 }
             }
