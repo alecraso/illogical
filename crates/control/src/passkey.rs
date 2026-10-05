@@ -231,6 +231,23 @@ fn cose_key(v: &Cbor) -> Result<(i64, Vec<u8>), ApiError> {
     }
 }
 
+/// What keeps a passkey, from the AAGUID its authenticator reports (all
+/// zeros when it won't say). A few common ones, from the community list at
+/// github.com/passkeydeveloper/passkey-authenticator-aaguids.
+fn provider(aaguid: &str) -> Option<&'static str> {
+    Some(match aaguid {
+        "fbfc3007154e4ecc8c0b6e020557d7bd" | "dd4ec289e01d41c9bb8970fa845d4bf2" => "iCloud Keychain",
+        "ea9b8d664d011d213ce4b6b48cb575d4" => "Google Password Manager",
+        "adce000235bcc60a648b0b25f1f05503" => "Chrome on Mac",
+        "08987058cadc4b81b6e130de50dcbe96"
+        | "9ddd1817af5a4672a2b93e3dd95000a9"
+        | "6028b017b1d44c02b4b3afcdafc96bb2" => "Windows Hello",
+        "bada5566a7aa401fbd9645619a55120d" => "1Password",
+        "d548826e79b4db40a3d811116f7e8349" => "Bitwarden",
+        _ => return None,
+    })
+}
+
 pub async fn register_finish(State(app): State<Arc<App>>, headers: HeaderMap, Json(r): Json<Registration>) -> Response {
     match register(&app, &headers, r).await {
         Ok((account, new_session)) => {
@@ -284,6 +301,8 @@ async fn register(
         }
     };
     app.db.add_passkey(&r.id, &account, alg, &public, now)?;
+    let aaguid = hex::encode(&rest[..16]);
+    app.db.note_passkey(&r.id, &crate::account::agent(headers), provider(&aaguid))?;
     Ok((account, cookie))
 }
 
@@ -363,7 +382,7 @@ fn login(app: &Arc<App>, headers: &HeaderMap, a: Assertion) -> Result<header::He
     if count != 0 && pk.sign_count != 0 && count <= pk.sign_count {
         return Err(err(StatusCode::UNAUTHORIZED, "this passkey's counter went backwards; it may have been copied"));
     }
-    app.db.passkey_used(&a.id, count)?;
+    app.db.passkey_used(&a.id, count, now_ms())?;
     auth::start_session(app, &pk.account)
 }
 
@@ -424,6 +443,7 @@ mod tests {
         let app = Arc::new(App::for_tests("http://control.test"));
         let mut h = HeaderMap::new();
         h.insert(header::ORIGIN, app.cfg.origin.parse().unwrap());
+        h.insert(header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0".parse().unwrap());
         let client = |kind: &str, challenge: &str| {
             let cd = json!({ "type": kind, "challenge": challenge, "origin": app.cfg.origin });
             B64.encode(serde_json::to_vec(&cd).unwrap())
@@ -435,7 +455,8 @@ mod tests {
         let mut data = rp.clone();
         data.push(UP | UV | AT);
         data.extend_from_slice(&0u32.to_be_bytes());
-        data.extend_from_slice(&[0; 16]);
+        // Windows Hello's AAGUID.
+        data.extend_from_slice(&hex::decode("6028b017b1d44c02b4b3afcdafc96bb2").unwrap());
         data.extend_from_slice(&(cred.len() as u16).to_be_bytes());
         data.extend_from_slice(&cred);
         ciborium::into_writer(&rsa_cose(&k), &mut data).unwrap();
@@ -478,7 +499,13 @@ mod tests {
                 },
             )
         };
+        // Listed by what keeps it and the browser that added it (#208).
+        let listed = &app.db.passkeys(&account).unwrap()[0];
+        assert_eq!(listed.provider.as_deref(), Some("Windows Hello"));
+        assert!(listed.agent.contains("Windows NT"));
+        assert_eq!(listed.used, None);
         assert!(sign_in(&k).is_ok());
+        assert!(app.db.passkeys(&account).unwrap()[0].used.is_some());
         // Another key's signature doesn't.
         let other = aws_lc_rs::rsa::KeyPair::generate(KeySize::Rsa2048).unwrap();
         assert!(sign_in(&other).is_err());

@@ -146,10 +146,8 @@ pub async fn note_agent(
 
 /// `GET /api/me/passkeys`: the account's passkeys, and its GitHub link.
 pub async fn passkeys(State(app): State<Arc<App>>, s: Session) -> R {
-    let list: Vec<Value> =
-        app.db.passkeys(&s.account)?.into_iter().map(|(id, created)| json!({ "id": id, "created": created })).collect();
     Ok(Json(json!({
-        "passkeys": list, "github": app.db.github_identity(&s.account)?.map(|(_, login)| login), "ways": app.db.sign_ins(&s.account)?,
+        "passkeys": app.db.passkeys(&s.account)?, "github": app.db.github_identity(&s.account)?.map(|(_, login)| login), "ways": app.db.sign_ins(&s.account)?,
     })))
 }
 

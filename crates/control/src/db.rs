@@ -231,6 +231,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("joins", "proven")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN proven INTEGER NOT NULL DEFAULT 0")?;
     }
+    // #208: what a passkey is (its maker, from its AAGUID), the browser
+    // that added it, and when it last signed in, to tell them apart.
+    if !has("passkeys", "agent")? {
+        conn.execute_batch("ALTER TABLE passkeys ADD COLUMN agent TEXT")?;
+    }
+    if !has("passkeys", "provider")? {
+        conn.execute_batch("ALTER TABLE passkeys ADD COLUMN provider TEXT")?;
+    }
+    if !has("passkeys", "used")? {
+        conn.execute_batch("ALTER TABLE passkeys ADD COLUMN used INTEGER")?;
+    }
     Ok(())
 }
 
@@ -322,6 +333,19 @@ pub struct DaemonRow {
     pub name: String,
     pub urls: Vec<String>,
     pub last_seen: Option<u64>,
+}
+
+/// A passkey as the account panel lists it.
+#[derive(Debug, Serialize)]
+pub struct PasskeyRow {
+    pub id: String,
+    pub created: u64,
+    /// The User-Agent of the browser that added it ("" before #208).
+    pub agent: String,
+    /// What keeps it (iCloud Keychain, Windows Hello...), when known.
+    pub provider: Option<String>,
+    /// Its last sign-in, if any since #208.
+    pub used: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -572,8 +596,16 @@ impl Db {
             .optional()?)
     }
 
-    pub fn passkey_used(&self, id: &str, count: u32) -> anyhow::Result<()> {
-        self.c().execute("UPDATE passkeys SET sign_count = ?2 WHERE id = ?1", params![id, count])?;
+    /// Where a new passkey came from: the browser that added it and,
+    /// when its AAGUID is a known one, what keeps it.
+    pub fn note_passkey(&self, id: &str, agent: &str, provider: Option<&str>) -> anyhow::Result<()> {
+        self.c()
+            .execute("UPDATE passkeys SET agent = ?2, provider = ?3 WHERE id = ?1", params![id, agent, provider])?;
+        Ok(())
+    }
+
+    pub fn passkey_used(&self, id: &str, count: u32, now: u64) -> anyhow::Result<()> {
+        self.c().execute("UPDATE passkeys SET sign_count = ?2, used = ?3 WHERE id = ?1", params![id, count, now])?;
         Ok(())
     }
 
@@ -581,11 +613,20 @@ impl Db {
         Ok(self.c().query_row("SELECT COUNT(*) FROM passkeys WHERE account = ?1", params![account], |r| r.get(0))?)
     }
 
-    /// An account's passkeys: (credential id, created).
-    pub fn passkeys(&self, account: &str) -> anyhow::Result<Vec<(String, u64)>> {
+    /// An account's passkeys, oldest first.
+    pub fn passkeys(&self, account: &str) -> anyhow::Result<Vec<PasskeyRow>> {
         let c = self.c();
-        let mut q = c.prepare("SELECT id, created FROM passkeys WHERE account = ?1 ORDER BY created")?;
-        let rows = q.query_map(params![account], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let mut q =
+            c.prepare("SELECT id, created, agent, provider, used FROM passkeys WHERE account = ?1 ORDER BY created")?;
+        let rows = q.query_map(params![account], |r| {
+            Ok(PasskeyRow {
+                id: r.get(0)?,
+                created: r.get(1)?,
+                agent: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                provider: r.get(3)?,
+                used: r.get(4)?,
+            })
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
