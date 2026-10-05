@@ -143,7 +143,10 @@ export function SwarmView({
       railH: () => (innerWidth < 760 ? 196 : 0),
       top: () => (bar.current?.getBoundingClientRect().bottom ?? 60) + 10,
       cardRect: (b) => rail.current?.querySelector<HTMLElement>(`[data-bundle="${CSS.escape(b)}"]`)?.getBoundingClientRect() ?? null,
-      open: (key) => handlers.current.open(key),
+      open: (key) => {
+        swallowClick();
+        handlers.current.open(key);
+      },
       hover: (key, x, y) => void handlers.current.hover(key, x, y),
       menu: (key, e) => handlers.current.menu(key, e),
       history: (sinceS) => historyOf(fleet, sinceS),
@@ -825,4 +828,17 @@ function AnsweredCard({ d, fleet, close }: { d: Done; fleet: Fleet; close: () =>
       )}
     </div>
   );
+}
+
+/** A tap on a tile opens its pane and closes the swarm on pointerup; the
+ * browser's click for that tap comes after. WebKit (iOS Safari) sends it to
+ * whatever is under the finger by then, such as the tab view's "Switch to"
+ * button for the host being left. Drop that one click. */
+function swallowClick() {
+  const drop = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  document.addEventListener("click", drop, { capture: true, once: true });
+  setTimeout(() => document.removeEventListener("click", drop, { capture: true }), 500);
 }

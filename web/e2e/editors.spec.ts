@@ -2,7 +2,8 @@
 // pins, downloaded into ~/.cache/illogical/code-server on first use). VS Code
 // opens from a pane's menu on that pane's directory, on the block's own
 // origin, in illogical's theme; `illogical edit FILE:LINE` opens a file in
-// under 3 s once the server is warm, on the desktop and a phone-sized page;
+// under 3 s once the server is warm, on the desktop, a Pixel 7 and an
+// iPhone (WebKit);
 // the extension reports the file and the cursor; the swarm shows the block
 // as an editor and opens one from a tile; the block survives a daemon
 // restart (and a "reboot", server and all) with the file still open; and a
@@ -15,11 +16,12 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { chromium, devices, expect, test, type FrameLocator, type Page } from "@playwright/test";
+import { chromium, expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { menu, paneEl, panes, ready, reset, run } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { tokenCookies } from "./local-token";
 import { ANY, blockPort, daemonPort } from "./ports";
+import { iphone, launchWebkit, pixel7 } from "./phones";
 
 let PORT = 0;
 let BLOCKS = 0;
@@ -172,27 +174,53 @@ test("illogical edit FILE:LINE: the file at its line in under 3 s once warm, rep
   expect(text).toContain("STATE_COOKIE");
 });
 
-test("from a phone-sized page, a file opens in under 3 s once warm", async ({ browser }) => {
-  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: APP });
-  const page = await ctx.newPage();
+/** From a phone's page: open a file at a line as an editor block, show it,
+ * and time it to the line drawn in VS Code. */
+async function openFromPhone(page: Page, line: number): Promise<number> {
   await page.goto("/");
   await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__illogical.client.state !== null)).toBe(true);
   const t0 = Date.now();
   const block = await page.evaluate(
-    async ([path, from]) => {
-      const res = await window.__illogical.client.request("POST", "/api/blocks", { type: "editor", config: { path, line: 20 }, from_pane: from });
+    async ([path, from, line]) => {
+      const res = await window.__illogical.client.request("POST", "/api/blocks", { type: "editor", config: { path, line }, from_pane: from });
       return (await res.json<{ block: number }>()).block;
     },
-    [join(proj, AUTH), term] as const,
+    [join(proj, AUTH), term, line] as const,
   );
   await expect.poll(() => page.evaluate((b) => !!window.__illogical.client.info(b), block)).toBe(true);
   await page.evaluate((b) => window.__illogical.client.setActive(b), block);
+  // The phone draws one pane at a time: this one, filling the screen.
+  await expect(page.locator(".pane")).toHaveCount(1);
+  await expect(page.locator(`[data-pane="${block}"]`)).toBeVisible();
   await expect(shown(frame(page, block), "Redirect")).toBeVisible({ timeout: 10_000 });
   const ms = Date.now() - t0;
-  console.log(`phone-sized: ${AUTH} shown ${ms} ms after opening`);
+  await expect.poll(async () => (await blockState(page, block))?.line).toBe(line);
+  return ms;
+}
+
+// #214 section 6: from a phone context (touch, mobile, its own size), on a
+// warm server. Chrome as a Pixel 7.
+test("from a Pixel 7, a file opens in under 3 s once warm", async ({ browser }) => {
+  const ctx = await browser.newContext({ ...pixel7, baseURL: APP, storageState: { cookies: tokenCookies, origins: [] } });
+  const ms = await openFromPhone(await ctx.newPage(), 20);
+  console.log(`Pixel 7: ${AUTH} shown ${ms} ms after opening`);
   expect(ms).toBeLessThan(3000);
   await ctx.close();
+});
+
+// And Safari's engine as an iPhone (Playwright's WebKit: the app on
+// 127.0.0.1 and the block on *.localhost are other sites there too).
+test("from an iPhone (WebKit), a file opens in under 3 s once warm", async () => {
+  const browser = await launchWebkit();
+  try {
+    const ctx = await browser.newContext({ ...iphone, baseURL: APP, storageState: { cookies: tokenCookies, origins: [] } });
+    const ms = await openFromPhone(await ctx.newPage(), 30);
+    console.log(`iPhone: ${AUTH} shown ${ms} ms after opening`);
+    expect(ms).toBeLessThan(3000);
+  } finally {
+    await browser.close();
+  }
 });
 
 test("from another site, in a browser that blocks third-party cookies: the file at its line (#69)", async () => {
