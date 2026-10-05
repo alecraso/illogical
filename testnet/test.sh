@@ -33,7 +33,8 @@
 #          ssh login with no sudo (S28's lifetime question). Broken: polkit
 #          masked (and unmasked afterwards).
 #
-# The control profile's claims (it needs node, and the CLI built:
+# The control profile's claims (they need node, the web client's packages
+# and Playwright's browsers (m52's phones), and the CLI built:
 # `cargo build -p illogical`, or ILLOGICAL_CLI):
 #
 #   signin  A person signs in to control with (the fake) GitHub, from the
@@ -48,8 +49,12 @@
 #           its code is approved by a headless device; the box is then on
 #           the account's device list and online, and with the ssh master
 #           closed and the bastion paused, a marker round-trips through a
-#           pane over control's relay. After `docker restart` it comes back
-#           to the relay by itself and the pane answers again. Broken:
+#           pane over control's relay. A Pixel 7 (Chrome) and an iPhone
+#           (WebKit) signed in to control, approved by the device, open the
+#           box's pane and type a marker, which the device reads back from
+#           the box over the relay. After `docker restart` it comes back to
+#           the relay by itself, and the same phones and the device reach
+#           the pane again. Broken:
 #           polkit masked on the box, so lingering can't be turned on and
 #           the daemon doesn't start again after the restart.
 #   unreachable
@@ -293,9 +298,13 @@ claim_m52() {
   ssh -F "$CFG" -o ControlPath="$RT/illogical-ssh/%C" -O exit "$box" >/dev/null 2>&1 || true
   docker pause "$TESTNET-bastion" > /dev/null && PAUSED=1
   dev pane "$box" "M52-RELAY-$$" 30 > /dev/null || { note "m52: no pane over the relay"; return 1; }
-  # A reboot: it comes back to the relay by itself.
+  # From phones: a Pixel 7 (Chrome) and an iPhone (WebKit), signed in to
+  # this control and approved by the device, type into the box's pane;
+  # then it's restarted (it comes back to the relay by itself) and the
+  # same phones type into it again (web/fixtures/m52-phones.ts).
   started="$(docker inspect -f '{{.State.StartedAt}}' "$TESTNET-$box")"
-  docker restart "$TESTNET-$box" > /dev/null
+  node --experimental-strip-types --no-warnings "$ROOT/web/fixtures/m52-phones.ts" --state "$WORK/device.json" \
+    --box "$box" --restart "$TESTNET-$box" --marker "M52-$$" > /dev/null || { note "m52: the phones didn't reach the box's pane"; return 1; }
   [ "$(docker inspect -f '{{.State.StartedAt}}' "$TESTNET-$box")" != "$started" ] || return 1
   for _ in $(seq 1 45); do
     if dev pane "$box" "M52-REBOOT-$$" 10 > /dev/null 2>&1; then ok=1; break; fi
