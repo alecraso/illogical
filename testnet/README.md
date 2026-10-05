@@ -39,8 +39,9 @@ not run. CI never sets it. The claims expect fresh boxes: after installing anyth
 | `control` | `ssh`'s, and `control`, `fakes` | validated | M52's join, the relay, a box with no way out |
 | `tailnet` | `headscale`, `ts-box`, `ts-client` | validated | S28's tailnet comparison |
 
-The other profiles in #200 (`relay`, `fountain`, `forgejo`) are added when
-a milestone needs them.
+The relay is part of `control`, and Forgejo and GitLab have a stack of
+their own in [`forges/`](forges/README.md). A `fountain` profile (#200) is
+added when a milestone needs it.
 
 ### `ssh`
 
@@ -102,7 +103,7 @@ Everything in `ssh`, and:
   Web Push endpoint. Only control talks to the last two.
 
 A person on the host is `web/fixtures/device-cli.ts`, the headless
-approving device (docs/testing.md): it signs in, enrolls, approves join
+approving device ([docs/testing.md](../docs/testing.md#a-device-that-approves-things)): it signs in, enrolls, approves join
 codes and opens panes through the relay. `up.sh` writes
 `.state/control.env` with control's URL and the `--via` mappings it needs.
 The claims run the CLI from this tree (`cargo build -p illogical`, which
@@ -113,6 +114,9 @@ The claims run the CLI from this tree (`cargo build -p illogical`, which
 A claim checks one property of a running profile. `BREAK=1` breaks that
 property, and the claim then has to fail; `just testnet break` checks that
 every claim does, which shows each one can catch what it's about.
+[docs/testing.md](../docs/testing.md#the-ssh-tracks-tests) says which
+promise of the SSH track each claim and test guards, and what a failure
+means.
 
 | Claim | Checks | Broken by |
 |---|---|---|
@@ -155,8 +159,8 @@ The `control` profile's:
 
 ## Not yet
 
-- The illogical binaries on the `ssh` profile's boxes. When S28 and M51
-  need them on a box, they arrive over ssh from the client (`just static`),
-  which is what the claims guard.
 - Claims for the tailnet profile; its check is the measurement, which fails
   when either path doesn't reach the daemon.
+
+The `ssh` profile's boxes never have illogical built in: tests put it there
+over ssh from the client (`just static`), which is what `bare` guards.
