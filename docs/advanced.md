@@ -56,11 +56,30 @@ daemon with the one it carries when that daemon runs as the service
 State (layout, logs, checkpoints) is in `~/.local/state/illogical`, private
 to you (0700/0600). `--state-dir` moves it.
 
-**Who gets in.** On loopback, anyone on the machine who can reach the port
-(it's your machine). Over the tailnet, the daemon asks tailscaled who each
-caller is and lets in only the login that owns the node; `--owner` names
-someone else. Tagged nodes, Funnel and the internet never get in. Don't put
-it behind anything else that would forward requests to it.
+**Who gets in.** On this machine, you: the CLI over its Unix socket (in
+your private state directory), and anything on the TCP port that shows the
+daemon's **local token** (`local-token` in the state directory, made at
+the first start, 0600). Loopback is shared by every account and program on
+the machine, so being on it isn't enough:
+
+- **Your browser** gets the token as a cookie from a sign-in link:
+  `illogical web` opens `http://127.0.0.1:7681` through it (`--print`
+  prints the link, to open by hand or through an `ssh -L` forward). Once
+  per browser; it stays signed in until the token changes. A page opened
+  without it says to run `illogical web`. The desktop app signs its own
+  window in.
+- **Programs** send it as `Authorization: Bearer <token>` (`illogical
+  --host http://127.0.0.1:7681` does that for you). MCP clients use
+  `illogical mcp` (the socket) or an `illogical mcp token`.
+- **A new token** signs every browser and program out: delete
+  `local-token` and restart the daemon.
+
+Over the tailnet, the daemon asks tailscaled who each caller is and lets
+in only the login that owns the node; `--owner` names someone else. Behind
+`tailscale serve`, the identity serve adds is believed only from
+tailscaled's own connection (on Linux, the daemon checks which account
+owns the other end). Tagged nodes, Funnel and the internet never get in.
+Don't put it behind anything else that would forward requests to it.
 
 ## Pane environment
 

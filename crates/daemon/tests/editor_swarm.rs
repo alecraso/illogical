@@ -93,7 +93,7 @@ struct Client {
 
 impl Client {
     async fn connect(d: &Daemon) -> Self {
-        let (ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port)).await.unwrap();
+        let (ws, _) = connect_async(d.ws("/ws")).await.unwrap();
         Self { ws, state: None, follows: vec![] }
     }
 

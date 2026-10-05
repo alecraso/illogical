@@ -23,8 +23,19 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 struct Daemon {
     child: Child,
     port: u16,
+    /// The local token loopback callers show.
+    token: String,
     /// Its own state dir, when it has one to itself.
     state: Option<TempState>,
+}
+
+impl Daemon {
+    /// A WebSocket request to `path` with the local token.
+    fn ws(&self, path: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
+        let mut req = format!("ws://127.0.0.1:{}{path}", self.port).into_client_request().unwrap();
+        req.headers_mut().insert("authorization", format!("Bearer {}", self.token).parse().unwrap());
+        req
+    }
 }
 
 impl Drop for Daemon {
@@ -93,7 +104,8 @@ async fn start_in(state: &Path) -> Daemon {
         if let Some(port) = listen::port(state)
             && std::os::unix::net::UnixStream::connect(sock()).is_ok()
         {
-            return Daemon { child, port, state: None };
+            let token = std::fs::read_to_string(state.join("local-token")).unwrap().trim().to_owned();
+            return Daemon { child, port, token, state: None };
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -136,7 +148,7 @@ async fn connect(d: &Daemon) -> (Ws, u64) {
 }
 
 async fn connect_state(d: &Daemon) -> (Ws, State) {
-    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port)).await.unwrap();
+    let (mut ws, _) = connect_async(d.ws("/ws")).await.unwrap();
     let In::Msg(ServerMsg::Hello { state, .. }) = recv(&mut ws).await else { panic!("expected hello") };
     assert!(!state.panes.is_empty(), "the daemon starts with a session");
     (ws, state)
@@ -495,15 +507,15 @@ async fn programs_hear_of_kitty_keys_while_a_client_that_speaks_them_is_attached
 #[tokio::test]
 async fn rejects_foreign_host_and_origin() {
     let d = start().await;
-    let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+    let mut req = d.ws("/ws");
     req.headers_mut().insert("origin", "https://evil.example".parse().unwrap());
     assert!(connect_async(req).await.is_err(), "foreign origin must be refused");
 
-    let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+    let mut req = d.ws("/ws");
     req.headers_mut().insert("host", "evil.example".parse().unwrap());
     assert!(connect_async(req).await.is_err(), "foreign host must be refused");
 
-    let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+    let mut req = d.ws("/ws");
     req.headers_mut().insert("tailscale-user-login", "someone@else".parse().unwrap());
     assert!(connect_async(req).await.is_err(), "tailnet user without --owner must be refused");
 }
@@ -513,7 +525,10 @@ async fn pages_refuse_to_be_framed() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let d = start().await;
     let mut s = TcpStream::connect(("127.0.0.1", d.port)).await.unwrap();
-    let req = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", d.port);
+    let req = format!(
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+        d.port, d.token
+    );
     s.write_all(req.as_bytes()).await.unwrap();
     let mut res = Vec::new();
     timeout(Duration::from_secs(5), s.read_to_end(&mut res)).await.unwrap().unwrap();

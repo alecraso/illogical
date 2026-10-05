@@ -90,7 +90,7 @@ fn listen_of(args: &[String]) -> String {
 /// from elsewhere.
 fn next_steps(args: &[String], logs: &str) -> String {
     format!(
-        "Open http://{}\nLogs: {logs}\nFrom other devices: `tailscale serve`, or `illogicald join https://control.illogical.widgets.wtf`\n",
+        "Open http://{} with `illogical web` (it signs your browser in)\nLogs: {logs}\nFrom other devices: `tailscale serve`, or `illogicald join https://control.illogical.widgets.wtf`\n",
         listen_of(args)
     )
 }
@@ -332,12 +332,16 @@ mod tests {
 
     #[test]
     fn next_steps_name_the_listen_address() {
-        assert!(super::next_steps(&[], "logs").starts_with("Open http://127.0.0.1:7681\nLogs: logs\n"));
+        assert!(
+            super::next_steps(&[], "logs").starts_with(
+                "Open http://127.0.0.1:7681 with `illogical web` (it signs your browser in)\nLogs: logs\n"
+            )
+        );
         assert!(
             super::next_steps(&["--listen".into(), "127.0.0.1:9000".into()], "l")
-                .starts_with("Open http://127.0.0.1:9000\n")
+                .starts_with("Open http://127.0.0.1:9000 with")
         );
-        assert!(super::next_steps(&["--listen=0.0.0.0:1".into()], "l").starts_with("Open http://0.0.0.0:1\n"));
+        assert!(super::next_steps(&["--listen=0.0.0.0:1".into()], "l").starts_with("Open http://0.0.0.0:1 with"));
     }
 
     #[test]

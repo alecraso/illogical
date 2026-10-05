@@ -3,6 +3,7 @@
 `illogical` drives the daemon from any shell, and from inside every pane (`ILLOGICAL_PANE` and `ILLOGICAL_SOCK` are set there, and it's on `PATH`).
 
 ```
+illogical web                                 # this machine's page in your browser, signed in (--print: the link)
 illogical ls                                  # panes, what they're running, who needs you
 illogical run -- make test                    # in a new tab; prints its pane (%N)
 illogical run --wait -- cargo build           # and exits with its exit code
@@ -185,7 +186,10 @@ Code drops a call that's silent for 60. If a long build still doesn't fit,
 "still running" well before any limit.
 
 **Over HTTP.** The daemon serves the same tools at `/mcp` (Streamable
-HTTP). From your own machines on the tailnet nothing more is needed:
+HTTP). On this machine, prefer `illogical mcp` (above); over loopback a
+client shows the daemon's local token (`local-token` in the state
+directory) or a token from `illogical mcp token`, as its bearer. From your
+own machines on the tailnet nothing more is needed:
 
 ```
 claude mcp add --transport http illogical https://home.<tailnet>.ts.net/mcp

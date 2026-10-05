@@ -66,7 +66,14 @@ impl Service {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(port) = listen::port(&self.state)
-                && let Ok((mut ws, _)) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await
+                && let Ok(token) = std::fs::read_to_string(self.state.join("local-token"))
+                && let Ok((mut ws, _)) = connect_async({
+                    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+                    let mut req = format!("ws://127.0.0.1:{port}/ws").into_client_request().unwrap();
+                    req.headers_mut().insert("authorization", format!("Bearer {}", token.trim()).parse().unwrap());
+                    req
+                })
+                .await
                 && let In::Msg(ServerMsg::Hello { state, .. }) = recv(&mut ws).await
             {
                 return (ws, state);

@@ -44,7 +44,11 @@ static LOCAL_ONLY: Mutex<bool> = Mutex::new(false);
 
 pub fn local() -> Local {
     let read = || -> Option<Local> {
-        let v: Value = agent().get(&format!("{}/api/host", crate::page())).call().ok()?.body_mut().read_json().ok()?;
+        let mut req = agent().get(&format!("{}/api/host", crate::page()));
+        if let Some(b) = crate::bearer() {
+            req = req.header("Authorization", &b);
+        }
+        let v: Value = req.call().ok()?.body_mut().read_json().ok()?;
         let control = std::env::var("ILLOGICAL_CONTROL")
             .ok()
             .or_else(|| v["control"].as_str().map(str::to_owned))
@@ -210,5 +214,5 @@ pub async fn cloud_signin(app: AppHandle, window: tauri::WebviewWindow) -> Resul
 #[tauri::command]
 pub fn cloud_local(window: tauri::WebviewWindow) -> Result<(), String> {
     set_local_only(true);
-    window.navigate(crate::page().parse().unwrap()).map_err(|e| e.to_string())
+    window.navigate(crate::page_at("/")).map_err(|e| e.to_string())
 }

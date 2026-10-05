@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import { chromium, devices, expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { menu, paneEl, panes, ready, reset, run } from "./helpers";
 import type { PaneId } from "../src/proto";
+import { tokenCookies } from "./local-token";
 import { ANY, blockPort, daemonPort } from "./ports";
 
 let PORT = 0;
@@ -202,6 +203,8 @@ test("from another site, in a browser that blocks third-party cookies: the file 
   mkdirSync(join(profile, "Default"), { recursive: true });
   writeFileSync(join(profile, "Default/Preferences"), JSON.stringify({ profile: { cookie_controls_mode: 1, block_third_party_cookies: true } }));
   const ctx = await chromium.launchPersistentContext(profile, { channel: "chrome", baseURL: APP, viewport: { width: 1000, height: 640 } });
+  // A profile of its own: signed in to the daemon as the config's contexts are.
+  await ctx.addCookies(tokenCookies);
   try {
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto("/");

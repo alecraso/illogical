@@ -302,6 +302,7 @@ async fn http_with_a_token_until_it_is_revoked() {
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"x","version":"1"}}}"#;
     let res = reqwest::Client::new()
         .post(format!("http://127.0.0.1:{}/mcp", d.port))
+        .header("Authorization", d.bearer())
         .header("Origin", "https://evil.example")
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")

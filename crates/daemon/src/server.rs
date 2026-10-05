@@ -134,6 +134,7 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/ws", get(ws))
         .route(crate::e2e::PATH, get(crate::e2e::ws))
+        .route(crate::localauth::AUTH_PATH, get(signin))
         .merge(
             api_routes(&app)
                 .layer(middleware::from_fn_with_state(app.clone(), crate::authz::check))
@@ -156,6 +157,8 @@ pub fn local_router(app: Arc<App>) -> Router {
         .route("/ws", get(local_ws))
         // Editors on this machine join the swarm here (M28).
         .route("/api/editors/connect", get(crate::editor::link::connect))
+        // `illogical web`: only over the socket, which is the owner's.
+        .route("/api/signin-link", get(signin_link))
         .merge(api_routes(&app))
         .with_state(app)
 }
@@ -200,8 +203,9 @@ async fn api_origin(State(app): State<Arc<App>>, req: Request, next: Next) -> Re
 
 /// The home daemon's page talks to other daemons' APIs (another origin):
 /// browsers allow that only if we say so, and we say so only to origins the
-/// access checks accept, exactly. Nothing needs cookies (identity is the
-/// tailnet's), so credentials stay off.
+/// access checks accept, exactly. On the tailnet identity is the tailnet's;
+/// on this machine it's the sign-in cookie, so credentials are allowed (for
+/// those exact origins only).
 async fn cors(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
     let origin = req
         .headers()
@@ -218,6 +222,7 @@ async fn cors(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
         h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
     }
     h.append(header::VARY, HeaderValue::from_static("origin"));
+    h.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
     if preflight {
         h.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, DELETE"));
         h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("content-type"));
@@ -234,8 +239,19 @@ async fn guard(
 ) -> Response {
     let peer = app.identify.peer(addr).await;
     let mut req = req;
-    let checked = app.access.check_host(req.headers()).and_then(|()| match class(&req) {
+    let checked = app.access.check_host(req.headers()).and_then(|()| match class(&req, &app.access) {
         Class::Owner => {
+            // serve's identity header, on loopback: only from tailscaled.
+            if peer == crate::access::Peer::Local
+                && !app.access.tunnelled()
+                && req.headers().contains_key("tailscale-user-login")
+                && !crate::localauth::serve_peer_ok(addr, app.access.port())
+            {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "a Tailscale-User-Login header from a local account other than tailscaled's".into(),
+                ));
+            }
             let pic = req.headers().get("tailscale-user-profile-pic").and_then(|v| v.to_str().ok()).map(str::to_owned);
             let who = app.access.check_identity(req.headers(), &peer)?.with_pic(pic);
             // Another user gets in only once something is shared with them.
@@ -257,6 +273,12 @@ async fn guard(
         }
         Class::Viewer => app.access.check_viewer(req.headers(), &peer),
         Class::Token => Ok(()),
+        // The link carries the credential; a browser on this machine only.
+        Class::SignIn if peer == crate::access::Peer::Local && !app.access.tunnelled() => Ok(()),
+        Class::SignIn => Err((StatusCode::FORBIDDEN, "sign-in links are for this machine's browsers".into())),
+        // A browser asking first, for one of our origins (`cors` answers
+        // it; it carries no credentials, and its answer gives nothing away).
+        Class::Preflight => app.access.check_origin(req.headers()),
         // From this machine or the tailnet; the MCP layer checks the token.
         Class::McpToken if matches!(peer, crate::access::Peer::Other) => {
             Err((StatusCode::FORBIDDEN, "not from this machine or the tailnet".into()))
@@ -306,6 +328,10 @@ enum Class {
     /// MCP with a bearer token (M16): an MCP client without a tailnet
     /// identity of its own, or an agent block's.
     McpToken,
+    /// The sign-in link (`localauth.rs`), whose token the handler checks.
+    SignIn,
+    /// A CORS preflight.
+    Preflight,
 }
 
 /// Exactly `/share/<token>`, `/share/<token>/ws`, `/assets/<file>` or the
@@ -320,9 +346,18 @@ fn viewer_path(path: &str) -> bool {
     }
 }
 
-fn class(req: &Request) -> Class {
+fn class(req: &Request, access: &Access) -> Class {
     use axum::http::Method;
     let (m, path) = (req.method(), req.uri().path());
+    if m == Method::GET && path == crate::localauth::AUTH_PATH {
+        return Class::SignIn;
+    }
+    if m == Method::OPTIONS
+        && req.headers().contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+        && req.headers().contains_key(header::ORIGIN)
+    {
+        return Class::Preflight;
+    }
     if (m == Method::POST && path == crate::hosts::JOIN_PATH)
         || (m == Method::GET && path == crate::dial::DIAL_PATH)
         || (m == Method::GET && path == crate::e2e::PATH)
@@ -330,12 +365,58 @@ fn class(req: &Request) -> Class {
         || (m == Method::POST && [crate::forge::live::FORGEJO_PATH, crate::forge::live::GITLAB_PATH].contains(&path))
     {
         Class::Token
-    } else if path == crate::mcp::PATH && req.headers().get(header::AUTHORIZATION).is_some() {
+    } else if path == crate::mcp::PATH
+        && req.headers().get(header::AUTHORIZATION).is_some()
+        && !access.local_bearer(req.headers())
+    {
         Class::McpToken
     } else if m == Method::GET && viewer_path(path) {
         Class::Viewer
     } else {
         Class::Owner
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SignInQuery {
+    token: String,
+    next: Option<String>,
+}
+
+/// A sign-in link (`/auth?token=…[&next=/path]`): the local token as a
+/// cookie for this browser, then the page. A year, so a browser stays
+/// signed in; `illogical web` signs it in again after the token changes.
+async fn signin(State(app): State<Arc<App>>, axum::extract::Query(q): axum::extract::Query<SignInQuery>) -> Response {
+    if !app.access.is_local_token(&q.token) {
+        let why = "That sign-in link isn't this daemon's (its token changed, or it's another daemon's).\n\n\
+                   Run this in a terminal here for a new one:\n\nillogical web";
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::response::Html(crate::access::refusal_page(StatusCode::UNAUTHORIZED, why)),
+        )
+            .into_response();
+    }
+    // Only a path of ours: never another site.
+    let next = q.next.filter(|n| n.starts_with('/') && !n.starts_with("//") && !n.contains('\\')).unwrap_or("/".into());
+    let cookie =
+        format!("{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000", app.access.cookie_name(), q.token.trim());
+    let mut res = Response::builder().status(StatusCode::SEE_OTHER).header(header::LOCATION, next);
+    if let Ok(v) = HeaderValue::from_str(&cookie) {
+        res = res.header(header::SET_COOKIE, v);
+    }
+    res.header(header::CACHE_CONTROL, "no-store")
+        .header(header::REFERRER_POLICY, "no-referrer")
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// `illogical web`'s link: the local token in a sign-in link.
+async fn signin_link(State(app): State<Arc<App>>) -> Response {
+    match app.access.signin_link() {
+        Some(url) => axum::Json(serde_json::json!({ "url": url })).into_response(),
+        None => {
+            (StatusCode::NOT_FOUND, "this daemon has no local token (it's reached through a tunnel)").into_response()
+        }
     }
 }
 

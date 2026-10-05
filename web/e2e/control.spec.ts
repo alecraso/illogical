@@ -212,6 +212,9 @@ test("with no machine yet, the account's menu is there (#97)", async () => {
   // (#103); signing back in keeps this browser's place.
   await laptop.locator("[data-account-bar]").getByRole("button", { name: "Sign out" }).click();
   await expect(laptop.locator("[data-signin=github]")).toBeVisible();
+  // Signing out goes to "/" itself: let that load land first, or it can
+  // overtake the link's.
+  await laptop.goto("/");
   await laptop.goto("/#join=ABCDE-FGHIJ");
   await expect(laptop.locator("[data-why=join]")).toHaveText("Sign in to approve this machine.");
   await laptop.goto("/");

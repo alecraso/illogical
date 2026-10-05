@@ -75,8 +75,11 @@ pub fn run() -> Result<(), String> {
 /// binary's `--version`.
 fn running_version() -> Option<String> {
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(3))).build().into();
-    let asked = agent
-        .get(&format!("{}/api/host", crate::page()))
+    let mut req = agent.get(&format!("{}/api/host", crate::page()));
+    if let Some(b) = crate::bearer() {
+        req = req.header("Authorization", &b);
+    }
+    let asked = req
         .call()
         .ok()
         .and_then(|mut r| r.body_mut().read_json::<serde_json::Value>().ok())

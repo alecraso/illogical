@@ -203,7 +203,7 @@ fn a_repository_s_changes_every_way() {
 
 /// A client that draws the tab `tab`, until dropped.
 async fn draw(d: &Daemon, tab: u64) -> tokio::task::JoinHandle<()> {
-    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port)).await.unwrap();
+    let (mut ws, _) = connect_async(d.ws("/ws")).await.unwrap();
     let view = json!({ "type": "view", "tab": tab, "cols": 80, "rows": 24, "zoom": null, "claim": false });
     ws.send(Message::Text(view.to_string().into())).await.unwrap();
     tokio::spawn(async move { while ws.next().await.is_some() {} })
@@ -275,7 +275,7 @@ async fn live_only_while_drawn() {
     assert_eq!(d.state(id)["rev"], 3);
 
     // A summaries-only client (the swarm) doesn't count.
-    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port)).await.unwrap();
+    let (mut ws, _) = connect_async(d.ws("/ws")).await.unwrap();
     let tab = tab_of(&d, id);
     for m in [
         json!({ "type": "subscribe", "summary": true }),

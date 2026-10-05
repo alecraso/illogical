@@ -371,7 +371,15 @@ impl Hosts {
         for (name, urls) in targets {
             let mut seen = false;
             for url in &urls {
-                let ok = self.http.get(format!("{url}/api/host")).send().await.is_ok_and(|r| r.status().is_success());
+                // A daemon that wants a credential we don't show it (one on
+                // this machine's loopback, which wants its local token) is
+                // there all the same.
+                let ok = self
+                    .http
+                    .get(format!("{url}/api/host"))
+                    .send()
+                    .await
+                    .is_ok_and(|r| r.status().is_success() || r.status() == reqwest::StatusCode::UNAUTHORIZED);
                 if ok {
                     seen = true;
                     break;

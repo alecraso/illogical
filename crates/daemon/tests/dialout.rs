@@ -91,6 +91,11 @@ impl Daemon {
         format!("http://127.0.0.1:{}", self.port)
     }
 
+    /// The local token loopback callers show.
+    fn token(&self) -> String {
+        std::fs::read_to_string(self.state.join("local-token")).unwrap_or_default().trim().to_owned()
+    }
+
     /// One HTTP request over TCP with these headers; status, headers, body.
     fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> (u16, String, String) {
         let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
@@ -101,6 +106,18 @@ impl Daemon {
         }
         for (k, v) in headers {
             req.push_str(&format!("{k}: {v}\r\n"));
+        }
+        // A program on this machine shows the local token (serve's
+        // requests carry an identity instead, and hosts' paths a token of
+        // their own).
+        let own_credential = ["/api/sync/", "/api/hosts/join", "/api/dial"].iter().any(|p| path.starts_with(p));
+        if !own_credential
+            && !self.token().is_empty()
+            && !headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("authorization") || k.eq_ignore_ascii_case("tailscale-user-login"))
+        {
+            req.push_str(&format!("Authorization: Bearer {}\r\n", self.token()));
         }
         if !body.is_empty() {
             req.push_str("Content-Type: application/json\r\n");
@@ -232,6 +249,7 @@ fn a_sandbox_that_only_dials_out_is_used_through_home_and_its_history_outlives_i
         let ws = |origin: &str| {
             let mut req = format!("ws://127.0.0.1:{}/h/sbx/ws", home.port).into_client_request().unwrap();
             req.headers_mut().insert("origin", origin.parse().unwrap());
+            req.headers_mut().insert("authorization", format!("Bearer {}", home.token()).parse().unwrap());
             connect_async(req)
         };
         let (mut sock, _) = ws(&home.url()).await.expect("the home page reaches the sandbox through home");

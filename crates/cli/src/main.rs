@@ -621,6 +621,14 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<SyncedCmd>,
     },
+    /// Open this machine's page in your browser, signed in. Programs and
+    /// browsers on this machine show the daemon's local token; this opens
+    /// a sign-in link that gives your browser it (once: it stays signed
+    /// in). `--print` prints the link instead (it holds the token).
+    Web {
+        #[arg(long)]
+        print: bool,
+    },
     /// Install the daemon: `illogicald install` with these arguments (e.g.
     /// `--tailnet file:KEY --home URL --join TOKEN` in a sandbox).
     Install {
@@ -878,6 +886,34 @@ fn default_socket() -> PathBuf {
         Ok(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
         _ => state.join("sock"),
     }
+}
+
+/// `illogical web`: the sign-in link, opened in a browser (or printed).
+fn web(sock: &http::Target, print: bool) -> anyhow::Result<i32> {
+    let v = request(sock, "GET", "/api/signin-link", None)?.json()?;
+    let Some(url) = v["url"].as_str() else { bail!("the daemon has no sign-in link: {v}") };
+    let page = url.split("/auth?").next().unwrap_or(url);
+    if print {
+        println!("{url}");
+        return Ok(0);
+    }
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let opened = (cfg!(target_os = "macos")
+        || std::env::var_os("DISPLAY").is_some()
+        || std::env::var_os("WAYLAND_DISPLAY").is_some())
+        && std::process::Command::new(opener)
+            .arg(url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+    if opened {
+        println!("Opened {page} in your browser, signed in.");
+    } else {
+        println!("Open this in a browser on this machine (it signs the browser in, once):\n\n  {url}\n");
+        println!("It holds this machine's local token: don't share it.");
+    }
+    Ok(0)
 }
 
 /// The pane given, or the one we're running in.
@@ -1139,6 +1175,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
     if let Command::Hook = cli.cmd {
         return Ok(hook::run(http::Target::Socket(socket(&cli))));
     }
+    if let Command::Web { print } = cli.cmd {
+        // The local daemon's own link, over its socket (only ours).
+        return web(&http::Target::Socket(socket(&cli)), print);
+    }
     if let Command::Inbox = cli.cmd {
         return Ok(hook::inbox(http::Target::Socket(socket(&cli))));
     }
@@ -1337,7 +1377,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
-        Command::Install { .. } => unreachable!("handled before connecting"),
+        Command::Install { .. } | Command::Web { .. } => unreachable!("handled before connecting"),
         Command::Tmux { args } => return tmux::run(sock, &args),
         Command::Ls => {
             let v = request(&sock, "GET", "/api/panes", None)?.json()?;

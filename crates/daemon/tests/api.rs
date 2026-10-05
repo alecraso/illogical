@@ -58,6 +58,11 @@ fn start() -> Daemon {
 }
 
 impl Daemon {
+    /// The local token loopback callers show.
+    fn token(&self) -> String {
+        std::fs::read_to_string(self.state.join("local-token")).unwrap().trim().to_owned()
+    }
+
     fn sock(&self) -> PathBuf {
         match std::fs::read_to_string(self.state.join("sock.path")) {
             Ok(p) => PathBuf::from(p.trim()),
@@ -354,8 +359,9 @@ fn the_api_over_tcp_refuses_other_sites() {
     let body = r#"{"command":"touch /tmp/pwned"}"#;
     s.write_all(
         format!(
-            "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: https://evil.example\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nOrigin: https://evil.example\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             d.port,
+            d.token(),
             body.len()
         )
         .as_bytes(),
@@ -366,7 +372,13 @@ fn the_api_over_tcp_refuses_other_sites() {
     assert!(resp.starts_with("HTTP/1.1 403"), "{resp}");
     // No Origin (a program) is fine.
     let mut s = std::net::TcpStream::connect(("127.0.0.1", d.port)).unwrap();
-    write!(s, "GET /api/panes HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", d.port).unwrap();
+    write!(
+        s,
+        "GET /api/panes HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+        d.port,
+        d.token()
+    )
+    .unwrap();
     let mut resp = String::new();
     s.read_to_string(&mut resp).unwrap();
     assert!(resp.starts_with("HTTP/1.1 200"), "{resp}");

@@ -4,13 +4,15 @@
 // asks, q = an agent asks a question, d = a long build finishes, x = quit.
 
 import { FakeFleet } from "./e2e/fake-fleet.ts";
+import { signIn } from "./e2e/local-token.ts";
 
 const f = new FakeFleet();
 await f.machine("workstation", 7730);
 await f.machine("build-01", 7731);
 await f.machine("build-02", 7732);
 await f.populate();
-console.log("swarm: http://127.0.0.1:7730/#swarm   (t trouble, a ask, q question, d done, x quit)");
+// Its daemons share a token: the link signs the browser in to all three.
+console.log(`swarm: ${signIn("http://127.0.0.1:7730", "/#swarm")}\n   (t trouble, a ask, q question, d done, x quit)`);
 const bye = () => {
   f.stop();
   process.exit(0);

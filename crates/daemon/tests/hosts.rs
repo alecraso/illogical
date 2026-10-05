@@ -36,6 +36,20 @@ impl Drop for Daemon {
     }
 }
 
+/// One local token for every daemon here, and the CLI: two daemons on one
+/// machine, as one person's (the CLI's `--host URL` shows it to both).
+fn token_file() -> PathBuf {
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::env::temp_dir().join(format!("ilg-hosts-token-{}", std::process::id()));
+    // Made once, before any daemon starts (they'd race to make it).
+    static MADE: std::sync::Once = std::sync::Once::new();
+    MADE.call_once(|| {
+        let mut w = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&f).unwrap();
+        w.write_all(format!("ilt_hosts{:032x}", std::process::id() as u128 * 7919).as_bytes()).unwrap();
+    });
+    f
+}
+
 fn start(name: &str, extra: &[&str]) -> Daemon {
     static N: AtomicU32 = AtomicU32::new(0);
     let state =
@@ -49,6 +63,7 @@ fn start(name: &str, extra: &[&str]) -> Daemon {
         .arg("--state-dir")
         .arg(&state)
         .env("PS1", "$ ")
+        .env("ILLOGICAL_LOCAL_TOKEN_FILE", token_file())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -77,6 +92,11 @@ impl Daemon {
         format!("http://127.0.0.1:{}", self.port)
     }
 
+    /// The local token loopback callers show.
+    fn token(&self) -> String {
+        std::fs::read_to_string(token_file()).unwrap_or_default().trim().to_owned()
+    }
+
     /// One HTTP request over TCP with these headers; status, headers, body.
     fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> (u16, String, String) {
         let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
@@ -87,6 +107,18 @@ impl Daemon {
         }
         for (k, v) in headers {
             req.push_str(&format!("{k}: {v}\r\n"));
+        }
+        // A program on this machine shows the local token (serve's
+        // requests carry an identity instead, and hosts' paths a token of
+        // their own).
+        let own_credential = ["/api/sync/", "/api/hosts/join", "/api/dial"].iter().any(|p| path.starts_with(p));
+        if !own_credential
+            && !self.token().is_empty()
+            && !headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("authorization") || k.eq_ignore_ascii_case("tailscale-user-login"))
+        {
+            req.push_str(&format!("Authorization: Bearer {}\r\n", self.token()));
         }
         if !body.is_empty() {
             req.push_str("Content-Type: application/json\r\n");
@@ -112,7 +144,14 @@ fn cli_bin() -> PathBuf {
 }
 
 fn cli(home: &Daemon, args: &[&str]) -> Output {
-    Command::new(cli_bin()).arg("--socket").arg(home.sock()).args(args).env_remove("ILLOGICAL_PANE").output().unwrap()
+    Command::new(cli_bin())
+        .arg("--socket")
+        .arg(home.sock())
+        .args(args)
+        .env_remove("ILLOGICAL_PANE")
+        .env("ILLOGICAL_LOCAL_TOKEN_FILE", token_file())
+        .output()
+        .unwrap()
 }
 
 fn stdout(o: &Output) -> String {
@@ -174,6 +213,7 @@ async fn another_daemon_accepts_the_home_page_and_nobody_else() {
     let ws = |origin: &str| {
         let mut req = format!("ws://127.0.0.1:{}/ws", other.port).into_client_request().unwrap();
         req.headers_mut().insert("origin", origin.parse().unwrap());
+        req.headers_mut().insert("authorization", format!("Bearer {}", other.token()).parse().unwrap());
         connect_async(req)
     };
     assert!(ws(&home.url()).await.is_ok(), "the home daemon's page may connect");
@@ -183,6 +223,7 @@ async fn another_daemon_accepts_the_home_page_and_nobody_else() {
     // The home daemon itself doesn't accept the other's page.
     let mut req = format!("ws://127.0.0.1:{}/ws", home.port).into_client_request().unwrap();
     req.headers_mut().insert("origin", other.url().parse().unwrap());
+    req.headers_mut().insert("authorization", format!("Bearer {}", home.token()).parse().unwrap());
     assert!(connect_async(req).await.is_err());
 
     let (other, home_url) = (std::sync::Arc::new(other), home.url());

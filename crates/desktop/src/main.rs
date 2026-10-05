@@ -4,7 +4,10 @@
 //! - **The daemon stays a separate service**, so panes outlive the window.
 //!   The app finds the local one (`ILLOGICAL_URL`, else the address in the
 //!   state directory's `listen` file, else `127.0.0.1:7681`) and loads its
-//!   page: the UI and the daemon always match. Loopback auth is unchanged.
+//!   page: the UI and the daemon always match. Loopback callers show the
+//!   daemon's local token (`local-token` in the state directory): the
+//!   window opens the page through its sign-in link, and the app's own
+//!   calls send it as a bearer.
 //! - **It installs the daemon when there is none.** The bundle carries
 //!   `illogicald` and `illogical` (sidecars, built by `sidecars.sh`). With no
 //!   daemon answering, the window opens on a setup page that runs
@@ -78,6 +81,41 @@ fn addr() -> &'static str {
 
 fn page() -> String {
     format!("http://{}", addr())
+}
+
+/// The local daemon's token, which loopback callers show.
+fn local_token() -> Option<String> {
+    let file = std::env::var_os("ILLOGICAL_LOCAL_TOKEN_FILE")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| state_dir().map(|d| d.join("local-token")))?;
+    std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
+}
+
+/// `Authorization` for the app's own calls to the daemon.
+fn bearer() -> Option<String> {
+    local_token().map(|t| format!("Bearer {t}"))
+}
+
+/// `path` on the daemon's page, through its sign-in link (which sets the
+/// browser's cookie and goes on to `path`).
+fn page_at(path: &str) -> tauri::Url {
+    let url = match local_token() {
+        Some(t) => {
+            let next: String = path
+                .bytes()
+                .map(|b| match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                        (b as char).to_string()
+                    }
+                    _ => format!("%{b:02X}"),
+                })
+                .collect();
+            format!("{}/auth?token={t}&next={next}", page())
+        }
+        None => format!("{}{path}", page()),
+    };
+    url.parse().unwrap()
 }
 
 fn reachable() -> bool {
@@ -199,7 +237,7 @@ fn home(app: &AppHandle) -> tauri::Url {
                 cloud::app_url(cloud::SIGNIN)
             }
         }
-        _ => page().parse().unwrap(),
+        _ => page_at("/"),
     }
 }
 
@@ -305,7 +343,7 @@ fn focus_or_open(app: &AppHandle) {
 
 /// From a notification: the pane, in a window of ours.
 fn open_pane(app: &AppHandle, pane: u32) {
-    let url: tauri::Url = format!("{}/#pane={pane}", page()).parse().unwrap();
+    let url = page_at(&format!("/#pane={pane}"));
     match app.webview_windows().values().next() {
         Some(w) => {
             let _ = w.navigate(url);
@@ -411,7 +449,11 @@ fn watch(app: AppHandle) {
 fn watch_once(app: &AppHandle) -> anyhow::Result<()> {
     let sa: SocketAddr = addr().to_socket_addrs()?.next().ok_or_else(|| anyhow::anyhow!("no address"))?;
     let tcp = TcpStream::connect_timeout(&sa, Duration::from_secs(2))?;
-    let (mut ws, _) = tungstenite::client(format!("ws://{}/ws", addr()), tcp).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut req = tungstenite::client::IntoClientRequest::into_client_request(format!("ws://{}/ws", addr()))?;
+    if let Some(b) = bearer() {
+        req.headers_mut().insert("authorization", b.parse()?);
+    }
+    let (mut ws, _) = tungstenite::client(req, tcp).map_err(|e| anyhow::anyhow!("{e}"))?;
     // pane -> needs you; None until the first state, so what already waits
     // at launch shows on the badge without a burst of notifications.
     let mut seen: Option<HashMap<u32, bool>> = None;
@@ -515,7 +557,7 @@ fn main() {
                     }
                     // The daemon's own page, whatever the window shows.
                     "this" => {
-                        let _ = open_window(app, WebviewUrl::External(page().parse().unwrap()));
+                        let _ = open_window(app, WebviewUrl::External(page_at("/")));
                     }
                     "quit" => app.exit(0),
                     _ => {}

@@ -143,7 +143,7 @@ async fn busy_panes_send_deltas_not_states() {
             json!({ "text": "for i in $(seq 1 60); do echo build $i; sleep 0.25; done", "enter": true }),
         );
     }
-    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{}/ws", d.port)).await.unwrap();
+    let (mut ws, _) = connect_async(d.ws("/ws")).await.unwrap();
     let start = Instant::now() + Duration::from_secs(10);
     let Some((_, ServerMsg::Hello { state, .. })) = next_msg(&mut ws, start).await else { panic!("no hello") };
     assert!(state.panes.len() >= 40);

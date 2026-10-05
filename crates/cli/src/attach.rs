@@ -37,7 +37,7 @@ fn send(ws: &mut WebSocket<Box<dyn Stream>>, msg: &ClientMsg) -> anyhow::Result<
 
 pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
     let stream = target.connect()?;
-    let (mut ws, _) = tungstenite::client(target.ws_url(), stream).map_err(|e| match e {
+    let (mut ws, _) = tungstenite::client(target.ws_request()?, stream).map_err(|e| match e {
         tungstenite::HandshakeError::Failure(e) => anyhow::Error::from(e).context("websocket handshake"),
         tungstenite::HandshakeError::Interrupted(_) => anyhow::anyhow!("websocket handshake interrupted"),
     })?;

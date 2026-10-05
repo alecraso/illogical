@@ -157,9 +157,9 @@ fi
 
 say ""
 if [ -n "$started" ]; then
-  say "  Open      $url"
+  say "  Open      illogical web   ($url, with your browser signed in)"
 else
-  say "  Open      $url  (once it's running)"
+  say "  Open      illogical web   ($url signed in, once it's running)"
 fi
 serve="tailscale serve --bg --https=443 $url"
 if [ -n "$dns" ]; then

@@ -204,7 +204,7 @@ test("Agent on this: the issue and its agent in a tab, on a branch of their own,
         agent!,
       ),
     )
-    .toContain(`Work on issue #${N} in ${REPO}: Add a frobnicator to the CLI`);
+    .toContain(`<issue-text>\nTitle: Add a frobnicator to the CLI`);
   await expect(el.locator("[data-agent-pr-waiting]")).toBeVisible();
 
   // The agent's PR appears on the forge: its block joins the tab.

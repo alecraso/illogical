@@ -90,6 +90,38 @@ impl Target {
         }
     }
 
+    /// A daemon on this machine over TCP (`--host http://127.0.0.1:…`)
+    /// wants the local token, as any loopback caller does: the one in the
+    /// default state directory's `local-token` (or
+    /// $ILLOGICAL_LOCAL_TOKEN_FILE), when it's readable.
+    pub fn local_token(&self) -> Option<String> {
+        let Target::Url(u) = self else { return None };
+        let host = u.host.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(u.host == "localhost");
+        if !host {
+            return None;
+        }
+        let file = std::env::var_os("ILLOGICAL_LOCAL_TOKEN_FILE")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                let state = std::env::var_os("XDG_STATE_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+                Some(state.join("illogical/local-token"))
+            })?;
+        std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
+    }
+
+    /// A WebSocket handshake request for this target.
+    pub fn ws_request(&self) -> anyhow::Result<tungstenite::handshake::client::Request> {
+        use tungstenite::client::IntoClientRequest;
+        let mut req = self.ws_url().into_client_request()?;
+        if let Some(t) = self.local_token() {
+            req.headers_mut().insert("authorization", format!("Bearer {t}").parse()?);
+        }
+        Ok(req)
+    }
+
     pub fn ws_url(&self) -> String {
         match self {
             Target::Url(u) if u.tls => format!("wss://{}/ws", u.authority),
@@ -227,6 +259,11 @@ pub fn send(
     );
     for (k, v) in headers {
         head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        && let Some(t) = target.local_token()
+    {
+        head.push_str(&format!("Authorization: Bearer {t}\r\n"));
     }
     head.push_str("\r\n");
     stream.write_all(head.as_bytes())?;

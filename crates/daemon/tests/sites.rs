@@ -72,6 +72,11 @@ impl Daemon {
         d
     }
 
+    /// `Authorization` with the local token loopback callers show.
+    fn bearer(&self) -> String {
+        format!("Bearer {}", std::fs::read_to_string(self.state.join("local-token")).unwrap().trim())
+    }
+
     fn sock(&self) -> PathBuf {
         self.state.join("sock")
     }
@@ -290,12 +295,14 @@ async fn a_port_through_its_own_site() {
     let app_ws = format!("ws://127.0.0.1:{}/ws", d.port);
     let mut req = app_ws.as_str().into_client_request().unwrap();
     req.headers_mut().insert("origin", origin.parse().unwrap());
+    req.headers_mut().insert("authorization", d.bearer().parse().unwrap());
     match tokio_tungstenite::connect_async(req).await {
         Err(tokio_tungstenite::tungstenite::Error::Http(r)) => assert_eq!(r.status(), 403),
         other => panic!("the app's socket took the block's origin: {:?}", other.map(|_| ())),
     }
     let r = reqwest::Client::new()
         .post(format!("http://127.0.0.1:{}/api/run", d.port))
+        .header("authorization", d.bearer())
         .header("origin", &origin)
         .json(&json!({"command": "touch /tmp/ilg-should-not-exist"}))
         .send()

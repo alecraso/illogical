@@ -112,7 +112,9 @@ most twice a day; nothing else is sent. `illogicald install --
 
 ## Quickstart
 
-1. Open <http://127.0.0.1:7681>. Right-click a pane or a tab for
+1. Run `illogical web`: it opens <http://127.0.0.1:7681> in your browser,
+   signed in (programs on this machine show its local token; see
+   [docs/advanced.md](docs/advanced.md)). Right-click a pane or a tab for
    everything. Drag a tab or a pane onto another pane's edge to split it
    there; drag dividers to resize.
 2. **From your phone and other machines**, put it behind Tailscale on this
@@ -223,7 +225,11 @@ diff and follow.
    It makes a `fountain` user (its sandboxes under
    `/home/fountain/sandboxes`), the `fountain-runner` systemd unit, and a
    sudoers rule: you may run `/bin/bash` as `fountain`, and
-   `systemctl start|stop|restart|status fountain-runner` as root.
+   `systemctl start|stop|restart|status fountain-runner` as root. The
+   unit keeps its agents off this machine's loopback (where illogicald
+   and your other local services listen), but for DNS;
+   `--allow-loopback` lets them use it (a dev server they start and
+   test, say).
 2. Then, as you: `illogical fountain runner install` (makes the runner's key
    without printing it, and starts the unit); `illogical fountain runner
    status` shows it.

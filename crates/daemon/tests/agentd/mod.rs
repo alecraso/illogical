@@ -242,6 +242,24 @@ impl Daemon {
         }
     }
 
+    /// The local token loopback callers show.
+    pub fn token(&self) -> String {
+        std::fs::read_to_string(self.state.join("local-token")).unwrap().trim().to_owned()
+    }
+
+    /// A WebSocket request to `path` on the TCP port, with the local token.
+    pub fn ws(&self, path: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut req = format!("ws://127.0.0.1:{}{path}", self.port).into_client_request().unwrap();
+        req.headers_mut().insert("authorization", self.bearer().parse().unwrap());
+        req
+    }
+
+    /// `Authorization` with the local token.
+    pub fn bearer(&self) -> String {
+        format!("Bearer {}", self.token())
+    }
+
     pub fn sock(&self) -> PathBuf {
         match std::fs::read_to_string(self.state.join("sock.path")) {
             Ok(p) => PathBuf::from(p.trim()),

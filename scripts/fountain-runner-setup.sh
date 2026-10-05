@@ -25,7 +25,9 @@
 #   - /etc/systemd/system/fountain-runner.service (User=fountain,
 #     Restart=always, UMask=0027 so the group can read; ProtectProc=invisible,
 #     so its agents can't read other users' processes' command lines in
-#     /proc; systemd 247 or later), enabled. The unit is the one source of
+#     /proc; systemd 247 or later; IPAddressDeny=localhost, so its agents
+#     can't reach services on this machine's loopback, like illogicald,
+#     except systemd-resolved's DNS stub), enabled. The unit is the one source of
 #     truth: an interim drop-in (fountain-runner.service.d/10-protect-proc.conf)
 #     is removed, with its directory if that leaves it empty. It starts
 #     once its key exists (ConditionPathExists), so at boot without one it's
@@ -37,6 +39,8 @@
 #   --fountain PATH   the fountain CLI to copy [`command -v fountain`]
 #   --node PATH       the node executable whose node and npm to copy
 #                     [`command -v node`]
+#   --allow-loopback  let the runner's agents use loopback (a dev server they
+#                     start and test, say): no IPAddressDeny=localhost
 #   --dry-run DIR     write every file under DIR instead of /, print the
 #                     commands instead of running them; needs no root
 #   --uninstall       undo it all; the user, its home and the sandboxes stay
@@ -55,6 +59,7 @@ root=
 dry=
 uninstall=
 purge=
+loopback=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -62,6 +67,7 @@ while [ $# -gt 0 ]; do
     --name) name=${2:?}; shift 2 ;;
     --fountain) fountain=${2:?}; shift 2 ;;
     --node) node=${2:?}; shift 2 ;;
+    --allow-loopback) loopback=1; shift ;;
     --dry-run) dry=1; root=${2:?}; shift 2 ;;
     --uninstall) uninstall=1; shift ;;
     --purge) purge=1; shift ;;
@@ -98,6 +104,18 @@ run_ok() {
 # Where a file goes: under DIR in a dry run.
 at() { printf '%s%s' "$root" "$1"; }
 
+# Loopback is shared by every account here: the runner's agents stay off
+# it (the services on it, illogicald among them, aren't theirs), but for
+# systemd-resolved's stub, which DNS goes through.
+render_loopback() {
+  if [ -n "$loopback" ]; then
+    printf '# --allow-loopback: its agents may reach services on this machine'"'"'s loopback.'
+  else
+    printf '%s\n' "# Services on this machine's loopback aren't the runner's (--allow-loopback to allow)." \
+      "IPAddressDeny=localhost" "IPAddressAllow=127.0.0.53 127.0.0.54"
+  fi
+}
+
 render_unit() {
   cat <<EOF
 # Written by illogical's scripts/fountain-runner-setup.sh; run it again to change it.
@@ -125,6 +143,7 @@ PrivateTmp=yes
 # ProcSubset=pid: it hides /proc/cpuinfo and meminfo (node's os.cpus()).
 ProtectProc=invisible
 InaccessiblePaths=-$user_home -/run/user/$user_uid
+$(render_loopback)
 
 [Install]
 WantedBy=multi-user.target

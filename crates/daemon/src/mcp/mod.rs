@@ -158,6 +158,8 @@ async fn authenticate(State(app): State<Arc<App>>, mut req: Request, next: Next)
     };
     let caller = match bearer {
         None => Caller { scope: Scope::Full, token: None },
+        // The daemon's local token: the owner, as the server already found.
+        Some(t) if app.access.is_local_token(&t) => Caller { scope: Scope::Full, token: None },
         Some(t) => match app.mcp.check(&t) {
             Some(Bearer::Client { name, scope }) => {
                 let scope = match scope {

@@ -559,9 +559,15 @@ the daemon stopping, crashing, or the machine rebooting:
     `.illogical/worktrees/`). The branch tracks nothing, so a plain `git
     push` can't land on main. The issue moves to a tab of its own (named
     `#N`), and Claude Code (or `{"agent": "codex"}`…) starts beside it in
-    the worktree with the issue's title, text and link as its prompt, told
-    to open a PR from the branch that closes the issue. *With
-    instructions…* adds to the prompt. The block looks for a PR from that
+    the worktree with the issue's link as its prompt, told to open a PR
+    from the branch that closes the issue. The issue's title and text go
+    in a marked block the prompt calls its author's, to read as a
+    description and not to follow as instructions (anyone who can open an
+    issue on the repository writes them), and the agent starts with
+    nothing allowed ahead of time (no rules, no permission mode, not your
+    own Claude Code settings): what it wants to do comes to you as a card
+    first. *With instructions…*
+    adds to the prompt (yours, outside that block). The block looks for a PR from that
     branch (every 30 s, faster while you look) and, when one appears, opens
     it beside the agent, once. `illogical issue agent %N` does the same.
   - **New issues.** `illogical issue new -t TITLE [-b TEXT]` (in a clone,

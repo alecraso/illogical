@@ -23,9 +23,13 @@
 //!   refused. Otherwise the connection is from this machine: a
 //!   `Tailscale-User-Login` header (added by serve) must be the owner, and a
 //!   request for a tailnet name without one came through serve from a node
-//!   with no user (a tagged node, or Funnel), so it is refused too. Local
-//!   processes could forge the header, but they could equally use the Unix
-//!   socket; its job is keeping other tailnet users and nodes out.
+//!   with no user (a tagged node, or Funnel), so it is refused too. The
+//!   header is only believed from tailscaled's end of the connection
+//!   (`localauth::serve_peer_ok`, checked by the server).
+//! - **Everything else on loopback** must show the local token
+//!   (`localauth.rs`): `Authorization: Bearer …`, or the cookie its
+//!   sign-in link sets. Loopback is every account's and every program's on
+//!   the machine, so being on it proves nothing.
 //! - **A resident daemon in a sandbox** (M4b) is reached through its
 //!   provider's proxy, which arrives on loopback like a local process.
 //!   There, everything not identified by tailscaled must carry the token
@@ -72,6 +76,17 @@ pub struct Access {
     tailnet: Option<String>,
     /// The port it listens on (what `tailscale serve` points at).
     port: u16,
+    /// The local token, when loopback callers need it (`localauth.rs`).
+    local: Option<LocalToken>,
+}
+
+#[derive(Clone)]
+struct LocalToken {
+    /// Its SHA-256: compared without early exits.
+    digest: [u8; 32],
+    /// The page the sign-in link is on (`http://127.0.0.1:PORT`).
+    page: String,
+    token: String,
 }
 
 impl Access {
@@ -101,7 +116,17 @@ impl Access {
             None => format!("http://127.0.0.1:{port}"),
         };
         let hosts = loopback.into_iter().chain(public.iter().cloned()).chain(direct).collect();
-        Self { hosts, public: public.into_iter().collect(), origins, owner, page, tunnel: None, tailnet: None, port }
+        Self {
+            hosts,
+            public: public.into_iter().collect(),
+            origins,
+            owner,
+            page,
+            tunnel: None,
+            tailnet: None,
+            port,
+            local: None,
+        }
     }
 
     pub fn port(&self) -> u16 {
@@ -140,6 +165,82 @@ impl Access {
         }
         self.tunnel = Some(d);
         Ok(self)
+    }
+
+    /// From now on, loopback callers that tailscaled didn't vouch for need
+    /// `token` (`localauth.rs`). `listen`: where the sign-in link goes.
+    pub fn require_local_token(mut self, token: &str, listen: SocketAddr) -> Self {
+        let ip = listen.ip();
+        let host = if ip.is_unspecified() || ip.is_loopback() {
+            if ip.is_ipv6() && !ip.is_unspecified() { "[::1]".to_owned() } else { "127.0.0.1".to_owned() }
+        } else {
+            host_name(ip)
+        };
+        let page = format!("http://{host}:{}", listen.port());
+        let token = token.trim().to_owned();
+        self.local = Some(LocalToken { digest: Sha256::digest(token.as_bytes()).into(), page, token });
+        self
+    }
+
+    /// Whether a resident's tunnel token is what loopback callers need.
+    pub fn tunnelled(&self) -> bool {
+        self.tunnel.is_some()
+    }
+
+    /// The cookie a sign-in link sets: one per port, so daemons side by
+    /// side (each with its own token) don't sign each other out.
+    pub fn cookie_name(&self) -> String {
+        format!("illogical_{}", self.port)
+    }
+
+    /// The sign-in link for a browser on this machine.
+    pub fn signin_link(&self) -> Option<String> {
+        let l = self.local.as_ref()?;
+        Some(format!("{}{}?token={}", l.page, crate::localauth::AUTH_PATH, l.token))
+    }
+
+    /// `given` is the local token.
+    pub fn is_local_token(&self, given: &str) -> bool {
+        self.local.as_ref().is_some_and(|l| same(&l.digest, given))
+    }
+
+    /// The request names the local token as its bearer (for `/mcp`, where a
+    /// bearer otherwise means an MCP token).
+    pub fn local_bearer(&self, headers: &HeaderMap) -> bool {
+        bearer(headers).is_some_and(|t| self.is_local_token(t))
+    }
+
+    /// A loopback caller shows the local token: as its bearer, or as a
+    /// cookie from a browser. A browser's cookie counts on our own pages,
+    /// on page loads, and for one of our origins; not for what another
+    /// site's page embeds (an image or a script, which carry no Origin).
+    fn check_local(&self, headers: &HeaderMap) -> Result<(), Refusal> {
+        let Some(l) = &self.local else { return Ok(()) };
+        if bearer(headers).is_some_and(|t| same(&l.digest, t)) {
+            return Ok(());
+        }
+        let site = header_str(headers, "sec-fetch-site").unwrap_or("none");
+        let ours = matches!(site, "same-origin" | "none")
+            || header_str(headers, "sec-fetch-mode") == Some("navigate")
+            || header_str(headers, header::ORIGIN.as_str()).is_some_and(|o| self.origin_allowed(o));
+        let cookie = headers
+            .get_all(header::COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(';'))
+            .filter_map(|c| c.split_once('=').map(|(_, v)| v.trim()))
+            .any(|v| same(&l.digest, v));
+        if ours && cookie {
+            return Ok(());
+        }
+        Err((
+            StatusCode::UNAUTHORIZED,
+            "This machine's illogical needs you to sign in from it.\n\n\
+             Run this in a terminal here, which opens the page signed in:\n\nillogical web\n\n\
+             (Or open the desktop app. Programs send the token in local-token, in illogical's state \
+             directory, as Authorization: Bearer.)"
+                .into(),
+        ))
     }
 
     /// Where this daemon's page is, for links to it: its tailnet name, else
@@ -214,7 +315,7 @@ impl Access {
                 None if self.public.contains(&host(headers)) => {
                     Err((StatusCode::FORBIDDEN, "tailnet request without a user identity (from a tagged node?)".into()))
                 }
-                None => Ok(Principal::Owner),
+                None => self.check_local(headers).map(|()| Principal::Owner),
             },
         }
     }
@@ -229,17 +330,10 @@ impl Access {
     }
 
     fn check_tunnel_token(&self, headers: &HeaderMap) -> Result<(), Refusal> {
-        let given = header_str(headers, header::AUTHORIZATION.as_str()).and_then(|v| v.strip_prefix("Bearer "));
-        let (Some(want), Some(given)) = (&self.tunnel, given) else {
+        let (Some(want), Some(given)) = (&self.tunnel, bearer(headers)) else {
             return Err((StatusCode::UNAUTHORIZED, "this daemon is reached through its home daemon's tunnel".into()));
         };
-        let got: [u8; 32] = Sha256::digest(given.trim().as_bytes()).into();
-        // Constant time: no early exit on the first differing byte.
-        if got.iter().zip(want).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0 {
-            Ok(())
-        } else {
-            Err((StatusCode::UNAUTHORIZED, "wrong tunnel token".into()))
-        }
+        if same(want, given) { Ok(()) } else { Err((StatusCode::UNAUTHORIZED, "wrong tunnel token".into())) }
     }
 
     fn must_be_owner(&self, login: &str) -> Result<(), Refusal> {
@@ -292,6 +386,12 @@ impl Access {
     }
 }
 
+impl std::fmt::Debug for LocalToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalToken").field("page", &self.page).finish_non_exhaustive()
+    }
+}
+
 /// The lasting fix for the owner (#109): installed, so it survives restarts.
 pub fn owner_fix(login: &str) -> String {
     format!("illogicald install -- --owner {login}")
@@ -305,7 +405,7 @@ pub fn refusal_page(status: StatusCode, why: &str) -> String {
         .filter(|p| !p.trim().is_empty())
         .map(|p| {
             let p = p.trim();
-            if p.starts_with("illogicald ") {
+            if p.starts_with("illogicald ") || p == "illogical web" {
                 format!(
                     "<p class=cmd><code id=fix>{}</code> <button onclick=\"navigator.clipboard.writeText(\
                      document.getElementById('fix').textContent).then(()=>this.textContent='Copied',()=>\
@@ -325,6 +425,17 @@ pub fn refusal_page(status: StatusCode, why: &str) -> String {
          .cmd{{display:flex;gap:.5em;align-items:center}}</style>{body}",
         status.as_u16()
     )
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    header_str(headers, header::AUTHORIZATION.as_str()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim)
+}
+
+/// `given`'s SHA-256 is `want`, compared in constant time (no early exit
+/// on the first differing byte).
+fn same(want: &[u8; 32], given: &str) -> bool {
+    let got: [u8; 32] = Sha256::digest(given.trim().as_bytes()).into();
+    got.iter().zip(want).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
 }
 
 fn host(headers: &HeaderMap) -> String {
@@ -531,6 +642,62 @@ mod tests {
         // The Host check still applies.
         assert!(check(&a, &[("host", "evil.com"), ("authorization", &bearer)]).is_err());
         assert!(Access::new(7681, &[], &[], &[], None).require_tunnel_token("abc").is_err());
+    }
+
+    #[test]
+    fn loopback_callers_show_the_local_token() {
+        let token = "ilt_a-test-token-for-the-access-checks";
+        let a = access().require_local_token(token, "127.0.0.1:7681".parse().unwrap());
+        let host = ("host", "127.0.0.1:7681");
+        // Being on loopback is not enough.
+        assert_eq!(check(&a, &[host]).unwrap_err().0, StatusCode::UNAUTHORIZED);
+        let why = check(&a, &[host]).unwrap_err().1;
+        assert!(why.contains("\n\nillogical web\n\n"), "{why}");
+        // A program: its bearer.
+        let bearer = format!("Bearer {token}");
+        assert!(check(&a, &[host, ("authorization", &bearer)]).is_ok());
+        assert!(check(&a, &[host, ("authorization", "Bearer ilt_wrong")]).is_err());
+        assert!(check(&a, &[host, ("authorization", token)]).is_err(), "not a bearer");
+        assert!(a.local_bearer(&headers(&[("authorization", &bearer)])));
+        // A browser: the cookie, under any name, among others.
+        let cookie = format!("other=1; illogical_7681={token}");
+        assert!(check(&a, &[host, ("cookie", &cookie)]).is_ok());
+        assert!(check(&a, &[host, ("cookie", "illogical_7681=ilt_wrong")]).is_err());
+        let same = ("sec-fetch-site", "same-origin");
+        assert!(check(&a, &[host, ("cookie", &cookie), same]).is_ok());
+        // Typed in the address bar, or a link from elsewhere: a page load.
+        let nav = [("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "navigate")];
+        assert!(check(&a, &[host, ("cookie", &cookie), nav[0], nav[1]]).is_ok());
+        // What another site's page embeds (another port of 127.0.0.1 is
+        // the same site) carries the cookie but isn't ours.
+        for site in ["same-site", "cross-site"] {
+            let embed = [host, ("cookie", &cookie), ("sec-fetch-site", site), ("sec-fetch-mode", "no-cors")];
+            assert_eq!(check(&a, &embed).unwrap_err().0, StatusCode::UNAUTHORIZED, "{site}");
+        }
+        // One of our origins (another daemon's page, by --allow-origin).
+        let home = [host, ("cookie", &cookie), ("sec-fetch-site", "same-site"), ("origin", "http://localhost:5173")];
+        assert!(check(&a, &home).is_ok());
+        // The tailnet's identity is still the tailnet's.
+        let served = [("host", "geek.example.ts.net"), ("tailscale-user-login", "me@x.com")];
+        assert!(check(&a, &served).is_ok());
+        assert!(
+            a.check(
+                &headers(&[("host", "geek.example.ts.net:7681")]),
+                &Peer::Tailnet { login: Some("me@x.com".into()) }
+            )
+            .is_err()
+        );
+        // Share links carry their own credential.
+        assert!(a.check_viewer(&headers(&[host]), &Peer::Local).is_ok());
+        // The sign-in link, and the token never in Debug.
+        assert_eq!(a.signin_link().unwrap(), format!("http://127.0.0.1:7681/auth?token={token}"));
+        assert!(a.is_local_token(token) && !a.is_local_token("ilt_x"));
+        assert!(!format!("{a:?}").contains(token));
+        assert_eq!(a.cookie_name(), "illogical_7681");
+        let any = Access::new(7681, &[], &[], &[], None).require_local_token(token, "0.0.0.0:7681".parse().unwrap());
+        assert!(any.signin_link().unwrap().starts_with("http://127.0.0.1:7681/auth?"));
+        let none = Access::new(7681, &[], &[], &[], None);
+        assert!(none.signin_link().is_none() && !none.is_local_token(token));
     }
 
     #[test]

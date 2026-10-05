@@ -243,6 +243,9 @@ export class Client {
     }
     const res = await fetch(this.base + path, {
       method,
+      // Another daemon (on this machine, its sign-in cookie; it allows
+      // credentials only from our exact origin).
+      credentials: /^https?:/.test(this.base) ? "include" : "same-origin",
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     });
     return { ok: res.ok, status: res.status, json: <T,>() => res.json() as Promise<T>, text: () => res.text() };

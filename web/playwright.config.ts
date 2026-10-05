@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
+// Loopback callers show the daemon's local token: every daemon of the run
+// shares one, which browsers carry as a cookie.
+import { tokenCookies } from "./e2e/local-token.ts";
 
 // Directories for the run, made once (workers load this config too, and
 // inherit them) and removed when the runner exits, after the daemon (#62).
@@ -132,6 +135,7 @@ export default defineConfig({
   use: {
     baseURL: external ?? `http://127.0.0.1:${port}`,
     viewport: { width: 1000, height: 640 },
+    storageState: { cookies: tokenCookies, origins: [] },
   },
   projects: [
     { name: "chrome", use: { channel: "chrome" }, testIgnore: /\.webkit\.spec\.ts$/ },
