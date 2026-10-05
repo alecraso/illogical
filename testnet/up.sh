@@ -2,7 +2,8 @@
 #
 # Bring up one profile of the test stack.
 #
-#   testnet/up.sh ssh     bastion, box-bare and box-systemd (see README.md)
+#   testnet/up.sh ssh       bastion, box-bare, box-systemd, git (see README.md)
+#   testnet/up.sh tailnet   headscale, ts-box and ts-client (S28's comparison)
 #
 # Makes the stack's keys in testnet/.state (.state-<name> for another
 # COMPOSE_PROJECT_NAME) (a client key and one host key per
@@ -17,7 +18,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${1:-ssh}"
-# shellcheck source=env.sh
+# shellcheck source-path=SCRIPTDIR source=env.sh
 . "$HERE/env.sh"
 PORT="${ILLOGICAL_TESTNET_SSH_PORT:-22922}"
 
@@ -29,15 +30,20 @@ docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 
 case "$PROFILE" in
   ssh) boxes="bastion box-bare box-systemd git" ;;
-  *) echo "usage: testnet/up.sh ssh   (the only profile so far)" >&2; exit 2 ;;
+  tailnet) boxes="ts-box ts-client" ;;
+  *) echo "usage: testnet/up.sh ssh|tailnet" >&2; exit 2 ;;
 esac
 
 mkdir -p "$STATE"
 [ -f "$STATE/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C illogical-testnet -f "$STATE/id_ed25519"
-: > "$STATE/known_hosts.new"
 for b in $boxes; do
   [ -f "$STATE/${b}_host_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C "$b" -f "$STATE/${b}_host_ed25519"
-  echo "$b $(cut -d' ' -f1,2 "$STATE/${b}_host_ed25519.pub")" >> "$STATE/known_hosts.new"
+done
+# Every profile's hosts, so bringing up one profile doesn't drop another's.
+: > "$STATE/known_hosts.new"
+for k in "$STATE"/*_host_ed25519.pub; do
+  b="$(basename "$k" _host_ed25519.pub)"
+  echo "$b $(cut -d' ' -f1,2 "$k")" >> "$STATE/known_hosts.new"
 done
 mv "$STATE/known_hosts.new" "$STATE/known_hosts"
 
@@ -66,7 +72,30 @@ Host *
   ConnectTimeout 10
 CFG
 
+if [ "$PROFILE" = tailnet ]; then
+  # headscale first, for a reusable, ephemeral key the nodes join with.
+  docker compose -f "$HERE/compose.yaml" --profile tailnet up -d --wait headscale >&2
+  hs() { docker exec "$TESTNET-headscale" headscale "$@"; }
+  for _ in $(seq 1 40); do hs users list >/dev/null 2>&1 && break; sleep 0.5; done
+  hs users list -o json | grep -q '"name": *"illo"' || hs users create illo >/dev/null
+  uid="$(hs users list -o json | tr -d ' \t\n' | sed 's/.*"id":\([0-9]*\),"name":"illo".*/\1/')"
+  hs preauthkeys create --user "$uid" --reusable --ephemeral --expiration 24h > "$STATE/tailnet-authkey.new"
+  tail -n1 "$STATE/tailnet-authkey.new" > "$STATE/tailnet-authkey" && rm "$STATE/tailnet-authkey.new"
+fi
+
 docker compose -f "$HERE/compose.yaml" --profile "$PROFILE" up -d --build --wait >&2
+
+if [ "$PROFILE" = tailnet ]; then
+  for _ in $(seq 1 60); do
+    if docker exec "$TESTNET-ts-client" tailscale ping -c 1 ts-box >/dev/null 2>&1; then
+      log "up: docker exec $TESTNET-ts-client tailscale status"
+      exit 0
+    fi
+    sleep 0.5
+  done
+  docker compose -f "$HERE/compose.yaml" --profile tailnet logs --tail=40 >&2 || true
+  die "ts-client can't reach ts-box over the tailnet"
+fi
 
 # sshd answers as soon as its container is up, but give it a few tries.
 for _ in $(seq 1 20); do

@@ -12,7 +12,15 @@ just testnet test ssh jump     # one claim
 just testnet break ssh         # each claim under BREAK=1; all must fail
 just testnet down              # remove containers, networks and .state
 ssh -F testnet/.state/ssh_config box-bare   # or bastion, box-systemd
+
+just testnet up tailnet        # headscale and two Tailscale nodes
+just testnet measure tailnet   # S28: ssh against the tailnet path
 ```
+
+The Rust tests that drive illogical against the stack skip without it:
+`crates/daemon/tests/ssh.rs` (M51, box-bare and git) and
+`crates/daemon/tests/reboot.rs` (#26, box-systemd). Both recreate the boxes
+they use and need `just static <arch>` for the box's binaries.
 
 Every script prints `SKIP: Docker is not available` and exits 0 without
 Docker. The claims expect fresh boxes: after installing anything on one,
@@ -23,6 +31,7 @@ Docker. The claims expect fresh boxes: after installing anything on one,
 | Profile | Services | Status | For |
 |---|---|---|---|
 | `ssh` | `bastion`, `box-bare`, `box-systemd`, `git` | validated | S28, M51, M52's install step, #26 |
+| `tailnet` | `headscale`, `ts-box`, `ts-client` | validated | S28's tailnet comparison |
 
 The other profiles in #200 (`control`, `relay`, `fountain`, `forgejo`) are
 added when a milestone needs them.
@@ -49,6 +58,25 @@ TCP forwarding are on. `up.sh` writes `testnet/.state/`: the client key,
 a host key per box, `known_hosts`, and an `ssh_config` that reaches each box
 by name with strict host key checking and `BatchMode`.
 
+### `tailnet`
+
+- `headscale`: a control server for the stack's own tailnet, plain http on
+  the inner network. `up.sh` makes a user, `illo`, and a reusable,
+  ephemeral preauthorized key (`tailnet-authkey` in the state directory)
+  that both nodes join with.
+- `ts-box`: a box with sshd and Tailscale in userspace mode, as a sandbox
+  runs it: its netstack forwards tailnet connections to the daemon's port
+  on loopback, and the daemon asks tailscaled who is connecting.
+- `ts-client`: the client, with Tailscale on a real `tailscale0` interface
+  (`NET_ADMIN` and `/dev/net/tun`), so programs on it dial the tailnet.
+
+The nodes share a network and connect directly (`tailscale ping` says
+"direct"). headscale requires a DERP map, so its embedded DERP server is on,
+unused. `measure-tailnet.sh` installs illogical on ts-box over ssh from
+ts-client, then times the same requests over both paths (S28's numbers are
+in `spikes/s28-ssh/README.md`). Tailscale SSH isn't here: its check mode
+needs a login at an identity provider, which a test can't do.
+
 ## Claims
 
 A claim checks one property of a running profile. `BREAK=1` breaks that
@@ -71,8 +99,8 @@ every claim does, which shows each one can catch what it's about.
 - Containers, networks and the images are named `illogical-testnet*`; `down`
   removes those and `testnet/.state`, nothing else.
 - `COMPOSE_PROJECT_NAME` renames a stack, so two can run side by side (one
-  per worktree): `COMPOSE_PROJECT_NAME=illo-a2` gives containers
-  `illo-a2-*`, images `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
+  per worktree): `COMPOSE_PROJECT_NAME=illo-a2` gives containers and images
+  `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
   `testnet/.state-illo-a2`. Give it its own `ILLOGICAL_TESTNET_SSH_PORT`
   too. The tests read the same variables.
 - Host ports are off the defaults and each can be overridden with an
@@ -83,5 +111,5 @@ every claim does, which shows each one can catch what it's about.
 
 - CI. A `testnet` job needs Docker on geek's runner (an open question in
   #200); until then the stack is run by hand.
-- The illogical binaries. When S28 and M51 need them on a box, they arrive
-  over ssh from the client (`just static`), which is what the claims guard.
+- Claims for the tailnet profile; its check is the measurement, which fails
+  when either path doesn't reach the daemon.

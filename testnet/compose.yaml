@@ -66,3 +66,40 @@ services:
     volumes:
       - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
     networks: [inner]
+
+  # S28's tailnet comparison: headscale and two Tailscale nodes on the inner
+  # network. ts-box is a box (userspace tailscaled, sshd); ts-client is
+  # where the CLI runs, over ssh or over the tailnet, to the same daemon.
+  headscale:
+    profiles: [tailnet]
+    image: headscale/headscale:0.29.4
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-headscale
+    hostname: headscale
+    command: serve
+    volumes:
+      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+    networks: [inner]
+
+  ts-box:
+    profiles: [tailnet]
+    build: ./tailnet
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-tailnet
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-ts-box
+    hostname: ts-box
+    environment: { TESTNET_NAME: ts-box, TS_TUN: userspace-networking }
+    volumes:
+      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+    networks: [inner]
+
+  ts-client:
+    profiles: [tailnet]
+    build: ./tailnet
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-tailnet
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-ts-client
+    hostname: ts-client
+    environment: { TESTNET_NAME: ts-client, TS_TUN: tailscale0 }
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    volumes:
+      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+    networks: [inner]

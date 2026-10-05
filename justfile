@@ -227,7 +227,7 @@ e2e-sandbox: static
     {{cargo}} build -p illogicald
     cd web && pnpm exec playwright test e2e/sandbox.spec.ts
 
-# The local Docker test stack (testnet/README.md): up|test|break|down [profile] [claim...].
+# The local Docker test stack (testnet/README.md): up|test|break|measure|down [profile] [claim...].
 testnet cmd="test" profile="ssh" *claims:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -235,8 +235,9 @@ testnet cmd="test" profile="ssh" *claims:
       up) testnet/up.sh {{profile}} ;;
       test) testnet/test.sh {{profile}} {{claims}} ;;
       break) testnet/test.sh {{profile}} --break ;;
+      measure) testnet/measure-{{profile}}.sh {{claims}} ;;
       down) testnet/down.sh ;;
-      *) echo "usage: just testnet up|test|break|down [profile] [claim...]" >&2; exit 2 ;;
+      *) echo "usage: just testnet up|test|break|measure|down [profile] [claim...]" >&2; exit 2 ;;
     esac
 
 # What CI runs.
