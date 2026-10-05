@@ -99,7 +99,11 @@ async fn main() -> anyhow::Result<()> {
                         let reply = match m {
                             Msg::Request { id, head, body } => Msg::Response {
                                 id,
-                                head: ResponseHead { status: 201, content_type: Some("application/json".into()) },
+                                head: ResponseHead {
+                                    status: 201,
+                                    content_type: Some("application/json".into()),
+                                    more: false,
+                                },
                                 body: serde_json::to_vec(&serde_json::json!({
                                     "method": head.method, "path": head.path, "len": body.len(),
                                 }))?,
