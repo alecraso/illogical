@@ -199,7 +199,7 @@ function DeleteAccount({ s, back }: { s: ControlSession; back: () => void }) {
             {p.vms ? <li>your {p.vms} hosted VM{p.vms === 1 ? "" : "s"}, which are deleted;</li> : null}
             {p.disband.map((t) => (
               <li key={t.team} data-disband={t.team}>
-                the team <b>{t.name}</b>, which you founded{t.others ? `: its ${t.others} other member${t.others === 1 ? "" : "s"} lose it, and its machines go back to their owners` : ""};
+                the team <b>{t.name}</b>, which you founded{t.others ? `: its ${t.others} other member${t.others === 1 ? " loses" : "s lose"} it, and its machines go back to their owners` : ""};
               </li>
             ))}
             <li>your push subscriptions, usage counts and team requests.</li>

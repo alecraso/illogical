@@ -26,11 +26,7 @@ struct Entry {
 
 impl Sprites {
     pub fn new(base: &str, token: String) -> anyhow::Result<Self> {
-        Ok(Self {
-            base: Url::parse(base)?,
-            token,
-            http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(300)).build()?,
-        })
+        Ok(Self { base: Url::parse(base)?, token, http: crate::roots::client(std::time::Duration::from_secs(300))? })
     }
 
     fn url(&self, path: &str) -> Url {

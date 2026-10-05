@@ -911,9 +911,25 @@ fn web(sock: &http::Target, print: bool) -> anyhow::Result<i32> {
         println!("Opened {page} in your browser, signed in.");
     } else {
         println!("Open this in a browser on this machine (it signs the browser in, once):\n\n  {url}\n");
+        if let Some(hint) = ssh_hint(page, std::env::var_os("SSH_CONNECTION").is_some()) {
+            println!("{hint}\n");
+        }
         println!("It holds this machine's local token: don't share it.");
     }
     Ok(0)
+}
+
+/// Over ssh there's no browser on this machine: forward its port from
+/// the computer you're at, and the same link works there.
+fn ssh_hint(page: &str, over_ssh: bool) -> Option<String> {
+    if !over_ssh {
+        return None;
+    }
+    let addr = page.strip_prefix("http://")?.trim_end_matches('/');
+    let port = addr.rsplit_once(':')?.1;
+    Some(format!(
+        "Over ssh? On the computer you're at, forward the port first, then open the link there:\n\n  ssh -L {port}:{addr} <this machine>"
+    ))
 }
 
 /// The pane given, or the one we're running in.
@@ -2629,6 +2645,13 @@ fn secret_input(prompt: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn web_link_over_ssh() {
+        assert_eq!(super::ssh_hint("http://127.0.0.1:7681", false), None);
+        let hint = super::ssh_hint("http://127.0.0.1:7681", true).unwrap();
+        assert!(hint.ends_with("ssh -L 7681:127.0.0.1:7681 <this machine>"), "{hint}");
+    }
+
     #[test]
     fn durations_and_policies() {
         assert_eq!(super::duration("90").unwrap(), 90);

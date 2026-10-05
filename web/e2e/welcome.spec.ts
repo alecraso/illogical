@@ -107,6 +107,6 @@ test.describe("phone", () => {
     await page.addInitScript(() => Object.defineProperty(Notification, "permission", { get: () => "denied" }));
     await reset(page);
     await page.locator(".sheet-button").click();
-    await expect(page.locator("[data-notify-blocked]")).toHaveText("Blocked for this site in your browser's settings.");
+    await expect(page.locator("[data-notify-blocked]")).toHaveText("Notifications are blocked for this site in your browser's settings.");
   });
 });

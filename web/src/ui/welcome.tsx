@@ -422,6 +422,11 @@ function Phone({ name, setup, host, manual, refresh }: { name: string; setup: Se
             </button>
           )}
           <Said outcome={outcome} />
+          {ts?.state === "missing" && (
+            <p class="start-dim" data-start-no-tailscale>
+              No Tailscale? The next step, the cloud, reaches this machine from your phone too.
+            </p>
+          )}
         </>
       )}
       {url && (ts?.serving ?? true) && (

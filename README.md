@@ -119,7 +119,9 @@ most twice a day; nothing else is sent. `illogicald install --
 
 1. Run `illogical web`: it opens <http://127.0.0.1:7681> in your browser,
    signed in (programs on this machine show its local token; see
-   [docs/advanced.md](docs/advanced.md)). Right-click a pane or a tab for
+   [docs/advanced.md](docs/advanced.md)). Over ssh it prints the link
+   and the `ssh -L` that forwards the port to the computer you're at.
+   Right-click a pane or a tab for
    everything. Drag a tab or a pane onto another pane's edge to split it
    there; drag dividers to resize.
 2. **From your phone and other machines**, put it behind Tailscale on this

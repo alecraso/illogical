@@ -36,7 +36,7 @@ export function notifyBlocker(s: PushState = push): string | null {
     case "install":
       return "Add it to your Home Screen first (Share › Add to Home Screen), then open it from there";
     case "denied":
-      return "Blocked for this site in your browser's settings";
+      return "Notifications are blocked for this site in your browser's settings";
     case "unsupported":
       return "This browser can't show notifications";
     default:

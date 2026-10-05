@@ -106,12 +106,26 @@ desktop:
         "$engine" run --rm --security-opt label=disable \
           -v "$root:/src" -v "$target:/target" -v illogical-desktop-cargo:/opt/cargo/registry -v illogical-desktop-tauri:/root/.cache/tauri \
           -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
-          "$image" cargo tauri build --bundles deb,appimage
+          "$image" bash -c 'set -euo pipefail
+            cargo tauri build --bundles deb,appimage
+            # linuxdeploy patches an RPATH into every ELF in usr/bin, which
+            # breaks the static-pie sidecars (they segfault at start, so the
+            # app could never install its daemon). Put the originals back
+            # and pack the AppImage again with the same plugin.
+            cd /target/release/bundle/appimage
+            for b in illogicald illogical; do install -m 755 "/src/crates/desktop/binaries/$b-'"$host"'" "illogical.AppDir/usr/bin/$b"; done
+            for b in illogicald illogical; do "illogical.AppDir/usr/bin/$b" --version >/dev/null; done
+            APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 OUTPUT=illogical_'"$v"'_amd64.AppImage /root/.cache/tauri/linuxdeploy-plugin-appimage.AppImage --appdir illogical.AppDir >/dev/null'
         out=$target/release/bundle
         # This version's bundles: a kept target dir (CI) holds older ones too.
         cp "$out/deb/illogical_${v}_amd64.deb" "$dist/illogical-desktop-linux-x86_64.deb"
         cp "$out/appimage/illogical_${v}_amd64.AppImage" "$dist/illogical-desktop-linux-x86_64.AppImage"
-        scripts/glibc-floor "$floor" "$dist/illogical-desktop-linux-x86_64.deb" "$dist/illogical-desktop-linux-x86_64.AppImage"
+        # The sidecars as the app will run them: they must start.
+        x=$(mktemp -d)
+        (cd "$x" && "$dist/illogical-desktop-linux-x86_64.AppImage" --appimage-extract >/dev/null \
+          && for b in illogicald illogical; do squashfs-root/usr/bin/$b --version >/dev/null || { echo "the AppImage's $b doesn't run" >&2; exit 1; }; done)
+        rm -rf "$x"
+        scripts/glibc-floor "$floor""$dist/illogical-desktop-linux-x86_64.deb" "$dist/illogical-desktop-linux-x86_64.AppImage"
         dpkg-deb -f "$dist/illogical-desktop-linux-x86_64.deb" Depends | grep -q "libc6 (>= $floor)" \
           || { echo "the .deb should depend on libc6 (>= $floor): crates/desktop/tauri.conf.json" >&2; exit 1; } ;;
       Darwin)

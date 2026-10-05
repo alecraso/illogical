@@ -23,6 +23,7 @@ mod push;
 #[cfg(test)]
 mod push_notices;
 mod relay;
+mod roots;
 #[cfg(test)]
 mod routing_wire;
 mod sandboxes;
@@ -572,7 +573,7 @@ async fn main() -> anyhow::Result<()> {
             old_daemon_signatures: !a.refuse_old_daemon_signatures,
         },
         db,
-        http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build()?,
+        http: roots::client(std::time::Duration::from_secs(15))?,
         relay: relay::Relay::new(relay::Caps {
             sockets: a.relay_max_sockets,
             daemons: a.relay_max_machines,

@@ -137,6 +137,7 @@ function WhyHere() {
   useEffect(() => {
     const on = () => setHash(location.hash);
     addEventListener("hashchange", on);
+    on();
     return () => removeEventListener("hashchange", on);
   }, []);
   useEffect(() => {
@@ -431,6 +432,10 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     const open = (e: Event) => setPanel((e as CustomEvent<Panel>).detail);
     addEventListener("hashchange", on);
     addEventListener("illogical:control-panel", open);
+    // Mounted afresh (the page switches machine when one is approved, and
+    // that happens before the prompt clears the hash): catch up with a
+    // hashchange that fired before this listener was there.
+    on();
     return () => {
       removeEventListener("hashchange", on);
       removeEventListener("illogical:control-panel", open);
@@ -525,7 +530,7 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
         <>
           <p>
             <b>{j.cert.name}</b> asks to join {j.team ? <>the team <b data-join-team={j.team.team}>{j.team.name}</b></> : "your account"} with code{" "}
-            <b data-join-code={j.code}>{j.code}</b>. Check that's the code it printed.
+            <b data-join-code={j.code}>{j.code}</b>. Check it's the code the machine shows (in Getting started, or where you ran <code>illogicald join</code>).
           </p>
           <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
           {s.enrollment ? (
@@ -1192,7 +1197,7 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
         ))}
       </ul>
       <p class="dim">
-        Owners approve everyone who uses an invite. Machines join a team when an owner approves them for it.{" "}
+        An invite link lets one person in right away (with Ask me first, an owner says yes to each). Machines join a team when an owner approves them for it.{" "}
         <a href="https://github.com/arugula-salad/illogical/blob/main/docs/teams.md" target="_blank" rel="noreferrer">
           More about teams
         </a>
