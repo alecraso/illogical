@@ -204,7 +204,7 @@ test: web
 # Control end to end without a browser: sign in (fake GitHub), enroll,
 # join a daemon, reach it through the relay and directly.
 control-smoke:
-    {{cargo}} build -p illogical-control -p illogicald
+    {{cargo}} build -p illogical-control -p illogicald -p illogical
     cd web && TARGET_DIR="{{target_dir}}/debug" node --experimental-strip-types --no-warnings control-smoke.ts
 
 # The swarm (M26) by hand: three throwaway daemons with scripted work on
