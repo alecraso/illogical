@@ -17,7 +17,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createECDH, createHmac, createDecipheriv, createPublicKey, randomBytes, verify } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { devices, expect, type BrowserContext, type Page } from "@playwright/test";
+import { devices, expect, webkit, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { ANY, daemonPort, listen } from "./ports";
 
 type Device = (typeof devices)[string];
@@ -29,6 +29,9 @@ const phone = (d: Device) => {
 export const pixel7 = phone(devices["Pixel 7"]);
 /** Context options for an iPhone (WebKit; Playwright has no iOS Chrome). */
 export const iphone = phone(devices["iPhone 15"]);
+
+/** WebKit from a Chrome spec: without the project's `chrome` channel. */
+export const launchWebkit = (): Promise<Browser> => webkit.launch({ channel: undefined });
 
 const b64 = (b: Buffer) => b.toString("base64url");
 
