@@ -147,12 +147,14 @@ desktop:
     esac
     ls -la "$dist"/illogical-desktop-*
 
-# The Linux desktop app under Xvfb, in a container (#204): builds the app
-# (debug, no bundle) in its build image (packaging/desktop/Containerfile)
-# and runs packaging/desktop/xvfb/test.sh against a static daemon and a
-# stand-in control. Needs podman or docker; the container runs the host's
-# architecture (aarch64 under Docker Desktop on a Mac).
-desktop-xvfb:
+# The Linux desktop app under Xvfb, in a container: builds the app (debug,
+# no bundle) in its build image (packaging/desktop/Containerfile) and runs
+# packaging/desktop/xvfb's tests against a static daemon: `join` (#204,
+# test.sh, with a stand-in control) and `m46` (m46.sh: keys, the titlebar,
+# illogical:// links, the global hotkey). Needs podman or docker; the
+# container runs the host's architecture (aarch64 under Docker Desktop on a
+# Mac). `just desktop-xvfb m46 keys` runs one claim.
+desktop-xvfb *tests="join m46":
     #!/usr/bin/env bash
     set -euo pipefail
     root={{justfile_directory()}}
@@ -173,7 +175,8 @@ desktop-xvfb:
       -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
       illogical-desktop-xvfb:jammy-$toolchain bash -c 'set -euo pipefail
         cargo tauri build --debug --no-bundle
-        /src/packaging/desktop/xvfb/test.sh /target/debug/illogical-desktop /src/crates/desktop/binaries/illogicald-'"$host"
+        APP=/target/debug/illogical-desktop BIN=/src/crates/desktop/binaries HOST='"$host"' \
+          /src/packaging/desktop/xvfb/run.sh {{tests}}'
 
 # Lint the desktop app (its own workspace) without building its sidecars.
 desktop-check:
