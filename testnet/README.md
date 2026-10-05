@@ -72,7 +72,7 @@ every claim does, which shows each one can catch what it's about.
   removes those and `testnet/.state`, nothing else.
 - `COMPOSE_PROJECT_NAME` renames a stack, so two can run side by side (one
   per worktree): `COMPOSE_PROJECT_NAME=illo-a2` gives containers
-  `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
+  `illo-a2-*`, images `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
   `testnet/.state-illo-a2`. Give it its own `ILLOGICAL_TESTNET_SSH_PORT`
   too. The tests read the same variables.
 - Host ports are off the defaults and each can be overridden with an

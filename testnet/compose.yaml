@@ -17,7 +17,7 @@ networks:
 
 x-sshd: &sshd
   build: ./sshd
-  image: illogical-testnet-sshd
+  image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-sshd
   volumes:
     - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
 
@@ -45,7 +45,7 @@ services:
   box-systemd:
     profiles: [ssh]
     build: ./sshd-systemd
-    image: illogical-testnet-sshd-systemd
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-sshd-systemd
     container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-box-systemd
     hostname: box-systemd
     privileged: true
@@ -60,7 +60,7 @@ services:
   git:
     profiles: [ssh]
     build: ./git
-    image: illogical-testnet-git
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-git
     container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-git
     hostname: git
     volumes:
