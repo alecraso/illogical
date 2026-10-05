@@ -237,6 +237,7 @@ fn fake_claude(d: &Daemon) -> String {
     let script = r#"#!/bin/bash
 rule() { printf '%.0s─' {1..60}; printf '\r\n'; }
 box() { rule; printf '❯ \r\n'; rule; printf '  %s\r\n' "$1"; }
+echo listening
 while read -r l; do
   printf '\e[2J\e[H'
   case "$l" in
@@ -275,6 +276,10 @@ fn a_quiet_agent_doesnt_want_you_its_screen_says_when_it_does() {
         }
     };
     d.send(1, &fake_claude(&d));
+    // Not before it reads: typed while the shell's line editor still has
+    // the terminal, "hello" isn't a line yet, and the agent would read
+    // "hello\rwork" as one (a busy machine is slow to hand it over).
+    d.wait_for("the agent", || d.raw("GET", "/api/panes/1/capture", None).1.contains("listening"));
     // It prints a line, then goes quiet: that's not "needs you".
     d.send(1, "hello");
     never_needs(4);
