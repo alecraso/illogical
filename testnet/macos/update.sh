@@ -21,7 +21,8 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 V="$HERE/vm.sh"
 VM="${ILLOGICAL_MACOS_VM:-illogical-macos-l}"
 PORT=7757
-command -v tart >/dev/null 2>&1 || { echo "SKIP: tart is not installed (brew install cirruslabs/cli/tart)"; exit 0; }
+# shellcheck source=testnet/macos/need-tart.sh
+. "$HERE/need-tart.sh"
 
 # The worktree's tauri-cli and desktop build directory, when there.
 [ -d "$ROOT/target/tools/bin" ] && export PATH="$ROOT/target/tools/bin:$PATH"
