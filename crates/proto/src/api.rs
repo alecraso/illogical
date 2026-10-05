@@ -30,6 +30,7 @@
 //! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |
 //! | GET | `/api/panes/N/capture` | `format=text\|ansi\|html`, `scope=screen\|scrollback\|last-command` | text |
 //! | GET | `/api/panes/N/process` | | `Process` |
+//! | GET | `/api/panes/N/detection` | | how its agent's screen reads, rule by rule (#145) |
 //! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `until=OFFSET`, `follow=1`, `text=1` | bytes (streamed with follow); other blocks: their text |
 //! | GET | `/api/panes/N/wait` | `until=command-end\|exit\|match\|idle\|needs-input`, `re=`, `timeout=` secs | `WaitResult` |
 //! | GET | `/api/panes/N/export.cast` | | asciicast v3 |

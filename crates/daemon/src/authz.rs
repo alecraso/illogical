@@ -39,7 +39,7 @@ fn policy(method: &Method, path: &str) -> Policy {
     let get = method == Method::GET;
     match parts.as_slice() {
         ["api", "host"] if get => Policy::Anyone,
-        ["api", "panes", id, "capture" | "process" | "tail" | "wait" | "export.cast"] if get => {
+        ["api", "panes", id, "capture" | "process" | "detection" | "tail" | "wait" | "export.cast"] if get => {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Viewer))
         }
         ["api", "blocks", id] if get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Viewer)),

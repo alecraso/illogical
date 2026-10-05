@@ -316,7 +316,33 @@ enum Cmd {
     },
     /// Read this agent's state off the screen from now on (`None`: stop).
     Agent(Option<&'static Agent>),
+    /// How the agent's screen reads now, rule by rule (`describe
+    /// --detection`); `None` when no agent's screen is read.
+    Detection(Sender<Option<Detection>>),
     Close,
+}
+
+/// How a pane's agent screen reads now, rule by rule (#145).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Detection {
+    pub agent: &'static str,
+    pub name: &'static str,
+    /// What was last reported (after the debounce).
+    pub shown: Option<&'static str>,
+    /// The rule that matches now, if any.
+    pub fired: Option<&'static str>,
+    pub title: String,
+    pub rules: Vec<DetectionRule>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DetectionRule {
+    pub rule: &'static str,
+    pub state: &'static str,
+    pub priority: u16,
+    pub region: String,
+    pub text: Vec<String>,
+    pub matched: bool,
 }
 
 #[derive(Clone)]
@@ -402,6 +428,13 @@ impl PaneHandle {
     /// The agent the pane runs, whose screen to read (#145), or `None`.
     pub fn watch_agent(&self, agent: Option<&'static Agent>) {
         let _ = self.tx.send(Cmd::Agent(agent));
+    }
+    /// How its agent's screen reads now, rule by rule; `None` when no
+    /// agent's screen is read (or the pane didn't answer).
+    pub fn detection(&self) -> Option<Detection> {
+        let (tx, rx) = bounded(1);
+        self.tx.send(Cmd::Detection(tx)).ok()?;
+        rx.recv_timeout(Duration::from_secs(5)).ok().flatten()
     }
     pub fn purge(&self) {
         let _ = self.tx.send(Cmd::Purge);
@@ -1187,6 +1220,9 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
             Cmd::Resize { cols, rows } => st.resize(cols, rows),
             Cmd::Purge => st.purge(),
             Cmd::Agent(agent) => st.watch_agent(agent),
+            Cmd::Detection(reply) => {
+                let _ = reply.send(st.detection());
+            }
             Cmd::Checkpoint(done) => {
                 st.checkpoint();
                 let _ = done.send(());
@@ -1665,6 +1701,30 @@ impl State {
         }
         let now = Instant::now();
         self.watch = agent.map(|agent| Watch { agent, debounce: Debounce::new(now), looked: now, dirty: true });
+    }
+
+    fn detection(&self) -> Option<Detection> {
+        let w = self.watch.as_ref()?;
+        let (title, lines) = (self.engine.title(), self.engine.screen_lines());
+        let rules = w.agent.explain(&title, &lines);
+        Some(Detection {
+            agent: w.agent.id,
+            name: w.agent.name,
+            shown: w.debounce.shown().map(AgentState::as_str),
+            fired: rules.iter().find(|r| r.matched).map(|r| r.rule),
+            title,
+            rules: rules
+                .into_iter()
+                .map(|r| DetectionRule {
+                    rule: r.rule,
+                    state: r.state.as_str(),
+                    priority: r.priority,
+                    region: r.region,
+                    text: r.text,
+                    matched: r.matched,
+                })
+                .collect(),
+        })
     }
 
     /// Read the agent's state off the screen, if it's been long enough

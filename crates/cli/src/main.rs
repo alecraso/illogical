@@ -128,8 +128,14 @@ enum Command {
     },
     /// Type `cd DIR` into a pane's shell, if it's waiting at its prompt.
     Cd { pane: Pane, dir: String },
-    /// A block's type, place and state (any type).
-    Describe { block: Pane },
+    /// A block's type, place and state (any type). With `--detection`, how
+    /// the screen of the agent in a terminal pane reads: each rule, the
+    /// text it looked at, and which one fired.
+    Describe {
+        block: Pane,
+        #[arg(long)]
+        detection: bool,
+    },
     /// Call one of a block's methods, e.g. `call %4 navigate '{"url":"…"}'`.
     Call {
         block: Pane,
@@ -991,6 +997,42 @@ fn split_of(split: Option<&str>) -> anyhow::Result<Option<u32>> {
     })
 }
 
+/// `describe %N --detection` for people: what fired, then each rule with
+/// the text it saw, highest priority first.
+fn detection_text(pane: u32, v: &Value) -> String {
+    use std::fmt::Write;
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_owned();
+    let Some(agent) = v["agent"].as_str() else {
+        return match v["command"].as_str() {
+            Some(c) => format!("%{pane} runs `{c}`: no agent with screen rules\n"),
+            None => format!("%{pane} is at its shell: no agent with screen rules\n"),
+        };
+    };
+    let mut out = format!("%{pane} runs {} ({agent})", s(&v["name"]));
+    match v["fired"].as_str() {
+        Some(rule) => {
+            let state = v["rules"].as_array().into_iter().flatten().find(|r| r["rule"] == rule);
+            let _ = write!(out, ": {} by rule {rule}", state.map(|r| s(&r["state"])).unwrap_or_default());
+        }
+        None => out.push_str(": no rule matches"),
+    }
+    let _ = writeln!(out, " (shown: {})", v["shown"].as_str().unwrap_or("nothing yet"));
+    let _ = writeln!(out, "title: {}", s(&v["title"]));
+    for r in v["rules"].as_array().into_iter().flatten() {
+        let mark = if r["matched"] == true { "matched" } else { "no match" };
+        let _ =
+            writeln!(out, "\n{} ({}, {}) {}: {mark}", s(&r["rule"]), s(&r["state"]), r["priority"], s(&r["region"]));
+        let text = r["text"].as_array().cloned().unwrap_or_default();
+        if text.iter().all(|l| l.as_str().is_none_or(|l| l.trim().is_empty())) {
+            out.push_str("  (empty)\n");
+        }
+        for l in text.iter().filter_map(|l| l.as_str()).filter(|l| !l.trim().is_empty()) {
+            let _ = writeln!(out, "  | {}", l.trim_end());
+        }
+    }
+    out
+}
+
 /// A block's `describe` once it has read what it shows (M11's views read
 /// in the background; at most 30s).
 fn loaded(sock: &http::Target, block: u64) -> anyhow::Result<Value> {
@@ -1487,7 +1529,11 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 );
             }
         }
-        Command::Describe { block } => {
+        Command::Describe { block, detection: true } => {
+            let v = request(&sock, "GET", &format!("/api/panes/{}/detection", block.0), None)?.json()?;
+            print!("{}", detection_text(block.0, &v));
+        }
+        Command::Describe { block, .. } => {
             print_json(&request(&sock, "GET", &format!("/api/blocks/{}", block.0), None)?.json()?);
         }
         Command::Call { block, method, args } => {
@@ -2706,6 +2752,28 @@ fn secret_input(prompt: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn detection_for_people() {
+        let v = serde_json::json!({
+            "agent": "claude", "name": "Claude Code", "shown": "blocked", "fired": "permission_prompt",
+            "title": "✳ Create a file",
+            "rules": [
+                {"rule": "permission_prompt", "state": "blocked", "priority": 1000, "region": "after the last rule",
+                 "text": [" Do you want to proceed?", "", " ❯ 1. Yes"], "matched": true},
+                {"rule": "title_idle", "state": "idle", "priority": 250, "region": "title", "text": [""], "matched": false},
+            ],
+        });
+        let text = super::detection_text(4, &v);
+        assert!(
+            text.starts_with("%4 runs Claude Code (claude): blocked by rule permission_prompt (shown: blocked)\n"),
+            "{text}"
+        );
+        assert!(text.contains("\npermission_prompt (blocked, 1000) after the last rule: matched\n  |  Do you want to proceed?\n  |  ❯ 1. Yes\n"), "{text}");
+        assert!(text.contains("\ntitle_idle (idle, 250) title: no match\n  (empty)\n"), "{text}");
+        let none = super::detection_text(2, &serde_json::json!({"agent": null, "command": "vim notes"}));
+        assert_eq!(none, "%2 runs `vim notes`: no agent with screen rules\n");
+    }
+
     #[test]
     fn web_link_over_ssh() {
         assert_eq!(super::ssh_hint("http://127.0.0.1:7681", false), None);

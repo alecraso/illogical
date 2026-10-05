@@ -61,6 +61,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/close", post(close))
         .route("/api/panes/{id}/capture", get(capture))
         .route("/api/panes/{id}/process", get(process))
+        .route("/api/panes/{id}/detection", get(detection))
         .route("/api/panes/{id}/tail", get(tail))
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
@@ -1192,6 +1193,20 @@ async fn process(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Proce
         argv: procinfo::argv(tpgid).unwrap_or_default(),
         exe: procinfo::exe(tpgid).map(|p| p.display().to_string()),
         cwd: procinfo::cwd(tpgid).map(|p| p.display().to_string()),
+    }))
+}
+
+/// How the screen of the agent in a pane reads, rule by rule (#145,
+/// `illogical describe %N --detection`): `{agent: null, command}` when no
+/// agent's screen is read there.
+async fn detection(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+    let p = pane(&app, id).await?;
+    let (found, command) = tokio::task::spawn_blocking(move || (p.detection(), p.command()))
+        .await
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(match found {
+        Some(d) => serde_json::to_value(d).unwrap_or_default(),
+        None => serde_json::json!({ "agent": null, "command": command }),
     }))
 }
 
