@@ -240,7 +240,13 @@ to wait for it), wait and read_output to follow it (they return \"still running\
 again), list to see what's there, open_port to show a dev server in a browser block beside its terminal, \
 open_app to show one of the user's studio apps (its agent's questions come to them; send_input prompts it), open_pr to show a pull request (read_pr reads it; pr_comment, pr_review and pr_merge draft writes the user sends), open_issue to show an issue (read_issue reads it; issue_comment and issue_new draft what the user sends), list_agents and read_agent to see the user's Fountain agents (open_fountain shows them as a catalog; start_agent with a Fountain agent hands one a task), start_agent and agent_respond to supervise another agent, read_thread and post_thread for the people's conversation about a pane or session (an @agent message there reaches you as a follow-up: answer with post_thread), list_conversations and open_conversation to \
 pick up a Claude Code conversation from a terminal or the desktop app, and history and search for what \
-happened before. Output is paged: pass next_offset back as offset.";
+happened before. Output is paged: pass next_offset back as offset. \
+Blocks you can open: a terminal (run), a browser (open_port), a diff (show_changes), a file (show_file), \
+a PR or issue (open_pr, open_issue), a studio app (open_app), the Fountain catalog (open_fountain), a \
+conversation (open_conversation); show one instead of describing it, and wait (until idle or needs_input) instead of polling output. \
+Claude Code hooks put your questions (illogical ask), permission prompts (illogical hook, which anyone allowed can \
+answer), follow-ups (illogical inbox) and attention on cards; without them your questions stay in the terminal. \
+`illogical hooks install` adds them: ask your person first.";
 
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {

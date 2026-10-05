@@ -200,4 +200,5 @@ fi
 say "  Anywhere  ${bin}illogicald join https://control.illogical.widgets.wtf"
 say "            (also how you add this machine to a team: pick it when you approve)"
 say "  Agents    ${bin}illogical agent --help · claude mcp add illogical -- ${bin}illogical mcp"
+say "  Hooks     ${bin}illogical hooks install   (Claude Code's questions and approvals as cards)"
 say "  Docs      https://illogical.widgets.wtf/#install"

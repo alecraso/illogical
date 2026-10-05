@@ -15,6 +15,7 @@ mod control;
 mod fountain_runner;
 mod fs;
 mod hook;
+mod hooks;
 mod hosts;
 mod http;
 mod mcp;
@@ -613,6 +614,12 @@ enum Command {
     /// it (exit 2). A session nobody drives (`claude -p`, the SDK) isn't
     /// held: it exits 0 at once.
     Inbox,
+    /// Put those hooks in Claude Code's settings.json (`install`), or say
+    /// which are there (`status`). Nothing else in the file is touched.
+    Hooks {
+        #[command(subcommand)]
+        cmd: hooks::HooksCmd,
+    },
     /// What wants you, and why (M24); or, given a state, tell illogical
     /// whether this pane needs you (for agent hooks, which pass their JSON
     /// on stdin: its `message` becomes the headline).
@@ -1453,6 +1460,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
     }
     if let Command::Inbox = cli.cmd {
         return Ok(hook::inbox(http::Target::Socket(socket(&cli))));
+    }
+    if let Command::Hooks { cmd } = cli.cmd {
+        // A settings file: no daemon involved.
+        return hooks::run(cmd, cli.json);
     }
     if let Command::Fountain { cmd: Some(FountainCmd::Runner { cmd }), .. } = &cli.cmd {
         // Fountain's API and this host's unit: no daemon involved.
@@ -2826,6 +2837,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         Command::Ask
         | Command::Hook
         | Command::Inbox
+        | Command::Hooks { .. }
         | Command::Fountain { cmd: Some(FountainCmd::Runner { .. }), .. } => {
             unreachable!("handled first")
         }
