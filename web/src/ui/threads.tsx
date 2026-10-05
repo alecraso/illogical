@@ -9,7 +9,7 @@ import { threadKey, type PaneId, type ThreadMsg, type ThreadTarget } from "../pr
 import { colorOf } from "./people";
 import type { MenuItem } from "./menu";
 
-interface Quote {
+export interface Quote {
   pane: PaneId;
   text: string;
 }
@@ -104,7 +104,7 @@ export function ThreadLayer({ phone }: { phone: boolean }) {
   return <ThreadPanel key={threadKey(open.target)} client={open.client} target={open.target} quote={open.quote} phone={phone} />;
 }
 
-function title(client: Client, target: ThreadTarget): string {
+export function title(client: Client, target: ThreadTarget): string {
   if ("session" in target) {
     const name = client.state?.sessions.find((s) => s.id === target.session)?.name;
     return `Session thread · ${name ?? target.session}`;
@@ -116,13 +116,59 @@ function title(client: Client, target: ThreadTarget): string {
 function ThreadPanel({
   client,
   target,
-  quote: initialQuote,
+  quote,
   phone,
 }: {
   client: Client;
   target: ThreadTarget;
   quote?: Quote;
   phone: boolean;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeThread();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const reveal = (q: Quote): string | null => {
+    const entry = client.panes.get(q.pane);
+    if (!entry) return `%${q.pane} is closed; the quote is all that's left`;
+    client.setActive(q.pane);
+    const shown = entry.view.reveal(q.text);
+    if (phone) closeThread();
+    return shown ? null : `that output has scrolled out of %${q.pane}`;
+  };
+
+  return (
+    <aside class={phone ? "thread-panel phone" : "thread-panel"} aria-label={title(client, target)}>
+      <header>
+        <strong>{title(client, target)}</strong>
+        <button class="thread-close" title="Close (Esc)" onClick={closeThread}>
+          ✕
+        </button>
+      </header>
+      <ThreadBody client={client} target={target} quote={quote} phone={phone} reveal={reveal} />
+    </aside>
+  );
+}
+
+/** A thread's messages and the box to write in: the drawer's insides, and
+ * the chat view's (ui/chat.tsx). `reveal` shows a quote's output, or says
+ * why it can't. */
+export function ThreadBody({
+  client,
+  target,
+  quote: initialQuote,
+  phone,
+  reveal,
+}: {
+  client: Client;
+  target: ThreadTarget;
+  quote?: Quote;
+  phone: boolean;
+  reveal: (q: Quote) => string | null;
 }) {
   const [msgs, setMsgs] = useState<ThreadMsg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,7 +200,7 @@ function ThreadPanel({
       live = false;
       off();
     };
-  }, [client, target]);
+  }, [client, threadKey(target)]);
 
   // Its pane or session went away, or the layout changed (names).
   useEffect(() => client.subscribe(() => setTick((t) => t + 1)), [client]);
@@ -168,19 +214,11 @@ function ThreadPanel({
   }, [last]);
   useEffect(() => {
     if (last && document.visibilityState === "visible") client.markThreadRead(target, last);
-  }, [client, target, last, client.thread(target)?.unread]);
+  }, [client, threadKey(target), last, client.thread(target)?.unread]);
 
   useEffect(() => {
     if (mayPost && !phone) input.current?.focus();
   }, [mayPost, phone]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeThread();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   const send = async () => {
     if (sending || (!text.trim() && !quote)) return;
@@ -198,25 +236,8 @@ function ThreadPanel({
     }
   };
 
-  const reveal = (q: Quote) => {
-    const entry = client.panes.get(q.pane);
-    if (!entry) {
-      setError(`%${q.pane} is closed; the quote is all that's left`);
-      return;
-    }
-    client.setActive(q.pane);
-    if (!entry.view.reveal(q.text)) setError(`that output has scrolled out of %${q.pane}`);
-    if (phone) closeThread();
-  };
-
   return (
-    <aside class={phone ? "thread-panel phone" : "thread-panel"} aria-label={title(client, target)}>
-      <header>
-        <strong>{title(client, target)}</strong>
-        <button class="thread-close" title="Close (Esc)" onClick={closeThread}>
-          ✕
-        </button>
-      </header>
+    <>
       <div class="thread-list" ref={list}>
         {msgs === null && !error && <p class="thread-empty">Loading…</p>}
         {msgs?.length === 0 && (
@@ -226,7 +247,7 @@ function ThreadPanel({
           </p>
         )}
         {msgs?.map((m, i) => (
-          <Message key={m.id} client={client} m={m} prev={msgs[i - 1]} reveal={reveal} />
+          <Message key={m.id} client={client} m={m} prev={msgs[i - 1]} reveal={(q) => setError(reveal(q))} />
         ))}
       </div>
       {error && <p class="thread-error">{error}</p>}
@@ -268,7 +289,7 @@ function ThreadPanel({
       ) : (
         <p class="thread-note">You're watching this session: you can read its threads, not post.</p>
       )}
-    </aside>
+    </>
   );
 }
 

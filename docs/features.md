@@ -1051,3 +1051,12 @@ the daemon stopping, crashing, or the machine rebooting:
   to the output. `@agent` (or `@claude`) in a pane's thread goes to that
   pane's agent as a follow-up, from whoever may drive it, and agents read
   and answer with the MCP tools `read_thread` and `post_thread`.
+- **Chat: every thread in one place.** *Chat* in the bar (or the phone's
+  sheet, or the command palette; `/#chat`) shows every thread on every
+  machine you can reach, like a team chat: each machine's sessions are the
+  channels, and each pane's thread sits under its session, newest first,
+  with your unread count and @mentions. The button counts what's unread
+  everywhere. A thread is read and written there, and *Go to pane* (or *Go
+  to session*) takes you to what it's about, switching machines if it's on
+  another one; so does clicking a quote. Escape, or picking a tab, goes
+  back to the panes.

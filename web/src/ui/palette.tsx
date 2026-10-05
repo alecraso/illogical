@@ -16,6 +16,7 @@ import type { PaneId } from "../proto";
 import { fuzzy } from "../fs";
 import { useWorkspaceDir } from "../blocks";
 import { closeSwarm, openSwarm, swarmRoute } from "../swarm/route";
+import { openChat } from "./chat";
 import { askText, closeMenu, type MenuItem } from "./menu";
 import { newTabItems, PALETTE_KEY, paneItems, sessionItems, tabItems } from "./commands";
 
@@ -174,6 +175,7 @@ export function commands(client: Client, phone: boolean, workspace: string | nul
   const wanting = state.panes.filter((p) => p.attention === "needs_input").map((p) => p.id);
   const next: PaneId | undefined = wanting.find((p) => p > (pane ?? -1)) ?? wanting[0];
   out.push({ key: "Swarm/open", group: "Swarm", label: "Open the swarm", run: openSwarm });
+  if (client.hasThreads()) out.push({ key: "Chat/open", group: "Chat", label: "Open chat: every thread", run: () => openChat() });
   out.push({
     key: "Swarm/next",
     group: "Swarm",

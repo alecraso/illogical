@@ -8,6 +8,7 @@ import { useSubscribe, usePhone } from "./hooks";
 import { closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./menu";
 import { KeyBar, PhoneHeader } from "./phone";
 import { ThreadBadge, ThreadLayer } from "./threads";
+import { ChatButton, ChatLayer } from "./chat";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
 import { openSwarm } from "../swarm/route";
@@ -109,6 +110,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <PromptLayer />
       <AgentDialogLayer />
       <ThreadLayer phone={phone} />
+      {state && <ChatLayer client={client} />}
       <ConversationsLayer />
       <AppsLayer />
       <SandboxesLayer />
@@ -161,6 +163,7 @@ function TopBar({
       <button class="swarm-button" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
         Swarm
       </button>
+      <ChatButton client={client} />
       {renaming?.kind === "session" && renaming.id === session.id ? (
         <RenameInput
           value={session.name}

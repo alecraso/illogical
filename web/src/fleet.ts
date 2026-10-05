@@ -434,6 +434,11 @@ export class Fleet {
     return c.request(method, path, body);
   }
 
+  /** A host's summary connection, for its threads (the chat view). */
+  clientOf(host: string): Client | null {
+    return this.hosts.get(host)?.client ?? null;
+  }
+
   /** Follow an editor on a host (M28). */
   follow(host: string, pane: number, fn: (m: import("./proto").FollowMsg) => void): () => void {
     const c = this.hosts.get(host)?.client;

@@ -345,6 +345,7 @@ fn follow_join(app: AppHandle) {
         eprintln!("illogical: this machine's control is now {}", now.as_deref().unwrap_or("none"));
         // A new control: "just this machine" was said of the old one.
         cloud::set_local_only(false);
+        allow_control(&app);
         let home = home(&app);
         for w in app.webview_windows().into_values() {
             let Ok(url) = w.url() else { continue };
@@ -386,7 +387,39 @@ fn open_outside(url: &tauri::Url) {
     }
 }
 
+/// The window permissions the bar needs (capabilities/default.json), for
+/// control's origin too: when joined, the window shows control's page, and
+/// without them its bar can't move, minimize, maximize or close the window
+/// on Linux. The control is only known at run time, and can change (#204).
+fn allow_control(app: &AppHandle) {
+    static ALLOWED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let Some(origin) = cloud::control()
+        .and_then(|c| c.parse::<tauri::Url>().ok())
+        .map(|u| u.origin().ascii_serialization())
+        .filter(|o| o != "null")
+    else {
+        return;
+    };
+    let mut allowed = ALLOWED.lock().unwrap();
+    if allowed.contains(&origin) {
+        return;
+    }
+    let cap = tauri::ipc::CapabilityBuilder::new(format!("control-{}", allowed.len()))
+        .remote(format!("{origin}/*"))
+        .window("*")
+        .permission("core:window:allow-minimize")
+        .permission("core:window:allow-toggle-maximize")
+        .permission("core:window:allow-internal-toggle-maximize")
+        .permission("core:window:allow-close")
+        .permission("core:window:allow-start-dragging");
+    match app.add_capability(cap) {
+        Ok(()) => allowed.push(origin),
+        Err(e) => eprintln!("illogical: letting {origin} move its window: {e}"),
+    }
+}
+
 fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::WebviewWindow> {
+    allow_control(app);
     let n = WINDOWS.fetch_add(1, Ordering::SeqCst);
     let label = format!("w{n}");
     let handle = app.clone();
