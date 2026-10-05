@@ -1,0 +1,126 @@
+{"t":406,"ready":true,"focus":true,"env":{"userAgent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15","webgl2":true,"renderer":"Apple GPU","dpr":1,"secure":true,"keyboardLock":false,"windowControlsOverlay":false,"tauri":true},"note":["Notification in window: true, permission granted","serviceWorker: true, PushManager: false, secure: true"]}
+{"t":406,"clip":"navigator write (no gesture)","error":"NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission."}
+{"t":408,"clip":"Rust write + read","ok":true}
+{"t":408,"clip":"navigator read (no gesture)","error":"NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission."}
+{"t":408,"note":"web requestPermission","result":"granted"}
+{"t":418,"note":"native shown","id":88}
+{"t":419,"badge":"set"}
+{"t":419,"autodone":true}
+{"t":1449,"key":"KeyZ","composing":false,"focus":true}
+{"t":1500,"key":"F1","composing":false,"focus":true}
+{"t":1555,"key":"F2","composing":false,"focus":true}
+{"t":1609,"key":"F3","composing":false,"focus":true}
+{"t":1664,"key":"F4","composing":false,"focus":true}
+{"t":1718,"key":"F5","composing":false,"focus":true}
+{"t":1772,"key":"F6","composing":false,"focus":true}
+{"t":1826,"key":"F7","composing":false,"focus":true}
+{"t":1880,"key":"F8","composing":false,"focus":true}
+{"t":1934,"key":"F9","composing":false,"focus":true}
+{"t":3047,"key":"KeyZ","composing":false,"focus":true}
+{"t":3101,"key":"F11","composing":false,"focus":true}
+{"t":3156,"key":"F12","composing":false,"focus":true}
+{"t":3222,"key":"Alt-KeyB","composing":false,"focus":true}
+{"t":3300,"key":"Alt-KeyF","composing":false,"focus":true}
+{"t":3378,"key":"Alt-KeyX","composing":false,"focus":true}
+{"t":3458,"key":"Alt-Period","composing":false,"focus":true}
+{"t":3536,"key":"Alt-Backspace","composing":false,"focus":true}
+{"t":3614,"key":"Alt-ArrowLeft","composing":false,"focus":true}
+{"t":3693,"key":"Ctrl-KeyC","composing":false,"focus":true}
+{"t":3771,"key":"Ctrl-KeyD","composing":false,"focus":true}
+{"t":3850,"key":"Ctrl-KeyZ","composing":false,"focus":true}
+{"t":3928,"key":"Ctrl-Backslash","composing":false,"focus":true}
+{"t":4008,"key":"Ctrl-BracketLeft","composing":false,"focus":true}
+{"t":4086,"key":"Ctrl-Space","composing":false,"focus":true}
+{"t":4153,"key":"Escape","composing":false,"focus":true}
+{"t":4231,"key":"Ctrl-Shift-KeyT","composing":false,"focus":true}
+{"t":4333,"key":"Ctrl-Shift-KeyW","composing":false,"focus":true}
+{"t":4436,"key":"Ctrl-Shift-KeyN","composing":false,"focus":true}
+{"t":4538,"key":"Ctrl-Shift-KeyC","composing":false,"focus":true}
+{"t":4641,"key":"Ctrl-Shift-KeyV","composing":false,"focus":true}
+{"t":4643,"paste":"s25-gesture"}
+{"t":4745,"key":"Ctrl-Shift-KeyP","composing":false,"focus":true}
+{"t":4847,"key":"Ctrl-Shift-KeyI","composing":false,"focus":true}
+{"t":4939,"key":"Ctrl-Tab","composing":false,"focus":true}
+{"t":5029,"key":"Ctrl-Shift-Tab","composing":false,"focus":true}
+{"t":5120,"key":"Ctrl-PageUp","composing":false,"focus":true}
+{"t":5197,"key":"Ctrl-PageDown","composing":false,"focus":true}
+{"t":5276,"key":"Ctrl-KeyL","composing":false,"focus":true}
+{"t":5354,"key":"Ctrl-KeyR","composing":false,"focus":true}
+{"t":5433,"key":"Ctrl-KeyF","composing":false,"focus":true}
+{"t":5511,"key":"Ctrl-KeyP","composing":false,"focus":true}
+{"t":5590,"key":"Ctrl-Comma","composing":false,"focus":true}
+{"t":5668,"key":"Ctrl-Digit1","composing":false,"focus":true}
+{"t":5747,"key":"Ctrl-Digit9","composing":false,"focus":true}
+{"t":5825,"key":"Ctrl-KeyT","composing":false,"focus":true}
+{"t":5904,"key":"Ctrl-KeyN","composing":false,"focus":true}
+{"t":5983,"key":"Ctrl-KeyH","composing":false,"focus":true}
+{"t":6061,"key":"Ctrl-KeyM","composing":false,"focus":true}
+{"t":6140,"key":"Ctrl-KeyW","composing":false,"focus":true}
+{"t":6218,"key":"Ctrl-KeyQ","composing":false,"focus":true}
+{"t":6812,"key":"Unidentified","composing":false,"focus":true}
+{"t":6814,"ime":"compositionstart","data":""}
+{"t":6817,"ime":"compositionupdate","data":"ｎ"}
+{"t":6858,"key":"Unidentified","composing":true,"focus":true}
+{"t":6860,"ime":"compositionupdate","data":"に"}
+{"t":6910,"key":"Unidentified","composing":true,"focus":true}
+{"t":6912,"ime":"compositionupdate","data":"にｈ"}
+{"t":6970,"key":"Unidentified","composing":true,"focus":true}
+{"t":6972,"ime":"compositionupdate","data":"にほ"}
+{"t":7020,"key":"Unidentified","composing":true,"focus":true}
+{"t":7022,"ime":"compositionupdate","data":"にほｎ"}
+{"t":7083,"key":"Unidentified","composing":true,"focus":true}
+{"t":7085,"ime":"compositionupdate","data":"にほんｇ"}
+{"t":7130,"key":"Unidentified","composing":true,"focus":true}
+{"t":7132,"ime":"compositionupdate","data":"にほんご"}
+{"t":7185,"key":"Unidentified","composing":true,"focus":true}
+{"t":7187,"ime":"compositionupdate","data":"日本語"}
+{"t":7541,"key":"Unidentified","composing":true,"focus":true}
+{"t":7545,"ime":"compositionend","data":"日本語"}
+{"t":7546,"onData":"日本語"}
+{"t":8866,"key":"Unidentified","composing":false,"focus":true}
+{"t":8867,"ime":"compositionstart","data":""}
+{"t":8868,"ime":"compositionupdate","data":"ㅎ"}
+{"t":8921,"key":"Unidentified","composing":true,"focus":true}
+{"t":8923,"ime":"compositionupdate","data":"하"}
+{"t":8976,"key":"Unidentified","composing":true,"focus":true}
+{"t":8978,"ime":"compositionupdate","data":"한"}
+{"t":9030,"key":"Unidentified","composing":true,"focus":true}
+{"t":9032,"ime":"compositionend","data":"한"}
+{"t":9033,"onData":"한"}
+{"t":9036,"key":"Unidentified","composing":false,"focus":true}
+{"t":9036,"ime":"compositionstart","data":""}
+{"t":9036,"ime":"compositionupdate","data":"ㄱ"}
+{"t":9084,"key":"Unidentified","composing":true,"focus":true}
+{"t":9086,"ime":"compositionupdate","data":"구"}
+{"t":9138,"key":"Unidentified","composing":true,"focus":true}
+{"t":9140,"ime":"compositionupdate","data":"국"}
+{"t":9192,"key":"Unidentified","composing":true,"focus":true}
+{"t":9195,"ime":"compositionend","data":"국"}
+{"t":9196,"onData":"국"}
+{"t":9198,"key":"Space","composing":false,"focus":true}
+{"t":9547,"key":"Enter","composing":false,"focus":true}
+{"t":10201,"key":"Ctrl-Alt-KeyG","composing":false,"focus":true}
+{"t":10203,"clip":"navigator write (gesture)","ok":true}
+{"t":10204,"clip":"navigator read (gesture)","error":"NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission."}
+{"t":10204,"clip":"restored"}
+{"t":10304,"key":"Ctrl-Alt-KeyP","composing":false,"focus":true}
+{"t":10305,"paste":"armed"}
+{"t":10407,"key":"Ctrl-Shift-KeyV","composing":false,"focus":true}
+{"t":10407,"paste":"s25-paste"}
+{"t":11309,"key":"Ctrl-Alt-KeyP","composing":false,"focus":true}
+{"t":11310,"paste":"armed"}
+{"t":11400,"key":"Ctrl-KeyV","composing":false,"focus":true}
+{"t":12291,"key":"Ctrl-Alt-KeyG","composing":false,"focus":true}
+{"t":12294,"clip":"navigator write (gesture)","ok":true}
+{"t":12296,"clip":"navigator read (gesture)","error":"NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission."}
+{"t":12296,"clip":"restored"}
+{"t":15415,"key":"Ctrl-Alt-KeyO","composing":false,"focus":true}
+{"t":15443,"window":"opened"}
+{"t":404,"ready":true,"focus":true,"env":{"userAgent":"Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15","webgl2":true,"renderer":"Apple GPU","dpr":1,"secure":true,"keyboardLock":false,"windowControlsOverlay":false,"tauri":true},"note":["Notification in window: true, permission granted","serviceWorker: true, PushManager: false, secure: true"]}
+{"t":404,"clip":"navigator write (no gesture)","error":"NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission."}
+{"t":405,"clip":"Rust write + read","ok":true}
+{"t":405,"clip":"navigator read (no gesture)","error":"NotAllowedError: The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission."}
+{"t":406,"note":"web requestPermission","result":"granted"}
+{"t":414,"note":"native shown","id":89}
+{"t":415,"badge":"set"}
+{"t":415,"autodone":true}

@@ -418,11 +418,17 @@ fn a_box_with_no_gh_login_reads_through_the_app_and_writes_nothing() {
     enroll(&d, &origin);
     let b = open(&d, json!({ "pr": format!("https://github.com/cli/cli/pull/{N}") }));
     wait_until("joined", 20, || !f.seen.lock().unwrap().texts.is_empty());
-    wait_until("a read", 20, || d.state(b)["pr"].is_object());
+    // The App's read and what control says (who you are, read-only) come
+    // separately, in either order (#138): wait for all of them.
+    wait_until("a read, and who you are", 20, || {
+        let st = d.state(b);
+        st["pr"].is_object()
+            && st["me"] == "jhgaylor"
+            && st["read_only"].as_str().is_some_and(|r| r.contains("GitHub App"))
+            && st["wants"].as_array().is_some_and(|w| w.iter().any(|w| w["kind"] == "review"))
+    });
     let st = d.state(b);
     assert!(st["error"].is_null(), "{st}");
-    assert_eq!(st["me"], "jhgaylor", "control said who you are: {st}");
-    assert!(st["read_only"].as_str().unwrap().contains("GitHub App"), "{st}");
     assert_eq!(f.seen.lock().unwrap().asked[0], json!({ "repo": "cli/cli" }));
     assert!(f.seen.lock().unwrap().tokens.iter().any(|t| t == &format!("Bearer {APP_TOKEN}")));
     // It wants you: a review asked of jhgaylor, from the App's read.

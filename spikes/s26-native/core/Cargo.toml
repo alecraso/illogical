@@ -1,0 +1,13 @@
+[package]
+name = "s26-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+illogical-proto = { path = "../../../crates/proto" }
+# The same pin as crates/vt.
+libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs.git", rev = "8953a74" }
+nix = { version = "0.31", features = ["poll"] }
+serde_json = "1"
+tungstenite = "0.30"
