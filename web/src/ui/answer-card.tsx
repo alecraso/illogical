@@ -97,6 +97,9 @@ export function PermissionButtons({ ask, act }: { ask: Ask; act: (action: "allow
   );
 }
 
+/** An answered card (with its follow-up box) stays this long. */
+export const ANSWERED_MS = 60_000;
+
 export const VIEWER_NOTE = "You're watching this session: an editor answers it.";
 
 /** The agent's next instruction (M29), for whoever may drive the pane. On

@@ -14,7 +14,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Fleet, FleetPane } from "../fleet";
 import { gateKey, type Action, type Reason } from "../proto";
 import { AskCard, type Answered } from "../blocks/ask";
-import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE, type Requester } from "../ui/answer-card";
+import { ANSWERED_MS, answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE, type Requester } from "../ui/answer-card";
 import { Avatar } from "../ui/people";
 import { MenuLayer, openMenu } from "../ui/menu";
 import { usePhone, useSubscribe } from "../ui/hooks";
@@ -32,8 +32,6 @@ export type Theme = "blocks" | "city" | "hive" | "timeline";
 export const THEMES: Theme[] = ["blocks", "city", "hive", "timeline"];
 /** A done card leaves the rail by itself after this long. */
 export const DONE_MS = 15_000;
-/** An answered card (with its follow-up box) stays this long. */
-const ANSWERED_MS = 60_000;
 
 function savedBy(): GroupBy {
   try {

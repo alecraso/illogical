@@ -14,7 +14,7 @@ import type { Client } from "../client";
 import type { DiffInfo, PaneId } from "../proto";
 import { DiffCard } from "./diff-card";
 import { AskCard, type Answered, type Ask } from "../blocks/ask";
-import { answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE } from "./answer-card";
+import { ANSWERED_MS, answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE } from "./answer-card";
 import { Avatar } from "./people";
 
 export { answeredLine, clock } from "./answer-card";
@@ -166,17 +166,41 @@ function PermissionCard({ client, id, ask, can }: { client: Client; id: PaneId; 
   );
 }
 
+/** Answered cards closed, or seen first, on this page: by pane and answer,
+ * so leaving a tab and coming back doesn't bring one back. */
+const closedAnswers = new Set<string>();
+const firstSeen = new Map<string, number>();
+
 /** After a card is answered (M29): who answered it, and a box for the
- * agent's next instruction, for whoever may drive the pane. */
+ * agent's next instruction, for whoever may drive the pane. It goes by
+ * itself after a minute, as on the swarm's rail; the terminal is there for
+ * anything later. */
 export function TermAnswered({ client, id, answered }: { client: Client; id: PaneId; answered: Answered }) {
-  const [closed, setClosed] = useState<string | null>(null);
-  if (closed === answered.id + answered.at_ms) return null;
+  const key = `${id}:${answered.id}:${answered.at_ms}`;
+  const [, rerender] = useState(0);
+  if (!firstSeen.has(key)) firstSeen.set(key, Date.now());
+  // The daemon's clock, or this page's if they disagree: whichever is sooner.
+  const until = Math.min(answered.at_ms, firstSeen.get(key)!) + ANSWERED_MS;
+  const gone = closedAnswers.has(key) || Date.now() >= until;
+  useEffect(() => {
+    if (gone) return;
+    const t = setTimeout(() => rerender((n) => n + 1), until - Date.now());
+    return () => clearTimeout(t);
+  }, [key, gone]);
+  if (gone) return null;
   const can = mayAnswer(client, id);
   return (
     <div class="pane-answered" onPointerDown={(e) => e.stopPropagation()} data-answered={answered.id}>
       <div class="pane-ask-bar">
         <span class="answered-by">{answeredLine(answered)}</span>
-        <button class="link" title="Close" onClick={() => setClosed(answered.id + answered.at_ms)}>
+        <button
+          class="link"
+          title="Close"
+          onClick={() => {
+            closedAnswers.add(key);
+            rerender((n) => n + 1);
+          }}
+        >
           ✕
         </button>
       </div>
