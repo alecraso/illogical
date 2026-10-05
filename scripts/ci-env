@@ -3,7 +3,8 @@
 # $GITHUB_ENV: this run's binaries, which the build jobs keep there for
 # the jobs that need them (laid out as target/ is).
 #   ci-env target JOB   a kept build directory (CARGO_TARGET_DIR) for JOB,
-#                       one of two, so two runs' JOBs never share one;
+#                       one of two, so two runs' JOBs never share one, and
+#                       rustc at the lowest priority (scripts/ci-rustc);
 #   ci-env testnet      a test stack of the job's own: its name, ports and
 #                       inner subnet (testnet/env.sh), so stacks run side
 #                       by side;
@@ -22,6 +23,9 @@ case "${1:-}" in
     n=$("$here/ci-slot" "target-$job" 2)
     dir=$HOME/.cache/illogical-ci/$job-$n
     echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+    # At one path for every runner's checkout: cargo keys its builds on it.
+    install -m 755 "$here/ci-rustc" "$HOME/.cache/illogical-ci/ci-rustc"
+    echo "RUSTC_WRAPPER=$HOME/.cache/illogical-ci/ci-rustc" >> "$GITHUB_ENV"
     CARGO_TARGET_DIR=$dir "$here/ci-cap-target" 30
     ;;
   testnet)
