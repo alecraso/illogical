@@ -30,7 +30,9 @@ against the running one. `workspace.spec.ts` runs the real chant: its first run
 installs the pinned version into `web/e2e/fixtures/chant-workspace` with
 `npm ci` (CI doesn't run the browser tests; the daemon's own workspace
 tests use a stand-in chant). `just screenshots` regenerates the images in
-`site/img/` from a throwaway daemon with a scripted demo session.
+`site/img/` from a throwaway daemon with a scripted demo session
+(`SHOTS_PORT` and `SHOTS_DEV_PORT` move its ports); the README's
+`dive.gif` is the page's own tour, made by `web/screenshots/dive.mjs`.
 
 `just testnet up ssh` starts a local stack in Docker (`testnet/`, #200): a
 bastion and a box with no illogical that only ssh reaches. `just testnet

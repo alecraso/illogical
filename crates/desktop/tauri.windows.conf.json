@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["nsis"],
+    "externalBin": [],
+    "longDescription": "illogical keeps your terminals running on your machines, so they outlive their windows. This app reaches every machine in your illogical cloud account and teams. On Windows it doesn't run panes itself yet.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

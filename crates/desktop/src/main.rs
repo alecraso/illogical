@@ -41,6 +41,9 @@
 //!   default (`settings.rs`), and **app updates** (`updates.rs`).
 //! - A tray icon with *New window* and *This machine*; one instance (a
 //!   second launch opens a window in the first).
+//! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
+//!   the app is control's client only, so a window opens on sign-in or
+//!   control's page, and nothing local is installed, watched or offered.
 
 mod cloud;
 mod links;
@@ -73,6 +76,9 @@ static WINDOWS: AtomicUsize = AtomicUsize::new(0);
 /// Why the daemon couldn't be reached, for the page that says so.
 static STATUS: Mutex<String> = Mutex::new(String::new());
 static ADDR: OnceLock<String> = OnceLock::new();
+
+/// No local daemon to reach or install: Windows until M59 (#222).
+pub const DAEMONLESS: bool = cfg!(windows);
 
 fn state_dir() -> Option<PathBuf> {
     std::env::var_os("ILLOGICAL_STATE_DIR")
@@ -278,7 +284,7 @@ fn start_agent() -> Result<(), String> {
 /// - joined, not signed in: the app's sign-in page;
 /// - otherwise (or "just this machine"): the daemon's own page.
 fn target(app: &AppHandle) -> WebviewUrl {
-    if !reachable() || upgrade::pending().is_some() {
+    if !DAEMONLESS && (!reachable() || upgrade::pending().is_some()) {
         return WebviewUrl::App("index.html".into());
     }
     WebviewUrl::External(home(app))
@@ -367,8 +373,15 @@ fn open_outside(url: &tauri::Url) {
         }
         return;
     }
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    if let Err(e) = std::process::Command::new(opener).arg(url.as_str()).spawn() {
+    // Windows: the URL handler directly; `cmd /c start` would split it at `&`.
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32.exe");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    } else {
+        std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
+    };
+    if let Err(e) = cmd.arg(url.as_str()).spawn() {
         eprintln!("illogical: opening {url}: {e}");
     }
 }
@@ -480,6 +493,7 @@ fn focus_or_open(app: &AppHandle) {
 }
 
 /// From a notification: the pane, in a window of ours.
+#[cfg(not(windows))]
 fn open_pane(app: &AppHandle, pane: u32) {
     let url = page_at(&format!("/#pane={pane}"));
     #[cfg(target_os = "macos")]
@@ -531,7 +545,12 @@ async fn retry(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), Strin
 // ---- notifications
 
 fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
+    // Windows: a local daemon's notifications come with it (M59).
+    #[cfg(windows)]
+    let _ = (app, pane, title, body);
+    #[cfg(not(windows))]
     let app = app.clone();
+    #[cfg(not(windows))]
     std::thread::spawn(move || {
         #[cfg(target_os = "linux")]
         {
@@ -729,7 +748,9 @@ fn main() {
                 }
             }
             profile::init(app.handle());
-            upgrade::check();
+            if !DAEMONLESS {
+                upgrade::check();
+            }
             let prefs = settings::load(app.handle());
             let hotkey_ok = match settings::apply(app.handle(), &prefs) {
                 Ok(()) => prefs.hotkey_on,
@@ -757,7 +778,12 @@ fn main() {
             )?;
             let update = MenuItem::with_id(app, "update", "Restart to update", false, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &new, &this, &hotkey];
+            // Windows has no daemon here yet (M54): no "this machine" item.
+            let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &new];
+            if !DAEMONLESS {
+                items.push(&this);
+            }
+            items.push(&hotkey);
             if updater && updates::can_update() {
                 items.push(&update);
             }
@@ -801,10 +827,12 @@ fn main() {
             } else {
                 eprintln!("illogical: this build has no updater key; it doesn't check for updates");
             }
-            let handle = app.handle().clone();
-            std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
-            let handle = app.handle().clone();
-            std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
+            if !DAEMONLESS {
+                let handle = app.handle().clone();
+                std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
+                let handle = app.handle().clone();
+                std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
+            }
             Ok(())
         })
         .build(context)

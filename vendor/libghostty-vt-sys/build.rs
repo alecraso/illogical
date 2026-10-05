@@ -454,6 +454,9 @@ fn fetch_ghostty(out_dir: &Path) -> PathBuf {
     let mut clone = Command::new("git");
     clone
         .arg("clone")
+        // As committed: Git for Windows defaults to CRLF checkouts, which
+        // our patches don't apply to (S29).
+        .args(["-c", "core.autocrlf=false"])
         .arg("--filter=blob:none")
         .arg("--no-checkout")
         .arg(GHOSTTY_REPO)

@@ -11,9 +11,13 @@ import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
 import type { PaneId } from "../src/proto";
 import { menu, open, paneEl, panes, ready, reset, text } from "../e2e/helpers";
+import "../e2e/local-token";
 
-const PORT = 7689;
-const BLOCK_PORT = 7690;
+// SHOTS_PORT moves the daemon (and its block port, the next one up) and
+// SHOTS_DEV_PORT the demo dev server, when these are taken.
+const PORT = Number(process.env.SHOTS_PORT ?? 7689);
+const BLOCK_PORT = PORT + 1;
+const DEV_PORT = Number(process.env.SHOTS_DEV_PORT ?? 5173);
 const base = `http://127.0.0.1:${PORT}`;
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "../../site/img");
@@ -115,14 +119,14 @@ printf 'test result: \\033[32mok\\033[0m. 6 passed; 0 failed; 0 ignored; finishe
 `;
 
 // A stand-in for npm: `npm run dev` says what Vite would, then serves web/.
-const NPM = `#!/bin/sh
+const NPM = () => `#!/bin/sh
 printf '\\n> auth-admin@0.4.2 dev\\n> vite\\n\\n'
 sleep 0.3
 printf '  \\033[1;32mVITE\\033[0m \\033[32mv6.3.5\\033[0m  ready in \\033[1m284\\033[0m ms\\n\\n'
-printf '  \\033[32m➜\\033[0m  \\033[1mLocal\\033[0m:   \\033[36mhttp://localhost:\\033[1m5173\\033[0;36m/\\033[0m\\n'
+printf '  \\033[32m➜\\033[0m  \\033[1mLocal\\033[0m:   \\033[36mhttp://localhost:\\033[1m${DEV_PORT}\\033[0;36m/\\033[0m\\n'
 printf '  \\033[2m➜  Network: use --host to expose\\033[0m\\n'
 printf '  \\033[2m➜  press h + enter to show help\\033[0m\\n'
-exec python3 -m http.server 5173 --bind 127.0.0.1 --directory web >/dev/null 2>&1
+exec python3 -m http.server ${DEV_PORT} --bind 127.0.0.1 --directory web >/dev/null 2>&1
 `;
 
 // What the dev server serves: the auth crate's admin page.
@@ -273,10 +277,12 @@ function demoHome() {
     git(repo, "add", "-A");
     git(repo, "commit", "-q", "-m", msg);
   }
-  writeFileSync(join(home, "bin/npm"), NPM);
+  writeFileSync(join(home, "bin/npm"), NPM());
   chmodSync(join(home, "bin/npm"), 0o755);
+  // The admin page, out of git's way (the shots show `git status`).
   mkdirSync(join(repo, "web"));
   writeFileSync(join(repo, "web/index.html"), ADMIN_HTML);
+  writeFileSync(join(repo, ".git/info/exclude"), "web/\n");
   git(repo, "checkout", "-q", "-b", "fix-flaky-expiry");
   writeFileSync(join(repo, "src/session.rs"), SESSION_RS + "\n// TODO: sweep on a timer\n");
 }
@@ -301,6 +307,12 @@ async function startDaemon() {
         USER: "demo",
         LANG: "C.UTF-8",
         TERM: "xterm-256color",
+        // No "a newer release is out" chip in the pictures.
+        ILLOGICAL_NO_UPDATE_CHECK: "true",
+        // Not this machine's Fountain runner, if it is one (no menu item).
+        ILLOGICAL_FOUNTAIN_UNIT_FILE: join(root, "no-fountain-runner.service"),
+        // The browser's cookie and Node's fetch carry this (e2e/local-token.ts).
+        ILLOGICAL_LOCAL_TOKEN_FILE: process.env.ILLOGICAL_LOCAL_TOKEN_FILE!,
         PATH: [join(home, "bin"), nvim, "/usr/local/bin", "/usr/bin", "/bin"].filter(Boolean).join(":"),
       },
     },
@@ -464,6 +476,7 @@ test.describe("desktop", () => {
     await block.locator(".agent-composer textarea").fill("and the other sleeps?");
     await block.getByRole("button", { name: "Send" }).click();
     await expect(block.getByText("Inject the clock everywhere")).toBeVisible();
+    await page.mouse.move(0, 0);
     await page.waitForTimeout(500);
     await block.screenshot({ path: join(out, "question.png") });
   });
@@ -525,13 +538,13 @@ test.describe("blocks", () => {
     await expect.poll(() => text(page, shell)).toContain("ready in");
     for (let i = 0; i < 50; i++) {
       try {
-        if ((await fetch("http://127.0.0.1:5173/")).ok) break;
+        if ((await fetch(`http://127.0.0.1:${DEV_PORT}/`)).ok) break;
       } catch {
         // not up yet
       }
       await page.waitForTimeout(100);
     }
-    const block = await openBlock(page, { type: "browser", config: { port: 5173, path: "/" }, split: shell });
+    const block = await openBlock(page, { type: "browser", config: { port: DEV_PORT, path: "/" }, split: shell });
     const frame = paneEl(page, block).frameLocator("iframe");
     await expect(frame.getByText("Live sessions")).toBeVisible({ timeout: 30_000 });
     await settle(page);
