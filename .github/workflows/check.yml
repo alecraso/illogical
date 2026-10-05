@@ -1,5 +1,7 @@
-# Every push: `just check` on Linux, build and test on macOS. Only pushes
-# (never pull requests), since these run on our own machines' hosts.
+# Every push: `just check` and the Playwright specs (Chromium and WebKit) on
+# Linux, build, test and the WebKit specs on macOS, and the testnet's claims
+# where Docker is. Only pushes (never pull requests), since these run on our
+# own machines' hosts.
 name: check
 on:
   push:
@@ -27,6 +29,13 @@ jobs:
         run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
       - name: No secrets
         run: gitleaks git --no-banner --redact .
+      - name: Playwright's browsers
+        run: just browsers
+      - name: The Playwright specs, in Chromium and WebKit
+        run: just e2e
+        env:
+          E2E_CHROMIUM: "1"
+          E2E_PORT: "7769"
 
   macos:
     runs-on: [self-hosted, macos-arm64]
@@ -37,3 +46,37 @@ jobs:
       - run: scripts/ci-cap-target 30
       - run: just bootstrap
       - run: just test
+      - name: Playwright's WebKit
+        run: just browsers webkit
+      - name: The WebKit specs (Safari's engine)
+        run: just e2e-webkit
+        env:
+          E2E_PORT: "7769"
+
+  # The Docker test stack (testnet/README.md): each profile's claims, then
+  # each claim again under BREAK=1, where it must fail.
+  testnet:
+    runs-on: [self-hosted, linux-x86_64]
+    # Container names and the bastion's port are fixed: one stack at a time.
+    concurrency:
+      group: testnet
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Is Docker here?
+        id: docker
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo ok=true >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=testnet skipped::Docker isn't available to this runner, so the testnet claims did not run."
+            echo ok=false >> "$GITHUB_OUTPUT"
+          fi
+      # A step per profile: the control profile (#200) gets one like this
+      # when it lands.
+      - name: The ssh profile
+        if: steps.docker.outputs.ok == 'true'
+        run: just testnet up ssh && just testnet test ssh && just testnet break ssh
+      - name: Take the stack down
+        if: always() && steps.docker.outputs.ok == 'true'
+        run: just testnet down
