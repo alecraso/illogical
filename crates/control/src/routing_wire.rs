@@ -379,6 +379,52 @@ async fn rosters_add_only_people_who_asked() {
     assert_eq!(c.as_person(&cookie, "POST", &path, Some(json!({ "roster": add }))).await.0, 200);
 }
 
+/// A team "Acme" founded by `owner` (account `own1`), its first roster
+/// alone.
+fn acme(app: &App, team: &str, owner_root: &DeviceKeys) {
+    let r = roster(team, 1, vec![member("own1", owner_root, TeamRole::Owner)], owner_root);
+    let t = Team {
+        id: team.into(),
+        name: "Acme".into(),
+        founder: "own1".into(),
+        founder_root: owner_root.id(),
+        locked: false,
+    };
+    app.db.add_team(&t, 1, &serde_json::to_string(&r).unwrap(), now_ms()).unwrap();
+}
+
+#[tokio::test]
+async fn a_team_daemon_too_old_for_presigned_rosters_is_told_to_update() {
+    let c = control(|_| {}).await;
+    let owner_root = person(&c.app, "owner", "own1");
+    let team = "00112233445566ff";
+    acme(&c.app, team, &owner_root);
+    let d = daemon(&c.app, "own1", "box");
+    c.app.db.set_daemon_team(&d.id(), team).unwrap();
+    let new = "/api/daemon/team?since=0&features=presigned-invites";
+    let old = "/api/daemon/team?since=0&features=";
+    // No presigned version yet: both get the team.
+    assert_eq!(c.daemon_get(&d, old).await.0, 200);
+    assert_eq!(c.daemon_get(&d, new).await.0, 200);
+    // A version written with a presigned invite (v2, an invite spent).
+    let mut v2 = roster(team, 2, vec![member("own1", &owner_root, TeamRole::Owner)], &owner_root);
+    v2.v = 2;
+    v2.spent = vec![illogical_e2e::team::Spent { key: "ab".repeat(32), expires: now_ms() + 3_600_000 }];
+    v2.sign_with(&owner_root);
+    c.app.db.add_roster(team, 2, &serde_json::to_string(&v2).unwrap()).unwrap();
+    // A daemon downgraded since can't check it: it's told why, not handed
+    // a roster it would stop at.
+    let (st, v) = c.daemon_get(&d, old).await;
+    assert_eq!(st, 409);
+    assert!(v["error"].as_str().unwrap().contains("update illogical"), "{v}");
+    let (st, v) = c.daemon_get(&d, "/api/daemon/team?since=1").await;
+    assert_eq!(st, 409, "{v}");
+    // One that understands them gets both versions.
+    let (st, v) = c.daemon_get(&d, new).await;
+    assert_eq!(st, 200);
+    assert_eq!(v["rosters"].as_array().unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn looking_people_up_is_rate_limited() {
     let c = control(|_| {}).await;

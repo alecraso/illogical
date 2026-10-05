@@ -558,6 +558,16 @@ pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Q
     app.db.set_daemon_features(&d.cert.device, &q.features)?;
     let Some(team) = app.db.daemon_team(&d.cert.device)? else { return Ok(Json(json!({ "team": null }))) };
     let t = app.db.team(&team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
+    // A machine downgraded after its team took a presigned invite would
+    // stop at the first version one wrote and keep whoever was in then,
+    // removed or not (#135). It's told why instead, as `daemon_teams`
+    // leaves such a team out.
+    if !takes_presigned(&q.features) && has_presigned(&app, &team)? {
+        return Err(err(
+            StatusCode::CONFLICT,
+            "this machine's illogical is older than its team's invites: update illogical to keep up with the team",
+        ));
+    }
     let rosters: Vec<Roster> =
         app.db.rosters(&team, q.since)?.iter().map(|b| parse(b)).collect::<anyhow::Result<_>>()?;
     // Certificates for everyone in any version it will check, the one it
