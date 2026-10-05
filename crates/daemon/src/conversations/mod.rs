@@ -163,10 +163,15 @@ pub struct Dirs {
 
 impl Dirs {
     pub fn from_env() -> Self {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/".into()));
+        let home = crate::home();
         let claude = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".claude"));
         let desktop = if cfg!(target_os = "macos") {
             home.join("Library/Application Support/Claude")
+        } else if cfg!(windows) {
+            std::env::var_os("APPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(r"AppData\Roaming"))
+                .join("Claude")
         } else {
             std::env::var_os("XDG_CONFIG_HOME")
                 .map(PathBuf::from)
@@ -456,7 +461,8 @@ fn live(dir: &Path, ours: &Ours) -> HashMap<String, Live> {
         };
         let (Some(pid), Some(session)) = (v["pid"].as_u64(), v["sessionId"].as_str()) else { continue };
         let pid = pid as u32;
-        if !alive(pid, v["procStart"].as_str()) {
+        // Windows writes the start as `procStartFt` (a FILETIME).
+        if !alive(pid, v["procStart"].as_str().or(v["procStartFt"].as_str())) {
             continue;
         }
         let (pane, block) = ours.holder(pid).unwrap_or_else(|| scope_of(pid));
@@ -490,8 +496,9 @@ fn alive(pid: u32, proc_start: Option<&str>) -> bool {
 
 /// Is `procStart` this start time ([`crate::procinfo::start_time`])?
 /// Claude Code writes field 22 of `/proc/<pid>/stat` (clock ticks since
-/// boot) on Linux, and `LC_ALL=C TZ=UTC ps -o lstart=` (`Sat Oct  3
-/// 10:17:50 2026`, to the second) elsewhere.
+/// boot) on Linux, `LC_ALL=C TZ=UTC ps -o lstart=` (`Sat Oct  3 10:17:50
+/// 2026`, to the second) on macOS, and on Windows `procStartFt`, the
+/// creation time from `GetProcessTimes` (100 ns since 1601).
 fn same_start(have: u64, want: &str) -> bool {
     if cfg!(target_os = "macos") { lstart_secs(want) == Some(have / 1_000_000) } else { want.parse() == Ok(have) }
 }
@@ -739,6 +746,31 @@ mod tests {
         assert_eq!(got, ["live-one"]);
         assert_eq!(l["live-one"].pid, me);
         assert!(l["live-one"].place().contains(&format!("pid {me}")) || l["live-one"].pane.is_some());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Windows: Claude Code writes `procStartFt`, its creation FILETIME.
+    #[cfg(windows)]
+    #[test]
+    fn live_sessions_on_windows_are_checked_against_their_filetime() {
+        let root = tmp("live-win");
+        let sessions = root.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let me = std::process::id();
+        let ft = crate::procinfo::start_time(me).unwrap().to_string();
+        let write = |name: &str, pid: u32, ft: &str, sid: &str| {
+            let v = json!({"pid": pid, "sessionId": sid, "procStartFt": ft, "kind": "interactive", "entrypoint": "cli", "status": "idle"});
+            std::fs::write(sessions.join(name), v.to_string()).unwrap();
+        };
+        write("a.json", me, &ft, "live-one");
+        write("b.json", me, "1", "reused-pid");
+        write("c.json", 999_999_999, &ft, "gone");
+        let l = live(&sessions, &Ours::default());
+        assert_eq!(l.keys().map(String::as_str).collect::<Vec<_>>(), ["live-one"]);
+
+        // Under one of our panes, by its ancestors.
+        let ours = Ours { panes: [(crate::procinfo::ppid(me).unwrap(), 7)].into(), ..Default::default() };
+        assert_eq!(live(&sessions, &ours)["live-one"].pane, Some(7));
         std::fs::remove_dir_all(&root).unwrap();
     }
 

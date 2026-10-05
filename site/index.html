@@ -461,8 +461,8 @@
         </div>
         <div class="card" style="--c: var(--k-agent)">
           <div class="ch"><b>Windows</b></div>
-          <div class="cm">x86_64 · installer · cloud client</div>
-          <p>Reaches every machine in your account. Panes don't run on Windows itself yet. It isn't signed yet: when SmartScreen stops it, choose <em>More info</em>, then <em>Run anyway</em>.</p>
+          <div class="cm">windows 10 or 11 · x86_64 · installer</div>
+          <p>Panes run PowerShell, and the app reaches every machine in your account too. It isn't signed yet: when SmartScreen stops it, choose <em>More info</em>, then <em>Run anyway</em>.</p>
           <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-windows-x86_64-setup.exe" data-dl="windows">Download for Windows</a></div>
         </div>
         <div class="card" style="--c: var(--k-shell)">
@@ -474,13 +474,20 @@
       </div>
       <p class="meta then-meta"><i style="background:var(--k-server)"></i>servers and machines without a screen</p>
       <p class="after">No desktop? Install the service from a terminal, then open it from a browser on your phone or another machine.</p>
-      <div class="ways">
+      <div class="ways four">
         <div class="card" style="--c: var(--k-server)">
           <div class="ch"><b>One command</b></div>
           <div class="cm">shell · linux · macos</div>
           <pre id="way1">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</pre>
           <p>Installs illogical and starts its background service. Run again to upgrade.</p>
           <div class="ca"><button type="button" class="pri copy" data-copy="way1">Copy</button></div>
+        </div>
+        <div class="card" style="--c: var(--k-server)">
+          <div class="ch"><b>On Windows</b></div>
+          <div class="cm">powershell · windows 10 or 11</div>
+          <pre id="way4">irm https://illogical.widgets.wtf/install.ps1 | iex</pre>
+          <p>The same, started at logon as a scheduled task. Run again to upgrade.</p>
+          <div class="ca"><button type="button" class="pri copy" data-copy="way4">Copy</button></div>
         </div>
         <div class="card" style="--c: var(--k-server)">
           <div class="ch"><b>Homebrew</b></div>
@@ -566,7 +573,7 @@ just bootstrap && just install</pre>
   if (/Windows/.test(navigator.userAgent)) {
     const main = document.getElementById("dl-main");
     main.href = "https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-windows-x86_64-setup.exe";
-    main.innerHTML = "<b>Download for Windows</b><span>x86_64 · reaches your machines · free</span>";
+    main.innerHTML = "<b>Download for Windows</b><span>x86_64 · free</span>";
     document.getElementById("dl-alt").innerHTML =
       'Also: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip">macOS</a> (<a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-x86_64.zip">Intel</a>) · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage">Linux</a> · <a href="#install">servers, without a screen</a>';
   } else if (/Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)) {

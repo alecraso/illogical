@@ -51,7 +51,8 @@ tabs and splits you drive with the mouse.
 
 [![A tour of the swarm: every pane clustered by project, then one project's panes up close, then an agent's request on the Needs You rail, then that agent's session opened](site/img/dive.gif)](https://illogical.widgets.wtf)
 
-Linux (x86_64, arm64) and macOS (Apple silicon and Intel). Share a session with
+Linux (x86_64, arm64), macOS (Apple silicon and Intel) and Windows 10 and 11
+(x86_64). Share a session with
 someone, or a whole machine with a team, with roles and presence
 ([docs/teams.md](docs/teams.md)). Remote access is over your tailnet, or
 through [illogical control](docs/control.md) for devices without one: end
@@ -62,14 +63,17 @@ serves ([what holds](docs/control-e2e.md#what-holds-against-control)).
 ## Install
 
 **The desktop app** (macOS 13 or later on Apple silicon or Intel, Linux
-x86_64), from [illogical.widgets.wtf](https://illogical.widgets.wtf) or the
+x86_64, Windows 10 or 11 x86_64), from
+[illogical.widgets.wtf](https://illogical.widgets.wtf) or the
 [latest release](https://github.com/arugula-salad/illogical/releases/latest):
 `illogical-desktop-macos-arm64.zip` (Apple silicon),
 `illogical-desktop-macos-x86_64.zip` (Intel),
 `illogical-desktop-linux-x86_64.AppImage` or `.deb` (the Linux app runs on
-Ubuntu 22.04, Debian 12, Fedora 36 or newer: glibc 2.35 and up). The first
-time it opens it installs `illogicald` and `illogical` in
-`~/.local/bin` and starts the daemon as a service, then *Getting started*
+Ubuntu 22.04, Debian 12, Fedora 36 or newer: glibc 2.35 and up),
+`illogical-desktop-windows-x86_64-setup.exe`. The first time it opens it
+installs `illogicald` and `illogical` (in `~/.local/bin`, or
+`%LOCALAPPDATA%\Programs\illogical` on Windows) and starts the daemon as a
+service, then *Getting started*
 sets up your phone, the cloud and Claude Code, a click each. Once the
 machine is in illogical cloud, the app signs in through your browser on
 the same computer (approve it as a new device once) and shows every machine in your account
@@ -77,11 +81,8 @@ and your teams. The macOS app
 isn't notarized yet: the first time, open it, then choose *Open Anyway* in
 System Settings › Privacy & Security.
 
-**On Windows** (x86_64), `illogical-desktop-windows-x86_64-setup.exe` is
-a client for illogical cloud: sign in and it shows the machines in your
-account. Panes don't run on Windows itself yet (the Windows track, #224).
-It isn't signed yet: when SmartScreen stops it, choose *More info*, then
-*Run anyway*.
+The Windows installer isn't signed yet: when SmartScreen stops it, choose
+*More info*, then *Run anyway*.
 
 **Servers and machines without a screen:**
 
@@ -92,6 +93,16 @@ curl -fsSL https://illogical.widgets.wtf/install.sh | sh
 This puts `illogicald` and `illogical` in `~/.local/bin` and starts the
 daemon as a service (systemd user unit on Linux, launchd agent on macOS).
 Run it again to upgrade. `ILLOGICAL_VERSION=vX.Y.Z` picks a version.
+
+On Windows, in PowerShell:
+
+```
+irm https://illogical.widgets.wtf/install.ps1 | iex
+```
+
+This puts them in `%LOCALAPPDATA%\Programs\illogical` (on your `PATH`) and
+starts the daemon at logon, as a scheduled task. `$env:ILLOGICAL_VERSION`
+picks a version.
 
 **Homebrew** (macOS, Linux):
 
@@ -113,7 +124,7 @@ loginctl enable-linger $USER
 command for how you installed it. Panes keep running while the daemon
 restarts.
 
-- install.sh: run it again.
+- install.sh or install.ps1: run it again.
 - Homebrew: `brew upgrade illogical && illogicald install`.
 - The desktop app: download the new one and open it. When it finds an
   older daemon running as the service, it puts its own in its place,
@@ -283,6 +294,22 @@ tests never run sudo or reach Fountain):
 Everything above works, except that restarting or upgrading the daemon
 ends the panes' programs (there's no systemd to hold them); scrollback and
 layout still come back. VM tabs are Linux only.
+
+## On Windows
+
+Panes run PowerShell (PowerShell 7 if it's installed, else Windows
+PowerShell), with prompts, commands, exit codes and the directory reported
+as in bash, zsh and fish: illogical passes its integration inline, so no
+profile or execution policy change is needed. Each pane has a small host
+process of its own, so panes keep running while the daemon restarts or
+upgrades, as on Linux.
+
+The daemon starts when you log on, and logging off ends it; its panes close
+a minute later. `illogicald install --system` (from an elevated terminal)
+starts it at boot instead, but programs there can't use Windows' protected
+storage, so Credential Manager and Git Credential Manager don't work in its
+panes. VM tabs are Linux only, and `illogical --ssh` doesn't reach Windows
+yet (#284).
 
 ## More
 

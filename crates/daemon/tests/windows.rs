@@ -81,3 +81,50 @@ fn a_pane_outlives_its_daemon_and_the_next_one_adopts_it() {
             .unwrap_or(false)
     });
 }
+
+fn pane_info(d: &illogical_testkit::Daemon, id: u64) -> serde_json::Value {
+    let panes = d.get("/api/panes");
+    let list = panes.as_array().cloned().or_else(|| panes["panes"].as_array().cloned()).unwrap_or_default();
+    list.into_iter().find(|p| p["id"] == id).unwrap_or_default()
+}
+
+/// M60 (#223): PowerShell reports its prompts, commands, exit codes and
+/// directory (the integration through `-EncodedCommand`), and what runs in
+/// the pane is read from the process.
+#[test]
+fn powershell_reports_commands_exit_codes_and_cwd_and_the_foreground_program() {
+    let d = illogicald!("win-shellint").start();
+    let pane = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+    d.wait_for("the first prompt", || pane_info(&d, pane)["cwd"].is_string());
+
+    let send = |text: &str| d.post(&format!("/api/panes/{pane}/send"), json!({"text": text, "enter": true}));
+    send(r"Set-Location C:\Windows; cmd /c exit 3");
+    let w = d.get(&format!("/api/panes/{pane}/wait?until=command-end&timeout=20"));
+    assert_eq!((w["result"].as_str(), w["exit"].as_i64()), (Some("command_end"), Some(3)), "{w}");
+    assert_eq!(w["text"], r"Set-Location C:\Windows; cmd /c exit 3");
+    d.wait_for("the cwd", || pane_info(&d, pane)["cwd"] == r"C:\Windows");
+    d.wait_for("the cwd as the title", || {
+        pane_info(&d, pane)["title"].as_str().is_some_and(|t| t.ends_with(r"C:\Windows"))
+    });
+
+    // A failing cmdlet is exit 1; a command with quotes and ';' comes
+    // through intact.
+    send("Get-Item C:\\no\\such");
+    let w = d.get(&format!("/api/panes/{pane}/wait?until=command-end&timeout=20"));
+    assert_eq!(w["exit"], 1, "{w}");
+    send(r#"Write-Output "a;b" 'c'"#);
+    let w = d.get(&format!("/api/panes/{pane}/wait?until=command-end&timeout=20"));
+    assert_eq!((w["exit"].as_i64(), w["text"].as_str()), (Some(0), Some(r#"Write-Output "a;b" 'c'"#)), "{w}");
+
+    // The program in the foreground, and the shell's own directory.
+    send("ping -n 30 127.0.0.1");
+    d.wait_for("ping in the foreground", || {
+        d.get(&format!("/api/panes/{pane}/process"))["comm"].as_str().is_some_and(|c| c.eq_ignore_ascii_case("ping"))
+    });
+    let p = d.get(&format!("/api/panes/{pane}/process"));
+    assert_eq!(p["argv"].as_array().and_then(|a| a.last()).and_then(|a| a.as_str()), Some("127.0.0.1"), "{p}");
+    d.wait_for("the command as the title", || {
+        pane_info(&d, pane)["title"].as_str().is_some_and(|t| t.ends_with("ping -n 30 127.0.0.1"))
+    });
+    d.post(&format!("/api/panes/{pane}/keys"), json!({"keys": ["C-c"]}));
+}

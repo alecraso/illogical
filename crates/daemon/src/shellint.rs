@@ -10,6 +10,9 @@
 //!   user's `ZDOTDIR` and reads their `.zshenv`.
 //! - **fish** gets our directory prepended to `XDG_DATA_DIRS`, where it loads
 //!   `fish/vendor_conf.d/illogical.fish`.
+//! - **PowerShell** (pwsh, Windows PowerShell) gets `-NoExit -EncodedCommand`
+//!   and our script inline: Windows' default execution policy runs no script
+//!   file, but doesn't cover an inline command (S29).
 //!
 //! On a machine (a VM pane) our files aren't there, so bash gets the script
 //! in an environment variable, and `ENV` (which bash expands, command
@@ -25,6 +28,7 @@ use crate::pane::Spawn;
 const BASH: &str = include_str!("../shell/bash/illogical.bash");
 const ZSH: &str = include_str!("../shell/zsh/.zshenv");
 const FISH: &str = include_str!("../shell/fish/vendor_conf.d/illogical.fish");
+const PWSH: &str = include_str!("../shell/pwsh/illogical.ps1");
 
 #[derive(Debug, Clone)]
 pub struct Integration {
@@ -50,6 +54,17 @@ impl Integration {
     /// shells we don't know are left alone.
     pub fn apply(&self, spawn: &mut Spawn) {
         if spawn.args.iter().any(|a| a == "-c") {
+            return;
+        }
+        if powershell(&spawn.program) {
+            // Anything it was told to run already (a command, a file).
+            let runs = |a: &String| {
+                let a = a.to_lowercase();
+                ["-command", "-encodedcommand", "-file", "-ec", "-f"].contains(&a.as_str())
+            };
+            if !spawn.args.iter().any(runs) {
+                spawn.args.extend(["-NoExit".into(), "-EncodedCommand".into(), encoded(PWSH)]);
+            }
             return;
         }
         match shell_name(&spawn.program) {
@@ -102,6 +117,29 @@ pub fn apply_guest(spawn: &mut Spawn) {
     ]);
 }
 
+/// Have an interactive PowerShell run `script` first, after the integration
+/// if it has ours.
+pub fn powershell_then(spawn: &mut Spawn, script: &str) {
+    let ours = spawn.args.iter().position(|a| a == "-EncodedCommand").filter(|i| *i + 1 < spawn.args.len());
+    match ours {
+        Some(i) => spawn.args[i + 1] = encoded(&format!("{PWSH}\n{script}")),
+        None => spawn.args.extend(["-NoExit".into(), "-Command".into(), script.into()]),
+    }
+}
+
+/// pwsh or Windows PowerShell, by the program's name.
+fn powershell(program: &str) -> bool {
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program).to_lowercase();
+    matches!(name.strip_suffix(".exe").unwrap_or(&name), "pwsh" | "powershell")
+}
+
+/// A script as `-EncodedCommand` takes it: base64 of its UTF-16LE.
+fn encoded(script: &str) -> String {
+    use base64::Engine;
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
 fn shell_name(program: &str) -> &str {
     Path::new(program).file_name().and_then(|n| n.to_str()).unwrap_or(program)
 }
@@ -148,5 +186,33 @@ mod tests {
         let mut s = spawn("/usr/bin/fish", &[]);
         i.apply(&mut s);
         assert!(s.env[0].1.starts_with("/x:"));
+        let mut s = spawn("pwsh", &["-NoLogo", "-Command", "Get-Date"]);
+        i.apply(&mut s);
+        assert_eq!(s.args, vec!["-NoLogo", "-Command", "Get-Date"]);
+    }
+
+    fn decoded(b64: &str) -> String {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        String::from_utf16(&bytes.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()).unwrap()
+    }
+
+    #[test]
+    fn powershell_gets_the_script_inline_and_runs_a_command_after_it() {
+        let i = Integration { dir: "/x".into() };
+        let mut s = spawn(r"C:\Program Files\PowerShell\7\pwsh.exe", &["-NoLogo"]);
+        i.apply(&mut s);
+        assert_eq!(&s.args[..3], ["-NoLogo", "-NoExit", "-EncodedCommand"]);
+        assert_eq!(decoded(&s.args[3]), PWSH);
+        assert!(s.env.is_empty());
+
+        powershell_then(&mut s, "make");
+        assert_eq!(s.args.len(), 4);
+        assert!(decoded(&s.args[3]).ends_with("\n\nmake"));
+
+        // Without the integration: a plain -Command.
+        let mut s = spawn("powershell", &[]);
+        powershell_then(&mut s, "make");
+        assert_eq!(s.args, vec!["-NoExit", "-Command", "make"]);
     }
 }

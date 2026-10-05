@@ -155,7 +155,7 @@ fn parse_osc(payload: &[u8]) -> Option<Signal> {
         "7" => {
             let url = rest.strip_prefix("file://")?;
             let path = &url[url.find('/')?..];
-            Some(Signal::Cwd { path: percent_decode(path) })
+            Some(Signal::Cwd { path: local_path(percent_decode(path)) })
         }
         // OSC 9;<message>; but 9;4;… is ConEmu/Ghostty progress, not a
         // notification.
@@ -212,6 +212,20 @@ fn unescape_633(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A file URL's path as this system writes it: `/C:/Users/x` is `C:\\Users\\x`
+/// on Windows.
+fn local_path(path: String) -> String {
+    let b = path.as_bytes();
+    let drive = b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':';
+    if cfg!(windows) && drive {
+        let p = path[1..].replace('/', "\\");
+        // `C:` alone is the drive's current directory, not its root.
+        if p.len() == 2 { p + "\\" } else { p }
+    } else {
+        path
+    }
 }
 
 fn percent_decode(s: &str) -> String {
@@ -314,6 +328,13 @@ mod tests {
     fn sequences_split_across_reads() {
         let s = scan(&[b"\x1b]13", b"3;D;", b"0\x1b", b"\\", b"\x1b]7;file://geek/tmp/a%20b", b"\x07"]);
         assert_eq!(s, vec![Signal::CommandEnd { exit: Some(0) }, Signal::Cwd { path: "/tmp/a b".into() }]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_directory_from_powershell() {
+        let s = scan(&[b"\x1b]7;file://WIN/C:/Program%20Files\x07\x1b]7;file://WIN/D:/\x07"]);
+        assert_eq!(s, vec![Signal::Cwd { path: r"C:\Program Files".into() }, Signal::Cwd { path: r"D:\".into() }]);
     }
 
     #[test]

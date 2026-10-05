@@ -474,9 +474,9 @@ impl Config {
         let shell = self.shell(pane, cwd, integrate);
         match Dialect::of(&self.shell) {
             Dialect::PowerShell => {
-                let mut args = shell.args.clone();
-                args.extend(["-NoExit".into(), "-Command".into(), command.into()]);
-                return Spawn { args, ..shell };
+                let mut shell = shell;
+                crate::shellint::powershell_then(&mut shell, command);
+                return shell;
             }
             Dialect::Cmd => {
                 let mut args = shell.args.clone();
@@ -504,9 +504,9 @@ impl Config {
                     Run::Argv(argv) => format!("& {}", argv.iter().map(|w| quoted(w)).collect::<Vec<_>>().join(" ")),
                     Run::Note(note) => format!("Write-Host -ForegroundColor DarkGray ('[' + {} + ']')", quoted(note)),
                 };
-                let mut args = shell.args.clone();
-                args.extend(["-NoExit".into(), "-Command".into(), script]);
-                return Spawn { args, ..shell };
+                let mut shell = shell;
+                crate::shellint::powershell_then(&mut shell, &script);
+                return shell;
             }
             Dialect::Cmd => {
                 let script = match &run {

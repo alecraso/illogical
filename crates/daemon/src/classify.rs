@@ -50,8 +50,14 @@ static BUILDS: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+/// A program's name from its path, either way it's written, less a
+/// Windows `.exe`.
 fn base(word: &str) -> &str {
-    word.rsplit('/').next().unwrap_or(word)
+    let name = word.rsplit(['/', '\\']).next().unwrap_or(word);
+    match name.len().checked_sub(4) {
+        Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".exe") => &name[..i],
+        _ => name,
+    }
 }
 
 /// Programs that start another named after them (`npx`, `uv run`, `sudo`,
@@ -273,6 +279,8 @@ mod tests {
             ("claude", Some("claude")),
             ("claude --resume 0f3c", Some("claude")),
             ("/home/me/.local/bin/claude", Some("claude")),
+            (r"C:\Users\me\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe", Some("claude")),
+            (r"C:\nodejs\node.EXE C:\npm\node_modules\.bin\codex", Some("codex")),
             ("node /usr/lib/node_modules/.bin/claude", Some("claude")),
             ("/usr/bin/python3 /tmp/bin/claude", Some("claude")),
             (
