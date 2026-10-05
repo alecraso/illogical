@@ -413,6 +413,109 @@ async fn a_daemons_relay_socket_takes_only_mux_sized_messages() {
     assert!(closed, "a 4 MB message closes the socket");
 }
 
+/// A daemon's relay socket, as `illogicald` dials it.
+async fn dial_relay(
+    c: &Control,
+    d: &DeviceKeys,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    let mut req = format!("{}/api/relay/dial", c.base.replace("http://", "ws://")).into_client_request().unwrap();
+    req.headers_mut().insert("x-illogical-auth", v2(d, "GET", "/api/relay/dial", b"").parse().unwrap());
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    ws
+}
+
+/// Whether the socket closes within two seconds (whatever else comes).
+async fn closes<S>(ws: &mut S) -> bool
+where
+    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[tokio::test]
+async fn deleting_a_founder_hangs_up_the_teams_machines_and_tells_its_members() {
+    // #206: Fran founds Acme; Mo (an owner) put his box in it, and Cy uses
+    // it through the relay as a member.
+    let c = control(|_| {}).await;
+    let fran = person(&c.app, "fran", "f1");
+    let mo = person(&c.app, "mo", "m1");
+    let cy = person(&c.app, "cy", "c1");
+    let team = "fedcba9876543210";
+    let r = roster(
+        team,
+        1,
+        vec![
+            member("f1", &fran, TeamRole::Owner),
+            member("m1", &mo, TeamRole::Owner),
+            member("c1", &cy, TeamRole::Editor),
+        ],
+        &fran,
+    );
+    let t = Team { id: team.into(), name: "Acme".into(), founder: "f1".into(), founder_root: fran.id(), locked: false };
+    c.app.db.add_team(&t, 1, &serde_json::to_string(&r).unwrap(), now_ms()).unwrap();
+    let mos_box = daemon(&c.app, "m1", "mos-box");
+    c.app.db.set_daemon_team(&mos_box.id(), team).unwrap();
+    let mut boxes_socket = dial_relay(&c, &mos_box).await;
+    for _ in 0..50 {
+        if c.app.relay.online(&mos_box.id()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(c.app.relay.online(&mos_box.id()));
+    let cys = session(&c.app, "c1");
+    let to_box = |cookie: &str| {
+        let mut req = format!("{}/api/relay/c/{}", c.base.replace("http://", "ws://"), mos_box.id())
+            .into_client_request()
+            .unwrap();
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        req.headers_mut().insert("origin", c.base.parse().unwrap());
+        req
+    };
+    let (mut cys_socket, _) = tokio_tungstenite::connect_async(to_box(&cys)).await.unwrap();
+
+    // Fran deletes her account, and Acme with it.
+    let frans = session(&c.app, "f1");
+    let (st, _) = c.as_person(&frans, "POST", "/api/me/delete", Some(json!({ "confirm": "fran" }))).await;
+    assert_eq!(st, 200);
+    // Both relay sockets end now, not at the box's next check.
+    assert!(closes(&mut cys_socket).await, "Cy's relayed connection ends at once");
+    assert!(closes(&mut boxes_socket).await, "the box is hung up on");
+    // The box, still Mo's, dials back in and is told to check again first.
+    let mut back = dial_relay(&c, &mos_box).await;
+    let first = tokio::time::timeout(Duration::from_secs(2), back.next()).await.unwrap().unwrap().unwrap();
+    assert_eq!(first, Message::Text(crate::relay::NUDGE.into()));
+    // Cy isn't routed to it any more.
+    let refused = tokio_tungstenite::connect_async(to_box(&cys)).await;
+    assert!(refused.is_err(), "no route for a member of a team that's gone");
+
+    // Both members see a notice in the app, once.
+    for (cookie, who) in [(&cys, "Cy"), (&session(&c.app, "m1"), "Mo")] {
+        let (_, v) = c.as_person(cookie, "GET", "/api/teams", None).await;
+        assert_eq!(v["teams"], json!([]), "{who}");
+        let n = &v["notices"][0];
+        assert_eq!(
+            (n["title"].as_str(), n["body"].as_str()),
+            (Some("Acme was deleted"), Some("Its founder deleted their account.")),
+            "{who}"
+        );
+        let seen = format!("/api/me/notices/{}/seen", n["id"]);
+        assert_eq!(c.as_person(cookie, "POST", &seen, None).await.0, 200);
+        assert_eq!(c.as_person(cookie, "POST", &seen, None).await.0, 404);
+        let (_, v) = c.as_person(cookie, "GET", "/api/teams", None).await;
+        assert_eq!(v["notices"], json!([]), "{who}");
+    }
+}
+
 #[test]
 fn join_proofs_and_signatures_are_what_daemons_sign() {
     // The daemon's side (crates/daemon) signs these same strings.

@@ -718,12 +718,19 @@ export class ControlSession {
   asked: { team: string; name: string; owners: string[] }[] = [];
   /** A team that took this account in while this page watched, to say so. */
   joined: { team: string; name: string } | null = null;
+  /** What control kept to tell this account once (#206: a team it was in
+   * was deleted), oldest first. */
+  notices: { id: number; title: string; body: string }[] = [];
 
   async loadTeams() {
-    const r = await api<{ teams: Omit<Team, "verified">[]; asked?: ControlSession["asked"] }>("/api/teams").catch(() => ({
+    const r = await api<{ teams: Omit<Team, "verified">[]; asked?: ControlSession["asked"]; notices?: ControlSession["notices"] }>(
+      "/api/teams",
+    ).catch(() => ({
       teams: [] as Omit<Team, "verified">[],
       asked: this.asked,
+      notices: this.notices,
     }));
+    this.notices = r.notices ?? [];
     const out: Team[] = [];
     for (const t of r.teams) {
       // The founder pinned on first sight. The team's daemons check each
@@ -741,6 +748,13 @@ export class ControlSession {
   sawJoined() {
     this.joined = null;
     this.emit();
+  }
+
+  /** Seen: control forgets it. */
+  async sawNotice(id: number) {
+    this.notices = this.notices.filter((n) => n.id !== id);
+    this.emit();
+    await api(`/api/me/notices/${id}/seen`, {}).catch(() => {});
   }
 
   private myMember(): { account: string; root: string; name: string } {

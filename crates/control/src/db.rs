@@ -10,6 +10,9 @@ use illogical_e2e::{Cert, Revocation};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
+/// How long an unseen notice waits.
+const NOTICE_TTL_MS: u64 = 30 * 24 * 3600 * 1000;
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -189,6 +192,14 @@ CREATE TABLE IF NOT EXISTS retained_for (
     team TEXT NOT NULL,
     PRIMARY KEY (account, team)
 );
+CREATE TABLE IF NOT EXISTS notices (
+    id INTEGER PRIMARY KEY,
+    account TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notices_account ON notices (account);
 ";
 
 /// Columns added after a table first shipped.
@@ -550,6 +561,8 @@ impl Db {
         c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
         c.execute("DELETE FROM invites WHERE expires <= ?1", params![now])?;
         c.execute("DELETE FROM presigned_invites WHERE expires <= ?1", params![now])?;
+        // A notice nobody came back for in a month isn't news any more.
+        c.execute("DELETE FROM notices WHERE created < ?1", params![now.saturating_sub(NOTICE_TTL_MS)])?;
         Ok(n)
     }
 
@@ -1646,6 +1659,7 @@ impl Db {
             "DELETE FROM daemon_offers WHERE account = ?1",
             "DELETE FROM share_answers WHERE account = ?1",
             "DELETE FROM push_subs WHERE account = ?1",
+            "DELETE FROM notices WHERE account = ?1",
             "DELETE FROM sandboxes WHERE account = ?1",
             "DELETE FROM billing WHERE owner = 'account:' || ?1",
             "DELETE FROM reported WHERE account = ?1",
@@ -1696,6 +1710,31 @@ impl Db {
             }
         }
         out
+    }
+
+    // ---- notices
+
+    /// Something to show the account in the app once (#206: a team it was
+    /// in was deleted), beside the push notification it may not get.
+    pub fn add_notice(&self, account: &str, title: &str, body: &str, now: u64) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO notices (account, title, body, created) VALUES (?1, ?2, ?3, ?4)",
+            params![account, title, body, now],
+        )?;
+        Ok(())
+    }
+
+    /// (id, title, body), oldest first.
+    pub fn notices(&self, account: &str) -> anyhow::Result<Vec<(i64, String, String)>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT id, title, body FROM notices WHERE account = ?1 ORDER BY id")?;
+        let rows = q.query_map(params![account], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Seen: whether it was this account's.
+    pub fn drop_notice(&self, account: &str, id: i64) -> anyhow::Result<bool> {
+        Ok(self.c().execute("DELETE FROM notices WHERE id = ?1 AND account = ?2", params![id, account])? > 0)
     }
 
     // ---- metering
