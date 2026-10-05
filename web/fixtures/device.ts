@@ -171,6 +171,14 @@ export class Device {
     other.approved = true;
   }
 
+  /** Approve a browser waiting on the account, from the certificate it
+   * asked with (its page's `control.request`), as the "New device?"
+   * prompt does. */
+  async approveRequest(asked: Cert): Promise<void> {
+    const k = { id: asked.device, noisePub: asked.noise, signPub: asked.sign } as DeviceKeys;
+    await this.api(`/api/devices/${asked.device}/approve`, { cert: await this.sign(k, asked.kind, asked.name) });
+  }
+
   /** Approve a daemon's join code (what `illogicald join` prints after
    * `#join=`) into this account, as the approve page does: the code must be
    * the one the waiting daemon's key gives. Returns its certificate. With
@@ -296,6 +304,29 @@ export class Device {
         await sleep(100);
       }
       return (hello.state?.panes ?? []).map((p) => p.id);
+    } finally {
+      sock.close();
+    }
+  }
+
+  /** A pane's text (`GET /api/panes/<pane>/capture`), over the relay,
+   * without typing into it. */
+  async capture(daemonId: string, pane: number, timeoutMs = 15_000): Promise<string> {
+    const sock = await this.connect(daemonId);
+    try {
+      let hello = false;
+      sock.onText = (t) => {
+        if (t.includes('"hello"')) hello = true;
+      };
+      sock.start();
+      const until = Date.now() + timeoutMs;
+      while (!hello) {
+        if (Date.now() > until) throw new Error("no hello from the daemon");
+        await sleep(100);
+      }
+      const r = await sock.request("GET", `/api/panes/${pane}/capture?format=text`, undefined, timeoutMs);
+      if (!r.ok) throw new Error(`capture of pane ${pane}: ${r.status}`);
+      return await r.text();
     } finally {
       sock.close();
     }
