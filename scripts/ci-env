@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Set up a CI job on geek's runner pool (#287). Every form sets CI_RUN in
+# $GITHUB_ENV: this run's binaries, which the build jobs keep there for
+# the jobs that need them (laid out as target/ is).
+#   ci-env target JOB   a kept build directory (CARGO_TARGET_DIR) for JOB,
+#                       one of two, so two runs' JOBs never share one, and
+#                       rustc at the lowest priority (scripts/ci-rustc);
+#   ci-env testnet      a test stack of the job's own: its name, ports and
+#                       inner subnet (testnet/env.sh), so stacks run side
+#                       by side;
+#   ci-env keep debug|static
+#                       keep this build's binaries in CI_RUN (debug: with
+#                       web/dist, which control's specs serve);
+#   ci-env use          make target/ and web/dist this run's.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+runs=$HOME/.cache/illogical-ci/runs
+run=$runs/$GITHUB_RUN_ID
+echo "CI_RUN=$run" >> "$GITHUB_ENV"
+case "${1:-}" in
+  target)
+    job=${2:?usage: ci-env target JOB}
+    n=$("$here/ci-slot" "target-$job" 2)
+    dir=$HOME/.cache/illogical-ci/$job-$n
+    echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+    # At one path for every runner's checkout: cargo keys its builds on it.
+    install -m 755 "$here/ci-rustc" "$HOME/.cache/illogical-ci/ci-rustc"
+    echo "RUSTC_WRAPPER=$HOME/.cache/illogical-ci/ci-rustc" >> "$GITHUB_ENV"
+    CARGO_TARGET_DIR=$dir "$here/ci-cap-target" 30
+    ;;
+  testnet)
+    n=$("$here/ci-slot" testnet 16)
+    {
+      echo "COMPOSE_PROJECT_NAME=illo-ci-$n"
+      echo "ILLOGICAL_TESTNET_SSH_PORT=$((25000 + n * 10))"
+      echo "ILLOGICAL_TESTNET_CONTROL_PORT=$((25001 + n * 10))"
+      echo "ILLOGICAL_TESTNET_FAKES_PORT=$((25002 + n * 10))"
+      echo "ILLOGICAL_TESTNET_INNER_NET=10.229.$((100 + n))"
+    } >> "$GITHUB_ENV"
+    echo "test stack illo-ci-$n"
+    ;;
+  keep)
+    case "${2:-}" in
+      debug) sub=debug ;;
+      static) sub=x86_64-unknown-linux-musl/release ;;
+      *) echo "usage: ci-env keep debug|static" >&2; exit 2 ;;
+    esac
+    mkdir -p "$run/$sub"
+    # Hard links: instant, and cargo replaces files rather than writing
+    # into them, so the next build into this directory leaves these alone.
+    for b in illogicald illogical illogical-control; do
+      ln -f "${CARGO_TARGET_DIR:?}/$sub/$b" "$run/$sub/$b"
+    done
+    if [ "$2" = debug ]; then rm -rf "$run/dist" && cp -a web/dist "$run/dist"; fi
+    # Runs from more than a day ago.
+    find "$runs" -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} +
+    ;;
+  use)
+    rm -rf target web/dist
+    ln -sfn "$run" target
+    if [ -d "$run/dist" ]; then cp -a "$run/dist" web/dist; fi
+    ;;
+  *) echo "usage: ci-env target JOB | testnet | keep debug|static | use" >&2; exit 2 ;;
+esac

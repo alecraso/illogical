@@ -31,8 +31,10 @@ jobs:
       - run: just static aarch64
       - run: just dist
       # In an Ubuntu 22.04 container (podman); fails if the bundles need a
-      # newer glibc than 2.35 (#170). arm64 runs under qemu-user emulation.
-      - run: just desktop-linux x86_64 && just desktop-linux aarch64
+      # newer glibc than 2.35 (#170). x86_64 only: geek has no arm64
+      # emulation for podman, so the arm64 app moves to GitHub's arm runner
+      # (#287).
+      - run: just desktop-linux x86_64
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -95,6 +97,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/release updater "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: scripts/release publish "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/release homebrew "$GITHUB_REF_NAME"

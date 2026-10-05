@@ -11,6 +11,9 @@
 //! the terminal, withdrawn by SIGTERM, and (under systemd) across a daemon
 //! restart.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

@@ -1,0 +1,8 @@
+# gitleaks' default rules, minus lock files: their package names trip the
+# generic rule ("libcrux-secrets" in a Cargo.lock), and they hold no secrets.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "lock files"
+paths = ['''(^|/)Cargo\.lock$''', '''(^|/)pnpm-lock\.yaml$''']

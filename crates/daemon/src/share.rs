@@ -79,10 +79,7 @@ pub struct Shares {
 }
 
 fn random_token() -> String {
-    let mut b = [0u8; 24];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b))
-        .expect("/dev/urandom");
+    let b = crate::push::random::<24>();
     format!("ils_{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>())
 }
 

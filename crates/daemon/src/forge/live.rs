@@ -335,10 +335,7 @@ fn save_hooks(h: &Hub) -> Result<(), String> {
     let path = hooks_file(&h.state_dir);
     let dir = path.parent().unwrap();
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    }
+    let _ = crate::perm::set(dir, 0o700);
     let f = HookFile { hooks: h.hooks.lock().unwrap().clone() };
     crate::store::write_atomic(&path, &serde_json::to_vec_pretty(&f).unwrap_or_default()).map_err(|e| e.to_string())
 }

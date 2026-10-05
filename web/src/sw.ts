@@ -89,6 +89,8 @@ interface Msg {
   reason?: { kind: string; actions: string[] };
   /** Control's own (#104): a device or a person waits for approval. */
   control?: boolean;
+  /** M61: an @mention in this thread (`pane-7`, `session-2`). */
+  thread?: string;
 }
 
 sw.addEventListener("push", (event: PushEvent) => {
@@ -229,13 +231,14 @@ sw.addEventListener("notificationclick", (event: ClickEvent) => {
   // Something that wants you (M24's reason) opens at its card on the swarm's
   // rail (M26); anything else at the pane.
   const where = data.reason ? "swarm" : "pane";
-  const url = pane ? (data.daemon ? `/#${where}=${data.daemon}.${pane}` : `/#${where}=${pane}`) : "/";
+  const thread = data.thread && /^(pane|session)-\d+$/.test(data.thread) ? data.thread : undefined;
+  const url = pane ? (data.daemon ? `/#${where}=${data.daemon}.${pane}` : `/#${where}=${pane}`) + (thread ? `&thread=${thread}` : "") : "/";
   event.waitUntil(
     (async () => {
       const wins = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const w of wins) {
         if (w.focus) {
-          w.postMessage({ type: data.reason ? "open-card" : "open-pane", pane, daemon: data.daemon });
+          w.postMessage({ type: data.reason ? "open-card" : "open-pane", pane, daemon: data.daemon, thread });
           return w.focus();
         }
       }

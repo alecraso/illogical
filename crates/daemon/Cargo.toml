@@ -13,16 +13,17 @@ base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 crossbeam-channel = "0.5.17"
 futures-util = "0.3.34"
+# The OS's random source on every system (not /dev/urandom, which Windows lacks).
+getrandom = "0.4"
 hkdf = "0.13.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
-illogical-core = { version = "0.18.0", path = "../core" }
-illogical-e2e = { version = "0.18.0", path = "../e2e" }
-illogical-proto = { version = "0.18.0", path = "../proto" }
-illogical-vt = { version = "0.18.0", path = "../vt" }
+illogical-core = { version = "0.20.0", path = "../core" }
+illogical-e2e = { version = "0.20.0", path = "../e2e" }
+illogical-proto = { version = "0.20.0", path = "../proto" }
+illogical-vt = { version = "0.20.0", path = "../vt" }
 instant-acme = { version = "0.8.5", features = ["rcgen"] }
-nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll", "socket", "uio", "hostname", "user", "dir"] }
 p256 = { version = "0.14.0", features = ["ecdh", "ecdsa"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "json"] }
@@ -49,11 +50,27 @@ url = "2.5.8"
 webpki-root-certs = "1.0.9"
 zstd = "0.14.0"
 
+# ptys, signals, sockets: Unix only. Windows gets ConPTY and named pipes (M56).
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", features = ["term", "process", "fs", "ioctl", "signal", "poll", "socket", "uio", "hostname", "user", "dir"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Time"] }
+
 [lints]
 workspace = true
 
 [dev-dependencies]
 futures-util = "0.3.34"
 illogical-testkit = { path = "../testkit" }
-rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-streamable-http-client-unix-socket", "transport-streamable-http-client-reqwest", "transport-child-process"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 rcgen = "0.14.10"
+
+[target.'cfg(unix)'.dev-dependencies]
+rmcp = { version = "=3.5.0", default-features = false, features = ["transport-streamable-http-client-unix-socket"] }
+
+[features]
+# Embed web/dist even in a debug build (rust-embed reads it from the source
+# tree at run time otherwise): CI's e2e shards run binaries built in another
+# job's checkout.
+debug-embed = ["rust-embed/debug-embed"]

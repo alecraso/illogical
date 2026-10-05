@@ -3,7 +3,8 @@
 #
 #   release check-version TAG      the tag matches the workspace version
 #   release check-desktop-version TAG   the tag matches the desktop app's
-#   release upload TAG FILE...     attach files to TAG's release (made if new)
+#   release upload TAG FILE...     attach files to TAG's release (a draft, made if new)
+#   release publish TAG            its notes from docs/releases/, then published as latest
 #   release sums TAG               SHA256SUMS of the release's tarballs
 #   release homebrew TAG           bump the formula in the Homebrew tap
 #   release updater TAG            latest.json for the desktop app's updater,
@@ -22,7 +23,9 @@ tap=git@github.com:arugula-salad/homebrew-tap.git
 ensure_release() {
   local tag=$1
   gh release view "$tag" -R "$repo" >/dev/null 2>&1 && return
-  gh release create "$tag" -R "$repo" --verify-tag --title "illogical ${tag#v}" \
+  # A draft until `publish`: a release with only the first job's files
+  # would be "latest" and break every other download link meanwhile.
+  gh release create "$tag" -R "$repo" --verify-tag --draft --title "illogical ${tag#v}" \
     --notes "Download the desktop app at https://illogical.widgets.wtf (it installs the daemon). Servers and headless machines: curl -fsSL https://illogical.widgets.wtf/install.sh | sh" >/dev/null 2>&1 \
     || gh release view "$tag" -R "$repo" >/dev/null
 }
@@ -48,6 +51,12 @@ case "${1:-}" in
     # --clobber replaces an asset of the same name (a re-run).
     gh release upload "$tag" -R "$repo" --clobber "$@"
     ;;
+  publish)
+    # Last: the notes from docs/releases/X.md, then out of draft as latest.
+    tag=$2; notes=docs/releases/${tag#v}.md
+    if [ -f "$notes" ]; then gh release edit "$tag" -R "$repo" --notes-file "$notes"; fi
+    gh release edit "$tag" -R "$repo" --draft=false --latest
+    ;;
   sums)
     ensure_release "$2"
     dir=$(mktemp -d)
@@ -56,7 +65,8 @@ case "${1:-}" in
     [ "$n" = 4 ] || { echo "expected 4 tarballs, found $n" >&2; exit 1; }
     # Every desktop download a release has (the updater's .app.tar.gz and
     # .sig files come too when TAURI_SIGNING_PRIVATE_KEY is set).
-    for f in illogical-desktop-linux-{x86_64,aarch64}.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe; do
+    # The arm64 Linux app comes back with GitHub's arm runner (#287).
+    for f in illogical-desktop-linux-x86_64.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe; do
       [ -f "$dir/$f" ] || { echo "the release has no $f" >&2; exit 1; }
     done
     (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)

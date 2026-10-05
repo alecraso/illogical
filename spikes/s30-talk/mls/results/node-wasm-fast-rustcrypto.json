@@ -1,0 +1,338 @@
+[
+ {
+  "n": 2,
+  "op": "create group",
+  "median_ms": 5.455582,
+  "min_ms": 5.455582,
+  "bytes": null
+ },
+ {
+  "n": 2,
+  "op": "batch add N-1 (setup)",
+  "median_ms": 11.644267999999999,
+  "min_ms": 11.644267999999999,
+  "bytes": 1635
+ },
+ {
+  "n": 2,
+  "op": "join from Welcome (setup)",
+  "median_ms": 5.723454,
+  "min_ms": 5.723454,
+  "bytes": 1739
+ },
+ {
+  "n": 2,
+  "op": "make KeyPackage",
+  "median_ms": 0.199945,
+  "min_ms": 0.183183,
+  "bytes": null
+ },
+ {
+  "n": 2,
+  "op": "add-one commit",
+  "median_ms": 1.272567,
+  "min_ms": 1.16234,
+  "bytes": 1747
+ },
+ {
+  "n": 2,
+  "op": "  receiver processes add",
+  "median_ms": 0.731692,
+  "min_ms": 0.629981,
+  "bytes": null
+ },
+ {
+  "n": 2,
+  "op": "join from Welcome",
+  "median_ms": 0.743955,
+  "min_ms": 0.636804,
+  "bytes": 2475
+ },
+ {
+  "n": 2,
+  "op": "  GroupInfo (published)",
+  "median_ms": 0,
+  "min_ms": 0,
+  "bytes": 2337
+ },
+ {
+  "n": 2,
+  "op": "encrypt message",
+  "median_ms": 0.08563000000000001,
+  "min_ms": 0.073438,
+  "bytes": 192
+ },
+ {
+  "n": 2,
+  "op": "decrypt message",
+  "median_ms": 0.110116,
+  "min_ms": 0.09379599999999999,
+  "bytes": null
+ },
+ {
+  "n": 2,
+  "op": "self-update commit",
+  "median_ms": 0.874711,
+  "min_ms": 0.795071,
+  "bytes": 1075
+ },
+ {
+  "n": 2,
+  "op": "  receiver processes update",
+  "median_ms": 0.57091,
+  "min_ms": 0.473949,
+  "bytes": null
+ },
+ {
+  "n": 2,
+  "op": "remove-one commit",
+  "median_ms": 0.695365,
+  "min_ms": 0.6372650000000001,
+  "bytes": 964
+ },
+ {
+  "n": 2,
+  "op": "  receiver processes remove",
+  "median_ms": 0.496742,
+  "min_ms": 0.413375,
+  "bytes": null
+ },
+ {
+  "n": 2,
+  "op": "external-commit join",
+  "median_ms": 1.0966159999999998,
+  "min_ms": 1.006889,
+  "bytes": 942
+ },
+ {
+  "n": 2,
+  "op": "  receiver processes ext join",
+  "median_ms": 0.643336,
+  "min_ms": 0.57616,
+  "bytes": null
+ },
+ {
+  "n": 10,
+  "op": "create group",
+  "median_ms": 0.148509,
+  "min_ms": 0.148509,
+  "bytes": null
+ },
+ {
+  "n": 10,
+  "op": "batch add N-1 (setup)",
+  "median_ms": 3.9243200000000003,
+  "min_ms": 3.9243200000000003,
+  "bytes": 7778
+ },
+ {
+  "n": 10,
+  "op": "join from Welcome (setup)",
+  "median_ms": 1.4536259999999999,
+  "min_ms": 1.4536259999999999,
+  "bytes": 8367
+ },
+ {
+  "n": 10,
+  "op": "make KeyPackage",
+  "median_ms": 0.180609,
+  "min_ms": 0.171482,
+  "bytes": null
+ },
+ {
+  "n": 10,
+  "op": "add-one commit",
+  "median_ms": 2.418867,
+  "min_ms": 2.254959,
+  "bytes": 2474
+ },
+ {
+  "n": 10,
+  "op": "  receiver processes add",
+  "median_ms": 0.901281,
+  "min_ms": 0.844253,
+  "bytes": null
+ },
+ {
+  "n": 10,
+  "op": "join from Welcome",
+  "median_ms": 1.508489,
+  "min_ms": 1.3968699999999998,
+  "bytes": 7819
+ },
+ {
+  "n": 10,
+  "op": "  GroupInfo (published)",
+  "median_ms": 0,
+  "min_ms": 0,
+  "bytes": 7681
+ },
+ {
+  "n": 10,
+  "op": "encrypt message",
+  "median_ms": 0.088415,
+  "min_ms": 0.08237399999999999,
+  "bytes": 192
+ },
+ {
+  "n": 10,
+  "op": "decrypt message",
+  "median_ms": 0.108714,
+  "min_ms": 0.10116900000000001,
+  "bytes": null
+ },
+ {
+  "n": 10,
+  "op": "self-update commit",
+  "median_ms": 1.9891,
+  "min_ms": 1.847315,
+  "bytes": 1801
+ },
+ {
+  "n": 10,
+  "op": "  receiver processes update",
+  "median_ms": 0.699662,
+  "min_ms": 0.665408,
+  "bytes": null
+ },
+ {
+  "n": 10,
+  "op": "remove-one commit",
+  "median_ms": 1.901406,
+  "min_ms": 1.7959079999999998,
+  "bytes": 1725
+ },
+ {
+  "n": 10,
+  "op": "  receiver processes remove",
+  "median_ms": 0.702217,
+  "min_ms": 0.673914,
+  "bytes": null
+ },
+ {
+  "n": 10,
+  "op": "external-commit join",
+  "median_ms": 2.316344,
+  "min_ms": 2.230804,
+  "bytes": 1141
+ },
+ {
+  "n": 10,
+  "op": "  receiver processes ext join",
+  "median_ms": 0.7133280000000001,
+  "min_ms": 0.696056,
+  "bytes": null
+ },
+ {
+  "n": 50,
+  "op": "create group",
+  "median_ms": 0.16185400000000003,
+  "min_ms": 0.16185400000000003,
+  "bytes": null
+ },
+ {
+  "n": 50,
+  "op": "batch add N-1 (setup)",
+  "median_ms": 19.607161,
+  "min_ms": 19.607161,
+  "bytes": 38088
+ },
+ {
+  "n": 50,
+  "op": "join from Welcome (setup)",
+  "median_ms": 5.956552,
+  "min_ms": 5.956552,
+  "bytes": 40669
+ },
+ {
+  "n": 50,
+  "op": "make KeyPackage",
+  "median_ms": 0.178706,
+  "min_ms": 0.172483,
+  "bytes": null
+ },
+ {
+  "n": 50,
+  "op": "add-one commit",
+  "median_ms": 8.150696,
+  "min_ms": 7.825626000000001,
+  "bytes": 5824
+ },
+ {
+  "n": 50,
+  "op": "  receiver processes add",
+  "median_ms": 1.599469,
+  "min_ms": 1.5285769999999999,
+  "bytes": null
+ },
+ {
+  "n": 50,
+  "op": "join from Welcome",
+  "median_ms": 5.382013,
+  "min_ms": 5.0481679999999995,
+  "bytes": 34041
+ },
+ {
+  "n": 50,
+  "op": "  GroupInfo (published)",
+  "median_ms": 0,
+  "min_ms": 0,
+  "bytes": 33901
+ },
+ {
+  "n": 50,
+  "op": "encrypt message",
+  "median_ms": 0.092634,
+  "min_ms": 0.08959800000000001,
+  "bytes": 192
+ },
+ {
+  "n": 50,
+  "op": "decrypt message",
+  "median_ms": 0.113363,
+  "min_ms": 0.106529,
+  "bytes": null
+ },
+ {
+  "n": 50,
+  "op": "self-update commit",
+  "median_ms": 7.196446,
+  "min_ms": 6.97985,
+  "bytes": 5151
+ },
+ {
+  "n": 50,
+  "op": "  receiver processes update",
+  "median_ms": 1.4497589999999998,
+  "min_ms": 1.3773730000000002,
+  "bytes": null
+ },
+ {
+  "n": 50,
+  "op": "remove-one commit",
+  "median_ms": 7.074768000000001,
+  "min_ms": 6.930818,
+  "bytes": 5075
+ },
+ {
+  "n": 50,
+  "op": "  receiver processes remove",
+  "median_ms": 1.408953,
+  "min_ms": 1.392311,
+  "bytes": null
+ },
+ {
+  "n": 50,
+  "op": "external-commit join",
+  "median_ms": 8.432324,
+  "min_ms": 8.098968999999999,
+  "bytes": 2488
+ },
+ {
+  "n": 50,
+  "op": "  receiver processes ext join",
+  "median_ms": 1.2657230000000002,
+  "min_ms": 1.238172,
+  "bytes": null
+ }
+]

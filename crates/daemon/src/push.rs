@@ -7,7 +7,6 @@
 //! the state directory.
 
 use std::{
-    io::Read,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -49,7 +48,7 @@ pub struct Push {
 
 pub(crate) fn random<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];
-    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).expect("/dev/urandom");
+    getrandom::fill(&mut b).expect("the OS's random source");
     b
 }
 

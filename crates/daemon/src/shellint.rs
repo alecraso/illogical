@@ -17,7 +17,6 @@
 
 use std::{
     fs, io,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -42,7 +41,7 @@ impl Integration {
             let p = dir.join(path);
             fs::create_dir_all(p.parent().unwrap())?;
             fs::write(&p, text)?;
-            fs::set_permissions(&p, fs::Permissions::from_mode(0o644))?;
+            crate::perm::set(&p, 0o644)?;
         }
         Ok(Self { dir })
     }
@@ -120,6 +119,8 @@ mod tests {
         }
     }
 
+    // Unix: bash's integration (PowerShell's is M60, #223).
+    #[cfg(unix)]
     #[test]
     fn bash_login_becomes_posix_with_env() {
         let i = Integration { dir: "/x".into() };

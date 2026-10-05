@@ -25,7 +25,7 @@ or an account skip without it and name what's missing
 
 | Command | What it runs | In CI |
 |---|---|---|
-| `cargo test --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/`, `ssh.rs` and `reboot.rs` among them (Docker) | Linux and macOS |
+| `cargo nextest run --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/`, `ssh.rs` and `reboot.rs` among them (Docker) | Linux and macOS |
 | `just e2e-interop` (in `just test`) | the browser's end-to-end crypto (`web/src/e2e`) against Rust's (`crates/e2e`): certificate vectors made by `crates/e2e/examples/interop.rs`, and a Noise handshake with its `responder` | Linux and macOS |
 | `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and real daemons; headless devices sign in, enroll, approve the daemons' join codes and reach them directly and through the relay; the CLI (M49) logs in with a code the device approves and, with no daemon of its own, runs, lists and captures on one machine directly and one through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one): the `chrome` project, and `webkit` for `*.webkit.spec.ts` | Linux (Playwright's Chromium and WebKit) |
@@ -39,11 +39,36 @@ or an account skip without it and name what's missing
 | `testnet/macos/desktop.sh`, `testnet/macos/update.sh` | the macOS app from its .dmg in a fresh tart VM, and its updater | no |
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
-CI (`.github/workflows/check.yml`) runs on pushes, on our own machines: the
-testnet's ssh and control profiles, `just check` and `just e2e` on Linux
-(geek); `just test` and `just e2e-webkit` on macOS (jake-mini). Both
-runners need Docker (the testnet, and `ssh.rs` in `just test`): without it
-the run fails. `just browsers` installs Playwright's browsers (with their
+CI (`.github/workflows/check.yml`) runs on pushes, every job it can at
+once (#287); a new push to a branch cancels that branch's run:
+- **lint** (GitHub's runners): rustfmt, shellcheck, `just test-scripts`
+  and gitleaks.
+- On geek's pool (twelve runners, `linux-x86_64-ci`):
+  - **build** and **static**: the debug binaries (with `--features
+    debug-embed`, so they carry `web/dist`) and the box's static ones,
+    once, kept for the run's other jobs (`scripts/ci-env keep`);
+  - **clippy**: Linux, both Macs (`just check-macos`), the desktop app
+    and `just notices`;
+  - **test**: `just test`, the box's binaries from static;
+  - **testnet**: the test stack's ssh and control profiles;
+  - **e2e**: the specs (`E2E_SET=rest`) in six `--shard`s, each with its
+    own test daemon on a free port; **stack**: those on the test stack
+    (`E2E_SET=stack`); **perf**: the specs that time things (`E2E_SET=perf`:
+    the frame rates, `editors.spec.ts`), after the shards, which leave geek
+    too busy to measure them.
+  Each job takes one of two build directories kept for its kind of job,
+  and a test stack with its own name, ports and subnet (`scripts/ci-env`),
+  so jobs and runs on geek don't share either.
+- **macos** (jake-mini): `just test` and `just e2e-webkit`.
+
+The Rust tests run under cargo-nextest (`.config/nextest.toml`): each in
+its own process and all at once, `ssh.rs` and `reboot.rs` one at a time
+(the test stack). CI's profile (`NEXTEST_PROFILE=ci`) retries a failure
+once and reports a test that passes the second time as flaky.
+
+geek and jake-mini need Docker (the testnet, and `ssh.rs` in `just test`):
+without it the run fails. To run one shard's specs locally: `E2E_SET=rest
+pnpm exec playwright test --shard=2/6` in `web/`. `just browsers` installs Playwright's browsers (with their
 system libraries on Linux, if sudo needs no password; otherwise run `sudo
 pnpm exec playwright install-deps` in `web/` once). See
 [development.md](development.md) for the runners.

@@ -2,6 +2,9 @@
 //! (`illogical send --wait`), against the replay agent playing a recorded
 //! Claude Code in a terminal pane, with no hooks.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 mod replay;
 

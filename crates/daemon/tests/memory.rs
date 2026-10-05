@@ -5,6 +5,9 @@
 //! headroom over what step 1 measured, but not enough to hide either big
 //! fix coming undone: Zig's signal stack (+1.3 MB a pane) or glibc keeping
 //! what closed panes freed. Linux only: it reads /proc.
+
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
 #![cfg(target_os = "linux")]
 
 use std::time::Duration;

@@ -5,6 +5,9 @@
 //! same success or error, and the same body once ids, checksums and the
 //! known differences are set aside.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
@@ -706,6 +709,13 @@ fn iterm2s_conversation_gets_tmuxs_answers() {
     );
 
     // ---- vi, typed into, left running
+    // A run that died left vi's swap file, and every vi after it opened on
+    // its question: none of those (the fixture has this file's name).
+    for f in std::fs::read_dir("/tmp").unwrap().flatten() {
+        if f.file_name().to_string_lossy().starts_with(".s11-vim.txt.sw") {
+            let _ = std::fs::remove_file(f.path());
+        }
+    }
     paste(&mut c, p0, "vi -u NONE -N /tmp/s11-vim.txt\r");
     c.pump(Duration::from_secs(1));
     c.wait_idle();

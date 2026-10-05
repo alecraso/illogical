@@ -8,6 +8,9 @@
 //! Under systemd, one held in a pane's scope, then by the block's own
 //! agent (#82).
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{path::PathBuf, time::Duration};

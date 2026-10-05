@@ -5,6 +5,9 @@
 //! without a wisp token or the static build (`just static`). Going cold is
 //! in `web/e2e/resident.spec.ts`.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output},

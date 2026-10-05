@@ -1,5 +1,8 @@
 //! End to end against the real binary: attach, input, detach, resume.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};

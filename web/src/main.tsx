@@ -20,6 +20,7 @@ import { SwarmView } from "./swarm/view";
 import { fakeSwarm } from "./swarm/fake";
 import { closeSwarm, onSwarmRoute, swarmRoute } from "./swarm/route";
 import { setupDesktop } from "./desktop";
+import { openThread } from "./ui/threads";
 
 // Served by illogical control (M17), not a daemon: sign in, enroll this
 // browser, and reach daemons through end-to-end channels. A read-only link
@@ -222,9 +223,10 @@ if (!linkTarget) {
 }
 
 
-// Opened from a notification (`#pane=N`), or told to by the service worker.
-// Notifications come from the home daemon, so show it first.
-const openPane = (pane: number, daemon?: string) => {
+// Opened from a notification (`#pane=N`, with `&thread=pane-N` for an
+// @mention, M61), or told to by the service worker. Notifications come
+// from the home daemon, so show it first.
+const openPane = (pane: number, daemon?: string, thread?: string) => {
   // From a notification through control: that daemon's host first.
   const host = daemon ? directory.list?.hosts.find((h) => h.id === daemon)?.name : undefined;
   if (host) directory.select(host);
@@ -232,6 +234,8 @@ const openPane = (pane: number, daemon?: string) => {
   const go = () => {
     if (!client.info(pane)) return false;
     client.setActive(pane);
+    const t = /^(pane|session)-(\d+)$/.exec(thread ?? "");
+    if (t) openThread(client, t[1] === "pane" ? { pane: Number(t[2]) } : { session: Number(t[2]) });
     return true;
   };
   if (!go()) {
@@ -240,12 +244,12 @@ const openPane = (pane: number, daemon?: string) => {
 };
 // A pane opened on the home daemon from elsewhere (a sandbox shell).
 window.addEventListener("illogical:open-pane", (e) => openPane((e as CustomEvent<number>).detail));
-const fromHash = /^#pane=(?:([0-9a-f]+)\.)?(\d+)$/.exec(location.hash);
+const fromHash = /^#pane=(?:([0-9a-f]+)\.)?(\d+)(?:&thread=((?:pane|session)-\d+))?$/.exec(location.hash);
 if (fromHash) {
-  const [, daemon, pane] = fromHash;
+  const [, daemon, pane, thread] = fromHash;
   // A notification through control names its daemon: once its host is in
   // the list, open the pane there.
-  const go = () => openPane(Number(pane), daemon);
+  const go = () => openPane(Number(pane), daemon, thread);
   if (daemon && !directory.find?.(directory.list?.hosts.find((h) => h.id === daemon)?.name ?? "")) {
     const off = directory.subscribe(() => {
       if (directory.list?.hosts.some((h) => h.id === daemon)) {

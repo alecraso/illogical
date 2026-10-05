@@ -1,10 +1,11 @@
 //! What the daemon asks the OS about processes and open files: /proc on
-//! Linux, libproc and sysctl on macOS.
+//! Linux, libproc and sysctl on macOS, the process API on Windows.
 
+#[cfg(unix)]
+use std::os::fd::RawFd;
 use std::{
     ffi::OsString,
     fs::{File, Metadata},
-    os::fd::RawFd,
     path::{Path, PathBuf},
 };
 
@@ -46,6 +47,7 @@ pub fn exe(pid: u32) -> Option<PathBuf> {
 }
 
 /// The path an open descriptor refers to now.
+#[cfg(unix)]
 pub fn fd_path(fd: RawFd) -> std::io::Result<PathBuf> {
     imp::fd_path(fd)
 }
@@ -55,6 +57,26 @@ pub fn fd_path(fd: RawFd) -> std::io::Result<PathBuf> {
 /// its own metadata (links not followed).
 pub fn list_dir(dir: &File, real: &Path) -> std::io::Result<Vec<(OsString, Metadata)>> {
     imp::list_dir(dir, real)
+}
+
+/// Whether a process with this pid exists (someone else's included).
+pub fn alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // EPERM is someone's process all the same; only ESRCH means it's gone.
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None) != Err(nix::errno::Errno::ESRCH)
+    }
+    #[cfg(not(unix))]
+    start_time(pid).is_some()
+}
+
+/// End a process now (SIGKILL; TerminateProcess on Windows).
+#[cfg(any(windows, test))]
+pub fn kill(pid: u32) {
+    #[cfg(unix)]
+    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::SIGKILL);
+    #[cfg(not(unix))]
+    imp::kill(pid);
 }
 
 /// Block until a process (not necessarily our child) has ended. Returns at
@@ -312,7 +334,114 @@ mod imp {
     }
 }
 
-#[cfg(test)]
+/// Windows: start times and waiting are real; what a pane's process is
+/// doing (cwd, argv, the foreground program) comes in M60 (#223).
+#[cfg(windows)]
+mod imp {
+    use std::{
+        ffi::OsString,
+        fs::{File, Metadata},
+        path::{Path, PathBuf},
+    };
+
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, FILETIME, HANDLE, WAIT_OBJECT_0},
+        System::Threading::{
+            GetProcessTimes, INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+            PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+        },
+    };
+
+    struct Process(HANDLE);
+    impl Drop for Process {
+        fn drop(&mut self) {
+            // SAFETY: a handle we opened.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    fn open(pid: u32, access: u32) -> Option<Process> {
+        // SAFETY: a plain call; a null handle means no such process.
+        let h = unsafe { OpenProcess(access, 0, pid) };
+        (!h.is_null()).then_some(Process(h))
+    }
+
+    pub fn list_dir(_dir: &File, real: &Path) -> std::io::Result<Vec<(OsString, Metadata)>> {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(real)?.flatten() {
+            if let Ok(meta) = std::fs::symlink_metadata(e.path()) {
+                out.push((e.file_name(), meta));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Its creation time, in 100 ns since 1601.
+    pub fn start_time(pid: u32) -> Option<u64> {
+        let p = open(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        let z = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let (mut created, mut exited, mut kernel, mut user) = (z, z, z, z);
+        // SAFETY: four valid FILETIMEs for the call to fill.
+        let ok = unsafe { GetProcessTimes(p.0, &mut created, &mut exited, &mut kernel, &mut user) };
+        (ok != 0).then_some((created.dwHighDateTime as u64) << 32 | created.dwLowDateTime as u64)
+    }
+
+    pub fn cwd(_pid: u32) -> Option<PathBuf> {
+        None
+    }
+
+    pub fn ppid(_pid: u32) -> Option<u32> {
+        None
+    }
+
+    pub fn foreground(_pid: u32) -> Option<u32> {
+        None
+    }
+
+    pub fn argv(_pid: u32) -> Option<Vec<Vec<u8>>> {
+        None
+    }
+
+    pub fn comm(_pid: u32) -> Option<String> {
+        None
+    }
+
+    pub fn exe(_pid: u32) -> Option<PathBuf> {
+        None
+    }
+
+    pub fn kill(pid: u32) {
+        if let Some(p) = open(pid, PROCESS_TERMINATE) {
+            // SAFETY: a handle we opened, with PROCESS_TERMINATE.
+            unsafe { TerminateProcess(p.0, 1) };
+        }
+    }
+
+    pub fn wait_gone(pid: u32) -> bool {
+        let Some(p) = open(pid, PROCESS_SYNCHRONIZE) else { return true };
+        // SAFETY: a handle we opened, with SYNCHRONIZE.
+        unsafe { WaitForSingleObject(p.0, INFINITE) == WAIT_OBJECT_0 }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn start_time_and_waiting() {
+        let me = std::process::id();
+        assert!(start_time(me).is_some());
+        assert_eq!(start_time(me), start_time(me));
+        let mut child = std::process::Command::new("cmd").args(["/c", "exit 0"]).spawn().unwrap();
+        let pid = child.id();
+        assert!(wait_gone(pid));
+        let _ = child.wait();
+    }
+}
+
+// Unix: they read /proc or libproc, and spawn `sh`.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

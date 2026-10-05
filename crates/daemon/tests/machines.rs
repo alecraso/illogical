@@ -2,6 +2,9 @@
 //! daemon restart without losing or repeating output, and takes its sprite
 //! with it when it closes. Skips without a wisp token on this host.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     path::{Path, PathBuf},
     process::Command,

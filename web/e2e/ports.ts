@@ -5,8 +5,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
-import type { Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Server } from "node:net";
 import { dirname, join } from "node:path";
 
 /** What to pass to `--listen` (and `--block-listen`): any free port. */

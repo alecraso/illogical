@@ -3,6 +3,9 @@
 //! timing in a pane, and the pane's attention follows what the screen
 //! shows. No hooks are installed.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 mod replay;
 

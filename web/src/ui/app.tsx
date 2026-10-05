@@ -7,6 +7,8 @@ import { drag, startDrag, type Dragged, type Target } from "./drag";
 import { useSubscribe, usePhone } from "./hooks";
 import { closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./menu";
 import { KeyBar, PhoneHeader } from "./phone";
+import { ThreadBadge, ThreadLayer } from "./threads";
+import { ChatButton, ChatLayer } from "./chat";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
 import { openSwarm } from "../swarm/route";
@@ -107,6 +109,8 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <MenuLayer />
       <PromptLayer />
       <AgentDialogLayer />
+      <ThreadLayer phone={phone} />
+      {state && <ChatLayer client={client} />}
       <ConversationsLayer />
       <AppsLayer />
       <SandboxesLayer />
@@ -159,6 +163,7 @@ function TopBar({
       <button class="swarm-button" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
         Swarm
       </button>
+      <ChatButton client={client} />
       {renaming?.kind === "session" && renaming.id === session.id ? (
         <RenameInput
           value={session.name}
@@ -169,7 +174,12 @@ function TopBar({
         />
       ) : (
         <button class="session-button" title="Sessions" onClick={sessionMenu} onContextMenu={sessionMenu}>
-          {session.name} <span class="caret">▾</span>
+          {session.name}
+          {/* M61: the session's thread has messages you haven't read. */}
+          {client.thread({ session: session.id })?.unread ? (
+            <span class={client.thread({ session: session.id })?.mention ? "session-unread mention" : "session-unread"} title="New in the session thread" />
+          ) : null}{" "}
+          <span class="caret">▾</span>
         </button>
       )}
       <div class="tabbar" role="tablist">
@@ -523,6 +533,7 @@ function PaneSlot({
       <HostBadge client={client} id={id} />
       <StartedByBadge client={client} id={id} />
       <PaneMarks client={client} pane={id} />
+      {info?.type !== "remote" && <ThreadBadge client={client} pane={id} />}
       {!active && (info?.attention === "needs_input" || info?.attention === "done") && (
         <div class={`pane-badge ${info.attention}`} title={info.reason?.headline}>
           {info.reason?.kind === "failed" ? "failed" : info.reason?.kind === "exited" ? "exited" : info.attention === "done" ? "done" : "needs you"}

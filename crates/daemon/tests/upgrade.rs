@@ -3,6 +3,9 @@
 //! systemd user service, so it needs a systemd user manager; it skips
 //! itself where there isn't one.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     path::PathBuf,
     process::Command,

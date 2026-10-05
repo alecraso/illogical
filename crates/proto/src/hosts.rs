@@ -128,6 +128,10 @@ pub struct HostFeatures {
     pub fountain: bool,
     /// A studio is linked (`illogical studio login`).
     pub studio: bool,
+    /// Threads on panes and sessions (M61): always, from daemons that have
+    /// them. Older daemons leave it out, and pages hide threads there.
+    #[serde(default)]
+    pub threads: bool,
 }
 
 /// A machine's Fountain runner, for its line in the machine panel and the

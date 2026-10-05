@@ -15,12 +15,12 @@ export const standalone = () =>
 
 /** Register the service worker (also what makes the app installable). A
  * notification through control (M21) says which daemon it's from. */
-export async function registerWorker(onOpenPane: (pane: number, daemon?: string) => void) {
+export async function registerWorker(onOpenPane: (pane: number, daemon?: string, thread?: string) => void) {
   if (!("serviceWorker" in navigator)) return;
   try {
     await navigator.serviceWorker.register("/sw.js");
     navigator.serviceWorker.addEventListener("message", (e) => {
-      if (e.data?.type === "open-pane" && typeof e.data.pane === "number") onOpenPane(e.data.pane, e.data.daemon);
+      if (e.data?.type === "open-pane" && typeof e.data.pane === "number") onOpenPane(e.data.pane, e.data.daemon, e.data.thread);
       // #104: control's page looks for what waits (its prompt shows).
       if (e.data?.type === "control-refresh") dispatchEvent(new Event("illogical:control-refresh"));
       // M26: at its card on the swarm's rail.

@@ -23,7 +23,6 @@
 use std::{
     collections::HashMap,
     io,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex, OnceLock, Weak},
@@ -233,7 +232,11 @@ impl Server {
 
     async fn connect(&self) -> io::Result<Conn> {
         match &self.on {
+            #[cfg(unix)]
             On::Here => Ok(Box::new(tokio::net::UnixStream::connect(&self.settings.socket).await?)),
+            // code-server listens on a Unix socket; Windows has none for it.
+            #[cfg(not(unix))]
+            On::Here => Err(io::Error::other("code-server here needs a Unix socket")),
             On::Vm { provider, sprite } => provider.dial(sprite, VM_PORT).await,
         }
     }
@@ -318,8 +321,13 @@ impl Server {
             c.arg(format!("--unit=illogical-code-server-{}", unique())).arg("--").arg(bin);
             c
         } else {
-            let mut c = tokio::process::Command::new(bin);
-            c.process_group(0);
+            let c = tokio::process::Command::new(bin);
+            #[cfg(unix)]
+            let c = {
+                let mut c = c;
+                c.process_group(0);
+                c
+            };
             c
         };
         for k in crate::sys::SERVICE_ENV {
@@ -434,7 +442,7 @@ fn args(dir: &Path, idle: u64, grace: u64) -> Vec<String> {
 fn prepare(dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir.join("user/User"))?;
     std::fs::create_dir_all(dir.join("extensions"))?;
-    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    let _ = crate::perm::set(dir, 0o700);
     store::write_atomic(&dir.join("config.yaml"), b"auth: none\ncert: false\n")?;
     let settings = dir.join("user/User/settings.json");
     if !settings.exists() {
@@ -584,8 +592,7 @@ fn tail(path: &Path) -> String {
 
 /// A name part no other process picks at the same time.
 fn unique() -> String {
-    let mut b = [0u8; 6];
-    let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b));
+    let b = crate::push::random::<6>();
     format!("{}-{}", std::process::id(), hex::encode(b))
 }
 
@@ -624,6 +631,8 @@ exec "$root/bin/code-server" --config "$d/config.yaml" --user-data-dir "$d/user"
 mod tests {
     use super::*;
 
+    // code-server here is Linux's and macOS's.
+    #[cfg(unix)]
     #[test]
     fn every_platform_has_a_checksum() {
         for p in ["linux-amd64", "linux-arm64", "macos-amd64", "macos-arm64"] {
@@ -633,6 +642,8 @@ mod tests {
         assert!(platform().is_some());
     }
 
+    // code-server here is Linux's and macOS's.
+    #[cfg(unix)]
     #[test]
     fn flags_keep_it_to_its_own_folder() {
         let a = args(Path::new("/s/editor"), 30, 300);
@@ -646,6 +657,8 @@ mod tests {
         assert!(a.contains(&"--disable-workspace-trust".to_owned()));
     }
 
+    // code-server here is Linux's and macOS's.
+    #[cfg(unix)]
     #[test]
     fn settings_and_extension_go_in_once() {
         let dir = std::env::temp_dir().join(format!("ilg-editor-{}", unique()));

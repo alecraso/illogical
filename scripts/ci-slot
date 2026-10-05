@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Claim one of COUNT slots called NAME on this machine for the rest of the
+# CI job, and print its number (1 to COUNT); wait while all are taken.
+#
+# The jobs on geek's runner pool run side by side (#287), so what one job
+# uses can't be another's at the same time: a build directory (cargo would
+# rebuild the binaries under another job's tests) or a test stack's
+# containers and ports. A slot is a lock in ~/.cache/illogical-ci/slots,
+# held by a sleep in the background that inherits it. The runner kills a
+# job's leftover processes when the job ends, which frees the slot; the
+# timeout frees it if that never happens.
+set -euo pipefail
+name=$1 count=$2
+dir=$HOME/.cache/illogical-ci/slots
+mkdir -p "$dir"
+waited=
+while :; do
+  for n in $(seq 1 "$count"); do
+    exec 9>"$dir/$name-$n.lock"
+    if flock -n 9; then
+      nohup timeout 6h sleep infinity >/dev/null 2>&1 &
+      exec 9>&-
+      echo "$n"
+      exit 0
+    fi
+    exec 9>&-
+  done
+  [ -n "$waited" ] || { echo "every $name slot is taken: waiting" >&2; waited=1; }
+  sleep 5
+done

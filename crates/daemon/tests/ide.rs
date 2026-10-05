@@ -7,6 +7,9 @@
 //! first closes the card. A daemon restart keeps the connection and the
 //! card. Diffs can go to another IDE instead.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

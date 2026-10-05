@@ -44,10 +44,6 @@ use std::{
     convert::Infallible,
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom},
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-    },
     path::{Component, Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -189,7 +185,9 @@ impl Scope {
 
     /// Open what `real` names without following a last-moment symlink, and
     /// check that what was opened is still that, allowed.
+    #[cfg(unix)]
     fn open(&self, real: &Path, dir: bool) -> Res<File> {
+        use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
         let mut flags = nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_NONBLOCK;
         if dir {
             flags |= nix::fcntl::OFlag::O_DIRECTORY;
@@ -198,6 +196,27 @@ impl Scope {
             OpenOptions::new().read(true).custom_flags(flags.bits()).open(real).map_err(|e| FsError::io(real, e))?;
         let opened = crate::procinfo::fd_path(f.as_raw_fd()).map_err(|e| FsError::io(real, e))?;
         if opened != real {
+            return Err(FsError::Denied(format!("{}: changed while it was opened", real.display())));
+        }
+        Ok(f)
+    }
+
+    /// Windows: open the link itself rather than its target (a reparse
+    /// point), directories included, then check the path still resolves to
+    /// `real`. (The handle's own final path is M56's, #219.)
+    #[cfg(windows)]
+    fn open(&self, real: &Path, dir: bool) -> Res<File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        let mut flags = FILE_FLAG_OPEN_REPARSE_POINT;
+        if dir {
+            flags |= FILE_FLAG_BACKUP_SEMANTICS;
+        }
+        let f = OpenOptions::new().read(true).custom_flags(flags).open(real).map_err(|e| FsError::io(real, e))?;
+        if f.metadata().map_err(|e| FsError::io(real, e))?.is_dir() != dir
+            || real.canonicalize().map_err(|e| FsError::io(real, e))? != real
+        {
             return Err(FsError::Denied(format!("{}: changed while it was opened", real.display())));
         }
         Ok(f)
@@ -268,8 +287,12 @@ fn entry_of(path: &Path, name: &str, meta: &std::fs::Metadata) -> FsEntry {
         path: path.display().to_string(),
         kind,
         size: meta.len(),
-        mode: meta.permissions().mode() & 0o7777,
-        mtime_ms: (meta.mtime().max(0) as u64) * 1000 + (meta.mtime_nsec().max(0) as u64) / 1_000_000,
+        mode: crate::perm::mode(meta) & 0o7777,
+        mtime_ms: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as u64),
         target,
     }
 }
@@ -737,7 +760,8 @@ fn cd_line(path: &str) -> Option<String> {
     Some(format!("\x05\x15cd -- {arg}\r"))
 }
 
-#[cfg(test)]
+// Unix: they make symlinks, which Windows only allows in developer mode.
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::fs::symlink;
 

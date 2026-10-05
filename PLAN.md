@@ -4518,6 +4518,110 @@ The S29 pty host becomes `illogicald _shim` on Windows:
 
 Merged to main in 9ebcc45. Every manual and real-device check became a test that runs with no person: the testnet profiles (`ssh`, `control`, `tailnet`) and the Docker stacks for forges, two hosts and VS Code; a headless approving device (`web/fixtures/device.ts`); the tart macOS VM harness (`just macos ...`); phone device contexts with a fake push service; a replay agent for terminal agents; `crates/testkit`; Playwright and the testnet in CI. docs/testing.md is the reference. Rules that came with it: missing Docker or tart fails a test (only `ILLOGICAL_SKIP_DOCKER=1` / `ILLOGICAL_SKIP_MACOS_VM=1` skip, loudly); secret-gated tests skip naming the secret; tests wait on what the daemon reports, not on time. Left: #256 (wisp reboot), #257 (iOS Simulator), and #93's github.com half (#264); follow-ups #252-#262.
 
+### Talk track (S30, M61–M64, added 2026-10-05)
+
+A team should be able to talk about a pane, about a session and about everything else, by text and by voice, inside illogical. Control's promise (control.md, "What it can and can't see") still holds: it can't read what it relays and never holds a private key. So control keeps no plaintext messages, and no hosted voice server decrypts audio.
+
+**Decisions (2026-10-05, Jake):**
+
+- **Pane and session threads live on the daemon** that owns the pane and travel over the Noise channels clients already have. The pane's rules apply to its thread: watchers read and drivers post, private panes stay private, and a shared session's guests see its threads.
+- **Team channels are ciphertext in control.** MLS (openmls), with each device a member. A new version of the team's signed roster moves the group to its next epoch, so control can't add a reader. Control orders, stores and fans out messages, and reads none of them.
+- **Voice is WebRTC on a session,** signaled through the session's daemon. Audio goes peer to peer, encrypted end to end by DTLS-SRTP, and each device signs its DTLS fingerprint with its device key. Control only hands out short-lived TURN credentials, and TURN sees only ciphertext.
+- **Agents are in the conversation.** MCP `read_thread` / `post_thread`, and an @mention in a pane's thread goes to that pane's agent.
+- **TURN: Cloudflare Realtime TURN for the hosted control** (Jake, 2026-10-05, after S30). Control holds the API key as a Fly secret and hands devices short-lived credentials. The privacy notice names Cloudflare. Self-hosted controls document coturn.
+- **Not Slack.** No reactions, file uploads, video or screen share: everyone in a session already sees its panes.
+
+**Order:** S30 (#239) first. M61 (#240) after it. M62 (#241) after S30 and M61. M63 (#242) after S30, in parallel with M62. M64 (#243) is gated. Tracker #244.
+
+#### S30: talk spike (#239)
+
+WebRTC and the mic in each client:
+- the desktop app on WebKitGTK (distro build and the AppImage's bundled WebKit), WKWebView on jake-air, and WebView2 on the Win11 VM;
+- Chrome, Firefox and Safari;
+- the phone PWA in the background.
+
+Where WebKitGTK has none, measure str0m or webrtc-rs with cpal on the Tauri side. For openmls in wasm: size, join and commit times at 2, 10 and 50 devices, and how invites, *Ask me first*, removal, locking and removed devices map to commits and Welcomes. Also: offline devices several epochs behind; what a hostile control gets from dropping or reordering messages; whether team daemons should be MLS members so agents can post; coturn on Fly against Cloudflare's TURN.
+
+**Result (2026-10-05, PR #270): go for both.**
+- **Voice:**
+  - WebRTC, including relay-only calls through TURN, works in Chrome, Firefox, Safari, WKWebView and Edge/WebView2.
+  - **No distro's WebKitGTK has WebRTC** (upstream builds it only with experimental features), so the Linux desktop app runs calls in Rust: webrtc-rs + Opus + cpal + AEC3. That path called Chrome on jake-air through TURN: 15 ms RTT, 0 loss, about 2% of a core.
+  - Signed fingerprints caught a hostile signaling server.
+  - TURN: Cloudflare for the hosted control.
+- **Channels:**
+  - openmls runs in wasm everywhere: 540 kB gzipped; 8 ms to join and 11 ms to commit at 50 devices.
+  - M62 needs a separate MLS key per device, bound by the device key (WebCrypto signs asynchronously), `max_past_epochs` of 3–5, and merging its own commits only after control accepts them.
+  - Team machines aren't channel members.
+- **Live checks (Jake):**
+  - Mac mic prompts work.
+  - On the iPhone, the PWA call is clean in the foreground, but **iOS stops the mic in the background** (playback continues), and there was feedback after coming back. M63 shows "muted (app in background)" and gets a fresh mic track when the app is visible again.
+  - Still open: native mic plus AEC3 in a live call on Linux (deferred to M63's done-when), and Jake creating the Cloudflare TURN key (needed by M63).
+
+**Done when:** `spikes/s30-talk/README.md` has a go/no-go per client and these two demos:
+- a call between geek's desktop app and jake-air's Chrome through TURN, with direct UDP blocked;
+- two accounts exchanging MLS messages through a stub delivery service, with a member removed mid-conversation who can't read anything sent after.
+
+#### M61: threads on panes and sessions (#240)
+
+- Each pane and session has a thread, held by the daemon with the pane's state and kept in history after the pane closes.
+- Quote a scrollback range as a block that jumps to the output.
+- @mentions notify through push.
+- MCP `read_thread` / `post_thread`. An @mention of the agent from someone who drives goes to the pane's agent as a follow-up.
+- An unread thread is a channel in the swarm themes.
+
+**Done when:**
+- Two accounts on a team talk on a team pane from geek's desktop app and the phone.
+- A watcher can't post, and a private pane's thread doesn't reach a member.
+- A shared session's guest sees its threads, with and without history.
+- An agent answers an @mention.
+- Threads survive daemon restarts and in-place upgrades (Playwright).
+
+**As built (2026-10-05):**
+- **Storage:** `<state>/threads/{pane,session}-N.jsonl`, plus `reads.json` for how far each person has read. They're outside the pane's directory, so *Forget history* and closing the pane keep them, and `search` finds them (hits carry `thread`).
+- **Routes:** `GET`/`POST /api/threads/{pane|session}-N` and `…/read`. New messages go out live as `ServerMsg::Thread`. Each person's `ThreadSummary` (`unread`, `mention`) is in `State`/`Delta`, whole when present, like `presence`.
+- **Rules:** a pane's thread follows `readable` (private panes are their owner's). Posting needs Editor. A "from now" grant sees messages from its `at`.
+- **`@agent`/`@claude`** (from someone `may_drive_here`) goes through the follow-up path, an agent block's `send` or the inbox hook. MCP `read_thread`/`post_thread` default to an agent block's own pane.
+- **UI:** a drawer (a full-screen sheet on phones), the pane's bubble, a dot on the session button, and a folded corner in the blocks, hive and timeline themes. A mention's push notification opens the thread (`#pane=N&thread=…`).
+- **Not done:**
+  - messages carry the name, not the device (presence carries no device either);
+  - the city theme doesn't draw unread;
+  - the desktop app's native notifications don't fire for mentions (web push and control's push do);
+  - the done-when's real run (two accounts through control on a team machine, the desktop app, a phone, a live Claude Code answering) is for Jake.
+
+#### M62: team channels (#241, after S30 and M61)
+
+- Each team has channels, starting with `#general`.
+- MLS with each device a member, driven by roster versions; *Lock* leaves only owners.
+- Control keeps ciphertext, ids, sizes, times and sender device ids.
+- New devices read from the epoch they joined.
+- Pane and session links open subject to the reader's own access.
+- control.md, control-e2e.md, the terms and the privacy notice are updated before the hosted control gets it.
+
+**Done when:**
+- Three accounts chat from the desktop app, Chrome and the phone.
+- A member removed mid-conversation reads nothing after, and nothing in a copy of control's database decrypts.
+- *Lock* cuts members off within a second.
+- A device offline across three roster changes catches up.
+
+#### M63: voice on a session (#242, after S30)
+
+- *Join call* in the session menu, with who's speaking on presence and in the swarm.
+- The daemon signals and admits people by the same rules as viewing.
+- Peer to peer up to S30's limit (about 5), with signed DTLS fingerprints checked against device certificates.
+- TURN from control.
+- On Linux the desktop app runs the call in Rust (S30's native peer: webrtc-rs, Opus, cpal, bundled AEC3). The page keeps signaling and the UI and hands the SDP over through a Tauri command. The mic prompt goes through wry's `with_permission_handler`.
+
+**Done when:**
+- A 30-minute call on a shared session with geek's desktop app, jake-air and the phone, one of them forced through TURN.
+- A revoked guest drops out within a second.
+- After a daemon restart, *Join call* brings everyone back.
+
+#### M64: bigger calls and calls in channels (#243, gated, after M63)
+
+- **Triggers:** a team regularly wants more people on a call than peer to peer handles, or people want a call that isn't on a session.
+
+An SFU with SFrame, keyed from the MLS group or the session's participants, never by the SFU. Channel calls signaled through control with device-signed messages.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |

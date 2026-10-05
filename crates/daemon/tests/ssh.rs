@@ -13,6 +13,9 @@
 //! naming `just static`. ILLOGICAL_SKIP_DOCKER=1 skips it, loudly. It recreates
 //! box-bare, so a run starts from a box with nothing on it.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},

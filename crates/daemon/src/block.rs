@@ -23,7 +23,6 @@
 
 use std::{
     collections::HashMap,
-    os::fd::OwnedFd,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -33,7 +32,7 @@ use illogical_proto::{Attention, BlockType, PaneId, Policy};
 use serde_json::Value;
 
 use crate::{
-    pane::{Launcher, Notice, NoticeSink, What},
+    pane::{Kept, Launcher, Notice, NoticeSink, What},
     provider::Provider,
     store::PaneLog,
 };
@@ -186,7 +185,7 @@ pub struct BlockCtx {
     pub home: PathBuf,
     /// Descriptors systemd kept for it across a restart, by name; take what
     /// you use.
-    pub kept: Arc<Mutex<HashMap<String, OwnedFd>>>,
+    pub kept: Arc<Mutex<HashMap<String, Kept>>>,
     pub secrets: Secrets,
     pub mcp: Option<crate::mcp::Link>,
     pub fs: Arc<crate::fs::Scope>,
@@ -205,7 +204,7 @@ impl BlockCtx {
         sprite: Option<String>,
         restoring: bool,
         policy: Policy,
-        kept: HashMap<String, OwnedFd>,
+        kept: HashMap<String, Kept>,
     ) -> Self {
         Self {
             id,

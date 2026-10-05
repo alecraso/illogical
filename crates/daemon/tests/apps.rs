@@ -12,6 +12,9 @@
 //! browser block through `/ask` work the same way, and guests who only
 //! watch can't answer. Nothing it keeps holds an entry link.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

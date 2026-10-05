@@ -25,6 +25,9 @@ interface OpenMenu {
 let current: OpenMenu | null = null;
 const listeners = new Set<() => void>();
 const changed = () => listeners.forEach((fn) => fn());
+/** The layers mounted, latest last: only it draws the menu (the swarm's,
+ * over the tab view's), else each would close the other's on a click. */
+const layers: object[] = [];
 
 export function openMenu(e: { clientX: number; clientY: number; preventDefault(): void }, items: MenuItem[]) {
   e.preventDefault();
@@ -43,10 +46,13 @@ export function MenuLayer() {
   const [, setTick] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [me] = useState(() => ({}));
 
   useEffect(() => {
     const fn = () => setTick((t) => t + 1);
     listeners.add(fn);
+    layers.push(me);
+    changed();
     const key = (e: KeyboardEvent) => e.key === "Escape" && closeMenu();
     const down = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) closeMenu();
@@ -56,12 +62,15 @@ export function MenuLayer() {
     window.addEventListener("blur", closeMenu);
     return () => {
       listeners.delete(fn);
+      layers.splice(layers.indexOf(me), 1);
+      changed();
       window.removeEventListener("keydown", key, true);
       window.removeEventListener("pointerdown", down, true);
       window.removeEventListener("blur", closeMenu);
     };
   }, []);
 
+  const top = layers.at(-1) === me;
   // Keep the menu on screen.
   useLayoutEffect(() => {
     if (!current || !ref.current) return setPos(null);
@@ -70,9 +79,9 @@ export function MenuLayer() {
       left: Math.max(4, Math.min(current.x, window.innerWidth - r.width - 4)),
       top: Math.max(4, Math.min(current.y, window.innerHeight - r.height - 4)),
     });
-  }, [current]);
+  }, [current, top]);
 
-  if (!current) return null;
+  if (!current || !top) return null;
   return (
     <div
       ref={ref}

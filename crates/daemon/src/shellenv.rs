@@ -255,6 +255,7 @@ async fn resolve(
         .kill_on_drop(true);
     // SAFETY: setsid is async-signal-safe; nothing else runs between fork
     // and exec. A session of its own: no controlling terminal to take.
+    #[cfg(unix)]
     unsafe {
         c.pre_exec(|| nix::unistd::setsid().map(|_| ()).map_err(std::io::Error::from));
     }
@@ -289,9 +290,12 @@ async fn resolve(
         }
         Err(_) => {
             // The shell, and whatever its rc files started with it.
+            #[cfg(unix)]
             if let Some(pid) = pid {
                 let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::SIGKILL);
             }
+            #[cfg(not(unix))]
+            let _ = (pid, child.start_kill());
             let _ = child.wait().await;
             Err(format!("{shell} took longer than {}s to start (an rc file waits for something?)", timeout.as_secs()))
         }
@@ -349,6 +353,8 @@ mod tests {
         }
     }
 
+    // Unix: runs bash.
+    #[cfg(unix)]
     #[tokio::test]
     async fn an_rc_file_adds_to_path_and_its_noise_is_ignored() {
         let home =
@@ -374,6 +380,8 @@ mod tests {
         assert!(env.contains(&("ILLOGICAL_PANE".into(), "7".into())));
     }
 
+    // Unix: runs bash.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_slow_rc_file_falls_back() {
         let home = Home::new("slow", "sleep 30\nexport PATH=\"$HOME/tools/bin:$PATH\"\n");
@@ -387,6 +395,8 @@ mod tests {
         assert_eq!(merge(&block, &r, None), block);
     }
 
+    // Unix: runs bash.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_broken_shell_falls_back() {
         let home = Home::new("broken", "exit 3\n");

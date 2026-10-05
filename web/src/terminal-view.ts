@@ -256,6 +256,27 @@ export class TerminalView {
     return this.term.getSelection();
   }
 
+  /** M61: find text quoted from this terminal (the newest place its lines
+   * appear), scroll to it and select it. False when it's no longer in the
+   * scrollback. */
+  reveal(text: string): boolean {
+    const want = text.split("\n").map((l) => l.trimEnd());
+    while (want.length && !want[want.length - 1]) want.pop();
+    while (want.length && !want[0]) want.shift();
+    if (!want.length) return false;
+    const b = this.term.buffer.active;
+    const line = (i: number) => b.getLine(i)?.translateToString(true).trimEnd() ?? "";
+    for (let i = b.length - want.length; i >= 0; i--) {
+      if (!line(i).includes(want[0])) continue;
+      if (want.every((w, k) => k === 0 || line(i + k).includes(w))) {
+        this.term.scrollToLine(Math.max(0, i - 2));
+        this.term.selectLines(i, i + want.length - 1);
+        return true;
+      }
+    }
+    return false;
+  }
+
   onMarkMenu(cb: (mark: CommandMark, e: MouseEvent) => void) {
     this.markMenu = cb;
   }

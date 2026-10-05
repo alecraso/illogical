@@ -24,11 +24,16 @@
 //! channel already carries: the daemon makes each channel a client of its
 //! own, so one `/ws` per command.
 
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+/// Windows: the link's own sockets come with M57 (#220); a stream type
+/// stands in until then.
+#[cfg(not(unix))]
+type UnixStream = std::net::TcpStream;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
     io::{BufRead, BufReader, ErrorKind, IsTerminal, Read, Write},
-    os::unix::{fs::OpenOptionsExt, net::UnixStream},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -82,13 +87,11 @@ impl Saved {
         let dir = config_dir();
         fs::create_dir_all(&dir)?;
         let tmp = dir.join(format!("{STATE_FILE}.tmp"));
-        fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?
-            .write_all(serde_json::to_string_pretty(self)?.as_bytes())?;
+        let mut file = fs::OpenOptions::new();
+        file.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut file, 0o600);
+        file.open(&tmp)?.write_all(serde_json::to_string_pretty(self)?.as_bytes())?;
         fs::rename(&tmp, dir.join(STATE_FILE))?;
         Ok(())
     }
@@ -516,6 +519,20 @@ impl std::fmt::Debug for Link {
 }
 
 impl Link {
+    #[cfg(not(unix))]
+    fn connect(
+        _at: &Url,
+        _ws_url: &str,
+        _headers: &[(&str, &str)],
+        _cert: &Cert,
+        _keys: &DeviceKeys,
+        _connect_timeout: Option<Duration>,
+        _route: String,
+    ) -> anyhow::Result<Self> {
+        bail!("reaching machines through control from Windows comes in M57 (#220)")
+    }
+
+    #[cfg(unix)]
     fn connect(
         at: &Url,
         ws_url: &str,
@@ -596,6 +613,12 @@ impl Link {
     /// A connection the HTTP client can use as if it were a socket to the
     /// daemon: each request on it is carried over the channel, and a
     /// WebSocket to `/ws` is the channel's protocol messages.
+    #[cfg(not(unix))]
+    pub fn stream(self: &Arc<Self>) -> anyhow::Result<UnixStream> {
+        bail!("reaching machines through control from Windows comes in M57 (#220)")
+    }
+
+    #[cfg(unix)]
     pub fn stream(self: &Arc<Self>) -> anyhow::Result<UnixStream> {
         let (ours, theirs) = UnixStream::pair()?;
         let link = self.clone();
@@ -607,6 +630,7 @@ impl Link {
 }
 
 /// Read one HTTP/1.1 request from `s`, carry it, write its answer.
+#[cfg(unix)]
 fn serve_one(link: &Link, s: UnixStream) -> anyhow::Result<()> {
     let mut r = BufReader::new(s.try_clone()?);
     let mut line = String::new();
@@ -812,6 +836,7 @@ impl Sink {
 
 /// The socket's thread: until every `Link` handle is gone or the socket
 /// closes.
+#[cfg(unix)]
 fn io(mut ws: WebSocket<Box<dyn Stream>>, ch: Channel, rx: mpsc::Receiver<Out>, mut woken: UnixStream) {
     use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
     use std::os::fd::AsFd;

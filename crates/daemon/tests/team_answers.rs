@@ -9,6 +9,9 @@
 //! `illogical inbox` waits for a follow-up and exits 2 with it, which is
 //! recorded as its sender's.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

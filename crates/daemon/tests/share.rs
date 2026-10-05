@@ -3,6 +3,9 @@
 //! refuses everything else: input, any message at all, other panes, the
 //! API, tagged nodes, after it expires, after it's revoked.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::{Read, Write},
     os::unix::net::UnixStream,

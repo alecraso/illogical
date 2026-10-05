@@ -1035,3 +1035,28 @@ the daemon stopping, crashing, or the machine rebooting:
   its VM, and what it runs lands on its machine. Over HTTP (`/mcp`), the owner gets in as for the web client;
   anything else needs a token from `illogical mcp token`, revocable at any
   time.
+- **Threads on panes and sessions** (M61). Every pane and every session has
+  a thread where the people working on it talk: *Thread* in a pane's menu,
+  *Session thread* in the session menu, or the bubble on a pane. Messages
+  arrive live on every window and phone. The machine that owns the pane
+  keeps them (`<state>/threads/`), so they survive restarts and upgrades,
+  outlive the pane, show up in `search`, and never pass through control
+  unencrypted. Watchers read and drivers post. A private pane's thread is
+  its owner's, and someone shared "from now" sees messages from then on.
+  Each person has their own unread count: on the pane's bubble, a dot on
+  the session button, and a folded corner in the swarm (blocks, hive and
+  timeline; the city doesn't draw it yet). `@name` notifies someone, on
+  their phone too. *Quote selection in thread* posts terminal output as a
+  quote that stays readable after the pane scrolls; clicking it jumps back
+  to the output. `@agent` (or `@claude`) in a pane's thread goes to that
+  pane's agent as a follow-up, from whoever may drive it, and agents read
+  and answer with the MCP tools `read_thread` and `post_thread`.
+- **Chat: every thread in one place.** *Chat* in the bar (or the phone's
+  sheet, or the command palette; `/#chat`) shows every thread on every
+  machine you can reach, like a team chat: each machine's sessions are the
+  channels, and each pane's thread sits under its session, newest first,
+  with your unread count and @mentions. The button counts what's unread
+  everywhere. A thread is read and written there, and *Go to pane* (or *Go
+  to session*) takes you to what it's about, switching machines if it's on
+  another one; so does clicking a quote. Escape, or picking a tab, goes
+  back to the panes.

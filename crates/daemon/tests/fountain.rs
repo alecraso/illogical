@@ -30,6 +30,9 @@
 //! known secret is on no surface but the adapter's stdin, and that editors
 //! can't wear one.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

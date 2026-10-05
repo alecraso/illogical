@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# RUSTC_WRAPPER for CI's jobs on geek (scripts/ci-env): rustc, and the
+# linkers it runs, at the lowest priority. Runs' builds and their tests
+# share the host, and a build at full speed starved the tests that time
+# things (a daemon slow to answer, a session late to show).
+exec nice -n 19 "$@"

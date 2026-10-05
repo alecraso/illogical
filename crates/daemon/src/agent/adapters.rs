@@ -274,6 +274,8 @@ mod tests {
         }
     }
 
+    // Unix: a fake node made executable by its mode.
+    #[cfg(unix)]
     #[test]
     fn reports_missing_and_installed() {
         // The agents directory is under home unless this is set.

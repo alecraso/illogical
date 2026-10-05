@@ -1,6 +1,5 @@
-# The Windows desktop app (M54, #217): lint it and build its installer on
-# GitHub's own runners. They're not our host runners, so pull requests can
-# run this too. The installer is kept as an artifact for testing in the VM.
+# Windows on GitHub's own runners (the Windows track, #224). They're not our
+# host runners, so pull requests can run this too.
 name: windows
 on:
   push:
@@ -12,6 +11,8 @@ permissions:
   contents: read
 
 jobs:
+  # M54 (#217): lint the desktop app and build its installer, kept as an
+  # artifact for testing in the VM.
   desktop:
     runs-on: windows-latest
     defaults:
@@ -30,3 +31,23 @@ jobs:
         with:
           name: illogical-desktop-windows-x86_64
           path: crates/desktop/target/release/bundle/nsis/*-setup.exe
+
+  # M55 (#218): the workspace compiles on Windows, and its unit tests pass.
+  # (control runs on Fly, and the integration tests use the Unix socket
+  # until M56.)
+  workspace:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      # Zig, for Ghostty's lib-vt (the version in .mise.toml). Not through
+      # mise: its Windows shims are .cmd files, which the build script's
+      # Command can't run.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --exclude illogical-control --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude illogical-control

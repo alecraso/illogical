@@ -12,7 +12,6 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::File,
     io::{Read, Write},
-    os::fd::{AsRawFd, OwnedFd},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -29,6 +28,7 @@ use illogical_vt::{
     GhosttyEngine, VtEngine,
     detect::{Agent, AgentState, Debounce},
 };
+#[cfg(unix)]
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
     libc,
@@ -562,12 +562,22 @@ pub struct Spawn {
     pub env: Vec<(String, String)>,
 }
 
+/// A terminal (and the program on it) kept while the daemon restarted:
+/// its PTY master. Windows keeps panes another way (M58, #221).
+#[cfg(unix)]
+pub type Kept = std::os::fd::OwnedFd;
+#[cfg(not(unix))]
+pub enum Kept {}
+
+/// SIGKILL's number, for exits that report a signal on every system.
+const SIGKILL: i32 = 9;
+
 /// How a pane begins.
 pub enum Start {
     Now(Spawn),
     /// Take over a terminal (and the program on it) that outlived the
     /// previous daemon.
-    Adopt(OwnedFd),
+    Adopt(Kept),
     /// Reattach to a session on the pane's machine that outlived the
     /// previous daemon, having logged `received` bytes of it; if it's gone,
     /// start as `otherwise` says.
@@ -723,6 +733,7 @@ struct Process {
     record: PathBuf,
 }
 
+#[cfg(unix)]
 impl Process {
     fn start(
         spawn: &Spawn,
@@ -741,7 +752,7 @@ impl Process {
         // Nor a stray copy of the slave beyond its stdio (the shim would
         // keep the terminal open after the program has gone).
         fcntl(&pty.slave, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))?;
-        let stdio = |fd: &OwnedFd| fd.try_clone().map(Stdio::from);
+        let stdio = |fd: &std::os::fd::OwnedFd| fd.try_clone().map(Stdio::from);
 
         let cwd = if spawn.cwd.is_dir() { spawn.cwd.as_path() } else { Path::new("/") };
         let _ = std::fs::remove_file(record);
@@ -752,8 +763,8 @@ impl Process {
         if let Some(socket) = &hold {
             cmd.arg("--hold").arg(socket);
             // The master goes to the shim as fd 3 (without close-on-exec).
+            use std::os::{fd::AsRawFd, unix::process::CommandExt};
             let master = pty.master.as_raw_fd();
-            use std::os::unix::process::CommandExt;
             // SAFETY: only dup2/fcntl between fork and exec.
             unsafe {
                 cmd.pre_exec(move || {
@@ -811,7 +822,7 @@ impl Process {
         }
         if launch.fd_store {
             crate::sys::remove_fd(&fd_name(pane));
-            if !crate::sys::store_fd(&fd_name(pane), master.as_raw_fd()) {
+            if !crate::sys::store_fd(&fd_name(pane), std::os::fd::AsRawFd::as_raw_fd(&master)) {
                 warn!(pane, "couldn't keep the terminal in the FD store");
             }
         }
@@ -820,7 +831,7 @@ impl Process {
 
     /// Take over a pane whose terminal and program outlived the previous
     /// daemon.
-    fn adopt(master: OwnedFd, record: &Path, pane: PaneId, events: Sender<Cmd>) -> std::io::Result<Self> {
+    fn adopt(master: Kept, record: &Path, pane: PaneId, events: Sender<Cmd>) -> std::io::Result<Self> {
         let r = crate::shim::read_record(record);
         let Some((pid, _)) = r.pid.filter(|_| crate::shim::alive(&r)) else {
             return Err(std::io::Error::other("the pane's program is gone"));
@@ -893,7 +904,7 @@ impl Process {
     fn resize(&self, cols: u16, rows: u16) {
         let ws = Winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
         // SAFETY: TIOCSWINSZ reads one Winsize from the pointer.
-        let rc = unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
+        let rc = unsafe { libc::ioctl(std::os::fd::AsRawFd::as_raw_fd(&self.master), libc::TIOCSWINSZ, &ws) };
         if rc < 0 {
             warn!(error = %std::io::Error::last_os_error(), "TIOCSWINSZ failed");
         }
@@ -913,6 +924,30 @@ impl Process {
             unsafe { libc::killpg(pgid, libc::SIGKILL) };
         });
     }
+}
+
+/// Windows: ConPTY panes come in M56 (#219).
+#[cfg(not(unix))]
+impl Process {
+    fn start(
+        _spawn: &Spawn,
+        _launch: &Launcher,
+        _record: &Path,
+        _cols: u16,
+        _rows: u16,
+        _pane: PaneId,
+        _events: Sender<Cmd>,
+    ) -> std::io::Result<Self> {
+        Err(std::io::Error::other("panes don't run on Windows yet (M56, #219)"))
+    }
+
+    fn adopt(master: Kept, _record: &Path, _pane: PaneId, _events: Sender<Cmd>) -> std::io::Result<Self> {
+        match master {}
+    }
+
+    fn resize(&self, _cols: u16, _rows: u16) {}
+
+    fn hang_up(&self) {}
 }
 
 /// What a pane's program runs on: a local PTY, or an exec on its machine.
@@ -959,6 +994,7 @@ const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(1);
 
 /// Wait for a process that may not be our child (a restarted daemon is no
 /// longer its parent), then read how it ended from the shim's record.
+#[cfg(unix)]
 fn wait_for_exit(pid: u32, record: &Path) -> (Option<i32>, Option<i32>) {
     if !crate::procinfo::wait_gone(pid) {
         // Can't be watched: poll until it's gone.
@@ -974,7 +1010,7 @@ fn wait_for_exit(pid: u32, record: &Path) -> (Option<i32>, Option<i32>) {
             None => thread::sleep(Duration::from_millis(10)),
         }
     }
-    (None, Some(libc::SIGKILL))
+    (None, Some(SIGKILL))
 }
 
 /// Recent output, addressed by absolute stream offset.
@@ -1204,6 +1240,7 @@ fn restore_engine(log: &PaneLog, id: PaneId, cols: u16, rows: u16) -> GhosttyEng
 }
 
 /// Local time as HH:MM on a weekday, for the restored marker.
+#[cfg(unix)]
 fn local_time(ms: u64) -> String {
     let t = (ms / 1000) as libc::time_t;
     // SAFETY: localtime_r writes one tm; both pointers are valid.
@@ -1218,6 +1255,33 @@ fn local_time(ms: u64) -> String {
         tm.tm_mday,
         tm.tm_hour,
         tm.tm_min
+    )
+}
+
+#[cfg(windows)]
+fn local_time(ms: u64) -> String {
+    use windows_sys::Win32::{
+        Foundation::{FILETIME, SYSTEMTIME},
+        System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
+    };
+    // FILETIME counts 100 ns from 1601.
+    let t = (ms + 11_644_473_600_000) * 10_000;
+    let ft = FILETIME { dwLowDateTime: t as u32, dwHighDateTime: (t >> 32) as u32 };
+    // SAFETY: plain conversions between valid structs.
+    let (mut utc, mut tm): (SYSTEMTIME, SYSTEMTIME) = unsafe { (std::mem::zeroed(), std::mem::zeroed()) };
+    unsafe {
+        FileTimeToSystemTime(&ft, &mut utc);
+        SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut tm);
+    }
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    format!(
+        "{} {:04}-{:02}-{:02} {:02}:{:02}",
+        DAYS[(tm.wDayOfWeek % 7) as usize],
+        tm.wYear,
+        tm.wMonth,
+        tm.wDay,
+        tm.wHour,
+        tm.wMinute
     )
 }
 
@@ -1419,7 +1483,7 @@ impl State {
                 }
                 Err(e) => {
                     info!(pane = id, error = %e, "can't adopt; treating as ended");
-                    self.exited(None, Some(libc::SIGKILL));
+                    self.exited(None, Some(SIGKILL));
                 }
             },
             Start::Resume { session, received, otherwise } => {

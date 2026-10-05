@@ -270,12 +270,19 @@ fn runner_name(unit: Option<&str>) -> String {
         words.next().map(str::to_owned)
     });
     from_unit.unwrap_or_else(|| {
-        nix::unistd::gethostname()
-            .ok()
-            .and_then(|h| h.into_string().ok())
-            .map(|h| h.split('.').next().unwrap_or_default().to_lowercase())
-            .unwrap_or_default()
+        hostname().map(|h| h.split('.').next().unwrap_or_default().to_lowercase()).unwrap_or_default()
     })
+}
+
+#[cfg(unix)]
+pub fn hostname() -> Option<String> {
+    nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok())
+}
+
+/// Windows keeps the machine's name in the environment.
+#[cfg(not(unix))]
+pub fn hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME").ok()
 }
 
 fn status(json_out: bool) -> anyhow::Result<i32> {
@@ -492,6 +499,7 @@ mod tests {
     /// The setup script's `--dry-run`: the unit and the sudoers rule it
     /// renders, without root.
     #[test]
+    #[cfg(unix)]
     fn the_setup_script_renders_the_unit_and_the_sudoers_rule() {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/fountain-runner-setup.sh");
         let tmp = std::env::temp_dir().join(format!("ilg-fountain-setup-{}", std::process::id()));

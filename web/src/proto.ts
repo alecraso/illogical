@@ -271,6 +271,7 @@ export interface Delta {
   gone?: PaneId[];
   machines?: Machine[];
   presence?: Presence[];
+  threads?: ThreadSummary[];
 }
 
 export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "workspace" | "app" | "forge" | "fountain";
@@ -341,6 +342,42 @@ export interface State {
   roles?: [SessionId, Role][];
   /** M13: who else is here, and where they look. */
   presence?: Presence[];
+  /** M61: the threads this person may read that have messages. */
+  threads?: ThreadSummary[];
+}
+
+/** M61: what a thread is about. */
+export type ThreadTarget = { pane: PaneId } | { session: SessionId };
+
+/** M61: one message in a pane's or session's thread. */
+export interface ThreadMsg {
+  id: number;
+  at: number;
+  who: string;
+  name: string;
+  text: string;
+  /** Terminal output it quotes, kept as text. */
+  quote?: { pane: PaneId; text: string };
+  /** Principal ids it @mentions. */
+  mentions?: string[];
+  /** It went to the pane's agent as a follow-up. */
+  to_agent?: boolean;
+  /** An agent posted it. */
+  agent?: boolean;
+}
+
+/** M61: a thread as this person has it. */
+export interface ThreadSummary {
+  target: ThreadTarget;
+  last: number;
+  at: number;
+  unread?: number;
+  mention?: boolean;
+}
+
+/** `pane-7` / `session-2`: a thread's name in its API path. */
+export function threadKey(t: ThreadTarget): string {
+  return "pane" in t ? `pane-${t.pane}` : `session-${t.session}`;
 }
 
 export type Role = "viewer" | "editor" | "owner";
@@ -356,6 +393,8 @@ export interface HostFeatures {
   fountain: boolean;
   /** A linked studio. */
   studio: boolean;
+  /** M61: threads on panes and sessions (absent: an older daemon). */
+  threads?: boolean;
 }
 
 export type Intent =
@@ -403,7 +442,8 @@ export type ServerMsg =
   | { type: "control_request"; pane: PaneId; who: string; name: string }
   | { type: "trust_request"; pane: PaneId; who: string; name: string }
   | { type: "delta"; delta: Delta }
-  | { type: "follow"; pane: PaneId; msg: FollowMsg };
+  | { type: "follow"; pane: PaneId; msg: FollowMsg }
+  | { type: "thread"; target: ThreadTarget; msg: ThreadMsg };
 
 export const enum FrameKind {
   Output = 1,

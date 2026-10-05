@@ -21,7 +21,6 @@
 use std::{
     io::{self, Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -48,11 +47,11 @@ pub fn load_or_create(path: &Path) -> anyhow::Result<String> {
             if !m.file_type().is_file() {
                 anyhow::bail!("{} isn't a plain file", path.display());
             }
-            if m.uid() != nix::unistd::geteuid().as_raw() {
+            if !crate::perm::mine(&m) {
                 anyhow::bail!("{} belongs to another account", path.display());
             }
-            if m.mode() & 0o077 != 0 {
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+            if crate::perm::mode(&m) & 0o077 != 0 {
+                crate::perm::set(path, 0o600)?;
             }
             let mut s = String::new();
             std::fs::File::open(path)?.read_to_string(&mut s)?;
@@ -70,7 +69,8 @@ pub fn load_or_create(path: &Path) -> anyhow::Result<String> {
             // Written aside and linked in: whoever starts beside us (two
             // daemons sharing a file) reads a whole token, never half of one.
             let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+            let mut f =
+                crate::perm::open_mode(std::fs::OpenOptions::new().write(true).create_new(true), 0o600).open(&tmp)?;
             f.write_all(token.as_bytes())?;
             f.sync_all()?;
             let linked = std::fs::hard_link(&tmp, path);
@@ -93,11 +93,17 @@ pub fn serve_peer_ok(peer: SocketAddr, port: u16) -> bool {
     if !cfg!(target_os = "linux") {
         return true;
     }
-    let me = nix::unistd::geteuid().as_raw();
     match loopback_uid(peer, port) {
-        Some(uid) => uid == 0 || uid == me,
+        Some(uid) => uid == 0 || Some(uid) == euid(),
         None => false,
     }
+}
+
+fn euid() -> Option<u32> {
+    #[cfg(unix)]
+    return Some(nix::unistd::geteuid().as_raw());
+    #[cfg(not(unix))]
+    None
 }
 
 /// The account that owns the client end of a loopback TCP connection to
@@ -144,7 +150,9 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)]
     fn the_token_file_is_private_and_kept() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let dir = std::env::temp_dir().join(format!("ilg-localauth-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let p = dir.join(FILE);

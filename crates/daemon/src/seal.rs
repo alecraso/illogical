@@ -29,7 +29,6 @@ use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -48,9 +47,7 @@ const RING_HEADER: &str = "illogical-sync-keys 1";
 const MAX_RECORD: u32 = 8 << 20;
 
 fn random<const N: usize>() -> [u8; N] {
-    let mut b = [0u8; N];
-    File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).expect("/dev/urandom");
-    b
+    crate::push::random()
 }
 
 fn hex(b: &[u8]) -> String {
@@ -81,7 +78,7 @@ impl KeyRing {
     pub fn open(path: &Path) -> io::Result<Self> {
         match fs::read_to_string(path) {
             Ok(text) => {
-                let mode = fs::metadata(path)?.permissions().mode();
+                let mode = crate::perm::mode(&fs::metadata(path)?);
                 if mode & 0o077 != 0 {
                     return Err(io::Error::other(format!(
                         "{} is readable by others (mode {:o}); chmod 600 it",
@@ -214,7 +211,7 @@ fn new_header(key: u32) -> [u8; HEADER] {
 
 fn private_rw() -> OpenOptions {
     let mut o = OpenOptions::new();
-    o.read(true).write(true).mode(0o600);
+    crate::perm::open_mode(o.read(true).write(true), 0o600);
     o
 }
 
@@ -314,7 +311,7 @@ mod tests {
     fn sealed_files_round_trip_and_are_ciphertext() {
         let d = dir("rt");
         let ring = KeyRing::open(&d.join("key")).unwrap();
-        let mode = fs::metadata(d.join("key")).unwrap().permissions().mode();
+        let mode = crate::perm::mode(&fs::metadata(d.join("key")).unwrap());
         assert_eq!(mode & 0o777, 0o600);
         let f = d.join("seg.enc");
         append(&ring, &f, "box/3/seg", b"export TOKEN=hunter2\n").unwrap();
@@ -323,7 +320,7 @@ mod tests {
         assert_eq!(plaintext_len(&f).unwrap(), 34);
         let raw = fs::read(&f).unwrap();
         assert!(!raw.windows(7).any(|w| w == b"hunter2"));
-        assert_eq!(fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(crate::perm::mode(&fs::metadata(&f).unwrap()) & 0o777, 0o600);
         // Somewhere else, it doesn't open.
         assert!(read(&ring, &f, "box/4/seg").is_err());
         // Another ring doesn't open it.
@@ -378,11 +375,14 @@ mod tests {
         assert_eq!(read(&ring, &f, "c").unwrap(), b"before after");
         // The old key alone opens nothing now.
         fs::write(d.join("old"), old_ring_text).unwrap();
-        fs::set_permissions(d.join("old"), fs::Permissions::from_mode(0o600)).unwrap();
+        crate::perm::set(&d.join("old"), 0o600).unwrap();
         assert!(read(&KeyRing::open(&d.join("old")).unwrap(), &f, "c").is_err());
-        // A ring others can read is refused.
-        fs::set_permissions(d.join("old"), fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(KeyRing::open(&d.join("old")).is_err());
+        // A ring others can read is refused (Unix: Windows has no such mode).
+        #[cfg(unix)]
+        {
+            crate::perm::set(&d.join("old"), 0o644).unwrap();
+            assert!(KeyRing::open(&d.join("old")).is_err());
+        }
         fs::remove_dir_all(d).unwrap();
     }
 }

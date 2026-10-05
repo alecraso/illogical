@@ -7,6 +7,9 @@
 //! removes it at once. `ide.rs` covers Claude Code's diffs; Playwright runs
 //! the real extension in code-server (`web/e2e/editor-swarm.spec.ts`).
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::time::{Duration, Instant};

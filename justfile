@@ -106,6 +106,11 @@ desktop arch="":
 desktop-linux arch="x86_64" *tauri_args="":
     #!/usr/bin/env bash
     set -euo pipefail
+    # An unset GitHub secret arrives as "": treat it as unset, or Tauri
+    # takes APPLE_CERTIFICATE="" for a certificate to import.
+    for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+      [ -n "${!v:-}" ] || unset "$v"
+    done
     root={{justfile_directory()}}
     dist=$root/dist
     mkdir -p "$dist"
@@ -159,6 +164,11 @@ desktop-packages arch="x86_64":
 desktop-macos arch="" *tauri_args="":
     #!/usr/bin/env bash
     set -euo pipefail
+    # An unset GitHub secret arrives as "": treat it as unset, or Tauri
+    # takes APPLE_CERTIFICATE="" for a certificate to import.
+    for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+      [ -n "${!v:-}" ] || unset "$v"
+    done
     root={{justfile_directory()}}
     dist=$root/dist
     mkdir -p "$dist"
@@ -267,9 +277,12 @@ desktop-check:
 notices:
     scripts/notices
 
-# All tests.
+# All tests. The Rust ones run under cargo-nextest (.config/nextest.toml),
+# which `just bootstrap` installs; the doctests, which it can't run, under
+# cargo test.
 test: web
-    {{cargo}} test --workspace
+    {{cargo}} nextest run --workspace
+    {{cargo}} test --workspace --doc
     cd web && pnpm run typecheck
     just e2e-interop control-smoke
 
@@ -369,7 +382,7 @@ testnet cmd="test" profile="ssh" *claims:
         up) arch=$(docker info --format '{{{{.Architecture}}')
             case "$arch" in arm64) arch=aarch64 ;; amd64) arch=x86_64 ;; esac
             [ -n "${ILLOGICAL_TESTNET_BINARIES:-}" ] || just static "$arch" >&2 ;;
-        test|break) {{cargo}} build -q -p illogical ;;
+        test|break) [ -n "${ILLOGICAL_CLI:-}" ] || {{cargo}} build -q -p illogical ;;
       esac
     fi
     case "{{cmd}}" in

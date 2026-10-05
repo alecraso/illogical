@@ -4,6 +4,9 @@
 //! reload's WebSocket passes, other origins are refused both by the site and
 //! by the app, and a server that dies and comes back is noticed both ways.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},

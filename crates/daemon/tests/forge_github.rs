@@ -21,6 +21,9 @@
 //! out in GitHub's shapes; the rate limit backing off; the timeline's last
 //! page; and the PR's code from `refs/pull/N/head`.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

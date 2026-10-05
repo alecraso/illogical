@@ -339,9 +339,12 @@ mod tests {
         }
     }
 
+    // Unix: the relay runs in Linux guests, on a Unix socket.
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
     async fn sessions_per_connection_and_reconnects() {
-        if Command::new("python3").arg("-V").output().is_err() {
+        // Windows' python3 can be the Store's stand-in, which only says to install it.
+        if !Command::new("python3").arg("-V").output().is_ok_and(|o| o.status.success()) {
             eprintln!("no python3; skipping");
             return;
         }
