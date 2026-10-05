@@ -2,6 +2,9 @@
 //! tool like `invite_person` knows where Claude Code in a terminal works;
 //! outside a pane it says nothing.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     os::unix::net::UnixListener,
