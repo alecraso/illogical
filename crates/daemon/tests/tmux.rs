@@ -5,21 +5,17 @@
 //! same success or error, and the same body once ids, checksums and the
 //! known differences are set aside.
 
-mod strays;
-
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        mpsc,
-    },
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
+use illogical_testkit::{Daemon, illogicald};
 use regex::Regex;
 
 const COLS: u16 = 120;
@@ -76,49 +72,8 @@ fn detailed() -> String {
 const LIST_WINDOWS: &str =
     "list-windows -F \"#{window_id} #{window_layout} #{window_flags} #{window_visible_layout} #{pane-border-status}\"";
 
-struct Daemon {
-    child: Child,
-    state: PathBuf,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        strays::remove(&self.state);
-    }
-}
-
-impl Daemon {
-    fn start() -> Self {
-        static N: AtomicU32 = AtomicU32::new(0);
-        let state =
-            std::env::temp_dir().join(format!("ilg-tmux-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
-        let _ = std::fs::remove_dir_all(&state);
-        let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", "127.0.0.1:0", "--shell", "bash --norc --noprofile", "--no-manager-env"])
-            .arg("--state-dir")
-            .arg(&state)
-            .env("PS1", "$ ")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let d = Daemon { child, state };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while UnixStream::connect(d.sock()).is_err() {
-            assert!(Instant::now() < deadline, "daemon did not start");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        d
-    }
-
-    fn sock(&self) -> PathBuf {
-        match std::fs::read_to_string(self.state.join("sock.path")) {
-            Ok(p) => PathBuf::from(p.trim()),
-            Err(_) => self.state.join("sock"),
-        }
-    }
+fn start() -> Daemon {
+    illogicald!("tmux").env("PS1", "$ ").wait_secs(10).start()
 }
 
 /// The CLI, built next to the daemon (cargo builds only this package's
@@ -657,7 +612,7 @@ fn compare(cmd: &str, ours: &(bool, Vec<String>), theirs: &(bool, Vec<String>)) 
 
 #[test]
 fn iterm2s_conversation_gets_tmuxs_answers() {
-    let daemon = Daemon::start();
+    let daemon = start();
     // The daemon starts with a session; tmux's transcript starts with none.
     {
         let mut c = Cc::start(&daemon, &["-CC"]);
@@ -881,7 +836,7 @@ fn assert_clean(c: &Cc) {
 /// Ghostty branch send, from their source (S11): the replies they parse.
 #[test]
 fn wezterm_and_ghostty_get_what_they_parse() {
-    let daemon = Daemon::start();
+    let daemon = start();
 
     // ---- WezTerm: no pause mode, strict parsing
     let (mut c, sid, wid, pane) = attached(&daemon, &["-CC"]);
@@ -1038,7 +993,7 @@ fn formats_match_real_tmux() {
         eprintln!("{} is older than 3.6; skipping", v.trim());
         return;
     }
-    let daemon = Daemon::start();
+    let daemon = start();
     let (mut c, _, _, first) = attached(&daemon, &["-CC"]);
     c.send(&["rename-session s11", &format!("split-window -h -t %{first}")]);
     c.wait_idle();
@@ -1110,7 +1065,7 @@ fn formats_match_real_tmux() {
 /// `continue` carries on from the capture.
 #[test]
 fn falling_behind_pauses_the_pane() {
-    let daemon = Daemon::start();
+    let daemon = start();
     let (mut c, _, _, pane) = attached(&daemon, &["-CC"]);
     c.send(&["refresh-client -fpause-after=1"]);
     c.wait_idle();
@@ -1155,7 +1110,7 @@ fn falling_behind_pauses_the_pane() {
 #[test]
 fn on_a_terminal_nothing_is_echoed() {
     use std::os::fd::{AsRawFd, FromRawFd};
-    let daemon = Daemon::start();
+    let daemon = start();
     let pty = nix::pty::openpty(None, None).unwrap();
     let slave = |_| unsafe { Stdio::from_raw_fd(nix::libc::dup(pty.slave.as_raw_fd())) };
     let mut child = Command::new(cli_bin())
@@ -1203,7 +1158,7 @@ fn on_a_terminal_nothing_is_echoed() {
 /// A block that isn't a terminal is a read-only pane drawn from its text.
 #[test]
 fn a_browser_block_is_a_read_only_pane() {
-    let daemon = Daemon::start();
+    let daemon = start();
     let (mut c, _, wid, pane) = attached(&daemon, &["-CC"]);
     c.notes.clear();
     let body = format!(r#"{{"type":"browser","config":{{"url":"http://127.0.0.1:9/"}},"split":{pane}}}"#);

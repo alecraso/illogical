@@ -1691,6 +1691,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "illogical-testkit"
+version = "0.17.0"
+dependencies = [
+ "nix",
+ "serde_json",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
 name = "illogical-vt"
 version = "0.17.0"
 dependencies = [
@@ -1721,6 +1730,7 @@ dependencies = [
  "illogical-core",
  "illogical-e2e",
  "illogical-proto",
+ "illogical-testkit",
  "illogical-vt",
  "instant-acme",
  "nix",
