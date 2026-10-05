@@ -12,6 +12,10 @@
 //! `Mcp-Method`/`Mcp-Name` headers. If the daemon restarted (its sessions
 //! are gone: 404), it opens a new session with the client's own
 //! `initialize` and sends the request again, so the client never notices.
+//!
+//! In a pane, it says which (`$ILLOGICAL_PANE`, as `X-Illogical-Pane`): a
+//! default for tools that act where the client works (#234's
+//! `invite_person`), not a credential.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -41,13 +45,21 @@ struct Session {
 struct Bridge {
     target: Target,
     token: Option<String>,
+    /// The pane it runs in.
+    pane: Option<String>,
     session: Mutex<Session>,
     out: Mutex<std::io::Stdout>,
 }
 
 pub fn run(target: Target, token: Option<String>) -> anyhow::Result<i32> {
-    let bridge =
-        Arc::new(Bridge { target, token, session: Mutex::new(Session::default()), out: Mutex::new(std::io::stdout()) });
+    let pane = std::env::var("ILLOGICAL_PANE").ok().filter(|p| p.trim().parse::<u32>().is_ok());
+    let bridge = Arc::new(Bridge {
+        target,
+        token,
+        pane,
+        session: Mutex::new(Session::default()),
+        out: Mutex::new(std::io::stdout()),
+    });
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let line = line.context("reading stdin")?;
@@ -178,6 +190,9 @@ impl Bridge {
         }
         if let Some(a) = &auth {
             headers.push(("Authorization", a));
+        }
+        if let Some(p) = &self.pane {
+            headers.push(("X-Illogical-Pane", p));
         }
         let res = http::send(&self.target, "POST", PATH, &headers, line.as_bytes())?;
         let status = res.status;

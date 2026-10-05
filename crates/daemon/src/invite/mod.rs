@@ -15,8 +15,17 @@
 //! fingerprint first.
 //!
 //! Neither route is in `authz`: unmatched paths are the owner's.
+//!
+//! An agent's invite (#234, MCP's `invite_person`) is a draft on a card
+//! ([`card`]) that only the owner sends: then [`run`] does the same, as
+//! them.
 
-use std::{collections::BTreeMap, sync::Arc};
+pub mod card;
+
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock, Weak},
+};
 
 use axum::{
     Json, Router,
@@ -54,36 +63,52 @@ fn ok_id(rest: &str) -> bool {
     !rest.is_empty() && rest.len() <= 200 && !rest.chars().any(|c| c.is_control() || c.is_whitespace())
 }
 
-#[derive(Deserialize)]
-struct Request {
-    session: SessionId,
+/// What runs an approved invite card (#234): blocks are made before the
+/// server is, so it's set once it is.
+pub type Hook = Arc<OnceLock<Weak<App>>>;
+
+/// Who answers an invite card: the owner, by any route.
+pub const OWNER_ONLY: &str = "only the session's owner sends or declines an invite";
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Request {
+    pub session: SessionId,
     /// `tailnet:<login>`, `account:<id>`, or a name: someone shared with,
     /// or in a checked roster.
-    who: String,
+    pub who: String,
     #[serde(default)]
-    role: Option<Role>,
+    pub role: Option<Role>,
     #[serde(default)]
-    note: Option<String>,
+    pub note: Option<String>,
     /// Where it opens (default: the session's first pane).
     #[serde(default)]
-    pane: Option<PaneId>,
+    pub pane: Option<PaneId>,
     /// With history (default: from now on), for a new grant.
     #[serde(default)]
-    history: bool,
+    pub history: bool,
     /// An editor may also type on this machine's pane for so long (M14).
     #[serde(default)]
-    drive_minutes: Option<u32>,
+    pub drive_minutes: Option<u32>,
     /// For an `account:` no grant or pin vouches for: their root device,
     /// whose fingerprint the owner checked with them.
     #[serde(default)]
-    root: Option<String>,
+    pub root: Option<String>,
+}
+
+/// An invite an agent drafted and the owner sent (#234), for the audit
+/// log: who drafted it, from which pane, and who sent it.
+#[derive(Debug, Clone)]
+pub struct Drafted {
+    pub by: String,
+    pub pane: PaneId,
+    pub approved_by: String,
 }
 
 /// Whom an invite names, and the root their devices chain back to.
 #[derive(Debug)]
-struct Person {
-    id: String,
-    name: String,
+pub struct Person {
+    pub id: String,
+    pub name: String,
     root: Option<String>,
 }
 
@@ -92,7 +117,7 @@ const UNKNOWN: &str = "share once from the web (it checks their fingerprint), th
 /// Who `who` is, by what this daemon knows itself: its grants and the
 /// rosters it checked. An explicit root counts only where nothing else
 /// vouches for one.
-fn resolve(app: &App, who: &str, root: Option<String>) -> Result<Person, (StatusCode, String)> {
+pub fn resolve(app: &App, who: &str, root: Option<String>) -> Result<Person, (StatusCode, String)> {
     let who = who.trim();
     let grants: Vec<_> = app
         .acl
@@ -160,29 +185,41 @@ fn resolve(app: &App, who: &str, root: Option<String>) -> Result<Person, (Status
 }
 
 async fn invite(State(app): State<Arc<App>>, Json(b): Json<Request>) -> Response {
+    match run(&app, b, None).await {
+        Ok(v) => Json(v).into_response(),
+        Err((status, why)) => refuse(status, why),
+    }
+}
+
+/// Whether `id` is the account this machine is the owner's, who needs no
+/// invite.
+pub fn owns_here(app: &App, id: &str) -> bool {
+    id.strip_prefix("account:").is_some_and(|a| app.control.owns_here(a))
+}
+
+/// Invite someone, as the owner: `POST /api/invite`'s, or an agent's card
+/// the owner sent (`drafted`).
+pub async fn run(app: &App, b: Request, drafted: Option<&Drafted>) -> Result<serde_json::Value, (StatusCode, String)> {
     let want = b.role.unwrap_or(Role::Viewer);
     if want == Role::Owner {
-        return refuse(StatusCode::BAD_REQUEST, "an invite makes someone a viewer or an editor");
+        return Err(no(StatusCode::BAD_REQUEST, "an invite makes someone a viewer or an editor"));
     }
     if let Some(m) = b.drive_minutes {
         if want != Role::Editor {
-            return refuse(StatusCode::BAD_REQUEST, "only an editor may be trusted to drive");
+            return Err(no(StatusCode::BAD_REQUEST, "only an editor may be trusted to drive"));
         }
         if !(1..=24 * 60).contains(&m) {
-            return refuse(StatusCode::BAD_REQUEST, "drive_minutes: 1 to 1440");
+            return Err(no(StatusCode::BAD_REQUEST, "drive_minutes: 1 to 1440"));
         }
     }
     let (pane, session_name) = match app.mux.api(|r| Api::InviteTo(b.session, b.pane, r)).await {
         Some(Ok(x)) => x,
-        Some(Err(why)) => return refuse(StatusCode::NOT_FOUND, why),
-        None => return refuse(StatusCode::SERVICE_UNAVAILABLE, "shutting down"),
+        Some(Err(why)) => return Err(no(StatusCode::NOT_FOUND, why)),
+        None => return Err(no(StatusCode::SERVICE_UNAVAILABLE, "shutting down")),
     };
-    let person = match resolve(&app, &b.who, b.root) {
-        Ok(p) => p,
-        Err((status, why)) => return refuse(status, why),
-    };
-    if person.id.strip_prefix("account:").is_some_and(|a| app.control.owns_here(a)) {
-        return refuse(StatusCode::BAD_REQUEST, format!("{} owns this machine already", person.name));
+    let person = resolve(app, &b.who, b.root)?;
+    if owns_here(app, &person.id) {
+        return Err(no(StatusCode::BAD_REQUEST, format!("{} owns this machine already", person.name)));
     }
 
     // The grant: none if they hold the role already (a team daemon's
@@ -190,7 +227,7 @@ async fn invite(State(app): State<Arc<App>>, Json(b): Json<Request>) -> Response
     // downgrade of one.
     let grant = app.acl.list().into_iter().find(|g| g.session == b.session && g.principal == person.id);
     if let Some(h) = grant.as_ref().map(|g| g.role).filter(|h| *h > want) {
-        return refuse(
+        return Err(no(
             StatusCode::CONFLICT,
             format!(
                 "{} is {} {} already: revoke first to make them {} {}",
@@ -200,12 +237,12 @@ async fn invite(State(app): State<Arc<App>>, Json(b): Json<Request>) -> Response
                 article(want),
                 want.as_str()
             ),
-        );
+        ));
     }
     let granted = app.acl.role_of(&person.id, b.session).is_none_or(|h| h < want);
     if granted {
         if person.id.starts_with("account:") && person.root.is_none() {
-            return refuse(StatusCode::BAD_REQUEST, format!("sharing with {} needs their root device", person.name));
+            return Err(no(StatusCode::BAD_REQUEST, format!("sharing with {} needs their root device", person.name)));
         }
         // A new share is from now on unless asked; one held keeps its own.
         let from = if b.history || grant.is_some() {
@@ -213,12 +250,12 @@ async fn invite(State(app): State<Arc<App>>, Json(b): Json<Request>) -> Response
         } else {
             match app.mux.api(|r| Api::SessionEnds(b.session, r)).await.flatten() {
                 Some(ends) => Some(ends),
-                None => return refuse(StatusCode::NOT_FOUND, "no such session"),
+                None => return Err(no(StatusCode::NOT_FOUND, "no such session")),
             }
         };
         let set = app.acl.set_full(b.session, &person.id, &person.name, Some(want), "owner", from, person.root.clone());
         if let Err(e) = set {
-            return refuse(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+            return Err(no(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
         }
         app.mux.send(Cmd::AclChanged);
         app.control.poke();
@@ -243,13 +280,20 @@ async fn invite(State(app): State<Arc<App>>, Json(b): Json<Request>) -> Response
     let told = if note.is_empty() { title.clone() } else { format!("{title}: {note}") };
     app.mux.send(Cmd::Api(Api::Tell(person.id.clone(), told)));
 
-    let (delivery, reason) = deliver(&app, &person, pane, &title, &body, &extra, granted).await;
-    app.acl.record(json!({
+    let (delivery, reason) = deliver(app, &person, pane, &title, &body, &extra, granted).await;
+    let mut line = json!({
         "at": now_ms(), "by": "owner", "action": "invite", "session": b.session, "principal": person.id,
         "name": person.name, "role": want, "pane": pane, "granted": granted, "delivery": delivery,
-    }));
+    });
+    // An agent's draft: who sent it, and who drafted it where (#234).
+    if let Some(d) = drafted {
+        line["approved_by"] = json!(d.approved_by);
+        line["drafted_by"] = json!(d.by);
+        line["drafted_in"] = json!(d.pane);
+    }
+    app.acl.record(line);
     let role = app.acl.role_of(&person.id, b.session).unwrap_or(want);
-    Json(json!({
+    Ok(json!({
         "invite": id,
         "grant": { "session": b.session, "principal": person.id, "name": person.name, "role": role, "granted": granted },
         "pane": pane,
@@ -257,7 +301,6 @@ async fn invite(State(app): State<Arc<App>>, Json(b): Json<Request>) -> Response
         "reason": reason,
         "drive": drive,
     }))
-    .into_response()
 }
 
 fn article(r: Role) -> &'static str {

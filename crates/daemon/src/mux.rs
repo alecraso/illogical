@@ -393,6 +393,8 @@ pub struct Config {
     pub private: Vec<PathBuf>,
     /// Where agent blocks reach MCP (M16); `None`: they don't.
     pub mcp: Option<crate::mcp::Link>,
+    /// What runs an invite the owner sent from an agent's card (#234).
+    pub invite: crate::invite::Hook,
     /// illogicald as Claude Code's IDE (M28); `None`: off.
     pub ide: Option<Arc<crate::ide::Ide>>,
 }
@@ -1187,6 +1189,7 @@ impl Daemon {
             cmds: Some(self.tx.clone()),
             ids: self.ids.clone(),
             rules: self.rules.clone(),
+            invite: self.config.invite.clone(),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();
@@ -1304,6 +1307,20 @@ impl Daemon {
             if let Some(r) = &reason {
                 let x = extra.get_or_insert_with(|| serde_json::json!({}));
                 x["reason"] = serde_json::json!({ "kind": r.kind, "actions": r.actions, "bundle": r.bundle });
+            }
+            // An agent's invite (#234) is for the owner alone, and opens at
+            // its card: no buttons to send it from.
+            if self.is_invite(pane) {
+                if let Some(x) = extra.as_mut().and_then(|x| x.as_object_mut()) {
+                    x.remove("approve");
+                    x.remove("ask");
+                }
+                if let Some(push) = &self.push {
+                    push.send_to(pane, title, &body, extra.clone(), |who| who == "owner");
+                }
+                self.config.control.push(pane, title, &body, extra, |who| who.is_owner());
+                self.touch(pane);
+                return;
             }
             // The owner, and whoever may edit the session and opted in
             // (M29): on this daemon's own push, and through control (M21),
@@ -2286,6 +2303,11 @@ impl Daemon {
         }
     }
 
+    /// Whether a block is an agent's invites (#234), the owner's to answer.
+    fn is_invite(&self, pane: PaneId) -> bool {
+        self.blocks.get(&pane).is_some_and(|b| b.kind() == BlockType::Invite)
+    }
+
     /// Show a terminal's question on every client, and ask for you.
     fn ask(&mut self, pane: PaneId, ask: Ask) -> Result<(u64, oneshot::Receiver<Replied>), String> {
         // A terminal, or a block that doesn't ask through its own methods
@@ -2341,6 +2363,11 @@ impl Daemon {
             .get(&pane)
             .filter(|a| id.as_ref().is_none_or(|id| *id == a.ask.id))
             .ok_or_else(|| format!("no open question in %{pane} (it was answered, or withdrawn)"))?;
+        // An agent's invite (#234) is the owner's to answer, by whatever
+        // route: editors may answer other cards, an agent none of these.
+        if self.is_invite(pane) && !by.as_ref().is_some_and(|b| b.who == "owner") {
+            return Err(crate::invite::OWNER_ONLY.into());
+        }
         let ask = a.ask.clone();
         let permission = ask.kind == AskKind::Permission;
         let answer = match answer {

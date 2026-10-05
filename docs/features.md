@@ -988,6 +988,22 @@ the daemon stopping, crashing, or the machine rebooting:
   browser gave it, never on control's word. A team's members on a team's
   machine already hold their role: they're just told. `--drive N` also
   trusts an editor to type on your machine for N minutes. Audit-logged.
+- **An agent asks to invite someone** (#234). MCP's `invite_person
+  {who, role?, pane?, note}`, from any agent, Claude Code in a terminal
+  included, shares nothing: it opens a small invite block beside the
+  agent with a card, "claude-code (pane %3) wants to bring Sam (editor)
+  into api-work at pane %3: …", and pushes it to you alone (not to
+  editors who opted in), with no buttons to send it from. Only the
+  session's owner answers it, by any route (the card, the push, the
+  swarm, the CLI): *Invite* sends #233's invite as you, with the role and
+  note as you left them and drive trust only if you set it; *Decline*
+  tells the agent, with a reason if you give one. Editors, and agents
+  (`agent_respond`, the CLI under one), are refused. Unanswered, it's
+  dropped after a day. `read_invite` tells the agent which: waiting,
+  sent (with the delivery), declined, dropped or failed. Each agent has at
+  most five waiting. The card lives on its own block, so it never
+  replaces the agent's own permission or question card. The audit log
+  names you as sender and the agent and its pane as drafter.
 - **The swarm** (M26, `/#swarm`, *Swarm* beside the tabs). Every pane on
   every machine you and your team can see, as one field of tiles coloured
   by kind and lit by activity, clustered by project (or directory, outside

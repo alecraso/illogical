@@ -736,6 +736,9 @@ pub enum BlockType {
     /// with their own `fountain` login. Config `{profile?, view: catalog,
     /// filter?, specs?}`.
     Fountain,
+    /// An agent's invites into the session (#234), waiting for the owner:
+    /// a card each, beside the agent. Config `{drafter, drafts}`.
+    Invite,
 }
 
 /// Where a remote block's pane lives (#17): a host in the home daemon's

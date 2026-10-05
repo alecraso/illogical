@@ -432,6 +432,7 @@ async fn attention_list(
 async fn act(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
+    headers: HeaderMap,
     Json(req): Json<illogical_proto::api::ActRequest>,
 ) -> Res<Response> {
     use illogical_proto::api::{ActResponse, ActResult};
@@ -439,6 +440,15 @@ async fn act(
     let panes = req.targets();
     if panes.is_empty() {
         return Err(bad("name a pane (pane) or several (panes)"));
+    }
+    // An agent's invite (#234): the owner's alone, and not an agent's on
+    // the owner's CLI (a courtesy, as for `call`).
+    if !who.is_owner() || headers.get("x-illogical-agent").is_some() {
+        for p in &panes {
+            if is_invite(&app, *p).await {
+                return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::OWNER_ONLY.into()));
+            }
+        }
     }
     // All or nothing on access: a list with one pane you can't change is
     // refused whole, so a bundle never half-happens for that reason.
@@ -625,6 +635,9 @@ async fn ask(
     Json(req): Json<AskRequest>,
 ) -> Res<Json<serde_json::Value>> {
     use illogical_proto::ask::{self, Ask, AskKind};
+    if is_invite(&app, id).await {
+        return Err(not_on_invites());
+    }
     let questions = req.questions.as_array().filter(|q| !q.is_empty()).ok_or_else(|| bad("no questions"))?;
     let message = match questions.as_slice() {
         [q] => q["question"].as_str().unwrap_or_default().to_owned(),
@@ -683,6 +696,9 @@ async fn permit(
     Json(hook): Json<serde_json::Value>,
 ) -> Res<Json<serde_json::Value>> {
     use illogical_proto::ask::{self, Ask, AskKind};
+    if is_invite(&app, id).await {
+        return Err(not_on_invites());
+    }
     let tool = hook["tool_name"].as_str().ok_or_else(|| bad("no tool_name"))?.to_owned();
     let input = hook["tool_input"].clone();
     let session = format!("{}/{}", hook["session_id"].as_str().unwrap_or(""), hook["agent_id"].as_str().unwrap_or(""));
@@ -809,6 +825,9 @@ async fn ask_withdraw(
     Path(id): Path<PaneId>,
     Json(req): Json<WithdrawRequest>,
 ) -> Res<Json<serde_json::Value>> {
+    if is_invite(&app, id).await {
+        return Err(not_on_invites());
+    }
     app.mux.send(Cmd::Api(Api::AskWithdraw(id, req.id, None)));
     Ok(Json(serde_json::json!({})))
 }
@@ -903,6 +922,16 @@ async fn thread_read(
     Ok(Json(serde_json::json!({})))
 }
 
+/// Whether a block is an agent's invites (#234): the owner's to answer,
+/// and it shows only its own cards.
+async fn is_invite(app: &App, id: PaneId) -> bool {
+    app.mux.api(|r| Api::Block(id, r)).await.flatten().is_some_and(|b| b.kind() == illogical_proto::BlockType::Invite)
+}
+
+fn not_on_invites() -> ApiError {
+    ApiError(StatusCode::FORBIDDEN, "an invite block shows only its own cards".into())
+}
+
 /// What to call whoever made a request (M13), to attribute what they did.
 async fn who_is(app: &App, who: crate::acl::Principal) -> Option<Driver> {
     app.mux.api(|r| Api::Who(who, r)).await
@@ -992,6 +1021,7 @@ async fn answer_terminal(
     };
     match app.mux.api(|r| Api::AskReply(id, ask_id, reply, by, r)).await {
         Some(Ok(a)) => Ok(Json(serde_json::json!({ "answered": a.id }))),
+        Some(Err(e)) if e == crate::invite::OWNER_ONLY => Err(ApiError(StatusCode::FORBIDDEN, e)),
         Some(Err(e)) => Err(bad(e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }
@@ -1328,6 +1358,7 @@ async fn call(
         serde_json::from_slice(&body).map_err(|e| bad(e.to_string()))?
     };
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    let owner = who.is_owner();
     let by = match method.as_str() {
         // M11: a file block's `open` is the owner's only. M36: a forge
         // block's writes say who sent them.
@@ -1336,6 +1367,11 @@ async fn call(
         _ => None,
     };
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+        // An agent's invites (#234) are the owner's, and not for an agent
+        // on the owner's CLI either (as a forge's drafts, a courtesy).
+        if b.kind() == illogical_proto::BlockType::Invite && (!owner || headers.get("x-illogical-agent").is_some()) {
+            return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::OWNER_ONLY.into()));
+        }
         // The CLI says when an agent runs it (CLAUDECODE, AI_AGENT): a forge
         // block makes its writes drafts then (M36). A courtesy, not a
         // boundary.

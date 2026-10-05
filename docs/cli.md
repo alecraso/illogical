@@ -224,10 +224,18 @@ The tools:
 | `read_agent` | One Fountain agent's whole recipe (prompt, skills, MCP servers, model, metadata), its servers' credentials as `${VAR}`s | yes |
 | `open_fountain` | The Fountain agent catalog as a block beside a pane (`query`, `source`); returns the list. `view: "runner"`: this host as the Fountain runner and its sandboxes instead | no |
 | `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
+| `invite_person` | Ask to bring someone (`who`: a teammate, a grantee, `tailnet:<login>`) into the pane's session as a viewer or an editor (`role`), with a `note`: a card on an invite block beside you that only the session's owner sends (editing the role, note or drive trust) or declines. `pane` defaults to your own (`illogical mcp` in a pane sends `$ILLOGICAL_PANE`); returns the draft's id at once | no |
+| `read_invite` | What became of a draft: `waiting`, `sent` (grant, `delivery`), `declined` (reason), `dropped` (unanswered for a day) or `failed`; who settled it, when | yes |
 
 Resources: `illogical://history`, and the templates
 `illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and
 `illogical://block/{id}`.
+
+`invite_person` asks twice in a terminal: Claude Code's own permission
+prompt for the tool, then the invite card. The card is the real gate
+(only the session's owner sends it, by any route; never an editor or an
+agent), so allowing `mcp__illogical__invite_person` in Claude Code is
+safe.
 
 Waits send a progress notification every 15 seconds: over HTTP, Claude
 Code drops a call that's silent for 60. If a long build still doesn't fit,

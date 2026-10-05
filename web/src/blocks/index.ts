@@ -9,6 +9,7 @@ import "./workspace";
 import "./app";
 import "./forge";
 import "./fountain";
+import "./invite";
 
 export { makeBlockView, type BlockView } from "./view";
 export { openPort } from "./browser";

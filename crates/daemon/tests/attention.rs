@@ -180,3 +180,30 @@ fn follow_events(d: &Daemon) -> std::thread::JoinHandle<String> {
 fn last_msg_is(d: &Daemon, id: u64, text: &str) -> bool {
     entries(&d.state(id)).iter().rev().find(|e| e["type"] == "agent").is_some_and(|e| e["text"] == text)
 }
+
+/// #234: an agent's invite card is pushed to the owner alone, opening at
+/// the card and with no buttons to send it from; an editor who asked to
+/// hear about everything hears nothing of it.
+#[test]
+fn an_invite_card_pushes_the_owner_only() {
+    const FRIEND: &str = "friend@example.com";
+    let args =
+        ["--owner", "me@example.com", "--tailscale-socket", "/nonexistent/sock", "--wisp-token-file", "/nonexistent"];
+    let d = Daemon::child_with(&args);
+    let p = &d.get("/api/panes")[0];
+    let (pane, session) = (p["id"].as_u64().unwrap(), p["session"].as_u64().unwrap());
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "editor" }));
+    let owner = Phone::subscribe(&d);
+    let friend = Phone::subscribe_as(&d, Some(FRIEND));
+    let (status, _) = d.raw_as(FRIEND, "POST", "/api/notify", Some(json!({ "on": true })));
+    assert_eq!(status, 200);
+
+    let m = Mcp::bridge(&d, Some(pane));
+    let r = m.call("invite_person", json!({ "who": "tailnet:sam@example.com", "note": "the flaky test" })).unwrap();
+    let block = r["block"].as_u64().unwrap();
+    let push = owner.needs_you();
+    assert_eq!(push["pane"], block, "it opens at the card: {push}");
+    assert!(push["body"].as_str().unwrap().contains("wants to bring sam@example.com"), "{push}");
+    assert!(push.get("approve").is_none() && push.get("ask").is_none(), "nothing sends it from the push: {push}");
+    assert!(friend.quiet(1500), "not to an editor, opted in or not");
+}

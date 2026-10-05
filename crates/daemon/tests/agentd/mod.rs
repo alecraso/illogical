@@ -302,3 +302,62 @@ impl Phone {
         }
     }
 }
+
+/// An MCP client as Claude Code in a terminal pane starts one: `illogical
+/// mcp` on the daemon's socket, with `ILLOGICAL_PANE` (or none), for tests
+/// that aren't async (#234).
+pub struct Mcp {
+    rt: tokio::runtime::Runtime,
+    session: Option<rmcp::service::RunningService<rmcp::RoleClient, McpClient>>,
+}
+
+#[derive(Clone)]
+pub struct McpClient;
+
+impl rmcp::ClientHandler for McpClient {
+    fn get_info(&self) -> rmcp::model::ClientConfig {
+        rmcp::model::ClientConfig::new(
+            rmcp::model::ClientCapabilities::default(),
+            rmcp::model::Implementation::new("claude-code", "1"),
+        )
+    }
+}
+
+impl Mcp {
+    pub fn bridge(d: &Daemon, pane: Option<u64>) -> Self {
+        use rmcp::ServiceExt;
+        let bin = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+        let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+        assert!(status.success(), "building the CLI");
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let mut cmd = tokio::process::Command::new(bin);
+        cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE");
+        if let Some(p) = pane {
+            cmd.env("ILLOGICAL_PANE", p.to_string());
+        }
+        let session = rt.block_on(async {
+            McpClient.serve(rmcp::transport::TokioChildProcess::new(cmd).unwrap()).await.expect("illogical mcp")
+        });
+        Self { rt, session: Some(session) }
+    }
+
+    /// A tool's structured result, or its error sentence.
+    pub fn call(&self, tool: &str, args: Value) -> Result<Value, String> {
+        let s = self.session.as_ref().unwrap();
+        let params = rmcp::model::CallToolRequestParams::new(tool.to_owned())
+            .with_arguments(args.as_object().cloned().unwrap_or_default());
+        let r = self.rt.block_on(s.call_tool(params)).map_err(|e| format!("{tool}: {e}"))?;
+        if r.is_error == Some(true) {
+            return Err(r.content.iter().filter_map(|c| c.as_text().map(|t| t.text.clone())).collect());
+        }
+        Ok(r.structured_content.unwrap_or_default())
+    }
+}
+
+impl Drop for Mcp {
+    fn drop(&mut self) {
+        if let Some(s) = self.session.take() {
+            let _ = self.rt.block_on(s.cancel());
+        }
+    }
+}

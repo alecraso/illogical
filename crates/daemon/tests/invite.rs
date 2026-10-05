@@ -552,3 +552,57 @@ fn on_a_team_daemon_a_members_role_is_enough() {
     let (status, _) = invite(&d, json!({ "session": session, "who": "account:a1" }));
     assert_eq!(status, 404, "this account is never named");
 }
+
+/// #234, end to end: Claude Code in a terminal pane on Alex's own machine
+/// (`illogical mcp` with that pane's `$ILLOGICAL_PANE`) asks to bring Bea,
+/// a teammate with no access yet, into the session. Nothing is shared
+/// until Alex sends the card; then, through control, Bea's phone gets
+/// exactly one invite, opening at the pane, and the agent reads `sent`.
+#[test]
+fn an_agent_in_a_terminal_asks_and_the_owner_sends() {
+    let w = world();
+    let d = w.daemon(false);
+    let (pane, session) = first(&d);
+    let r = d.post("/api/team-pins", json!({ "pins": { "t1": w.pin() } }));
+    assert_eq!(r["checked"], json!(["t1"]), "{r}");
+    w.route(&w.bea);
+
+    let m = Mcp::bridge(&d, Some(pane));
+    let r = m.call("invite_person", json!({ "who": "bea", "note": "the flaky test needs your eyes" })).unwrap();
+    assert_eq!((r["status"].as_str(), r["who"].as_str()), (Some("waiting"), Some("account:b1")), "{r}");
+    let (draft, block) = (r["draft"].as_str().unwrap().to_owned(), r["block"].as_u64().unwrap());
+    assert!(d.get("/api/acl")["grants"].as_array().unwrap().is_empty(), "nothing shared yet");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(w.bea.got(&w.fake).is_empty());
+
+    // Alex sends it from the card (here, as the swarm's rail would).
+    let card = d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == block).unwrap()["ask"].clone();
+    assert_eq!(card["source"], "invite", "{card}");
+    let act = json!({ "action": "answer", "pane": block, "id": card["id"], "content": { "role": "viewer" } });
+    let r = d.post("/api/attention/act", act);
+    assert_eq!(r["results"][0]["ok"], true, "{r}");
+    let sent = std::time::Instant::now();
+    while w.bea.got(&w.fake).is_empty() {
+        assert!(sent.elapsed() < Duration::from_secs(10), "Bea's phone heard nothing in 10s");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let got = w.bea.got(&w.fake);
+    assert!(got[0]["tag"].as_str().unwrap().starts_with("invite-"), "{got:?}");
+    assert_eq!(got[0]["pane"].as_u64(), Some(pane));
+    assert_eq!(got[0]["session"].as_u64(), Some(session));
+    assert_eq!(got[0]["body"], "the flaky test needs your eyes");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let r = loop {
+        let r = m.call("read_invite", json!({ "draft": draft })).unwrap();
+        if r["status"] != "waiting" {
+            break r;
+        }
+        assert!(std::time::Instant::now() < deadline, "{r}");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!((r["status"].as_str(), r["delivery"].as_str()), (Some("sent"), Some("sent")), "{r}");
+    assert_eq!(d.get("/api/acl")["grants"][0]["principal"], "account:b1");
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(w.bea.got(&w.fake).len(), 1, "exactly one");
+}
