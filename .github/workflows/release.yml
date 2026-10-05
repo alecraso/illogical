@@ -1,7 +1,8 @@
-# A `v*` tag: build Linux (x86_64, arm64, static) and macOS (arm64)
-# binaries and the desktop app (a .deb and an AppImage for Linux x86_64, a
-# zipped app for macOS, an installer for Windows), attach them to the tag's
-# release with SHA256SUMS, and bump the Homebrew formula.
+# A `v*` tag: build Linux (x86_64, arm64, static) and macOS (arm64, and
+# x86_64 cross-compiled for Intel Macs) binaries and the desktop app (a .deb
+# and an AppImage for Linux x86_64, a zipped app for each macOS arch, an
+# installer for Windows), attach them to the tag's release with SHA256SUMS,
+# and bump the Homebrew formula.
 name: release
 on:
   push:
@@ -37,8 +38,10 @@ jobs:
       - run: scripts/ci-cap-target 30
       - run: just bootstrap
       - run: just build
+      - run: just build-macos-x86_64
       - run: just dist
       - run: just desktop
+      - run: just desktop x86_64
       - run: scripts/release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/illogical-desktop-*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

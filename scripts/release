@@ -51,9 +51,9 @@ case "${1:-}" in
     dir=$(mktemp -d)
     gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-desktop-*' -D "$dir"
     n=$(find "$dir" -name "*.tar.gz" | wc -l | tr -d " ")
-    [ "$n" = 3 ] || { echo "expected 3 tarballs, found $n" >&2; exit 1; }
+    [ "$n" = 4 ] || { echo "expected 4 tarballs, found $n" >&2; exit 1; }
     d=$(find "$dir" -name "illogical-desktop-*" | wc -l | tr -d " ")
-    [ "$d" = 4 ] || { echo "expected 4 desktop downloads (deb, AppImage, macOS zip, Windows installer), found $d" >&2; exit 1; }
+    [ "$d" = 5 ] || { echo "expected 5 desktop downloads (deb, AppImage, macOS arm64 and x86_64 zips, Windows installer), found $d" >&2; exit 1; }
     (cd "$dir" && sha256sum -- *.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
     ;;
@@ -72,6 +72,7 @@ case "${1:-}" in
     mkdir -p "$dir/Formula"
     sed -e "s/@VERSION@/$v/g" \
       -e "s/@SHA_MAC@/$(sha aarch64-apple-darwin)/" \
+      -e "s/@SHA_MAC_INTEL@/$(sha x86_64-apple-darwin)/" \
       -e "s/@SHA_LINUX_X86@/$(sha x86_64-unknown-linux-musl)/" \
       -e "s/@SHA_LINUX_ARM@/$(sha aarch64-unknown-linux-musl)/" \
       packaging/homebrew/illogical.rb.in > "$dir/Formula/illogical.rb"

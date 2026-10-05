@@ -259,7 +259,7 @@
       <p class="lede">See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.</p>
       <div>
         <a class="dl" id="dl-main" href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip"><b>Download for macOS</b><span>Apple silicon · free</span></a>
-        <p class="small dl-alt" id="dl-alt">Linux: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a> · Windows: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-windows-x86_64-setup.exe">installer</a> · <a href="#install">servers, without a screen</a></p>
+        <p class="small dl-alt" id="dl-alt">Intel Mac: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-x86_64.zip">.zip</a> · Linux: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a> · Windows: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-windows-x86_64-setup.exe">installer</a> · <a href="#install">servers, without a screen</a></p>
         <p class="small">free and open source · the app sets up everything it needs</p>
       </div>
     </div>
@@ -449,9 +449,9 @@
       <div class="ways four">
         <div class="card" style="--c: var(--k-agent)">
           <div class="ch"><b>macOS</b></div>
-          <div class="cm">apple silicon · .zip</div>
+          <div class="cm">apple silicon or intel · .zip</div>
           <p>Unzip it and drag <em>illogical</em> to Applications. It isn't notarized yet: the first time, open it, then choose <em>Open Anyway</em> in System Settings › Privacy &amp; Security.</p>
-          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip" data-dl="mac">Download for macOS</a></div>
+          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip" data-dl="mac">Apple silicon</a><a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-x86_64.zip">Intel</a></div>
         </div>
         <div class="card" style="--c: var(--k-agent)">
           <div class="ch"><b>Linux</b></div>
@@ -568,13 +568,24 @@ just bootstrap && just install</pre>
     main.href = "https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-windows-x86_64-setup.exe";
     main.innerHTML = "<b>Download for Windows</b><span>x86_64 · reaches your machines · free</span>";
     document.getElementById("dl-alt").innerHTML =
-      'Also: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip">macOS</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage">Linux</a> · <a href="#install">servers, without a screen</a>';
+      'Also: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip">macOS</a> (<a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-x86_64.zip">Intel</a>) · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage">Linux</a> · <a href="#install">servers, without a screen</a>';
   } else if (/Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)) {
     const main = document.getElementById("dl-main");
     main.href = "https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage";
     main.innerHTML = "<b>Download for Linux</b><span>x86_64 AppImage · free</span>";
     document.getElementById("dl-alt").innerHTML =
-      'Also: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip">macOS</a> · <a href="#install">servers, without a screen</a>';
+      'Also: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip">macOS</a> (<a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-x86_64.zip">Intel</a>) · <a href="#install">servers, without a screen</a>';
+  } else if (/Macintosh/.test(navigator.userAgent) && navigator.userAgentData?.getHighEntropyValues) {
+    // Chromium browsers say which chip a Mac has; Safari and Firefox don't,
+    // so they keep Apple silicon with Intel beside it.
+    navigator.userAgentData.getHighEntropyValues(["architecture"]).then(({ architecture }) => {
+      if (architecture !== "x86") return;
+      const main = document.getElementById("dl-main");
+      main.href = "https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-x86_64.zip";
+      main.innerHTML = "<b>Download for macOS</b><span>Intel · free</span>";
+      document.getElementById("dl-alt").innerHTML =
+        'Apple silicon: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-macos-arm64.zip">.zip</a> · Linux: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-linux-x86_64.deb">.deb</a> · Windows: <a href="https://github.com/arugula-salad/illogical/releases/latest/download/illogical-desktop-windows-x86_64-setup.exe">installer</a> · <a href="#install">servers, without a screen</a>';
+    }, () => {});
   }
 
   const live = document.documentElement.classList.contains("live");

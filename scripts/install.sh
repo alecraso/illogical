@@ -26,6 +26,10 @@ case "$(uname -s)/$(uname -m)" in
   Linux/x86_64 | Linux/amd64) target=x86_64-unknown-linux-musl ;;
   Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-musl ;;
   Darwin/arm64) target=aarch64-apple-darwin ;;
+  # An Intel Mac, or a shell under Rosetta on Apple silicon (which gets the
+  # native build).
+  Darwin/x86_64)
+    if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then target=aarch64-apple-darwin; else target=x86_64-apple-darwin; fi ;;
   *) die "no release for $(uname -s) $(uname -m); build from source: $repo/blob/main/docs/development.md" ;;
 esac
 
