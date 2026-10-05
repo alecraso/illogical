@@ -193,9 +193,38 @@ e2e-interop:
 # Browser tests in system Chrome; pass a URL to test a running daemon.
 # The web client is built first: a debug daemon built before web/dist
 # existed never serves it (rust-embed fixes the folder's path at compile time).
-e2e url="": web
-    {{cargo}} build -p illogicald -p illogical -p illogical-control
+e2e url="": web e2e-build
     cd web && E2E_BASE_URL="{{url}}" pnpm exec playwright test
+
+# Only the WebKit specs (`*.webkit.spec.ts`), as the macOS runner runs them.
+e2e-webkit: web e2e-build
+    cd web && pnpm exec playwright test --project=webkit
+
+# What the specs run, from ../target/debug: with CARGO_TARGET_DIR elsewhere
+# (CI), target is a link to it.
+[private]
+e2e-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{cargo}} build -p illogicald -p illogical -p illogical-control
+    t="{{target_dir}}"
+    if [ "$t" != "{{justfile_directory()}}/target" ]; then
+      if [ -L target ] || [ ! -e target ]; then ln -sfn "$t" target
+      else echo "target/ is a directory but CARGO_TARGET_DIR is $t: the specs would run stale binaries" >&2; exit 1; fi
+    fi
+
+# Playwright's browsers (Chromium and WebKit by default). On Linux their
+# system libraries come too when sudo needs no password; otherwise a spec
+# that can't start its browser says which are missing.
+browsers *which="chromium webkit":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd web
+    if [ "$(uname -s)" = Linux ] && sudo -n true 2>/dev/null; then
+      pnpm exec playwright install --with-deps {{which}}
+    else
+      pnpm exec playwright install {{which}}
+    fi
 
 # illogical's VS Code extension as a VSIX in target/ (M28), for Open VSX
 # (`npx ovsx publish FILE`) and the Marketplace (`npx @vscode/vsce publish

@@ -115,7 +115,8 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
 }
 
 // By default runs against a throwaway debug daemon on 7683 (which serves
-// web/dist from disk), driving the system Chrome; `*.webkit.spec.ts` drive
+// web/dist from disk), driving the system Chrome (E2E_CHROMIUM=1: Playwright's
+// own Chromium, for machines without Chrome, like CI's); `*.webkit.spec.ts` drive
 // Playwright's WebKit (#94: Safari's engine, where device keys behave
 // differently), which needs `pnpm exec playwright install webkit`. Set E2E_BASE_URL to test a
 // daemon that is already running, e.g. through `tailscale serve`.
@@ -138,7 +139,7 @@ export default defineConfig({
     storageState: { cookies: tokenCookies, origins: [] },
   },
   projects: [
-    { name: "chrome", use: { channel: "chrome" }, testIgnore: /\.webkit\.spec\.ts$/ },
+    { name: "chrome", use: process.env.E2E_CHROMIUM ? {} : { channel: "chrome" }, testIgnore: /\.webkit\.spec\.ts$/ },
     { name: "webkit", use: { browserName: "webkit" }, testMatch: /\.webkit\.spec\.ts$/ },
   ],
   webServer: external
