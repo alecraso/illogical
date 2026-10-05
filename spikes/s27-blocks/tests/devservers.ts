@@ -4,7 +4,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { freePort } from "./stack.ts";
+import { freePort } from "./servers.ts";
 
 export interface Server {
   port: number;
