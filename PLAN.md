@@ -4190,6 +4190,10 @@ Engineering calls made while turning the SSH track's in-person checks into tests
 - **Stacks per worktree.** `COMPOSE_PROJECT_NAME` names a stack's containers, images, networks and state directory, so parallel worktrees don't share boxes or rebuild each other's images.
 - **The tailnet comparison (S28)** is done in containers (`tailnet` profile: headscale, a userspace box, a client with `tailscale0`) rather than on geek; numbers in `spikes/s28-ssh/README.md`. Over a real network both paths add the same round trips, so the container numbers are the overhead difference. Tailscale SSH's check mode needs an identity provider's login and stays untested (a limit in #214).
 
+#### S28, M51, M52: as built (2026-10-05)
+
+Merged to main in 9ebcc45 (#209, #210, #211 and #214); #153, #154, #155 and #157 are closed. S28's answers are in `spikes/s28-ssh/README.md`. M51 and M52 work as planned, and every done-when check that named geek, jake-mini or a phone runs as a test instead: the testnet `ssh` and `control` claims (with `BREAK=1`), `ssh.rs` (including the real `git push`), `reboot.rs`, `measure-tailnet.sh` and `just macos launchd`. docs/testing.md's "The SSH track's tests" maps each to the promise it guards. Left: Tailscale SSH's check mode (needs an identity-provider login) and M53 (gated).
+
 #### M53: the desktop app over ssh (#156, gated, after M51)
 
 Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this only covers boxes that never join control. M46 shipped in 0.14.0 (#144), so only M51 is left as a dependency.
@@ -4473,6 +4477,10 @@ The S29 pty host becomes `illogicald _shim` on Windows:
 - In the VM, pane titles follow the running program and cwd as on Linux.
 - Prompt marks and cwd come through from `pwsh`.
 - A Claude Code session started in a pane shows up as a conversation.
+
+### No person in the loop (#214): as built (2026-10-05)
+
+Merged to main in 9ebcc45. Every manual and real-device check became a test that runs with no person: the testnet profiles (`ssh`, `control`, `tailnet`) and the Docker stacks for forges, two hosts and VS Code; a headless approving device (`web/fixtures/device.ts`); the tart macOS VM harness (`just macos ...`); phone device contexts with a fake push service; a replay agent for terminal agents; `crates/testkit`; Playwright and the testnet in CI. docs/testing.md is the reference. Rules that came with it: missing Docker or tart fails a test (only `ILLOGICAL_SKIP_DOCKER=1` / `ILLOGICAL_SKIP_MACOS_VM=1` skip, loudly); secret-gated tests skip naming the secret; tests wait on what the daemon reports, not on time. Left: #256 (wisp reboot), #257 (iOS Simulator), and #93's github.com half (#264); follow-ups #252-#262.
 
 ## Acceptance tests (automated where possible)
 
