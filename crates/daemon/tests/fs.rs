@@ -215,7 +215,7 @@ impl Drop for Sprite {
 #[test]
 fn a_sandbox_through_the_provider() {
     let Some(token) = token() else {
-        eprintln!("skipping: no wisp token on this host");
+        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     };
     let sprite = Sprite { token: token.clone(), name: format!("illogical-m7-{}", std::process::id()) };

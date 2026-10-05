@@ -92,7 +92,9 @@ fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
 #[test]
 fn a_shell_then_a_resident_daemon_through_the_tunnel() {
     if token().is_none() || !static_dir().join("illogicald").exists() {
-        eprintln!("skipping: needs wispd's token and `just static`");
+        eprintln!(
+            "SKIP: needs wispd's token (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token) and `just static`"
+        );
         return;
     }
     let sprite = format!("illogical-m4b-test-{}", std::process::id());

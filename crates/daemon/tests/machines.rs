@@ -165,7 +165,7 @@ fn sprite_exists(token: &str, name: &str) -> bool {
 #[test]
 fn a_vm_pane_survives_a_restart_and_takes_its_machine_when_it_closes() {
     let Some(token) = token() else {
-        eprintln!("skipping: no wisp token on this host");
+        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     };
     let mut d = Daemon::new();
