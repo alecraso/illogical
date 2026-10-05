@@ -174,6 +174,8 @@ desktop-macos arch="" *tauri_args="":
     # The Mac's own arch builds without --target (`just build`).
     src={{target_dir}}/$t/release
     if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/illogicald ]; then src={{target_dir}}/release; fi
+    # A test's own daemon and CLI (testnet/macos/update.sh's older ones).
+    src=${ILLOGICAL_DESKTOP_BINARIES:-$src}
     out=${CARGO_TARGET_DIR:-$PWD/target}
     flags=()
     if [ "$t" = "$host" ]; then out=$out/release; else
