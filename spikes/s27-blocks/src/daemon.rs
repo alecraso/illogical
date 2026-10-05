@@ -172,7 +172,9 @@ pub async fn dial(d: Arc<Daemon>, url: String) {
 }
 
 async fn dial_once(d: &Arc<Daemon>, url: &str) -> anyhow::Result<()> {
-    let (ws, _) = tokio_tungstenite::connect_async(format!("{url}?id={}", d.id())).await?;
+    // Without TCP_NODELAY, small frames wait on the peer's delayed ACK
+    // (40 ms on Linux) behind any unacknowledged one.
+    let (ws, _) = tokio_tungstenite::connect_async_with_config(format!("{url}?id={}", d.id()), None, true).await?;
     d.stats.dials.fetch_add(1, Ordering::Relaxed);
     let (mut tx, mut rx) = ws.split();
     let (accept_tx, mut accept_rx) = mpsc::unbounded_channel::<DuplexStream>();
@@ -529,7 +531,7 @@ async fn websocket(
     if !open.protocols.is_empty() {
         h.insert(header::SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_str(&open.protocols.join(", "))?);
     }
-    let (ws, res) = tokio_tungstenite::connect_async(req).await?;
+    let (ws, res) = tokio_tungstenite::connect_async_with_config(req, None, true).await?;
     let protocol = res.headers().get(header::SEC_WEBSOCKET_PROTOCOL).and_then(|v| v.to_str().ok()).unwrap_or("");
     out.frame(wire::json_frame(b'A', sid, &json!({ "protocol": protocol }))).await?;
     let (mut tx, mut rx) = ws.split();

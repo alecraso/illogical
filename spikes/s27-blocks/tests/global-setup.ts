@@ -20,6 +20,7 @@ export default async function () {
     }
     const up = net.connect(Number(p) || 443, "127.0.0.1", () => {
       up.setNoDelay(true);
+      client.setNoDelay(true);
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (head.length) up.write(head);
       up.pipe(client);

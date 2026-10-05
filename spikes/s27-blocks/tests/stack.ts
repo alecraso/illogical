@@ -23,7 +23,7 @@ export interface Stack {
 }
 
 function startS27(args: string[]): Promise<{ proc: ChildProcess; info: Record<string, string> }> {
-  const proc = spawn("target/release/s27", args, { stdio: ["ignore", "pipe", "inherit"] });
+  const proc = spawn(process.env.S27_BIN ?? "target/release/s27", args, { stdio: ["ignore", "pipe", "inherit"] });
   return new Promise((res, rej) => {
     const rl = createInterface({ input: proc.stdout! });
     rl.once("line", (l) => res({ proc, info: JSON.parse(l) }));
@@ -217,7 +217,7 @@ export { expect };
 export async function record(what: string, browser: string, data: Record<string, unknown>) {
   const { appendFileSync, mkdirSync } = await import("node:fs");
   const os = await import("node:os");
-  const line = { what, browser, at: new Date().toISOString(), load: os.loadavg()[0].toFixed(1), cores: os.cpus().length, ...data };
+  const line = { what, browser, platform: process.platform, at: new Date().toISOString(), load: os.loadavg()[0].toFixed(1), cores: os.cpus().length, ...data };
   mkdirSync(".run", { recursive: true });
   appendFileSync(".run/results.jsonl", JSON.stringify(line) + "\n");
   console.log(JSON.stringify(line));
