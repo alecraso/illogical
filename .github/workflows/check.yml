@@ -73,9 +73,10 @@ jobs:
       # The box's binaries, for the ssh tests in `just test` (which bring
       # the test stack up themselves).
       - run: just static aarch64
+      # Before `just test`: reboot.rs drives Chromium, the WebKit specs WebKit.
+      - name: Playwright's browsers
+        run: just browsers
       - run: just test
-      - name: Playwright's WebKit
-        run: just browsers webkit
       - name: The WebKit specs (Safari's engine)
         run: just e2e-webkit
         env:
