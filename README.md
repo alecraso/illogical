@@ -20,9 +20,13 @@ tabs and splits you drive with the mouse.
   [ACP](https://agentclientprotocol.com) agent as a UI beside your
   terminals: tool calls with their output, approvals and questions as
   cards big enough for a thumb.
-- **VS Code beside your terminals.** *Open in editor* (or `illogical edit
-  src/main.rs:42`) opens VS Code on the pane's machine, in its directory,
-  as a block: on the phone too, and back with its file after a restart.
+- **VS Code and dev servers beside your terminals** (opt-in). *Open in
+  editor* (or `illogical edit src/main.rs:42`) opens VS Code on the pane's
+  machine, in its directory, as a block, back with its file after a
+  restart; *Open a port…* shows a dev server beside its terminal. Both are
+  off until the daemon gets a listener for them (one flag for this
+  computer's browser; a domain of yours for the phone): see
+  [advanced setup](docs/advanced.md#browser-blocks-on-ports).
 - **What did the agent change?** *Changes* on a pane (or `illogical diff`)
   lists the files changed in its repository, on its machine, with +/−; tap
   a file for its hunks and a line to see the file there, both updating
@@ -51,8 +55,9 @@ Linux (x86_64, arm64) and macOS (Apple silicon). Share a session with
 someone, or a whole machine with a team, with roles and presence
 ([docs/teams.md](docs/teams.md)). Remote access is over your tailnet, or
 through [illogical control](docs/control.md) for devices without one: end
-to end encrypted, so the service relays for your devices but can't read
-your terminals.
+to end encrypted, so what the service relays it can't read, and it can't
+add a reader to your machines. You do trust it for the web client it
+serves ([what holds](docs/control-e2e.md#what-holds-against-control)).
 
 ## Install
 
@@ -64,8 +69,8 @@ or `.deb` (the Linux app runs on Ubuntu 22.04, Debian 12, Fedora 36 or
 newer: glibc 2.35 and up). The first time it opens it installs `illogicald` and `illogical` in
 `~/.local/bin` and starts the daemon as a service, then *Getting started*
 sets up your phone, the cloud and Claude Code, a click each. Once the
-machine is in illogical cloud, the app signs in through your browser
-(approve it as a new device once) and shows every machine in your account
+machine is in illogical cloud, the app signs in through your browser on
+the same computer (approve it as a new device once) and shows every machine in your account
 and your teams. The macOS app
 isn't notarized yet: the first time, open it, then choose *Open Anyway* in
 System Settings › Privacy & Security.
@@ -159,7 +164,8 @@ most twice a day; nothing else is sent. `illogicald install --
    illogicald join https://control.illogical.widgets.wtf
    ```
 
-   See [docs/control.md](docs/control.md), including running your own.
+   The hosted control is free during the beta, provided as is. See
+   [docs/control.md](docs/control.md), including running your own.
    **With a team:** make one in control (*Teams…*), invite people, and
    pick the team when you approve a machine's join. Roles, personal vs
    team machines and sharing one session: [docs/teams.md](docs/teams.md).

@@ -19,7 +19,7 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{App, Config, auth::Session, db::Team};
+use crate::{App, auth::Session, db::Team};
 
 /// A browser's push subscription: its keys, and what its service got.
 struct Phone {
@@ -123,29 +123,7 @@ fn person(app: &App, provider: &str, subject: &str, login: &str, id: &str) -> De
 
 #[tokio::test]
 async fn waiting_devices_and_requests_push_their_owners() {
-    let db = crate::db::Db::memory();
-    let vapid = crate::push::Vapid::load(&db).unwrap();
-    let mut app = App {
-        cfg: Config {
-            push_hosts: vec![],
-            relay_free_bytes: 0,
-            public_url: "http://control.test".into(),
-            origin: "http://control.test".into(),
-            github: None,
-            static_dir: None,
-        },
-        db,
-        http: reqwest::Client::new(),
-        relay: Default::default(),
-        passkeys: Default::default(),
-        limits: crate::limit::Limits::new(None),
-        vapid,
-        hosted: None,
-        stripe: None,
-        github_app: None,
-        forge: Default::default(),
-        app_logins: Default::default(),
-    };
+    let mut app = App::for_tests("http://control.test");
     let jake = person(&app, "github", "1", "jhgaylor", "a1jake");
     let ada = person(&app, "passkey", "p2", "", "a2ada");
     app.db.set_name("a2ada", "Ada Lovelace").unwrap();

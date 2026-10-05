@@ -44,6 +44,7 @@ x509-parser = "0.18.1"
 tower = { version = "0.5.3", features = ["util"] }
 hex = "0.4.3"
 url = "2.5.8"
+webpki-root-certs = "1.0.9"
 zstd = "0.14.0"
 
 [lints]

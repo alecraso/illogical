@@ -1615,6 +1615,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde_json",
  "tungstenite 0.30.0",
+ "webpki-root-certs",
  "zstd",
 ]
 
@@ -1635,6 +1636,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "illogical-e2e",
+ "libc",
  "p256",
  "reqwest",
  "rusqlite",
@@ -1692,6 +1694,7 @@ name = "illogical-vt"
 version = "0.16.0"
 dependencies = [
  "libghostty-vt",
+ "regex",
  "serde",
  "serde_json",
  "zstd",
@@ -1738,6 +1741,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "webpki-root-certs",
  "x509-parser",
  "zstd",
 ]

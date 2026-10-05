@@ -6,6 +6,11 @@ illogical is MIT OR Apache-2.0. Its binaries include the software below.
   Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors.
   <https://github.com/ghostty-org/ghostty>
   Its license is at the end of the Rust crates' section.
+- **herdr** (agent detection rules): Apache-2.0, herdr contributors.
+  <https://github.com/herdrdev/herdr> The screen rules for Claude Code and
+  Codex in `crates/vt/src/detect.rs` follow the shape of herdr's agent
+  manifests (`src/detect/manifests/`) and adapt some of their patterns.
+  The Apache License 2.0 text is below.
 - **The web client** bundles npm packages: xterm.js, preact, fzstd and three.js (below). three.js draws the swarm's city and loads only when that theme is picked.
 - **Rust crates**, by license:
 

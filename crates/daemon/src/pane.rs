@@ -25,7 +25,10 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
 use illogical_proto::{ClientId, Frame, FrameKind, PaneId, ServerMsg};
-use illogical_vt::{GhosttyEngine, VtEngine};
+use illogical_vt::{
+    GhosttyEngine, VtEngine,
+    detect::{Agent, AgentState, Debounce},
+};
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
     libc,
@@ -195,6 +198,9 @@ pub enum What {
     Clear(illogical_proto::ReasonKind),
     /// What an editor sends its followers (M28).
     Follow(serde_json::Value),
+    /// What the agent in it is doing, read off its screen (#145), and for
+    /// a blocked one what it asks.
+    Screen(AgentState, Option<String>),
 }
 
 pub type NoticeSink = mpsc::UnboundedSender<Notice>;
@@ -308,6 +314,8 @@ enum Cmd {
         scope: CaptureScope,
         reply: Sender<String>,
     },
+    /// Read this agent's state off the screen from now on (`None`: stop).
+    Agent(Option<&'static Agent>),
     Close,
 }
 
@@ -390,6 +398,10 @@ impl PaneHandle {
     /// machine was reset, so what ran on the old one is gone.
     pub fn restart(&self, start: Start, note: &str) {
         let _ = self.tx.send(Cmd::Restart { start, note: note.into() });
+    }
+    /// The agent the pane runs, whose screen to read (#145), or `None`.
+    pub fn watch_agent(&self, agent: Option<&'static Agent>) {
+        let _ = self.tx.send(Cmd::Agent(agent));
     }
     pub fn purge(&self) {
         let _ = self.tx.send(Cmd::Purge);
@@ -966,7 +978,24 @@ struct State {
     typed_by: Option<String>,
     status: Arc<std::sync::Mutex<Status>>,
     last_time_mark: Instant,
+    /// When the once-a-second chores last ran.
+    last_tick: Instant,
+    /// The agent whose screen is read (#145).
+    watch: Option<Watch>,
 }
+
+/// Reading an agent's state off the pane's screen (#145).
+struct Watch {
+    agent: &'static Agent,
+    debounce: Debounce,
+    /// When the screen was last read, and whether output came since.
+    looked: Instant,
+    dirty: bool,
+}
+
+/// The screen is read at most this often while output flows, and this
+/// often while a change waits to be confirmed.
+const LOOK_EVERY: Duration = Duration::from_millis(100);
 
 pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
     let Setup { id, cols, rows, log, restore, start, shell, launch, hold, notices, host } = setup;
@@ -1016,6 +1045,8 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             typed_by: None,
             status,
             last_time_mark: Instant::now() - Duration::from_secs(60),
+            last_tick: Instant::now(),
+            watch: None,
         };
         let adopting = matches!(start, Start::Adopt(_) | Start::Resume { .. });
         if restore && !adopting {
@@ -1118,12 +1149,16 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
                     Ok(cmd) => cmd,
                     Err(_) => continue,
                 },
-                default(Duration::from_secs(1)) => {
-                    if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
-                        st.checkpoint();
+                default(st.tick()) => {
+                    st.look_if_due(true);
+                    if st.last_tick.elapsed() >= Duration::from_secs(1) {
+                        st.last_tick = Instant::now();
+                        if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
+                            st.checkpoint();
+                        }
+                        st.check_quiet();
+                        st.save_exec();
                     }
-                    st.check_quiet();
-                    st.save_exec();
                     continue;
                 }
             },
@@ -1151,6 +1186,7 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
             }
             Cmd::Resize { cols, rows } => st.resize(cols, rows),
             Cmd::Purge => st.purge(),
+            Cmd::Agent(agent) => st.watch_agent(agent),
             Cmd::Checkpoint(done) => {
                 st.checkpoint();
                 let _ = done.send(());
@@ -1608,6 +1644,46 @@ impl State {
         if busy_now {
             self.notify(What::Busy(true));
         }
+        if let Some(w) = &mut self.watch {
+            w.dirty = true;
+        }
+        self.look_if_due(false);
+    }
+
+    /// How long the pane's thread waits for something to do before its
+    /// chores: less while an agent's screen wants another look.
+    fn tick(&self) -> Duration {
+        let now = Instant::now();
+        match &self.watch {
+            Some(w) if w.dirty || w.debounce.pending(now) => LOOK_EVERY,
+            _ => Duration::from_secs(1),
+        }
+    }
+
+    fn watch_agent(&mut self, agent: Option<&'static Agent>) {
+        if self.watch.as_ref().map(|w| w.agent.id) == agent.map(|a| a.id) {
+            return;
+        }
+        let now = Instant::now();
+        self.watch = agent.map(|agent| Watch { agent, debounce: Debounce::new(now), looked: now, dirty: true });
+    }
+
+    /// Read the agent's state off the screen, if it's been long enough
+    /// (`idle`: or there's no output to wait for), and say when it changes.
+    fn look_if_due(&mut self, idle: bool) {
+        let now = Instant::now();
+        let Some(w) = &mut self.watch else { return };
+        if !(w.dirty || w.debounce.pending(now)) || (!idle && now.duration_since(w.looked) < LOOK_EVERY) {
+            return;
+        }
+        w.looked = now;
+        w.dirty = false;
+        let seen = w.agent.detect(&self.engine.title(), &self.engine.screen_lines());
+        let state = seen.as_ref().map(|d| d.state);
+        let Some(changed) = w.debounce.see(now, state) else { return };
+        debug!(pane = self.id, agent = w.agent.id, ?changed, rule = seen.as_ref().map(|d| d.rule), "agent screen");
+        let headline = seen.and_then(|d| d.headline);
+        self.notify(What::Screen(changed, headline));
     }
 
     fn check_quiet(&mut self) {

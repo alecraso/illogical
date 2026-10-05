@@ -1,0 +1,9 @@
+title: ✳ First 15 prime numbers
+❯ List the first 15 primes, one sentence each.
+
+✽ Slithering… (1s · ↓ 25 tokens · thinking)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents

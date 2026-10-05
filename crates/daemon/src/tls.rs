@@ -275,7 +275,7 @@ impl Cloudflare {
     }
 
     fn with_api(token: String, api: &str, doh: &str) -> Self {
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().expect("http client");
+        let http = crate::roots::http().timeout(Duration::from_secs(30)).build().expect("http client");
         Self { token, api: api.trim_end_matches('/').to_owned(), doh: doh.to_owned(), http }
     }
 

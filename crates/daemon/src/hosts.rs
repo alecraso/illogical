@@ -39,7 +39,7 @@ use axum::{
     routing::{delete, get, post},
 };
 use illogical_proto::hosts::{
-    AddHost, Host, HostInfo, HostList, HostToken, Invite, JoinRequest, Joined, ProviderRef, Transport,
+    AddHost, Host, HostFeatures, HostInfo, HostList, HostToken, Invite, JoinRequest, Joined, ProviderRef, Transport,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -118,10 +118,8 @@ impl Hosts {
             .and_then(|b| serde_json::from_slice::<SavedTokens>(&b).ok())
             .map(|s| s.tokens)
             .unwrap_or_default();
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .expect("an HTTP client with default settings");
+        let http =
+            crate::roots::http().timeout(Duration::from_secs(5)).build().expect("an HTTP client with default settings");
         Arc::new(Self {
             name,
             path,
@@ -511,7 +509,40 @@ async fn host(State(app): AppState) -> Json<HostInfo> {
             .and_then(|s| s.roster.as_ref().map(|r| r.name.clone()).or_else(|| Some(s.team.as_ref()?.team.clone()))),
         // M45b: only where the runner's unit is; from what was last read.
         fountain_runner: crate::fountain::runner::host_info(&app.mux.shell_env),
+        features: Some(features(&app)),
     })
+}
+
+/// What this machine is set up for, so the menus offer only that (#180)
+/// or say how to turn it on (#171). Cheap: nothing here asks anyone.
+fn features(app: &App) -> HostFeatures {
+    HostFeatures {
+        blocks: crate::sites::get().is_some(),
+        vms: app.mux.provider.is_some(),
+        fountain: fountain_login_here(&app.mux.shell_env),
+        studio: crate::apps::studio::get().and_then(|s| s.url()).is_some(),
+    }
+}
+
+/// A Fountain login the catalog would find (`fountain::login`'s order): a
+/// key in the daemon's or the shell's environment, or the CLI's
+/// credentials file.
+fn fountain_login_here(shell_env: &crate::shellenv::ShellEnv) -> bool {
+    let shell = shell_env.local_now();
+    let var = |k: &str| {
+        shell
+            .as_ref()
+            .and_then(|r| r.get(k).map(str::to_owned))
+            .or_else(|| std::env::var(k).ok())
+            .filter(|v| !v.is_empty())
+    };
+    if var("FOUNTAIN_API_KEY").is_some() {
+        return true;
+    }
+    let file = var("ILLOGICAL_FOUNTAIN_CREDENTIALS")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".fountain/credentials")));
+    file.is_some_and(|f| f.is_file())
 }
 
 async fn list(State(app): AppState) -> Json<HostList> {

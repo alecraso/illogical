@@ -70,7 +70,7 @@ pub fn start(s: Settings) {
 }
 
 async fn run(s: Settings, cached: Option<Checked>) {
-    let client = match reqwest::Client::builder()
+    let client = match crate::roots::http()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
         .user_agent("illogical")

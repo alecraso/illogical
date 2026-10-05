@@ -128,7 +128,7 @@ class HttpError extends Error {
   }
 }
 
-async function api<T>(path: string, body?: unknown): Promise<T> {
+export async function api<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
@@ -299,6 +299,29 @@ function deviceName(): string {
   return `${app ? `${app} on ` : ""}${os}`;
 }
 
+/** M48: the desktop app's window, after the person allowed its sign-in in
+ * their browser: `#app-redeem=<ticket>.<grant>.<verifier>` from the app,
+ * posted here for the session cookie. Only in the app's own window (a link
+ * to this in a browser would sign it in as someone else). */
+async function redeemAppLogin() {
+  const m = /^#app-redeem=([0-9a-f]+)\.([0-9a-f]+)\.([0-9a-f]+)$/.exec(location.hash);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  if (!(globalThis as { __illogicalApp?: unknown }).__illogicalApp) return;
+  await api(`/auth/app/${m[1]}/redeem`, { grant: m[2], verifier: m[3] }).catch(() => {});
+}
+
+/** Someone offering to share a session on their machine with this
+ * account: it isn't listed, or let in, until accepted. */
+export interface ShareOffer {
+  daemon: string;
+  /** The machine's name, as its owner's machine says. */
+  name: string;
+  account: string;
+  owner_name: string;
+  owner_login: string;
+}
+
 export class ControlSession {
   phase: Phase = "loading";
   error = "";
@@ -325,6 +348,8 @@ export class ControlSession {
   pending: Cert[] = [];
   revocations: Revocation[] = [];
   daemons: DirDaemon[] = [];
+  /** Shares waiting for this account's yes. */
+  offers: ShareOffer[] = [];
   /** The directory is the saved one: control didn't answer. */
   stale = false;
   /** Control says the account's root is a different device than the one
@@ -356,6 +381,7 @@ export class ControlSession {
   /** Sign-in state, enrollment, then the directory, kept fresh. */
   async boot() {
     try {
+      await redeemAppLogin();
       this.keys = await loadKeys();
       this.enrollment = await loadEnrollment(location.origin);
       if (this.enrollment && this.enrollment.cert.device !== this.keys.id) {
@@ -504,6 +530,11 @@ export class ControlSession {
   /** A passkey for the account signed in. */
   async addPasskey() {
     await passkeyRegister();
+    await this.refreshMe();
+  }
+
+  /** How many passkeys the account has now. */
+  async refreshMe() {
     this.passkeys = (await api<{ passkeys: number }>("/api/me")).passkeys;
     this.emit();
   }
@@ -561,7 +592,7 @@ export class ControlSession {
     try {
       const [devs, dir] = await Promise.all([
         api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[]; pending: Cert[] }>("/api/devices"),
-        api<{ daemons: ForeignEntry[] }>("/api/directory"),
+        api<{ daemons: ForeignEntry[]; offers?: ShareOffer[] }>("/api/directory"),
       ]);
       this.rootMismatch = !!devs.trust && devs.trust.root !== e.root;
       this.trusted = await evaluate({ account: e.account, root: e.root }, devs.certs, devs.revocations);
@@ -579,6 +610,7 @@ export class ControlSession {
         if (cert?.kind === "daemon") daemons.push({ ...entry, cert });
       }
       this.daemons = daemons;
+      this.offers = dir.offers ?? [];
       await this.loadTeams();
       await this.loadSandboxes();
       await this.loadBilling();
@@ -934,13 +966,29 @@ export class ControlSession {
   }
 
   /** Turn a daemon's join down: it stops waiting. */
-  /** M48: a desktop app asking to sign in as this account (`#app=`). */
-  async showAppLogin(id: string): Promise<{ name: string; code: string; allowed: boolean }> {
+  /** M48: a desktop app asking to sign in as this account (`#app=`):
+   * where it asked from, and whether that's this browser's network. */
+  async showAppLogin(id: string): Promise<{ name: string; code: string; allowed: boolean; from: string; same_network: boolean }> {
     return api(`/api/app-login/${encodeURIComponent(id)}`);
   }
 
-  async allowAppLogin(id: string) {
-    await api(`/api/app-login/${encodeURIComponent(id)}/allow`, {});
+  /** Allow it: control answers with the app's loopback address, which this
+   * browser hands the grant to (only the app on this computer hears it). */
+  async allowAppLogin(id: string): Promise<string> {
+    const r = await api<{ redirect: string }>(`/api/app-login/${encodeURIComponent(id)}/allow`, {});
+    return r.redirect;
+  }
+
+  /** Answer a share someone offered: accepted, it's listed and reachable. */
+  async answerShare(daemon: string, accept: boolean) {
+    await api(`/api/shares/${encodeURIComponent(daemon)}`, { accept });
+    this.offers = this.offers.filter((o) => o.daemon !== daemon);
+    this.emit();
+    if (accept) {
+      // The machine fetches this account's certificates when control
+      // nudges it; the directory lists it once it lets this account in.
+      setTimeout(() => void this.refresh(), 1500);
+    }
   }
 
   async rejectJoin(code: string) {

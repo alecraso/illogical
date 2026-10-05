@@ -319,6 +319,12 @@ impl Trust {
 }
 
 /// The code a daemon shows when joining, derived from its keys: the device
+/// What a daemon signs with its own key when it asks to join (0.17 and
+/// newer): that whoever asks holds the key, not just its certificate.
+pub fn join_proof_body(cert: &Cert, ms: u64) -> String {
+    format!("illogical join proof v1\n{ms}\n{}", cert.body())
+}
+
 /// approving it recomputes it from the certificate control shows, so
 /// control can't swap in a key of its own. Ten base32 characters, as
 /// `XXXXX-XXXXX`.

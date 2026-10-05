@@ -1,8 +1,14 @@
 # The hosted illogical control (control.illogical.widgets.wtf). One machine
-# with its SQLite database on a volume. Secrets (fly secrets set):
-# GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET. Deploy with `just control-deploy`.
+# with its SQLite database on a volume, backed up off-site by Litestream
+# when its secrets are set. Secrets (fly secrets set): GITHUB_CLIENT_ID,
+# GITHUB_CLIENT_SECRET; LITESTREAM_BUCKET, LITESTREAM_ENDPOINT,
+# LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY (docs/control.md,
+# "Operating the hosted one"). Deploy with `just control-deploy`.
 app = "illogical-control"
 primary_region = "ewr"
+# On a stop, control lets Litestream sync one last time (up to 10 s).
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
 
 [env]
   ILLOGICAL_CONTROL_URL = "https://control.illogical.widgets.wtf"
@@ -21,10 +27,15 @@ primary_region = "ewr"
   auto_start_machines = true
   min_machines_running = 1
 
+  # An idle relay connection costs control about 28 KB (#174: 3,900 of them
+  # took 121 MB in a 1 GB VM), so memory isn't the limit at these numbers;
+  # open files are (control raises its own limit to the hard one at start,
+  # and logs it). Past the soft limit Fly prefers another machine (there's
+  # none yet); at the hard limit it queues new connections.
   [http_service.concurrency]
     type = "connections"
-    soft_limit = 8000
-    hard_limit = 10000
+    soft_limit = 6000
+    hard_limit = 8000
 
   [[http_service.checks]]
     grace_period = "10s"
@@ -35,4 +46,4 @@ primary_region = "ewr"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "256mb"
+  memory = "1gb"

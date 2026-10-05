@@ -326,7 +326,7 @@ pub trait Adapter: Send + Sync {
 pub(crate) fn http() -> reqwest::Client {
     static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     C.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::roots::http()
             .timeout(Duration::from_secs(20))
             .user_agent(concat!("illogical/", env!("CARGO_PKG_VERSION")))
             .build()

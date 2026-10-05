@@ -100,7 +100,7 @@ async function person(browser: Browser, login: string): Promise<Page> {
 async function addMachine(page: Page, name: string, team?: string) {
   const state = temp(name);
   const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])], {
-    stdio: ["ignore", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "ignore"],
   });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
@@ -113,7 +113,10 @@ async function addMachine(page: Page, name: string, team?: string) {
   });
   const exited = new Promise<number | null>((r) => joining.on("exit", r));
   await page.goto(link);
+  // The machine asks whether the account is the one this browser shows.
+  const account = await page.locator("[data-join-account]").getAttribute("data-join-account");
   await page.locator("[data-approve-join]").click();
+  joining.stdin!.end(`${account}\n`);
   expect(await exited).toBe(0);
   procs.push(
     spawn(

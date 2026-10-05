@@ -1,0 +1,14 @@
+title: demo
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.155.1)                         │
+│                                                    │
+│ model:     some-model   /model to change           │
+│ directory: ~/src/demo                              │
+╰────────────────────────────────────────────────────╯
+
+  Tip: Use /fast to enable our fastest inference.
+
+
+› Ask Codex to do anything
+
+  some-model default · ~/src/demo

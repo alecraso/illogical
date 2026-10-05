@@ -135,15 +135,20 @@ function TopBar({
 
   const sessionMenu = (e: MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const items: MenuItem[] = [
+    openFresh(client, { clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, () => [
       ...state.sessions.map((s) => ({
         label: `${s.id === session.id ? "✓ " : "    "}${s.name}`,
         run: () => client.selectSession(s.id),
       })),
       "separator",
       { label: "New session", run: () => client.intent({ op: "new_session", name: null, from_pane: client.active() ?? null }) },
-      { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
-      { label: "Sandboxes…", run: () => openSandboxes() },
+      // VMs and sandboxes need wisp (#180).
+      ...(client.has("vms")
+        ? [
+            { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) } as MenuItem,
+            { label: "Sandboxes…", run: () => openSandboxes() } as MenuItem,
+          ]
+        : []),
       { label: "Rename session", run: () => setRenaming({ kind: "session", id: session.id }) },
       // Sharing is the daemon's owner's (M13).
       ...(state.roles ? [] : [{ label: "Share session…", run: () => shareSession(session.id) } as MenuItem]),
@@ -153,8 +158,7 @@ function TopBar({
       { label: "Getting started", run: () => openGettingStarted(undefined, client) },
       "separator",
       { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session: session.id }) },
-    ];
-    openMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, items);
+    ]);
   };
 
   return (
@@ -197,26 +201,23 @@ function TopBar({
         {marker === session.tabs.length && <div class="drop-marker" />}
         <button
           class="new-tab"
-          title="New tab (right-click for a VM tab)"
+          title={client.has("vms") ? "New tab (right-click for a VM tab)" : "New tab (right-click for more)"}
           onClick={() => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null })}
           onContextMenu={(e) =>
-            openMenu(e, [
+            openFresh(client, e, () => [
               { label: "New tab", run: () => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null }) },
-              { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) },
+              ...(client.has("vms") ? [{ label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) } as MenuItem] : []),
               { label: "In a directory…", disabled: client.active() === undefined, run: () => openPicker(client, client.active()) },
               // M35: a studio app's box, in a tab of its own. The owner's.
-              ...(!client.state?.roles ? [{ label: "Open a studio app…", run: () => pickApp(client, { session: session.id }) } as MenuItem] : []),
+              ...(!client.state?.roles && client.has("studio")
+                ? [{ label: "Open a studio app…", run: () => pickApp(client, { session: session.id }) } as MenuItem]
+                : []),
               // M36: a pull request, in a tab of its own.
               ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { session: session.id }) } as MenuItem] : []),
               // M37: an issue, in a tab of its own.
               ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { session: session.id }) } as MenuItem] : []),
               // M43: the Fountain agent catalog, in a tab of its own.
-              ...(!client.state?.roles
-                ? [
-                    { label: "Fountain agents…", run: () => void openFountain(client, { session: session.id }) } as MenuItem,
-                    { label: "Fountain runner…", run: () => void openFountain(client, { session: session.id }, "runner") } as MenuItem,
-                  ]
-                : []),
+              ...(!client.state?.roles ? fountainItems(client, { session: session.id }) : []),
               // #17: a tab here whose shell runs on another host.
               ...remoteHosts().map((h): MenuItem => ({ label: `New tab on ${h}`, run: () => void newRemote(client, h, { session: session.id }) })),
             ])
@@ -280,10 +281,10 @@ function TabItem({
       onDblClick={() => setRenaming({ kind: "tab", id: tab.id })}
       onAuxClick={(e) => e.button === 1 && close()}
       onContextMenu={(e) =>
-        openMenu(e, [
+        openFresh(client, e, () => [
           { label: "Rename tab", run: () => setRenaming({ kind: "tab", id: tab.id }) },
           { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
-          { label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) },
+          ...(client.has("vms") ? [{ label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) } as MenuItem] : []),
           { label: "Go to directory…", run: () => openPicker(client, client.active(tab.id)) },
           // M11: what changed in the active pane's repository, on its machine.
           ...(!client.state?.roles && client.active(tab.id) !== undefined
@@ -569,11 +570,11 @@ function PaneSlot({
     const tabMachine = tabId === undefined ? undefined : client.tabMachine(tabId);
     const mine = client.machine(id);
     const own = mine !== undefined && "pane" in mine.owner && mine.owner.pane === id;
-    openMenu(e, [
+    openFresh(client, e, () => [
       { label: "Split right", run: () => client.intent({ op: "split", pane: id, edge: "right" }) },
       { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
       ...(tabMachine ? [{ label: "Split (local)", run: () => client.intent({ op: "split", pane: id, edge: "right", local: true }) } as MenuItem] : []),
-      { label: "New VM pane on the right", run: () => void client.newVm({ split: id }) },
+      ...(client.has("vms") ? [{ label: "New VM pane on the right", run: () => void client.newVm({ split: id }) } as MenuItem] : []),
       ...elsewhere(),
       {
         label: "Open a web page…",
@@ -590,18 +591,13 @@ function PaneSlot({
         ? [{ label: "Claude Code conversations…", run: () => pickConversation(client, { split: id, cwd: cwd ?? undefined }) } as MenuItem]
         : []),
       // M35: a studio app's box beside this pane.
-      ...(!client.state?.roles ? [{ label: "Open a studio app…", run: () => pickApp(client, { split: id }) } as MenuItem] : []),
+      ...(!client.state?.roles && client.has("studio") ? [{ label: "Open a studio app…", run: () => pickApp(client, { split: id }) } as MenuItem] : []),
       // M36: a pull request beside it (N: in its repository).
       ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { split: id, dir: cwd }) } as MenuItem] : []),
       // M37: an issue beside it (N: in its repository).
       ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { split: id, dir: cwd }) } as MenuItem] : []),
       // M43: the Fountain agent catalog beside it.
-      ...(!client.state?.roles
-        ? [
-            { label: "Fountain agents…", run: () => void openFountain(client, { split: id }) } as MenuItem,
-            { label: "Fountain runner…", run: () => void openFountain(client, { split: id }, "runner") } as MenuItem,
-          ]
-        : []),
+      ...(!client.state?.roles ? fountainItems(client, { split: id }) : []),
       // M27: VS Code where this pane runs, in its directory. The owner's,
       // like ports.
       ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),
@@ -750,6 +746,26 @@ function HostBadge({ client, id }: { client: Client; id: PaneId }) {
 /** "idle" when nothing in the tab runs on its machine any more. */
 function machineState(client: Client, m: Machine): string {
   return m.state === "running" && client.panesOn(m.id).length === 0 ? "idle" : m.state;
+}
+
+/** A menu whose items depend on what the daemon is set up for: read that
+ * again first (briefly), so a studio linked a moment ago shows (#180). */
+function openFresh(client: Client, e: { clientX: number; clientY: number; preventDefault(): void }, build: () => MenuItem[]) {
+  e.preventDefault();
+  const at = { clientX: e.clientX, clientY: e.clientY, preventDefault() {} };
+  const wait = new Promise((r) => setTimeout(r, 300));
+  void Promise.race([client.loadFeatures(), wait]).then(() => openMenu(at, build()));
+}
+
+/** The Fountain catalog with a login here; the runner view where the
+ * runner's unit is (#180). */
+function fountainItems(client: Client, where: { session?: number; split?: PaneId }): MenuItem[] {
+  return [
+    ...(client.has("fountain") ? [{ label: "Fountain agents…", run: () => void openFountain(client, where) } as MenuItem] : []),
+    ...(client.features === null || client.fountainRunner
+      ? [{ label: "Fountain runner…", run: () => void openFountain(client, where, "runner") } as MenuItem]
+      : []),
+  ];
 }
 
 /** The tab's machine: how it is, a new pane on it, reset. */

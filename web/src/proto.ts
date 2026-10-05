@@ -341,6 +341,19 @@ export interface State {
 
 export type Role = "viewer" | "editor" | "owner";
 
+/** `GET /api/host`'s `features` (#171, #180): what this machine is set up
+ * for. */
+export interface HostFeatures {
+  /** Browser blocks on ports and editor blocks (`--block-listen`). */
+  blocks: boolean;
+  /** VM tabs and panes, and sandboxes (wisp). */
+  vms: boolean;
+  /** A Fountain login. */
+  fountain: boolean;
+  /** A linked studio. */
+  studio: boolean;
+}
+
 export type Intent =
   | { op: "new_session"; name: string | null; from_pane: PaneId | null }
   | { op: "rename_session"; session: SessionId; name: string }

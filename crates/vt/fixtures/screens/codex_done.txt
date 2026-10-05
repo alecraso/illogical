@@ -1,0 +1,10 @@
+title: Explain the first 10 primes | demo
+  9. 23 is the only prime between 20 and 28.
+  10. 29 is the tenth prime and the largest prime below 30.
+
+  done 7:11 PM
+
+
+› Ask Codex to do anything
+
+  some-model default · ~/src/demo

@@ -31,6 +31,10 @@ impl Drop for Daemon {
 }
 
 fn start() -> Daemon {
+    start_with(&[])
+}
+
+fn start_with(env: &[(&str, &std::ffi::OsStr)]) -> Daemon {
     static N: AtomicU32 = AtomicU32::new(0);
     // Short: Unix socket paths are limited to ~100 bytes.
     let state =
@@ -41,6 +45,7 @@ fn start() -> Daemon {
         .arg("--state-dir")
         .arg(&state)
         .env("PS1", "$ ")
+        .envs(env.iter().copied())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -141,6 +146,20 @@ impl Daemon {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+}
+
+/// A machine with no CA certificates (no `ca-certificates` package): the
+/// daemon falls back to its bundled roots instead of going down at start.
+#[test]
+fn starts_on_a_machine_without_ca_certificates() {
+    let dir = std::env::temp_dir().join(format!("ilg-noca-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("empty.pem"), "").unwrap();
+    // rustls-native-certs reads only these when they're set.
+    let d = start_with(&[("SSL_CERT_FILE", dir.join("empty.pem").as_os_str()), ("SSL_CERT_DIR", dir.as_os_str())]);
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(d.get("/api/panes").as_array().is_some_and(|p| !p.is_empty()));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -318,38 +337,80 @@ fn events_stream_and_attention() {
     assert_eq!(d.pane(1)["attention"], "done");
 }
 
-#[test]
-fn an_idle_agent_redrawing_wants_you_once_a_turn() {
-    let d = start();
-    // A stand-in agent: answers a line, then redraws itself after a while,
-    // as Claude Code does on a resize or for its status line.
+/// A stand-in `claude` that draws what it's told to: Claude Code's screens,
+/// as `crates/vt/fixtures/screens` has them, or a line and silence.
+fn fake_claude(d: &Daemon) -> String {
     let bin = d.state.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let agent = bin.join("claude");
-    std::fs::write(&agent, "#!/bin/bash\nwhile read -r l; do echo \"ok $l\"; sleep 4; echo redraw; done\n").unwrap();
+    let script = r#"#!/bin/bash
+rule() { printf '%.0s─' {1..60}; printf '\r\n'; }
+box() { rule; printf '❯ \r\n'; rule; printf '  %s\r\n' "$1"; }
+while read -r l; do
+  printf '\e[2J\e[H'
+  case "$l" in
+    work) printf '✽ Thinking… (3s · ↓ 20 tokens)\r\n\r\n'; box '⏸ manual mode on · esc to interrupt' ;;
+    ask) printf '● Removing the build\r\n\r\n'; rule
+         printf ' Bash command\r\n'; printf '%.0s╌' {1..60}; printf '\r\n rm -rf build\r\n'
+         printf '%.0s╌' {1..60}; printf '\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n\r\n Esc to cancel · Tab to amend\r\n' ;;
+    idle) printf '● Done.\r\n\r\n'; box '⏸ manual mode on · ? for shortcuts' ;;
+    notify) printf '\e]9;Claude needs your attention\a' ;;
+    *) echo "ok $l" ;;
+  esac
+done
+"#;
+    std::fs::write(&agent, script).unwrap();
     std::fs::set_permissions(&agent, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    let needs = || d.pane(1)["attention"] == "needs_input";
-    let wait = |secs| {
+    agent.display().to_string()
+}
+
+#[test]
+fn a_quiet_agent_doesnt_want_you_its_screen_says_when_it_does() {
+    let d = start();
+    let attention = || d.pane(1)["attention"].as_str().unwrap_or_default().to_owned();
+    // Quiet `secs` long without wanting you.
+    let never_needs = |secs| {
         let deadline = Instant::now() + Duration::from_secs(secs);
         while Instant::now() < deadline {
-            assert!(!needs(), "an idle agent wanted you again");
+            assert_ne!(attention(), "needs_input", "a quiet agent wanted you");
             std::thread::sleep(Duration::from_millis(100));
         }
     };
-
-    d.send(1, &agent.display().to_string());
-    d.wait_for(needs);
-    d.post("/api/panes/1/attention", json!({"state": "idle"}));
-    // A turn: it goes quiet after answering, and wants you.
-    d.send(1, "go");
-    d.wait_for(needs);
-    d.post("/api/panes/1/attention", json!({"state": "idle"}));
-    // Its redraw (4 s on) and the quiet after it don't want you again.
-    wait(7);
-    assert_eq!(d.pane(1)["attention"], "idle");
-    // The next turn does.
-    d.send(1, "again");
-    d.wait_for(needs);
+    let until = |want: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while attention() != want {
+            assert!(Instant::now() < deadline, "not {want}: {} {}", d.pane(1), d.get("/api/panes/1/capture"));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    d.send(1, &fake_claude(&d));
+    // It prints a line, then goes quiet: that's not "needs you".
+    d.send(1, "hello");
+    never_needs(4);
+    // A long think: its screen says it's working, however quiet it is.
+    d.send(1, "work");
+    until("working");
+    never_needs(4);
+    assert_eq!(attention(), "working");
+    // A permission prompt wants you, and says for what.
+    d.send(1, "ask");
+    until("needs_input");
+    let items = d.get("/api/attention");
+    let item = items.as_array().unwrap().iter().find(|i| i["pane"] == 1).cloned().unwrap();
+    assert_eq!(item["reason"]["headline"], "Claude Code asks to run `rm -rf build`", "{item}");
+    // Answering it, then the turn ending: no longer wanted (nobody is
+    // watching, so it's done).
+    d.send(1, "work");
+    until("working");
+    // (Its screen is read every 100 ms: let it see the turn.)
+    std::thread::sleep(Duration::from_millis(500));
+    d.send(1, "idle");
+    until("done");
+    // A notification (or a hook) still wants you, over an idle screen.
+    d.send(1, "notify");
+    until("needs_input");
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(attention(), "needs_input");
 }
 
 #[test]

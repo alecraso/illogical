@@ -160,6 +160,7 @@ pub struct Checkout {
 /// `POST /api/billing/checkout`: a Stripe Checkout page to upgrade.
 pub async fn checkout(State(app): State<Arc<App>>, s: Session, Json(b): Json<Checkout>) -> R {
     let st = stripe(&app)?;
+    app.limits.check_account(crate::limit::CHECKOUTS, &s.account)?;
     let (owner, seats) = match &b.team {
         Some(t) => {
             let r: illogical_e2e::team::Roster = serde_json::from_str(
@@ -216,7 +217,7 @@ fn verify_signature(secret: &str, header: &str, body: &[u8], now_s: u64) -> bool
         }
     }
     let Some(t) = t else { return false };
-    if now_s.abs_diff(t) > 300 {
+    if secret.is_empty() || now_s.abs_diff(t) > 300 {
         return false;
     }
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
@@ -325,8 +326,10 @@ fn payer(app: &App, account: &str) -> Option<String> {
 
 /// `POST /api/billing/report` (owners of billing on this control): report
 /// usage now, rather than at the next hour.
-pub async fn report_now(State(app): State<Arc<App>>, _s: Session) -> R {
+pub async fn report_now(State(app): State<Arc<App>>, s: Session) -> R {
     stripe(&app)?;
+    app.limits.check_account(crate::limit::REPORTS, &s.account)?;
+    app.limits.check_all(crate::limit::ALL_REPORTS)?;
     report_usage(&app).await;
     Ok(Json(json!({})))
 }
@@ -348,6 +351,12 @@ mod tests {
         assert!(!verify_signature("whsec_test", &format!("t=1000,v1={sig}"), body, 2000), "too old");
         assert!(!verify_signature("whsec_other", &format!("t=1000,v1={sig}"), body, 1100));
         assert!(!verify_signature("whsec_test", &format!("t=1000,v1={sig}"), br#"{"type":"y"}"#, 1100));
+        // Never against an empty secret.
+        let mut mac = HmacSha256::new_from_slice(b"").unwrap();
+        mac.update(b"1000.");
+        mac.update(body);
+        let empty = hex::encode(mac.finalize().into_bytes());
+        assert!(!verify_signature("", &format!("t=1000,v1={empty}"), body, 1100));
     }
 
     #[test]

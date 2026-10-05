@@ -19,8 +19,12 @@
 //!   with GitHub, the App is installed where the repository lives, and that
 //!   installation is the person's own account, or GitHub says they're a
 //!   collaborator on the repository (`collaborators/{login}/permission`
-//!   through an installation token, any permission but `none`). Answers are
-//!   kept ten minutes. Subscriptions live as long as the socket.
+//!   through an installation token, any permission but `none`). Both are
+//!   checked by the person's numeric GitHub id, never the login alone (a
+//!   login can change hands). Answers are kept ten minutes. Subscriptions
+//!   live as long as the socket. A daemon watches at most 200 repositories
+//!   and an account 400; `forge.watch` messages and first-time lookups at
+//!   GitHub are rate-limited per daemon and per account (limit.rs).
 //! - **Hosted boxes.** `POST /api/daemon/github/token {repo}` (a daemon's
 //!   signature): for an account the same rule allows, an installation token
 //!   scoped to that one repository with read-only permissions, minted with
@@ -55,6 +59,8 @@ use crate::{ApiError, App, auth::DaemonAuth, err};
 const KEEP: Duration = Duration::from_secs(600);
 /// Repositories one daemon may watch.
 const MAX_REPOS: usize = 200;
+/// Repositories one account's daemons may watch, together.
+const MAX_ACCOUNT_REPOS: usize = 400;
 /// Deliveries remembered for deduplication.
 const DELIVERIES: usize = 10_000;
 
@@ -71,6 +77,16 @@ pub struct Install {
     pub id: u64,
     /// The account it's installed on (a user or an organization).
     pub account: String,
+    /// That account's numeric id.
+    pub account_id: u64,
+}
+
+/// A person by their GitHub identity: the numeric id is who they are, the
+/// login what control last saw them called.
+#[derive(Debug, Clone)]
+pub struct GithubUser {
+    pub id: u64,
+    pub login: String,
 }
 
 /// When a person's access was looked at, and the answer.
@@ -86,7 +102,7 @@ pub struct GithubApp {
     pub api: String,
     key: KeyPair,
     installs: Mutex<HashMap<String, (Instant, Option<Install>)>>,
-    access: Mutex<HashMap<(String, String), Access>>,
+    access: Mutex<HashMap<(u64, String), Access>>,
     /// Installation tokens by (installation, repository), until they expire.
     tokens: Mutex<HashMap<(u64, String), Minted>>,
 }
@@ -194,7 +210,11 @@ impl GithubApp {
             200 => {
                 let v: Value = r.json().await?;
                 let id = v["id"].as_u64().context("an installation with no id")?;
-                Some(Install { id, account: v["account"]["login"].as_str().unwrap_or_default().to_owned() })
+                Some(Install {
+                    id,
+                    account: v["account"]["login"].as_str().unwrap_or_default().to_owned(),
+                    account_id: v["account"]["id"].as_u64().unwrap_or(0),
+                })
             }
             404 => None,
             s => bail!("GitHub said {s} for the App's installation on {repo}"),
@@ -236,16 +256,22 @@ impl GithubApp {
         Ok((t, at))
     }
 
-    /// Whether `login` (a GitHub user) may hear about `repo` through the
-    /// App: the installation that covers it, or why not.
-    pub async fn may(&self, http: &reqwest::Client, login: &str, repo: &str) -> Result<Install, String> {
-        let k = (login.to_ascii_lowercase(), repo.to_ascii_lowercase());
+    /// Whether the answer for this person and repository is at hand.
+    pub fn knows(&self, user: &GithubUser, repo: &str) -> bool {
+        let k = (user.id, repo.to_ascii_lowercase());
+        self.access.lock().unwrap().get(&k).is_some_and(|(at, _)| at.elapsed() < KEEP)
+    }
+
+    /// Whether `user` may hear about `repo` through the App: the
+    /// installation that covers it, or why not.
+    pub async fn may(&self, http: &reqwest::Client, user: &GithubUser, repo: &str) -> Result<Install, String> {
+        let k = (user.id, repo.to_ascii_lowercase());
         if let Some((at, r)) = self.access.lock().unwrap().get(&k)
             && at.elapsed() < KEEP
         {
             return r.clone();
         }
-        let r = self.may_now(http, login, repo).await;
+        let r = self.may_now(http, user, repo).await;
         if let Err(e) = &r {
             info!(repo, why = e, "no live updates for a repository");
         }
@@ -253,7 +279,8 @@ impl GithubApp {
         r
     }
 
-    async fn may_now(&self, http: &reqwest::Client, login: &str, repo: &str) -> Result<Install, String> {
+    async fn may_now(&self, http: &reqwest::Client, user: &GithubUser, repo: &str) -> Result<Install, String> {
+        let login = user.login.as_str();
         let owner = repo.split('/').next().unwrap_or_default();
         let install = match self.installation(http, repo).await {
             Ok(Some(i)) => i,
@@ -268,7 +295,8 @@ impl GithubApp {
                 return Err("couldn't ask GitHub about the App's installation".into());
             }
         };
-        if install.account.eq_ignore_ascii_case(login) {
+        // Their own: by id, as a login that changed hands would match.
+        if install.account_id != 0 && install.account_id == user.id {
             return Ok(install);
         }
         // Someone else's installation (an organization's, say): only if
@@ -284,8 +312,12 @@ impl GithubApp {
         let path = format!("repos/{repo}/collaborators/{login}/permission");
         let r = self.req(http, reqwest::Method::GET, &path, &token).send().await.map_err(|e| e.to_string())?;
         let v: Value = if r.status().is_success() { r.json().await.unwrap_or_default() } else { Value::Null };
-        match v["permission"].as_str() {
-            Some(p) if p != "none" => Ok(install),
+        // The login control knows may belong to someone else by now.
+        if v["user"]["id"].as_u64().is_some_and(|id| id != user.id) {
+            return Err(format!("the GitHub login {login} isn't yours any more: sign in to control with GitHub again"));
+        }
+        match (v["permission"].as_str(), v["user"]["id"].as_u64()) {
+            (Some(p), Some(_)) if p != "none" => Ok(install),
             _ => Err(format!("GitHub doesn't list {login} as a collaborator on {repo}")),
         }
     }
@@ -434,6 +466,17 @@ impl Watches {
             .insert(daemon.to_owned(), Watch { generation, account: account.to_owned(), repos, standing });
     }
 
+    /// Repositories (lowercase) the account's other daemons watch.
+    fn account_repos(&self, account: &str, except: &str) -> HashSet<String> {
+        self.by_daemon
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(d, w)| w.account == account && d.as_str() != except)
+            .flat_map(|(_, w)| w.repos.iter().map(|r| r.to_ascii_lowercase()))
+            .collect()
+    }
+
     fn snapshot(&self) -> Vec<(String, u64, String, Vec<String>)> {
         self.by_daemon
             .lock()
@@ -461,15 +504,31 @@ fn good_repo(r: &str) -> bool {
     ok(p.next()) && ok(p.next()) && p.next().is_none()
 }
 
-/// Where each repository stands for an account.
-async fn standings(app: &App, account: &str, repos: &[String]) -> Vec<Standing> {
-    let login = app.db.github_login(account).ok().flatten();
+/// The account's GitHub identity, if it signed in with GitHub.
+fn github_user(app: &App, account: &str) -> anyhow::Result<Option<GithubUser>> {
+    Ok(app.db.github_identity(account)?.and_then(|(id, login)| Some(GithubUser { id: id.parse().ok()?, login })))
+}
+
+/// Where each repository stands for an account. `fresh`: a daemon just
+/// asked (not the heartbeat), so lookups GitHub hasn't answered lately
+/// count against the account's limit.
+async fn standings(app: &App, account: &str, repos: &[String], fresh: bool) -> Vec<Standing> {
+    let user = github_user(app, account).ok().flatten();
     let mut out = Vec::new();
     for repo in repos {
-        let why = match (&app.github_app, &login) {
+        let why = match (&app.github_app, &user) {
             (None, _) => Some("this control has no GitHub App: the block polls".to_owned()),
             (Some(_), None) => Some("sign in to control with GitHub for live updates from GitHub".to_owned()),
-            (Some(gh), Some(l)) => gh.may(&app.http, l, repo).await.err(),
+            (Some(gh), Some(u)) => {
+                if fresh
+                    && !gh.knows(u, repo)
+                    && app.limits.check_account(crate::limit::FORGE_LOOKUPS, account).is_err()
+                {
+                    Some("too many repositories asked about lately: live updates resume within the hour".to_owned())
+                } else {
+                    gh.may(&app.http, u, repo).await.err()
+                }
+            }
         };
         out.push(Standing { repo: repo.clone(), live: why.is_none(), why });
     }
@@ -488,13 +547,29 @@ pub fn from_daemon(app: &Arc<App>, daemon: &str, generation: u64, text: &str) {
     if m.t != "forge.watch" {
         return;
     }
+    if app.limits.check_daemon(crate::limit::FORGE_WATCHES, daemon).is_err() {
+        warn!(%daemon, "too many forge.watch messages; ignoring this one");
+        return;
+    }
     let mut repos: Vec<String> = m.repos.into_iter().filter(|r| good_repo(r)).take(MAX_REPOS).collect();
     repos.sort_by_key(|r| r.to_ascii_lowercase());
     repos.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
     let (app, daemon) = (app.clone(), daemon.to_owned());
     tokio::spawn(async move {
         let Ok(Some(account)) = app.db.daemon_account(&daemon) else { return };
-        let st = standings(&app, &account, &repos).await;
+        // The account's machines together watch at most so many.
+        let mut others = app.forge.account_repos(&account, &daemon);
+        let (ok, over): (Vec<String>, Vec<String>) = repos.into_iter().partition(|r| {
+            let k = r.to_ascii_lowercase();
+            others.contains(&k) || (others.len() < MAX_ACCOUNT_REPOS && others.insert(k))
+        });
+        let repos = ok;
+        let mut st = standings(&app, &account, &repos, true).await;
+        st.extend(over.into_iter().map(|repo| Standing {
+            repo,
+            live: false,
+            why: Some(format!("this account's machines watch {MAX_ACCOUNT_REPOS} repositories already")),
+        }));
         let live = st.iter().filter(|s| s.live).count();
         info!(%daemon, repos = repos.len(), live, "forge subscriptions");
         app.forge.set(&daemon, generation, &account, repos, st.clone());
@@ -513,7 +588,7 @@ pub async fn heartbeat(app: Arc<App>, every: Duration) {
     loop {
         tokio::time::sleep(every).await;
         for (daemon, generation, account, repos) in app.forge.snapshot() {
-            let st = standings(&app, &account, &repos).await;
+            let st = standings(&app, &account, &repos, false).await;
             app.forge.set(&daemon, generation, &account, repos, st.clone());
             app.relay.text(&daemon, &watching(&st));
         }
@@ -572,11 +647,13 @@ pub async fn daemon_token(
     if !good_repo(&b.repo) {
         return Err(err(StatusCode::BAD_REQUEST, "repo: OWNER/NAME"));
     }
-    let login = app
-        .db
-        .github_login(&d.cert.account)?
+    let user = github_user(&app, &d.cert.account)?
         .ok_or_else(|| err(StatusCode::FORBIDDEN, "sign in to control with GitHub to read GitHub through its App"))?;
-    let install = gh.may(&app.http, &login, &b.repo).await.map_err(|why| err(StatusCode::FORBIDDEN, &why))?;
+    if !gh.knows(&user, &b.repo) {
+        app.limits.check_account(crate::limit::FORGE_LOOKUPS, &d.cert.account)?;
+    }
+    let install = gh.may(&app.http, &user, &b.repo).await.map_err(|why| err(StatusCode::FORBIDDEN, &why))?;
+    let login = user.login;
     let name = b.repo.split('/').nth(1).unwrap_or_default();
     let (token, expires_at) = gh.token(&app.http, install.id, name).await?;
     // Who and what; never the token.

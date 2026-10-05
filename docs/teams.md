@@ -118,6 +118,10 @@ To share a session (a set of tabs) instead of a whole machine:
   fingerprint and *Share with* them. They *can watch* or *can drive*.
   *with history* also shows what was there before; without it they see
   from now on.
+  - Someone you're not in a team with is asked first: they see *{you}
+    wants to share a session on {machine} with you* and *Accept* or
+    *Decline*. Until they accept, the machine isn't listed for them and
+    its notifications don't reach them. Teammates aren't asked.
 - **A team:** *Share with everyone in {team}*, as members come and go.
   Each member gets the role you picked.
 - **A read-only link:** *Make a read-only link*. Anyone with it watches,

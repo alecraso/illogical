@@ -41,7 +41,7 @@ const CREDENTIALS: &str = "/home/fountain/.fountain/credentials";
 const SETUP: &str = "sudo bash scripts/fountain-runner-setup.sh \
 --fountain \"$(command -v fountain)\" --node \"$(node -p process.execPath)\"";
 const SETUP_URL: &str =
-    "https://git.inevitable.fyi/jhgaylor/illogical/raw/branch/main/scripts/fountain-runner-setup.sh";
+    "https://raw.githubusercontent.com/arugula-salad/illogical/main/scripts/fountain-runner-setup.sh";
 
 #[derive(Subcommand)]
 pub enum RunnerCmd {
@@ -50,7 +50,7 @@ pub enum RunnerCmd {
     /// start the unit. A key that's there already is kept.
     Install {
         /// The key's name on Fountain.
-        #[arg(long, default_value = "geek-runner")]
+        #[arg(long, default_value = "illogical-runner")]
         key_name: String,
         /// Make a new key even if the runner has one (revoke the old one
         /// with `fountain keys revoke`).
@@ -67,8 +67,8 @@ pub enum RunnerCmd {
         #[arg(required = true)]
         agents: Vec<String>,
         /// The agent-specs checkout, to name the file of an agent chant
-        /// manages [default: ~/dev/jhgaylor/agent-specs, if it's there].
-        #[arg(long)]
+        /// manages [default: ~/agent-specs, if it's there].
+        #[arg(long, env = "ILLOGICAL_AGENT_SPECS")]
         specs: Option<PathBuf>,
     },
 }
@@ -396,7 +396,7 @@ fn spec_file(specs: &Path, agent: &str) -> Option<PathBuf> {
 fn adopt(agents: &[String], specs: Option<PathBuf>, json_out: bool) -> anyhow::Result<i32> {
     let login = Login::load()?;
     let specs = specs.or_else(|| {
-        let d = Path::new(&std::env::var_os("HOME")?).join("dev/jhgaylor/agent-specs");
+        let d = Path::new(&std::env::var_os("HOME")?).join("agent-specs");
         d.is_dir().then_some(d)
     });
     let mut code = 0;

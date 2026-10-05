@@ -670,6 +670,15 @@ button {
   font-weight: 600;
 }
 
+.prompt-notice p {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
+.prompt-notice a {
+  color: var(--accent);
+}
+
 .prompt input {
   font: 13px ui-monospace, monospace;
   padding: 8px;
@@ -1973,6 +1982,11 @@ button {
   color: var(--accent);
 }
 
+.fingerprint-inline {
+  font: 600 1em ui-monospace, monospace;
+  color: var(--accent);
+}
+
 .control-error {
   color: var(--danger);
 }
@@ -2103,6 +2117,18 @@ button {
   color: var(--danger);
 }
 
+/* Deleting an account (#173): type its login to confirm. */
+.prompt-buttons button.danger:not(:disabled) {
+  background: var(--danger);
+  color: var(--letterbox);
+}
+
+.prompt label.control-confirm {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+
 .prompt label.control-check {
   display: flex;
   align-items: center;
@@ -2145,6 +2171,15 @@ button {
   display: grid;
   gap: 8px;
   justify-items: start;
+}
+
+.control-legal {
+  margin-top: 24px;
+  font-size: 12px;
+}
+
+.control-legal a {
+  color: inherit;
 }
 
 .control-secondary {
@@ -4136,6 +4171,19 @@ button {
   letter-spacing: 0.18em;
   color: var(--s-ask);
   text-shadow: 0 0 24px rgba(185, 140, 255, 0.35);
+}
+
+.start-code-big.start-fp {
+  font: 700 clamp(18px, 6vw, 30px)/1.2 ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.start-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
 }
 
 .start-pulse {

@@ -150,9 +150,19 @@ impl Target {
     }
 }
 
+/// The platform's roots first (they carry a company's own CA); the bundled
+/// Mozilla roots on a machine with none (no `ca-certificates`), with a warning.
 fn tls_config() -> anyhow::Result<Arc<rustls::ClientConfig>> {
     use rustls_platform_verifier::ConfigVerifierExt;
-    Ok(Arc::new(rustls::ClientConfig::with_platform_verifier()?))
+    match rustls::ClientConfig::with_platform_verifier() {
+        Ok(c) => Ok(Arc::new(c)),
+        Err(e) => {
+            eprintln!("illogical: no system CA certificates ({e}): trusting the bundled Mozilla roots");
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
+            Ok(Arc::new(rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth()))
+        }
+    }
 }
 
 /// A connection to a daemon, whatever it runs over.

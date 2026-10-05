@@ -92,7 +92,7 @@ function runDaemon(name: string) {
 /** `illogicald join`, approved from `page`; then the daemon runs. Its port. */
 async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["ignore", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -106,7 +106,10 @@ async function addMachine(page: Page, name: string, direct: boolean) {
   const exited = new Promise<number | null>((r) => joining.on("exit", r));
   await page.goto(link);
   await expect(page.locator("[data-join-code]")).toHaveText(code);
+  // The machine asks whether the account is the one this browser shows.
+  const account = await page.locator("[data-join-account]").getAttribute("data-join-account");
   await page.locator("[data-approve-join]").click();
+  joining.stdin!.end(`${account}\n`);
   expect(await exited).toBe(0);
   const args = [
     ...["--listen", ANY, "--name", name, "--state-dir", state],

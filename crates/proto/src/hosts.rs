@@ -98,6 +98,25 @@ pub struct HostInfo {
     /// `fountain-runner` unit): what was last read of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fountain_runner: Option<FountainRunnerInfo>,
+    /// What this machine is set up for (#171, #180): the menus offer only
+    /// these, or say how to turn them on. Absent from older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<HostFeatures>,
+}
+
+/// The optional parts of a machine, as `GET /api/host` reports them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostFeatures {
+    /// Browser blocks on ports and editor blocks: block sites are on
+    /// (`--block-listen`).
+    pub blocks: bool,
+    /// VM tabs and panes and *Sandboxes…*: a sandbox provider (wisp).
+    pub vms: bool,
+    /// A Fountain login here: `FOUNTAIN_API_KEY`, or the CLI's
+    /// credentials file.
+    pub fountain: bool,
+    /// A studio is linked (`illogical studio login`).
+    pub studio: bool,
 }
 
 /// A machine's Fountain runner, for its line in the machine panel and the

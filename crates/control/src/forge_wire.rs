@@ -22,7 +22,7 @@ use illogical_e2e::{Cert, DeviceKeys, Kind, now_ms};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
-use crate::{App, Config, forge};
+use crate::{App, forge};
 
 const SECRET: &str = "whsec-m40-test";
 
@@ -59,8 +59,12 @@ async fn installation(State(h): State<Shared>, headers: HeaderMap, Path((o, r)):
     }
     h.lock().unwrap().asked.push(format!("installation {o}/{r}"));
     match o.as_str() {
-        "jhgaylor" => Json(json!({ "id": 11, "account": { "login": "jhgaylor", "type": "User" } })).into_response(),
-        "acme" => Json(json!({ "id": 12, "account": { "login": "acme", "type": "Organization" } })).into_response(),
+        "jhgaylor" => {
+            Json(json!({ "id": 11, "account": { "login": "jhgaylor", "id": 1, "type": "User" } })).into_response()
+        }
+        "acme" => {
+            Json(json!({ "id": 12, "account": { "login": "acme", "id": 900, "type": "Organization" } })).into_response()
+        }
         _ => (StatusCode::NOT_FOUND, Json(json!({ "message": "Not Found" }))).into_response(),
     }
 }
@@ -84,8 +88,13 @@ async fn permission(headers: HeaderMap, Path((o, r, login)): Path<(String, Strin
     if auth != "Bearer ghs_test_12" || (o, r) != ("acme".into(), "tool".into()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let p = if login == "jhgaylor" { "write" } else { "none" };
-    Json(json!({ "permission": p })).into_response()
+    // Who has each login now: jhgaylor is GitHub user 1.
+    let (p, id) = match login.as_str() {
+        "jhgaylor" => ("write", 1),
+        "stranger" => ("none", 2),
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    Json(json!({ "permission": p, "user": { "login": login, "id": id } })).into_response()
 }
 
 async fn fake_github(h: Shared) -> String {
@@ -159,43 +168,27 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
     let (pem, public) = forge::tests::throwaway_key();
     let h: Shared = Arc::new(Mutex::new(Hub { public, ..Hub::default() }));
     let api = fake_github(h.clone()).await;
-    let db = crate::db::Db::memory();
-    let vapid = crate::push::Vapid::load(&db).unwrap();
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", l.local_addr().unwrap());
-    let app = Arc::new(App {
-        cfg: Config {
-            push_hosts: vec![],
-            relay_free_bytes: 0,
-            public_url: base.clone(),
-            origin: base.clone(),
-            github: None,
-            static_dir: None,
-        },
-        db,
-        http: reqwest::Client::new(),
-        relay: Default::default(),
-        passkeys: Default::default(),
-        limits: crate::limit::Limits::new(None),
-        vapid,
-        hosted: None,
-        stripe: None,
-        github_app: Some(forge::GithubApp::new(
-            "42".into(),
-            "illogical-test".into(),
-            SECRET.into(),
-            &api,
-            forge::parse_pem(&pem).unwrap(),
-        )),
-        forge: Default::default(),
-        app_logins: Default::default(),
-    });
+    let mut app = App::for_tests(&base);
+    app.github_app = Some(forge::GithubApp::new(
+        "42".into(),
+        "illogical-test".into(),
+        SECRET.into(),
+        &api,
+        forge::parse_pem(&pem).unwrap(),
+    ));
+    let app = Arc::new(app);
     // Jake signed in with GitHub; a stranger did too; someone else only
     // with a passkey.
     let now = now_ms();
     app.db.account_for("github", "1", "jhgaylor", "a1", now).unwrap();
     app.db.account_for("github", "2", "stranger", "a2", now).unwrap();
     app.db.account_for("passkey", "p3", "pk", "a3", now).unwrap();
+    // Someone who was jhgaylor once (GitHub user 77) and hasn't signed in
+    // since they renamed: control still has the old login for them.
+    app.db.account_for("github", "77", "jhgaylor", "a4", now).unwrap();
+    let k4 = daemon(&app, "a4", "was-jhgaylor");
     let (k1, k2, k3) = (daemon(&app, "a1", "geek"), daemon(&app, "a2", "theirs"), daemon(&app, "a3", "pk"));
     let svc = crate::router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
     tokio::spawn(async move { axum::serve(l, svc).await.unwrap() });
@@ -323,6 +316,12 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
     assert_eq!(ask(&k2, "jhgaylor/hud").await.unwrap().status(), 403);
     assert_eq!(ask(&k3, "jhgaylor/hud").await.unwrap().status(), 403);
     assert_eq!(ask(&k1, "nobody/x").await.unwrap().status(), 403);
+    // A login that changed hands gets nothing: access is by GitHub's id.
+    let r = ask(&k4, "jhgaylor/hud").await.unwrap();
+    assert_eq!(r.status(), 403);
+    let r = ask(&k4, "acme/tool").await.unwrap();
+    assert_eq!(r.status(), 403);
+    assert!(r.text().await.unwrap().contains("isn't yours any more"));
     let unsigned = reqwest::Client::new()
         .post(format!("{base}/api/daemon/github/token"))
         .json(&json!({ "repo": "jhgaylor/hud" }))
@@ -386,7 +385,10 @@ async fn real_app_reads() {
     let install = app.installation(&http, &repo).await.unwrap().expect("installed there");
     println!("installation for {repo}: {} on {}", install.id, install.account);
     let owner = repo.split('/').next().unwrap();
-    println!("may {owner} hear {repo}: {:?}", app.may(&http, owner, &repo).await.map(|i| i.id));
+    println!(
+        "may {owner} hear {repo}: {:?}",
+        app.may(&http, &forge::GithubUser { id: install.account_id, login: owner.into() }, &repo).await.map(|i| i.id)
+    );
     let (token, expires) = app.token(&http, install.id, repo.split('/').nth(1).unwrap()).await.unwrap();
     println!("installation token minted, {} chars, expires {expires}", token.len());
     let r = http

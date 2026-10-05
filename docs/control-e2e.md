@@ -3,7 +3,9 @@
 Written 2026-10-01, from S15 ([spikes/s15-control](../spikes/s15-control/README.md)).
 This is the design M17–M21 build. It turns the control track's promise
 (PLAN.md, "Control track") into mechanisms: **control can refuse service,
-but it can't read.**
+but it can't read.** That promise has limits, set out in
+[What holds against control](#what-holds-against-control): the client code
+control serves, and the first account a machine joins, are trusted.
 
 ## Summary
 
@@ -23,7 +25,10 @@ but it can't read.**
 - **Trust:**
   - control distributes keys, but each device certificate is signed by a
     device the account already trusts;
-  - daemons verify the chain themselves, so control can't add a reader.
+  - daemons verify the chain themselves, so control can't add a reader;
+  - a joining machine pins its account's root only once the person has
+    compared the account's fingerprint on the machine with the one on the
+    device that approved it ([Joining](#joining-a-machine-the-accounts-fingerprint)).
 - **Relay:** control keeps each enrolled daemon's dial-out socket (M4c's
   mux) and splices clients onto it. It sees connection metadata and byte
   counts only.
@@ -207,6 +212,85 @@ Ed25519 seed.
 | Chrome 153, Linux (headless) | reported `true` | needs a real authenticator | pending a real device |
 | Safari, iOS | pending phone run | | |
 | Chrome, Android | pending phone run | | |
+
+### Joining a machine: the account's fingerprint
+
+The chain a daemon checks is only as good as the root it pins, and at
+`join` that root comes from control. A control that wanted to read a
+machine could approve it itself, into an account of its own (its own
+"first device", signing the daemon's certificate), and every check above
+would pass. So the daemon doesn't take the root on control's word:
+
+- **The account's fingerprint** is its root device's id (the first 8 bytes
+  of SHA-256 over its keys) in four groups, `1a2b-3c4d-5e6f-7a8b`: the same
+  form as every device fingerprint.
+- **The approving device shows it:** in the *Add a machine?* dialog, next to
+  the code, and under *Devices and machines…*. A browser shows the root it
+  pinned when it enrolled (from IndexedDB), not what control says now (when
+  those differ it says so).
+- **The machine shows it** once the approval arrives and checks out, and
+  pins nothing until the person says they match:
+  - `illogicald join` prints it and asks (`y`, or type the fingerprint);
+    `--account FINGERPRINT` checks it without asking, for scripts;
+  - Getting started (the daemon's own page) shows it with *They match* /
+    *They don't*.
+- **If they don't match,** nothing is saved: the daemon asks control to drop
+  it (best effort) and makes a new key, so it can join again.
+- **What this rests on:** the machine's side is the daemon's own output
+  (terminal, or its local page), which control doesn't serve. The other
+  side is the approving device, and it's only as trustworthy as that
+  device's own pin (below) and the client code it's running
+  ([What holds against control](#what-holds-against-control)).
+- **Trust on first use, still:**
+  - an account's first device is self-signed, and a browser enrolling as a
+    later device takes the account's root from control. A browser approved
+    by your other device checks its own certificate chains to that root, but
+    a control that lied at that moment would have to keep lying to it;
+    compare *Devices and machines…* across two devices to check;
+  - a machine joined before 0.17.0 pinned whatever root control sent then.
+    Its *Devices and machines…* fingerprint and `control.json`'s
+    `trust.root` should be the same; if not, `illogicald leave` and join
+    again.
+- **Hosted sandboxes** (M20) skip the check: control creates the VM through
+  its provider and writes the sandbox's `control.json` itself
+  (`crates/control/src/sandboxes.rs`). The operator runs that machine, so it
+  can read it whatever the keys say. A sandbox is end to end encrypted
+  against the network, not against control.
+- **Older daemons** (0.16.0 and before) join as they did, pinning without a
+  check; control's API is unchanged, so they keep working with a newer
+  control, and a new daemon works with an older control.
+
+## What holds against control
+
+Who can read your terminals, depending on what control (the hosted service,
+or whoever runs yours) does:
+
+| Control… | Your terminals |
+|---|---|
+| relays and stores honestly | only your devices and the people you share with read them |
+| has its database or relay copied, or logs everything it sees | still unreadable: it holds certificates and ciphertext, never a private key |
+| turns malicious **after** your machines and devices are set up, without changing the page it serves | can't add a reader: daemons check every device against the root they pinned. It can withhold revocations and refuse service |
+| lies at **join** about which account a machine joins | caught by the account fingerprint, if you compare it |
+| serves a **modified web client** | can read what that client shows and use its keys while it runs |
+
+The last row is the important limit. The browser client at control's
+address is JavaScript that control serves, and a page can't check its own
+code. A modified page could send keys or plaintext anywhere. That applies
+to:
+
+- any browser or phone that opens control's page;
+- **the desktop app once it's joined** (M48): its window then loads
+  control's page, signed in through your browser;
+- not to a daemon's own page (`http://127.0.0.1:7681`, or its tailnet
+  name) or the desktop app before it's joined: the daemon serves those from
+  its own binary;
+- not to `illogicald` or the CLI.
+
+So the promise is end to end encryption against the relay and against
+anyone who gets control's data, with the client code and the join trusted.
+To avoid trusting control's page, reach your machines from their own pages
+(over the tailnet, or `--direct-url`): a daemon's page talks to the daemon
+it came from.
 
 ## Channels
 

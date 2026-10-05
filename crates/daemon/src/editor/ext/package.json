@@ -5,7 +5,7 @@
   "publisher": "illogical",
   "version": "0.2.0",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/jhgaylor/illogical" },
+  "repository": { "type": "git", "url": "https://github.com/arugula-salad/illogical" },
   "homepage": "https://illogical.widgets.wtf",
   "categories": ["Other", "Themes"],
   "keywords": ["illogical", "multiplexer", "swarm", "claude code"],

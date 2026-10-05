@@ -16,6 +16,7 @@ import {
   type ClientMsg,
   type Delta,
   type Driver,
+  type HostFeatures,
   type Intent,
   type PaneId,
   type PaneInfo,
@@ -252,6 +253,12 @@ export class Client {
   }
 
   state: State | null = null;
+  /** What this daemon is set up for (`GET /api/host`'s `features`, #180),
+   * read on each hello and when a menu opens; `null` until read, or from
+   * a daemon too old to say (then menus offer everything, as before). */
+  features: HostFeatures | null = null;
+  /** This machine has the Fountain runner's unit (M45b). */
+  fountainRunner = false;
   clientId: number | null = null;
   connected = false;
   error: string | null = null;
@@ -457,6 +464,29 @@ export class Client {
   /** Panes running on a machine. */
   panesOn(machine: number): PaneId[] {
     return (this.state?.panes ?? []).filter((p) => p.host === machine).map((p) => p.id);
+  }
+
+  /** Read what this daemon is set up for again (#180). Menus show what
+   * was last read; a change (a studio linked, say) shows next time. */
+  async loadFeatures() {
+    try {
+      const res = await this.request("GET", "/api/host");
+      if (!res.ok) return;
+      const h = await res.json<{ features?: HostFeatures; fountain_runner?: unknown }>();
+      const features = h.features ?? null;
+      const runner = !!h.fountain_runner;
+      if (JSON.stringify(features) === JSON.stringify(this.features) && runner === this.fountainRunner) return;
+      this.features = features;
+      this.fountainRunner = runner;
+      this.emit();
+    } catch {
+      // as it was
+    }
+  }
+
+  /** Is `f` set up here? Yes when the daemon didn't say. */
+  has(f: keyof HostFeatures): boolean {
+    return this.features?.[f] ?? true;
   }
 
   /** POST to the API; a failure shows as a toast. */
@@ -797,6 +827,7 @@ export class Client {
         for (const pane of this.editorFollows.keys()) this.send({ type: "follow", pane, on: true });
         this.applyState(msg.state, true);
         if (msg.state.roles) void this.loadNotify();
+        void this.loadFeatures();
         break;
       case "state":
         this.applyState(msg.state, false);

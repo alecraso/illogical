@@ -1790,12 +1790,14 @@ name = "illogical-desktop"
 version = "0.16.0"
 dependencies = [
  "anyhow",
+ "getrandom 0.3.4",
  "gtk",
  "illogical-proto",
  "mac-notification-sys",
  "notify-rust",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

@@ -5,6 +5,7 @@
 import { render } from "preact";
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
+import { blocksOff } from "./browser";
 import { registerBlock, type BlockView } from "./view";
 
 type Server =
@@ -38,6 +39,7 @@ export interface EditorState {
  * both in from `from`), in a tab of its own.
  */
 export function openEditor(client: Client, from: PaneId, path?: string) {
+  if (!client.has("blocks")) return blocksOff("editor");
   void client.api("/api/blocks", { type: "editor", config: path ? { path } : {}, from_pane: from }, "couldn't open an editor");
 }
 

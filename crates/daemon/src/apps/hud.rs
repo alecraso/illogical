@@ -113,7 +113,7 @@ pub struct Session {
 impl Session {
     /// Follow `link` into the box at `origin`, keeping the cookies it sets.
     pub async fn enter(origin: &str, link: &str) -> Result<Self, String> {
-        let http = reqwest::Client::builder()
+        let http = crate::roots::http()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .build()

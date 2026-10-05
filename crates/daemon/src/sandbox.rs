@@ -229,7 +229,7 @@ async fn install_async(opts: TailnetOpts) -> anyhow::Result<()> {
     // The supervisor picks up the daemon's arguments.
     signal_supervisor(&config, Signal::SIGHUP)?;
 
-    let http = reqwest::Client::new();
+    let http = crate::roots::client();
     let local = format!("http://127.0.0.1:{}/api/host", opts.port);
     wait_for("the daemon", Duration::from_secs(30), || async {
         http.get(&local).send().await.is_ok_and(|r| r.status().is_success())
@@ -277,7 +277,7 @@ async fn join(home: &str, token: &str, host: AddHost) -> anyhow::Result<Joined> 
 
 async fn join_once(home: &str, token: &str, host: &AddHost) -> anyhow::Result<Joined> {
     // In userspace mode the tailnet is only reachable through tailscaled.
-    let http = reqwest::Client::builder()
+    let http = crate::roots::http()
         .proxy(reqwest::Proxy::all(format!("http://{PROXY}"))?)
         .timeout(Duration::from_secs(10))
         .build()?;
@@ -387,7 +387,7 @@ async fn tailscale_binaries(home: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         a => bail!("no tailscale download for {a}"),
     };
     println!("downloading tailscale…");
-    let http = reqwest::Client::new();
+    let http = crate::roots::client();
     let index: serde_json::Value =
         http.get("https://pkgs.tailscale.com/stable/?mode=json").send().await?.error_for_status()?.json().await?;
     let file = index["Tarballs"][arch].as_str().context("no tarball in pkgs.tailscale.com's index")?;

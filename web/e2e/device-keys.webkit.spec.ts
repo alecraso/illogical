@@ -83,7 +83,7 @@ const keyForm = (page: Page) =>
 
 /** `illogicald join`, approved from `page` (a fresh page load each time). */
 async function approveJoin(page: Page, name: string) {
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", temp(name)], { stdio: ["ignore", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", temp(name)], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -96,7 +96,10 @@ async function approveJoin(page: Page, name: string) {
   const exited = new Promise<number | null>((r) => joining.on("exit", r));
   await page.goto(link);
   await expect(page.locator("[data-join-code]")).toHaveText(link.split("#join=")[1]);
+  // The machine asks whether the account is the one this browser shows.
+  const account = await page.locator("[data-join-account]").getAttribute("data-join-account");
   await page.locator("[data-approve-join]").click();
+  joining.stdin!.end(`${account}\n`);
   expect(await exited).toBe(0);
 }
 

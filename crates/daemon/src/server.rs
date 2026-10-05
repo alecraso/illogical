@@ -341,7 +341,7 @@ fn viewer_path(path: &str) -> bool {
     match path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice() {
         ["share", token] | ["share", token, "ws"] => plain(token),
         ["assets", file] => plain(file),
-        ["icon.svg"] => true,
+        ["icon.svg"] | ["favicon.ico"] => true,
         _ => false,
     }
 }

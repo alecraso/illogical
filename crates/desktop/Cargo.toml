@@ -18,6 +18,9 @@ tauri-plugin-single-instance = "2"
 tungstenite = "0.30"
 # Control's ticket for signing in (M48), and the local daemon's /api/host.
 ureq = { version = "3", features = ["json"] }
+# Signing in binds the browser's yes to this app: a verifier only it holds.
+getrandom = "0.3"
+sha2 = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # For click handling, which tauri-plugin-notification doesn't expose on desktop.

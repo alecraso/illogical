@@ -5,7 +5,7 @@
 import { render } from "preact";
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
-import { askText } from "../ui/menu";
+import { askText, tellSetup } from "../ui/menu";
 import { registerBlock, type BlockView } from "./view";
 
 export interface BrowserState {
@@ -25,6 +25,24 @@ export interface BrowserState {
   machine: string | null;
 }
 
+const ADVANCED = "https://github.com/arugula-salad/illogical/blob/main/docs/advanced.md";
+
+/** Ports and editors in blocks are off on this machine: say what turns them
+ * on, rather than fail (#171). */
+export function blocksOff(what: "port" | "editor") {
+  const [title, thing, anchor] =
+    what === "port"
+      ? ["Dev servers in blocks are off here", "A dev server beside its terminal", "#browser-blocks-on-ports"]
+      : ["VS Code in blocks is off here", "VS Code beside your terminals", "#editor-blocks"];
+  void tellSetup(
+    title,
+    `${thing} is optional: each block gets a web origin of its own, so the daemon needs a listener for them. ` +
+      "For a browser on this computer, start illogicald with --block-listen 127.0.0.1:7701 " +
+      "(illogicald install -- --block-listen 127.0.0.1:7701). From your phone or other machines it also needs a domain of yours.",
+    { label: "How to turn it on (advanced setup)", href: ADVANCED + anchor },
+  );
+}
+
 /** `:5173/path` for a port, else the URL. */
 function shown(s: BrowserState) {
   return s.port !== null ? `:${s.port}${s.path ?? "/"}` : s.url;
@@ -35,6 +53,7 @@ function shown(s: BrowserState) {
  * on the daemon's host even in a VM tab.
  */
 export async function openPort(client: Client, where: { split?: PaneId; host?: number; local?: boolean }) {
+  if (!client.has("blocks")) return blocksOff("port");
   const v = await askText("Open a port", "", "5173, or 5173/path");
   const m = v?.trim().match(/^:?(\d{1,5})(\/.*)?$/);
   if (!v) return;

@@ -93,7 +93,7 @@ pub fn interval() -> Duration {
 const POLL: Duration = Duration::from_secs(180);
 
 /// Where *Spec* looks when the block hasn't been told, if it's there.
-pub const DEFAULT_SPECS: &str = "~/dev/jhgaylor/agent-specs";
+pub const DEFAULT_SPECS: &str = "~/agent-specs";
 
 /// What a Fountain block shows: the agents, or this host as the runner
 /// (M45b).

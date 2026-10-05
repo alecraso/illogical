@@ -143,6 +143,15 @@ impl GhosttyEngine {
         f.format_alloc(None).map(|b| b.to_vec()).unwrap_or_default()
     }
 
+    /// The active screen's lines as text, top to bottom: never the
+    /// scrollback, wherever a viewer has scrolled to.
+    pub fn screen_lines(&self) -> Vec<String> {
+        capture(&self.term, &CaptureOpts::default())
+            .into_iter()
+            .map(|l| String::from_utf8_lossy(&l).into_owned())
+            .collect()
+    }
+
     /// `capture-pane`: lines of the screen (and scrollback), each without
     /// its newline. `None` for `other` when the alternate screen isn't on.
     pub fn capture(&self, opts: &CaptureOpts) -> Option<Vec<Vec<u8>>> {

@@ -19,6 +19,7 @@ use illogical_proto::{
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::{Ask, AskKind},
 };
+use illogical_vt::detect::AgentState;
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
     time::{Instant, sleep_until},
@@ -50,8 +51,10 @@ const DONE_AFTER_MS: u64 = 5_000;
 /// A command that ran at least this long and failed is "failed" (M24);
 /// quicker ones you were typing at anyway.
 const FAILED_AFTER_MS: u64 = 3_000;
-/// Programs that wait for you quietly: one of these going quiet mid-command
-/// means it probably needs input.
+/// Agents run in terminals. Those with screen rules
+/// ([`illogical_vt::detect`]) say whether they're working, blocked on you or
+/// idle (#145); the rest are only known to be agents, and going quiet
+/// doesn't mean they want you.
 const AGENTS: &[&str] = &["claude", "codex", "aider", "gemini", "opencode", "goose", "amp"];
 /// Changes a card depends on (attention, a question, who drives) reach
 /// clients within this (M23); several in a row go together.
@@ -494,6 +497,14 @@ fn seed() -> u64 {
     std::collections::hash_map::RandomState::new().hash_one(now_ms())
 }
 
+/// The agent a command line runs, by its first few words.
+fn agent_in(text: &str) -> Option<String> {
+    text.split_whitespace().take(3).find_map(|w| {
+        let name = w.rsplit('/').next().unwrap_or(w);
+        AGENTS.iter().find(|a| name == **a || name.starts_with(&format!("{a}-"))).map(|a| (*a).to_owned())
+    })
+}
+
 /// Tags a pane's execs on machines (`ILLOGICAL_EXEC`).
 pub fn exec_tag(daemon_id: &str, pane: PaneId) -> String {
     format!("{daemon_id}-p{pane}")
@@ -506,10 +517,13 @@ struct Daemon {
     attention: HashMap<PaneId, Attention>,
     /// Why each pane wants you (M24), as recorded when it started to.
     reasons: HashMap<PaneId, Reason>,
-    /// Panes whose agent may be said to have gone quiet: once per turn,
-    /// armed by input or a new command, so an idle agent redrawing itself
-    /// (a resize, its status line) doesn't want you again and again.
-    quiet_armed: std::collections::HashSet<PaneId>,
+    /// The agent each pane's screen is read for (#145), and what its
+    /// screen last said.
+    watching: HashMap<PaneId, &'static str>,
+    screen: HashMap<PaneId, AgentState>,
+    /// Panes typed in since their agent was last idle: its next idle ends
+    /// a turn someone started (a spinner at startup doesn't).
+    turn_typed: std::collections::HashSet<PaneId>,
     clients: HashMap<ClientId, Subscriber>,
     /// The pane each client's focused window is looking at.
     focus: HashMap<ClientId, PaneId>,
@@ -665,7 +679,9 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         meta: HashMap::new(),
         attention: HashMap::new(),
         reasons: HashMap::new(),
-        quiet_armed: Default::default(),
+        watching: Default::default(),
+        screen: Default::default(),
+        turn_typed: Default::default(),
         clients: HashMap::new(),
         focus: HashMap::new(),
         refused: HashMap::new(),
@@ -1439,10 +1455,18 @@ impl Daemon {
     fn agent_name(&self, pane: PaneId) -> Option<String> {
         let h = self.panes.get(&pane)?;
         let text = h.status().current.and_then(|c| c.text).or_else(|| h.command()).unwrap_or_default();
-        text.split_whitespace().take(3).find_map(|w| {
-            let name = w.rsplit('/').next().unwrap_or(w);
-            AGENTS.iter().find(|a| name == **a || name.starts_with(&format!("{a}-"))).map(|a| (*a).to_owned())
-        })
+        agent_in(&text)
+    }
+
+    /// The agent running in a terminal now: what the OS says runs in the
+    /// foreground first (it sees past `cd x && claude`), else the command
+    /// line the shell reported.
+    fn agent_running(&self, pane: PaneId) -> Option<String> {
+        let h = self.panes.get(&pane)?;
+        match h.command() {
+            Some(argv) => agent_in(&argv),
+            None => agent_in(&h.status().current.and_then(|c| c.text)?),
+        }
     }
 
     /// What a pane's failures bundle by: the machine it runs on.
@@ -1450,6 +1474,75 @@ impl Daemon {
         match self.machine_of(pane) {
             Some(m) => m.name.clone().unwrap_or_else(|| m.sprite.clone()),
             None => "here".into(),
+        }
+    }
+
+    /// Read the screen of the agent the pane runs now, if it has rules
+    /// (#145), and stop reading it once it's gone.
+    fn watch_agent(&mut self, pane: PaneId) {
+        let name = self.agent_running(pane);
+        self.watch_named(pane, name);
+    }
+
+    fn watch_named(&mut self, pane: PaneId, name: Option<String>) {
+        let agent = name.and_then(|name| illogical_vt::detect::agent(&name));
+        let id = agent.map(|a| a.id);
+        if self.watching.get(&pane).copied() == id {
+            return;
+        }
+        let Some(h) = self.panes.get(&pane) else { return };
+        h.watch_agent(agent);
+        self.screen.remove(&pane);
+        // The line that started it isn't a turn.
+        self.turn_typed.remove(&pane);
+        match id {
+            Some(id) => self.watching.insert(pane, id),
+            None => self.watching.remove(&pane),
+        };
+    }
+
+    /// What an agent's screen says it's doing now (#145). Hooks and open
+    /// questions say more, so they win; a bell or a notification still
+    /// wants you until you answer it.
+    fn agent_screen(&mut self, pane: PaneId, state: AgentState, headline: Option<String>) {
+        let before = self.screen.insert(pane, state);
+        if self.asks.contains_key(&pane) {
+            return;
+        }
+        let now = self.attention.get(&pane).copied().unwrap_or_default();
+        let name =
+            self.watching.get(&pane).and_then(|id| illogical_vt::detect::agent(id)).map_or("The agent", |a| a.name);
+        match state {
+            AgentState::Working => {
+                let answered = now == Attention::NeedsInput && before == Some(AgentState::Blocked);
+                if matches!(now, Attention::Idle | Attention::Done) || answered {
+                    self.set_attention(pane, Attention::Working, "agent working");
+                }
+            }
+            AgentState::Blocked => {
+                let why = headline.unwrap_or_else(|| format!("{name} is waiting for you"));
+                self.set_attention(pane, Attention::NeedsInput, &why);
+            }
+            AgentState::Idle => match now {
+                // A turn someone started ended: done, if nobody watched it
+                // end.
+                Attention::Working
+                    if before == Some(AgentState::Working) && self.turn_typed.remove(&pane) && !self.focused(pane) =>
+                {
+                    let why = format!("{name} finished its turn");
+                    self.set_attention(pane, Attention::Done, &why);
+                }
+                Attention::Working => {
+                    self.turn_typed.remove(&pane);
+                    self.set_attention(pane, Attention::Idle, "agent idle")
+                }
+                // Its prompt went away without an answer typed here (Esc in
+                // another terminal attached to it, say).
+                Attention::NeedsInput if before == Some(AgentState::Blocked) => {
+                    self.set_attention(pane, Attention::Idle, "agent idle")
+                }
+                _ => {}
+            },
         }
     }
 
@@ -1569,11 +1662,14 @@ impl Daemon {
                     m.hold = false;
                 }
                 self.set_attention(pane, Attention::Idle, "started");
-                self.quiet_armed.insert(pane);
+                self.watch_agent(pane);
                 self.changed();
             }
             What::Busy(true) => {
+                // An idle agent redrawing itself (a resize, its status line)
+                // isn't working; its screen says when it is.
                 if running_command()
+                    && self.screen.get(&pane) != Some(&AgentState::Idle)
                     && matches!(
                         self.attention.get(&pane).copied().unwrap_or_default(),
                         Attention::Idle | Attention::Done
@@ -1581,23 +1677,26 @@ impl Daemon {
                 {
                     self.set_attention(pane, Attention::Working, "output");
                 }
+                self.watch_agent(pane);
             }
             What::Busy(false) => {
+                // An agent gone quiet may be thinking, or done, or asking:
+                // only its screen (or a hook, or a notification) says it
+                // wants you. Quiet alone is idle, unless the screen says
+                // it's still working (a long think).
                 if running_command()
                     && self.looks_like_agent(pane)
                     && self.attention.get(&pane) == Some(&Attention::Working)
+                    && self.screen.get(&pane) != Some(&AgentState::Working)
                 {
-                    // Once a turn: after that it's an idle agent redrawing.
-                    if self.quiet_armed.remove(&pane) {
-                        self.set_attention(pane, Attention::NeedsInput, "an agent went quiet");
-                    } else {
-                        self.set_attention(pane, Attention::Idle, "quiet");
-                    }
+                    self.set_attention(pane, Attention::Idle, "quiet");
                 }
             }
+            What::Screen(state, headline) => self.agent_screen(pane, state, headline),
             What::Signal(signal) => match signal {
                 Signal::Prompt => {
                     self.emit(Some(pane), EventKind::Prompt);
+                    self.watch_agent(pane);
                     if self.attention.get(&pane) == Some(&Attention::Working) {
                         self.set_attention(pane, Attention::Idle, "prompt");
                     }
@@ -1606,7 +1705,7 @@ impl Daemon {
                 Signal::CommandStart => {
                     let text = self.panes.get(&pane).and_then(|h| h.status().current.and_then(|c| c.text));
                     self.emit(Some(pane), EventKind::CommandStart { text });
-                    self.quiet_armed.insert(pane);
+                    self.watch_agent(pane);
                     self.set_attention(pane, Attention::Working, "command started");
                     self.touch(pane);
                 }
@@ -1761,11 +1860,12 @@ impl Daemon {
             None => p.input(data),
         }
         if turn {
-            self.quiet_armed.insert(pane);
+            self.turn_typed.insert(pane);
         }
         // A question open beside it still wants an answer (typing in Claude
-        // Code's prompt box doesn't answer it).
-        if self.asks.contains_key(&pane) {
+        // Code's prompt box doesn't answer it), and so does a prompt on the
+        // agent's screen that was only looked at.
+        if self.asks.contains_key(&pane) || (!turn && self.screen.get(&pane) == Some(&AgentState::Blocked)) {
             return;
         }
         if matches!(self.attention.get(&pane), Some(Attention::NeedsInput | Attention::Done)) {
@@ -3030,7 +3130,9 @@ impl Daemon {
                     self.sizes.remove(&pane);
                     self.meta.remove(&pane);
                     self.attention.remove(&pane);
-                    self.quiet_armed.remove(&pane);
+                    self.watching.remove(&pane);
+                    self.screen.remove(&pane);
+                    self.turn_typed.remove(&pane);
                     if let Some(a) = self.asks.remove(&pane) {
                         let _ = a.reply.send((AskReply::Withdrawn, None));
                     }
@@ -3761,6 +3863,7 @@ impl Daemon {
     /// run, and mark the panes where either changed.
     fn refresh_meta(&mut self) {
         let mut changed = vec![];
+        let mut agents = vec![];
         for (id, h) in &self.panes {
             if !h.running() {
                 continue;
@@ -3771,6 +3874,10 @@ impl Daemon {
             // The command line as typed, when the shell integration reported
             // it; otherwise what /proc says is in the foreground.
             let fg = h.command();
+            // An agent started without a word to the shell integration (or
+            // after `cd x &&`) is found here, at the latest.
+            let typed = status.current.as_ref().and_then(|c| c.text.as_deref());
+            agents.push((*id, fg.as_deref().or(typed).and_then(agent_in)));
             let command = match status.current {
                 Some(c) => c.text.or_else(|| fg.clone()),
                 None => fg.clone(),
@@ -3785,6 +3892,9 @@ impl Daemon {
         for id in changed {
             self.procs.borrow_mut().remove(&id);
             self.mark(id);
+        }
+        for (id, agent) in agents {
+            self.watch_named(id, agent);
         }
     }
 

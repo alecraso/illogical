@@ -529,8 +529,7 @@ pub async fn fetch_release(
     let unpack = parent.join(format!(".{unique}"));
     let result = async {
         info!(url, "downloading code-server");
-        let http =
-            reqwest::Client::builder().connect_timeout(Duration::from_secs(15)).build().map_err(|e| e.to_string())?;
+        let http = crate::roots::http().connect_timeout(Duration::from_secs(15)).build().map_err(|e| e.to_string())?;
         let mut res = http.get(url).send().await.and_then(|r| r.error_for_status()).map_err(|e| e.to_string())?;
         let of = res.content_length().unwrap_or(0);
         let mut file = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;

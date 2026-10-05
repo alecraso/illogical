@@ -323,7 +323,7 @@ pub async fn token(opts: &PeerOpts) -> anyhow::Result<String> {
             transport: illogical_proto::hosts::Transport::DialOut,
         },
     };
-    let res = reqwest::Client::new()
+    let res = crate::roots::client()
         .post(format!("{}/api/hosts/join", home_origin(&opts.url)?))
         .json(&body)
         .timeout(Duration::from_secs(15))
@@ -429,11 +429,11 @@ pub async fn open_ws(url: &reqwest::Url, headers: &[(&str, &str)]) -> anyhow::Re
 fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
     use tokio_rustls::rustls;
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let verifier = rustls_platform_verifier::Verifier::new(provider.clone())?;
+    let verifier = crate::roots::verifier(provider.clone())?;
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()?
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(verifier))
+        .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
     Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
 }

@@ -85,10 +85,8 @@ impl Push {
         };
         let path = dir.join("subscriptions.json");
         let subs = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .map_err(std::io::Error::other)?;
+        let http =
+            crate::roots::http().timeout(std::time::Duration::from_secs(15)).build().map_err(std::io::Error::other)?;
         Ok(Self { key, subs: Arc::new(Mutex::new(subs)), path, subject, http })
     }
 

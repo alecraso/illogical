@@ -133,7 +133,7 @@ async function machine(page: Page, name: string, team?: string) {
   const state = temp(name);
   states.set(name, state);
   const args = ["join", base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])];
-  const joining = spawn("../target/debug/illogicald", args, { stdio: ["ignore", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/illogicald", args, { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -145,7 +145,10 @@ async function machine(page: Page, name: string, team?: string) {
   });
   const exited = new Promise<number | null>((r) => joining.on("exit", r));
   await page.goto(link);
+  // The machine asks whether the account is the one this browser shows.
+  const account = await page.locator("[data-join-account]").getAttribute("data-join-account");
   await page.locator("[data-approve-join]").click();
+  joining.stdin!.end(`${account}\n`);
   expect(await exited).toBe(0);
   procs.push(
     spawn(
@@ -218,7 +221,7 @@ test("two people, a laptop and a phone each, two machines each and a team box", 
   await jake.evaluate(() => window.__illogical.control!.createTeam("Acme"));
   const team = await jake.evaluate(() => window.__illogical.control!.teams[0].team);
   sam = await laptop(browser, "sam");
-  const link = await jake.evaluate((t) => window.__illogical.control!.invite(t, "editor"), team);
+  const link = await jake.evaluate((t) => window.__illogical.control!.invite(t, "editor", true), team);
   await sam.goto(link);
   await sam.locator("[data-accept-invite]").click();
   await jake.evaluate(() => window.__illogical.control!.refresh());

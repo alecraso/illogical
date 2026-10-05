@@ -60,7 +60,9 @@ const remembered = () => {
 
 function AgentDialog({ client, where, close }: { client: Client; where: AgentWhere; close: () => void }) {
   const last = remembered();
-  const [kind, setKind] = useState<Kind>(last.kind ?? "claude");
+  // Fountain agents need a Fountain login here, VMs wisp (#180).
+  const hasFountain = client.has("fountain");
+  const [kind, setKind] = useState<Kind>(last.kind === "fountain" && !hasFountain ? "claude" : (last.kind ?? "claude"));
   const [fountain, setFountain] = useState(last.fountain ?? "");
   const [acp, setAcp] = useState(last.acp ?? "");
   const [model, setModel] = useState(last.model ?? "");
@@ -69,7 +71,7 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
   const [prompt, setPrompt] = useState("");
   const promptRef = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => promptRef.current?.focus(), []);
-  const canVm = kind !== "fountain";
+  const canVm = kind !== "fountain" && client.has("vms");
   // #111: whether this agent's adapter is installed here (a VM installs
   // its own).
   const [adapters, setAdapters] = useState<Adapter[] | null>(null);
@@ -131,7 +133,7 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
           <select name="agent" value={kind} onChange={(e) => setKind((e.currentTarget as HTMLSelectElement).value as Kind)}>
             <option value="claude">Claude Code</option>
             <option value="codex">Codex</option>
-            <option value="fountain">Fountain agent</option>
+            {hasFountain && <option value="fountain">Fountain agent</option>}
             <option value="acp">Another ACP agent…</option>
           </select>
         </label>

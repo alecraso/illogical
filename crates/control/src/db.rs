@@ -125,6 +125,19 @@ CREATE TABLE IF NOT EXISTS daemon_access (
     account TEXT NOT NULL,
     PRIMARY KEY (daemon, account)
 );
+CREATE TABLE IF NOT EXISTS daemon_offers (
+    daemon TEXT NOT NULL,
+    account TEXT NOT NULL,
+    since INTEGER NOT NULL,
+    PRIMARY KEY (daemon, account)
+);
+CREATE TABLE IF NOT EXISTS share_answers (
+    account TEXT NOT NULL,
+    daemon TEXT NOT NULL,
+    accepted INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (account, daemon)
+);
 CREATE TABLE IF NOT EXISTS daemon_links (
     daemon TEXT PRIMARY KEY,
     until INTEGER NOT NULL
@@ -166,6 +179,16 @@ CREATE TABLE IF NOT EXISTS usage (
     relay_bytes INTEGER NOT NULL,
     PRIMARY KEY (account, day)
 );
+CREATE TABLE IF NOT EXISTS retained_certs (
+    account TEXT PRIMARY KEY,
+    certs TEXT NOT NULL,
+    revocations TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS retained_for (
+    account TEXT NOT NULL,
+    team TEXT NOT NULL,
+    PRIMARY KEY (account, team)
+);
 ";
 
 /// Columns added after a table first shipped.
@@ -202,6 +225,24 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("joins", "features")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN features TEXT")?;
     }
+    if !has("sessions", "agent")? {
+        conn.execute_batch("ALTER TABLE sessions ADD COLUMN agent TEXT")?;
+    }
+    if !has("joins", "proven")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN proven INTEGER NOT NULL DEFAULT 0")?;
+    }
+    Ok(())
+}
+
+/// Before share answers were kept, every account a daemon listed was
+/// routed to: those already listed count as accepted, so nothing shared
+/// then stops working.
+fn grandfather_shares(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO share_answers (account, daemon, accepted, at)
+         SELECT account, daemon, 1, 0 FROM daemon_access",
+        [],
+    )?;
     Ok(())
 }
 
@@ -257,6 +298,24 @@ pub struct Account {
     pub name: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    pub hash: String,
+    pub created: u64,
+    pub expires: u64,
+    pub agent: String,
+}
+
+/// What deleting an account (#173) takes with it, besides its own rows.
+pub struct Erase<'a> {
+    pub account: &'a str,
+    /// Teams that go with it (it founded them, or nobody else is left).
+    pub disband: &'a [String],
+    /// Teams whose signed history its devices signed: its certificates
+    /// stay, for checking those signatures only, while they last.
+    pub retain_for: &'a [String],
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DaemonRow {
     pub id: String,
@@ -291,6 +350,8 @@ pub struct Join {
     /// What the daemon said it understands when it asked (older ones say
     /// nothing).
     pub features: String,
+    /// It signed for its key when it asked (0.17 and newer).
+    pub proven: bool,
 }
 
 /// A row that's already there (a primary key), as opposed to anything
@@ -321,10 +382,20 @@ fn cert_of(s: String) -> rusqlite::Result<Cert> {
 impl Db {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        // Litestream (#174) takes the write lock now and then to checkpoint.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        let answers_before: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'share_answers')",
+            [],
+            |r| r.get(0),
+        )?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
+        if !answers_before {
+            grandfather_shares(&conn)?;
+        }
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -373,14 +444,15 @@ impl Db {
         Ok(new_id.to_owned())
     }
 
-    /// The account's GitHub login, if it signed in with GitHub (M40).
-    pub fn github_login(&self, account: &str) -> anyhow::Result<Option<String>> {
+    /// The account's GitHub identity (M40): its numeric id (as a string)
+    /// and the login it had when it last signed in.
+    pub fn github_identity(&self, account: &str) -> anyhow::Result<Option<(String, String)>> {
         Ok(self
             .c()
             .query_row(
-                "SELECT login FROM identities WHERE account = ?1 AND provider = 'github' LIMIT 1",
+                "SELECT subject, login FROM identities WHERE account = ?1 AND provider = 'github' LIMIT 1",
                 params![account],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?)
     }
@@ -414,11 +486,14 @@ impl Db {
         Ok(())
     }
 
+    /// The account a live session is for. An account that's gone (#173)
+    /// has none, whenever its session was made.
     pub fn session(&self, token_hash: &str, now: u64) -> anyhow::Result<Option<String>> {
         Ok(self
             .c()
             .query_row(
-                "SELECT account FROM sessions WHERE token_hash = ?1 AND expires > ?2",
+                "SELECT s.account FROM sessions s JOIN accounts a ON a.id = s.account
+                 WHERE s.token_hash = ?1 AND s.expires > ?2",
                 params![token_hash, now],
                 |r| r.get(0),
             )
@@ -428,6 +503,54 @@ impl Db {
     pub fn drop_session(&self, token_hash: &str) -> anyhow::Result<()> {
         self.c().execute("DELETE FROM sessions WHERE token_hash = ?1", params![token_hash])?;
         Ok(())
+    }
+
+    /// What signed in, as its browser or app said (#173).
+    pub fn set_session_agent(&self, token_hash: &str, agent: &str) -> anyhow::Result<()> {
+        self.c().execute("UPDATE sessions SET agent = ?2 WHERE token_hash = ?1", params![token_hash, agent])?;
+        Ok(())
+    }
+
+    /// An account's live sessions, newest first: (token hash, created,
+    /// expires, agent).
+    pub fn sessions(&self, account: &str, now: u64) -> anyhow::Result<Vec<SessionRow>> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT token_hash, created, expires, COALESCE(agent, '') FROM sessions
+             WHERE account = ?1 AND expires > ?2 ORDER BY created DESC",
+        )?;
+        let rows = q.query_map(params![account, now], |r| {
+            Ok(SessionRow { hash: r.get(0)?, created: r.get(1)?, expires: r.get(2)?, agent: r.get(3)? })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Sign out one session of the account's, by the start of its hash.
+    /// How many went.
+    pub fn drop_session_of(&self, account: &str, hash_prefix: &str) -> anyhow::Result<usize> {
+        if hash_prefix.len() < 16 || !hash_prefix.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(0);
+        }
+        Ok(self.c().execute(
+            "DELETE FROM sessions WHERE account = ?1 AND substr(token_hash, 1, ?3) = ?2",
+            params![account, hash_prefix, hash_prefix.len()],
+        )?)
+    }
+
+    /// Sign out everywhere.
+    pub fn drop_sessions(&self, account: &str) -> anyhow::Result<usize> {
+        Ok(self.c().execute("DELETE FROM sessions WHERE account = ?1", params![account])?)
+    }
+
+    /// Forget what has expired: sessions, join codes, invites. How many
+    /// sessions went.
+    pub fn prune(&self, now: u64) -> anyhow::Result<usize> {
+        let c = self.c();
+        let n = c.execute("DELETE FROM sessions WHERE expires <= ?1", params![now])?;
+        c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
+        c.execute("DELETE FROM invites WHERE expires <= ?1", params![now])?;
+        c.execute("DELETE FROM presigned_invites WHERE expires <= ?1", params![now])?;
+        Ok(n)
     }
 
     // ---- passkeys
@@ -456,6 +579,53 @@ impl Db {
 
     pub fn passkey_count(&self, account: &str) -> anyhow::Result<u64> {
         Ok(self.c().query_row("SELECT COUNT(*) FROM passkeys WHERE account = ?1", params![account], |r| r.get(0))?)
+    }
+
+    /// An account's passkeys: (credential id, created).
+    pub fn passkeys(&self, account: &str) -> anyhow::Result<Vec<(String, u64)>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT id, created FROM passkeys WHERE account = ?1 ORDER BY created")?;
+        let rows = q.query_map(params![account], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Ways to sign in to an account: its passkeys and its GitHub link.
+    pub fn sign_ins(&self, account: &str) -> anyhow::Result<u64> {
+        Ok(self.c().query_row(
+            "SELECT (SELECT COUNT(*) FROM passkeys WHERE account = ?1)
+                  + (SELECT COUNT(*) FROM identities WHERE account = ?1 AND provider = 'github')",
+            params![account],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Remove a passkey, unless it's the account's last way to sign in
+    /// (checked in the same transaction). Whether it went.
+    pub fn drop_passkey(&self, account: &str, id: &str) -> anyhow::Result<Result<(), &'static str>> {
+        let mut c = self.c();
+        let tx = c.transaction()?;
+        let ways: u64 = tx.query_row(
+            "SELECT (SELECT COUNT(*) FROM passkeys WHERE account = ?1)
+                  + (SELECT COUNT(*) FROM identities WHERE account = ?1 AND provider = 'github')",
+            params![account],
+            |r| r.get(0),
+        )?;
+        let n = tx.execute("DELETE FROM passkeys WHERE id = ?2 AND account = ?1", params![account, id])?;
+        if n == 0 {
+            return Ok(Err("no such passkey"));
+        }
+        if ways <= 1 {
+            return Ok(Err(
+                "that's the only way to sign in to this account: add another passkey (or sign in with GitHub) first",
+            ));
+        }
+        // A passkey that made the account is its sign-in identity too.
+        tx.execute(
+            "DELETE FROM identities WHERE provider = 'passkey' AND subject = ?2 AND account = ?1",
+            params![account, id],
+        )?;
+        tx.commit()?;
+        Ok(Ok(()))
     }
 
     // ---- devices
@@ -574,14 +744,15 @@ impl Db {
         team: Option<&str>,
         sandbox: Option<&str>,
         features: &str,
+        proven: bool,
         now: u64,
     ) -> anyhow::Result<()> {
         let c = self.c();
         // Old ones go first; a code can be asked for again.
         c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
         c.execute(
-            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox, features)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8)",
+            "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox, features, proven)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9)",
             params![
                 code,
                 serde_json::to_string(cert)?,
@@ -590,7 +761,8 @@ impl Db {
                 now,
                 team,
                 sandbox,
-                features
+                features,
+                proven
             ],
         )?;
         Ok(())
@@ -601,7 +773,7 @@ impl Db {
             .c()
             .query_row(
                 "SELECT cert, poll_hash, urls, created, account, team, sandbox, team_sig, rejected,
-                 COALESCE(features, '') FROM joins
+                 COALESCE(features, ''), proven FROM joins
                  WHERE code = ?1 AND created >= ?2",
                 params![code, now.saturating_sub(JOIN_TTL_MS)],
                 |r| {
@@ -616,6 +788,7 @@ impl Db {
                         team_sig: r.get(7)?,
                         rejected: r.get(8)?,
                         features: r.get(9)?,
+                        proven: r.get(10)?,
                     })
                 },
             )
@@ -688,6 +861,91 @@ impl Db {
         let c = self.c();
         c.execute("DELETE FROM daemons WHERE id = ?1", params![id])?;
         c.execute("DELETE FROM devices WHERE id = ?1 AND kind = 'daemon'", params![id])?;
+        // What it shared, and the answers: a machine that joins again (to
+        // another account, say) asks again.
+        c.execute("DELETE FROM daemon_access WHERE daemon = ?1", params![id])?;
+        c.execute("DELETE FROM daemon_links WHERE daemon = ?1", params![id])?;
+        c.execute("DELETE FROM daemon_offers WHERE daemon = ?1", params![id])?;
+        c.execute("DELETE FROM share_answers WHERE daemon = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// Whether this id is a daemon here already, or a device of any
+    /// account's (what a join may not take over without its key).
+    pub fn device_known(&self, id: &str) -> anyhow::Result<bool> {
+        let c = self.c();
+        let d: bool = c.query_row("SELECT EXISTS (SELECT 1 FROM daemons WHERE id = ?1)", params![id], |r| r.get(0))?;
+        let v: bool = c.query_row("SELECT EXISTS (SELECT 1 FROM devices WHERE id = ?1)", params![id], |r| r.get(0))?;
+        Ok(d || v)
+    }
+
+    // ---- shares offered to people, and their answers
+
+    /// The accounts a daemon would share with that haven't said yes yet:
+    /// these replace the ones it named before. The ones new since then.
+    pub fn offer_shares(&self, daemon: &str, accounts: &[String], now: u64) -> anyhow::Result<Vec<String>> {
+        let mut c = self.c();
+        let tx = c.transaction()?;
+        let had: Vec<String> = {
+            let mut q = tx.prepare("SELECT account FROM daemon_offers WHERE daemon = ?1")?;
+            let rows = q.query_map(params![daemon], |r| r.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        tx.execute("DELETE FROM daemon_offers WHERE daemon = ?1", params![daemon])?;
+        let mut new = Vec::new();
+        for a in accounts {
+            tx.execute(
+                "INSERT OR IGNORE INTO daemon_offers (daemon, account, since) VALUES (?1, ?2, ?3)",
+                params![daemon, a, now],
+            )?;
+            if !had.contains(a) {
+                new.push(a.clone());
+            }
+        }
+        tx.commit()?;
+        Ok(new)
+    }
+
+    /// Daemons offering to share with this account that it hasn't answered.
+    pub fn offers_for(&self, account: &str) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT o.daemon FROM daemon_offers o
+             WHERE o.account = ?1
+               AND NOT EXISTS (SELECT 1 FROM share_answers s WHERE s.account = o.account AND s.daemon = o.daemon)
+             ORDER BY o.since",
+        )?;
+        let rows = q.query_map(params![account], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn offered(&self, daemon: &str, account: &str) -> anyhow::Result<bool> {
+        Ok(self.c().query_row(
+            "SELECT EXISTS (SELECT 1 FROM daemon_offers WHERE daemon = ?1 AND account = ?2)
+                 OR EXISTS (SELECT 1 FROM daemon_access WHERE daemon = ?1 AND account = ?2)",
+            params![daemon, account],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Whether `account` accepted (`Some(true)`) or turned down a share
+    /// from `daemon`.
+    pub fn share_answer(&self, account: &str, daemon: &str) -> anyhow::Result<Option<bool>> {
+        Ok(self
+            .c()
+            .query_row(
+                "SELECT accepted FROM share_answers WHERE account = ?1 AND daemon = ?2",
+                params![account, daemon],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn answer_share(&self, account: &str, daemon: &str, accepted: bool, now: u64) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT OR REPLACE INTO share_answers (account, daemon, accepted, at) VALUES (?1, ?2, ?3, ?4)",
+            params![account, daemon, accepted, now],
+        )?;
         Ok(())
     }
 
@@ -1288,6 +1546,156 @@ impl Db {
         let mut q = c.prepare("SELECT account FROM daemon_access WHERE daemon = ?1")?;
         let rows = q.query_map(params![daemon], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    // ---- deleting an account (#173)
+
+    /// Every team's id.
+    pub fn team_ids(&self) -> anyhow::Result<Vec<String>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT id FROM teams")?;
+        let rows = q.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The certificates a deleted account left for checking teams' signed
+    /// history: (approved certificates, revocations).
+    pub fn retained_certs(&self, account: &str) -> anyhow::Result<Option<(Vec<Cert>, Vec<Revocation>)>> {
+        let row: Option<(String, String)> = self
+            .c()
+            .query_row("SELECT certs, revocations FROM retained_certs WHERE account = ?1", params![account], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?;
+        match row {
+            Some((c, r)) => Ok(Some((serde_json::from_str(&c)?, serde_json::from_str(&r)?))),
+            None => Ok(None),
+        }
+    }
+
+    /// Delete an account and everything that's only its, in one
+    /// transaction. Returns its machines' ids (to hang up on).
+    pub fn delete_account(&self, e: &Erase) -> anyhow::Result<Vec<String>> {
+        let a = e.account;
+        let mut c = self.c();
+        let tx = c.transaction()?;
+        let daemons: Vec<String> = {
+            let mut q = tx.prepare("SELECT id FROM daemons WHERE account = ?1")?;
+            q.query_map(params![a], |r| r.get(0))?.collect::<Result<_, _>>()?
+        };
+        if !e.retain_for.is_empty() {
+            // Only devices that can sign: what a roster's signature chains to.
+            let certs: Vec<Cert> = {
+                let mut q = tx.prepare(
+                    "SELECT cert FROM devices WHERE account = ?1 AND approved = 1 AND kind != 'daemon' ORDER BY created",
+                )?;
+                q.query_map(params![a], |r| cert_of(r.get(0)?))?.collect::<Result<_, _>>()?
+            };
+            let revs: Vec<Revocation> = {
+                let mut q = tx.prepare("SELECT body FROM revocations WHERE account = ?1")?;
+                let bodies: Vec<String> = q.query_map(params![a], |r| r.get(0))?.collect::<Result<_, _>>()?;
+                bodies.iter().map(|b| serde_json::from_str(b)).collect::<Result<_, _>>()?
+            };
+            tx.execute(
+                "INSERT OR REPLACE INTO retained_certs (account, certs, revocations) VALUES (?1, ?2, ?3)",
+                params![a, serde_json::to_string(&certs)?, serde_json::to_string(&revs)?],
+            )?;
+            for t in e.retain_for {
+                tx.execute("INSERT OR IGNORE INTO retained_for (account, team) VALUES (?1, ?2)", params![a, t])?;
+            }
+        }
+        for t in e.disband {
+            for sql in [
+                "DELETE FROM rosters WHERE team = ?1",
+                "DELETE FROM invites WHERE team = ?1",
+                "DELETE FROM presigned_invites WHERE team = ?1",
+                "DELETE FROM team_requests WHERE team = ?1",
+                "DELETE FROM daemon_watches WHERE team = ?1",
+                "DELETE FROM retained_for WHERE team = ?1",
+                "DELETE FROM billing WHERE owner = 'team:' || ?1",
+                "UPDATE daemons SET team = NULL, moved = NULL WHERE team = ?1",
+                "UPDATE joins SET team = NULL, team_sig = NULL WHERE team = ?1",
+                "DELETE FROM teams WHERE id = ?1",
+            ] {
+                tx.execute(sql, params![t])?;
+            }
+        }
+        // Certificates kept for teams that are gone now.
+        tx.execute("DELETE FROM retained_certs WHERE account NOT IN (SELECT account FROM retained_for)", [])?;
+        for d in &daemons {
+            for sql in [
+                "DELETE FROM daemon_access WHERE daemon = ?1",
+                "DELETE FROM daemon_links WHERE daemon = ?1",
+                "DELETE FROM daemon_watches WHERE daemon = ?1",
+                "DELETE FROM daemon_offers WHERE daemon = ?1",
+                "DELETE FROM share_answers WHERE daemon = ?1",
+            ] {
+                tx.execute(sql, params![d])?;
+            }
+        }
+        for sql in [
+            "DELETE FROM identities WHERE account = ?1",
+            "DELETE FROM sessions WHERE account = ?1",
+            "DELETE FROM passkeys WHERE account = ?1",
+            "DELETE FROM devices WHERE account = ?1",
+            "DELETE FROM turned_down WHERE account = ?1",
+            "DELETE FROM revocations WHERE account = ?1",
+            "DELETE FROM joins WHERE account = ?1",
+            "DELETE FROM daemons WHERE account = ?1",
+            "DELETE FROM daemon_access WHERE account = ?1",
+            "DELETE FROM daemon_offers WHERE account = ?1",
+            "DELETE FROM share_answers WHERE account = ?1",
+            "DELETE FROM push_subs WHERE account = ?1",
+            "DELETE FROM sandboxes WHERE account = ?1",
+            "DELETE FROM billing WHERE owner = 'account:' || ?1",
+            "DELETE FROM reported WHERE account = ?1",
+            "DELETE FROM usage WHERE account = ?1",
+            "DELETE FROM team_requests WHERE account = ?1",
+            "DELETE FROM invites WHERE by_account = ?1",
+            "DELETE FROM presigned_invites WHERE by_account = ?1",
+            "DELETE FROM accounts WHERE id = ?1",
+        ] {
+            tx.execute(sql, params![a])?;
+        }
+        tx.commit()?;
+        Ok(daemons)
+    }
+
+    /// Every row in every table that mentions `needle`, as `table.column`
+    /// (tests: nothing of a deleted account is left).
+    #[cfg(test)]
+    pub fn mentions(&self, needle: &str) -> Vec<String> {
+        let c = self.c();
+        let tables: Vec<String> = c
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut out = Vec::new();
+        for t in tables {
+            let cols: Vec<String> = c
+                .prepare(&format!("PRAGMA table_info({t})"))
+                .unwrap()
+                .query_map([], |r| r.get(1))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            for col in cols {
+                let n: u64 = c
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM {t} WHERE CAST({col} AS TEXT) LIKE '%' || ?1 || '%'"),
+                        params![needle],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                if n > 0 {
+                    out.push(format!("{t}.{col}"));
+                }
+            }
+        }
+        out
     }
 
     // ---- metering

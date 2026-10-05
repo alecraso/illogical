@@ -5,9 +5,13 @@
 //! the button that joins).
 //!
 //! Signing in happens in the person's browser, where passkeys work (an
-//! unsigned app's webview has none): the app asks control for a ticket,
-//! opens control's page on it, and polls; once the person allows it there,
-//! the window opens the ticket's redeem URL, which signs the window in.
+//! unsigned app's webview has none): the app makes a verifier it keeps,
+//! listens on a loopback port, asks control for a ticket, and opens
+//! control's page on it. Once the person allows it there, their browser
+//! hands a one-time grant to that port (so only the app on the computer
+//! the browser runs on hears it), and the window opens control's page with
+//! the grant and the verifier, which signs the window in (control's
+//! `app_login.rs`).
 //! The window is then a new device, which a trusted device approves on
 //! control's page as any browser is. All of that is control's page's own
 //! code; this module only routes the window and runs the ticket.
@@ -156,58 +160,105 @@ pub struct Started {
     url: String,
 }
 
-/// Start signing in: a ticket from control, its page in the browser, and a
-/// poll that sends `window` to redeem it once it's allowed.
+/// Start signing in: a verifier and a loopback port, a ticket from
+/// control, its page in the browser, and a listener that sends `window` to
+/// redeem it once the person's browser hands over the grant.
 #[tauri::command]
 pub async fn cloud_signin(app: AppHandle, window: tauri::WebviewWindow) -> Result<Started, String> {
+    use sha2::{Digest, Sha256};
     let control = control().ok_or("this machine isn't joined to illogical cloud")?;
+    let mut secret = [0u8; 32];
+    getrandom::fill(&mut secret).map_err(|e| e.to_string())?;
+    let verifier = hex(&secret);
+    let challenge = hex(&Sha256::digest(verifier.as_bytes()));
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| format!("can't listen for the sign-in: {e}"))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let c = control.clone();
     let t: Value = tauri::async_runtime::spawn_blocking(move || {
-        agent()
+        let mut r = agent()
             .post(&format!("{c}/auth/app"))
-            .send_json(json!({ "name": device_name() }))
-            .map_err(|e| format!("can't reach {c}: {e}"))?
-            .body_mut()
-            .read_json::<Value>()
-            .map_err(|e| e.to_string())
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(json!({ "name": device_name(), "challenge": challenge, "port": port }))
+            .map_err(|e| format!("can't reach {c}: {e}"))?;
+        let ok = r.status().is_success();
+        let v = r.body_mut().read_json::<Value>().map_err(|e| e.to_string())?;
+        if !ok {
+            return Err(v["error"].as_str().unwrap_or("control refused the sign-in").to_owned());
+        }
+        Ok(v)
     })
     .await
     .map_err(|e| e.to_string())??;
     let get = |k: &str| t[k].as_str().map(str::to_owned).ok_or(format!("control's answer has no {k}"));
-    let (id, secret, code, url) = (get("ticket")?, get("secret")?, get("code")?, get("url")?);
+    let (id, code, url) = (get("ticket")?, get("code")?, get("url")?);
     if let Ok(u) = url.parse::<tauri::Url>() {
         crate::open_outside(&u);
     }
     let label = window.label().to_owned();
     std::thread::spawn(move || {
-        let poll = format!("{control}/auth/app/{id}/poll?secret={secret}");
-        for _ in 0..300 {
-            std::thread::sleep(Duration::from_secs(2));
-            let state = agent()
-                .get(&poll)
-                .call()
-                .ok()
-                .and_then(|mut r| r.body_mut().read_json::<Value>().ok())
-                .and_then(|v| v["state"].as_str().map(str::to_owned));
-            match state.as_deref() {
-                Some("allowed") => {
-                    let redeem: tauri::Url = format!("{control}/auth/app/{id}/redeem?secret={secret}").parse().unwrap();
-                    set_signed_in(&app, &control, true);
-                    let a = app.clone();
-                    let _ = app.run_on_main_thread(move || {
-                        if let Some(w) = a.get_webview_window(&label) {
-                            let _ = w.navigate(redeem);
-                            let _ = w.set_focus();
-                        }
-                    });
-                    return;
-                }
-                Some("expired") => return,
-                _ => {}
+        let Some(grant) = await_grant(&listener, &id, &control) else { return };
+        let redeem: tauri::Url = format!("{control}/#app-redeem={id}.{grant}.{verifier}").parse().unwrap();
+        set_signed_in(&app, &control, true);
+        let a = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(w) = a.get_webview_window(&label) {
+                let _ = w.navigate(redeem);
+                let _ = w.set_focus();
             }
-        }
+        });
     });
     Ok(Started { code, url })
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// The grant for ticket `id`, when the person's browser brings it to the
+/// loopback port (`GET /illogical-signin?ticket=…&grant=…`); none if ten
+/// minutes pass. The browser goes back to control's page.
+fn await_grant(listener: &std::net::TcpListener, id: &str, control: &str) -> Option<String> {
+    use std::io::{BufRead, BufReader, Write};
+    let deadline = std::time::Instant::now() + Duration::from_secs(600);
+    listener.set_nonblocking(true).ok()?;
+    while std::time::Instant::now() < deadline {
+        let conn = match listener.accept() {
+            Ok((c, _)) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+            Err(_) => return None,
+        };
+        let _ = conn.set_nonblocking(false);
+        let _ = conn.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut line = String::new();
+        let mut r = BufReader::new(&conn);
+        if r.read_line(&mut line).is_err() {
+            continue;
+        }
+        let target = line.split_whitespace().nth(1).unwrap_or_default();
+        let query = target.strip_prefix("/illogical-signin?").unwrap_or_default();
+        let param = |k: &str| {
+            query.split('&').find_map(|kv| kv.strip_prefix(k).and_then(|v| v.strip_prefix('='))).map(str::to_owned)
+        };
+        let ok = param("ticket").as_deref() == Some(id);
+        let grant = param("grant").filter(|g| ok && !g.is_empty() && g.bytes().all(|c| c.is_ascii_hexdigit()));
+        let reply = match &grant {
+            Some(_) => format!(
+                "HTTP/1.1 303 See Other\r\nLocation: {control}/#app-done\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ),
+            None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        };
+        let _ = (&conn).write_all(reply.as_bytes());
+        if grant.is_some() {
+            return grant;
+        }
+    }
+    None
 }
 
 /// "Just this machine": the local page, for the rest of this run.

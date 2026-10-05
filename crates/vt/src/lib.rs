@@ -7,6 +7,7 @@
 //! `spikes/s1-ghostty/README.md` for why and for what the snapshot fixes up.
 
 mod compat;
+pub mod detect;
 mod ghostty;
 
 pub use compat::Capabilities;

@@ -42,11 +42,99 @@ const PING_EVERY: Duration = Duration::from_secs(15);
 pub const NUDGE: &str = "trust";
 const DEAD_AFTER: Duration = Duration::from_secs(45);
 const CLIENT_PING: Duration = Duration::from_secs(30);
+/// Each socket's read buffer (#174): the default, 128 KiB, made an idle
+/// relay connection cost about 150 KB; terminal traffic is small messages.
+/// Bigger messages still arrive whole, read in more than one go.
+const CLIENT_READ_BUFFER: usize = 8 * 1024;
+/// A daemon's socket carries all its streams.
+const DAEMON_READ_BUFFER: usize = 32 * 1024;
+/// The largest message a daemon's socket takes: a mux frame's most data
+/// (its window) and header, with room to spare.
+const DAEMON_MAX_MESSAGE: usize = 512 * 1024;
 
 #[derive(Default)]
 pub struct Relay {
     live: Mutex<HashMap<String, Live>>,
     next: AtomicU64,
+    /// What each account has open through the relay (#174).
+    accounts: Arc<Mutex<HashMap<String, Arc<Use>>>>,
+    pub caps: Caps,
+}
+
+/// Per-account relay limits (#174), so one account can't take the whole
+/// machine: sockets at once, and (while billing is off) bytes a day,
+/// past which its relayed traffic slows down as billing's does. 0 is no
+/// limit.
+#[derive(Clone, Copy, Debug)]
+pub struct Caps {
+    /// Client sockets (`/api/relay/c`, `/api/relay/m`, read-only links).
+    pub sockets: usize,
+    /// Daemons dialed in.
+    pub daemons: usize,
+    /// Relayed bytes a day, both ways, while billing is off.
+    pub daily_bytes: u64,
+}
+
+impl Default for Caps {
+    fn default() -> Self {
+        Self { sockets: 32, daemons: 50, daily_bytes: 2_000_000_000 }
+    }
+}
+
+/// One account's open relay sockets.
+struct Use {
+    /// (client sockets, daemon sockets), changed under the map's lock.
+    open: Mutex<(usize, usize)>,
+    /// Today (`YYYY-MM-DD`) and its relayed bytes: the database's count
+    /// when the first socket opened, plus what's moved since.
+    today: Mutex<(String, u64)>,
+    /// Set when the account is deleted: its sockets hang up.
+    gone: tokio::sync::watch::Sender<bool>,
+}
+
+/// An open relay socket, counted against its account until dropped.
+pub struct Ticket {
+    map: Arc<Mutex<HashMap<String, Arc<Use>>>>,
+    account: String,
+    u: Arc<Use>,
+    daemon: bool,
+    /// The byte budget to slow down past (0: none).
+    budget: u64,
+}
+
+impl Ticket {
+    /// Count bytes moved; whether the account is now past today's budget.
+    pub fn count(&self, n: u64) -> bool {
+        let mut t = self.u.today.lock().unwrap();
+        let day = crate::day(now_ms());
+        if t.0 != day {
+            *t = (day, 0);
+        }
+        t.1 += n;
+        self.budget > 0 && t.1 > self.budget
+    }
+
+    /// Resolves when the account is deleted.
+    pub async fn gone(&self) {
+        let mut rx = self.u.gone.subscribe();
+        let _ = rx.wait_for(|g| *g).await;
+    }
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        let mut map = self.map.lock().unwrap();
+        let mut open = self.u.open.lock().unwrap();
+        if self.daemon {
+            open.1 = open.1.saturating_sub(1);
+        } else {
+            open.0 = open.0.saturating_sub(1);
+        }
+        if *open == (0, 0) && map.get(&self.account).is_some_and(|u| Arc::ptr_eq(u, &self.u)) {
+            drop(open);
+            map.remove(&self.account);
+        }
+    }
 }
 
 struct Live {
@@ -60,6 +148,62 @@ struct Live {
 }
 
 impl Relay {
+    pub fn new(caps: Caps) -> Self {
+        Self { caps, ..Default::default() }
+    }
+
+    /// Count a socket against `account`, or say why not (#174).
+    /// `billing`: control bills (its own allowance applies, not the
+    /// daily budget).
+    pub fn admit(&self, db: &crate::db::Db, account: &str, daemon: bool, billing: bool) -> Result<Ticket, String> {
+        let mut map = self.accounts.lock().unwrap();
+        let u = match map.get(account) {
+            Some(u) => u.clone(),
+            None => {
+                let day = crate::day(now_ms());
+                let used = db.relay_bytes(account, &day).unwrap_or(0);
+                let u = Arc::new(Use {
+                    open: Mutex::new((0, 0)),
+                    today: Mutex::new((day, used)),
+                    gone: tokio::sync::watch::channel(false).0,
+                });
+                map.insert(account.to_owned(), u.clone());
+                u
+            }
+        };
+        let mut open = u.open.lock().unwrap();
+        let (n, cap, what) = if daemon {
+            (&mut open.1, self.caps.daemons, "machines connected to the relay")
+        } else {
+            (&mut open.0, self.caps.sockets, "connections through the relay")
+        };
+        if cap > 0 && *n >= cap {
+            let why = format!("this account has {n} {what}, the most at once; close some first");
+            let empty = *open == (0, 0);
+            drop(open);
+            if empty {
+                map.remove(account);
+            }
+            return Err(why);
+        }
+        *n += 1;
+        drop(open);
+        Ok(Ticket {
+            map: self.accounts.clone(),
+            account: account.to_owned(),
+            u,
+            daemon,
+            budget: if billing { 0 } else { self.caps.daily_bytes },
+        })
+    }
+
+    /// The account was deleted (#173): hang up its open sockets.
+    pub fn account_gone(&self, account: &str) {
+        if let Some(u) = self.accounts.lock().unwrap().get(account) {
+            u.gone.send_replace(true);
+        }
+    }
+
     pub fn online(&self, id: &str) -> bool {
         self.live.lock().unwrap().contains_key(id)
     }
@@ -110,13 +254,21 @@ pub async fn dial(
 ) -> Response {
     let urls: Option<Vec<String>> = q.urls.and_then(|u| serde_json::from_str(&u).ok());
     let id = d.cert.device.clone();
+    let ticket = match app.relay.admit(&app.db, &d.cert.account, true, app.stripe.is_some()) {
+        Ok(t) => t,
+        Err(why) => return err(StatusCode::TOO_MANY_REQUESTS, &why).into_response(),
+    };
     if let Err(e) = app.db.seen(&id, urls.as_deref(), now_ms()) {
         warn!(error = %e, "recording a daemon");
     }
-    up.on_upgrade(move |ws| daemon_socket(app, id, ws))
+    // Mux frames (at most a window of data and a header) and forge text.
+    up.max_message_size(DAEMON_MAX_MESSAGE)
+        .max_frame_size(DAEMON_MAX_MESSAGE)
+        .read_buffer_size(DAEMON_READ_BUFFER)
+        .on_upgrade(move |ws| daemon_socket(app, id, ws, ticket))
 }
 
-async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
+async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket, ticket: Ticket) {
     let (mux, mut out) = Mux::new(None);
     let stop = Arc::new(tokio::sync::Notify::new());
     let nudge = Arc::new(tokio::sync::Notify::new());
@@ -166,6 +318,7 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket) {
                 let _ = app.db.seen(&id, None, now_ms());
             }
             _ = stop.notified() => break,
+            _ = ticket.gone() => break,
             _ = nudge.notified() => if tx.send(Message::Text(NUDGE.into())).await.is_err() { break },
         }
     }
@@ -211,23 +364,31 @@ pub async fn link(
 }
 
 fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUpgrade) -> Response {
+    // Links count against the daemon's owner (#174: sockets too).
+    let Some(who) = account.clone().or_else(|| app.db.daemon_account(&id).ok().flatten()) else {
+        return err(StatusCode::NOT_FOUND, "no such daemon").into_response();
+    };
+    let ticket = match app.relay.admit(&app.db, &who, false, app.stripe.is_some()) {
+        Ok(t) => t,
+        Err(why) => return err(StatusCode::TOO_MANY_REQUESTS, &why).into_response(),
+    };
     // A hosted sandbox (M20) doesn't dial in: it's reached through the
     // provider's proxy, which wakes it.
     if let Ok(Some(sandbox)) = app.db.sandbox_of_daemon(&id)
         && app.hosted.is_some()
     {
-        return up.max_message_size(MAX_WIRE).on_upgrade(move |ws| async move {
-            let (up, down) = match sandbox_splice(&app, &sandbox, ws).await {
-                Ok(n) => n,
-                Err(e) => {
-                    warn!(%sandbox, error = %e, "can't reach the sandbox");
-                    return;
-                }
+        return up.max_message_size(MAX_WIRE).read_buffer_size(CLIENT_READ_BUFFER).on_upgrade(move |ws| async move {
+            let (up, down) = tokio::select! {
+                r = sandbox_splice(&app, &sandbox, ws, &ticket) => match r {
+                    Ok(n) => n,
+                    Err(e) => {
+                        warn!(%sandbox, error = %e, "can't reach the sandbox");
+                        return;
+                    }
+                },
+                _ = ticket.gone() => return,
             };
-            let who = account.or_else(|| app.db.daemon_account(&id).ok().flatten());
-            if let Some(a) = who {
-                let _ = app.db.add_relay_bytes(&a, &crate::day(now_ms()), up + down);
-            }
+            let _ = app.db.add_relay_bytes(&who, &crate::day(now_ms()), up + down);
         });
     }
     // Past twice the free allowance, a free account's relayed traffic
@@ -240,14 +401,14 @@ fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUp
     let Ok(stream) = mux.open() else {
         return err(StatusCode::SERVICE_UNAVAILABLE, "that daemon just went away").into_response();
     };
-    up.max_message_size(MAX_WIRE).on_upgrade(move |ws| async move {
-        let (up, down) = splice(ws, stream, slow).await;
+    up.max_message_size(MAX_WIRE).read_buffer_size(CLIENT_READ_BUFFER).on_upgrade(move |ws| async move {
+        let done = tokio::select! {
+            n = splice(ws, stream, slow, &ticket) => Some(n),
+            _ = ticket.gone() => None,
+        };
+        let Some((up, down)) = done else { return };
         let day = crate::day(now_ms());
-        // Links count against the daemon's owner.
-        let who = account.or_else(|| app.db.daemon_account(&id).ok().flatten());
-        if let Some(a) = who
-            && let Err(e) = app.db.add_relay_bytes(&a, &day, up + down)
-        {
+        if let Err(e) = app.db.add_relay_bytes(&who, &day, up + down) {
             warn!(error = %e, "metering");
         }
     })
@@ -255,8 +416,9 @@ fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUp
 
 /// Client WebSocket messages to length-prefixed frames on the stream, and
 /// back. Returns the bytes moved each way.
-/// `slow`: at most about 64 KB/s down (over the free relay allowance).
-async fn splice(ws: WebSocket, stream: DuplexStream, slow: bool) -> (u64, u64) {
+/// `slow`: at most about 64 KB/s down (over the free relay allowance);
+/// so too past the account's daily budget (#174).
+async fn splice(ws: WebSocket, stream: DuplexStream, slow: bool, ticket: &Ticket) -> (u64, u64) {
     let (mut wtx, mut wrx) = ws.split();
     let (mut rd, mut wr) = tokio::io::split(stream);
     let up = async {
@@ -265,6 +427,9 @@ async fn splice(ws: WebSocket, stream: DuplexStream, slow: bool) -> (u64, u64) {
             match m {
                 Message::Binary(b) => {
                     n += b.len() as u64;
+                    if ticket.count(b.len() as u64) {
+                        tokio::time::sleep(throttle(b.len())).await;
+                    }
                     let mut f = Vec::with_capacity(4 + b.len());
                     f.extend_from_slice(&(b.len() as u32).to_be_bytes());
                     f.extend_from_slice(&b);
@@ -305,8 +470,8 @@ async fn splice(ws: WebSocket, stream: DuplexStream, slow: bool) -> (u64, u64) {
                 f = frames.recv() => {
                     let Some(b) = f else { break };
                     n += b.len() as u64;
-                    if slow {
-                        tokio::time::sleep(Duration::from_micros(b.len() as u64 * 1_000_000 / 65_536)).await;
+                    if ticket.count(b.len() as u64) || slow {
+                        tokio::time::sleep(throttle(b.len())).await;
                     }
                     if wtx.send(Message::Binary(b.into())).await.is_err() {
                         break;
@@ -325,7 +490,7 @@ async fn splice(ws: WebSocket, stream: DuplexStream, slow: bool) -> (u64, u64) {
 
 /// A client's channel onto a hosted sandbox's daemon (`/e2e`), through the
 /// provider's proxy: WebSocket messages both ways, one for one.
-async fn sandbox_splice(app: &App, sandbox: &str, ws: WebSocket) -> anyhow::Result<(u64, u64)> {
+async fn sandbox_splice(app: &App, sandbox: &str, ws: WebSocket, ticket: &Ticket) -> anyhow::Result<(u64, u64)> {
     use tokio_tungstenite::tungstenite::Message as T;
     let h = app.hosted.as_ref().ok_or_else(|| anyhow::anyhow!("no hosted sandboxes"))?;
     let stream = h.sprites.dial(sandbox, crate::sandboxes::PORT).await?;
@@ -339,6 +504,9 @@ async fn sandbox_splice(app: &App, sandbox: &str, ws: WebSocket) -> anyhow::Resu
             match m {
                 Message::Binary(b) => {
                     n += b.len() as u64;
+                    if ticket.count(b.len() as u64) {
+                        tokio::time::sleep(throttle(b.len())).await;
+                    }
                     if dtx.send(T::Binary(b.to_vec().into())).await.is_err() {
                         break;
                     }
@@ -356,6 +524,9 @@ async fn sandbox_splice(app: &App, sandbox: &str, ws: WebSocket) -> anyhow::Resu
             match m {
                 T::Binary(b) => {
                     n += b.len() as u64;
+                    if ticket.count(b.len() as u64) {
+                        tokio::time::sleep(throttle(b.len())).await;
+                    }
                     if ctx.send(Message::Binary(b.to_vec().into())).await.is_err() {
                         break;
                     }
@@ -387,6 +558,11 @@ async fn sandbox_splice(app: &App, sandbox: &str, ws: WebSocket) -> anyhow::Resu
 // Control routes and counts, as for `/api/relay/c/<id>`, and can't read
 // what crosses.
 
+/// How long `n` bytes take at about 64 KB/s: a slowed account's pace.
+fn throttle(n: usize) -> Duration {
+    Duration::from_micros(n as u64 * 1_000_000 / 65_536)
+}
+
 const M_OPEN: u8 = 1;
 const M_DATA: u8 = 2;
 const M_CLOSE: u8 = 3;
@@ -403,10 +579,16 @@ fn mframe(kind: u8, chan: u32, payload: &[u8]) -> Vec<u8> {
 }
 
 pub async fn many(State(app): State<Arc<App>>, s: Session, up: WebSocketUpgrade) -> Response {
-    up.max_message_size(MAX_WIRE + 5).on_upgrade(move |ws| many_socket(app, s.account, ws))
+    let ticket = match app.relay.admit(&app.db, &s.account, false, app.stripe.is_some()) {
+        Ok(t) => Arc::new(t),
+        Err(why) => return err(StatusCode::TOO_MANY_REQUESTS, &why).into_response(),
+    };
+    up.max_message_size(MAX_WIRE + 5)
+        .read_buffer_size(CLIENT_READ_BUFFER)
+        .on_upgrade(move |ws| many_socket(app, s.account, ws, ticket))
 }
 
-async fn many_socket(app: Arc<App>, account: String, ws: WebSocket) {
+async fn many_socket(app: Arc<App>, account: String, ws: WebSocket, ticket: Arc<Ticket>) {
     let (mut wtx, mut wrx) = ws.split();
     let (out_tx, mut out) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
     let mut chans: HashMap<u32, tokio::sync::mpsc::Sender<Vec<u8>>> = HashMap::new();
@@ -436,8 +618,9 @@ async fn many_socket(app: Arc<App>, account: String, ws: WebSocket) {
                         let (tx, rx) = tokio::sync::mpsc::channel(64);
                         chans.insert(chan, tx);
                         let (app, account, out, done) = (app.clone(), account.clone(), out_tx.clone(), done_tx.clone());
+                        let ticket = ticket.clone();
                         tokio::spawn(async move {
-                            let opened = channel(app, account, id, chan, rx, out.clone()).await;
+                            let opened = channel(app, account, id, chan, rx, out.clone(), &ticket).await;
                             // After everything it sent, in the same queue: a
                             // daemon's last words (why it hung up) arrive.
                             if opened {
@@ -471,6 +654,7 @@ async fn many_socket(app: Arc<App>, account: String, ws: WebSocket) {
                 chans.remove(&chan);
             }
             _ = ping.tick() => if wtx.send(Message::Ping(Default::default())).await.is_err() { break },
+            _ = ticket.gone() => break,
         }
     }
     // Dropping the senders ends every channel.
@@ -485,6 +669,7 @@ async fn channel(
     chan: u32,
     mut from_page: tokio::sync::mpsc::Receiver<Vec<u8>>,
     out: tokio::sync::mpsc::Sender<Vec<u8>>,
+    ticket: &Ticket,
 ) -> bool {
     let refuse = |why: &str| mframe(M_CLOSE, chan, why.as_bytes());
     match crate::teams::may_reach(&app, &account, &id) {
@@ -512,6 +697,9 @@ async fn channel(
     let up = async {
         while let Some(b) = from_page.recv().await {
             sent.fetch_add(b.len() as u64, Ordering::Relaxed);
+            if ticket.count(b.len() as u64) {
+                tokio::time::sleep(throttle(b.len())).await;
+            }
             let mut f = Vec::with_capacity(4 + b.len());
             f.extend_from_slice(&(b.len() as u32).to_be_bytes());
             f.extend_from_slice(&b);
@@ -533,8 +721,8 @@ async fn channel(
                 break;
             }
             got.fetch_add(l as u64, Ordering::Relaxed);
-            if slow {
-                tokio::time::sleep(Duration::from_micros(l as u64 * 1_000_000 / 65_536)).await;
+            if ticket.count(l as u64) || slow {
+                tokio::time::sleep(throttle(l)).await;
             }
             if out.send(mframe(M_DATA, chan, &b)).await.is_err() {
                 break;
@@ -549,4 +737,38 @@ async fn channel(
     let bytes = sent.load(Ordering::Relaxed) + got.load(Ordering::Relaxed);
     let _ = app.db.add_relay_bytes(&account, &crate::day(now_ms()), bytes);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn caps_per_account() {
+        let db = crate::db::Db::memory();
+        let r = Relay::new(Caps { sockets: 2, daemons: 1, daily_bytes: 100 });
+        let a1 = r.admit(&db, "a", false, false).unwrap();
+        let a2 = r.admit(&db, "a", false, false).unwrap();
+        assert!(r.admit(&db, "a", false, false).err().unwrap().contains("the most at once"));
+        // Someone else's count is their own; machines count apart.
+        let _b = r.admit(&db, "b", false, false).unwrap();
+        let d = r.admit(&db, "a", true, false).unwrap();
+        assert!(r.admit(&db, "a", true, false).is_err());
+        drop(a1);
+        let a3 = r.admit(&db, "a", false, false).unwrap();
+        // The budget is the account's, across its sockets, and counts
+        // what's in the database from earlier today.
+        assert!(!a2.count(60));
+        assert!(a3.count(60));
+        drop((a2, a3, d));
+        assert!(r.accounts.lock().unwrap().get("a").is_none(), "forgotten once nothing's open");
+        db.add_relay_bytes("a", &crate::day(now_ms()), 150).unwrap();
+        assert!(r.admit(&db, "a", false, false).unwrap().count(1));
+        // With billing on, billing's allowance applies instead.
+        assert!(!r.admit(&db, "a", false, true).unwrap().count(1));
+        // A deleted account's sockets hear it.
+        let t = r.admit(&db, "c", false, false).unwrap();
+        r.account_gone("c");
+        tokio::time::timeout(Duration::from_secs(1), t.gone()).await.unwrap();
+    }
 }

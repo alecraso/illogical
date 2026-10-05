@@ -80,7 +80,7 @@ impl Studio {
             }),
             Err(_) => Saved::default(),
         };
-        let http = reqwest::Client::builder()
+        let http = crate::roots::http()
             .timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::none())
             .build()

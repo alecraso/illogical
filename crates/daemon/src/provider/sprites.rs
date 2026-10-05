@@ -139,8 +139,8 @@ fn fly_caps() -> Caps {
 impl Sprites {
     pub fn new(base: &str, token: String) -> anyhow::Result<Self> {
         let base = Url::parse(base)?;
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-        let slow = reqwest::Client::builder().connect_timeout(Duration::from_secs(30)).build()?;
+        let http = crate::roots::http().timeout(Duration::from_secs(30)).build()?;
+        let slow = crate::roots::http().connect_timeout(Duration::from_secs(30)).build()?;
         let fly = base.host_str().is_some_and(|h| h == "sprites.dev" || h.ends_with(".sprites.dev"));
         let (name, caps) = if fly { ("sprites", fly_caps()) } else { ("wisp", wisp_caps()) };
         Ok(Self { base, token, http, slow, name, caps })

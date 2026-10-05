@@ -111,6 +111,8 @@ interface OpenPrompt {
   title: string;
   value: string;
   placeholder?: string;
+  /** No input: a note to read, with a link to more (#171). */
+  notice?: { text: string; link: { label: string; href: string } };
   done: (value: string | null) => void;
 }
 
@@ -121,6 +123,15 @@ const promptListeners = new Set<() => void>();
 export function askText(title: string, value: string, placeholder?: string): Promise<string | null> {
   return new Promise((resolve) => {
     prompt = { title, value, placeholder, done: resolve };
+    promptListeners.forEach((fn) => fn());
+  });
+}
+
+/** Say why something isn't there yet and where to read how to turn it
+ * on, instead of an error (#171). */
+export function tellSetup(title: string, text: string, link: { label: string; href: string }): Promise<void> {
+  return new Promise((resolve) => {
+    prompt = { title, value: "", notice: { text, link }, done: () => resolve() };
     promptListeners.forEach((fn) => fn());
   });
 }
@@ -161,6 +172,17 @@ export function PromptLayer() {
           finish(input.current?.value ?? "");
         }}
       >
+        {p.notice ? (
+          <div class="prompt-notice" data-setup-notice>
+            <b>{p.title}</b>
+            <p>{p.notice.text}</p>
+            <p>
+              <a href={p.notice.link.href} target="_blank" rel="noopener noreferrer">
+                {p.notice.link.label}
+              </a>
+            </p>
+          </div>
+        ) : (
         <label>
           {p.title}
           <input
@@ -172,10 +194,13 @@ export function PromptLayer() {
             onKeyDown={(e) => e.key === "Escape" && finish(null)}
           />
         </label>
+        )}
         <div class="prompt-buttons">
-          <button type="button" onClick={() => finish(null)}>
-            Cancel
-          </button>
+          {!p.notice && (
+            <button type="button" onClick={() => finish(null)}>
+              Cancel
+            </button>
+          )}
           <button type="submit" class="primary">
             OK
           </button>

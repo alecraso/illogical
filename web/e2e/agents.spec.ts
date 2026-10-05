@@ -111,11 +111,15 @@ test("an adapter that isn't installed: its command to copy, and Install in a pan
   await dialog.locator("select[name=agent]").selectOption("claude");
   await expect(dialog.locator(".adapter-help")).toBeHidden();
   await expect(dialog.getByRole("button", { name: "Start" })).toBeEnabled();
-  // On a VM it installs its own.
+  // On a VM it installs its own (where VMs are set up: wisp, #180).
   await dialog.locator("select[name=agent]").selectOption("codex");
-  await dialog.locator("input[name=vm]").check();
-  await expect(dialog.locator(".adapter-help")).toBeHidden();
-  await dialog.locator("input[name=vm]").uncheck();
+  if (await page.evaluate(() => window.__illogical.client.has("vms"))) {
+    await dialog.locator("input[name=vm]").check();
+    await expect(dialog.locator(".adapter-help")).toBeHidden();
+    await dialog.locator("input[name=vm]").uncheck();
+  } else {
+    await expect(dialog.locator("input[name=vm]")).toHaveCount(0);
+  }
 
   // Install: the command runs in a new pane to watch.
   await dialog.getByRole("button", { name: "Install" }).click();

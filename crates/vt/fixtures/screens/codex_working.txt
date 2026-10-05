@@ -1,0 +1,9 @@
+title: ⠙ renaming... ⠙ | demo
+› Explain the first 10 primes, one sentence each.
+
+• Working (1s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  some-model default · ~/src/demo

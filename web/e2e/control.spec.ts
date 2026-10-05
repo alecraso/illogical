@@ -5,13 +5,14 @@
 // anything until the first approves it, and loses access when removed.
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { ready, run, text } from "./helpers";
-import { ANY, controlPort, listen } from "./ports";
+import { ANY, controlPort, daemonPort, listen } from "./ports";
 
 let base = "";
 const procs: ChildProcess[] = [];
@@ -85,7 +86,7 @@ async function signIn(page: Page) {
 /** `illogicald join`, approved from `page`; then the daemon runs. */
 async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["ignore", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -99,7 +100,10 @@ async function addMachine(page: Page, name: string, direct: boolean) {
   const exited = new Promise<number | null>((r) => joining.on("exit", r));
   await page.goto(link);
   await expect(page.locator("[data-join-code]")).toHaveText(code);
+  // The machine asks whether the account is the one this browser shows.
+  const account = await page.locator("[data-join-account]").getAttribute("data-join-account");
   await page.locator("[data-approve-join]").click();
+  joining.stdin!.end(`${account}\n`);
   expect(await exited).toBe(0);
   procs.push(
     spawn(
@@ -265,34 +269,63 @@ test("a phone needs the laptop's approval", async ({ browser }) => {
 });
 
 test("the desktop app signs in through the browser, then is approved as a device (M48)", async ({ browser }) => {
-  // The app asks for a ticket, and opens its page in the person's browser.
-  const ask = await fetch(`${base}/auth/app`, {
+  // The app keeps a verifier, listens on a loopback port for its grant,
+  // asks for a ticket, and opens its page in the person's browser.
+  const verifier = randomBytes(32).toString("hex");
+  const challenge = createHash("sha256").update(verifier).digest("hex");
+  let grant = "";
+  const loop = createServer((req, res) => {
+    const u = new URL(req.url!, "http://127.0.0.1");
+    if (u.pathname === "/illogical-signin") grant = u.searchParams.get("grant") ?? "";
+    res.writeHead(303, { location: `${base}/#app-done` }).end();
+  });
+  await new Promise<void>((r) => loop.listen(0, "127.0.0.1", r));
+  const port = (loop.address() as { port: number }).port;
+  // An app from before the loopback hand-over is told to update.
+  const old = await fetch(`${base}/auth/app`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "illogical app on test-mac" }),
   });
+  expect(old.status).toBe(400);
+  expect(((await old.json()) as { error: string }).error).toContain("update it");
+  const ask = await fetch(`${base}/auth/app`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "illogical app on test-mac", challenge, port }),
+  });
   expect(ask.status).toBe(200);
-  const t = (await ask.json()) as { ticket: string; secret: string; code: string; url: string };
+  const t = (await ask.json()) as { ticket: string; code: string; url: string };
   expect(t.url).toBe(`${base}/#app=${t.ticket}`);
-  const poll = async (secret = t.secret) => ((await (await fetch(`${base}/auth/app/${t.ticket}/poll?secret=${secret}`)).json()) as { state: string }).state;
-  expect(await poll()).toBe("waiting");
-  // A redeem before the person allows it gets nothing.
-  expect((await fetch(`${base}/auth/app/${t.ticket}/redeem?secret=${t.secret}`, { redirect: "manual" })).status).toBe(404);
+  const redeem = (body: unknown, origin = base) =>
+    fetch(`${base}/auth/app/${t.ticket}/redeem`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(body) });
+  // A redeem before the person allows it gets nothing; nor does a GET.
+  expect((await redeem({ grant: "00", verifier })).status).toBe(404);
+  expect((await fetch(`${base}/auth/app/${t.ticket}/redeem?grant=00&verifier=${verifier}`, { redirect: "manual" })).status).toBe(405);
 
-  // In the browser (signed in), the same code, and Allow.
+  // In the browser (signed in), the same code, and Allow: the grant goes
+  // to the app's port, and the browser comes back to control's page.
   await laptop.goto(t.url);
   await expect(laptop.locator("[data-app-login-name]")).toHaveText("illogical app on test-mac");
   await expect(laptop.locator("[data-app-login-code]")).toHaveText(t.code);
+  await expect(laptop.locator("[data-app-login-elsewhere]")).toHaveCount(0);
   await laptop.locator("[data-app-login-allow]").click();
   await expect(laptop.locator("[data-app-login-done]")).toBeVisible();
-  expect(await poll()).toBe("allowed");
-  expect(await poll("0".repeat(64))).toBe("expired");
+  expect(grant).toMatch(/^[0-9a-f]{64}$/);
+  loop.close();
+  // The grant alone (someone who saw the link) or from another site does nothing.
+  expect((await redeem({ grant, verifier: "0".repeat(64) })).status).toBe(404);
+  expect((await redeem({ grant, verifier }, "https://elsewhere.example")).status).toBe(403);
+  // In a browser rather than the app's window, #app-redeem doesn't sign in.
+  const other = await (await browser.newContext()).newPage();
+  await other.goto(`${base}/#app-redeem=${t.ticket}.${grant}.${verifier}`);
+  await expect(other.locator("[data-signin]").first()).toBeVisible();
+  await other.context().close();
 
   // The app's window redeems it: signed in, then a new device to approve.
   const app = await (await browser.newContext()).newPage();
   await app.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "illogical app on test-mac" } }));
-  await app.goto(`${base}/auth/app/${t.ticket}/redeem?secret=${t.secret}`);
-  await expect(app).toHaveURL(`${base}/`);
+  await app.goto(`${base}/#app-redeem=${t.ticket}.${grant}.${verifier}`);
   await expect(app.getByText("Approve this browser")).toBeVisible();
   const fp = await app.locator("[data-fingerprint]").getAttribute("data-fingerprint");
   await expect(laptop.locator(`[data-pending="${fp}"]`)).toBeVisible({ timeout: 20_000 });
@@ -303,8 +336,7 @@ test("the desktop app signs in through the browser, then is approved as a device
   await shell(app, "app");
 
   // Single use.
-  expect((await fetch(`${base}/auth/app/${t.ticket}/redeem?secret=${t.secret}`, { redirect: "manual" })).status).toBe(404);
-  expect(await poll()).toBe("expired");
+  expect((await redeem({ grant, verifier })).status).toBe(404);
 
   // Removing the app's device in control cuts it off at once.
   const id = await app.evaluate(() => window.__illogical.control!.keys.id);
@@ -397,4 +429,116 @@ test("removing the phone cuts it off", async () => {
   await expect.poll(() => connected(phone), { timeout: 5_000, intervals: [200] }).toBe(false);
   await new Promise((r) => setTimeout(r, 3000));
   expect(await connected(phone)).toBe(false);
+});
+
+test("Getting started asks to check the account's fingerprint before the machine trusts it", async ({ browser }) => {
+  const state = temp("starter");
+  procs.push(
+    spawn(
+      "../target/debug/illogicald",
+      [
+        ...["--listen", ANY, "--name", "starter", "--state-dir", state],
+        ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
+      ],
+      { stdio: "ignore" },
+    ),
+  );
+  const local = `http://127.0.0.1:${await daemonPort(state, procs.at(-1))}`;
+  const page = await (await browser.newContext()).newPage();
+  await page.goto(local);
+  await expect(page.locator(".session-button")).toBeVisible();
+  const start = page.getByRole("dialog", { name: "Getting started" });
+  const cloud = async () => {
+    if (!(await start.isVisible())) {
+      await page.locator(".session-button").click();
+      await page.getByRole("menuitem", { name: "Getting started" }).click();
+    }
+    await start.locator('[data-start-seg="cloud"]').click();
+  };
+  // Asks this test's control for a code (the button asks the hosted one),
+  // approves it on the laptop from the link the panel shows, and returns
+  // the account the laptop showed.
+  const approve = async () => {
+    const r = await page.request.post(`${local}/api/setup/control`, { data: { url: base } });
+    expect(((await r.json()) as { pending?: { approve: string } }).pending?.approve).toContain(base);
+    await page.reload();
+    await cloud();
+    const link = (await start.locator("[data-start-approve]").getAttribute("href"))!;
+    expect(link.startsWith(`${base}/#join=`)).toBe(true);
+    await laptop.goto(link);
+    const account = (await laptop.locator("[data-join-account]").getAttribute("data-join-account"))!;
+    await laptop.locator("[data-approve-join]").click();
+    return account;
+  };
+  const shown = () => start.locator("[data-start-account]").getAttribute("data-start-account").then((a) => a?.replaceAll("-", ""));
+
+  // Approved, but not saved until the person says the account is theirs.
+  // "They don't": nothing is pinned.
+  const account = await approve();
+  await expect.poll(shown, { timeout: 20_000 }).toBe(account);
+  await expect(start.locator("[data-start-confirm]")).toContainText("Is this your account?");
+  await start.locator("[data-start-different]").click();
+  await expect(start.locator("[data-start-error]")).toContainText("Not joined");
+  expect((await (await page.request.get(`${local}/api/setup?part=control`)).json()).control.joined).toBeUndefined();
+
+  // Again (as a new key: the turned-down one is dropped), and "They
+  // match": joined.
+  expect(await approve()).toBe(account);
+  await expect.poll(shown, { timeout: 20_000 }).toBe(account);
+  await start.locator("[data-start-same]").click();
+  await expect(start.locator("[data-start-joined]")).toHaveText("Joined to your account", { timeout: 20_000 });
+  await page.context().close();
+  // The laptop sees it in the account.
+  await laptop.goto("/");
+  await expect.poll(() => hostNames(laptop), { timeout: 20_000 }).toContain("starter");
+  await panel(laptop, "devices");
+  await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account);
+  await laptop.getByRole("button", { name: "Done" }).click();
+});
+
+test("sessions: where you're signed in, and signing out everywhere (#173)", async () => {
+  await panel(laptop, "account");
+  await expect(laptop.getByRole("heading", { name: "Sign-in and account" })).toBeVisible();
+  // This browser, the phone, and the others that signed in above.
+  await expect(laptop.locator("[data-session]")).not.toHaveCount(0);
+  expect(await laptop.locator("[data-session]").count()).toBeGreaterThanOrEqual(2);
+  await expect(laptop.locator("[data-sessions]")).toContainText("Chrome on Linux");
+  await expect(laptop.locator("[data-sessions]")).toContainText("(this one)");
+  // Sign one other out: it's gone from the list.
+  const n = await laptop.locator("[data-session]").count();
+  const other = laptop.locator("[data-end-session]").first();
+  await other.click();
+  await other.click();
+  await expect(laptop.locator("[data-session]")).toHaveCount(n - 1);
+  // Everywhere: this one too.
+  await laptop.locator("[data-end-all]").click();
+  await laptop.locator("[data-end-all]").click();
+  await expect(laptop.locator("[data-signin=github]")).toBeVisible();
+  expect((await phone.request.get(`${base}/api/me`)).status()).toBe(401);
+});
+
+test("deleting the account: type its login; its machines and team go (#173)", async () => {
+  await signIn(laptop);
+  await booted(laptop);
+  const before = await laptop.evaluate(() => window.__illogical.control!.account);
+  await panel(laptop, "account");
+  await laptop.locator("[data-delete-account]").click();
+  await expect(laptop.getByRole("heading", { name: "Delete your account" })).toBeVisible();
+  await expect(laptop.locator("[data-disband]")).toContainText("Solo");
+  await expect(laptop.locator("[data-delete-what]")).toContainText(/your \d+ machines/);
+  const go = laptop.locator("[data-delete-go]");
+  await expect(go).toBeDisabled();
+  await laptop.locator("[data-delete-confirm]").fill("someone");
+  await expect(go).toBeDisabled();
+  await laptop.locator("[data-delete-confirm]").fill("stranger");
+  await go.click();
+  await expect(laptop.locator("[data-signin=github]")).toBeVisible();
+  // The same GitHub account signing in again starts afresh: a new
+  // account, a new first device, no machines.
+  await signIn(laptop);
+  await expect(laptop.locator("[data-recovery-code]")).toHaveCount(2);
+  const after = await laptop.evaluate(() => window.__illogical.control!.account);
+  expect(after).not.toBe(before);
+  const dir = await laptop.request.get(`${base}/api/directory`);
+  expect((await dir.json()).daemons).toEqual([]);
 });

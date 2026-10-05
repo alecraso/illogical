@@ -126,7 +126,9 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
             New tab
           </button>
-          <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
+          {client.has("vms") && (
+            <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
+          )}
           <button onClick={act(() => client.session !== null && startAgent(client, { session: client.session, from: active }))}>New agent</button>
           {!state.roles && (
             <button
@@ -136,7 +138,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
               Conversations
             </button>
           )}
-          {!state.roles && (
+          {!state.roles && client.has("studio") && (
             <button data-studio-apps onClick={act(() => client.session !== null && pickApp(client, { session: client.session }, true))}>
               Studio apps
             </button>
@@ -151,7 +153,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
               Issue
             </button>
           )}
-          {!state.roles && (
+          {!state.roles && client.has("fountain") && (
             <button data-open-fountain onClick={act(() => client.session !== null && void openFountain(client, { session: client.session }))}>
               Fountain agents
             </button>
@@ -175,7 +177,7 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             </button>
           )}
           <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
-          <button onClick={act(() => openSandboxes())}>Sandboxes</button>
+          {client.has("vms") && <button onClick={act(() => openSandboxes())}>Sandboxes</button>}
           <button data-getting-started-open onClick={act(() => openGettingStarted(undefined, client))}>
             Getting started
           </button>

@@ -43,11 +43,25 @@ the daemon stopping, crashing, or the machine rebooting:
   from inside every pane (`ILLOGICAL_PANE` and `ILLOGICAL_SOCK` are set and
   it's on `PATH`). See below.
 - **Attention.** A pane that rings the bell, sends a notification (OSC 9,
-  777, 99), has an agent go quiet mid-command, or is told by a hook, shows a
+  777, 99), shows an agent's prompt waiting on you, or is told by a hook, shows a
   badge on its tab and pane (and in a "Needs you" list on the phone). A long
   command finishing while you're elsewhere shows "done". With *Notify this
   device* on (session menu; the phone's sheet), the phone gets a push notification; tapping it
   opens the pane.
+  - **Agents in terminal panes** (#145). For Claude Code and Codex the
+    daemon reads the bottom of the pane's screen and its title, as its own
+    terminal has them (never where someone has scrolled to), with no hooks
+    needed: a spinner or "esc to interrupt" is *working*, a permission or
+    trust prompt is *needs you* with what it asks ("Claude Code asks to run
+    `rm -rf build`"), and an empty prompt box is *idle*, or *done* when a
+    turn someone started ends while nobody is watching. The agent is found
+    by what runs in the pane's foreground, so `cd x && claude` counts. A turn has to look over in three reads
+    100 ms apart (or for 700 ms) before it counts as ended, and the first
+    second after an agent starts isn't read. Other agents (aider, gemini,
+    opencode...) are known as agents but not read yet; for any agent,
+    going quiet alone never means it wants you. Hooks, notifications and
+    the bell still say so whatever the screen shows. The rules are a small
+    table per agent in `crates/vt/src/detect.rs`.
   - **Why it wants you** (M24). Every pane that wants you says why: *ask*
     (an agent's question or permission request), *failed* (a command that
     ran a few seconds ended non-zero), *exited*, *input* (a bell or a
@@ -611,7 +625,7 @@ the daemon stopping, crashing, or the machine rebooting:
     ***Spec*** opens the agent-specs file
     that declares a `managed-by: chant` agent (a `.ts` under `src/agents`
     with its `name:`) as a file block; it looks in the checkout you pick
-    (`~/dev/jhgaylor/agent-specs` if it's there). Any other agent, or with
+    (`~/agent-specs` if it's there). Any other agent, or with
     no checkout, opens its page on Fountain.
   - **Read-only.** agent-specs stays the one place a curated agent is
     edited; the catalog never writes to Fountain.
@@ -734,8 +748,15 @@ the daemon stopping, crashing, or the machine rebooting:
     are the owner's; an editor sees the list. `capture --text` is the
     view as text.
 
-- **Other hosts** (M4a). Every daemon is a peer; the one the page comes
-  from (the "home daemon") keeps a list of the others and checks on
+- **Your machines through control** (M48, #151). The main way to reach
+  more than one machine: each one runs `illogicald join` once, and control's
+  page (in a browser or the desktop app) lists every machine of your
+  account and your teams in its host menu, reaching each directly when it
+  can and through control's encrypted relay otherwise. No machine is
+  special: none keeps a list of the others. See [control.md](control.md).
+- **Other hosts over the tailnet** (M4a, the older model, still there for
+  the CLI's `--host` and sandboxes). Every daemon is a peer; the one the
+  page comes from (the "home daemon") keeps a list of the others and checks on
   each every minute. The page shows a host switcher (desktop: the bar's
   left end; phone: the sheet), and each host has its own sessions and tabs.
   Switching connects straight to that daemon; nothing is relayed, and the

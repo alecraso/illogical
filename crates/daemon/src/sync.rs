@@ -554,7 +554,7 @@ pub struct PushOpts {
 
 /// Push for good, every `every`.
 pub async fn keep_pushing(opts: PushOpts, store: StateDir) {
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(60)).build().expect("an HTTP client");
+    let http = crate::roots::http().timeout(Duration::from_secs(60)).build().expect("an HTTP client");
     let mut tick = tokio::time::interval(opts.every);
     let mut failing = false;
     loop {

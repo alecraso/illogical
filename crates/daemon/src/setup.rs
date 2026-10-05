@@ -5,7 +5,11 @@
 //!   front of this daemon, so the phone reaches it on the tailnet.
 //! - `POST /api/setup/control`: ask illogical control to add this machine
 //!   (`illogicald join`); the answer is the code and where to approve it,
-//!   and the daemon waits for the approval in the background.
+//!   and the daemon waits for the approval in the background. Once
+//!   approved, the page shows the account's fingerprint to check against
+//!   the approving device, and
+//!   `POST /api/setup/control/confirm` (`{"same": true}`) saves the join;
+//!   `false` drops it.
 //! - `POST /api/setup/claude`: `claude mcp add illogical -- illogical mcp`.
 //!
 //! `GET /api/setup` says how far along each one is. When a step needs
@@ -40,6 +44,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/setup", get(status))
         .route("/api/setup/tailscale", post(tailscale_serve))
         .route("/api/setup/control", post(control_join))
+        .route("/api/setup/control/confirm", post(control_confirm))
         .route("/api/setup/claude", post(claude_mcp))
 }
 
@@ -114,6 +119,9 @@ struct ControlStatus {
     /// A join waiting for someone to approve it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pending: Option<Pending>,
+    /// An approved join waiting for the person to check the account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirm: Option<Confirm>,
     /// The last join that didn't work, and why.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -129,6 +137,17 @@ struct Pending {
     expires_ms: u64,
 }
 
+/// What the page shows to check before the join is saved.
+#[derive(Serialize, Clone)]
+struct Confirm {
+    /// The account's fingerprint.
+    account: String,
+    /// The device that approved it, by name.
+    approver: String,
+    /// "your account" or "the team X".
+    place: String,
+}
+
 #[derive(Serialize, Default)]
 struct ClaudeStatus {
     installed: bool,
@@ -138,6 +157,8 @@ struct ClaudeStatus {
 
 /// The join in flight, if any, and the last one's failure.
 static JOIN: Mutex<(Option<Pending>, Option<String>)> = Mutex::new((None, None));
+/// An approved join, until the person says the account is theirs.
+static APPROVED: Mutex<Option<crate::control::Approved>> = Mutex::new(None);
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
@@ -311,6 +332,11 @@ fn control_status(app: &App) -> ControlStatus {
         team: saved
             .and_then(|s| s.roster.as_ref().map(|r| r.name.clone()).or_else(|| Some(s.team.as_ref()?.team.clone()))),
         pending: pending.filter(|p| p.expires_ms > now_ms() && saved.is_none()),
+        confirm: APPROVED.lock().unwrap().as_ref().filter(|_| saved.is_none()).map(|a| Confirm {
+            account: a.joined.account.clone(),
+            approver: a.joined.approver.clone(),
+            place: a.joined.place.clone(),
+        }),
         error: error.filter(|_| saved.is_none()),
         url: CONTROL,
     }
@@ -318,7 +344,7 @@ fn control_status(app: &App) -> ControlStatus {
 
 async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json<Value> {
     let req = body.map(|Json(b)| b).unwrap_or_default();
-    if app.control.enrolled().is_some() {
+    if app.control.enrolled().is_some() || APPROVED.lock().unwrap().is_some() {
         return Json(serde_json::to_value(control_status(&app)).unwrap());
     }
     // One at a time: asking again while a code is open returns that code.
@@ -339,10 +365,15 @@ async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json
             };
             *JOIN.lock().unwrap() = (Some(pending.clone()), None);
             tokio::spawn(async move {
-                // control.json lands where the running daemon looks for it.
-                let r = crate::control::join_finish(p, &dir).await;
+                let r = crate::control::join_finish(p).await;
                 let mut j = JOIN.lock().unwrap();
-                *j = (None, r.err().map(|e| e.to_string()));
+                match r {
+                    Ok(a) => {
+                        *APPROVED.lock().unwrap() = Some(a);
+                        *j = (None, None);
+                    }
+                    Err(e) => *j = (None, Some(e.to_string())),
+                }
             });
             Json(serde_json::json!({ "pending": pending }))
         }
@@ -351,6 +382,34 @@ async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json
             Json(serde_json::json!({ "error": e.to_string() }))
         }
     }
+}
+
+#[derive(Deserialize)]
+struct ConfirmReq {
+    /// The fingerprint here is the one the approving device shows.
+    same: bool,
+}
+
+/// The person compared the account's fingerprints: save the join (where the
+/// running daemon picks it up), or drop it.
+async fn control_confirm(State(app): AppState, Json(req): Json<ConfirmReq>) -> Json<Value> {
+    let Some(a) = APPROVED.lock().unwrap().take() else {
+        return Json(serde_json::json!({ "control": control_status(&app) }));
+    };
+    let error = if !req.same {
+        let e = format!(
+            "Not joined: control approved this machine into the account {}, which isn't the one your device shows. Don't add machines through this control.",
+            a.joined.account
+        );
+        a.refuse(app.control.state_dir()).await;
+        Some(e)
+    } else {
+        let r = a.save(app.control.state_dir());
+        app.control.poke();
+        r.err().map(|e| e.to_string())
+    };
+    JOIN.lock().unwrap().1 = error;
+    Json(serde_json::json!({ "control": control_status(&app) }))
 }
 
 // ---- claude code

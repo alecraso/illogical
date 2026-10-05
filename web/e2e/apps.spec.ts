@@ -196,9 +196,10 @@ async function blockOf(page: Page): Promise<number> {
 test("a studio app opens framed from another site; its agent's question is answered here", async ({ page }) => {
   await reset(page);
   const term = (await panes(page))[0];
-  // Not logged in: the picker says how.
-  await menu(page, paneEl(page, term), "Open a studio app…");
-  await expect(page.locator(".picker.apps .picker-error")).toContainText("illogical studio login");
+  // Not linked to a studio: the menus don't offer one (#180).
+  await paneEl(page, term).click({ button: "right", position: { x: 60, y: 60 } });
+  await expect(page.getByRole("menuitem", { name: "Split right" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open a studio app…" })).toHaveCount(0);
   await page.keyboard.press("Escape");
   const r = await page.evaluate(([url, token]) => window.__illogical.client.request("POST", "/api/studio", { url, token }).then((r) => r.status), [studio, TOKEN]);
   expect(r).toBe(200);

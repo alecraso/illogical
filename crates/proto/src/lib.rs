@@ -133,8 +133,8 @@ pub enum Attention {
     Idle,
     /// A command is running and producing output.
     Working,
-    /// It asked for you (a notification, a bell, an agent's hook) or an agent
-    /// went quiet mid-command.
+    /// It asked for you (a notification, a bell, an agent's hook, or a
+    /// prompt on an agent's screen).
     NeedsInput,
     /// A long command finished while nobody was looking.
     Done,
@@ -178,8 +178,8 @@ pub struct Reason {
 pub enum ReasonKind {
     /// An agent asks: a question, or a permission to approve.
     Ask,
-    /// It waits on you some other way (a bell, a notification, an agent
-    /// gone quiet).
+    /// It waits on you some other way (a bell, a notification, a prompt on
+    /// an agent's screen).
     Input,
     /// A command that ran a while ended with a non-zero exit.
     Failed,

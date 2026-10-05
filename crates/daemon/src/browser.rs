@@ -144,7 +144,7 @@ impl Browser {
         if !ctx.restoring {
             usable(&page, ctx.sprite.is_some())?;
         }
-        let http = reqwest::Client::builder()
+        let http = crate::roots::http()
             .timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
