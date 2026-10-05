@@ -2,8 +2,9 @@
 //! (`testnet/`, #200), a bastion and box-bare, which has no illogical and is
 //! reached only by ProxyJump. The CLI's `--ssh` installs illogical there,
 //! starts its daemon, runs and captures a pane, gives the box's panes this
-//! client's agent, survives the connection going away, and a saved ssh host
-//! works with `--host`.
+//! client's agent (a `git push` from a pane to the stack's git server works
+//! with it, and only with it), survives the connection going away, and a
+//! saved ssh host works with `--host`.
 //!
 //! Needs `just testnet up ssh` and the box's static binaries from this tree
 //! (`just static aarch64` on Apple silicon, `just static` on x86_64), or
@@ -16,13 +17,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
+mod testnet;
 
-fn ssh_config() -> PathBuf {
-    root().join("testnet/.state/ssh_config")
-}
+use testnet::ssh_config;
 
 fn cli_bin() -> PathBuf {
     let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
@@ -137,7 +134,7 @@ fn agent(runtime: &Path) -> Agent {
     wait_for("ssh-agent", || sock.exists());
     let st = Command::new("ssh-add")
         .arg("-q")
-        .arg(root().join("testnet/.state/id_ed25519"))
+        .arg(testnet::state().join("id_ed25519"))
         .env("SSH_AUTH_SOCK", &sock)
         .status()
         .unwrap();
@@ -145,35 +142,25 @@ fn agent(runtime: &Path) -> Agent {
     Agent(child, sock)
 }
 
+/// A pane's shell command that commits and pushes `branch` to the stack's
+/// git server, then says how it went (the markers are computed, so the
+/// command line itself never matches them).
+fn push(branch: &str) -> String {
+    format!(
+        "cd \"$(mktemp -d)\" && git init -q && git -c user.name=illo -c user.email=illo@box-bare commit -q --allow-empty -m {branch} \
+         && git push -q git@git:/srv/git/repo.git HEAD:refs/heads/{branch} && echo pushed-$((6*7)) || echo push-failed-$((6*7))"
+    )
+}
+
 #[test]
-fn ssh_installs_runs_forwards_the_agent_and_saved_hosts_work() {
-    let cfg = ssh_config();
-    let reachable = cfg.exists()
-        && Command::new("ssh")
-            .arg("-F")
-            .arg(&cfg)
-            .args(["-o", "BatchMode=yes", "box-bare", "true"])
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-    if !reachable {
+fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
+    if !testnet::reachable("box-bare") {
         eprintln!("SKIP: the test stack isn't up (`just testnet up ssh`)");
         return;
     }
     // A box with nothing on it.
-    let st = Command::new("docker")
-        .args(["compose", "-f"])
-        .arg(root().join("testnet/compose.yaml"))
-        .args(["--profile", "ssh", "up", "-d", "--force-recreate", "--wait", "box-bare"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .unwrap();
-    assert!(st.success(), "recreating box-bare");
-    let arch = String::from_utf8(
-        Command::new("ssh").arg("-F").arg(&cfg).args(["box-bare", "uname", "-m"]).output().unwrap().stdout,
-    )
-    .unwrap();
+    testnet::recreate(&["box-bare"]);
+    let arch = String::from_utf8(testnet::ssh().args(["box-bare", "uname", "-m"]).output().unwrap().stdout).unwrap();
     let Some(binaries) = box_binaries(arch.trim()) else {
         eprintln!("SKIP: no static binaries for {} (`just static {}`)", arch.trim(), arch.trim());
         return;
@@ -202,17 +189,46 @@ fn ssh_installs_runs_forwards_the_agent_and_saved_hosts_work() {
     let mut watching = env.cmd(&["--ssh", "box-bare", "events", "-f"]).stdout(Stdio::null()).spawn().unwrap();
     std::thread::sleep(Duration::from_secs(1));
     let want = String::from_utf8(
-        Command::new("ssh-keygen")
-            .arg("-lf")
-            .arg(root().join("testnet/.state/id_ed25519.pub"))
-            .output()
-            .unwrap()
-            .stdout,
+        Command::new("ssh-keygen").arg("-lf").arg(testnet::state().join("id_ed25519.pub")).output().unwrap().stdout,
     )
     .unwrap();
     let want = want.split_whitespace().nth(1).unwrap().to_owned();
     let p2 = env.ok(&["--ssh", "box-bare", "run", "--", "ssh-add", "-l"]).trim().to_owned();
     wait_for("the forwarded key in a pane", || env.ok(&["--ssh", "box-bare", "capture", &p2]).contains(&want));
+
+    // `git push` from a pane there to the stack's git server, which knows
+    // only the client's key; the box has no key of its own, so the push
+    // signs in with the forwarded agent.
+    let branch = format!("m51-{}", std::process::id());
+    let p3 = env.ok(&["--ssh", "box-bare", "run", &push(&branch)]).trim().to_owned();
+    wait_for("the push", || {
+        let out = env.ok(&["--ssh", "box-bare", "capture", &p3]);
+        assert!(!out.contains("push-failed-42"), "git push from a pane: {out}");
+        out.contains("pushed-42")
+    });
+    let o = testnet::exec(
+        "git",
+        &["git", "--git-dir=/srv/git/repo.git", "rev-parse", "--verify", &format!("refs/heads/{branch}")],
+    );
+    assert!(o.status.success(), "the branch is on the git server");
+    let _ = watching.kill();
+    let _ = watching.wait();
+
+    // Without the agent (ILLOGICAL_SSH_AGENT=no), the same push is refused.
+    env.disconnect("box-bare");
+    let mut watching = env
+        .cmd(&["--ssh", "box-bare", "events", "-f"])
+        .env("ILLOGICAL_SSH_AGENT", "no")
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_secs(1));
+    let p4 = env.ok(&["--ssh", "box-bare", "run", &push(&format!("{branch}-noagent"))]).trim().to_owned();
+    wait_for("the refused push", || {
+        let out = env.ok(&["--ssh", "box-bare", "capture", &p4]);
+        assert!(!out.contains("pushed-42"), "pushed with no agent: {out}");
+        out.contains("push-failed-42")
+    });
     let _ = watching.kill();
     let _ = watching.wait();
 
