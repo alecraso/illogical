@@ -1,11 +1,14 @@
-//! #104 inside control: a new device waiting and a team join request push
-//! to the right people's subscriptions (a push service of our own, whose
-//! messages are decrypted here as a browser would), once each, saying
-//! only that something waits.
+//! #104 inside control: a new device waiting, a team join request and a
+//! share offer (#232) push to the right people's subscriptions (a push
+//! service of our own, whose messages are decrypted here as a browser
+//! would), once each, saying only that something waits.
 
 use std::{sync::Arc, time::Duration};
 
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    extract::{Query, State},
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use illogical_e2e::{
     Cert, DeviceKeys, Kind, now_ms,
@@ -19,7 +22,11 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{App, auth::Session, db::Team};
+use crate::{
+    App,
+    auth::{DaemonAuth, Session},
+    db::Team,
+};
 
 /// A browser's push subscription: its keys, and what its service got.
 struct Phone {
@@ -200,5 +207,42 @@ async fn waiting_devices_and_requests_push_their_owners() {
     assert_eq!(app.db.requests(team).unwrap()[0].name, "Ada-Lovelace");
     assert_eq!(accept().await.unwrap().0["pending"], true);
     assert!(phone.quiet().await, "asking again doesn't push again");
+    assert!(ada_phone.quiet().await);
+}
+
+/// #232: a machine offering a session to someone outside its owner's teams
+/// pushes them, once per offer (not on each refresh that names them
+/// again): whose machine and which, nothing of what's shared.
+#[tokio::test]
+async fn a_new_share_offer_pushes_the_person_offered_once() {
+    let mut app = App::for_tests("http://control.test");
+    person(&app, "github", "1", "jhgaylor", "a1jake");
+    let ada = person(&app, "passkey", "p2", "", "a2ada");
+    let bo = person(&app, "github", "3", "bo", "a3bo");
+    let (mut ada_phone, ada_host) = Phone::subscribe(&app, "a2ada", &ada, 8).await;
+    let (mut bo_phone, bo_host) = Phone::subscribe(&app, "a3bo", &bo, 9).await;
+    app.cfg.push_hosts = vec![ada_host, bo_host];
+    let app = Arc::new(app);
+    let cert = Cert::new(&DeviceKeys::generate(), "a1jake", Kind::Daemon, "geek");
+    app.db.put_device(&cert, true, now_ms()).unwrap();
+    app.db.put_daemon("a1jake", &cert.device, "geek", &[]).unwrap();
+    // What the daemon asks on each refresh: certificates of whom it lets in.
+    let refresh = async |accounts: &str| {
+        let q = Query(serde_json::from_value(json!({ "accounts": accounts })).unwrap());
+        crate::teams::daemon_peers(State(app.clone()), DaemonAuth { cert: cert.clone() }, q).await.unwrap().0
+    };
+
+    let got = refresh("a1jake,a2ada").await;
+    assert!(got.get("a2ada").is_none(), "an offer, not certificates");
+    let n = ada_phone.next().await.expect("a push for the offer");
+    assert_eq!(n["title"], "jhgaylor wants to share geek with you");
+    assert_eq!(n["tag"], format!("control-share-{}", cert.device));
+    assert_eq!(n["control"], true, "a tap opens control's page, where the prompt is");
+    refresh("a1jake,a2ada").await;
+    assert!(ada_phone.quiet().await, "the next refresh, the same offer: no push");
+    assert!(bo_phone.quiet().await, "nobody else hears of it");
+
+    refresh("a1jake,a2ada,a3bo").await;
+    assert!(bo_phone.next().await.is_some(), "a new offer, to someone else");
     assert!(ada_phone.quiet().await);
 }
