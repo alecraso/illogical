@@ -1,0 +1,2 @@
+# Patches apply to LF sources, whatever the checkout does on Windows (S29).
+vendor/libghostty-vt-sys/patches/*.patch -text
