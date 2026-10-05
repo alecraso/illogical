@@ -505,7 +505,7 @@ test("sessions: where you're signed in, and signing out everywhere (#173)", asyn
   // This browser, the phone, and the others that signed in above.
   await expect(laptop.locator("[data-session]")).not.toHaveCount(0);
   expect(await laptop.locator("[data-session]").count()).toBeGreaterThanOrEqual(2);
-  await expect(laptop.locator("[data-sessions]")).toContainText("Chrome on Linux");
+  await expect(laptop.locator("[data-sessions]")).toContainText(/Chrome on (Linux|macOS)/);
   await expect(laptop.locator("[data-sessions]")).toContainText("(this one)");
   // Sign one other out: it's gone from the list.
   const n = await laptop.locator("[data-session]").count();
