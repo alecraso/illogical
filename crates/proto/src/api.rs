@@ -37,7 +37,10 @@
 //! | GET | `/api/panes/N/export.cast` | | asciicast v3 |
 //! | GET | `/api/events` | `pane=`, `type=a,b`, `follow=1` | NDJSON `Event`s |
 //! | GET | `/api/history` | `pane=`, `failed=1`, `since=` secs, `cwd=`, `match=` | `[HistoryEntry]` |
-//! | GET | `/api/search` | `re=`, `since=` secs | `[SearchHit]` |
+//! | GET | `/api/search` | `re=`, `since=` secs | `[SearchHit]` (output, and thread messages) |
+//! | GET | `/api/threads/pane-N`, `/api/threads/session-N` | | `{target, messages: [ThreadMsg]}`: a thread (M61), as the caller may read it |
+//! | POST | `/api/threads/pane-N`, `/api/threads/session-N` | `{text, quote?}` | `{message, agent}`: posted (needs drive); `agent` is `{delivered}` (or `{error}`) when an `@agent` went to the pane's agent |
+//! | POST | `/api/threads/…/read` | `{upto}` | `{}`: the caller has read up to that message |
 //! | GET | `/api/fs/…`, POST `/api/panes/N/cd` | | files on a host: see [`crate::fs`] |
 //! | GET | `/api/host` | | `HostInfo`: this daemon's name and version, its tailnet URL, whether the tailnet has reached it, the control it joined |
 //! | GET | `/api/hosts/self/shell-env` | | `{shell, ok, error, ms, path, vars}`: the shell environment blocks that run your tools get (#74) |
@@ -420,6 +423,10 @@ pub struct SearchHit {
     /// A synced copy of another host's history (`host=NAME`), not ours.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// A message in a thread (M61), `pane-N` or `session-N` (then `pane`
+    /// is 0), not output: `offset` is the message's id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
 }
 
 /// `POST /api/shares`: a read-only link to one terminal pane.

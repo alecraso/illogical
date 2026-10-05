@@ -6,7 +6,7 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
 use illogical_proto::{
-    Attention, BlockType, Driver, PaneId, Policy, StartedBy,
+    Attention, BlockType, Driver, PaneId, Policy, SessionId, StartedBy, ThreadTarget,
     api::{ActRequest, HistoryEntry, OpenRequest, PaneSummary, RunRequest, WaitResult},
 };
 use rmcp::{
@@ -191,6 +191,33 @@ pub struct WaitArgs {
 
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct ListArgs {}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ThreadArgs {
+    /// The pane whose thread it is (`7` or `"%7"`). For an agent block's
+    /// token, its own pane when neither is given.
+    #[serde(default)]
+    pub pane: Option<PaneArg>,
+    /// Or a session's thread, by its id.
+    #[serde(default)]
+    pub session: Option<SessionId>,
+    /// Only messages after this id (what an earlier call returned as last).
+    #[serde(default)]
+    pub after: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PostThreadArgs {
+    /// The pane whose thread to post in (`7` or `"%7"`). For an agent
+    /// block's token, its own pane when neither is given.
+    #[serde(default)]
+    pub pane: Option<PaneArg>,
+    /// Or a session's thread, by its id.
+    #[serde(default)]
+    pub session: Option<SessionId>,
+    /// The message. `@name` mentions someone (they're notified).
+    pub text: String,
+}
 
 #[derive(Deserialize, JsonSchema)]
 pub struct HistoryArgs {
@@ -687,6 +714,26 @@ fn defs() -> Vec<Def> {
             open_world: false,
         },
         Def {
+            name: "read_thread",
+            title: "Read a thread",
+            description: "The people's conversation about a pane or a session (M61): who said what and when, oldest first, with quoted terminal output. When someone writes @agent in a pane's thread, it reaches that pane's agent as a follow-up; answer with post_thread.",
+            schema: schema_for_type::<ThreadArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "post_thread",
+            title: "Post in a thread",
+            description: "Post a message in a pane's or a session's thread, where the people working on it talk; it shows as from an agent. Use it to answer an @agent message or to tell the people something they should see.",
+            schema: schema_for_type::<PostThreadArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
             name: "history",
             title: "Command history",
             description: "Commands run across panes (open and recently closed), newest first: exit codes, directories, when, and who ran them. Filter by failed, since/before (\"2d\", \"36h\"), cwd, a regex.",
@@ -1027,6 +1074,14 @@ impl<'a> Call<'a> {
             "list" => self.list().await,
             "close" => match parse(args) {
                 Ok(a) => self.close(a).await,
+                Err(e) => Err(e),
+            },
+            "read_thread" => match parse(args) {
+                Ok(a) => self.read_thread(a).await,
+                Err(e) => Err(e),
+            },
+            "post_thread" => match parse(args) {
+                Ok(a) => self.post_thread(a).await,
                 Err(e) => Err(e),
             },
             "history" => match parse(args) {
@@ -1735,6 +1790,76 @@ impl<'a> Call<'a> {
         Some(panes.iter().filter(|p| Some(p.tab) == tab).map(|p| p.info.id).collect())
     }
 
+    /// The thread a call names: a pane's or a session's, within what this
+    /// caller reaches (an agent block's token: its own tab and session).
+    async fn thread_of(&self, pane: Option<&PaneArg>, session: Option<SessionId>) -> Result<ThreadTarget, String> {
+        match (pane.map(PaneArg::id).transpose()?, session) {
+            (Some(_), Some(_)) => Err("give a pane or a session, not both".into()),
+            (Some(p), None) => self.readable(p).await.map(|_| ThreadTarget::Pane(p)),
+            (None, Some(s)) => {
+                if let Some(me) = self.me()
+                    && self.readable(me).await?.session != s
+                {
+                    return Err(format!("session {s} isn't this agent's: its token reaches its own session only"));
+                }
+                Ok(ThreadTarget::Session(s))
+            }
+            (None, None) => match self.me() {
+                Some(me) => Ok(ThreadTarget::Pane(me)),
+                None => Err("which thread? give a pane or a session".into()),
+            },
+        }
+    }
+
+    async fn read_thread(&self, a: ThreadArgs) -> Out {
+        let target = self.thread_of(a.pane.as_ref(), a.session).await?;
+        let who = crate::acl::Principal::Owner;
+        let msgs = self
+            .app
+            .mux
+            .api(|r| Api::ThreadGet(target, who, r))
+            .await
+            .ok_or("daemon is shutting down")?
+            .map_err(|e| e.1)?;
+        let after = a.after.unwrap_or(0);
+        let msgs: Vec<_> = msgs.into_iter().filter(|m| m.id > after).collect();
+        let last = msgs.last().map(|m| m.id).unwrap_or(after);
+        let text: Vec<String> = msgs
+            .iter()
+            .map(|m| {
+                let mut t = format!("#{} {}: {}", m.id, m.name, m.text);
+                if let Some(q) = &m.quote {
+                    t.push_str(&format!("\n  > (%{}) {}", q.pane, q.text.replace('\n', "\n  > ")));
+                }
+                t
+            })
+            .collect();
+        done(
+            format!(
+                "{} message(s) in {}{}",
+                msgs.len(),
+                target.key(),
+                if text.is_empty() { String::new() } else { format!(":\n{}", text.join("\n")) }
+            ),
+            json!({ "thread": target, "messages": msgs, "last": last }),
+        )
+    }
+
+    async fn post_thread(&self, a: PostThreadArgs) -> Out {
+        let target = self.thread_of(a.pane.as_ref(), a.session).await?;
+        let as_agent = Driver { who: self.by(), name: format!("{} (agent)", self.client) };
+        let post = crate::mux::ThreadPost {
+            target,
+            who: crate::acl::Principal::Owner,
+            as_agent: Some(as_agent),
+            text: a.text,
+            quote: None,
+        };
+        let (msg, _) =
+            self.app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or("daemon is shutting down")?.map_err(|e| e.1)?;
+        done(format!("posted #{} in {}", msg.id, target.key()), json!({ "thread": target, "message": msg }))
+    }
+
     async fn history(&self, a: HistoryArgs) -> Out {
         let limit = a.limit.unwrap_or(30).clamp(1, 200);
         let since = a.since.as_deref().map(seconds).transpose()?;
@@ -1804,7 +1929,7 @@ impl<'a> Call<'a> {
             .into_iter()
             .filter(|h| only.as_ref().is_none_or(|o| o.contains(&h.pane)))
             .take(limit)
-            .map(|h| json!({ "pane": h.pane, "open": h.open, "offset": h.offset, "command": h.command, "line": one_line(&h.line, 300) }))
+            .map(|h| json!({ "pane": h.pane, "open": h.open, "offset": h.offset, "command": h.command, "thread": h.thread, "line": one_line(&h.line, 300) }))
             .collect();
         done(format!("{} matching lines", hits.len()), json!({ "hits": hits }))
     }
@@ -2739,7 +2864,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 32);
+        assert_eq!(all.len(), 34);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -2752,6 +2877,7 @@ mod tests {
                 "capture_screen",
                 "wait",
                 "list",
+                "read_thread",
                 "history",
                 "search",
                 "list_conversations",

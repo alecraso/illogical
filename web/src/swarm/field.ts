@@ -7,9 +7,15 @@
 // card with a thread back to its cluster; one waiting for room pulses in
 // place. S16: physics is half of each frame, so it sleeps once everything
 // has settled and wakes on a regroup, a new pane, attention or a touch.
+// A folded top-right corner: its thread has messages you haven't read
+// (yellow: one mentions you).
 
 import type { WorkKind } from "../proto";
 import { KINDS } from "./model";
+
+/** M61: an unread thread, and one that mentions you. */
+export const UNREAD = "#e6ebf4";
+export const UNREAD_MENTION = "#f9e2af";
 
 export interface FieldPane {
   key: string;
@@ -45,6 +51,10 @@ export interface FieldPane {
    * its driver claim (M13), `typing` when they typed in the last few
    * seconds (#118). */
   people?: { name: string; driving: boolean; typing: boolean }[];
+  /** Messages in its thread (M61) this person hasn't read; `mention`: one
+   * is for them. */
+  unread?: number;
+  mention?: boolean;
 }
 
 /** What the swarm draws its panes with (M41's themes): the field (blocks)
@@ -762,6 +772,16 @@ export class Field implements SwarmScene {
       if (t.flash > 0.05) {
         cx.fillStyle = `rgba(255,255,255,${t.flash * 0.5})`;
         cx.fillRect(x, y, w, h);
+      }
+      if (t.unread) {
+        // M61: an unread thread folds the tile's top-right corner.
+        const k = Math.max(4, Math.min(w, h) * 0.22);
+        cx.fillStyle = t.mention ? UNREAD_MENTION : UNREAD;
+        cx.beginPath();
+        cx.moveTo(x + w - k, y);
+        cx.lineTo(x + w, y);
+        cx.lineTo(x + w, y + k);
+        cx.fill();
       }
       if (t.att) {
         // Waiting for room on the rail: pulsing in place.

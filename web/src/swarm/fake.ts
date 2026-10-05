@@ -86,6 +86,9 @@ export function fakeSwarm(fleet: Fleet, n: number): () => void {
       person,
       driver: null,
       watchers: [],
+      // M61: a few with people talking about them.
+      unread: Math.random() < 0.06 ? Math.ceil(rnd(1, 4)) : 0,
+      mention: Math.random() < 0.02,
     });
   }
   fleet.inject(panes);

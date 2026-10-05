@@ -27,6 +27,10 @@ import {
   type State,
   type TabId,
   type TabView,
+  type ThreadMsg,
+  type ThreadSummary,
+  type ThreadTarget,
+  threadKey,
 } from "./proto";
 import { decompress } from "fzstd";
 import { SCROLLBACK, TerminalView } from "./terminal-view";
@@ -393,6 +397,55 @@ export class Client {
     return this.state?.presence?.find((p) => p.client === this.clientId)?.who ?? "owner";
   }
 
+  // ---- threads (M61)
+
+  private threadListeners = new Map<string, Set<(m: ThreadMsg) => void>>();
+
+  /** A thread as this person has it, if it has messages. */
+  thread(t: ThreadTarget): ThreadSummary | undefined {
+    const key = threadKey(t);
+    return this.state?.threads?.find((x) => threadKey(x.target) === key);
+  }
+
+  /** New messages in a thread, as they come. */
+  onThread(t: ThreadTarget, fn: (m: ThreadMsg) => void): () => void {
+    const key = threadKey(t);
+    let set = this.threadListeners.get(key);
+    if (!set) this.threadListeners.set(key, (set = new Set()));
+    set.add(fn);
+    return () => set.delete(fn);
+  }
+
+  async loadThread(t: ThreadTarget): Promise<ThreadMsg[]> {
+    const r = await this.request("GET", `/api/threads/${threadKey(t)}`);
+    if (!r.ok) throw new Error((await r.json<{ error?: string }>().catch(() => ({ error: undefined }))).error ?? `HTTP ${r.status}`);
+    return (await r.json<{ messages: ThreadMsg[] }>()).messages;
+  }
+
+  async postThread(t: ThreadTarget, text: string, quote?: { pane: PaneId; text: string }): Promise<void> {
+    const r = await this.request("POST", `/api/threads/${threadKey(t)}`, { text, quote });
+    if (!r.ok) throw new Error((await r.json<{ error?: string }>().catch(() => ({ error: undefined }))).error ?? `HTTP ${r.status}`);
+    const a = (await r.json<{ agent?: { delivered?: boolean; error?: string } | null }>()).agent;
+    if (a?.error) this.showError(`the agent didn't get it: ${a.error}`);
+  }
+
+  markThreadRead(t: ThreadTarget, upto: number) {
+    const s = this.thread(t);
+    if (!s || (!s.unread && !s.mention)) return;
+    void this.request("POST", `/api/threads/${threadKey(t)}/read`, { upto }).catch(() => {});
+  }
+
+  /** Whether this person may post in a thread (drivers and owners). */
+  mayPost(t: ThreadTarget): boolean {
+    const session = "session" in t ? t.session : this.sessionOfTab(this.tabOfPane(t.pane)?.id ?? -1);
+    return this.role(session ?? null) !== "viewer";
+  }
+
+  /** The session a pane is in. */
+  sessionOfPane(pane: PaneId): SessionId | null {
+    return this.sessionOfTab(this.tabOfPane(pane)?.id ?? -1) ?? null;
+  }
+
   /** Everyone else connected, within what this client sees. */
   others(): Presence[] {
     const me = this.me();
@@ -487,6 +540,12 @@ export class Client {
   /** Is `f` set up here? Yes when the daemon didn't say. */
   has(f: keyof HostFeatures): boolean {
     return this.features?.[f] ?? true;
+  }
+
+  /** M61: whether this daemon keeps threads. Unlike the rest, unknown means
+   * no: control serves this page to older daemons too. */
+  hasThreads(): boolean {
+    return this.features?.threads === true;
   }
 
   /** POST to the API; a failure shows as a toast. */
@@ -887,6 +946,9 @@ export class Client {
       case "follow":
         for (const fn of this.editorFollows.get(msg.pane) ?? []) fn(msg.msg);
         break;
+      case "thread":
+        for (const fn of this.threadListeners.get(threadKey(msg.target)) ?? []) fn(msg.msg);
+        break;
       case "block": {
         const b = this.blocks.get(msg.block);
         if (b) {
@@ -921,6 +983,7 @@ export class Client {
       panes: [...byId.values()].sort((a, b) => a.id - b.id),
       machines: d.machines ?? old.machines,
       presence: d.presence ?? old.presence,
+      threads: d.threads ?? old.threads,
     };
     if (added || d.gone?.length) return this.applyState(state, false);
     this.state = state;

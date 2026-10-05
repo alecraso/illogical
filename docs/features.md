@@ -1035,3 +1035,19 @@ the daemon stopping, crashing, or the machine rebooting:
   its VM, and what it runs lands on its machine. Over HTTP (`/mcp`), the owner gets in as for the web client;
   anything else needs a token from `illogical mcp token`, revocable at any
   time.
+- **Threads on panes and sessions** (M61). Every pane and every session has
+  a thread where the people working on it talk: *Thread* in a pane's menu,
+  *Session thread* in the session menu, or the bubble on a pane. Messages
+  arrive live on every window and phone. The machine that owns the pane
+  keeps them (`<state>/threads/`), so they survive restarts and upgrades,
+  outlive the pane, show up in `search`, and never pass through control
+  unencrypted. Watchers read and drivers post. A private pane's thread is
+  its owner's, and someone shared "from now" sees messages from then on.
+  Each person has their own unread count: on the pane's bubble, a dot on
+  the session button, and a folded corner in the swarm (blocks, hive and
+  timeline; the city doesn't draw it yet). `@name` notifies someone, on
+  their phone too. *Quote selection in thread* posts terminal output as a
+  quote that stays readable after the pane scrolls; clicking it jumps back
+  to the output. `@agent` (or `@claude`) in a pane's thread goes to that
+  pane's agent as a follow-up, from whoever may drive it, and agents read
+  and answer with the MCP tools `read_thread` and `post_thread`.

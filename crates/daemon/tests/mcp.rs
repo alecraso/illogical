@@ -122,7 +122,7 @@ async fn tools_through_the_stdio_bridge() {
 
     // The tools, with honest annotations.
     let tools = s.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 32);
+    assert_eq!(tools.len(), 34);
     let ro = |n: &str| tools.iter().find(|t| t.name == n).unwrap().annotations.as_ref().unwrap().read_only_hint;
     assert_eq!(
         (ro("read_output"), ro("wait"), ro("run"), ro("close")),
@@ -253,7 +253,7 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     // (and retries it, then gives up: no tools).
     let tools = s.list_tools(None).await.unwrap();
     assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
-    assert_eq!(tools.tools.len(), 32);
+    assert_eq!(tools.tools.len(), 34);
     let t = s.list_resource_templates(None).await.unwrap();
     assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
     let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
@@ -293,7 +293,7 @@ async fn http_with_a_token_until_it_is_revoked() {
     let ro =
         d.post("/api/mcp/tokens", json!({ "name": "watcher", "scope": "read" }))["token"].as_str().unwrap().to_owned();
     let w = http(&d, &ro, Client::named("watcher")).await.unwrap();
-    assert_eq!(w.list_all_tools().await.unwrap().len(), 12);
+    assert_eq!(w.list_all_tools().await.unwrap().len(), 13);
     assert!(refused(&w, "run", json!({ "command": "true" })).await.contains("may only read"));
     call(&w, "list", json!({})).await;
 
@@ -643,4 +643,43 @@ async fn prompt_agent_waits_for_the_turn() {
     assert_eq!(v["ask"]["questions"][0]["question"], "Which colour do you prefer?", "{v}");
     let v = call(&s, "prompt_agent", json!({ "pane": b, "text": "recall" })).await;
     assert_eq!(v["result"], "blocked", "{v}");
+}
+
+/// M61: an agent reads the people's thread about a pane and answers in it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_reads_and_posts_in_threads() {
+    let d = Daemon::child();
+    let panes = d.get("/api/panes");
+    let (pane, session) = (panes[0]["id"].as_u64().unwrap(), panes[0]["session"].as_u64().unwrap());
+    d.post(&format!("/api/threads/pane-{pane}"), json!({ "text": "why does the build fail?" }));
+    let s = bridge(&d, Client::named("claude-code")).await;
+    let r = call(&s, "read_thread", json!({ "pane": format!("%{pane}") })).await;
+    assert_eq!(r["messages"][0]["text"], "why does the build fail?");
+    assert!(r["summary"].as_str().unwrap().contains("why does the build fail?"), "{r}");
+    let p = call(&s, "post_thread", json!({ "pane": pane, "text": "a missing env var: FOO" })).await;
+    assert_eq!(
+        (p["message"]["agent"].as_bool(), p["message"]["name"].as_str()),
+        (Some(true), Some("claude-code (agent)"))
+    );
+    let r = call(&s, "read_thread", json!({ "pane": pane, "after": 1 })).await;
+    assert_eq!(r["messages"].as_array().unwrap().len(), 1, "{r}");
+    call(&s, "post_thread", json!({ "session": session, "text": "done for today" })).await;
+    assert_eq!(d.get(&format!("/api/threads/session-{session}"))["messages"][0]["text"], "done for today");
+    // A client with no pane of its own has to say which thread.
+    assert!(refused(&s, "post_thread", json!({ "text": "hi" })).await.contains("which thread"));
+    s.cancel().await.unwrap();
+}
+
+/// M61: an agent block's own pane is its thread unless it names another.
+#[test]
+fn an_agent_blocks_thread_is_its_own() {
+    let d = Daemon::child_with(&["--wisp-token-file", "/nonexistent", "--block-listen", "127.0.0.1:0"]);
+    let other = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+    let a = d.open("hello");
+    d.wait(a, "idle");
+    agent_mcp(&d, a, "post_thread", json!({ "text": "starting on it" })).unwrap();
+    assert_eq!(d.get(&format!("/api/threads/pane-{a}"))["messages"][0]["text"], "starting on it");
+    // Another tab's pane isn't its to post in.
+    let e = agent_mcp(&d, a, "post_thread", json!({ "pane": other, "text": "hi" })).unwrap_err();
+    assert!(e.contains("another tab"), "{e}");
 }

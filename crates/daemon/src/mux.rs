@@ -13,8 +13,8 @@ use std::{
 use illogical_core::{Effect, Intent, Mux, Role};
 use illogical_proto::{
     Action, Activity, AskRef, AskWhat, Attention, BlockType, ClientId, ClientMsg, CommandInfo, Delta, Driver, Event,
-    EventKind, Machine, MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, Reason, ReasonKind,
-    ServerMsg, SessionId, State, TabId, TabView, WorkKind,
+    EventKind, Machine, MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, Quote, Reason,
+    ReasonKind, ServerMsg, SessionId, State, TabId, TabView, ThreadMsg, ThreadSummary, ThreadTarget, WorkKind,
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::{Ask, AskKind},
 };
@@ -170,6 +170,14 @@ pub enum Api {
     RoleOn(crate::acl::Principal, PaneId, oneshot::Sender<Option<(Role, Option<u64>)>>),
     /// Whether a guest may type in a pane on this machine (M14).
     MayDrive(crate::acl::Principal, PaneId, oneshot::Sender<Result<(), String>>),
+    /// A thread's messages (M61), as `who` may read them.
+    ThreadGet(ThreadTarget, crate::acl::Principal, oneshot::Sender<Result<Vec<ThreadMsg>, ThreadError>>),
+    /// Post in a thread as `who`. `as_agent`: an agent posts through MCP
+    /// under that name. Answers with the message, and whether it goes to
+    /// the pane's agent as a follow-up.
+    ThreadPost(ThreadPost, oneshot::Sender<Result<(ThreadMsg, bool), ThreadError>>),
+    /// `who` has read a thread up to a message.
+    ThreadRead(ThreadTarget, crate::acl::Principal, u64),
     /// Where each pane of a session's output ends now (a "from now" share
     /// starts there).
     SessionEnds(SessionId, oneshot::Sender<Option<BTreeMap<PaneId, u64>>>),
@@ -644,6 +652,8 @@ struct Daemon {
     sizes: BTreeMap<PaneId, (u16, u16)>,
     config: Config,
     store: StateDir,
+    /// Threads on panes and sessions (M61).
+    threads: crate::threads::Threads,
     notices: NoticeSink,
     events: broadcast::Sender<Event>,
     push: Option<Push>,
@@ -707,6 +717,20 @@ struct Daemon {
     ide_conns: HashMap<u64, (Option<u32>, Option<PaneId>)>,
 }
 
+/// A post to a thread (M61).
+pub struct ThreadPost {
+    pub target: ThreadTarget,
+    pub who: crate::acl::Principal,
+    /// An agent posting through MCP: its name. Access is still `who`'s.
+    pub as_agent: Option<Driver>,
+    pub text: String,
+    pub quote: Option<Quote>,
+}
+
+/// Why a thread request failed: an HTTP status and what to say.
+#[derive(Debug)]
+pub struct ThreadError(pub u16, pub String);
+
 /// Which panes changed.
 #[derive(Default)]
 enum Dirty {
@@ -716,6 +740,8 @@ enum Dirty {
     All,
 }
 
+/// What one person sees besides panes: machines, who's here, threads.
+type People = (Vec<Machine>, Vec<Presence>, Vec<ThreadSummary>);
 /// A pane as one client has it.
 type PaneJson = serde_json::Map<String, serde_json::Value>;
 /// The changed panes as one person sees them (`None`: not any more).
@@ -728,6 +754,7 @@ struct Sent {
     panes: HashMap<PaneId, PaneJson>,
     machines: Vec<Machine>,
     presence: Vec<Presence>,
+    threads: Vec<ThreadSummary>,
 }
 
 /// A pane's working directory and foreground command, as the OS showed
@@ -790,6 +817,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, Kept>, push:
         trust: HashMap::new(),
         sizes: BTreeMap::new(),
         config,
+        threads: crate::threads::Threads::open(store.root()),
         store: store.clone(),
         notices,
         events: events.clone(),
@@ -1981,6 +2009,18 @@ impl Daemon {
             }
             Api::MayDrive(who, pane, reply) => {
                 let _ = reply.send(self.may_drive_here(&who, pane));
+            }
+            Api::ThreadGet(target, who, reply) => {
+                let _ = reply.send(self.thread_get(target, &who));
+            }
+            Api::ThreadPost(post, reply) => {
+                let _ = reply.send(self.thread_post(post));
+            }
+            Api::ThreadRead(target, who, upto) => {
+                if self.thread_role(&who, target).is_some() && self.threads.mark_read(who.id(), target, upto) {
+                    self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
+                    self.soon();
+                }
             }
             Api::SessionEnds(session, reply) => {
                 let ends = self.mux.session(session).ok().map(|s| {
@@ -3459,7 +3499,7 @@ impl Daemon {
         // Most clients are one person's: work each view out once.
         let mut states: HashMap<Principal, State> = HashMap::new();
         let mut views: HashMap<(Principal, bool), PaneView> = HashMap::new();
-        let mut people: HashMap<Principal, (Vec<Machine>, Vec<Presence>)> = HashMap::new();
+        let mut people: HashMap<Principal, People> = HashMap::new();
         for (client, who) in clients {
             let summary = self.summary.contains(&client);
             let stale = full || self.sent.get(&client).is_none_or(|s| s.rev != self.mux.rev);
@@ -3479,8 +3519,9 @@ impl Daemon {
                     })
                     .collect()
             });
-            let (machines, presence) =
-                people.entry(who.clone()).or_insert_with(|| (self.machines_for(&who), self.presence(&who)));
+            let (machines, presence, threads) = people
+                .entry(who.clone())
+                .or_insert_with(|| (self.machines_for(&who), self.presence(&who), self.threads_for(&who)));
             let Some(sent) = self.sent.get_mut(&client) else { continue };
             let mut delta = Delta::default();
             for (id, v) in view.iter() {
@@ -3519,6 +3560,10 @@ impl Daemon {
                 sent.presence = presence.clone();
                 delta.presence = Some(presence.clone());
             }
+            if sent.threads != *threads {
+                sent.threads = threads.clone();
+                delta.threads = Some(threads.clone());
+            }
             if !delta.is_empty()
                 && let Some(c) = self.clients.get(&client)
             {
@@ -3537,6 +3582,7 @@ impl Daemon {
             panes: HashMap::new(),
             machines: state.machines.clone(),
             presence: state.presence.clone(),
+            threads: state.threads.clone(),
         };
         let mut panes = Vec::with_capacity(state.panes.len());
         for p in &state.panes {
@@ -3892,6 +3938,167 @@ impl Daemon {
         who.is_owner() || (self.sees(who, pane) && !self.meta.get(&pane).is_some_and(|m| m.private))
     }
 
+    // ---- threads (M61)
+
+    /// Whether a thread's pane or session is still here.
+    fn thread_exists(&self, target: ThreadTarget) -> bool {
+        match target {
+            ThreadTarget::Pane(p) => self.panes.contains_key(&p) || self.blocks.contains_key(&p),
+            ThreadTarget::Session(s) => self.mux.session(s).is_ok(),
+        }
+    }
+
+    /// `who`'s role in a thread, and the time its messages start for them:
+    /// a pane's thread is read by whoever may read the pane (a private
+    /// pane's only by its owner), a session's by whoever has a role in it.
+    /// A "from now" share sees messages from when it was made.
+    fn thread_role(&self, who: &Principal, target: ThreadTarget) -> Option<(Role, u64)> {
+        if !self.thread_exists(target) {
+            return None;
+        }
+        if who.is_owner() {
+            return Some((Role::Owner, 0));
+        }
+        let session = match target {
+            ThreadTarget::Pane(p) => self.session_of(p).filter(|_| self.readable(who, p))?,
+            ThreadTarget::Session(s) => s,
+        };
+        let role = self.config.acl.role(who, session)?;
+        Some((role, self.config.acl.thread_floor(who, session).unwrap_or(0)))
+    }
+
+    fn thread_get(&self, target: ThreadTarget, who: &Principal) -> Result<Vec<ThreadMsg>, ThreadError> {
+        let (_, floor) = self.thread_role(who, target).ok_or_else(|| ThreadError(404, "no such thread".into()))?;
+        Ok(self.threads.get(target).iter().filter(|m| m.at >= floor).cloned().collect())
+    }
+
+    /// The threads `who` may read that have messages, with what they
+    /// haven't read.
+    fn threads_for(&self, who: &Principal) -> Vec<ThreadSummary> {
+        let mut out: Vec<ThreadSummary> = self
+            .threads
+            .targets()
+            .filter_map(|t| {
+                let (_, floor) = self.thread_role(who, t)?;
+                let msgs: Vec<&ThreadMsg> = self.threads.get(t).iter().filter(|m| m.at >= floor).collect();
+                let last = msgs.last()?;
+                let read = self.threads.read_upto(who.id(), t);
+                let new: Vec<&&ThreadMsg> = msgs.iter().filter(|m| m.id > read && m.who != who.id()).collect();
+                Some(ThreadSummary {
+                    target: t,
+                    last: last.id,
+                    at: last.at,
+                    unread: new.len() as u32,
+                    mention: new.iter().any(|m| m.mentions.iter().any(|x| x == who.id())),
+                })
+            })
+            .collect();
+        out.sort_by_key(|t| t.target);
+        out
+    }
+
+    /// Everyone a message could @mention: the owner, everyone shared with,
+    /// and whoever is connected.
+    fn mentionable(&self) -> Vec<Principal> {
+        let mut out = vec![Principal::Owner];
+        for g in self.config.acl.list() {
+            out.push(Principal::User { id: g.principal.clone(), name: g.name.clone(), pic: None });
+        }
+        for c in self.clients.values() {
+            out.push(c.principal.clone());
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|p| seen.insert(p.id().to_owned()));
+        out
+    }
+
+    fn thread_post(&mut self, post: ThreadPost) -> Result<(ThreadMsg, bool), ThreadError> {
+        let ThreadPost { target, who, as_agent, text, quote } = post;
+        let (role, _) = self.thread_role(&who, target).ok_or_else(|| ThreadError(404, "no such thread".into()))?;
+        if role < Role::Editor {
+            return Err(ThreadError(403, "you're watching this session; you can't post in its threads".into()));
+        }
+        let text = text.trim().to_owned();
+        if text.is_empty() && quote.is_none() {
+            return Err(ThreadError(400, "nothing to post".into()));
+        }
+        if let Some(q) = &quote
+            && !self.readable(&who, q.pane)
+        {
+            return Err(ThreadError(403, format!("you can't read %{}", q.pane)));
+        }
+        let by = as_agent.clone().unwrap_or_else(|| self.driver_of(&who));
+        let tokens = crate::threads::mentions(&text);
+        let mentions: Vec<String> = self
+            .mentionable()
+            .into_iter()
+            .filter(|p| p.id() != by.who && self.thread_role(p, target).is_some())
+            .filter(|p| {
+                let name = self.name_of(p);
+                tokens.iter().any(|t| crate::threads::names(t, p.id(), &name))
+            })
+            .map(|p| p.id().to_owned())
+            .collect();
+        // An @agent goes to the pane's agent as a follow-up: an instruction,
+        // so only from someone who may drive it (and never from an agent).
+        let to_agent = as_agent.is_none()
+            && crate::threads::calls_agent(&tokens)
+            && matches!(target, ThreadTarget::Pane(p) if self.may_drive_here(&who, p).is_ok());
+        let msg = ThreadMsg {
+            id: 0,
+            at: now_ms(),
+            who: by.who.clone(),
+            name: by.name.clone(),
+            text,
+            quote,
+            mentions,
+            to_agent,
+            agent: as_agent.is_some(),
+        };
+        let msg = self.threads.post(target, msg).map_err(|e| ThreadError(500, format!("can't save it: {e}")))?;
+        // What you post, you've read.
+        self.threads.mark_read(&by.who, target, msg.id);
+        self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
+        for c in self.clients.values() {
+            if self.thread_role(&c.principal, target).is_some() {
+                let _ = c.ctrl.send(ToClient::Msg(ServerMsg::Thread { target, msg: msg.clone() }));
+            }
+        }
+        self.soon();
+        self.notify_mentions(target, &msg);
+        Ok((msg, to_agent))
+    }
+
+    /// Tell everyone a message mentions, on their phones too.
+    fn notify_mentions(&self, target: ThreadTarget, msg: &ThreadMsg) {
+        if msg.mentions.is_empty() {
+            return;
+        }
+        // A notification opens a pane: the thread's, or the session's first.
+        let pane = match target {
+            ThreadTarget::Pane(p) => Some(p),
+            ThreadTarget::Session(s) => self
+                .mux
+                .session(s)
+                .ok()
+                .and_then(|s| s.tabs.first().copied())
+                .and_then(|t| self.mux.tab(t).ok())
+                .and_then(|t| t.root.panes().into_iter().next()),
+        };
+        let Some(pane) = pane else { return };
+        let title = format!("{} mentioned you", msg.name);
+        let body: String = msg.text.chars().take(200).collect();
+        let extra = serde_json::json!({ "thread": target.key() });
+        for id in &msg.mentions {
+            let id = id.clone();
+            if let Some(push) = &self.push {
+                let id = id.clone();
+                push.send_to(pane, &title, &body, Some(extra.clone()), move |w| w == id);
+            }
+            self.config.control.push(pane, &title, &body, Some(extra.clone()), move |p| p.id() == id);
+        }
+    }
+
     /// A guest's intent that makes a pane: on a VM, never this machine
     /// (M14). A new tab is a VM tab; a split joins its tab's machine, or
     /// gets one of its own. Their VMs count against their quota.
@@ -4019,6 +4226,7 @@ impl Daemon {
     fn state_for(&self, who: &Principal) -> State {
         let mut st = self.state();
         st.presence = self.presence(who);
+        st.threads = self.threads_for(who);
         if who.is_owner() {
             return st;
         }
@@ -4108,6 +4316,7 @@ impl Daemon {
     /// Write the layout and pane details if anything changed since the last
     /// write.
     fn save(&mut self) {
+        self.threads.save();
         // Whichever notices a new directory or command tells the clients
         // (at the next tick).
         self.refresh_meta();
@@ -4332,6 +4541,7 @@ impl Daemon {
             options,
             roles: None,
             presence: Vec::new(),
+            threads: Vec::new(),
         }
     }
 }

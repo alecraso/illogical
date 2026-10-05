@@ -4540,6 +4540,18 @@ Where WebKitGTK has none, measure str0m or webrtc-rs with cpal on the Tauri side
 - An agent answers an @mention.
 - Threads survive daemon restarts and in-place upgrades (Playwright).
 
+**As built (2026-10-05):**
+- **Storage:** `<state>/threads/{pane,session}-N.jsonl`, plus `reads.json` for how far each person has read. They're outside the pane's directory, so *Forget history* and closing the pane keep them, and `search` finds them (hits carry `thread`).
+- **Routes:** `GET`/`POST /api/threads/{pane|session}-N` and `…/read`. New messages go out live as `ServerMsg::Thread`. Each person's `ThreadSummary` (`unread`, `mention`) is in `State`/`Delta`, whole when present, like `presence`.
+- **Rules:** a pane's thread follows `readable` (private panes are their owner's). Posting needs Editor. A "from now" grant sees messages from its `at`.
+- **`@agent`/`@claude`** (from someone `may_drive_here`) goes through the follow-up path, an agent block's `send` or the inbox hook. MCP `read_thread`/`post_thread` default to an agent block's own pane.
+- **UI:** a drawer (a full-screen sheet on phones), the pane's bubble, a dot on the session button, and a folded corner in the blocks, hive and timeline themes. A mention's push notification opens the thread (`#pane=N&thread=…`).
+- **Not done:**
+  - messages carry the name, not the device (presence carries no device either);
+  - the city theme doesn't draw unread;
+  - the desktop app's native notifications don't fire for mentions (web push and control's push do);
+  - the done-when's real run (two accounts through control on a team machine, the desktop app, a phone, a live Claude Code answering) is for Jake.
+
 #### M62: team channels (#241, after S30 and M61)
 
 - Each team has channels, starting with `#general`.

@@ -18,7 +18,7 @@
 // - A heartbeat notices a link that died without closing.
 
 import { Client } from "./client";
-import type { Driver, PaneInfo, Presence, State } from "./proto";
+import type { Driver, PaneInfo, Presence, State, ThreadSummary } from "./proto";
 import { RelayMux } from "./e2e/relaymux";
 
 export type HostStatus = "connecting" | "connected" | "stale" | "offline" | "asleep" | "capped";
@@ -78,6 +78,10 @@ export interface FleetPane {
   driver: Driver | null;
   /** M30: who has it open now (M13 presence), other than summaries. */
   watchers: Presence[];
+  /** M61: messages in its thread this person hasn't read, and whether
+   * one mentions them. */
+  unread: number;
+  mention: boolean;
 }
 
 /** Most summary connections one page holds (S16: about 14 MB a page for
@@ -492,6 +496,8 @@ export class Fleet {
       const person = this.personOf(e.ref);
       const watchers = new Map<number, Presence[]>();
       for (const p of st.presence ?? []) if (p.pane !== undefined) (watchers.get(p.pane) ?? watchers.set(p.pane, []).get(p.pane)!).push(p);
+      const threads = new Map<number, ThreadSummary>();
+      for (const t of st.threads ?? []) if ("pane" in t.target) threads.set(t.target.pane, t);
       for (const info of st.panes) {
         // Someone else's private pane (M14): not even a tile.
         if (info.private && st.roles) continue;
@@ -509,6 +515,8 @@ export class Fleet {
           person,
           driver: info.driver ?? null,
           watchers: watchers.get(info.id) ?? [],
+          unread: threads.get(info.id)?.unread ?? 0,
+          mention: !!threads.get(info.id)?.mention,
         });
       }
     }

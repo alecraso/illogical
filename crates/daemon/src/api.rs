@@ -62,6 +62,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/hook", post(hook))
         .route("/api/panes/{id}/inbox", post(inbox))
         .route("/api/panes/{id}/followup", post(followup))
+        .route("/api/threads/{target}", get(thread_get).post(thread_post))
+        .route("/api/threads/{target}/read", post(thread_read))
         .route("/api/panes/{id}/close", post(close))
         .route("/api/panes/{id}/capture", get(capture))
         .route("/api/panes/{id}/process", get(process))
@@ -808,6 +810,96 @@ async fn ask_withdraw(
     Json(req): Json<WithdrawRequest>,
 ) -> Res<Json<serde_json::Value>> {
     app.mux.send(Cmd::Api(Api::AskWithdraw(id, req.id, None)));
+    Ok(Json(serde_json::json!({})))
+}
+
+// ---- threads (M61)
+
+fn thread_target(key: &str) -> Res<illogical_proto::ThreadTarget> {
+    illogical_proto::ThreadTarget::parse(key)
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "a thread is pane-N or session-N".into()))
+}
+
+fn thread_err(e: crate::mux::ThreadError) -> ApiError {
+    ApiError(StatusCode::from_u16(e.0).unwrap_or(StatusCode::BAD_REQUEST), e.1)
+}
+
+fn gone() -> ApiError {
+    ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())
+}
+
+/// A thread's messages, as the caller may read them.
+async fn thread_get(
+    State(app): AppState,
+    Path(key): Path<String>,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    let target = thread_target(&key)?;
+    let msgs = app.mux.api(|r| Api::ThreadGet(target, who, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
+    Ok(Json(serde_json::json!({ "target": target, "messages": msgs })))
+}
+
+#[derive(Deserialize)]
+struct ThreadPostRequest {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    quote: Option<illogical_proto::Quote>,
+}
+
+/// Post in a thread. An `@agent` in a pane's thread, from someone who may
+/// drive the pane, also goes to its agent as a follow-up.
+async fn thread_post(
+    State(app): AppState,
+    Path(key): Path<String>,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(req): Json<ThreadPostRequest>,
+) -> Res<Json<serde_json::Value>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    let target = thread_target(&key)?;
+    let post = crate::mux::ThreadPost { target, who, as_agent: None, text: req.text, quote: req.quote };
+    let (msg, to_agent) = app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
+    let mut agent = serde_json::Value::Null;
+    if to_agent && let illogical_proto::ThreadTarget::Pane(pane) = target {
+        agent = match tell_agent(&app, pane, &msg).await {
+            Ok(now) => serde_json::json!({ "delivered": now }),
+            Err(e) => serde_json::json!({ "error": e }),
+        };
+    }
+    Ok(Json(serde_json::json!({ "message": msg, "agent": agent })))
+}
+
+/// Hand a thread message to the pane's agent, as a follow-up from its
+/// author (M61). `Ok(true)`: it went straight in; `Ok(false)`: queued.
+async fn tell_agent(app: &App, pane: PaneId, msg: &illogical_proto::ThreadMsg) -> Result<bool, String> {
+    let mut text = format!("{} wrote in this pane's thread: {}", msg.name, msg.text);
+    if let Some(q) = &msg.quote {
+        text.push_str(&format!("\n\nQuoting %{}:\n{}", q.pane, q.text));
+    }
+    text.push_str("\n\n(Answer in the thread with illogical's post_thread tool.)");
+    let by = Driver { who: msg.who.clone(), name: msg.name.clone() };
+    if let Some(b) = app.mux.api(|r| Api::Block(pane, r)).await.flatten() {
+        let name = (by.who != "owner").then_some(by.name.as_str());
+        return b.call_by("send", serde_json::json!({ "text": text }), name).await.map(|_| true);
+    }
+    app.mux.api(|r| Api::FollowUp(pane, text, by, r)).await.unwrap_or_else(|| Err("daemon is shutting down".into()))
+}
+
+#[derive(Deserialize)]
+struct ThreadReadRequest {
+    upto: u64,
+}
+
+async fn thread_read(
+    State(app): AppState,
+    Path(key): Path<String>,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Json(req): Json<ThreadReadRequest>,
+) -> Res<Json<serde_json::Value>> {
+    let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
+    let target = thread_target(&key)?;
+    app.mux.send(Cmd::Api(Api::ThreadRead(target, who, req.upto)));
     Ok(Json(serde_json::json!({})))
 }
 

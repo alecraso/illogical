@@ -137,6 +137,23 @@ To share a session (a set of tabs) instead of a whole machine:
 On your own machine, people you share with still can't type in its panes
 until you allow it (above).
 
+## Talking about it: threads
+
+Every pane and every session has a thread (M61): *Thread* in a pane's
+menu, *Session thread* in the session menu, or the bubble on a pane.
+
+- **Who sees what:** the same people as the pane or session. Watchers read;
+  drivers and owners post. A private pane's thread is its owner's (on a
+  team machine, the team's owners'). Someone you shared with "from now"
+  sees messages from then on.
+- **Where it lives:** on the machine that runs the pane, like its output.
+  Control relays it encrypted, as it does the terminal.
+- **@name** notifies them, on their phone too. **@agent** in a pane's
+  thread goes to the agent in that pane as a follow-up, if you may drive
+  it; agents answer in the thread.
+- *Quote selection in thread* (pane menu) posts what you selected in the
+  terminal; clicking the quote jumps back to it.
+
 ## Over a tailnet
 
 Without control, the same sharing works between Tailscale logins:

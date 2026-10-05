@@ -295,6 +295,15 @@ impl Acl {
         Some(from.get(&pane).copied().unwrap_or(0))
     }
 
+    /// For a "from now" share (M13): when it was made. Thread messages
+    /// (M61) from before it aren't theirs to read either.
+    pub fn thread_floor(&self, p: &Principal, session: SessionId) -> Option<u64> {
+        let Principal::User { id, .. } = p else { return None };
+        let g = self.grants.read().unwrap();
+        let grant = g.iter().find(|g| g.session == session && &g.principal == id)?;
+        grant.from.as_ref().map(|_| grant.at)
+    }
+
     /// Whether this principal may connect at all.
     pub fn knows(&self, p: &Principal) -> bool {
         if p.is_owner()

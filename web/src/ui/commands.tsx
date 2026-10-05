@@ -16,6 +16,7 @@ import { agentNotifyItems, notificationItems } from "./notify";
 import { openGettingStarted } from "./welcome";
 import { openRules } from "./rules";
 import { desktopApp, openInNewWindow } from "../desktop";
+import { sessionThreadItems, threadItems } from "./threads";
 
 /** Chords, as menus and the palette show them. */
 export const PICKER_KEY = "Ctrl+Shift+G";
@@ -122,6 +123,9 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
         ]),
     ...driveItems(client, id),
     "separator",
+    // M61: the people's conversation about this pane.
+    ...threadItems(client, id),
+    "separator",
     ...restartItems(client, id),
     "separator",
     ...(info && (info.attention === "needs_input" || info.attention === "done")
@@ -191,6 +195,8 @@ export function sessionItems(client: Client, session: SessionId, rename: () => v
         ]
       : []),
     { label: "Rename session", run: rename },
+    // M61: the people's conversation about this session.
+    ...sessionThreadItems(client, session),
     // Sharing is the daemon's owner's (M13).
     ...(client.state?.roles ? [] : [{ label: "Share session…", run: () => shareSession(session) } as MenuItem]),
     "separator",

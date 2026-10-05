@@ -479,12 +479,15 @@ pub enum ServerMsg {
     /// `{edit: {file, version, changes}}`, `{diagnostics: {file, items}}`,
     /// or `{gone: true}` when it left.
     Follow { pane: PaneId, msg: serde_json::Value },
+    /// A new message in a pane's or session's thread (M61), sent to every
+    /// client whose person may read it.
+    Thread { target: ThreadTarget, msg: ThreadMsg },
 }
 
 /// Changes to the last [`State`]: each pane in `panes` is `{id, ...}` with
 /// only the fields that changed (a field set to `null` went back to its
 /// default, absent); `gone` panes left this client's view. `machines` and
-/// `presence` are whole when present. Anything else (sessions, tabs,
+/// `presence` (and `threads`) are whole when present. Anything else (sessions, tabs,
 /// options, roles) changes with a new `State`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Delta {
@@ -496,11 +499,17 @@ pub struct Delta {
     pub machines: Option<Vec<Machine>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presence: Option<Vec<Presence>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threads: Option<Vec<ThreadSummary>>,
 }
 
 impl Delta {
     pub fn is_empty(&self) -> bool {
-        self.panes.is_empty() && self.gone.is_empty() && self.machines.is_none() && self.presence.is_none()
+        self.panes.is_empty()
+            && self.gone.is_empty()
+            && self.machines.is_none()
+            && self.presence.is_none()
+            && self.threads.is_none()
     }
 }
 
@@ -536,6 +545,9 @@ impl State {
         }
         if let Some(p) = &delta.presence {
             self.presence = p.clone();
+        }
+        if let Some(t) = &delta.threads {
+            self.threads = t.clone();
         }
     }
 }
@@ -606,6 +618,10 @@ pub struct State {
     /// client sees.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub presence: Vec<Presence>,
+    /// The threads (M61) this person may read that have messages, with how
+    /// many they haven't read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<ThreadSummary>,
 }
 
 pub type MachineId = u32;
@@ -976,6 +992,84 @@ pub struct Presence {
     pub pane: Option<PaneId>,
 }
 
+/// What a thread (M61) is about: a pane, or a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadTarget {
+    Pane(PaneId),
+    Session(SessionId),
+}
+
+impl ThreadTarget {
+    /// `pane-7` or `session-2`: its name in paths and file names.
+    pub fn key(&self) -> String {
+        match self {
+            ThreadTarget::Pane(p) => format!("pane-{p}"),
+            ThreadTarget::Session(s) => format!("session-{s}"),
+        }
+    }
+
+    pub fn parse(key: &str) -> Option<Self> {
+        if let Some(p) = key.strip_prefix("pane-") {
+            return p.parse().ok().map(ThreadTarget::Pane);
+        }
+        key.strip_prefix("session-")?.parse().ok().map(ThreadTarget::Session)
+    }
+}
+
+/// One message in a thread (M61).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadMsg {
+    /// 1, 2, 3, ... within its thread.
+    pub id: u64,
+    /// When it was posted (ms since the epoch).
+    pub at: u64,
+    /// Who posted it: a principal id (`owner`, `tailnet:…`, `account:…`),
+    /// or `mcp:…` for an agent.
+    pub who: String,
+    pub name: String,
+    pub text: String,
+    /// Terminal output it quotes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<Quote>,
+    /// Principal ids it @mentions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mentions: Vec<String>,
+    /// It @mentioned the pane's agent, and went to it as a follow-up.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub to_agent: bool,
+    /// An agent posted it (through MCP).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent: bool,
+}
+
+/// Output quoted in a thread message: kept as text, so it stays readable
+/// after the pane scrolls or closes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Quote {
+    pub pane: PaneId,
+    pub text: String,
+}
+
+/// A thread as one person has it (M61).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    pub target: ThreadTarget,
+    /// The newest message's id and time.
+    pub last: u64,
+    pub at: u64,
+    /// Messages from others they haven't read.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unread: u32,
+    /// One of those mentions them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mention: bool,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 fn yes() -> bool {
     true
 }
@@ -1136,6 +1230,7 @@ mod tests {
             options: Box::new(options),
             roles: Some(vec![(1, illogical_core::Role::Viewer), (4, illogical_core::Role::Editor)]),
             presence: vec![],
+            threads: vec![],
         };
         let msg = ServerMsg::State { state };
         let back: ServerMsg = serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();

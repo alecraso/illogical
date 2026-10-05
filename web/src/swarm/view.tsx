@@ -220,6 +220,8 @@ export function SwarmView({
           lastExit: p.info.last?.exit ?? null,
           lastEnded: p.info.last?.ended_ms ?? null,
           people,
+          unread: p.unread,
+          mention: p.mention,
         };
       });
     field.current?.set(fed.current);

@@ -65,6 +65,7 @@ mod store;
 mod sync;
 mod sys;
 mod tailscale;
+mod threads;
 mod tls;
 mod update;
 mod workspace;

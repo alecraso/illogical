@@ -125,6 +125,7 @@ pub fn search(store: &StateDir, re: &Regex, since_ms: Option<u64>, limit: usize)
                         line: line.to_owned(),
                         command: None,
                         host: None,
+                        thread: None,
                     });
                     if hits.len() >= limit {
                         return hits;
@@ -136,6 +137,39 @@ pub fn search(store: &StateDir, re: &Regex, since_ms: Option<u64>, limit: usize)
         let read = |from| PaneLog::open(dir.clone()).and_then(|l| l.read_from(from)).ok();
         if search_log(pane, open, events, read, re, since_ms, limit, &mut hits) {
             return hits;
+        }
+    }
+    // What people said in threads (M61), open panes' or closed ones'.
+    let open: std::collections::HashSet<PaneId> =
+        store.pane_dirs().into_iter().filter(|(_, open, _)| *open).map(|(p, _, _)| p).collect();
+    let threads = crate::threads::Threads::open(store.root());
+    let mut targets: Vec<_> = threads.targets().collect();
+    targets.sort();
+    for t in targets {
+        let pane = match t {
+            illogical_proto::ThreadTarget::Pane(p) => p,
+            illogical_proto::ThreadTarget::Session(_) => 0,
+        };
+        for m in threads.get(t) {
+            if since_ms.is_some_and(|s| m.at < s) {
+                continue;
+            }
+            let line = format!("{}: {}", m.name, m.text);
+            let quoted = m.quote.as_ref().is_some_and(|q| re.is_match(&q.text));
+            if re.is_match(&line) || quoted {
+                hits.push(SearchHit {
+                    pane,
+                    open: open.contains(&pane),
+                    offset: m.id,
+                    line,
+                    command: None,
+                    host: None,
+                    thread: Some(t.key()),
+                });
+                if hits.len() >= limit {
+                    return hits;
+                }
+            }
         }
     }
     hits
@@ -182,7 +216,7 @@ pub fn search_log(
                 .rev()
                 .find(|c| c.start <= line_end && c.end.is_none_or(|e| at < e))
                 .and_then(|c| c.text.clone());
-            hits.push(SearchHit { pane, open, offset: at, line: line.to_owned(), command, host: None });
+            hits.push(SearchHit { pane, open, offset: at, line: line.to_owned(), command, host: None, thread: None });
             if hits.len() >= limit {
                 return true;
             }

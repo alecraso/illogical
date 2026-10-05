@@ -14,10 +14,12 @@
 //   has waited, and its glow spills onto its neighbours, wider the longer
 //   it waits;
 // - a ring: a teammate has it open (dashed and turning while they type);
-//   grey: its machine isn't connected.
+//   grey: its machine isn't connected;
+// - a dot on its top-right edge: its thread has messages you haven't read
+//   (yellow: one mentions you), with how many when zoomed in (M61).
 
 import { KINDS, REASON_COL } from "./model";
-import type { FieldPane } from "./field";
+import { UNREAD, UNREAD_MENTION, type FieldPane } from "./field";
 import { C, Flat, FONT, fmtDur, needs, rateOf, reduce, runtimeOf, UNTIL_STOPPED, type Rect } from "./flat";
 
 const R = 16;
@@ -300,6 +302,25 @@ export class Hive extends Flat {
       }
     }
     cx.textAlign = "start";
+
+    // M61: unread threads.
+    for (const [key, c] of this.cells) {
+      const p = this.panes.get(key);
+      if (!p?.unread) continue;
+      const x = c.x + R * 0.75;
+      const y = c.y - R * 0.75;
+      cx.fillStyle = p.mention ? UNREAD_MENTION : UNREAD;
+      cx.beginPath();
+      cx.arc(x, y, s < 0.7 ? 3.5 : 6, 0, 7);
+      cx.fill();
+      if (s >= 0.7) {
+        cx.font = FONT.mono(700, 8);
+        cx.textAlign = "center";
+        cx.fillStyle = C.void;
+        cx.fillText(p.unread > 9 ? "9+" : String(p.unread), x, y + 0.5);
+        cx.textAlign = "start";
+      }
+    }
 
     // Teammates with it open.
     const tagged = new Set<string>();

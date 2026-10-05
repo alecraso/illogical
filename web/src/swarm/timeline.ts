@@ -12,14 +12,16 @@
 // - needs you: a band in the reason's colour from when it started wanting
 //   you until now, and a tag past the now edge saying how long;
 // - a dot at the now edge: a teammate has it open (ringed while they
-//   type); a grey lane: its machine isn't connected.
+//   type); a grey lane: its machine isn't connected;
+// - a square past the teammates' dots: its thread has messages you
+//   haven't read (yellow: one mentions you) (M61).
 //
 // The past comes from each daemon's command history (`/api/history`, the
 // last 45 minutes, refreshed every half minute) and from what the view
 // sees finish while it's open; the live output from the panes' `bps`.
 
 import { KINDS, REASON_COL } from "./model";
-import type { FieldHooks, FieldPane } from "./field";
+import { UNREAD, UNREAD_MENTION, type FieldHooks, type FieldPane } from "./field";
 import { C, Flat, FONT, fmtDur, needs, rateOf, reduce, UNTIL_STOPPED, type Rect } from "./flat";
 
 /** Seconds shown when it fits. */
@@ -382,6 +384,11 @@ export class Timeline extends Flat {
         cx.fillRect(cam.x + 6, y - 7, w, 14);
         cx.fillStyle = C.void;
         cx.fillText(txt, cam.x + 11, y + 0.5);
+      }
+      if (p.unread) {
+        const x = cam.x - 6 - (p.people?.length ?? 0) * 7 - 2;
+        cx.fillStyle = p.mention ? UNREAD_MENTION : UNREAD;
+        cx.fillRect(x - 3, y - 3, 6, 6);
       }
       (p.people ?? []).forEach((m, i) => {
         const x = cam.x - 6 - i * 7;

@@ -537,6 +537,7 @@ fn features(app: &App) -> HostFeatures {
         vms: app.mux.provider.is_some(),
         fountain: fountain_login_here(&app.mux.shell_env),
         studio: crate::apps::studio::get().and_then(|s| s.url()).is_some(),
+        threads: true,
     }
 }
 
