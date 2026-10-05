@@ -10,7 +10,7 @@
 // The first run installs the fixture's chant (`npm ci`, a few seconds).
 
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,7 +60,8 @@ test.beforeAll(async () => {
   if (!existsSync(join(FIXTURE, "node_modules/.bin/chant"))) {
     execFileSync("npm", ["ci", "--no-audit", "--no-fund"], { cwd: FIXTURE, stdio: "ignore" });
   }
-  dir = mkdtempSync(join(tmpdir(), "ilg-e2e-workspace-"));
+  // Resolved, as the daemon reports paths (macOS's temp dir is behind a symlink).
+  dir = realpathSync(mkdtempSync(join(tmpdir(), "ilg-e2e-workspace-")));
   ws = join(dir, "toy");
   cpSync(FIXTURE, ws, { recursive: true, filter: (src) => !src.includes("node_modules") });
   symlinkSync(join(FIXTURE, "node_modules"), join(ws, "node_modules"));
@@ -112,8 +113,15 @@ test("illogical workspace shows its members; a gate reached while it's drawn is 
   const took = Date.now() - t;
   console.log(`chant run exits 3 → the gate on screen: ${took} ms`);
   expect(took).toBeLessThan(6_000);
+  // The pane's attention follows the block's state: poll it, as it may
+  // come a moment after the gate is drawn.
+  await expect
+    .poll(async () => {
+      const r = await reasonOf(page, block);
+      return r && [r.kind, r.headline, r.bundle];
+    })
+    .toEqual(["gate", "delivery: ship waits at gate approve-ship", `gate:${ws}`]);
   const r = (await reasonOf(page, block))!;
-  expect([r.kind, r.headline, r.bundle]).toEqual(["gate", "delivery: ship waits at gate approve-ship", `gate:${ws}`]);
   expect(r.actions).toEqual(["allow", "dismiss"]);
   await expect(shown.locator('[data-member="delivery"]')).toHaveClass(/waits/);
 });
@@ -123,7 +131,8 @@ test("the owner approves; the next run walks through", async ({ page }) => {
   await page.evaluate((b) => window.__illogical.client.setActive(b), block);
   const shown = page.locator(`[data-workspace-block="${block}"]`);
   await shown.locator('[data-gate="delivery/ship/approve-ship"] [data-approve]').click();
-  await expect(shown.locator("[data-ws-said]")).toContainText("Approved approve-ship");
+  // Approving runs chant, which on a busy machine takes seconds.
+  await expect(shown.locator("[data-ws-said]")).toContainText("Approved approve-ship", { timeout: 15_000 });
   await expect(shown.locator("[data-gate]")).toHaveCount(0);
   await expect.poll(async () => (await panesOf(page)).find((p) => p.id === block)?.attention).toBe("idle");
   // chant's ledger names the owner by their illogical name.
