@@ -3998,12 +3998,13 @@ impl Daemon {
     }
 
     /// Everyone a message could @mention: the owner, everyone shared with,
-    /// and whoever is connected.
+    /// team members (connected or not), and whoever is connected.
     fn mentionable(&self) -> Vec<Principal> {
         let mut out = vec![Principal::Owner];
         for g in self.config.acl.list() {
             out.push(Principal::User { id: g.principal.clone(), name: g.name.clone(), pic: None });
         }
+        out.extend(self.config.control.team_people());
         for c in self.clients.values() {
             out.push(c.principal.clone());
         }
@@ -4088,7 +4089,8 @@ impl Daemon {
         let Some(pane) = pane else { return };
         let title = format!("{} mentioned you", msg.name);
         let body: String = msg.text.chars().take(200).collect();
-        let extra = serde_json::json!({ "thread": target.key() });
+        // Its own notification, not the pane's.
+        let extra = serde_json::json!({ "thread": target.key(), "tag": format!("thread-{}", target.key()) });
         for id in &msg.mentions {
             let id = id.clone();
             if let Some(push) = &self.push {

@@ -1046,7 +1046,8 @@ the daemon stopping, crashing, or the machine rebooting:
   Each person has their own unread count: on the pane's bubble, a dot on
   the session button, and a folded corner in the swarm (blocks, hive and
   timeline; the city doesn't draw it yet). `@name` notifies someone, on
-  their phone too. *Quote selection in thread* posts terminal output as a
+  their phone too (a tap opens the thread; team members are reached
+  whether or not they're connected). *Quote selection in thread* posts terminal output as a
   quote that stays readable after the pane scrolls; clicking it jumps back
   to the output. `@agent` (or `@claude`) in a pane's thread goes to that
   pane's agent as a follow-up, from whoever may drive it, and agents read

@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ready, run } from "./helpers";
+import { deliver, tap } from "./phones";
 import { ANY, daemonPort } from "./ports";
 
 let base = "";
@@ -165,11 +166,26 @@ test("the session has a thread of its own", async () => {
 });
 
 test("a mention's notification opens its thread", async ({ browser }) => {
-  const page = await (await browser.newContext({ extraHTTPHeaders: { "tailscale-user-login": FRIEND } })).newPage();
-  // What tapping the notification opens (the service worker's URL).
-  await page.goto(`/#pane=${pane}&thread=pane-${pane}`);
+  const context = await browser.newContext({ extraHTTPHeaders: { "tailscale-user-login": FRIEND } });
+  await context.grantPermissions(["notifications"]);
+  const page = await context.newPage();
+  await openAs(page);
+  // What the daemon pushes for a mention: its own tag, and the thread.
+  const tag = `thread-pane-${pane}`;
+  await deliver(context, page, { title: "me mentioned you", body: "@friend look", pane, tag, thread: `pane-${pane}` });
+  // The worker keeps the thread in what the notification carries...
+  const worker = context.serviceWorkers()[0];
+  const data = await worker.evaluate(async (tag) => {
+    const [n] = await (self as unknown as { registration: ServiceWorkerRegistration }).registration.getNotifications({ tag });
+    return n.data as { pane: number; thread: string };
+  }, tag);
+  expect(data).toMatchObject({ pane, thread: `pane-${pane}` });
+  // ...so a tap opens the thread over the pane.
+  await expect(page.locator(".thread-panel")).toHaveCount(0);
+  await tap(context, tag, "");
   await expect(page.locator(".thread-panel")).toContainText(`Thread · %${pane}`);
   await expect(page.locator(".thread-panel .thread-msg")).toHaveCount(3);
+  await context.close();
 });
 
 test("an older daemon (no threads feature) gets no thread items", async () => {

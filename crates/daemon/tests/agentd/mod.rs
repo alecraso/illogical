@@ -171,17 +171,24 @@ pub struct Phone {
 
 impl Phone {
     pub fn subscribe(d: &Daemon) -> Self {
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+        let phone = Self::bind();
+        d.post("/api/push/subscribe", phone.subscription());
+        phone
+    }
+
+    /// A phone nobody has subscribed yet.
+    pub fn bind() -> Self {
         let service = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!("http://127.0.0.1:{}/push/abc", service.local_addr().unwrap().port());
         let ua = p256::SecretKey::from_slice(&[7u8; 32]).unwrap();
         let ua_public = ua.public_key().to_sec1_bytes().to_vec();
-        let auth = [9u8; 16];
-        d.post(
-            "/api/push/subscribe",
-            json!({"endpoint": endpoint, "keys": {"p256dh": B64.encode(&ua_public), "auth": B64.encode(auth)}}),
-        );
-        Self { service, ua, ua_public, auth }
+        Self { service, ua, ua_public, auth: [9u8; 16] }
+    }
+
+    /// Its subscription, as `PushSubscription.toJSON()` gives it.
+    pub fn subscription(&self) -> Value {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+        let endpoint = format!("http://127.0.0.1:{}/push/abc", self.service.local_addr().unwrap().port());
+        json!({"endpoint": endpoint, "keys": {"p256dh": B64.encode(&self.ua_public), "auth": B64.encode(self.auth)}})
     }
 
     /// The next push.

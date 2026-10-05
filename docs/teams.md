@@ -148,7 +148,8 @@ menu, *Session thread* in the session menu, or the bubble on a pane.
   sees messages from then on.
 - **Where it lives:** on the machine that runs the pane, like its output.
   Control relays it encrypted, as it does the terminal.
-- **@name** notifies them, on their phone too. **@agent** in a pane's
+- **@name** notifies them, on their phone too, whether or not they're
+  connected (team members included); tapping it opens the thread. **@agent** in a pane's
   thread goes to the agent in that pane as a follow-up, if you may drive
   it; agents answer in the thread.
 - *Quote selection in thread* (pane menu) posts what you selected in the

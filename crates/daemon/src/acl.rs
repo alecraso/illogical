@@ -368,6 +368,13 @@ impl Acl {
         let before = g.clone();
         let old = g.iter().find(|x| x.session == session && x.principal == principal).cloned();
         let kept = old.as_ref().and_then(|x| x.from.clone());
+        // A role change keeps when the grant began (it's the thread floor of
+        // a "from now" share); a first grant, or one made after a revoke,
+        // begins now.
+        let at = match &old {
+            Some(x) if from.is_none() => x.at,
+            _ => now_ms(),
+        };
         let root = root.or_else(|| old.and_then(|x| x.root));
         g.retain(|x| !(x.session == session && x.principal == principal));
         if let Some(role) = role {
@@ -377,7 +384,7 @@ impl Acl {
                 name: name.into(),
                 role,
                 by: by.into(),
-                at: now_ms(),
+                at,
                 from: from.or(kept),
                 root,
                 key: None,
@@ -455,6 +462,29 @@ mod tests {
         assert!(!again.knows(&alice));
         let log = again.audit();
         assert_eq!(log.iter().map(|e| e["action"].as_str().unwrap()).collect::<Vec<_>>(), ["grant", "grant", "revoke"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A role change keeps when a grant began (a "from now" share's thread
+    /// floor); a grant made again after a revoke begins now.
+    #[test]
+    fn a_role_change_keeps_when_the_grant_began() {
+        let dir = std::env::temp_dir().join(format!("illogical-acl-at-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let alice = Principal::tailnet("alice@example.com");
+        let acl = Acl::open(&dir);
+        let from: BTreeMap<PaneId, u64> = [(1, 5)].into();
+        acl.set_from(3, alice.id(), "alice", Some(Role::Viewer), "owner", Some(from.clone())).unwrap();
+        let first = acl.thread_floor(&alice, 3).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        acl.set(3, alice.id(), "alice", Some(Role::Editor), "owner").unwrap();
+        assert_eq!(acl.role(&alice, 3), Some(Role::Editor));
+        assert_eq!(acl.thread_floor(&alice, 3), Some(first));
+        assert_eq!(acl.floor(&alice, 3, 1), Some(5));
+        acl.set(3, alice.id(), "alice", None, "owner").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        acl.set_from(3, alice.id(), "alice", Some(Role::Viewer), "owner", Some(from)).unwrap();
+        assert!(acl.thread_floor(&alice, 3).unwrap() > first);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

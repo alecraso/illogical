@@ -4,15 +4,21 @@
 //! a private pane's thread is its owner's, and a "from now" share starts
 //! when it was made. Each person's unread count comes in their state.
 //! `@agent` in a pane's thread reaches the agent there as a follow-up, and
-//! threads outlive a daemon restart.
+//! threads outlive a daemon restart. A mention reaches team members who
+//! aren't connected, on a notification of its thread's own, and a role change
+//! keeps what a "from now" share already reads.
 
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
 #![cfg(unix)]
 
+mod agentd;
+
 use std::time::{Duration, Instant};
 
+use agentd::Phone;
 use futures_util::{SinkExt, StreamExt};
-use illogical_testkit::illogicald;
+use illogical_e2e::{DeviceKeys, Kind, cert::Cert};
+use illogical_testkit::{Scratch, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -221,4 +227,136 @@ fn at_agent_reaches_the_panes_agent_from_someone_who_drives_it() {
     // Plain mentions don't.
     let r = d.post(&format!("/api/threads/pane-{pane}"), json!({ "text": "the agent is slow" }));
     assert_eq!(r["message"]["to_agent"], Value::Null);
+}
+
+/// A role change (the share dialog's select) keeps what a "from now" share
+/// has read; a share made again after being removed starts again.
+#[test]
+fn a_role_change_keeps_the_floor_and_a_fresh_share_moves_it() {
+    let d = daemon("threads-floor");
+    let panes = d.get("/api/panes");
+    let (pane, session) = (panes[0]["id"].as_u64().unwrap(), panes[0]["session"].as_u64().unwrap());
+    let key = format!("/api/threads/pane-{pane}");
+    let pause = || std::thread::sleep(Duration::from_millis(20));
+    d.post(&key, json!({ "text": "before" }));
+    pause();
+    share(&d, session, LATE, "viewer", false);
+    pause();
+    d.post(&key, json!({ "text": "one" }));
+    d.post(&key, json!({ "text": "two" }));
+    assert_eq!(texts(&guest(&d, LATE, "GET", &key, None).1), ["one", "two"]);
+    pause();
+
+    // To an editor, as the dialog does it (with history, which keeps the
+    // share "from now"): still everything since the share, and no more.
+    share(&d, session, LATE, "editor", true);
+    assert_eq!(texts(&guest(&d, LATE, "GET", &key, None).1), ["one", "two"]);
+
+    // Removed, then shared again: it starts now.
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{LATE}"), "role": null }));
+    pause();
+    share(&d, session, LATE, "viewer", false);
+    pause();
+    d.post(&key, json!({ "text": "three" }));
+    assert_eq!(texts(&guest(&d, LATE, "GET", &key, None).1), ["three"]);
+}
+
+const TEAM_BOB: &str = "account:bob";
+const SHARED_CAROL: &str = "account:carol";
+
+fn member(account: &str, role: &str) -> Value {
+    json!({ "account": account, "root": "r", "role": role, "name": account })
+}
+
+fn roster(team: &str, members: Vec<Value>) -> Value {
+    json!({ "v": 1, "team": team, "name": team, "version": 1, "at": 1, "members": members, "by": "", "sig": "" })
+}
+
+/// A mention reaches team members who aren't connected: a team daemon's
+/// roster, and the members of a team the session was shared with. The push
+/// is tagged for its thread, apart from the pane's own; it's still only for
+/// those who can read the thread.
+#[tokio::test]
+async fn a_mention_reaches_team_members_offline_on_a_tag_of_its_own() {
+    let dir = Scratch::new("threads-team");
+    let (bob, carol) = (Phone::bind(), Phone::bind());
+    let state = dir.join("state");
+    // Their phones are subscribed before the daemon starts (nobody here
+    // connects as an account).
+    std::fs::create_dir_all(state.join("push")).unwrap();
+    let subs: Vec<Value> = [(&bob, TEAM_BOB), (&carol, SHARED_CAROL)]
+        .iter()
+        .map(|(p, who)| {
+            let mut s = p.subscription();
+            s["who"] = json!(who);
+            s
+        })
+        .collect();
+    std::fs::write(state.join("push/subscriptions.json"), serde_json::to_vec(&subs).unwrap()).unwrap();
+    let d = illogicald!("threads-team")
+        .state_dir(&state)
+        .no_wisp()
+        .args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock", "--no-relay"])
+        .start();
+    let panes = d.get("/api/panes");
+    let (pane, session) = (panes[0]["id"].as_u64().unwrap(), panes[0]["session"].as_u64().unwrap());
+    let key = format!("pane-{pane}");
+
+    // The session is shared with a team, then this daemon joins its own: a
+    // roster of bob (editor), and the team's member carol (viewer).
+    d.post("/api/acl", json!({ "session": session, "principal": "team:t9", "role": "viewer", "root": "f.r" }));
+    let keys = DeviceKeys::generate();
+    let mut cert = Cert::new(&keys, "owner-acct", Kind::Daemon, "x");
+    cert.sign_with(&keys);
+    let saved = json!({
+        "url": "http://127.0.0.1:1",
+        "trust": { "account": "owner-acct", "root": cert.device },
+        "cert": cert,
+        "roster": roster("t1", vec![member("bob", "editor")]),
+        "shared_teams": { "t9": { "roster": roster("t9", vec![member("carol", "viewer")]) } },
+    });
+    keys.save(&state.join("daemon.key")).unwrap();
+    std::fs::write(state.join("control.json"), serde_json::to_vec(&saved).unwrap()).unwrap();
+
+    // control.json is picked up within a few seconds.
+    let text = "@bob and @carol, look at this";
+    let until = Instant::now() + Duration::from_secs(20);
+    let mentioned = loop {
+        let r = d.post(&format!("/api/threads/{key}"), json!({ "text": text }));
+        if r["message"]["mentions"].as_array().is_some_and(|m| m.len() == 2) || Instant::now() > until {
+            break r["message"]["mentions"].clone();
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    assert_eq!(mentioned, json!([TEAM_BOB, SHARED_CAROL]));
+    for phone in [&bob, &carol] {
+        let push = phone.next();
+        assert_eq!(
+            (push["tag"].as_str(), push["thread"].as_str()),
+            (Some(format!("thread-{key}").as_str()), Some(key.as_str())),
+            "{push}"
+        );
+        assert_eq!(push["pane"], pane);
+    }
+
+    // The pane's own notifications keep the pane's tag.
+    let owner = Phone::bind();
+    d.post("/api/push/subscribe", owner.subscription());
+    d.post("/api/push/test", json!({}));
+    assert_eq!(owner.next()["tag"], "pane-0");
+
+    // Whoever can't read the thread isn't mentioned, listed or not: a
+    // private pane's is its owner's.
+    let (mut ws, _) = connect_async(d.ws("/ws")).await.unwrap();
+    let op = json!({ "type": "pane", "pane": pane, "op": { "op": "set_private", "on": true } });
+    ws.send(Message::Text(op.to_string().into())).await.unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let r = d.post(&format!("/api/threads/{key}"), json!({ "text": text }));
+        if r["message"]["mentions"].as_array().is_none_or(|m| m.is_empty()) {
+            break;
+        }
+        assert!(Instant::now() < until, "still mentioning them on a private pane: {r}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }

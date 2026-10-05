@@ -351,6 +351,32 @@ impl Control {
         Some(e.saved.team_names.get(account).unwrap_or(&m.name).clone())
     }
 
+    /// People who have a team role here, by the roster (this daemon's team,
+    /// and teams sessions were shared with), connected or not.
+    pub fn team_people(&self) -> Vec<Principal> {
+        let Some(e) = self.enrolled() else { return Vec::new() };
+        let mut out = Vec::new();
+        if let Some(r) = &e.saved.roster {
+            for m in &r.members {
+                let id = format!("account:{}", m.account);
+                if e.team_roles.contains_key(&id) {
+                    let name = e.saved.team_names.get(&m.account).unwrap_or(&m.name).clone();
+                    out.push(Principal::User { id, name, pic: None });
+                }
+            }
+        }
+        for (team, t) in &e.saved.shared_teams {
+            for m in &t.roster.members {
+                let id = format!("account:{}", m.account);
+                if e.shared_roles.get(team).is_some_and(|r| r.contains_key(&id)) {
+                    let name = t.names.get(&m.account).unwrap_or(&m.name).clone();
+                    out.push(Principal::User { id, name, pic: None });
+                }
+            }
+        }
+        out
+    }
+
     /// Who a Noise key belongs to, if this daemon lets them in: a device of
     /// its own account (the owner), a team member's, or someone's a session
     /// was shared with.
