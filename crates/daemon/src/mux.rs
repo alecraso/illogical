@@ -206,6 +206,29 @@ pub enum Api {
     /// Home and the environment an agent block gets (#111: whether its
     /// adapter can start).
     AgentEnv(oneshot::Sender<(PathBuf, Vec<(String, String)>)>),
+    /// An ssh guest with a read-write invite typed (M54). Refused while
+    /// someone else drives; the first keys take the pane, and its size, as
+    /// `illogical attach` does.
+    GuestInput {
+        pane: PaneId,
+        client: ClientId,
+        by: Driver,
+        data: Vec<u8>,
+        size: (u16, u16),
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Their window changed: the pane follows if they drive it.
+    GuestSize {
+        pane: PaneId,
+        client: ClientId,
+        who: String,
+        size: (u16, u16),
+    },
+    /// They left: they drive nothing and size nothing.
+    GuestLeft {
+        client: ClientId,
+        who: String,
+    },
 }
 
 /// An edit Claude Code proposes through its IDE connection (M28).
@@ -2001,6 +2024,44 @@ impl Daemon {
                 let _ = reply.send((self.config.home.clone(), self.config.env(0)));
             }
             Api::InputBy(pane, data, by) => self.input(pane, data, Some(by)),
+            Api::GuestInput { pane, client, by, data, size, reply } => {
+                if !self.panes.contains_key(&pane) {
+                    let _ = reply.send(Err("the pane closed".into()));
+                    return;
+                }
+                if !self.pair.contains(&pane) {
+                    match self.drivers.get(&pane) {
+                        Some(d) if d.who != by.who => {
+                            let _ = reply.send(Err(format!("{} is driving this pane", d.name)));
+                            return;
+                        }
+                        Some(_) => self.typed(pane),
+                        None => {
+                            self.drive(pane, by.clone());
+                            self.typed(pane);
+                            self.guest_view(client, pane, size);
+                            self.broadcast();
+                        }
+                    }
+                }
+                self.input(pane, data, Some(by.name));
+                let _ = reply.send(Ok(()));
+            }
+            Api::GuestSize { pane, client, who, size } => {
+                if self.drivers.get(&pane).is_some_and(|d| d.who == who) {
+                    self.guest_view(client, pane, size);
+                }
+            }
+            Api::GuestLeft { client, who } => {
+                let before = self.drivers.len();
+                self.drivers.retain(|_, d| d.who != who);
+                if self.mux.release(client) {
+                    self.changed();
+                }
+                if self.drivers.len() != before {
+                    self.broadcast();
+                }
+            }
             Api::Ide(ev) => self.ide_event(ev),
             Api::IdeConns(pane, reply) => {
                 let mut v: Vec<u64> =
@@ -3247,6 +3308,14 @@ impl Daemon {
         self.activity.retain(|id, _| self.panes.contains_key(id));
         for id in changed {
             self.mark(id);
+        }
+    }
+
+    /// An ssh guest's window (M54) sizes the pane's tab, zoomed to it.
+    fn guest_view(&mut self, client: ClientId, pane: PaneId, (cols, rows): (u16, u16)) {
+        let Ok(tab) = self.mux.tab_of(pane) else { return };
+        if let Ok(true) = self.mux.view(client, tab, cols, rows, Some(pane), true) {
+            self.changed();
         }
     }
 

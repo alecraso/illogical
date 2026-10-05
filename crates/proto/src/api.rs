@@ -400,6 +400,65 @@ pub struct Share {
     pub url: Option<String>,
 }
 
+/// `POST /api/guests` (M54): an invite to one terminal pane for someone
+/// with only OpenSSH.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestInviteRequest {
+    pub pane: PaneId,
+    /// They may type (one driver per pane still applies).
+    #[serde(default)]
+    pub rw: bool,
+    /// Good for any number of logins until it ends; else the first spends it.
+    #[serde(default)]
+    pub reusable: bool,
+    /// Seconds until it expires [default: an hour; at most a day, or two
+    /// hours with `rw`].
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+    /// What to call them, on their input [default: `guest`].
+    #[serde(default)]
+    pub label: Option<String>,
+    /// The address to put in the command [default: the daemon's
+    /// `--guest-ssh-host`, else its hostname].
+    #[serde(default)]
+    pub host: Option<String>,
+}
+
+/// An ssh invite to a pane (M54). `token`, `command` and the pinning lines
+/// are only in the answer that made it; the daemon keeps a hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestInvite {
+    pub id: u32,
+    pub pane: PaneId,
+    pub rw: bool,
+    pub reusable: bool,
+    pub label: String,
+    pub created_ms: u64,
+    pub expires_ms: u64,
+    /// A single-use invite someone has logged in with.
+    #[serde(default)]
+    pub used: bool,
+    /// Guests connected with it now.
+    #[serde(default)]
+    pub sessions: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// What the guest pastes: `ssh` with the host key pinned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The pinned key as a known-hosts line, for an OpenSSH older than 8.5
+    /// (no `KnownHostsCommand`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_hosts: Option<String>,
+    /// The host key's SHA256 fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+}
+
 /// `GET /api/sync/state`: what the home daemon holds of the calling host's
 /// panes, so a push resumes where the last one stopped.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

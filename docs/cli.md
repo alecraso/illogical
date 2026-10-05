@@ -107,6 +107,9 @@ illogical hosts token sbx                     # a dial-out host's token (prints 
 illogical hosts revoke sbx                    # …revoked, and its connection dropped
 illogical share %3 --ttl 2h                   # a read-only link to a pane
 illogical shares                              # links that still work; shares revoke ID
+illogical share --guest %3 --name sam          # an ssh command for someone with only OpenSSH (read-only)
+illogical share --guest %3 --rw --addr box.lan  # ...who may type; --reusable for more than one login
+illogical guests                              # ssh invites that still work; guests revoke ID
 illogical search 'panic' --synced sbx         # a host's synced history (all: every host)
 illogical tail %4 --synced sbx --text         # one of its panes, after it's gone
 illogical synced                              # hosts whose history is kept here

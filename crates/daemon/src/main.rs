@@ -18,6 +18,7 @@ mod forge;
 mod fountain;
 mod fs;
 mod gate;
+mod guest_ssh;
 mod heap;
 mod history;
 mod holder;
@@ -224,6 +225,16 @@ struct RunArgs {
     /// at once; their panes run on VMs, never this machine.
     #[arg(long, default_value_t = 3, env = "ILLOGICAL_GUEST_MACHINES")]
     guest_machines: usize,
+
+    /// Where the ssh server for invited guests listens (M54: `illogical
+    /// share --guest`), only while an invite exists; `off` turns the feature
+    /// off. Port 0 picks a free one.
+    #[arg(long, env = "ILLOGICAL_GUEST_SSH", default_value = guest_ssh::DEFAULT_LISTEN)]
+    guest_ssh: String,
+
+    /// The address guests are told to ssh to [default: the hostname].
+    #[arg(long, env = "ILLOGICAL_GUEST_SSH_HOST")]
+    guest_ssh_host: Option<String>,
 
     /// Command line for panes, split on whitespace [default: $SHELL -l].
     #[arg(long)]
@@ -967,6 +978,11 @@ async fn run(
     let hosts = hosts::Hosts::open(&state_dir, name.clone(), provider);
     hosts.spawn_probe();
     let shares = share::Shares::open(&state_dir);
+    let guest_listen = match args.guest_ssh.as_str() {
+        "off" => None,
+        a => Some(a.parse::<SocketAddr>().map_err(|e| anyhow::anyhow!("--guest-ssh {a}: {e}"))?),
+    };
+    let guests = guest_ssh::Guests::open(&state_dir, guest_listen, args.guest_ssh_host.clone());
     let synced = sync::Synced::new(&state_dir, args.reach.sync_key_file.clone());
     synced.prune(sync::RETAIN_MS);
     let static_dir = args.static_dir.clone().unwrap_or_else(|| {
@@ -988,7 +1004,9 @@ async fn run(
         control.clone(),
         acl.clone(),
         mcp_tokens,
+        guests,
     );
+    app.guests.run(&app);
     control.start(app.clone());
     if let Some(serve) = mcp_serve {
         let _ = serve.set(mcp::pipe_server(&app));

@@ -119,6 +119,38 @@ The fakes:
   control's relay socket and GitHub App token endpoint, GitHub and Forgejo
   with stand-in `gh` and `tea` (`forge_live.rs`), `systemctl` and `sudo`.
 
+### Guest ssh (M54)
+
+`crates/daemon/tests/guest_ssh.rs` runs the system OpenSSH client
+(`/usr/bin/ssh`, 8.5 or later for `KnownHostsCommand`) against a dev
+daemon started with `--guest-ssh 127.0.0.1:0 --guest-ssh-host 127.0.0.1`.
+Each guest is the command the daemon printed, run by `sh` on a
+pseudo-terminal that is its controlling terminal (so a resize reaches ssh as
+SIGWINCH), with `-F /dev/null -o BatchMode=yes` added so the runner's own
+ssh config and agent stay out of it. They check:
+
+- a read-only guest sees the screen and live output, its typing never
+  reaches the pane, and a single-use token can't log in twice;
+- a read-write guest types under its label (`/api/panes/N/drivers`),
+  drives, sizes the pane (`stty size`), and holds off a second guest on the
+  same reusable invite;
+- revoking cuts a live guest off within a second or two, expiry ends a live
+  session and refuses new logins, and closing the pane ends the session and
+  its invite;
+- a wrong token gets `Permission denied` with no prompt; a different host
+  key in the command fails host-key verification before the token is sent
+  (the invite stays unspent); `exec` is refused; the port closes once the
+  last invite is gone;
+- `illogical share --guest` prints a command that works, and `illogical
+  guests` lists and revokes.
+
+Run them with `cargo test -p illogicald --test guest_ssh`. They skip,
+saying so, if there's no `ssh` on PATH. The relay path through control is a
+skipped stub until it's built (PLAN.md, M54). `web/e2e/guest-ssh.spec.ts`
+covers *Invite over ssh…* in the pane menu, on desktop and phone viewports,
+with the same system ssh (`pnpm exec playwright test e2e/guest-ssh.spec.ts`
+in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
+
 ## Fixtures
 
 Recorded from real systems and checked in, so tests see real shapes:
