@@ -450,7 +450,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   const appLogin = /^#app=([0-9a-f]{16,128})$/.exec(hash)?.[1];
   if (appLogin && !s.pending[0]) return <AppLoginPrompt s={s} id={appLogin} />;
   if (hash === "#app-done" && !s.pending[0]) return <AppLoginDone />;
-  const invite = inviteInHash(hash);
+  const invite = inviteInHash(hash) ?? inviteInHash(usedLink);
   if (invite)
     return invite.presigned ? (
       <PresignedPrompt s={s} team={invite.team} seed={invite.code} />
@@ -494,13 +494,18 @@ function Modal({ children, close }: { children: preact.ComponentChildren; close?
 }
 
 function clearHash() {
-  dropHash();
+  usedLink = "";
+  history.replaceState(null, "", location.pathname + location.search);
   dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
-/** Take a used link out of the address bar, leaving its prompt up: a
- * reload then doesn't offer the invite again (#208). */
+/** An invite link that was used: out of the address bar, so a reload
+ * doesn't offer it again (#208), but its prompt stays up until closed,
+ * through the overlay mounting afresh. */
+let usedLink = "";
+
 function dropHash() {
+  if (location.hash) usedLink = location.hash;
   history.replaceState(null, "", location.pathname + location.search);
 }
 
