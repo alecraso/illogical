@@ -324,13 +324,16 @@ impl Daemon {
         }
     }
 
-    /// Wait until it answers on its socket, and on its ports.
+    /// Wait until it answers on its socket, and (as a child) on its ports.
+    /// A service picks new ports each time it starts, so [`Daemon::port`]
+    /// is only its first one's.
     pub fn wait_up(&self) {
         let deadline = Instant::now() + START;
+        let child = matches!(self.run, Run::Child(_));
+        let tcp = |port: u16| port == 0 || TcpStream::connect(("127.0.0.1", port)).is_ok();
         while UnixStream::connect(self.sock()).is_err()
             || self.raw("GET", "/api/panes", None).0 != 200
-            || TcpStream::connect(("127.0.0.1", self.port)).is_err()
-            || (self.block_port != 0 && TcpStream::connect(("127.0.0.1", self.block_port)).is_err())
+            || (child && !(tcp(self.port) && tcp(self.block_port)))
         {
             assert!(Instant::now() < deadline, "daemon did not start");
             std::thread::sleep(Duration::from_millis(50));
