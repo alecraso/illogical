@@ -24,8 +24,8 @@
 #   restart   the app quits and starts again; the daemon and its panes
 #             stay (pids unchanged)
 #
-# The .dmg is $ILLOGICAL_DMG, default the newest under
-# target/desktop-mac/release/bundle/dmg (`just desktop` on a Mac). The app
+# The .dmg is $ILLOGICAL_DMG, default dist/illogical-desktop-macos-arm64.dmg
+# (`just desktop` on a Mac). The app
 # is copied in without a quarantine flag: an ad-hoc signed app needs a
 # person's right-click > Open past Gatekeeper, which only notarization
 # (#177) removes. VM name: $ILLOGICAL_MACOS_VM (default illogical-macos-l).
@@ -37,7 +37,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 V="$HERE/vm.sh"
 VM="${ILLOGICAL_MACOS_VM:-illogical-macos-l}"
-DMG="${ILLOGICAL_DMG:-$(ls -t "$ROOT"/target/desktop-mac/release/bundle/dmg/*.dmg 2>/dev/null | head -1)}"
+DMG="${ILLOGICAL_DMG:-$ROOT/dist/illogical-desktop-macos-arm64.dmg}"
 
 command -v tart >/dev/null 2>&1 || { echo "SKIP: tart is not installed (brew install cirruslabs/cli/tart)"; exit 0; }
 [ -f "$DMG" ] || { echo "no .dmg (ILLOGICAL_DMG, or build one: just desktop)" >&2; exit 2; }

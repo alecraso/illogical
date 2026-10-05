@@ -44,9 +44,6 @@
     "linux": {
       "deb": {
         "depends": ["libc6 (>= 2.35)"]
-      },
-      "rpm": {
-        "depends": ["glibc >= 2.35"]
       }
     },
     "externalBin": [

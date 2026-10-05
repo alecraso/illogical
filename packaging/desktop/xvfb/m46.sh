@@ -84,7 +84,6 @@ stop_app() {
 }
 # The app's window (visible), by its title.
 window() { xdotool search --onlyvisible --name '^illogical$' 2>/dev/null | head -1; }
-geometry() { xdotool getwindowgeometry --shell "$1" | grep -E '^(X|Y|WIDTH|HEIGHT)=' | tr '\n' ' '; }
 # Pane ids.
 panes() { il --json ls | python3 -c 'import json, sys; [print(p["id"]) for p in json.load(sys.stdin)]'; }
 # The recorder that started in $1, and its size ("rows cols").
