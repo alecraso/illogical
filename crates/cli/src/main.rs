@@ -604,11 +604,40 @@ enum Command {
     },
     /// A read-only link to a pane: whoever opens it on the tailnet sees it
     /// live and can't type, resize or see anything else.
+    ///
+    /// With --guest: an invite for someone with only OpenSSH. It prints an
+    /// `ssh` command to send them, with this machine's host key pinned.
+    /// Read-only unless --rw; one login unless --reusable.
     Share {
         pane: Option<Pane>,
-        /// How long it works (e.g. 30m, 2h, 7d; a week at most).
+        /// How long it works (e.g. 30m, 2h, 7d; a week at most, a day with
+        /// --guest, two hours with --rw).
         #[arg(long, default_value = "1h")]
         ttl: String,
+        /// An ssh invite instead of a link (M54). (`--ssh` is taken: it
+        /// reaches a box over ssh, so `--ssh box share --guest` makes an
+        /// invite there.)
+        #[arg(long)]
+        guest: bool,
+        /// They may type, when nobody else is driving the pane.
+        #[arg(long, requires = "guest")]
+        rw: bool,
+        /// Good for any number of logins until it ends.
+        #[arg(long, requires = "guest")]
+        reusable: bool,
+        /// What to call them on their input [default: guest].
+        #[arg(long, requires = "guest")]
+        name: Option<String>,
+        /// The address they should ssh to [default: the daemon's
+        /// --guest-ssh-host, else its hostname].
+        #[arg(long = "addr", requires = "guest")]
+        addr: Option<String>,
+    },
+    /// ssh invites that still work (`share --guest`); `guests revoke ID` ends
+    /// one and cuts off anyone using it.
+    Guests {
+        #[command(subcommand)]
+        cmd: Option<SharesCmd>,
     },
     /// Who else can reach which sessions: `access` lists grants,
     /// `access grant SESSION WHO ROLE`, `access revoke SESSION WHO`, `access
@@ -1294,7 +1323,65 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         flag.or(gone.clone()).map(|h| format!("host={}", enc(if h == "all" { "*" } else { &h })))
     };
     match cli.cmd {
-        Command::Share { pane, ttl } => {
+        Command::Share { pane, ttl, guest: true, rw, reusable, name, addr } => {
+            let body = json!({
+                "pane": here(pane)?, "ttl_secs": duration(&ttl)?, "rw": rw, "reusable": reusable,
+                "label": name, "host": addr,
+            });
+            let v = request(&sock, "POST", "/api/guests", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("{}", v["command"].as_str().unwrap_or_default());
+                let left = v["expires_ms"].as_u64().unwrap_or(0).saturating_sub(now_ms()) / 1000;
+                eprintln!(
+                    "Invite {}: {}, {}, for {}. `illogical guests revoke {}` ends it.\n\
+                     The host key is pinned in the command ({}). ssh older than 8.5 has no \
+                     KnownHostsCommand: save this line to a file and pass -o UserKnownHostsFile=<file>:\n{}",
+                    v["id"],
+                    if rw { "read-write" } else { "read-only" },
+                    if reusable { "reusable" } else { "one login" },
+                    span(left),
+                    v["id"],
+                    v["fingerprint"].as_str().unwrap_or_default(),
+                    v["known_hosts"].as_str().unwrap_or_default(),
+                );
+            }
+        }
+        Command::Guests { cmd: None } => {
+            let v = request(&sock, "GET", "/api/guests", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let list = v.as_array().cloned().unwrap_or_default();
+            if list.is_empty() {
+                println!("no ssh invites");
+            }
+            for g in list {
+                let left = g["expires_ms"].as_u64().unwrap_or(0).saturating_sub(now_ms()) / 1000;
+                let kind = match (g["rw"].as_bool(), g["reusable"].as_bool()) {
+                    (Some(true), Some(true)) => "rw, reusable",
+                    (Some(true), _) => "rw",
+                    (_, Some(true)) => "ro, reusable",
+                    _ => "ro",
+                };
+                println!(
+                    "{:<4} %{:<4} {:<12} {:<14} {} connected{}, expires in {}",
+                    g["id"],
+                    g["pane"],
+                    g["label"].as_str().unwrap_or(""),
+                    kind,
+                    g["sessions"],
+                    if g["used"] == true && g["reusable"] != true { ", spent" } else { "" },
+                    span(left)
+                );
+            }
+        }
+        Command::Guests { cmd: Some(SharesCmd::Revoke { id }) } => {
+            request(&sock, "DELETE", &format!("/api/guests/{id}"), None)?.json()?;
+        }
+        Command::Share { pane, ttl, .. } => {
             let body = json!({"pane": here(pane)?, "ttl_secs": duration(&ttl)?});
             let v = request(&sock, "POST", "/api/shares", Some(&body))?.json()?;
             if json_out {

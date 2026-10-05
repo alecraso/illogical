@@ -221,7 +221,7 @@ struct RunArgs {
     guest_machines: usize,
 
     /// Where the ssh server for invited guests listens (M54: `illogical
-    /// share --ssh`), only while an invite exists; `off` turns the feature
+    /// share --guest`), only while an invite exists; `off` turns the feature
     /// off. Port 0 picks a free one.
     #[arg(long, env = "ILLOGICAL_GUEST_SSH", default_value = guest_ssh::DEFAULT_LISTEN)]
     guest_ssh: String,

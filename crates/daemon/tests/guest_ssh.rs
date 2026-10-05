@@ -1,5 +1,5 @@
 //! M54: a pane for a guest with only OpenSSH. Every test runs the system
-//! `ssh` with the command `illogical share --ssh` prints (plus `-F
+//! `ssh` with the command `illogical share --guest` prints (plus `-F
 //! /dev/null` and `BatchMode`, so the runner's own ssh config stays out of
 //! it), on a pseudo-terminal, against a dev daemon.
 
@@ -436,4 +436,40 @@ fn wrong_tokens_and_other_host_keys_are_refused_and_the_port_closes() {
         assert!(Instant::now() < deadline, "still listening on {port}");
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+fn cli_bin() -> PathBuf {
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    assert!(status.success(), "building the CLI");
+    bin
+}
+
+#[test]
+fn the_cli_prints_a_command_that_works_and_lists_and_revokes() {
+    if skip() {
+        return;
+    }
+    let d = start("cli");
+    let pane = d.first_pane();
+    d.send(pane, "echo cli-$((9*9))");
+    d.wait_capture(pane, "cli-81");
+    let cli = |args: &[&str]| {
+        let out = Command::new(cli_bin()).arg("--socket").arg(d.sock()).args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        (String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+    };
+    let (cmd, note) = cli(&["share", "--guest", &format!("%{pane}"), "--name", "kim", "--ttl", "10m"]);
+    let cmd = cmd.trim();
+    assert!(cmd.starts_with("ssh ") && cmd.ends_with("@127.0.0.1"), "{cmd}");
+    assert!(note.contains("read-only") && note.contains("SHA256:"), "{note}");
+    let g = Guest::run(cmd);
+    g.wait_for("cli-81");
+    let (list, _) = cli(&["guests"]);
+    assert!(list.contains("kim") && list.contains("1 connected"), "{list}");
+    cli(&["guests", "revoke", "1"]);
+    let mut g = g;
+    assert_ne!(g.exited(Duration::from_secs(5)), 0);
+    let (list, _) = cli(&["guests"]);
+    assert!(list.contains("no ssh invites"), "{list}");
 }
