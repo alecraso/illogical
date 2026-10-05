@@ -123,6 +123,12 @@ export async function controlStats(stack: Stack): Promise<any> {
 /** Start control (on `controlListen`, default any port), the daemon and
  * the test server. */
 export async function startStack(controlListen = "127.0.0.1:0"): Promise<Stack & { stop(): void }> {
+  // A stack running elsewhere (netem.sh: control and the daemon in their
+  // own containers), as JSON.
+  if (process.env.S27_STACK) {
+    const s = JSON.parse(process.env.S27_STACK) as Stack;
+    return { ...s, async restartControl() { throw new Error("not with S27_STACK"); }, stop() {} };
+  }
   const dir = ".run/cert";
   const ctl = (listen: string, dial: string) => ["control", "--listen", listen, "--dial-listen", dial, "--dir", dir, "--web", "dist", "--marker", MARKER];
   let control = await startS27(ctl(controlListen, "127.0.0.1:0"));

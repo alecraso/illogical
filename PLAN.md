@@ -4096,9 +4096,11 @@ Answers in `spikes/s27-blocks/README.md`. Go for M50, per browser:
 | Browser | Verdict | On what |
 |---|---|---|
 | Chrome / Chromium | **go** | every check, including code-server's webviews; about 0.2 ms added per request on loopback |
-| Safari, macOS | **go, provisional** | Playwright's WebKit on macOS passes every check; real Safari waits on `safari/safari.ts` in Track E's VM |
-| Safari, iOS | **unknown** | not run; `safari/safari.ts --ios` in the same VM's Simulator |
-| Desktop app (WebKitGTK) | **go, provisional** | Playwright's Linux WebKit passes; the app's older Ubuntu 22.04 WebKitGTK not checked yet |
+| Safari, macOS | **go** (2026-10-05) | Playwright's WebKit passes every check; real Safari 26.6.2 in a tart VM passes `safari/safari.ts` (`testnet/macos/s27-safari.sh`) |
+| Safari, iOS | **unknown** | not run; `safari/safari.ts --ios` needs the Simulator, so the Xcode image (#257) |
+| Desktop app (WebKitGTK) | **go** (2026-10-05) | Ubuntu 22.04's libwebkit2gtk-4.1 2.50.4, the library the app links, passes `safari/safari.ts` in the app's Xvfb image (MiniBrowser through WebKitWebDriver, `webkitgtk.sh`) |
+
+**Network (2026-10-05):** with browser, control and box on separate Docker networks and `tc netem` giving each link a 20 ms round trip (`netem.sh`), a relayed request took 44.5 ms at p50 against 24.6 ms for the worker straight to the daemon and 26.4 ms for today's block site: the relay costs one round trip to control and nothing more. 200 parallel requests were faster through the channel (185 ms) than today's HTTP/1.1 site (1163 ms). A block's first load was 429 ms against 98 ms today, from the bootstrap's sequential round trips through control.
 
 What M50 takes from it: the grant in Noise message 1 (`Responder::read` returning the payload), WebSockets on the page's own channel rather than the worker's, control's worker hosting apps' own service workers (VS Code's webviews need it), `frame-ancestors 'self'` plus control, a stable origin key per block, grant expiry against the daemon's clock from the device channel (a page a day off can't open blocks), and the worker keeping each block's cookie jar. Throughput through the worker tops out near 140 MB/s (WebCrypto), against 300–900 MB/s today.
 
@@ -4122,6 +4124,14 @@ What M50 takes from it: the grant in Noise message 1 (`Responder::read` returnin
 #### M50: blocks through control (#150, after S27)
 
 Built from S27's findings: block sites on control for every enrolled daemon, with the daemon-served schemes (tailnet, dev) kept for people without control. A port or editor block opened on any joined machine shows in control's page wherever that page is open. The host menu says "direct" or "relayed" for blocks too.
+
+**Notes from S27 (#262, 2026-10-05):**
+
+- **The grant goes in Noise message 1's payload**, not in the first transport message (`illogical_e2e::channel::Responder::read` changed to return that payload, which it drops today), and the daemon answers `ok` or `refused` in message 2. That saves a round trip through control on every new channel, which is most of a first load's cost at real latency (429 ms against 98 ms today at 20 ms per link). A replayed message 1 can't finish a handshake without the block's private key.
+- **The daemon's time comes from the device channel.** Control's page already has a channel to the daemon; it asks the daemon's clock there and mints the grant's expiry from it, so a device whose clock is off still opens blocks. The block's frame never reports a time (block code could extend its own grant).
+- **WebSockets ride the page's own channel**, opened by the shim in the block's page, not the worker's: the browser stops idle workers, and a hot-reload socket is idle for minutes.
+- **Each block has a stable origin key**, kept with the block on the daemon, so a reload or a new visit finds the worker, key and storage it had. A new key per open would re-run the bootstrap every time and leave old origins' storage behind.
+- Also from the spike: control's worker hosts apps' own service workers (VS Code's webviews), `frame-ancestors 'self'` plus control on block pages, the worker keeps each block's cookie jar, a refusal that arrives with the close is read as a refusal, and WebKit stays on the relay until real Safari's direct path and idle wake-up are measured.
 
 **Done when:** on jake-mini and jake-air, with no block flags, *Open a port…* on a Vite server and *Open in editor* both work from control's page on geek, on the phone and in the desktop app; then geek's own block flags are removed and the same holds there.
 

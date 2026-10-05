@@ -309,6 +309,9 @@ pnpm test                   # builds s27 and the worker, then Chromium and WebKi
 pnpm typecheck
 ./linux-webkit.sh [specs]   # WebKit on Linux in Playwright's container (Docker, Zig)
 node safari/safari.ts       # real Safari via safaridriver; --ios for the Simulator
+../../testnet/macos/s27-safari.sh   # the same in a fresh tart VM's Safari
+./webkitgtk.sh              # the same in the desktop app's WebKitGTK (Ubuntu 22.04, Docker)
+./netem.sh                  # the latency spec with control, box and browser 20 ms apart (Docker)
 ```
 
 Hostnames (`control.test`, `*.blocks.test`) go to 127.0.0.1 through a
@@ -827,8 +830,9 @@ Real gaps, each one automatable:
   detach and reattach ([development.md](development.md#testing-iterm2))
   aren't in `just macos iterm2` yet; they can be, with the same
   AppleScript.
-- **S27 in real Safari:** `spikes/s27-blocks/safari/safari.ts` (and
-  `--ios`) in the tart VM, unattended.
+- **S27 in iOS Safari:** `spikes/s27-blocks/safari/safari.ts --ios`
+  needs the Simulator, so the Xcode image (#257). macOS Safari runs
+  unattended with `testnet/macos/s27-safari.sh`.
 - **The tart tests in CI** on the macos-arm64 runner ([above](#on-the-macos-arm64-runner)).
 - **The guest ssh relay path** (M65), once control's jump host is built.
 - **M49's attach, `tui` and event streams, and team machines, through
