@@ -290,10 +290,11 @@ impl Remote {
             )?;
         }
         // A daemon already running there keeps the old binary until it
-        // restarts: a systemd service restarts now (its panes are adopted).
+        // restarts: a systemd service or a launchd agent restarts now (its
+        // panes are adopted). A --system LaunchDaemon needs sudo, so not.
         if p.daemon {
             let out = self.run(
-                "sh -c 'systemctl --user is-active --quiet illogicald 2>/dev/null && ~/.local/bin/illogicald install >/dev/null && echo restarted'",
+                "sh -c 'if systemctl --user is-active --quiet illogicald 2>/dev/null || [ -f ~/Library/LaunchAgents/illogicald.plist ]; then ~/.local/bin/illogicald install >/dev/null && echo restarted; fi'",
                 None,
             );
             if !out.is_ok_and(|o| o.contains("restarted")) {
@@ -306,7 +307,9 @@ impl Remote {
         Ok(())
     }
 
-    /// Start the daemon so it outlives this login: a systemd user service
+    /// Start the daemon so it outlives this login: a launchd agent on a Mac
+    /// (in the background session when there's no GUI login: it outlives
+    /// the login, not a reboot, and says so); a systemd user service
     /// with lingering where there's systemd (lingering is asked for without
     /// sudo, which polkit usually allows), detached otherwise (it survives
     /// logging out, not a reboot).
@@ -314,6 +317,13 @@ impl Remote {
         let out = self.run(START, None)?;
         let how = out.lines().last().unwrap_or_default().trim();
         match how {
+            "launchd" => {
+                // The install's notes (a Mac with no GUI login: it won't come
+                // back after a reboot by itself) pass through.
+                for note in out.lines().filter_map(|l| l.strip_prefix("note: ")) {
+                    eprintln!("illogical: {}: {note}", self.dest);
+                }
+            }
             "linger" => {}
             "nolinger" => eprintln!(
                 "illogical: illogicald on {} stops when you log out: lingering couldn't be turned on without sudo \
@@ -329,12 +339,17 @@ impl Remote {
     }
 }
 
-/// On the box: a systemd user service if the user has a manager, with
-/// lingering; else detached, without this login's agent (the bridge links
-/// the current one). Prints how: `linger`, `nolinger` or `detached`.
+/// On the box: on a Mac, `illogicald install` (a LaunchAgent, or with no
+/// GUI login a background agent, whose `note:` line is printed first); a
+/// systemd user service if the user has a manager, with lingering; else
+/// detached, without this login's agent (the bridge links the current one).
+/// Prints how: `launchd`, `linger`, `nolinger` or `detached`.
 const START: &str = r#"sh -c '
 d=$HOME/.local/bin/illogicald
-if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 && "$d" install >/dev/null 2>&1; then
+if [ "$(uname -s)" = Darwin ] && out=$("$d" install 2>&1); then
+  printf "%s\n" "$out" | grep "^note:"
+  echo launchd
+elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1 && "$d" install >/dev/null 2>&1; then
   loginctl enable-linger >/dev/null 2>&1
   if [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = yes ]; then echo linger; else echo nolinger; fi
 else

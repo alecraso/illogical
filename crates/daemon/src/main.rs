@@ -78,7 +78,10 @@ struct Args {
 enum Command {
     /// Install as a service that starts at boot (a systemd user service) or
     /// at login (a launchd agent on macOS): copies this binary to
-    /// ~/.local/bin, writes the unit or plist, enables and (re)starts it.
+    /// ~/.local/bin, writes the unit or plist, enables and (re)starts it. On
+    /// a Mac with no GUI login (reached over ssh) the agent runs in the
+    /// background session: it outlives the ssh login but not a reboot;
+    /// --system starts it at boot instead.
     /// With --tailnet (sandboxes, no systemd): joins the tailnet with a
     /// userspace tailscaled and runs the daemon there, both kept running by
     /// `illogicald sandbox`.
@@ -86,6 +89,12 @@ enum Command {
         /// Write and enable the unit without starting it now.
         #[arg(long)]
         no_start: bool,
+        /// macOS: a LaunchDaemon that runs it as you from boot, with nobody
+        /// logged in (/Library/LaunchDaemons/illogicald.USER.plist). Runs
+        /// sudo, which may ask for your password. `illogicald uninstall`
+        /// removes it.
+        #[arg(long, conflicts_with = "tailnet")]
+        system: bool,
         /// A Tailscale auth key (ephemeral, tagged), as `file:PATH`, `-` for
         /// stdin, or the key itself (kept off command lines it starts).
         #[arg(long, value_name = "AUTHKEY")]
@@ -119,6 +128,10 @@ enum Command {
         #[arg(last = true)]
         daemon_args: Vec<String>,
     },
+    /// Stop the service `install` set up and remove it (the LaunchAgent, the
+    /// background agent or the --system LaunchDaemon, which needs sudo; on
+    /// Linux the systemd user service). The binaries and panes' state stay.
+    Uninstall,
     /// Keep tailscaled and the daemon running, as `install --tailnet` set
     /// them up (for machines without systemd); stops on SIGTERM.
     Sandbox,
@@ -668,9 +681,10 @@ fn main() -> anyhow::Result<()> {
         }) => {
             sandbox::install(sandbox::TailnetOpts { authkey, hostname, home, join, owner, port, no_serve, daemon_args })
         }
-        Some(Command::Install { no_start, reset_args, daemon_args, .. }) => {
-            install::install(!no_start, &daemon_args, reset_args)
+        Some(Command::Install { no_start, reset_args, system, daemon_args, .. }) => {
+            install::install(!no_start, &daemon_args, reset_args, system)
         }
+        Some(Command::Uninstall) => install::uninstall(),
         Some(Command::Sandbox) => sandbox::supervise(),
         Some(Command::Join { url, name, team, account, ticket, state_dir }) => {
             let name = name.unwrap_or_else(|| {
