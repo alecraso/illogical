@@ -655,6 +655,10 @@ enum Command {
         /// Join it to a team (its id), not your account alone.
         #[arg(long)]
         team: Option<String>,
+        /// The account's fingerprint, as the approving device shows it:
+        /// checked instead of asking.
+        #[arg(long, value_name = "FINGERPRINT")]
+        account: Option<String>,
     },
     /// On a box a client reaches over ssh (`--ssh`): join stdin and stdout
     /// to this daemon's socket. Clients run it; people don't.
@@ -1205,15 +1209,16 @@ fn main() {
 }
 
 fn real_main(cli: Cli) -> anyhow::Result<i32> {
-    if let Command::Join { url, name, team } = &cli.cmd {
-        let mut args = vec!["join".to_owned(), url.clone().unwrap_or_else(|| ssh::CONTROL.to_owned())];
-        for (flag, v) in [("--name", name), ("--team", team)] {
+    if let Command::Join { url, name, team, account } = &cli.cmd {
+        let control = url.clone().unwrap_or_else(|| ssh::CONTROL.to_owned());
+        let mut args = vec!["join".to_owned(), control.clone()];
+        for (flag, v) in [("--name", name), ("--team", team), ("--account", account)] {
             if let Some(v) = v {
                 args.extend([flag.to_owned(), v.clone()]);
             }
         }
         if let Some(dest) = &cli.ssh {
-            return ssh::Remote::parse(dest)?.join(&args);
+            return ssh::Remote::parse(dest)?.join(&args, &control);
         }
         use std::os::unix::process::CommandExt;
         let beside = std::env::current_exe()?.with_file_name("illogicald");

@@ -2,9 +2,12 @@
 #
 # Bring up one profile of the test stack.
 #
-#   testnet/up.sh ssh     bastion, box-bare and box-systemd (see README.md)
+#   testnet/up.sh ssh       bastion, box-bare, box-systemd and git (see README.md)
+#   testnet/up.sh control   the same, and illogical-control with its fakes;
+#                           needs this tree's static binaries (`just static`)
 #
-# Makes the stack's keys in testnet/.state (a client key and one host key per
+# Makes the stack's keys in testnet/.state (.state-<name> for another
+# COMPOSE_PROJECT_NAME) (a client key and one host key per
 # box) and writes testnet/.state/ssh_config, which reaches every box by name
 # with strict host key checking:
 #
@@ -16,7 +19,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${1:-ssh}"
-STATE="$HERE/.state"
+# shellcheck source=env.sh
+. "$HERE/env.sh"
 PORT="${ILLOGICAL_TESTNET_SSH_PORT:-22922}"
 
 log() { echo "[testnet up $PROFILE] $*" >&2; }
@@ -26,9 +30,19 @@ command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exi
 docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 
 case "$PROFILE" in
-  ssh) boxes="bastion box-bare box-systemd" ;;
-  *) echo "usage: testnet/up.sh ssh   (the only profile so far)" >&2; exit 2 ;;
+  ssh) boxes="bastion box-bare box-systemd git"; profiles="--profile ssh" ;;
+  control) boxes="bastion box-bare box-systemd git"; profiles="--profile ssh --profile control" ;;
+  *) echo "usage: testnet/up.sh ssh|control" >&2; exit 2 ;;
 esac
+
+if [ "$PROFILE" = control ]; then
+  # The static binaries for Docker's architecture, mounted into control
+  # (and installed on the boxes by the tests).
+  arch="$(docker info --format '{{.Architecture}}')"
+  case "$arch" in arm64) arch=aarch64 ;; amd64) arch=x86_64 ;; esac
+  export ILLOGICAL_TESTNET_BINARIES="${ILLOGICAL_TESTNET_BINARIES:-$(cd "$HERE/.." && pwd)/target/$arch-unknown-linux-musl/release}"
+  [ -x "$ILLOGICAL_TESTNET_BINARIES/illogical-control" ] || die "no $ILLOGICAL_TESTNET_BINARIES/illogical-control: run 'just static $arch'"
+fi
 
 mkdir -p "$STATE"
 [ -f "$STATE/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C illogical-testnet -f "$STATE/id_ed25519"
@@ -64,7 +78,32 @@ Host *
   ConnectTimeout 10
 CFG
 
-docker compose -f "$HERE/compose.yaml" --profile "$PROFILE" up -d --build --wait >&2
+# shellcheck disable=SC2086 # two words for the control profile
+docker compose -f "$HERE/compose.yaml" $profiles up -d --build --wait >&2
+
+if [ "$PROFILE" = control ]; then
+  # What the control profile's tests need (test.sh reads it): control's
+  # public URL and where the host reaches it and the fake GitHub.
+  net="${ILLOGICAL_TESTNET_INNER_NET:-10.229.80}"
+  cport="${ILLOGICAL_TESTNET_CONTROL_PORT:-22980}"
+  cat > "$STATE/control.env" <<ENV
+# Written by testnet/up.sh control. The stack's settings, so a test that
+# recreates a box gets the same networks.
+CONTROL_URL=http://$net.10:8080
+CONTROL_VIA="--via http://$net.10:8080=http://127.0.0.1:$cport --via http://fakes:9001=http://127.0.0.1:${ILLOGICAL_TESTNET_FAKES_PORT:-22981}"
+export ILLOGICAL_TESTNET_BINARIES="$ILLOGICAL_TESTNET_BINARIES"
+export ILLOGICAL_TESTNET_INNER_NET=$net
+export ILLOGICAL_TESTNET_SSH_PORT=$PORT
+export ILLOGICAL_TESTNET_CONTROL_PORT=$cport
+export ILLOGICAL_TESTNET_FAKES_PORT=${ILLOGICAL_TESTNET_FAKES_PORT:-22981}
+ENV
+  for _ in $(seq 1 40); do
+    curl -fsS "http://127.0.0.1:$cport/control.json" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  curl -fsS "http://127.0.0.1:$cport/control.json" >/dev/null || die "control did not answer on 127.0.0.1:$cport"
+  log "control: http://$net.10:8080 (127.0.0.1:$cport from here)"
+fi
 
 # sshd answers as soon as its container is up, but give it a few tries.
 for _ in $(seq 1 20); do
@@ -75,5 +114,6 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 ssh -F "$STATE/ssh_config" -v box-bare true || true
-docker compose -f "$HERE/compose.yaml" --profile "$PROFILE" logs --tail=40 >&2 || true
+# shellcheck disable=SC2086
+docker compose -f "$HERE/compose.yaml" $profiles logs --tail=40 >&2 || true
 die "box-bare did not answer through the bastion"
