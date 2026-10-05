@@ -4126,6 +4126,160 @@ The host menu lists ssh hosts and has *Connect over ssh…*. The app runs the sy
 
 **Done when:** on jake-air and geek, the desktop app opens a pane on a box reached only over ssh (Tailscale off, not joined to control), including through a ProxyJump bastion.
 
+### Windows track (S29, M54–M60, added 2026-10-05)
+
+illogical on Windows: the desktop app, the CLI and illogicald, as on Linux and macOS. Jake has no Windows machine, so the work is built on GitHub's `windows-latest` runners and tested in a Windows 11 VM on geek.
+
+A survey on 2026-10-04 found:
+
+- **The desktop app** is close to portable: about 15 sites, mostly paths, sidecar names and notifications.
+- **The CLI** has about 45 sites: termios raw mode, `nix::poll` loops and the Unix socket.
+- **The daemon** has about 150 real sites across about 45 files. Neither the daemon nor the CLI compiles for `x86_64-pc-windows-msvc` today: `nix` is unconditional, and `procinfo` has no fallback.
+- **`core`, `proto` and `vt`** have none. libghostty-vt-sys's `build.rs` already maps windows-msvc, but the pinned Ghostty hasn't been built for it.
+
+**Decisions (Jake, 2026-10-04):**
+
+- **Full port, including the daemon.** Panes can run on a Windows machine, not only be driven from one.
+- **Built on GitHub-hosted `windows-latest`** in check.yml and release.yml. These runners are free for the public repo and aren't our host runners, so PR triggers are fine.
+- **Tested in a Windows 11 VM on geek.** It runs as the `dockurr/windows` container `illogical-win`, reached over ssh. Jake can watch it at localhost:8006.
+- **Unsigned for now.** Users click through SmartScreen, as with macOS's ad-hoc signing. Azure Trusted Signing is the upgrade when it matters.
+
+**Shape (from the survey):**
+
+- **Panes run under a ConPTY host.** Windows has no fork, no `SCM_RIGHTS`, no FD store and no process groups, and a pseudoconsole can only be resized or closed by the process that made it. So the Windows shim becomes a per-pane **pty host**.
+  - It calls `CreatePseudoConsole`, starts the program in a Job Object, and serves a per-pane named pipe.
+  - The pipe carries bytes, resize, close and exit. This is holder's protocol, extended.
+  - It is started detached, so it outlives the daemon, and holder's lease and grace rules carry over unchanged.
+  - Close is `ClosePseudoConsole`, then `TerminateJobObject` after the kill delay.
+- **The local socket is a named pipe** (`\\.\pipe\illogical-<user>`). Its DACL admits only the user's SID, and the peer is checked by SID, as `SO_PEERCRED` checks it today.
+- **The service is a Task Scheduler logon task, not a Windows service.** A service runs in session 0 without the user's profile, environment or credentials.
+  - The app installs into `%LOCALAPPDATA%\Programs\illogical`, and state lives in `%LOCALAPPDATA%\illogical`.
+  - An upgrade renames the running exe aside, because Windows can't overwrite it.
+- **The default shell** is `pwsh`, else Windows PowerShell, else `%COMSPEC%`. Shell integration (OSC 133 and OSC 7) comes from a PowerShell profile snippet.
+- **Left out on Windows:** the sandbox and Tailscale supervisor, the Fountain runner, code-server, the systemd paths and the tmux `-CC` front. Each is cfg-gated, not stubbed with errors.
+
+**Order:**
+
+1. S29 first.
+2. M54, the app as a cloud client, ships alongside S29. It needs no daemon, so Windows users get something early.
+3. M55, then M56, then M57 and M58 in parallel, then M59, then M60.
+
+The tracker is #224.
+
+#### S29: Windows feasibility (risks first) (#216)
+
+Answer the questions that could change the shape before any milestone starts:
+
+1. **Ghostty.** Does the pinned Ghostty build lib-vt for `x86_64-windows-msvc` with Zig 0.16, and does the `vt` crate's test suite pass there?
+2. **ConPTY host.** A tiny detached pty host keeps `pwsh` running while its parent exits and a new parent reconnects over a named pipe. Measure:
+   - the extra hop's latency for echo and bulk output;
+   - resize from the new parent;
+   - close through the Job Object.
+3. **ConPTY's output through `vt`.** ConPTY rewrites the VT stream. Check the reflow after a resize, cursor queries (ConPTY answers DSR itself), and whether full-screen apps (vim, htop-likes) render the same as on Linux.
+4. **axum over a named pipe.** A custom `axum::serve::Listener` with a DACL and a SID check on the peer. The CLI's http client reaches it.
+5. **Logon task lifetime.** A task registered without admin starts at logon and survives logoff and logon. What happens to detached pty hosts at logoff?
+6. **PowerShell integration.** OSC 133 prompt marks and OSC 7 cwd from `$PROFILE`, without breaking user profiles. Also what `cmd.exe` gives us.
+
+**Done when:** `spikes/s29-windows/README.md` has the answers with numbers. In the VM, a demo pty host keeps a `pwsh` pane alive across its parent's restart, and the go/no-go for each later milestone's approach is written down.
+
+**Done (2026-10-05, PR #235): go.** What changed in the milestones below:
+
+- **Ship Microsoft's current ConPTY** (`conpty.dll` and `OpenConsole.exe`, MIT). Windows' own adds a frame, about 16 ms, to every echo; 1.25 echoes in 0.07 ms.
+- **The pane host works.** The pipe hop costs about 0.05 ms per keystroke, and a pane survives its parent's ssh session.
+- **lib-vt builds under MSVC** once our patch applies to CRLF checkouts.
+- **A logon task is the service.** S4U survives logoff but has no DPAPI, so it's an opt-in.
+- **Shell integration goes inline** with `-EncodedCommand`, past the `Restricted` policy.
+
+#### M54: the desktop app on Windows as a cloud client (#217)
+
+M48 made the app control's client, so on Windows it starts with sign-in and every machine on control's page, with no local daemon. Until M59 the window shows that this machine can't run panes yet.
+
+- An NSIS installer, per user, with no admin rights.
+- Toast notifications whose click opens the pane, through the AUMID the installer registers.
+- The tray and single instance, as on the other systems.
+- URLs open through the opener rather than `xdg-open`.
+- A `windows-x86_64` job in release.yml builds the installer with `cargo tauri build --bundles nsis` on `windows-latest`. A desktop check job runs on PRs.
+- The site offers the Windows download.
+
+**Done when:**
+
+- In the VM, the installer from a CI release installs with no admin rights.
+- Sign-in through the system browser works, and a device approved from the phone shows geek's panes.
+- Typing in a pane on geek works.
+
+Native notifications come from a local daemon, so they arrive with it in M59.
+
+#### M55: the workspace compiles on Windows (#218)
+
+- `nix` and `std::os::unix` are gated, and the Linux-only modules are cfg'd out.
+- `procinfo` and `sys` get Windows modules: stubs at first, made real in M60.
+- `e2e`'s key-file modes are gated.
+- S29's CRLF fix (`build.rs` clones Ghostty with `core.autocrlf=false`, and `.gitattributes` marks our patches `-text`) is what lets the job build lib-vt.
+- check.yml gains a `windows-x86_64` job: clippy and the unit tests for every crate except `control`, plus the `vt` tests on Windows from S29. It needs Zig and pnpm through mise.
+
+**Done when:** the Windows check job is green on main and required. No Linux or macOS behaviour changes.
+
+#### M56: illogicald runs panes on Windows (#219)
+
+- The named-pipe transport for the CLI and editors, with the SID check.
+- `%LOCALAPPDATA%` paths.
+- ConPTY panes inside the daemon, not yet surviving a restart, with resize and close.
+  - Through the shipped `conpty.dll`, falling back to the inbox ConPTY when it's missing.
+  - Spawned with `STARTF_USESTDHANDLES` and null handles; otherwise a daemon with redirected std handles gives them to the pane (S29).
+  - State in `%LOCALAPPDATA%\illogical\state`. The app's installer owns `%LOCALAPPDATA%\illogical` (M54).
+- The local socket is a named pipe, served by S29's `PipeListener`: a fresh instance waits while the last one serves. The DACL names the user's SID rather than `OW`, and the CLI retries on error 231.
+- The shell defaults from the shape above.
+- localauth maps loopback peers through `GetExtendedTcpTable`.
+- The integration test harness gets a transport abstraction, so its tests run on Windows CI.
+
+**Done when:** in the VM, `illogicald` runs and the web client on it opens `pwsh` panes, splits and tabs. vim and a long `Get-ChildItem -Recurse` render correctly. The daemon's integration tests pass on the Windows CI job.
+
+#### M57: the CLI and the TUI on Windows (#220)
+
+- Raw mode, size and input through crossterm, with a reader thread in place of `nix::poll`.
+- Duplex paths (`attach`, the TUI's WebSocket) use overlapped I/O, such as tokio's named-pipe client. In S29 a blocking pipe handle held a write behind a read for more than 3 s.
+- `attach`, `tui`, `run`, `ls` and the MCP server work.
+- The tmux `-CC` front stays out.
+
+**Done when:** in the VM, `illogical tui` drives local panes and a remote host. `illogical attach` works in Windows Terminal and in conhost.
+
+#### M58: panes survive daemon restarts on Windows (#221)
+
+The S29 pty host becomes `illogicald _shim` on Windows:
+
+- its exec record;
+- the lease and grace rules;
+- `holder::collect` over named pipes;
+- the watchdog through the Job Object;
+- keeping a chunk read but not yet sent when a client leaves (S29's host drops it);
+- running hosts from a versioned path, because they outlive upgrades and a running exe can't be replaced.
+
+**Done when:** in the VM, restarting the daemon, killing it, and upgrading it to a new build each keep running panes with their scrollback. The e2e restart test runs on Windows CI.
+
+#### M59: install, upgrade and the app carrying the daemon on Windows (#222)
+
+- `illogicald install` registers the logon task (interactive, no admin). Panes end at logoff, as with launchd and systemd without linger.
+- `--survive-logoff` registers an S4U task at startup instead. It says that panes there have no DPAPI, so Git Credential Manager and Credential Manager don't work in them (S29).
+- Upgrades work by renaming the running exe aside.
+- An `install.ps1` counterpart to `install.sh` (`irm … | iex`), and Windows text in the update notice.
+- The desktop app carries `illogicald.exe` and `illogical.exe` (a PowerShell `sidecars.ps1`), installs the daemon when none answers, and upgrades an older one, as on macOS and Linux.
+- Windows zips in release.yml, and a Windows machine can join control.
+
+**Done when:** in a fresh VM, the installer alone gives a joined machine whose panes open from the phone, and they survive a reboot. A notification's click opens its pane (moved here from M54, which has no local daemon). Upgrading from the previous release keeps panes running.
+
+#### M60: Windows parity (#223)
+
+- procinfo for real: cwd, argv and the deepest process in the pane's job as its foreground. These feed titles, classification and conversation matching.
+- PowerShell shell integration from S29: started with `-NoExit -EncodedCommand`, which wraps the profile's prompt and emits OSC 133 and OSC 7. Windows' default `Restricted` policy blocks any script file, a profile included.
+- Conversations' process matching on Windows.
+- The README and the site describe Windows like the other systems.
+
+**Done when:**
+
+- In the VM, pane titles follow the running program and cwd as on Linux.
+- Prompt marks and cwd come through from `pwsh`.
+- A Claude Code session started in a pane shows up as a conversation.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
