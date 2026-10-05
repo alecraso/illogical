@@ -8,6 +8,10 @@
 //   node safari/safari.ts --print-setup      what the machine needs (sudo)
 //   node safari/safari.ts                    Safari on this Mac
 //   node safari/safari.ts --ios              Safari in the booted iOS Simulator
+//   SAFARIDRIVER_URL=... node safari/safari.ts --webkitgtk
+//                                            WebKitGTK's MiniBrowser through
+//                                            WebKitWebDriver (the desktop
+//                                            app's engine: webkitgtk.sh)
 //   node safari/safari.ts --driver playwright-webkit
 //                                            the same script in Playwright's
 //                                            WebKit, to check the script here
@@ -30,7 +34,7 @@ const CERT = resolve(".run/cert/cert.pem");
 if (flag("--print-setup")) {
   console.log(`# Once per machine (the VM's provisioning does this):
 sudo safaridriver --enable
-sudo security add-trusted-cert -d -r trustAsRoot -k /Library/Keychains/System.keychain ${CERT}
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ${CERT}
 echo "127.0.0.1 control.test ${KEYS.map((k) => `b-${k}.blocks.test`).join(" ")}" | sudo tee -a /etc/hosts
 # For --ios, also: xcrun simctl boot <device>; xcrun simctl keychain booted add-root-cert ${CERT}
 # (the Simulator uses this Mac's resolver, so /etc/hosts covers it).`);
@@ -49,11 +53,17 @@ interface Driver {
 
 const ELEMENT = "element-6066-11e4-a52e-4f735466cecf";
 
+const MINIBROWSER = process.env.S27_MINIBROWSER ?? "/usr/lib/aarch64-linux-gnu/webkit2gtk-4.1/MiniBrowser";
+
 async function webdriver(ios: boolean): Promise<Driver> {
+  // SAFARIDRIVER_URL: a safaridriver already running elsewhere (in the tart
+  // VM, forwarded here: testnet/macos/s27-safari.sh), with control's port
+  // forwarded back to this machine.
   const { spawn } = await import("node:child_process");
   const port = 4444 + Math.floor(Math.random() * 1000);
-  const proc = spawn("safaridriver", ["-p", String(port)], { stdio: "inherit" });
-  const base = `http://127.0.0.1:${port}`;
+  const remote = process.env.SAFARIDRIVER_URL;
+  const proc = remote ? null : spawn("safaridriver", ["-p", String(port)], { stdio: "inherit" });
+  const base = remote ?? `http://127.0.0.1:${port}`;
   const call = async (method: string, path: string, body?: unknown) => {
     const r = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     const j = (await r.json()) as { value: any };
@@ -69,7 +79,11 @@ async function webdriver(ios: boolean): Promise<Driver> {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
-  const caps = ios ? { browserName: "Safari", platformName: "iOS", "safari:useSimulator": true } : { browserName: "safari" };
+  const caps = ios
+    ? { browserName: "Safari", platformName: "iOS", "safari:useSimulator": true }
+    : flag("--webkitgtk")
+      ? { browserName: "MiniBrowser", "webkitgtk:browserOptions": { binary: MINIBROWSER, args: ["--automation"] } }
+      : { browserName: "safari" };
   const { sessionId } = await call("POST", "/session", { capabilities: { alwaysMatch: caps } });
   const s = `/session/${sessionId}`;
   await call("POST", `${s}/timeouts`, { script: 60_000 });
@@ -83,7 +97,7 @@ async function webdriver(ios: boolean): Promise<Driver> {
     },
     async close() {
       await call("DELETE", s).catch(() => {});
-      proc.kill();
+      proc?.kill();
     },
   };
 }
@@ -137,7 +151,7 @@ async function until<T>(d: Driver, src: string, ok: (v: T) => boolean, ms = 30_0
 const pw = args.includes("--driver") && args[args.indexOf("--driver") + 1] === "playwright-webkit";
 const stack = await startStack(pw ? "127.0.0.1:0" : `127.0.0.1:${PORT}`);
 const v = await vite();
-const verdict: Record<string, unknown> = { browser: pw ? "playwright-webkit" : flag("--ios") ? "safari-ios-simulator" : "safari-macos", at: new Date().toISOString() };
+const verdict: Record<string, unknown> = { browser: pw ? "playwright-webkit" : flag("--ios") ? "safari-ios-simulator" : flag("--webkitgtk") ? "webkitgtk" : "safari-macos", at: new Date().toISOString() };
 const checks: Record<string, boolean | string> = {};
 const d = pw ? await playwrightWebkit() : await webdriver(flag("--ios"));
 try {
@@ -176,17 +190,31 @@ try {
   try {
     await until<string>(d, "return document.querySelector('#msg')?.textContent", (t) => t === "message one", 60_000);
     await new Promise((r) => setTimeout(r, 1000));
+    // What Vite's socket did between the save and the reload, kept in
+    // sessionStorage (it survives the reload).
+    await d.exec(
+      run(`const d0 = EventTarget.prototype.dispatchEvent;
+        const log = (x) => sessionStorage.setItem('s27log', (sessionStorage.getItem('s27log') ?? '') + Date.now() + ' ' + x + '\\n');
+        EventTarget.prototype.dispatchEvent = function (e) { if (typeof this.url === 'string' && this.readyState !== undefined) log(e.type + ' ' + this.url + (e.data ? ' ' + String(e.data).slice(0, 60) : '')); return d0.call(this, e); };
+        addEventListener('pagehide', () => log('pagehide'));
+        log('hooked');`),
+    );
     const t = Date.now();
     writeFileSync(`${v.dir}/main.js`, `document.querySelector("#msg").textContent = "message saved";\n`);
     await until<string>(d, "return document.querySelector('#msg')?.textContent", (x) => x === "message saved");
     checks.viteReload = true;
     // From the save to the reloaded page's DOMContentLoaded, by the page's
     // own clock (not when this script happened to look).
-    const loaded = await d.exec<number>(
-      run("const n = performance.getEntriesByType('navigation')[0]; return performance.timeOrigin + n.domContentLoadedEventEnd"),
+    const nav = await d.exec<{ origin: number; dcl: number }>(
+      run("const n = performance.getEntriesByType('navigation')[0]; return { origin: performance.timeOrigin, dcl: n.domContentLoadedEventEnd }"),
     );
-    verdict.viteReloadMs = Math.round(loaded - t);
+    verdict.viteReloadMs = Math.round(nav.origin + nav.dcl - t);
+    // How much of that came before the reload started (the save reaching
+    // the page over Vite's socket) and how much was the load itself.
+    verdict.viteReloadStartedMs = Math.round(nav.origin - t);
     verdict.viteReloadSeenMs = Date.now() - t;
+    verdict.viteSocketLog = (await d.exec<string>(run("return sessionStorage.getItem('s27log') ?? ''")))
+      .split("\n").filter(Boolean).map((l) => `${Number(l.split(" ")[0]) - t} ${l.slice(l.indexOf(" ") + 1)}`);
   } catch (e) {
     checks.viteReload = String(e);
   }

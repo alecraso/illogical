@@ -9,8 +9,11 @@ measurement was taken once.
 take from this". Chromium and both WebKit builds tested (macOS and Linux)
 pass every functional check: Vite, Next and code-server (webviews
 included) work inside control's page through the block's worker, with
-control relaying only ciphertext. Real Safari (macOS and iOS) wasn't run
-here; the test for it is in `safari/` and needs Track E's VM.
+control relaying only ciphertext. Follow-up runs for #262 (same day,
+below): real Safari 26.6.2 on macOS and the desktop app's WebKitGTK
+(Ubuntu 22.04's 2.50.4) pass `safari/safari.ts`, and with real delay the
+relay costs one more round trip per request, as predicted. iOS Safari is
+still unrun (#257: it needs the Xcode image).
 
 ## What was built
 
@@ -66,20 +69,19 @@ How to run it: [docs/testing.md](../../docs/testing.md#spike-blocks-through-cont
 
 ### Does it work, per browser?
 
-| Check | Chromium (Playwright, macOS) | WebKit (Playwright, macOS) | WebKit (Playwright, Linux) | Real Safari / iOS |
-|---|---|---|---|---|
-| Worker registers in a cross-site frame | yes | yes | yes | not run (`safari/`) |
-| Page, POST, redirect, 3 MB download through it | yes | yes | yes | not run |
-| WebSocket through the shim | yes | yes | yes | not run |
-| Control saw no plaintext (marker hits) | 0 | 0 | 0 | |
-| Vite: CSS hot update, JS full reload | yes | yes | yes | not run |
+| Check | Chromium (Playwright, macOS) | WebKit (Playwright, macOS) | WebKit (Playwright, Linux) | Real Safari, macOS | App's WebKitGTK | iOS |
+|---|---|---|---|---|---|---|
+| Worker registers in a cross-site frame | yes | yes | yes | yes | yes | not run |
+| Page, POST, redirect, 3 MB download through it | yes | yes | yes | page and POST | page and POST | not run |
+| WebSocket through the shim | yes | yes | yes | yes | yes | not run |
+| Control saw no plaintext (marker hits) | 0 | 0 | 0 | 0 | 0 | |
+| Vite: CSS hot update, JS full reload | yes | yes | yes | JS reload | JS reload | not run |
 | Next 16 (Turbopack): Fast Refresh, no reload | yes | yes | yes | |
 | code-server 4.140.0: workbench, file, Markdown preview webview | yes | yes | skipped (macOS binary) | |
 | Worker straight to the daemon (no relay) | yes | **no** (see below) | not run | |
 
-Linux WebKit is the engine family the desktop app's WebKitGTK webview
-uses, but Playwright's build is newer than the WebKitGTK in Ubuntu 22.04
-that the desktop app links; see "What still needs a real machine".
+The last three columns are `safari/safari.ts`'s smaller set of checks
+(see "Follow-up runs").
 
 ### Vite, Next and code-server
 
@@ -243,6 +245,78 @@ today:
   frame's is keyed to control's site), so no worker, no key, and a
   bootstrap page with no parent to ask.
 
+## Follow-up runs (2026-10-05, #262)
+
+Each run once, on the same M5 Pro, load average 19–20.
+
+### Real Safari on macOS: go
+
+`testnet/macos/s27-safari.sh` boots a fresh clone of the tart base VM
+(macOS 26.6.2, Safari 26.6.2), trusts the test certificate in its System
+keychain, adds the three names to its `/etc/hosts`, enables safaridriver
+and drives Safari from here, with control's port forwarded back over ssh.
+`safari/safari.ts` (it can now take a `SAFARIDRIVER_URL`) reported every
+check true: the worker controls the cross-site frame, the page, a POST and
+a WebSocket go through it, control saw no plaintext, and a Vite save
+reloads the block.
+
+The save-to-reload time was 9.6–10 s, against 80–180 ms in the earlier
+runs. The verdict now logs what Vite's socket received: the
+`full-reload` message itself arrived 8.8 s after the save, and the page
+reloaded 1 s after that. The same script in Playwright's WebKit on the
+host took 13 s (message at 12.8 s), so the delay is Vite's file watcher on
+this loaded host, not Safari or the relay.
+
+Not checked in real Safari: the 45 s idle wake-up seen in Playwright's
+WebKit, and the worker's direct path to the daemon. M50 can keep WebKit
+on the relay until one of them is measured.
+
+### The desktop app's WebKitGTK: go
+
+`webkitgtk.sh` starts the desktop app's Xvfb image (`just desktop-xvfb`
+builds it; Ubuntu 22.04 with `libwebkit2gtk-4.1-0` 2.50.4-0ubuntu0.22.04.1,
+the library the app links), adds `webkit2gtk-driver` at the same version,
+and drives that library's MiniBrowser through WebKitWebDriver. The test
+certificate is in the container's system store, the names are 127.0.0.1
+there, and socat carries control's port to this machine. Every
+`safari/safari.ts` check passed; Vite's reload took 11.9 s for the same
+watcher reason. Ubuntu's updates carry WebKitGTK's stable releases to
+22.04, so its WebKitGTK is not as old as this README first assumed.
+
+This is MiniBrowser, not the app's own window: the app's webview is the
+same library with wry's settings. The app only navigates to its daemon
+and control, so pointing it at a stand-in would mean a test hook in the
+app; the engine was the open question, and it answers.
+
+### Real network delay
+
+`netem.sh` runs `tests/latency.spec.ts` (Chromium) with the browser,
+control and the box in three containers, each pair on its own Docker
+network, and `tc netem` delaying every packet 10 ms on every interface, so
+each link has a 20 ms round trip (a TCP connect measured 20.5 ms to
+control and to the box). Relayed requests cross two links; the worker
+straight to the daemon and today's block site cross one.
+
+| 20 ms per link | p50 | p90 | p99 | 200 at once | 10 MB | first load |
+|---|---|---|---|---|---|---|
+| Relayed | 44.5 ms | 48.2 | 75.8 | 185 ms | 11.3 MB/s | 429 ms |
+| Worker straight to daemon | 24.6 | 32.9 | 52.9 | 163 | 29.6 | 364 |
+| Today's block site | 26.4 | 40.7 | 84.6 | 1163 | 8.1 | 98 |
+
+- The relay adds one round trip to control per request: 20 ms here, the
+  client-control-box path's extra link, and nothing else (no stalls like
+  the missing `TCP_NODELAY` the first Linux run found).
+- 200 requests at once were faster through the channel than today's
+  path, which pays the browser's six HTTP/1.1 connections per host (the
+  daemon's block site speaks HTTP/1.1); the channel multiplexes.
+- First load costs about 330 ms more than today's path at 20 ms per link:
+  the bootstrap page, the worker's install and the handshake are several
+  sequential round trips, each through control. Putting the grant in
+  Noise message 1 removes one of them.
+- The 10 MB rows are netem's queue and TCP over emulated links, not a
+  bandwidth claim; the order matches loopback's (the channel is not the
+  slow part at these rates).
+
 ## What M50 should take from this
 
 - **The grant in Noise message 1's payload.** The spike sends it as the
@@ -269,22 +343,17 @@ today:
 - **The direct path from the worker**: in Playwright's WebKit a worker's
   WebSocket to another host than its own failed (the page's own to the
   same host worked). That may be the test certificate rather than WebKit;
-  real Safari settles it. Until then, M50 can use the relay in WebKit.
+  real Safari settles it (not yet checked there). Until then, M50 can use
+  the relay in WebKit.
 
 ## What still needs a real machine
 
-These are not person steps; they need hardware or a VM that this run
-didn't have. The PLAN's demo on jake-mini, geek's Chrome and the phone is
-replaced by the automated runs above plus these:
+These are not person steps; they need hardware or a VM. The PLAN's demo
+on jake-mini, geek's Chrome and the phone is replaced by the automated
+runs above. macOS Safari, the app's WebKitGTK and a network with delay
+were done on 2026-10-05 ("Follow-up runs"). Left:
 
-- **Safari on macOS and iOS**: `node safari/safari.ts` (and `--ios`, the
-  Simulator) on a Mac with `safaridriver --enable`, the test certificate
-  trusted and three `/etc/hosts` names (`--print-setup` lists them; all
-  need sudo, so Track E's tart VM). It prints a JSON verdict. Checked here
-  with `--driver playwright-webkit`.
-- **The desktop app's WebKitGTK**: Linux Playwright WebKit passes, but the
-  app links Ubuntu 22.04's WebKitGTK, which is older. The Xvfb desktop
-  image (#203) could load control's stand-in page in the real webview.
-- **A real network**: every number here is loopback. The relay's cost is
-  one more round trip to control per request level; measuring it needs
-  control somewhere else (or `tc netem` in the testnet).
+- **Safari on iOS**: `node safari/safari.ts --ios` in the iOS Simulator,
+  which needs a tart base image with Xcode (#257).
+- **Real Safari's idle wake-up and the worker's direct path**: not in
+  `safari/safari.ts` yet; M50 keeps WebKit on the relay until measured.
