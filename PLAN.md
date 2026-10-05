@@ -4078,6 +4078,54 @@ Built from S27's findings: block sites on control for every enrolled daemon, wit
 
 **Done when:** on jake-mini and jake-air, with no block flags, *Open a port…* on a Vite server and *Open in editor* both work from control's page on geek, on the phone and in the desktop app; then geek's own block flags are removed and the same holds there.
 
+### SSH track (S28, M51–M53, added 2026-10-04)
+
+A machine you can ssh into should be reachable with nothing set up there first, and ssh should be enough to make it a joined machine. Today every way in (tailnet, dial-out, provider tunnel, control's relay) needs something on the far machine before it works. The herdr comparison (2026-10-04) showed that herdr's whole remote story is plain OpenSSH: its client runs `ssh box herdr remote-client-bridge` and copies itself over when the box has none.
+
+Most of the machinery exists already. `illogical_e2e::mux` (M4c) runs many streams over one link and doesn't care what carries its frames. Dial-out carries them over a WebSocket; this track carries them over ssh's stdin and stdout, to an `illogical bridge` on the box that connects each stream to the box daemon's Unix socket. Reaching that socket already means full control, so an ssh login as the user owns the daemon, the same trust as locally.
+
+**Decisions (2026-10-04):**
+
+- **Clients run ssh, daemons don't.** The CLI, the TUI and the desktop app each run the system `ssh` for themselves, where the user's agent and any password or 2FA prompt are available.
+- **No ssh relaying.** A home daemon running ssh and answering for the box at `/h/<name>` (dial-out's shape) was considered and rejected. It would make that daemon a hub, against the "no special machines" decisions, and it would need the user's ssh credentials inside a background service.
+- **ssh to set up, control to reach.** For the web, the phone and sharing, ssh is used to install illogical and join the box to control (M52), and control reaches it afterwards like any other machine.
+- **Nothing stored but the target.** OpenSSH does all authentication. We keep `user@box` and nothing else.
+- **Only the owner's agent reaches panes.** The fixed `SSH_AUTH_SOCK` path links only to an agent forwarded by the box's owner. A guest's forwarded agent is never used in the owner's panes, so on a box several people attach to, `git push` doesn't depend on who attached last.
+- **M52 doesn't wait for M49.** Until M49 (#149) ships, M52 shows the box's join code in the terminal and you approve it from the phone or the web. Approving with the CLI's `cli` device key becomes the shortcut once M49 lands.
+- **Version skew.** S28 records what a mismatched client and box do today. After that, a client refuses a box whose major version differs from its own and offers to upgrade the box over the same ssh session.
+
+**Order:** S28 (#153) first; M51 (#154) and M52 (#155) after it, in parallel. M53 (#156) is gated (see below). Tracker #157.
+
+#### S28: reach a machine over ssh (#153)
+
+The bridge over stdio, measured against the tailnet path. Installing when the box has no illogical. Whether the daemon outlives the ssh login: systemd linger without sudo, and the launchd domain from an ssh session with no GUI login on jake-mini. Which ssh options to use (ControlMaster, keepalives, `BatchMode` for checks, ProxyJump, Tailscale SSH's check prompt). What version skew does. Whether `illogicald join` works from an ssh session.
+
+Daemon lifetime is answered here, not left to M52, because M52's design depends on it and jake-mini is needed in person either way. The throwaway boxes come from the `ssh` profile of the test stack (#200): a bastion and a bare box with no illogical, built small and first, so the checks can be rerun and later run in CI. The rest of #200 stays out of this track.
+
+**Done when:** `spikes/s28-ssh/README.md` has the answers. From geek, `illogical tui --ssh` installs illogical on a fresh throwaway box and its pane survives disconnects and a logout. The same into jake-mini.
+
+#### M51: the CLI and the TUI over ssh (#154)
+
+`--ssh user@box` on any command, and saved hosts with transport `ssh` for `--host`. Clients already reach hosts directly, so the host list only holds the target. Install when missing, after asking once. While a client is attached over ssh, the box's panes get a fixed `SSH_AUTH_SOCK` path pointing at the owner's forwarded agent (never a guest's), so `git push` works from them. A box on a different major version is refused, with an offer to upgrade it. Web and phone show ssh hosts as reachable from a terminal only, with the M52 step offered.
+
+**Done when:** from jake-air with Tailscale off, `illogical tui --ssh geek` and `--ssh geek run` work. A fresh box gets installed by the first command. `git push` from a pane there uses jake-air's agent. An e2e test drives it against a local sshd.
+
+#### M52: add a machine over ssh and join it to control (#155)
+
+One command: install over ssh, set up the service to outlive the login, run `illogicald join` on the box and show its join code in your terminal, to approve from the phone or the web. Once M49 ships, approving with its `cli` device key (after asking) is the shortcut; M52 doesn't wait for it. Afterwards the box is an ordinary machine on control's page, and ssh is out of the picture. A box that can't reach control says so and stays reachable over `--ssh`. The getting-started steps gain "Add a machine you can ssh into".
+
+**Done when:** from geek, a fresh throwaway box becomes a machine on control's page in one step plus the approval, and its pane opens from the phone. The same for jake-mini with no GUI session. The box survives a reboot.
+
+#### M53: the desktop app over ssh (#156, gated, after M51)
+
+Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this only covers boxes that never join control. M46 shipped in 0.14.0 (#144), so only M51 is left as a dependency.
+
+- **Trigger:** someone asks for the desktop app on boxes that will never join control (and the CLI or TUI over `--ssh` isn't enough for them).
+
+The host menu lists ssh hosts and has *Connect over ssh…*. The app runs the system `ssh` with M51's options and the user's agent and `~/.ssh/config`, and shows any password or 2FA prompt. It serves only itself, so it isn't a hub. This is the GUI for boxes that will never join control.
+
+**Done when:** on jake-air and geek, the desktop app opens a pane on a box reached only over ssh (Tailscale off, not joined to control), including through a ProxyJump bastion.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
