@@ -22,6 +22,8 @@ import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
 import { agentNotifyItems, InstallHint, notificationItems } from "./notify";
 import { GettingStartedLayer, openGettingStarted, useFirstRun } from "./welcome";
 import { UpdateChip } from "./update";
+import { WindowButtons } from "./window-buttons";
+import { desktopApp, openInNewWindow } from "../desktop";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -162,7 +164,7 @@ function TopBar({
   };
 
   return (
-    <header class="bar">
+    <header class="bar" data-tauri-drag-region>
       <HostButton />
       <button class="swarm-button" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
         Swarm
@@ -226,9 +228,10 @@ function TopBar({
           +
         </button>
       </div>
-      <div class="bar-fill" />
+      <div class="bar-fill" data-tauri-drag-region />
       <UpdateChip client={client} />
       <PeopleBar client={client} />
+      <WindowButtons />
     </header>
   );
 }
@@ -286,6 +289,8 @@ function TabItem({
           { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
           ...(client.has("vms") ? [{ label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) } as MenuItem] : []),
           { label: "Go to directory…", run: () => openPicker(client, client.active(tab.id)) },
+          // The desktop app (M46): this tab in a window of its own.
+          ...(desktopApp() ? [{ label: "Open in new window", run: () => openInNewWindow(client.active(tab.id)) } as MenuItem] : []),
           // M11: what changed in the active pane's repository, on its machine.
           ...(!client.state?.roles && client.active(tab.id) !== undefined
             ? [{ label: "Changes", run: () => openChanges(client, client.active(tab.id)!) } as MenuItem]
