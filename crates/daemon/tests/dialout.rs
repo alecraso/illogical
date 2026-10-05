@@ -6,19 +6,16 @@
 //! answers from after the sandbox is gone. Both daemons are real binaries on
 //! loopback; nothing ever connects to the sandbox's own port.
 
-mod listen;
-mod strays;
-
 use std::{
-    io::{Read, Write},
+    io::Read,
     net::TcpStream,
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
-    sync::atomic::{AtomicU32, Ordering},
-    time::{Duration, Instant},
+    process::{Command, Output, Stdio},
+    time::Duration,
 };
 
 use futures_util::StreamExt;
+use illogical_testkit::{Daemon, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::{
     connect_async,
@@ -28,112 +25,47 @@ use tokio_tungstenite::{
 const PUBLIC: &str = "home.example.ts.net";
 const OWNER: &str = "me@example.com";
 
-struct Daemon {
-    child: Child,
-    port: u16,
-    state: PathBuf,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        strays::remove(&self.state);
-    }
-}
-
-fn temp(what: &str) -> PathBuf {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let d = std::env::temp_dir().join(format!(
-        "ilg-dial-{what}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = std::fs::remove_dir_all(&d);
-    d
-}
-
 fn start(name: &str, extra: &[&str]) -> Daemon {
-    let state = temp(name);
-    let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
-        .args(["--name", name, "--tailscale-socket", "/nonexistent/tailscaled.sock"])
+    illogicald!(&format!("dial-{name}"))
+        .args(["--name", name])
+        .no_tailscale()
         .args(["--public-host", PUBLIC, "--owner", OWNER])
         .args(extra)
-        .arg("--state-dir")
-        .arg(&state)
         .env("PS1", "$ ")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut d = Daemon { child, port: 0, state };
-    d.port = listen::wait_port(&d.state);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while std::os::unix::net::UnixStream::connect(d.sock()).is_err()
-        || TcpStream::connect(("127.0.0.1", d.port)).is_err()
-    {
-        assert!(Instant::now() < deadline, "daemon did not start");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    d
+        .start()
 }
 
-impl Daemon {
-    fn sock(&self) -> PathBuf {
-        match std::fs::read_to_string(self.state.join("sock.path")) {
-            Ok(p) => PathBuf::from(p.trim()),
-            Err(_) => self.state.join("sock"),
-        }
-    }
+trait Http {
+    fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> (u16, String, String);
+    fn get_tcp(&self, path: &str) -> Value;
+}
 
-    fn url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
-    }
-
-    /// The local token loopback callers show.
-    fn token(&self) -> String {
-        std::fs::read_to_string(self.state.join("local-token")).unwrap_or_default().trim().to_owned()
-    }
-
+impl Http for Daemon {
     /// One HTTP request over TCP with these headers; status, headers, body.
     fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<Value>) -> (u16, String, String) {
-        let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
         let body = body.map(|b| b.to_string()).unwrap_or_default();
-        let mut req = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\nContent-Length: {}\r\n", body.len());
-        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
-            req.push_str(&format!("Host: 127.0.0.1:{}\r\n", self.port));
-        }
-        for (k, v) in headers {
-            req.push_str(&format!("{k}: {v}\r\n"));
-        }
+        let mut headers = headers.to_vec();
         // A program on this machine shows the local token (serve's
         // requests carry an identity instead, and hosts' paths a token of
         // their own).
         let own_credential = ["/api/sync/", "/api/hosts/join", "/api/dial"].iter().any(|p| path.starts_with(p));
+        let bearer = self.bearer();
         if !own_credential
             && !self.token().is_empty()
             && !headers
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case("authorization") || k.eq_ignore_ascii_case("tailscale-user-login"))
         {
-            req.push_str(&format!("Authorization: Bearer {}\r\n", self.token()));
+            headers.push(("Authorization", &bearer));
         }
         if !body.is_empty() {
-            req.push_str("Content-Type: application/json\r\n");
+            headers.push(("Content-Type", "application/json"));
         }
-        req.push_str("\r\n");
-        req.push_str(&body);
-        s.write_all(req.as_bytes()).unwrap();
-        let mut res = Vec::new();
-        s.read_to_end(&mut res).unwrap();
-        let res = String::from_utf8_lossy(&res).into_owned();
-        let (head, body) = res.split_once("\r\n\r\n").unwrap_or((&res, ""));
-        let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
-        (status, head.to_ascii_lowercase(), body.to_owned())
+        self.tcp(method, path, &headers, Some(&body))
     }
 
-    fn get(&self, path: &str) -> Value {
+    /// GET over TCP, which must answer 200 with JSON.
+    fn get_tcp(&self, path: &str) -> Value {
         let (status, _, body) = self.http("GET", path, &[], None);
         assert_eq!(status, 200, "GET {path}: {body}");
         // Chunked bodies: the JSON is the line that parses.
@@ -159,12 +91,8 @@ fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
-fn wait_for(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(secs);
-    while !f() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+fn wait_for(what: &str, secs: u64, f: impl FnMut() -> bool) {
+    illogical_testkit::wait_for(what, Duration::from_secs(secs), f);
 }
 
 /// A token minted on `home` for `name`, in a private file (in home's state
@@ -216,7 +144,7 @@ fn a_sandbox_that_only_dials_out_is_used_through_home_and_its_history_outlives_i
         host_entry(&home, "sbx").is_some_and(|h| h["last_seen_ms"].is_u64())
             && home.http("GET", "/h/sbx/api/host", &[], None).0 == 200
     });
-    let me = home.get("/h/sbx/api/host");
+    let me = home.get_tcp("/h/sbx/api/host");
     assert_eq!(me["name"], "sbx", "through home, it's the sandbox answering");
 
     // The CLI's --host goes through the home daemon.
@@ -286,7 +214,7 @@ fn a_sandbox_that_only_dials_out_is_used_through_home_and_its_history_outlives_i
     // History: pushed as it grows, kept encrypted.
     stdout(&cli(&home, &["--host", "sbx", "close", &format!("%{pane}")]));
     wait_for("the closed pane to sync", 20, || {
-        let s = home.get("/api/synced");
+        let s = home.get_tcp("/api/synced");
         s.as_array().unwrap().iter().any(|h| h["name"] == "sbx" && h["panes"][&pane]["closed_ms"].is_u64())
     });
     let key = home.state.join("synced/key");
@@ -344,26 +272,14 @@ fn the_sandbox_works_alone_and_reconnects_when_home_comes_back() {
     let mut home = start("home", &[]);
     let home_port = home.port;
     let (token, _) = token_file(&home, "lone");
-    let home_state = home.state.clone();
-    let _ = home.child.kill();
-    let _ = home.child.wait();
+    home.kill();
     let peer = format!("ws://127.0.0.1:{home_port}");
     let sbx = start("lone", &["--peer", &peer, "--token", token.to_str().unwrap()]);
     let alone = cli(&sbx, &["run", "--wait", "--", "echo alone"]);
     assert_eq!(alone.status.code(), Some(0));
 
     // Home comes up (same state, so the token is known) on the port it dials.
-    home.state = temp("unused");
-    let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", &format!("127.0.0.1:{home_port}"), "--shell", "bash --norc --noprofile", "--no-manager-env"])
-        .args(["--name", "home", "--tailscale-socket", "/nonexistent/tailscaled.sock", "--owner", OWNER])
-        .arg("--state-dir")
-        .arg(&home_state)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let home = Daemon { child, port: home_port, state: home_state };
+    home.start();
     wait_for("the sandbox to redial", 40, || {
         TcpStream::connect(("127.0.0.1", home_port)).is_ok() && home.http("GET", "/h/lone/api/host", &[], None).0 == 200
     });

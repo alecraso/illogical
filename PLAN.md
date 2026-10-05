@@ -4116,6 +4116,15 @@ One command: install over ssh, set up the service to outlive the login, run `ill
 
 **Done when:** from geek, a fresh throwaway box becomes a machine on control's page in one step plus the approval, and its pane opens from the phone. The same for jake-mini with no GUI session. The box survives a reboot.
 
+**Testing it without a person (2026-10-04):**
+
+- The e2e is a claim of the test stack's new `control` profile, `just testnet test control m52`, not a Rust test beside M51's in `ssh.rs`. It drives Docker, ssh, the CLI and an approving device the way a person would, and a shell claim does that with less code; like the `ssh` claims it has a `BREAK=1` form (polkit masked, so no lingering, so the box doesn't come back after `docker restart`).
+- The approval comes from a headless device, `web/fixtures/device.ts`: the web client's own e2e code without a page, lifted out of `control-smoke.ts`, which now uses it too. It's TypeScript, not Rust in `crates/e2e`, so it stays the browser's behaviour rather than a second implementation; `device-cli.ts` makes it usable from shell and Rust tests. "Its pane opens from the phone" is checked as the phone's browser does it: a device on the account reaches the pane end to end through control's relay. A real phone's browser is Track B's (phone device contexts).
+- In the stack, control has a fixed address on the inner network and that address is its public URL. A daemon accepts plain http only to loopback or a private IP (`private_http` in the daemon's control.rs), so a hostname like `http://control:8080` would be refused; allowing single-label hostnames was considered and not done, since it's a change to what the daemon trusts made only for a test.
+- `illogical join` passes `--account` through to `illogicald join`, so the join runs with no terminal to confirm the fingerprint in.
+- A box that can't reach control: the CLI recognises `illogicald join`'s "can't reach control at" and says so, naming the box and control, with `illogical --ssh box tui` as the way that still works. The `unreachable` claim checks it on box-bare, which has no route out, joining the hosted control.
+- Not covered by the stack: jake-mini with no GUI session (launchd), which needs Track E's macOS harness.
+
 #### M53: the desktop app over ssh (#156, gated, after M51)
 
 Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this only covers boxes that never join control. M46 shipped in 0.14.0 (#144), so only M51 is left as a dependency.
@@ -4125,6 +4134,69 @@ Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this on
 The host menu lists ssh hosts and has *Connect over ssh…*. The app runs the system `ssh` with M51's options and the user's agent and `~/.ssh/config`, and shows any password or 2FA prompt. It serves only itself, so it isn't a hub. This is the GUI for boxes that will never join control.
 
 **Done when:** on jake-air and geek, the desktop app opens a pane on a box reached only over ssh (Tailscale off, not joined to control), including through a ProxyJump bastion.
+
+### Desktop track (S25, M46–M48, added 2026-10-04)
+
+A desktop app for macOS and Linux: the web UI in a native window, with the app installing, supervising and upgrading `illogicald`. Control stays the SaaS layer, and the browser and phone clients stay as they are. The full plan is #130.
+
+**Decisions (2026-10-03, Jake):**
+
+- **The daemon stays a separate service.** The app bundles `illogicald` and `illogical`, registers the service and upgrades it in place. Sessions outlive the window; if the app owned the PTYs, quitting it would end every pane.
+- **Tauri 2, decided by S25.** Electron is the fallback if WebKitGTK isn't usable on geek.
+- **macOS and Linux together.** No Windows: it has no daemon.
+- **Unsigned macOS builds for now** (ad-hoc signed). Notarization waits for a Developer ID.
+
+**Order:** S25 (done, go), then S26 (#141, done: Tauri stays, native on a trigger), then M46 (window, installer, supervisor, packaging), then M47 (Finder and Nautilus) and M48 (connections in Rust, the device key in the Keychain or Secret Service).
+
+#### S25: desktop shell spike
+
+**Done 2026-10-04: go** (see [spikes/s25-desktop](spikes/s25-desktop/README.md)), on geek's run. Jake called it before the macOS half; those checks are in M46's done-when.
+
+- **WebGL xterm works in WebKitGTK 2.52.** Idle write-to-paint matches Chrome (7 ms). Under full-screen redraws WebKitGTK paints at about 60 fps where Chrome follows geek's 240 Hz display (33 ms against 8 ms); Jake didn't notice it in use.
+- **48 of 49 chords reach the page**, Ctrl-W/T/N/Q/Tab included. F10 is GTK's menu-bar key.
+- **IME:** Mozc and Hangul commit through xterm.
+- **Clipboard:** Ctrl-Shift-C/V work as in Chrome. The page can't write without a gesture, so OSC 52 writes through Rust.
+- **No `PushManager`** in the webview: notifications come from Rust.
+- Start to the daemon's page: about 280 ms on geek, 215–310 ms on jake-mini. `.deb` 5.8 MB before the daemon.
+
+#### S26: how native can it get (#141)
+
+**Done 2026-10-04** (see [spikes/s26-native](spikes/s26-native/README.md)). The spike recommended the hybrid on performance: a native window, native terminals, native chrome and rail, and web blocks in webviews.
+
+**Decision (Jake, 2026-10-04): M46 stays on Tauri.** The gap is about one frame at 60 Hz, Jake didn't feel WebKitGTK's in use, and every feature in the web client lands once instead of three times. Native terminals wait for a trigger:
+- someone feels terminal lag in the Tauri app;
+- the macOS app has to compete with Ghostty head to head;
+- Tauri hits a wall native wouldn't (keys, WKWebView).
+
+When one fires, start with native terminals on macOS (B2 in AppKit). S26's core is the seed for `crates/client`, which the TUI and M8 can use too.
+
+- **B2 (own renderer over libghostty-vt's render state, both platforms):** one shared Rust core (the daemon connection, a client-side libghostty-vt terminal that never answers queries, keys) under GTK4 (GSK, a render node per row) and AppKit (CoreText, a CALayer per row).
+  - It shows output a frame sooner than any browser: on geek, a 4.1 ms log flood against Chrome's 10.6 and WebKitGTK's 31, at 135 MB/s; on the Air, 15–17 ms against Chrome's and Safari's 29–30.
+  - IME and real typing worked on both.
+  - Missing so far: selection, the mouse, scrollback UI, links, accessibility.
+- **B1 (GhosttyKit surface running `illogical attach`):** works, but macOS only, emulates twice, and uses Ghostty's internal API.
+- **Level A:** libadwaita tabs and NSWindow tabs around webviews work. Each webview is a whole client, so a hybrid needs an **embed mode** in the web client.
+- **Level C:** a native attention rail is 80 lines. Rebuilding every block natively isn't worth it: browser, editor and app blocks are web pages anyway.
+
+#### M46: the app as window, installer and supervisor
+
+See #130. From S25:
+
+- The window loads the UI from the local daemon (`http://127.0.0.1:7681`, already an accepted origin).
+- Notifications from Rust, off the attention events the window already gets; the click opens the pane.
+- An OSC 52 handler in the client, writing through Rust in the app.
+- Clear GTK's F10 binding. On Linux, window buttons in the client's bar when the titlebar is the client's (`data-tauri-drag-region`), in place of the PWA's `env(titlebar-area-*)`.
+- macOS: an Edit-only menu (copy, paste, select all), so Cmd-W, T, N and Q reach the page.
+
+**Also done when (S25's macOS half):** on jake-mini, the bench against Chrome; Cmd-W, T, N, Q, H and M reach the page; Japanese and Korean IME; a notification click opens the pane; the dock badge shows the needs-you count. And on geek, a notification click opens the pane.
+
+#### M47: OS integration
+
+See #130.
+
+#### M48: native transport
+
+See #130.
 
 ## Acceptance tests (automated where possible)
 

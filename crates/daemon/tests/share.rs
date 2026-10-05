@@ -3,20 +3,15 @@
 //! refuses everything else: input, any message at all, other panes, the
 //! API, tagged nodes, after it expires, after it's revoked.
 
-mod listen;
-mod strays;
-
 use std::{
-    io::{BufRead, BufReader, Read, Write},
-    net::TcpStream,
+    io::{Read, Write},
     os::unix::net::UnixStream,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
 use futures_util::{SinkExt, StreamExt};
 use illogical_proto::{Frame, FrameKind};
+use illogical_testkit::{Daemon, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
@@ -27,89 +22,34 @@ const PUBLIC: &str = "geek.example.ts.net";
 const OWNER: &str = "me@example.com";
 const FRIEND: (&str, &str) = ("tailscale-user-login", "friend@example.com");
 
-struct Daemon {
-    child: Child,
-    port: u16,
-    state: PathBuf,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        strays::remove(&self.state);
-    }
-}
-
 fn start() -> Daemon {
-    let state = std::env::temp_dir().join(format!("ilg-share-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&state);
-    let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
-        .args(["--tailscale-socket", "/nonexistent/tailscaled.sock", "--public-host", PUBLIC, "--owner", OWNER])
-        .arg("--state-dir")
-        .arg(&state)
+    illogicald!("share")
+        .no_tailscale()
+        .args(["--public-host", PUBLIC, "--owner", OWNER])
         .env("PS1", "$ ")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut d = Daemon { child, port: 0, state };
-    d.port = listen::wait_port(&d.state);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while UnixStream::connect(d.sock()).is_err() {
-        assert!(Instant::now() < deadline, "daemon did not start");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    d
+        .wait_secs(10)
+        .start()
 }
 
-impl Daemon {
-    fn sock(&self) -> PathBuf {
-        match std::fs::read_to_string(self.state.join("sock.path")) {
-            Ok(p) => PathBuf::from(p.trim()),
-            Err(_) => self.state.join("sock"),
-        }
-    }
+trait Sharing {
+    fn api(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value);
+    fn http(&self, path: &str, headers: &[(&str, &str)]) -> (u16, String);
+    fn send(&self, pane: u64, text: &str);
+    fn capture(&self, pane: u64) -> String;
+    fn share(&self, pane: u64, ttl: u64) -> Value;
+}
 
+impl Sharing for Daemon {
     /// The API over the socket (the owner's CLI): status and JSON.
     fn api(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
-        let mut s = UnixStream::connect(self.sock()).unwrap();
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
-        s.write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        let mut r = BufReader::new(s);
-        let mut line = String::new();
-        r.read_line(&mut line).unwrap();
-        let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-        let mut rest = String::new();
-        r.read_to_string(&mut rest).unwrap();
-        let body = rest.split_once("\r\n\r\n").map(|x| x.1).unwrap_or("");
-        (status, serde_json::from_str(body).unwrap_or(Value::Null))
+        let (status, body) = self.raw(method, path, body);
+        (status, serde_json::from_str(&body).unwrap_or(Value::Null))
     }
 
-    /// One request over TCP with these headers: status and body.
+    /// One GET over TCP with these headers: status and body.
     fn http(&self, path: &str, headers: &[(&str, &str)]) -> (u16, String) {
-        let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
-        let mut req = format!("GET {path} HTTP/1.1\r\nConnection: close\r\n");
-        if !headers.iter().any(|(k, _)| *k == "host") {
-            req.push_str(&format!("Host: 127.0.0.1:{}\r\n", self.port));
-        }
-        for (k, v) in headers {
-            req.push_str(&format!("{k}: {v}\r\n"));
-        }
-        req.push_str("\r\n");
-        s.write_all(req.as_bytes()).unwrap();
-        let mut res = String::new();
-        s.read_to_string(&mut res).unwrap();
-        let (head, body) = res.split_once("\r\n\r\n").unwrap_or((&res, ""));
-        (head.split_whitespace().nth(1).unwrap().parse().unwrap(), body.to_owned())
+        let (status, _, body) = self.tcp("GET", path, headers, None);
+        (status, body)
     }
 
     fn send(&self, pane: u64, text: &str) {

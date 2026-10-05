@@ -1,0 +1,16 @@
+[package]
+name = "illogical-testkit"
+description = "The test harness for illogicald's integration tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+nix = { version = "0.31.3", features = ["signal", "process"] }
+serde_json = "1.0.151"
+tokio-tungstenite = "0.30.0"
+
+[lints]
+workspace = true

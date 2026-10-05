@@ -3,9 +3,6 @@
 //! systemd user service, so it needs a systemd user manager; it skips
 //! itself where there isn't one.
 
-mod listen;
-mod strays;
-
 use std::{
     path::PathBuf,
     process::Command,
@@ -15,6 +12,7 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use illogical_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg, State};
+use illogical_testkit::{listen, strays};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 

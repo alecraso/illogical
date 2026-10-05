@@ -228,9 +228,19 @@ e2e-sandbox: static
     cd web && pnpm exec playwright test e2e/sandbox.spec.ts
 
 # The local Docker test stack (testnet/README.md): up|test|break|down [profile] [claim...].
+# The control profile builds what it runs: the static binaries for Docker's
+# architecture (unless ILLOGICAL_TESTNET_BINARIES names others) and the CLI.
 testnet cmd="test" profile="ssh" *claims:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ {{profile}} = control ] && docker info >/dev/null 2>&1; then
+      case "{{cmd}}" in
+        up) arch=$(docker info --format '{{{{.Architecture}}')
+            case "$arch" in arm64) arch=aarch64 ;; amd64) arch=x86_64 ;; esac
+            [ -n "${ILLOGICAL_TESTNET_BINARIES:-}" ] || just static "$arch" >&2 ;;
+        test|break) {{cargo}} build -q -p illogical ;;
+      esac
+    fi
     case "{{cmd}}" in
       up) testnet/up.sh {{profile}} ;;
       test) testnet/test.sh {{profile}} {{claims}} ;;
