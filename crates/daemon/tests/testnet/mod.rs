@@ -90,16 +90,32 @@ pub fn require(profile: &str, host: &str, test: &str) -> bool {
         "{test} needs Docker, which isn't available (ILLOGICAL_SKIP_DOCKER=1 skips it)"
     );
     if !reachable(host) {
-        let st = Command::new(root().join("testnet/up.sh"))
-            .arg(profile)
-            .env("COMPOSE_PROJECT_NAME", name())
-            .stdout(Stdio::null())
-            .status()
-            .unwrap();
+        let mut up = Command::new(root().join("testnet/up.sh"));
+        up.arg(profile).env("COMPOSE_PROJECT_NAME", name()).stdout(Stdio::null());
+        // control mounts the box's binaries: the same ones the tests install
+        // (ILLOGICAL_SSH_BINARIES, or this build's `just static`), not
+        // up.sh's default of the source tree's target/.
+        if profile == "control"
+            && std::env::var_os("ILLOGICAL_TESTNET_BINARIES").is_none()
+            && let Some(dir) = box_binaries(&docker_arch())
+        {
+            up.env("ILLOGICAL_TESTNET_BINARIES", dir);
+        }
+        let st = up.status().unwrap();
         assert!(st.success(), "testnet/up.sh {profile} failed");
         assert!(reachable(host), "{host} doesn't answer after testnet/up.sh {profile}");
     }
     true
+}
+
+/// Docker's architecture, as a target triple names it (x86_64, aarch64).
+fn docker_arch() -> String {
+    let out = Command::new("docker").args(["info", "--format", "{{.Architecture}}"]).output().unwrap();
+    match String::from_utf8_lossy(&out.stdout).trim() {
+        "arm64" => "aarch64".into(),
+        "amd64" => "x86_64".into(),
+        a => a.into(),
+    }
 }
 
 /// The box's binaries for `arch`, or a failure saying how to build them:

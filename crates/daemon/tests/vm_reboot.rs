@@ -100,6 +100,8 @@ fn reboot(token: &str, cookie: &str, sprite: &str) {
         let out = Command::new("curl")
             .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST"])
             .args(["-H", &format!("Cookie: {cookie}"), "-H", "X-Wisp-UI: 1"])
+            // sandpitd, which took over wispd, names the header its own way.
+            .args(["-H", "X-Sandpit-UI: 1"])
             .arg(format!("{WISP}/ui/api/sprites/{sprite}/{what}"))
             .output()
             .unwrap();
