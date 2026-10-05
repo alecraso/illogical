@@ -374,6 +374,21 @@ impl Config {
         }
         env.push(("ILLOGICAL_PANE".into(), pane.to_string()));
         env.push(("ILLOGICAL_SOCK".into(), self.socket.display().to_string()));
+        // A box reached over ssh (M51) has no agent of its own: its panes
+        // use the one at a fixed path beside the socket, which `illogical
+        // bridge` points at the owner's forwarded agent while they're
+        // connected. An agent this machine has (a desktop's) is kept.
+        let live = |p: &str| std::os::unix::net::UnixStream::connect(p).is_ok();
+        let has_agent = env
+            .iter()
+            .find(|(k, _)| k == "SSH_AUTH_SOCK")
+            .map(|(_, v)| v.clone())
+            .or_else(|| std::env::var("SSH_AUTH_SOCK").ok())
+            .is_some_and(|p| live(&p));
+        if !has_agent {
+            env.retain(|(k, _)| k != "SSH_AUTH_SOCK");
+            env.push(("SSH_AUTH_SOCK".into(), self.socket.with_file_name("agent.sock").display().to_string()));
+        }
         // Claude Code in a pane finds us as its IDE (M28), and only us.
         if let Some(ide) = &self.ide {
             env.retain(|(k, _)| k != "CLAUDE_CODE_SSE_PORT");

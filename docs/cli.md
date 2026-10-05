@@ -112,6 +112,8 @@ illogical sandboxes                           # the provider's sandboxes and the
 illogical run --sandbox s1                    # a disposable shell on one, nothing installed there
 illogical sandboxes promote s1 --as s1        # a resident daemon there, a host reached through the tunnel
 illogical --host s1 ls                        # through the tunnel (wakes it)
+illogical --ssh me@box tui                    # a box you can ssh into; installs illogical there first if asked
+illogical hosts add box ssh://me@box          # saved: `illogical --host box …` runs your ssh to it
 illogical fs ls -l ~/src                      # files on this host (read-only)
 illogical fs cat %4:~/app/log.txt             # on the host %4 runs on (its VM); mN:PATH for machine N
 illogical fs watch ~/src                      # changes, as NDJSON (also stat, recent)
@@ -126,7 +128,18 @@ illogical mcp token --revoke laptop           # cut it off at its next call
 ```
 
 `--json` prints the API's JSON. `--host`, anywhere on the line, is another
-daemon; a machine (a VM) is `--machine mN`. `send` then `wait` only sees what happened
+daemon; a machine (a VM) is `--machine mN`.
+
+`--ssh DEST` reaches a box with your own `ssh` (your `~/.ssh/config`, keys
+and agent; a password or 2FA prompt shows in your terminal once). One master
+connection per box carries every command after it. The first time, if the
+box has no illogical, it offers to put this version in `~/.local/bin` there
+(the release for the box's platform, copied over ssh, so the box needs no
+network) and starts its daemon: a systemd user service with lingering where
+it can, detached otherwise. Declining is remembered.
+`ILLOGICAL_SSH_INSTALL=yes` answers yes, `ILLOGICAL_SSH` replaces the `ssh`
+command, and `ILLOGICAL_SSH_AGENT=no` keeps your agent here; otherwise panes
+on the box use it (for `git push`) while you're connected. `send` then `wait` only sees what happened
 after the send. The same calls are an HTTP API (`/api/...`, documented in
 `crates/proto/src/api.rs`) on the Unix socket and, behind the usual access
 checks, over the tailnet.

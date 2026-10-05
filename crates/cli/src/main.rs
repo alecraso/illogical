@@ -11,6 +11,7 @@ mod hook;
 mod hosts;
 mod http;
 mod mcp;
+mod ssh;
 mod tmux;
 mod tui;
 
@@ -33,8 +34,13 @@ struct Cli {
     socket: Option<PathBuf>,
     /// Talk to another daemon: a name from the local daemon's host list
     /// (`illogical hosts`), or a URL.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "ssh")]
     host: Option<String>,
+    /// Talk to the daemon on a box you can ssh into (`user@box`, or a Host
+    /// from ~/.ssh/config), with your own ssh. Offers to install illogical
+    /// there if it's missing.
+    #[arg(long, global = true, value_name = "DEST")]
+    ssh: Option<String>,
     /// Print the API's JSON instead of a summary.
     #[arg(long, global = true)]
     json: bool,
@@ -635,6 +641,14 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// On a box a client reaches over ssh (`--ssh`): join stdin and stdout
+    /// to this daemon's socket. Clients run it; people don't.
+    #[command(hide = true)]
+    Bridge {
+        /// Print what's installed and whether the daemon answers, as JSON.
+        #[arg(long)]
+        probe: bool,
+    },
     /// Other daemons to switch to (this daemon's host list).
     Hosts {
         #[command(subcommand)]
@@ -1160,6 +1174,11 @@ fn main() {
 }
 
 fn real_main(cli: Cli) -> anyhow::Result<i32> {
+    if let Command::Bridge { probe } = cli.cmd {
+        // On a box, for a client that ssh'd in: this daemon's socket on
+        // stdin and stdout.
+        return ssh::bridge(&socket(&cli), probe);
+    }
     if let Command::Install { args } = &cli.cmd {
         // The daemon beside this binary, else the one on PATH.
         use std::os::unix::process::CommandExt;
@@ -1193,7 +1212,11 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         return claude_ls_all(socket(&cli), conversations_path(*all, *live, cwd.clone(), *limit, words), cli.json);
     }
     let reads_history = matches!(cli.cmd, Command::History { .. } | Command::Search { .. } | Command::Tail { .. });
-    let (sock, gone) = match hosts::target(socket(&cli), cli.host.as_deref()) {
+    let resolved = match &cli.ssh {
+        Some(dest) => ssh::Remote::parse(dest).map(http::Target::Ssh),
+        None => hosts::target(socket(&cli), cli.host.as_deref()),
+    };
+    let (sock, gone) = match resolved {
         Ok(t) => (t, None),
         // A host that's gone (deleted, unreachable) may have left its
         // history here.
@@ -1212,6 +1235,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         Err(e) => return Err(e),
     };
     REMOTE.store(!matches!(sock, http::Target::Socket(_)), std::sync::atomic::Ordering::Relaxed);
+    // Over ssh: the master, illogical installed there, its daemon up.
+    if let http::Target::Ssh(r) = &sock {
+        r.prepare()?;
+    }
     let json_out = cli.json;
     // `run --home`: the local daemon too, and the host's name in its list.
     let (local_sock, host_name) = (socket(&cli), cli.host.clone());
@@ -1377,7 +1404,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
-        Command::Install { .. } | Command::Web { .. } => unreachable!("handled before connecting"),
+        Command::Install { .. } | Command::Web { .. } | Command::Bridge { .. } => {
+            unreachable!("handled before connecting")
+        }
         Command::Tmux { args } => return tmux::run(sock, &args),
         Command::Ls => {
             let v = request(&sock, "GET", "/api/panes", None)?.json()?;
@@ -2003,8 +2032,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             if vault.is_some() && fountain.is_none() && as_fountain.is_none() {
                 anyhow::bail!("--vault goes with --fountain or --as");
             }
-            // A VM has none of this host's directories.
-            let cwd = if vm || machine.is_some() {
+            // A VM, or another daemon's machine, has none of this host's
+            // directories.
+            let cwd = if vm || machine.is_some() || REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
                 cwd
             } else {
                 cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))

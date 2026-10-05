@@ -21,6 +21,10 @@ pub enum Transport {
     /// daemon in a sandbox that sleeps. Its URLs, if any, are tailnet ones
     /// to upgrade to once it's awake.
     Provider,
+    /// Over ssh, from each client (M51): `illogical --host NAME` runs the
+    /// system `ssh` to [`Host::ssh`]. No URLs; the web and the phone can't
+    /// reach it, only a terminal can.
+    Ssh,
 }
 
 /// Where a resident daemon lives: a sandbox, and its daemon's port there.
@@ -45,6 +49,10 @@ pub struct Host {
     /// For [`Transport::Provider`]: where it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderRef>,
+    /// For [`Transport::Ssh`]: ssh's destination (`user@box`, or a Host
+    /// from the client's `~/.ssh/config`). Nothing else is kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<String>,
     #[serde(default)]
     pub added_ms: u64,
     /// When the home daemon last reached it (for a provider host: last
@@ -73,6 +81,9 @@ pub struct AddHost {
     pub urls: Vec<String>,
     #[serde(default)]
     pub transport: Transport,
+    /// For [`Transport::Ssh`]: its destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<String>,
 }
 
 /// `GET /api/host`: who this daemon is.

@@ -22,7 +22,9 @@ pub enum HostsCmd {
     /// Add a daemon (or replace the one with this name).
     Add {
         name: String,
-        /// Its URL(s), best first: `https://box.tailnet.ts.net`.
+        /// Its URL(s), best first: `https://box.tailnet.ts.net`. Or one
+        /// `ssh://[user@]box[:port]` (M51): reached over ssh from each client,
+        /// with your own ssh and its ~/.ssh/config; only that is kept.
         #[arg(required = true)]
         urls: Vec<String>,
     },
@@ -135,6 +137,11 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
     // A host reached through the home daemon: one that dials out to it
     // (M4c), or a resident daemon in a sandbox, through the provider tunnel
     // (M4b; that also wakes it).
+    // Over ssh, from this client (M51).
+    if entry["transport"].as_str() == Some("ssh") {
+        let dest = entry["ssh"].as_str().with_context(|| format!("host {host} has no ssh destination"))?;
+        return Ok(Target::Ssh(crate::ssh::Remote::parse(dest)?));
+    }
     let via = match entry["transport"].as_str() {
         Some("dial_out") => Some("h"),
         Some("provider") => Some("tunnel"),
@@ -162,7 +169,7 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
 fn socket_of(t: &Target) -> PathBuf {
     match t {
         Target::Socket(p) | Target::Via(p, _) => p.clone(),
-        Target::Url(_) => unreachable!("the local daemon is a socket"),
+        Target::Url(_) | Target::Ssh(_) => unreachable!("the local daemon is a socket"),
     }
 }
 
@@ -194,6 +201,11 @@ pub fn run(
                     if h["transport"].as_str() == Some("dial_out") {
                         urls.push("(dials out, reached through here)");
                     }
+                    let ssh;
+                    if h["transport"].as_str() == Some("ssh") {
+                        ssh = format!("ssh {}", h["ssh"].as_str().unwrap_or("?"));
+                        urls.push(&ssh);
+                    }
                     let seen =
                         h["last_seen_ms"].as_u64().map(|t| format!("seen {}", ago(t))).unwrap_or("never seen".into());
                     let place = match h["provider"].as_object() {
@@ -214,6 +226,12 @@ pub fn run(
                 return Ok(());
             }
             v
+        }
+        Some(HostsCmd::Add { name, urls }) if urls.iter().any(|u| u.starts_with("ssh://")) => {
+            let [dest] = urls.as_slice() else { bail!("an ssh host has one ssh:// destination and no other URL") };
+            let dest = crate::ssh::Remote::parse(dest)?.dest;
+            let body = json!({"name": name, "urls": [], "transport": "ssh", "ssh": dest});
+            request(target, "POST", "/api/hosts", Some(&body))?.json()?
         }
         Some(HostsCmd::Add { name, urls }) => {
             request(target, "POST", "/api/hosts", Some(&json!({"name": name, "urls": urls, "transport": "tailnet"})))?

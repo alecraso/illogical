@@ -197,8 +197,12 @@ async fn install_async(opts: TailnetOpts) -> anyhow::Result<()> {
     let mut joined = false;
     if let (Some(home_url), Some(token)) = (&opts.home, &opts.join) {
         let token = read_secret(token)?;
-        match join(home_url, &token, AddHost { name: name.clone(), urls: urls.clone(), transport: Transport::Tailnet })
-            .await
+        match join(
+            home_url,
+            &token,
+            AddHost { name: name.clone(), urls: urls.clone(), transport: Transport::Tailnet, ssh: None },
+        )
+        .await
         {
             Ok(j) => {
                 println!("added to {home_url}'s hosts as {}", j.host.name);
