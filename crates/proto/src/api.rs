@@ -471,6 +471,11 @@ pub struct GuestInviteRequest {
     /// `--guest-ssh-host`, else its hostname].
     #[serde(default)]
     pub host: Option<String>,
+    /// Through control's ssh jump host (`true`), or straight to this
+    /// machine (`false`) [default: through control when the daemon is
+    /// joined to one that has a jump host and no address is named].
+    #[serde(default)]
+    pub relay: Option<bool>,
 }
 
 /// An ssh invite to a pane (M65). `token`, `command` and the pinning lines
@@ -506,6 +511,12 @@ pub struct GuestInvite {
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// Through control's ssh jump host (the daemon is behind NAT).
+    #[serde(default)]
+    pub relay: bool,
+    /// The jump host, as `host[:port]` (with `command` only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump: Option<String>,
 }
 
 /// `GET /api/sync/state`: what the home daemon holds of the calling host's

@@ -210,6 +210,11 @@ impl Relay {
         self.live.lock().unwrap().contains_key(id)
     }
 
+    /// The daemon's dial-out mux, if it's connected.
+    pub fn daemon_mux(&self, id: &str) -> Option<Mux> {
+        self.mux(id)
+    }
+
     fn mux(&self, id: &str) -> Option<Mux> {
         self.live.lock().unwrap().get(id).map(|l| l.mux.clone())
     }
@@ -322,7 +327,9 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket, ticket: Ticket)
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 Some(Ok(Message::Text(t))) => {
                     heard = Instant::now();
-                    crate::forge::from_daemon(&app, &id, generation, t.as_str());
+                    if !crate::guest_jump::from_daemon(&app, &id, generation, t.as_str()) {
+                        crate::forge::from_daemon(&app, &id, generation, t.as_str());
+                    }
                 }
                 Some(Ok(_)) => heard = Instant::now(),
             },
@@ -345,6 +352,7 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket, ticket: Ticket)
     }
     drop(live);
     app.forge.drop_daemon(&id, generation);
+    app.guest_routes.drop_daemon(&id, generation);
     let _ = app.db.seen(&id, None, now_ms());
     info!(daemon = %id, "daemon left the relay");
 }

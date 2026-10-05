@@ -1773,6 +1773,7 @@ dependencies = [
  "p256",
  "reqwest",
  "rusqlite",
+ "russh",
  "rust-embed",
  "serde",
  "serde_json",

@@ -646,7 +646,9 @@ enum Command {
     ///
     /// With --guest: an invite for someone with only OpenSSH. It prints an
     /// `ssh` command to send them, with this machine's host key pinned.
-    /// Read-only unless --rw; one login unless --reusable.
+    /// Read-only unless --rw; one login unless --reusable. A machine joined
+    /// to control with no --addr (or --guest-ssh-host) is reached through
+    /// control's ssh jump host, so a box behind NAT works too.
     Share {
         pane: Option<Pane>,
         /// How long it works (e.g. 30m, 2h, 7d; a week at most, a day with
@@ -668,9 +670,13 @@ enum Command {
         #[arg(long, requires = "guest")]
         name: Option<String>,
         /// The address they should ssh to [default: the daemon's
-        /// --guest-ssh-host, else its hostname].
-        #[arg(long = "addr", requires = "guest")]
+        /// --guest-ssh-host, else its hostname]. Not through control.
+        #[arg(long = "addr", requires = "guest", conflicts_with = "relay")]
         addr: Option<String>,
+        /// Through control's ssh jump host, or fail [default: when this
+        /// machine is joined to control and no address is set].
+        #[arg(long, requires = "guest")]
+        relay: bool,
     },
     /// ssh invites that still work (`share --guest`); `guests revoke ID` ends
     /// one and cuts off anyone using it.
@@ -1544,10 +1550,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         flag.or(gone.clone()).map(|h| format!("host={}", enc(if h == "all" { "*" } else { &h })))
     };
     match cli.cmd {
-        Command::Share { pane, ttl, guest: true, rw, reusable, name, addr } => {
+        Command::Share { pane, ttl, guest: true, rw, reusable, name, addr, relay } => {
             let body = json!({
                 "pane": here(pane)?, "ttl_secs": duration(&ttl)?, "rw": rw, "reusable": reusable,
-                "label": name, "host": addr,
+                "label": name, "host": addr, "relay": relay.then_some(true),
             });
             let v = request(&sock, "POST", "/api/guests", Some(&body))?.json()?;
             if json_out {
@@ -1555,10 +1561,16 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             } else {
                 println!("{}", v["command"].as_str().unwrap_or_default());
                 let left = v["expires_ms"].as_u64().unwrap_or(0).saturating_sub(now_ms()) / 1000;
+                if let Some(jump) = v["jump"].as_str() {
+                    eprintln!(
+                        "Through control's ssh jump host {jump} (ssh -J, written out so its key is pinned \
+                         too): control carries the session and can't read it."
+                    );
+                }
                 eprintln!(
                     "Invite {}: {}, {}, for {}. `illogical guests revoke {}` ends it.\n\
                      The host key is pinned in the command ({}). ssh older than 8.5 has no \
-                     KnownHostsCommand: save this line to a file and pass -o UserKnownHostsFile=<file>:\n{}",
+                     KnownHostsCommand: save this to a file and pass -o UserKnownHostsFile=<file>:\n{}",
                     v["id"],
                     if rw { "read-write" } else { "read-only" },
                     if reusable { "reusable" } else { "one login" },

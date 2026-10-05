@@ -442,36 +442,63 @@ fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
 async fn connect_once(opts: &PeerOpts, accept: &mpsc::UnboundedSender<DuplexStream>) -> anyhow::Result<()> {
     let ws = open_socket(opts).await?;
     info!(peer = opts.url, "tunnel to the home daemon up");
-    serve_mux(ws, accept, None, None).await
+    serve_mux(ws, accept, None, None, None).await
 }
 
-/// Text messages on control's relay socket besides `trust` (M40): what
-/// to do with those that come, and the latest one to send (sent on
-/// connect and whenever it changes).
+/// Text messages on control's relay socket besides `trust` (M40, M65):
+/// what to do with those that come, and messages to send: the latest of
+/// each `out` (sent on connect and whenever it changes).
 pub struct Texts<'a> {
     pub on_text: &'a (dyn Fn(&str) + Send + Sync),
-    pub out: tokio::sync::watch::Receiver<Option<String>>,
+    pub out: Vec<tokio::sync::watch::Receiver<Option<String>>>,
 }
 
 /// The host end of a mux over `ws`: streams the other end opens go to
-/// `accept`, until the socket closes or goes quiet.
+/// `accept` (raw streams to `raw`, with their kind, when given), until the
+/// socket closes or goes quiet.
 /// A text message `trust` (control's relay) wakes `nudge`; others go to
 /// `texts`.
 pub async fn serve_mux(
     ws: Ws,
     accept: &mpsc::UnboundedSender<DuplexStream>,
+    raw: Option<&mpsc::UnboundedSender<(Vec<u8>, DuplexStream)>>,
     nudge: Option<&Notify>,
     texts: Option<Texts<'_>>,
 ) -> anyhow::Result<()> {
-    let (mux, mut out) = Mux::new(Some(accept.clone()));
+    let (mux, mut out) = Mux::with_raw(Some(accept.clone()), raw.cloned());
     let (mut tx, mut rx) = ws.split();
-    let (on_text, mut say) = match texts {
-        Some(t) => (Some(t.on_text), Some(t.out)),
-        None => (None, None),
+    // Each `out`'s latest message, now and as it changes, in one queue.
+    let (say_tx, mut say) = mpsc::unbounded_channel::<String>();
+    let mut sayers = Vec::new();
+    let on_text = match texts {
+        Some(t) => {
+            for mut w in t.out {
+                let say_tx = say_tx.clone();
+                sayers.push(tokio::spawn(async move {
+                    loop {
+                        if let Some(m) = w.borrow_and_update().clone()
+                            && say_tx.send(m).is_err()
+                        {
+                            return;
+                        }
+                        if w.changed().await.is_err() {
+                            return;
+                        }
+                    }
+                }));
+            }
+            Some(t.on_text)
+        }
+        None => None,
     };
-    if let Some(m) = say.as_mut().and_then(|s| s.borrow_and_update().clone()) {
-        tx.send(tungstenite::Message::Text(m.into())).await?;
+    drop(say_tx);
+    struct Abort(Vec<tokio::task::JoinHandle<()>>);
+    impl Drop for Abort {
+        fn drop(&mut self) {
+            self.0.iter().for_each(|h| h.abort());
+        }
     }
+    let _sayers = Abort(sayers);
     let mut ping = tokio::time::interval(PING_EVERY);
     let mut heard = Instant::now();
     let result = loop {
@@ -500,21 +527,8 @@ pub async fn serve_mux(
             Some(f) = out.recv() => {
                 if let Err(e) = tx.send(tungstenite::Message::Binary(f.into())).await { break Err(e.into()) }
             }
-            changed = async {
-                match say.as_mut() {
-                    Some(s) => s.changed().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                match changed {
-                    Ok(()) => {
-                        let m = say.as_mut().and_then(|s| s.borrow_and_update().clone());
-                        if let Some(m) = m && let Err(e) = tx.send(tungstenite::Message::Text(m.into())).await {
-                            break Err(e.into());
-                        }
-                    }
-                    Err(_) => say = None,
-                }
+            Some(m) = say.recv() => {
+                if let Err(e) = tx.send(tungstenite::Message::Text(m.into())).await { break Err(e.into()) }
             }
             _ = ping.tick() => {
                 if heard.elapsed() > DEAD_AFTER {

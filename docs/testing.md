@@ -606,7 +606,8 @@ reached only over ssh.
 | `just testnet test control m52` | #155 (M52): one step plus the approval, the pane opens from the phone, ssh out of the picture, the box survives a reboot | on a fresh box-systemd, `illogical --ssh box-systemd join` installs and starts the daemon and prints a code; the device approves it; the box is on the device list and online; with the CLI's ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the pane answers over the relay again | promise 4: the join over ssh, the approval, the relay with ssh gone, or coming back after a reboot (which also rests on promise 2) |
 | `just testnet test control unreachable` | #155 (M52): "a box that can't reach control says so and stays reachable over `--ssh`" | box-bare, with no route out, joins the hosted control; the output must name the box and control and give `illogical --ssh box-bare tui`, and `--ssh box-bare ls` still works | promise 5 |
 | `just testnet test control m49` | #149 (M49) | box-systemd and box-bare join over ssh; the CLI on the bastion, with no daemon, logs in with a code the device approves, lists both from control, and runs, lists and captures on box-bare directly and box-systemd through the relay ([M49](#m49-the-cli-through-control)) | the CLI through control (login, `hosts`, direct or relayed routing); the joins it starts with are promise 4 |
-| `crates/daemon/tests/guest_ssh.rs`, `web/e2e/guest-ssh.spec.ts` | #198 (M65): the direct path and the pane menu entry | the system OpenSSH client as a guest against a dev daemon ([below](#guest-ssh-m54)) | promise 6; the test's name says which part (read-only, read-write, ending a session, refusals, the CLI) |
+| `crates/daemon/tests/guest_ssh.rs`, `web/e2e/guest-ssh.spec.ts` | #198 (M65): the direct path and the pane menu entry | the system OpenSSH client as a guest against a dev daemon ([below](#guest-ssh-m65)) | promise 6; the test's name says which part (read-only, read-write, ending a session, refusals, the CLI) |
+| `guest_ssh.rs`'s `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host` | #253 (M65's relay) | box-systemd joined to the `control` profile's control, a guest on the host through control's jump host | promise 6 for a box behind NAT, and control can't read the pane |
 | `testnet/measure-tailnet.sh` (`just testnet measure tailnet`) | #153 (S28): the tailnet comparison | installs illogical on ts-box over ssh from ts-client, checks both paths see the same panes, then times `illogical ls` and an 8 MiB `illogical export` over `--ssh` and over the tailnet | one path no longer reaches the daemon, or the two disagree about its panes. Slower numbers don't fail it: compare them with `spikes/s28-ssh/README.md` |
 | `just macos launchd` | #153 (S28) and #155 (M52): jake-mini with no GUI session | in a fresh macOS VM, a user who never had a GUI session runs `illogicald install` over ssh: it installs the background agent, warns that it won't start after a reboot by itself, and the daemon and pane outlive the ssh session; `illogical --ssh` from the host starts it and passes the warning on; `install --system` survives a VM restart with nobody logged in, its pane restored; `uninstall` leaves nothing of either ([its claims](#the-tests)) | promise 2 on macOS: the install a Mac reached only over ssh gets, and what it says about reboots |
 
@@ -659,8 +660,27 @@ ssh config and agent stay out of it. They check:
 - `illogical share --guest` prints a command that works, and `illogical
   guests` lists and revokes.
 
+The relay path, `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host`,
+runs against the `control` profile (Docker; `just static` first, and
+`node` for the approving device). box-systemd, which has no route out but
+to control and which nothing on the host can reach, joins control over ssh
+and runs a pane; `illogical --ssh box-systemd share --guest` then gives a
+command through control's jump host (`127.0.0.1:22982`,
+`ILLOGICAL_TESTNET_GUEST_SSH_PORT`), and a guest on the host runs it. The
+hop's `ssh` is wrapped in a `tee` both ways, which records exactly what
+control's jump host carried for the session. The test checks:
+
+- the guest sees the pane's screen and its live output, and `illogical
+  guests` on the box counts them;
+- what control carried starts with the daemon's `SSH-2.0-` banner and has
+  neither the pane's text nor the token in it, and control's log has
+  neither (nor the route): control relays ciphertext;
+- a wrong route, and the same command after `guests revoke`, are refused
+  at the hop, with nothing passed on to the daemon.
+
 Run them with `cargo test -p illogicald --test guest_ssh`. They skip,
-saying so, if there's no `ssh` on PATH. `web/e2e/guest-ssh.spec.ts`
+saying so, if there's no `ssh` on PATH; the relay test fails without
+Docker unless ILLOGICAL_SKIP_DOCKER=1. `web/e2e/guest-ssh.spec.ts`
 covers *Invite over ssh…* in the pane menu, on desktop and phone viewports,
 with the same system ssh (`pnpm exec playwright test e2e/guest-ssh.spec.ts`
 in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
@@ -670,16 +690,12 @@ in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
 - **Tailscale SSH's check mode** (S28): it sends the user to an identity
   provider's login, so no test can answer whether its prompt shows in the
   client's terminal. It's in [By hand](#by-hand).
-- **The guest ssh relay path** (M65, through control's ssh jump host):
-  not built. `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host`
-  in `guest_ssh.rs` is an `#[ignore]`d stub until it is, and its test will
-  run against the `control` profile.
 - **M49's attach, `tui` and event streams through control, and team
   machines through control**: not built, so `m49` covers `run`, `ls` and
   `capture` only.
 - **M53**, the desktop app over ssh: gated (PLAN.md), no tests.
 
-The relay path and M49's streams are in [Planned](#planned).
+M49's streams are in [Planned](#planned).
 
 ## A fresh Mac: the tart VM harness
 
@@ -834,7 +850,6 @@ Real gaps, each one automatable:
   needs the Simulator, so the Xcode image (#257). macOS Safari runs
   unattended with `testnet/macos/s27-safari.sh`.
 - **The tart tests in CI** on the macos-arm64 runner ([above](#on-the-macos-arm64-runner)).
-- **The guest ssh relay path** (M65), once control's jump host is built.
 - **M49's attach, `tui` and event streams, and team machines, through
   control**, once built.
 - **Control checking GitHub's signature on a real webhook delivery**: it
