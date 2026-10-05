@@ -57,9 +57,19 @@
 #           control, with no route out) says so, naming the box, control
 #           and `illogical --ssh box tui`, and is still reachable over
 #           --ssh. Broken: it joins the stack's control, which it can reach.
+#   m49     M49 end to end: box-systemd and box-bare join the stack's
+#           control (approved by the headless device); box-bare's daemon
+#           also listens on the inner network and lists that URL, and
+#           box-systemd lists none. On the bastion, which has the CLI and no
+#           daemon (so no hosts.json), `illogical login` shows a code the
+#           device approves; then `illogical hosts` lists both machines
+#           from control, and `--host box-bare` (direct) and `--host
+#           box-systemd` (relayed) each `run`, `ls` and `capture`. Broken:
+#           the CLI isn't logged in, so neither name resolves.
 #
-# Needs `testnet/up.sh <profile>` first. Exit codes: 0 every claim held (or
-# Docker is unavailable, a clean skip), 1 a claim failed, 2 usage.
+# Needs `testnet/up.sh <profile>` first. Exit codes: 0 every claim held, 1 a
+# claim failed or there's no Docker (ILLOGICAL_SKIP_DOCKER=1 makes that a
+# loud skip with exit 0: nothing runs), 2 usage.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,10 +79,9 @@ PROFILE="${1:-ssh}"; shift || true
 CFG="$STATE/ssh_config"
 BREAK="${BREAK:-}"
 SSH_CLAIMS="login jump inner bare stdio agent push linger"
-CONTROL_CLAIMS="signin reach m52 unreachable"
+CONTROL_CLAIMS="signin reach m52 unreachable m49"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+need_docker
 
 case "$PROFILE" in
   ssh) CLAIMS="$SSH_CLAIMS" ;;
@@ -297,6 +306,92 @@ claim_unreachable() {
   # Leave it bare for the ssh profile's claims.
   fresh "$box" || true
   return "$rc"
+}
+
+# Join a box to the stack's control over ssh, approved by the device
+# (signed in already). Its daemon is up when this returns.
+join_box() {
+  local box="$1" fp="$2" code="" pid
+  cli --ssh "$box" join "$CONTROL_URL" --account "$fp" < /dev/null > "$WORK/join-$box.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 120); do
+    code="$(sed -n 's/.*#join=\([A-Z0-9]*-[A-Z0-9]*\).*/\1/p' "$WORK/join-$box.out" | head -1)"
+    [ -n "$code" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  if [ -z "$code" ]; then note "join $box: no code"; cat "$WORK/join-$box.out" >&2; kill "$pid" 2>/dev/null; return 1; fi
+  dev approve "$code" > /dev/null || { kill "$pid" 2>/dev/null; return 1; }
+  wait "$pid" || { note "join $box failed"; cat "$WORK/join-$box.out" >&2; return 1; }
+  dev online "$box" 60 > /dev/null
+}
+
+claim_m49() {
+  local fp code pid b out pane ok
+  # The bastion is the CLI's machine: on the inner network, with no daemon.
+  # Leave it as it was, whatever happens.
+  # shellcheck disable=SC2329,SC2317 # run by the trap below
+  m49_tidy() { s bastion 'rm -rf ~/.local/bin/illogical ~/.config/illogical' >/dev/null 2>&1 || true; }
+  m49_tidy
+  if ! fresh box-bare || ! fresh box-systemd; then note "m49: couldn't recreate the boxes"; return 1; fi
+  fp="$(signin "m49-$$-$RANDOM" | field fingerprint)"
+  [ -n "$fp" ] || { note "m49: no device signed in"; return 1; }
+  join_box box-systemd "$fp" || return 1
+  join_box box-bare "$fp" || return 1
+  # box-bare: reachable on the inner network too, and says so to control.
+  # shellcheck disable=SC2016 # expanded on the box
+  s box-bare 'pkill -x illogicald; for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x illogicald >/dev/null || break; sleep 0.5; done
+    ILLOGICAL_DIRECT_URL=http://box-bare:7681 nohup setsid ~/.local/bin/illogicald --keep-panes --listen 0.0.0.0:7681 \
+      </dev/null >"$HOME/.local/state/illogicald.log" 2>&1 &' || return 1
+  for _ in $(seq 1 60); do
+    dev online box-bare 2 2>/dev/null | grep -q 'box-bare:7681' && break
+    sleep 1
+  done
+  dev online box-bare 2 | grep -q 'box-bare:7681' || { note "m49: box-bare doesn't list its direct URL"; return 1; }
+  # The CLI on the bastion, as the boxes got theirs.
+  s bastion 'mkdir -p ~/.local/bin && cat > ~/.local/bin/illogical && chmod 755 ~/.local/bin/illogical' \
+    < "$ILLOGICAL_TESTNET_BINARIES/illogical" || return 1
+  if [ -z "$BREAK" ]; then
+    s bastion ".local/bin/illogical login $CONTROL_URL --name bastion --account $fp" < /dev/null > "$WORK/login.out" 2>&1 &
+    pid=$!
+    code=""
+    for _ in $(seq 1 60); do
+      code="$(sed -n 's/.*#join=\([A-Z0-9]*-[A-Z0-9]*\).*/\1/p' "$WORK/login.out" | head -1)"
+      [ -n "$code" ] && break
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    [ -n "$code" ] || { note "m49: illogical login showed no code"; cat "$WORK/login.out" >&2; m49_tidy; return 1; }
+    dev approve "$code" > /dev/null || { kill "$pid" 2>/dev/null; m49_tidy; return 1; }
+    if ! wait "$pid" || ! grep -q "Logged in." "$WORK/login.out"; then
+      note "m49: login failed"; cat "$WORK/login.out" >&2; m49_tidy; return 1
+    fi
+    dev devices | grep -q '"kind":"cli","name":"bastion"' || { note "m49: the CLI isn't on the device list"; m49_tidy; return 1; }
+  fi
+  ok=1
+  s bastion '.local/bin/illogical hosts' > "$WORK/hosts.out" 2>&1 || ok=0
+  grep -q '^box-bare .*direct http://box-bare:7681.*(control: ' "$WORK/hosts.out" || ok=0
+  grep -q '^box-systemd .*relayed.*(control: ' "$WORK/hosts.out" || ok=0
+  [ "$ok" = 1 ] || { note "m49: illogical hosts on the bastion:"; cat "$WORK/hosts.out" >&2; }
+  for b in box-bare:direct box-systemd:relayed; do
+    local how="${b#*:}"; b="${b%%:*}"
+    # shellcheck disable=SC2016 # $((...)) is for the pane's shell
+    out="$(s bastion "ILLOGICAL_VERBOSE=1 .local/bin/illogical --host $b --json run -- 'echo M49-$b-\$((6*7))'" 2>&1)" || { note "m49: run on $b: $out"; ok=0; continue; }
+    grep -q "$b: $how" <<< "$out" || { note "m49: $b wasn't reached $how: $out"; ok=0; }
+    pane="$(sed -n 's/.*"pane": *\([0-9]*\).*/\1/p' <<< "$out" | head -1)"
+    [ -n "$pane" ] || { note "m49: no pane from $b: $out"; ok=0; continue; }
+    s bastion ".local/bin/illogical --host $b ls" | grep -q "^%$pane " || { note "m49: ls on $b doesn't show %$pane"; ok=0; }
+    local seen=0
+    for _ in $(seq 1 30); do
+      if s bastion ".local/bin/illogical --host $b capture $pane" 2>/dev/null | grep -q "M49-$b-42"; then seen=1; break; fi
+      sleep 0.5
+    done
+    [ "$seen" = 1 ] || { note "m49: capture on $b never showed M49-$b-42"; ok=0; }
+  done
+  m49_tidy
+  # Leave box-bare bare for the ssh profile's claims.
+  fresh box-bare || true
+  [ "$ok" = 1 ]
 }
 
 failed=""

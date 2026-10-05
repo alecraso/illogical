@@ -18,7 +18,7 @@ just e2e         # the browser tests, in the system Chrome
 |---|---|---|
 | `cargo test --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/` | Linux and macOS |
 | `just e2e-interop` (in `just test`) | the browser's end-to-end crypto (`web/src/e2e`) against Rust's (`crates/e2e`): certificate vectors made by `crates/e2e/examples/interop.rs`, and a Noise handshake with its `responder` | Linux and macOS |
-| `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and a real daemon; headless devices sign in, enroll, approve the daemon's join code and reach it directly and through the relay | Linux and macOS |
+| `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and real daemons; headless devices sign in, enroll, approve the daemons' join codes and reach them directly and through the relay; the CLI (M49) logs in with a code the device approves and, with no daemon of its own, runs, lists and captures on one machine directly and one through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one) | no |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
 | `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): it opens on a static daemon's page, follows a join to the app's sign-in (a stand-in control) and a leave back (#204) | no |
@@ -172,13 +172,49 @@ d pane box MARKER                                         # round-trip through i
 ```
 
 `illogicald join --account <fingerprint>` (and `illogical join
---account`) takes the account without asking; the fingerprint is what
-`signin` printed. `just control-smoke` and the testnet's `control` claims
-use both.
+--account`, and `illogical login --account`) takes the account without
+asking; the fingerprint is what `signin` printed. `just control-smoke` and
+the testnet's `control` claims use both. `approve` takes a CLI's code from
+`illogical login` as well as a daemon's.
+
+### M49: the CLI through control
+
+Three tests cover M49, from fastest to most faithful:
+
+- `just control-smoke` (in `just test`, so in CI): `illogical login` on
+  loopback, approved by the headless device, then `--host box` (direct, it
+  has `--direct-url`) and `--host box2` (no URL, so relayed) each `run`,
+  `ls` and `capture`, with the CLI's `ILLOGICAL_SOCK` pointing at no
+  daemon. `illogical-control`'s own `routing_wire` test checks the join
+  and the signed requests (`cargo test -p illogical-control the_cli_joins`).
+- `web/e2e/host-menu-control.spec.ts` (`just e2e`): a daemon joined by
+  code (approved by the device) has *All your machines…* in its host menu,
+  opening control's page; one that isn't joined doesn't.
+- The testnet's `m49` claim, which needs Docker:
+
+  ```sh
+  just testnet up control
+  just testnet test control m49        # PASS
+  BREAK=1 just testnet test control m49  # must FAIL: the CLI isn't logged in
+  ```
+
+  box-systemd and box-bare join the stack's control over ssh; box-bare's
+  daemon is restarted listening on the inner network with
+  `ILLOGICAL_DIRECT_URL=http://box-bare:7681`, and box-systemd lists no
+  URL, so it's only reachable through the relay. The CLI runs on the
+  bastion (on the inner network, no daemon, no `hosts.json`): `illogical
+  login` there prints a code that `device-cli.ts approve` approves, then
+  `--host box-bare` must report "direct" and `--host box-systemd`
+  "relayed" (`ILLOGICAL_VERBOSE=1`), and both `run`, `ls` and `capture`.
+  Beside another worktree's stack: `COMPOSE_PROJECT_NAME=illo-j
+  ILLOGICAL_TESTNET_INNER_NET=10.229.85 ILLOGICAL_TESTNET_SSH_PORT=22955
+  ILLOGICAL_TESTNET_CONTROL_PORT=22985 ILLOGICAL_TESTNET_FAKES_PORT=22986`.
 
 ## Tests that need something extra
 
-These skip, saying why, unless what they need is there:
+These skip, saying why, unless what they need is there. The testnet is
+the exception: missing Docker fails it, and only `ILLOGICAL_SKIP_DOCKER=1`
+skips it (with a banner saying nothing ran).
 
 | Test | Needs |
 |---|---|
@@ -187,7 +223,7 @@ These skip, saying why, unless what they need is there:
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
 | `just testnet test ssh`, `ssh.rs` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
-| `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries |
+| `just testnet test control` (M52 and M49 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries. Without Docker it fails; `ILLOGICAL_SKIP_DOCKER=1` skips, saying nothing ran |
 
 ## By hand
 

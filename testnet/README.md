@@ -15,10 +15,12 @@ ssh -F testnet/.state/ssh_config box-bare   # or bastion, box-systemd
 
 just testnet up control        # the ssh profile, plus illogical-control and its fakes
 just testnet test control m52  # M52 end to end
+just testnet test control m49  # M49: the CLI logged in, reaching a direct and a relayed box
 ```
 
-Every script prints `SKIP: Docker is not available` and exits 0 without
-Docker. The claims expect fresh boxes: after installing anything on one,
+Without Docker every script fails (exit 1), so a run that checked nothing
+never passes. `ILLOGICAL_SKIP_DOCKER=1` turns that into a skip (exit 0)
+that says in a banner that nothing ran. The claims expect fresh boxes: after installing anything on one,
 `just testnet down` and `up` again (`bare` fails otherwise, as it should).
 
 ## Profiles
@@ -103,6 +105,7 @@ The `control` profile's:
 | `reach` | box-systemd, with no route out, reaches control at its inner address | control taken off the inner network |
 | `m52` | on a fresh box-systemd, `illogical --ssh box-systemd join` installs, starts the daemon and shows a code; the device approves it; the box is on the account's device list and online; with the ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the box is back on the relay and the pane answers | polkit masked, so no lingering: the daemon doesn't come back after the restart |
 | `unreachable` | box-bare joining the hosted control (no route out) is told it can't reach control, with `illogical --ssh box-bare tui` as the way in, and `--ssh` still works | joining the stack's control, which it can reach |
+| `m49` | box-systemd and box-bare join the stack's control (the device approves both); box-bare's daemon also listens on the inner network and lists `http://box-bare:7681`, box-systemd lists no URL. On the bastion (the CLI copied there, no daemon, so no `hosts.json`), `illogical login` shows a code and the device approves it; `illogical hosts` lists both from control, marked; `--host box-bare` (direct) and `--host box-systemd` (relayed) each `run`, `ls` and `capture` | the CLI isn't logged in: neither name resolves |
 
 ## Conventions
 

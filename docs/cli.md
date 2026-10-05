@@ -95,7 +95,10 @@ illogical attention [--json]                  # what wants you and why: ask, fai
 illogical ask                                 # Claude Code's AskUserQuestion hook (below)
 illogical hook                                # Claude Code's permission prompts as cards anyone on the team answers (below)
 illogical inbox                               # Claude Code's background Stop hook: follow-ups from the team (below)
-illogical hosts                               # the home daemon's other hosts, last seen
+illogical hosts                               # the home daemon's other hosts, last seen, and control's machines once logged in
+illogical login [--account FP]                # make this CLI one of your devices on control (approve its code on a signed-in device)
+illogical --host mini capture %2              # a machine on your control account, direct or relayed (nothing in hosts.json)
+illogical logout                              # forget the CLI's key for control
 illogical hosts add box https://box.<tailnet>.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
 illogical --host box run --wait -- make       # any command, on another host
