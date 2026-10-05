@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>S30 MLS in the browser</title>
+<pre id="out">loading…</pre>
+<script type="module">
+// Open with ?variant=wasm-rustcrypto&sizes=2,10,50&reps=9 (served from this directory).
+const q = new URLSearchParams(location.search);
+const variant = q.get("variant") || "wasm-rustcrypto";
+const out = document.getElementById("out");
+const t0 = performance.now();
+const m = await import(`./pkg/${variant}/web/s30_mls.js`);
+await m.default();
+const load = performance.now() - t0;
+const demo = m.demo();
+const ok = demo.includes("bob read 0 of 2 messages sent after his removal");
+const rows = JSON.parse(m.bench(q.get("sizes") || "2,10,50", Number(q.get("reps") || 9)));
+window.s30 = { variant, load_ms: load, demo_ok: ok, rows, ua: navigator.userAgent };
+out.textContent = JSON.stringify(window.s30, null, 1);
+</script>
