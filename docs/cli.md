@@ -103,6 +103,8 @@ illogical inbox                               # Claude Code's background Stop ho
 illogical hosts                               # the home daemon's other hosts, last seen, and control's machines once logged in
 illogical login [--account FP]                # make this CLI one of your devices on control (approve its code on a signed-in device)
 illogical --host mini capture %2              # a machine on your control account, direct or relayed (nothing in hosts.json)
+illogical --host mini attach %2               # attach, tui and --follow work through control too
+illogical --host sams-box tui                 # a team's machine, or one shared with you
 illogical logout                              # forget the CLI's key for control
 illogical hosts add box https://box.<tailnet>.ts.net
 illogical hosts invite                        # a one-time token a sandbox joins with
@@ -144,6 +146,19 @@ illogical mcp token --revoke laptop           # cut it off at its next call
 
 `--json` prints the API's JSON. `--host`, anywhere on the line, is another
 daemon; a machine (a VM) is `--machine mN`.
+
+Once `illogical login` has made the CLI one of your devices, `--host NAME`
+also finds the machines control lists: your own, your teams', and those
+shared with you. Every command works that way, `attach`, `tui` and
+`--follow` included, over one end-to-end channel per command (directly
+when the machine lists a URL that answers, else through control's relay;
+`ILLOGICAL_VERBOSE=1` says which). Another account's machine is checked
+against that account's root, which the CLI remembers the first time it
+sees it (in `cli-control.json`, as a browser keeps it); if control later
+reports a different root for that account, the CLI refuses the machine and
+says so. `illogical hosts` marks another account's machines with whose
+they are. What you may do on one is what the web lets you: a team editor
+reads and types in its panes, and making panes stays its owner's.
 
 `--ssh DEST` reaches a box with your own `ssh` (your `~/.ssh/config`, keys
 and agent; a password or 2FA prompt shows in your terminal once). One master

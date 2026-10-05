@@ -395,14 +395,25 @@ Three tests cover M49, from fastest to most faithful:
   loopback, approved by the headless device, then `--host box` (direct, it
   has `--direct-url`) and `--host box2` (no URL, so relayed) each `run`,
   `ls` and `capture`, with the CLI's `ILLOGICAL_SOCK` pointing at no
-  daemon. `illogical-control`'s own `routing_wire` test checks the join
+  daemon. On both, `events --follow` and `tail --follow` must print while
+  they're still running (#254: a streamed answer, in parts), and `attach`
+  with a pipe for stdin types a command, sees its answer and detaches on
+  Ctrl-]. `illogical-control`'s own `routing_wire` test checks the join
   and the signed requests (`cargo test -p illogical-control the_cli_joins`).
 - `web/e2e/host-menu-control.spec.ts` (`just e2e`): a daemon joined by
   code (approved by the device) has *All your machines…* in its host menu,
   opening control's page; one that isn't joined doesn't.
 - The testnet's `m49` claim (`just testnet test control m49`; Docker):
   the CLI on the bastion, with no daemon, logs in and reaches box-bare
-  directly and box-systemd through the relay. It's in the
+  directly and box-systemd through the relay; on box-systemd it also
+  follows events and a pane's output, and drives `attach` and `tui` in a
+  pty (`ssh -tt`, keys piped in with pauses). `m49team` reaches another
+  account's machine: an owner (a second headless device, `devs FILE` in
+  `testnet/test.sh`) makes a team and joins box-systemd to it, the CLI's
+  account asks to join and is let in, and the CLI lists the box as the
+  owner's, captures its pane and attaches to it as a team editor. Under
+  `BREAK=1` the CLI has pinned another root for the owner's account, so the
+  box is refused. Both are in the
   [SSH track's table](#the-ssh-tracks-tests) and
   [testnet/README.md](../testnet/README.md#claims). Beside another
   worktree's stack: `COMPOSE_PROJECT_NAME=illo-j
@@ -583,7 +594,8 @@ reached only over ssh.
 | `just testnet test control signin reach` | the ground under #155 (M52) | a device signs in with the fake GitHub and is trusted; box-systemd reaches control at its inner address | the stack, not M52: the fakes or the inner network |
 | `just testnet test control m52` | #155 (M52): one step plus the approval, the pane opens from the phone, ssh out of the picture, the box survives a reboot | on a fresh box-systemd, `illogical --ssh box-systemd join` installs and starts the daemon and prints a code; the device approves it; the box is on the device list and online; with the CLI's ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the pane answers over the relay again | promise 4: the join over ssh, the approval, the relay with ssh gone, or coming back after a reboot (which also rests on promise 2) |
 | `just testnet test control unreachable` | #155 (M52): "a box that can't reach control says so and stays reachable over `--ssh`" | box-bare, with no route out, joins the hosted control; the output must name the box and control and give `illogical --ssh box-bare tui`, and `--ssh box-bare ls` still works | promise 5 |
-| `just testnet test control m49` | #149 (M49) | box-systemd and box-bare join over ssh; the CLI on the bastion, with no daemon, logs in with a code the device approves, lists both from control, and runs, lists and captures on box-bare directly and box-systemd through the relay ([M49](#m49-the-cli-through-control)) | the CLI through control (login, `hosts`, direct or relayed routing); the joins it starts with are promise 4 |
+| `just testnet test control m49` | #149 (M49), #254 | box-systemd and box-bare join over ssh; the CLI on the bastion, with no daemon, logs in with a code the device approves, lists both from control, and runs, lists and captures on box-bare directly and box-systemd through the relay; on box-systemd, `events --follow` and `tail --follow` print while running, and `attach` and `tui` in a pty type a command, see the answer and leave with Ctrl-] ([M49](#m49-the-cli-through-control)) | the CLI through control (login, `hosts`, direct or relayed routing, streamed answers, `/ws` over the channel); the joins it starts with are promise 4 |
+| `just testnet test control m49team` | #254: a team machine listed and reachable from `illogical hosts` | an owner's team with box-systemd in it; the CLI's account asks to join and is admitted; `hosts` lists box-systemd as the owner's, and the CLI captures its pane and attaches to it (relayed) | pinning and checking another account's root, or a team member's CLI device not taken by the team's machine |
 | `crates/daemon/tests/guest_ssh.rs`, `web/e2e/guest-ssh.spec.ts` | #198 (M65): the direct path and the pane menu entry | the system OpenSSH client as a guest against a dev daemon ([below](#guest-ssh-m54)) | promise 6; the test's name says which part (read-only, read-write, ending a session, refusals, the CLI) |
 | `testnet/measure-tailnet.sh` (`just testnet measure tailnet`) | #153 (S28): the tailnet comparison | installs illogical on ts-box over ssh from ts-client, checks both paths see the same panes, then times `illogical ls` and an 8 MiB `illogical export` over `--ssh` and over the tailnet | one path no longer reaches the daemon, or the two disagree about its panes. Slower numbers don't fail it: compare them with `spikes/s28-ssh/README.md` |
 | `just macos launchd` | #153 (S28) and #155 (M52): jake-mini with no GUI session | in a fresh macOS VM, a user who never had a GUI session runs `illogicald install` over ssh: it installs the background agent, warns that it won't start after a reboot by itself, and the daemon and pane outlive the ssh session; `illogical --ssh` from the host starts it and passes the warning on; `install --system` survives a VM restart with nobody logged in, its pane restored; `uninstall` leaves nothing of either ([its claims](#the-tests)) | promise 2 on macOS: the install a Mac reached only over ssh gets, and what it says about reboots |
@@ -652,12 +664,9 @@ in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
   not built. `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host`
   in `guest_ssh.rs` is an `#[ignore]`d stub until it is, and its test will
   run against the `control` profile.
-- **M49's attach, `tui` and event streams through control, and team
-  machines through control**: not built, so `m49` covers `run`, `ls` and
-  `capture` only.
 - **M53**, the desktop app over ssh: gated (PLAN.md), no tests.
 
-The relay path and M49's streams are in [Planned](#planned).
+The relay path is in [Planned](#planned).
 
 ## A fresh Mac: the tart VM harness
 
@@ -812,8 +821,6 @@ Real gaps, each one automatable:
   `--ios`) in the tart VM, unattended.
 - **The tart tests in CI** on the macos-arm64 runner ([above](#on-the-macos-arm64-runner)).
 - **The guest ssh relay path** (M65), once control's jump host is built.
-- **M49's attach, `tui` and event streams, and team machines, through
-  control**, once built.
 - **Control checking GitHub's signature on a real webhook delivery**: it
   needs a URL github.com can reach.
 - **Cursor's Remote-SSH and the Dev Containers extension** (M28).
