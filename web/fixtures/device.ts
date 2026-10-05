@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { certBody, evaluate, joinCode, unhex, type Cert, type Revocation } from "../src/e2e/cert.ts";
 import { E2ESocket } from "../src/e2e/channel.ts";
 import { generateKeys, signText, type DeviceKeys } from "../src/e2e/keys.ts";
+import { signRoster, teamJoinBody, word, type Roster, type TeamPin, type TeamRole } from "../src/e2e/team.ts";
 
 const subtle = globalThis.crypto.subtle;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -172,15 +173,62 @@ export class Device {
 
   /** Approve a daemon's join code (what `illogicald join` prints after
    * `#join=`) into this account, as the approve page does: the code must be
-   * the one the waiting daemon's key gives. Returns its certificate. */
-  async approveJoin(code: string): Promise<Cert> {
+   * the one the waiting daemon's key gives. Returns its certificate. With
+   * `team` (one this account owns), into that team, signed as the page
+   * signs it. */
+  async approveJoin(code: string, team?: string): Promise<Cert> {
     const shown = await this.api<{ cert: Cert }>(`/api/joins/${code}`);
     const want = await joinCode(shown.cert);
     if (want !== code) throw new Error(`the daemon waiting on ${code} has a key whose code is ${want}`);
     const c: Cert = { ...shown.cert, account: this.account, approver: this.keys.id, sig: "" };
     c.sig = await signText(this.keys, certBody(c));
-    await this.api(`/api/joins/${code}/approve`, { cert: c });
+    let team_sig: string | null = null;
+    if (team) team_sig = await signText(this.keys, teamJoinBody(c.device, (await this.team(team)).pin));
+    await this.api(`/api/joins/${code}/approve`, { cert: c, team: team ?? null, team_sig });
     return c;
+  }
+
+  // ---- teams (M19), as the page's owner does them
+
+  /** A team this account is in, as control lists it. */
+  async team(id: string): Promise<{ team: string; pin: TeamPin; roster: Roster; requests: { account: string; root: string; name: string; role: TeamRole }[] }> {
+    const { teams } = await this.api<{ teams: Awaited<ReturnType<Device["team"]>>[] }>("/api/teams");
+    const t = teams.find((x) => x.team === id);
+    if (!t) throw new Error(`this account isn't in team ${id}`);
+    return t;
+  }
+
+  /** A new team with this account its owner. Returns its id. */
+  async createTeam(name: string): Promise<string> {
+    const team = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+    const me = { account: this.account, root: this.root, name: word(this.login || this.name), role: "owner" as const };
+    const roster = await signRoster({ v: 1, team, name, version: 1, at: Date.now(), members: [me] }, this.keys);
+    await this.api("/api/teams", { roster });
+    return team;
+  }
+
+  /** An invite code (ask-first: the owner admits whoever accepts it). */
+  async invite(team: string, role: TeamRole = "editor"): Promise<string> {
+    return (await this.api<{ code: string }>(`/api/teams/${team}/invites`, { role })).code;
+  }
+
+  /** Accept an invite: this account asks to join. */
+  async acceptInvite(team: string, code: string): Promise<void> {
+    await this.api(`/api/invites/${team}/${code}/accept`, {});
+  }
+
+  /** Admit everyone who asked: the next roster, signed by this owner. */
+  async admitAll(team: string): Promise<number> {
+    const t = await this.team(team);
+    if (!t.requests.length) return 0;
+    const asked = new Set(t.requests.map((r) => r.account));
+    const members = [
+      ...t.roster.members.filter((m) => !asked.has(m.account)),
+      ...t.requests.map((r) => ({ account: r.account, root: r.root, role: r.role, name: word(r.name) })),
+    ];
+    const next = await signRoster({ v: 1, team, name: t.roster.name, version: t.roster.version + 1, at: Date.now(), members }, this.keys);
+    await this.api(`/api/teams/${team}/roster`, { roster: next });
+    return t.requests.length;
   }
 
   /** The account's devices and machines that chain back to the root this
