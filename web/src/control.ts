@@ -76,8 +76,20 @@ export interface Team {
   role: TeamRole | null;
   requests: { account: string; root: string; name: string; role: TeamRole; created: number }[];
   certs: AccountCerts;
+  /** Members' names as they set them, by account (#208): the roster's
+   * one-word form ("Sam-Stranger") is only what's signed. */
+  names?: Record<string, string>;
   /** The founder is the one this browser pinned on first sight. */
   verified: boolean;
+}
+
+/** A one-click invite link control still holds (#134). */
+export interface PresignedInvite {
+  key: string;
+  role: TeamRole;
+  expires: number;
+  by: string;
+  by_name: string;
 }
 
 const PINS_KEY = "illogical.control.pins";
@@ -718,12 +730,19 @@ export class ControlSession {
   asked: { team: string; name: string; owners: string[] }[] = [];
   /** A team that took this account in while this page watched, to say so. */
   joined: { team: string; name: string } | null = null;
+  /** What control kept to tell this account once (#206: a team it was in
+   * was deleted), oldest first. */
+  notices: { id: number; title: string; body: string }[] = [];
 
   async loadTeams() {
-    const r = await api<{ teams: Omit<Team, "verified">[]; asked?: ControlSession["asked"] }>("/api/teams").catch(() => ({
+    const r = await api<{ teams: Omit<Team, "verified">[]; asked?: ControlSession["asked"]; notices?: ControlSession["notices"] }>(
+      "/api/teams",
+    ).catch(() => ({
       teams: [] as Omit<Team, "verified">[],
       asked: this.asked,
+      notices: this.notices,
     }));
+    this.notices = r.notices ?? [];
     const out: Team[] = [];
     for (const t of r.teams) {
       // The founder pinned on first sight. The team's daemons check each
@@ -741,6 +760,13 @@ export class ControlSession {
   sawJoined() {
     this.joined = null;
     this.emit();
+  }
+
+  /** Seen: control forgets it. */
+  async sawNotice(id: number) {
+    this.notices = this.notices.filter((n) => n.id !== id);
+    this.emit();
+    await api(`/api/me/notices/${id}/seen`, {}).catch(() => {});
   }
 
   private myMember(): { account: string; root: string; name: string } {
@@ -862,6 +888,20 @@ export class ControlSession {
   async rejectRequest(team: string, account: string) {
     await api(`/api/teams/${team}/requests/${account}/reject`, {});
     await this.refresh();
+  }
+
+  /** A team's one-click links nobody has used yet (owners only, #134). */
+  async presignedInvites(team: string) {
+    return (await api<{ invites: PresignedInvite[] }>(`/api/teams/${team}/presigned`)).invites;
+  }
+
+  /** Cancel one of them: control refuses it from now on. */
+  async cancelPresigned(team: string, key: string) {
+    const res = await fetch(`/api/teams/${team}/presigned/${key}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new HttpError(res.status, j.error ?? `HTTP ${res.status}`, j);
+    }
   }
 
   async lockTeam(team: string, locked: boolean) {

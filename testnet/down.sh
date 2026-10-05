@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
 # Remove everything the test stack started, every profile: containers, the
-# illogical-testnet networks, and testnet/.state. Touches nothing outside the
-# illogical-testnet compose project.
+# stack's networks, and its state directory. Touches nothing outside the
+# compose project (COMPOSE_PROJECT_NAME, default illogical-testnet).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=env.sh
+. "$HERE/env.sh"
 
 # Docker is required: without it this fails. ILLOGICAL_SKIP_DOCKER=1 skips
 # on purpose, and says loudly that nothing ran.
@@ -18,6 +20,6 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-docker compose -f "$HERE/compose.yaml" --profile ssh down -v --remove-orphans
-rm -rf "$HERE/.state"
-echo "illogical testnet removed"
+docker compose -f "$HERE/compose.yaml" --profile ssh --profile control down -v --remove-orphans
+rm -rf "$STATE"
+echo "$TESTNET removed"

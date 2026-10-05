@@ -125,8 +125,9 @@ struct ControlStatus {
     /// The last join that didn't work, and why.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    /// Control's address, for the button.
-    url: &'static str,
+    /// The control the button joins: `--control`, else illogical cloud
+    /// (#207). The page sends it back with the join.
+    url: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -338,7 +339,7 @@ fn control_status(app: &App) -> ControlStatus {
             place: a.joined.place.clone(),
         }),
         error: error.filter(|_| saved.is_none()),
-        url: CONTROL,
+        url: app.control.default_url.clone(),
     }
 }
 
@@ -353,7 +354,7 @@ async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json
     {
         return Json(serde_json::json!({ "pending": p }));
     }
-    let url = req.url.unwrap_or_else(|| CONTROL.into());
+    let url = req.url.filter(|u| !u.trim().is_empty()).unwrap_or_else(|| app.control.default_url.clone());
     let name = app.hosts.name().to_owned();
     let dir = app.control.state_dir().to_owned();
     match crate::control::join_start(&url, &name, req.team.as_deref(), None, &dir).await {

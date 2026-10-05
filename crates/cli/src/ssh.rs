@@ -198,13 +198,39 @@ impl Remote {
     /// in this terminal: its code and the account's fingerprint show here
     /// and its question is answered here, while you approve it from a
     /// signed-in device. Afterwards control reaches it, and ssh isn't needed.
-    pub fn join(&self, args: &[String]) -> anyhow::Result<i32> {
+    ///
+    /// A box that can't reach `control` (no outbound connection) is told
+    /// so, with the way that still works: a terminal over `--ssh`.
+    pub fn join(&self, args: &[String], control: &str) -> anyhow::Result<i32> {
         self.prepare()?;
         let quoted: Vec<String> = args.iter().map(|a| sh_quote(a)).collect();
-        let status = self
+        let mut child = self
             .channel_cmd(&[], &format!("~/.local/bin/illogicald {}", quoted.join(" ")))
-            .status()
+            .stderr(Stdio::piped())
+            .spawn()
             .with_context(|| format!("running ssh to {}", self.dest))?;
+        // Its errors pass through as they come, and are kept to tell why
+        // it failed.
+        let mut said = Vec::new();
+        if let Some(mut err) = child.stderr.take() {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = err.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let _ = io::stderr().write_all(&buf[..n]);
+                said.extend_from_slice(&buf[..n]);
+            }
+        }
+        let status = child.wait()?;
+        if !status.success() && unreachable(&String::from_utf8_lossy(&said)) {
+            eprintln!(
+                "illogical: {dest} can't reach control at {control}. Joining needs {dest} to connect out to \
+                 control (HTTPS, or http on a private network), and it couldn't. {dest} is still reachable from a \
+                 terminal over ssh: `illogical --ssh {dest} tui`.",
+                dest = self.dest
+            );
+        }
         Ok(status.code().unwrap_or(1))
     }
 
@@ -318,6 +344,12 @@ else
   nohup $s "$d" --keep-panes </dev/null >"$HOME/.local/state/illogicald.log" 2>&1 &
   echo detached
 fi'"#;
+
+/// Whether `illogicald join`'s errors say it couldn't connect to control
+/// at all (as opposed to control refusing, or nobody approving).
+fn unreachable(said: &str) -> bool {
+    said.contains("can't reach control at")
+}
 
 /// One word for the box's shell, whatever it holds.
 fn sh_quote(s: &str) -> String {

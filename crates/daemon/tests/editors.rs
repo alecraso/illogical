@@ -8,139 +8,68 @@
 //! has stopped. Guests can't open one. Playwright runs the real code-server
 //! (`web/e2e/editors.spec.ts`).
 
-mod listen;
-
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Write},
     net::SocketAddr,
     os::unix::{fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
+    process::{Command, Stdio},
+    time::Duration,
 };
 
+use illogical_testkit::{Scratch, illogicald};
 use serde_json::{Value, json};
 
 const OWNER: &str = "me@example.com";
 const FRIEND: &str = "friend@example.com";
 
+/// A testkit daemon with the stand-in code-server, in a dir of its own
+/// (its state, the projects, the servers' log).
 struct Daemon {
-    child: Option<Child>,
-    dir: PathBuf,
-    port: u16,
-    blocks: u16,
-    idle: Option<&'static str>,
+    d: illogical_testkit::Daemon,
+    dir: Scratch,
+}
+
+impl std::ops::Deref for Daemon {
+    type Target = illogical_testkit::Daemon;
+    fn deref(&self) -> &Self::Target {
+        &self.d
+    }
+}
+
+impl std::ops::DerefMut for Daemon {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.d
+    }
 }
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        self.stop();
+        self.d.halt();
         for pid in self.servers().iter().map(|s| s["pid"].as_i64().unwrap()) {
             let _ = Command::new("kill").arg(pid.to_string()).stderr(Stdio::null()).status();
         }
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
 impl Daemon {
     fn new(name: &str, idle: Option<&'static str>) -> Self {
-        let dir = std::env::temp_dir().join(format!("ilg-editors-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("state")).unwrap();
-        let mut d = Self { child: None, dir, port: 0, blocks: 0, idle };
-        d.start();
-        d
-    }
-
-    fn state(&self) -> PathBuf {
-        self.dir.join("state")
-    }
-
-    /// Start it: on a port of its choosing, then on the same one again.
-    fn start(&mut self) {
+        let dir = Scratch::new(&format!("editors-{name}"));
         let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_code_server.py");
-        let first = self.port == 0;
-        let addr = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.port) };
-        let mut c = Command::new(env!("CARGO_BIN_EXE_illogicald"));
-        let blocks = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.blocks) };
-        c.args(["--listen", &addr, "--block-listen", &blocks])
-            .args(["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"])
+        let mut b = illogicald!("editors")
+            .state_dir(dir.join("state"))
+            .block_listen()
+            .no_wisp()
             .args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"])
-            .arg("--state-dir")
-            .arg(self.state())
             .arg("--code-server")
             .arg(fake)
-            .env("FAKE_CS_LOG", self.dir.join("servers.log"))
+            .env("FAKE_CS_LOG", dir.join("servers.log"))
             // A daemon started in a VS Code terminal doesn't hand that on.
-            .env("VSCODE_IPC_HOOK_CLI", "/tmp/not-for-code-server.sock")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        if let Some(i) = self.idle {
-            c.env("FAKE_CS_IDLE", i);
+            .env("VSCODE_IPC_HOOK_CLI", "/tmp/not-for-code-server.sock");
+        if let Some(i) = idle {
+            b = b.env("FAKE_CS_IDLE", i);
         }
-        self.child = Some(c.spawn().unwrap());
-        if first {
-            self.port = listen::wait_port(&self.state());
-            self.blocks = listen::wait_block_port(&self.state());
-        }
-        let (sock, blocks) = (self.sock(), self.blocks);
-        wait_for("daemon", || UnixStream::connect(&sock).is_ok());
-        wait_for("block listener", || std::net::TcpStream::connect(("127.0.0.1", blocks)).is_ok());
-    }
-
-    /// Stop the daemon the way a restart does (it saves first).
-    fn stop(&mut self) {
-        if let Some(mut c) = self.child.take() {
-            let _ = Command::new("kill").arg(c.id().to_string()).status();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while c.try_wait().unwrap().is_none() {
-                if Instant::now() > deadline {
-                    let _ = c.kill();
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        }
-    }
-
-    fn sock(&self) -> PathBuf {
-        self.state().join("sock")
-    }
-
-    fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
-        let mut s = UnixStream::connect(self.sock()).unwrap();
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
-        s.write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        let mut r = BufReader::new(s);
-        let mut line = String::new();
-        r.read_line(&mut line).unwrap();
-        let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-        while {
-            line.clear();
-            r.read_line(&mut line).unwrap();
-            !line.trim().is_empty()
-        } {}
-        let mut out = String::new();
-        r.read_to_string(&mut out).unwrap();
-        (status, out)
-    }
-
-    fn get(&self, path: &str) -> Value {
-        let (status, body) = self.raw("GET", path, None);
-        assert_eq!(status, 200, "{path}: {body}");
-        serde_json::from_str(&body).unwrap()
-    }
-
-    fn post(&self, path: &str, body: Value) -> Value {
-        let (status, out) = self.raw("POST", path, Some(body));
-        assert_eq!(status, 200, "{path}: {out}");
-        serde_json::from_str(&out).unwrap()
+        Self { d: b.start(), dir }
     }
 
     fn block(&self, id: u64) -> Value {
@@ -165,12 +94,8 @@ impl Daemon {
     }
 }
 
-fn wait_for(what: &str, f: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while !f() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+fn wait_for(what: &str, f: impl FnMut() -> bool) {
+    illogical_testkit::wait_for(what, Duration::from_secs(15), f);
 }
 
 /// A client that resolves the block's name to the block listener, as a
@@ -217,7 +142,7 @@ async fn an_editor_on_this_host() {
     let argv: Vec<String> = serde_json::from_value(started[0]["argv"].clone()).unwrap();
     let after =
         |f: &str| argv[argv.iter().position(|a| a == f).unwrap_or_else(|| panic!("no {f}: {argv:?}")) + 1].clone();
-    let editor = d.state().join("editor");
+    let editor = d.state.join("editor");
     assert_eq!(after("--auth"), "none");
     assert_eq!(after("--user-data-dir"), editor.join("user").display().to_string());
     assert_eq!(after("--extensions-dir"), editor.join("extensions").display().to_string());
@@ -242,16 +167,16 @@ async fn an_editor_on_this_host() {
     let url = reqwest::Url::parse(&src).unwrap();
     let host = url.host_str().unwrap().to_owned();
     assert!(host.starts_with(&format!("b-{id}-")) && host.ends_with(".localhost"), "{host}");
-    assert_eq!(url.port(), Some(d.blocks));
+    assert_eq!(url.port(), Some(d.block_port));
     let q: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
     let ws: Value = serde_json::from_str(&std::fs::read_to_string(&q["workspace"]).unwrap()).unwrap();
     assert_eq!(ws["folders"][0]["path"], proj.display().to_string());
     assert_eq!(ws["settings"]["illogical.block"], id);
     let payload: Value = serde_json::from_str(&q["payload"]).unwrap();
-    assert_eq!(payload[0][1], format!("vscode-remote://{host}:{}{main}:3", d.blocks));
+    assert_eq!(payload[0][1], format!("vscode-remote://{host}:{}{main}:3", d.block_port));
 
     // Through its site only: the server sees a local request.
-    let http = client(&host, d.blocks);
+    let http = client(&host, d.block_port);
     let page = http.get(&src).send().await.unwrap();
     assert_eq!(page.status(), 200);
     assert!(page.text().await.unwrap().contains("fake code-server"));
@@ -272,22 +197,23 @@ async fn an_editor_on_this_host() {
         text.starts_with(r#"<html><head><script src="/.illogical/head.js"></script><title>fake code-server"#),
         "{text}"
     );
-    let js = http.get(format!("http://{host}:{}/.illogical/head.js", d.blocks)).send().await.unwrap();
+    let js = http.get(format!("http://{host}:{}/.illogical/head.js", d.block_port)).send().await.unwrap();
     assert_eq!(js.headers()["content-type"], "text/javascript; charset=utf-8");
     assert!(js.text().await.unwrap().contains("localStorage"));
     // Another site still can't fetch it.
     let r = http
-        .get(format!("http://{host}:{}/.illogical/head.js", d.blocks))
+        .get(format!("http://{host}:{}/.illogical/head.js", d.block_port))
         .header("sec-fetch-site", "cross-site")
         .header("sec-fetch-mode", "no-cors")
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 403);
-    let echo: Value = http.get(format!("http://{host}:{}/echo", d.blocks)).send().await.unwrap().json().await.unwrap();
+    let echo: Value =
+        http.get(format!("http://{host}:{}/echo", d.block_port)).send().await.unwrap().json().await.unwrap();
     assert_eq!(echo["headers"]["host"], "localhost");
     let wrong = format!("b-{id}-wrongkeywrongkeywrong.localhost");
-    let r = client(&wrong, d.blocks).get(format!("http://{wrong}:{}/", d.blocks)).send().await.unwrap();
+    let r = client(&wrong, d.block_port).get(format!("http://{wrong}:{}/", d.block_port)).send().await.unwrap();
     assert_eq!(r.status(), 404, "a wrong key");
 
     // The extension's report: the file and the lines around the cursor,
@@ -363,11 +289,11 @@ async fn an_editor_on_this_host() {
     let b = d.block(id);
     assert_eq!(b["info"]["file"], "src/lib.rs");
     let src2 = b["state"]["src"].as_str().unwrap().to_owned();
-    assert!(src2.starts_with(&format!("http://{host}:{}/", d.blocks)), "same origin: {src2}");
+    assert!(src2.starts_with(&format!("http://{host}:{}/", d.block_port)), "same origin: {src2}");
     let q: std::collections::HashMap<String, String> =
         reqwest::Url::parse(&src2).unwrap().query_pairs().into_owned().collect();
     let payload: Value = serde_json::from_str(&q["payload"]).unwrap();
-    assert_eq!(payload[0][1], format!("vscode-remote://{host}:{}{lib}:10", d.blocks));
+    assert_eq!(payload[0][1], format!("vscode-remote://{host}:{}{lib}:10", d.block_port));
     assert_eq!(d.servers().len(), 1, "the same server");
     assert_eq!(http.get(&src2).send().await.unwrap().status(), 200);
 
@@ -380,7 +306,7 @@ async fn an_editor_on_this_host() {
 
     // Closed: its name stops working and its workspace goes.
     assert_eq!(d.raw("POST", &format!("/api/panes/{id}/close"), Some(json!({}))).0, 200);
-    let r = client(&host, d.blocks).get(&src2).send().await.unwrap();
+    let r = client(&host, d.block_port).get(&src2).send().await.unwrap();
     assert_eq!(r.status(), 404);
     assert!(!Path::new(&q["workspace"]).exists());
 }
@@ -399,7 +325,7 @@ async fn idle_servers_stop_and_come_back() {
     wait_for("stopped", || d.block(id)["state"]["server"]["is"] == "stopped");
     assert_eq!(d.block(id)["info"]["attention"], "idle");
     // Someone looks: it starts again.
-    let r = client(&host, d.blocks).get(&src).send().await.unwrap();
+    let r = client(&host, d.block_port).get(&src).send().await.unwrap();
     assert_eq!(r.status(), 200);
     assert_eq!(d.servers().len(), 2);
 }

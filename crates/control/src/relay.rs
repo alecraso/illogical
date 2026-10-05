@@ -58,6 +58,8 @@ pub struct Relay {
     next: AtomicU64,
     /// What each account has open through the relay (#174).
     accounts: Arc<Mutex<HashMap<String, Arc<Use>>>>,
+    /// Daemons hung up on by [`Relay::redial`], to nudge when they're back.
+    renudge: Mutex<std::collections::HashSet<String>>,
     pub caps: Caps,
 }
 
@@ -231,6 +233,17 @@ impl Relay {
         }
     }
 
+    /// Hang up on these daemons now, and nudge each as it dials back in
+    /// (#206: a team they were in was deleted). Whatever they relayed ends
+    /// at once, rather than at their next check of certificates and teams,
+    /// and that check comes as soon as they're back.
+    pub fn redial(&self, ids: &[String]) {
+        self.renudge.lock().unwrap().extend(ids.iter().cloned());
+        for id in ids {
+            self.drop_daemon(id);
+        }
+    }
+
     /// A daemon left or was revoked: hang up on it.
     pub fn drop_daemon(&self, id: &str) {
         if let Some(l) = self.live.lock().unwrap().remove(id) {
@@ -284,6 +297,9 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket, ticket: Ticket)
         // A daemon that reconnected: the old socket is dead or about to be.
         old.stop.notify_one();
         old.mux.close();
+    }
+    if app.relay.renudge.lock().unwrap().remove(&id) {
+        nudge.notify_one();
     }
     info!(daemon = %id, "daemon connected to the relay");
     let (mut tx, mut rx) = ws.split();
