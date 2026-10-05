@@ -164,6 +164,9 @@ pub fn local_router(app: Arc<App>) -> Router {
         .route("/api/editors/connect", get(crate::editor::link::connect))
         // `illogical web`: only over the socket, which is the owner's.
         .route("/api/signin-link", get(signin_link))
+        // Stop: save every pane and exit, as on Ctrl-C (an upgrade on
+        // Windows, where there's no service manager to ask; M59).
+        .route("/api/daemon/stop", axum::routing::post(stop))
         .merge(api_routes(&app))
         .with_state(app)
 }
@@ -414,6 +417,11 @@ async fn signin(State(app): State<Arc<App>>, axum::extract::Query(q): axum::extr
         .header(header::REFERRER_POLICY, "no-referrer")
         .body(Body::empty())
         .unwrap()
+}
+
+async fn stop() -> &'static str {
+    crate::STOP.notify_one();
+    "stopping"
 }
 
 /// `illogical web`'s link: the local token in a sign-in link.

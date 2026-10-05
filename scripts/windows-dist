@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Windows (M59): build illogicald and illogical, fetch Microsoft's ConPTY,
+# and make the release's zip and the desktop app's sidecars from them.
+#   scripts/windows-dist VERSION
+# Run on Windows (Git Bash) with Zig, Rust and pnpm on PATH.
+set -euo pipefail
+v=$1
+conpty=1.25.260930003
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+(cd web && pnpm install --frozen-lockfile && pnpm run build)
+cargo build --release -p illogicald -p illogical
+target=${CARGO_TARGET_DIR:-$root/target}/release
+
+# conpty.dll and the OpenConsole.exe it starts, beside illogicald (S29).
+tmp=$(mktemp -d)
+# A .nupkg is a zip (Git Bash's tar can't read one; PowerShell can).
+curl -fsSL -o "$tmp/conpty.zip" "https://www.nuget.org/api/v2/package/Microsoft.Windows.Console.ConPTY/$conpty"
+powershell -NoProfile -Command "Expand-Archive -Force '$(cygpath -w "$tmp/conpty.zip")' '$(cygpath -w "$tmp/conpty")'"
+
+name=illogical-$v-x86_64-pc-windows-msvc
+mkdir -p "dist/$name"
+cp "$target/illogicald.exe" "$target/illogical.exe" "dist/$name/"
+cp "$tmp/conpty/runtimes/win-x64/native/conpty.dll" "$tmp/conpty/build/native/runtimes/x64/OpenConsole.exe" "dist/$name/"
+cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md README.md packaging/windows/ConPTY-LICENSE.txt "dist/$name/"
+(cd dist && rm -f "$name.zip" && powershell -NoProfile -Command "Compress-Archive -Path '$name' -DestinationPath '$name.zip'")
+echo "dist/$name.zip"
+
+# The desktop app carries them (tauri.windows.conf.json).
+mkdir -p crates/desktop/binaries
+cp "$target/illogicald.exe" crates/desktop/binaries/illogicald-x86_64-pc-windows-msvc.exe
+cp "$target/illogical.exe" crates/desktop/binaries/illogical-x86_64-pc-windows-msvc.exe
+cp "dist/$name/conpty.dll" "dist/$name/OpenConsole.exe" packaging/windows/ConPTY-LICENSE.txt crates/desktop/binaries/

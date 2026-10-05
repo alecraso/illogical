@@ -198,6 +198,11 @@ enum Command {
 
 #[derive(clap::Args, Debug)]
 struct RunArgs {
+    /// `ILLOGICAL_LOG_FILE`, as a flag: where Windows' logon task (which
+    /// sets no environment) puts the log. Read before parsing (`log_to_file`).
+    #[arg(long, hide = true)]
+    log_file: Option<PathBuf>,
+
     /// Address to listen on. Keep it loopback; `tailscale serve` exposes it.
     /// Port 0 picks a free one, recorded in `listen` in the state directory.
     #[arg(long, default_value = "127.0.0.1:7681", env = "ILLOGICAL_LISTEN")]
@@ -758,11 +763,15 @@ fn home() -> PathBuf {
         .unwrap_or_else(|| "/".into())
 }
 
-/// `ILLOGICAL_LOG_FILE`: stdout and stderr appended to that file (a
-/// leading `~/` is the home directory). The desktop app's launch agent
-/// sets it (M46): launchd can't put a log in each user's home itself.
-fn log_to_file() {
-    let Some(path) = std::env::var_os("ILLOGICAL_LOG_FILE").filter(|p| !p.is_empty()) else { return };
+/// `ILLOGICAL_LOG_FILE` (or `--log-file`): stdout and stderr appended to
+/// that file (a leading `~/` is the home directory). The desktop app's
+/// launch agent sets it (M46): launchd can't put a log in each user's home
+/// itself; Windows' logon task passes the flag (M59).
+fn log_to_file(argv: &[String]) {
+    let flag = argv.iter().position(|a| a == "--log-file").and_then(|i| argv.get(i + 1)).map(std::ffi::OsString::from);
+    let Some(path) = flag.or_else(|| std::env::var_os("ILLOGICAL_LOG_FILE")).filter(|p| !p.is_empty()) else {
+        return;
+    };
     let path = PathBuf::from(path);
     let path = match path.strip_prefix("~") {
         Ok(rest) => home().join(rest),
@@ -777,9 +786,19 @@ fn log_to_file() {
         let _ = nix::unistd::dup2_stdout(&f);
         let _ = nix::unistd::dup2_stderr(&f);
     }
-    // Windows: the service's log comes with its logon task (M59, #222).
-    #[cfg(not(unix))]
-    drop(f);
+    // Windows: the std handles become the file (std's stdout and stderr
+    // look them up on every write). It stays open for the process's life.
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::IntoRawHandle;
+        use windows_sys::Win32::System::Console::{STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle};
+        let h = f.into_raw_handle();
+        // SAFETY: a handle we own and never close.
+        unsafe {
+            SetStdHandle(STD_OUTPUT_HANDLE, h);
+            SetStdHandle(STD_ERROR_HANDLE, h);
+        }
+    }
     // Panes don't inherit it.
     unsafe { std::env::remove_var("ILLOGICAL_LOG_FILE") };
 }
@@ -800,7 +819,7 @@ fn main() -> anyhow::Result<()> {
     if argv.get(1).map(String::as_str) == Some("_host") {
         host::run(&argv[2..]);
     }
-    log_to_file();
+    log_to_file(&argv);
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogicald=info".into()),
@@ -1248,6 +1267,9 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
     Ok(())
 }
 
+/// `POST /api/daemon/stop` (on the local socket): stop as on a signal.
+static STOP: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
 /// Windows: Ctrl-C, the console closing, logoff or shutdown.
 #[cfg(windows)]
 async fn signalled() {
@@ -1259,6 +1281,7 @@ async fn signalled() {
     );
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
+        _ = STOP.notified() => {}
         _ = close.recv() => {}
         _ = shutdown.recv() => {}
         _ = logoff.recv() => {}
@@ -1270,6 +1293,7 @@ async fn signalled() {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
+        _ = STOP.notified() => {}
         _ = term.recv() => {}
     }
 }

@@ -1,7 +1,8 @@
 # A `v*` tag: build Linux (x86_64, arm64, static) and macOS (arm64, and
 # x86_64 cross-compiled for Intel Macs) binaries and the desktop app (a
 # .deb, an .rpm and an AppImage for Linux x86_64 and arm64; a .dmg and a
-# zipped app for each macOS arch; an installer for Windows), attach them to
+# zipped app for each macOS arch; an installer for Windows), and a zip of
+# illogicald and illogical for Windows (install.ps1's), attach them to
 # the tag's release with SHA256SUMS and the updater's latest.json, and bump
 # the Homebrew formula.
 #
@@ -79,12 +80,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: scripts/release check-desktop-version "$GITHUB_REF_NAME"
+      # Zig for Ghostty's lib-vt, pnpm for the web client the daemon embeds.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      # illogicald and illogical, with Microsoft's ConPTY: the zip
+      # (install.ps1's) and the app's sidecars (M59).
+      - run: scripts/windows-dist "${GITHUB_REF_NAME#v}"
       - run: cd crates/desktop && npx --yes @tauri-apps/cli@2 build --bundles nsis
       - run: |
-          mkdir -p dist
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
           cp "crates/desktop/target/release/bundle/nsis/illogical_${v}_x64-setup.exe" dist/illogical-desktop-windows-x86_64-setup.exe
       - run: scripts/release upload "$GITHUB_REF_NAME" dist/illogical-desktop-windows-x86_64-setup.exe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: scripts/release upload "$GITHUB_REF_NAME" dist/illogical-*-x86_64-pc-windows-msvc.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

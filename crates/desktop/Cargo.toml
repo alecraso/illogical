@@ -36,6 +36,10 @@ gtk = "0.18"
 # The running WebKitGTK's version, for the window's profile (profile.rs).
 webkit2gtk-sys = "2"
 
+[target.'cfg(windows)'.dependencies]
+# Toasts whose click opens the pane (M59).
+windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"
 # SMAppService for the daemon's launch agent, and NSWindow tabs (M46).

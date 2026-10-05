@@ -99,13 +99,6 @@ fn quote(s: &str) -> String {
 fn act_on(app: &AppHandle, what: String, act: Act) {
     let app = app.clone();
     std::thread::spawn(move || {
-        if crate::DAEMONLESS {
-            // No daemon here to open it on (Windows until M59, #222).
-            eprintln!("illogical: no daemon here to open {what}");
-            let a = app.clone();
-            let _ = app.run_on_main_thread(move || crate::focus_or_open(&a));
-            return;
-        }
         for _ in 0..240 {
             if crate::reachable() && crate::upgrade::pending().is_none() {
                 break;

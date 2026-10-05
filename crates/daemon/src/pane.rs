@@ -1069,8 +1069,18 @@ impl Process {
                 }
             }
             // Its exit, after all its output; or the host is gone (killed).
-            let signal = code.is_none().then_some(SIGKILL);
-            let _ = out.send(Cmd::Exited { key: pid as u64, code: code.or(Some(128 + SIGKILL)), signal });
+            // A program its console closed under it (the session ending,
+            // a shutdown) ends with STATUS_CONTROL_C_EXIT: that's Unix's
+            // hangup, so the pane stays for its restore policy rather than
+            // closing as a shell's own `exit` does.
+            const STATUS_CONTROL_C_EXIT: i32 = 0xC000_013Au32 as i32;
+            const SIGHUP: i32 = 1;
+            let (code, signal) = match code {
+                Some(STATUS_CONTROL_C_EXIT) => (Some(128 + SIGHUP), Some(SIGHUP)),
+                Some(c) => (Some(c), None),
+                None => (Some(128 + SIGKILL), Some(SIGKILL)),
+            };
+            let _ = out.send(Cmd::Exited { key: pid as u64, code, signal });
         })?;
 
         let (writer, inputs) = unbounded::<Vec<u8>>();

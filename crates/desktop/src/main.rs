@@ -82,12 +82,15 @@ static WINDOWS: AtomicUsize = AtomicUsize::new(0);
 static STATUS: Mutex<String> = Mutex::new(String::new());
 static ADDR: OnceLock<String> = OnceLock::new();
 
-/// No local daemon to reach or install: Windows until M59 (#222).
-pub const DAEMONLESS: bool = cfg!(windows);
-
 fn state_dir() -> Option<PathBuf> {
+    // Windows: the daemon's (`%LOCALAPPDATA%\illogical\state`, M56).
+    #[cfg(windows)]
+    let windows = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("illogical").join("state"));
+    #[cfg(not(windows))]
+    let windows = None;
     std::env::var_os("ILLOGICAL_STATE_DIR")
         .map(PathBuf::from)
+        .or(windows)
         .or_else(|| std::env::var_os("XDG_STATE_HOME").map(|d| PathBuf::from(d).join("illogical")))
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state/illogical")))
 }
@@ -150,11 +153,18 @@ fn reachable() -> bool {
     TcpStream::connect_timeout(&sa, Duration::from_millis(400)).is_ok()
 }
 
-/// An installed copy of `name`: `~/.local/bin`, Homebrew, then `PATH`.
+/// An installed copy of `name`: `~/.local/bin`, Homebrew, then `PATH`;
+/// on Windows, where `illogicald install` puts it, then `PATH`.
 fn installed(name: &str) -> Option<PathBuf> {
+    let name = &format!("{name}{}", std::env::consts::EXE_SUFFIX);
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut candidates: Vec<PathBuf> = home.iter().map(|h| h.join(".local/bin").join(name)).collect();
-    candidates.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(|d| PathBuf::from(d).join(name)));
+    if cfg!(windows) {
+        let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        candidates.extend(local.map(|l| l.join("Programs").join("illogical").join(name)));
+    } else {
+        candidates.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(|d| PathBuf::from(d).join(name)));
+    }
     if let Some(path) = std::env::var_os("PATH") {
         candidates.extend(std::env::split_paths(&path).map(|d| d.join(name)));
     }
@@ -165,7 +175,7 @@ fn installed(name: &str) -> Option<PathBuf> {
 /// The copy of `name` this app carries, next to its own executable.
 fn bundled(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
-    Some(exe.parent()?.join(name)).filter(|p| p.is_file())
+    Some(exe.parent()?.join(format!("{name}{}", std::env::consts::EXE_SUFFIX))).filter(|p| p.is_file())
 }
 
 /// macOS: a downloaded app's files carry the quarantine flag, and a copy
@@ -178,8 +188,9 @@ fn unquarantine(path: &std::path::Path) {
 }
 
 /// The bundled CLI into `~/.local/bin`, when no `illogical` is installed.
+/// (Windows: `illogicald install` puts it beside itself, on PATH.)
 fn install_cli() -> Option<PathBuf> {
-    if installed("illogical").is_some() {
+    if cfg!(windows) || installed("illogical").is_some() {
         return None;
     }
     let src = bundled("illogical")?;
@@ -289,7 +300,7 @@ fn start_agent() -> Result<(), String> {
 /// - joined, not signed in: the app's sign-in page;
 /// - otherwise (or "just this machine"): the daemon's own page.
 fn target(app: &AppHandle) -> WebviewUrl {
-    if !DAEMONLESS && (!reachable() || upgrade::pending().is_some()) {
+    if !reachable() || upgrade::pending().is_some() {
         return WebviewUrl::App("index.html".into());
     }
     WebviewUrl::External(home(app))
@@ -582,13 +593,16 @@ async fn retry(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), Strin
 // ---- notifications
 
 fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
-    // Windows: a local daemon's notifications come with it (M59).
-    #[cfg(windows)]
-    let _ = (app, pane, title, body);
-    #[cfg(not(windows))]
     let app = app.clone();
-    #[cfg(not(windows))]
     std::thread::spawn(move || {
+        // Windows: a toast under the app's own id (its Start menu shortcut,
+        // which the installer makes, carries it). A click opens
+        // `illogical://pane/N`, which comes back to this app (one instance)
+        // as a link, from the popup or the Action Center alike.
+        #[cfg(windows)]
+        if let Err(e) = toast(&app.config().identifier, &title, &body, pane) {
+            eprintln!("illogical: a notification: {e}");
+        }
         #[cfg(target_os = "linux")]
         {
             let Ok(handle) = notify_rust::Notification::new()
@@ -620,6 +634,26 @@ fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
             }
         }
     });
+}
+
+/// A Windows toast whose click opens `illogical://pane/{pane}`.
+#[cfg(windows)]
+fn toast(app_id: &str, title: &str, body: &str, pane: u32) -> windows::core::Result<()> {
+    use windows::{
+        Data::Xml::Dom::XmlDocument,
+        UI::Notifications::{ToastNotification, ToastNotificationManager},
+        core::HSTRING,
+    };
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let xml = format!(
+        r#"<toast activationType="protocol" launch="illogical://pane/{pane}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        esc(title),
+        esc(body)
+    );
+    let doc = XmlDocument::new()?;
+    doc.LoadXml(&HSTRING::from(xml))?;
+    let toast = ToastNotification::CreateToastNotification(&doc)?;
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))?.Show(&toast)
 }
 
 fn set_count(app: &AppHandle, count: usize) {
@@ -787,9 +821,7 @@ fn main() {
             profile::init(app.handle());
             #[cfg(target_os = "macos")]
             finder::init(app.handle());
-            if !DAEMONLESS {
-                upgrade::check();
-            }
+            upgrade::check();
             let prefs = settings::load(app.handle());
             let hotkey_ok = match settings::apply(app.handle(), &prefs) {
                 Ok(()) => prefs.hotkey_on,
@@ -817,11 +849,7 @@ fn main() {
             )?;
             let update = MenuItem::with_id(app, "update", "Restart to update", false, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            // Windows has no daemon here yet (M54): no "this machine" item.
-            let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &new];
-            if !DAEMONLESS {
-                items.push(&this);
-            }
+            let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &new, &this];
             items.push(&hotkey);
             if updater && updates::can_update() {
                 items.push(&update);
@@ -866,12 +894,10 @@ fn main() {
             } else {
                 eprintln!("illogical: this build has no updater key; it doesn't check for updates");
             }
-            if !DAEMONLESS {
-                let handle = app.handle().clone();
-                std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
-                let handle = app.handle().clone();
-                std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
-            }
+            let handle = app.handle().clone();
+            std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
+            let handle = app.handle().clone();
+            std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
             Ok(())
         })
         .build(context)

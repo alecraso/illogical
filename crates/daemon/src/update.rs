@@ -26,6 +26,8 @@ use crate::server::App;
 pub const LATEST: &str = "https://github.com/arugula-salad/illogical/releases/latest";
 const RELEASES: &str = "https://github.com/arugula-salad/illogical/releases";
 pub const INSTALL_SH: &str = "curl -fsSL https://illogical.widgets.wtf/install.sh | sh";
+/// Windows' counterpart, in PowerShell (M59).
+pub const INSTALL_PS1: &str = "irm https://illogical.widgets.wtf/install.ps1 | iex";
 const EVERY_MS: u64 = 12 * 60 * 60 * 1000;
 /// After a failed check (offline, say), try again sooner.
 const RETRY: Duration = Duration::from_secs(60 * 60);
@@ -151,6 +153,7 @@ enum Kind {
     /// `install.sh` (or `illogicald install` from a download).
     Script,
     /// Homebrew: `brew upgrade`, then `illogicald install` again.
+    #[cfg_attr(windows, allow(dead_code))] // Homebrew is macOS's and Linux's.
     Brew,
     /// The desktop app (its .deb or the macOS app): a newer app replaces
     /// the daemon when it opens.
@@ -159,6 +162,7 @@ enum Kind {
     Source,
 }
 
+#[cfg(any(unix, test))]
 /// The service runs a copy in `~/.local/bin` whichever way it came, so
 /// look for where that copy came from.
 fn kind(exe: &Path, home: &Path, exists: impl Fn(&Path) -> Option<PathBuf>) -> Kind {
@@ -209,6 +213,21 @@ struct Status {
     url: String,
 }
 
+/// Windows: `illogicald install` puts it in `%LOCALAPPDATA%\Programs\illogical`
+/// (from install.ps1 or the desktop app, which lives in
+/// `%LOCALAPPDATA%\illogical`).
+#[cfg(windows)]
+fn this_kind() -> Kind {
+    let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok()).unwrap_or_default();
+    let local = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default());
+    let installed = local.join("Programs").join("illogical").join("illogicald.exe").canonicalize().ok();
+    if installed.as_ref() != Some(&exe) {
+        return Kind::Source;
+    }
+    if local.join("illogical").join("illogical-desktop.exe").is_file() { Kind::App } else { Kind::Script }
+}
+
+#[cfg(unix)]
 fn this_kind() -> Kind {
     let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok()).unwrap_or_default();
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
@@ -226,7 +245,7 @@ fn status() -> Status {
         latest,
         enabled: ENABLED.get().copied().unwrap_or(false),
         command: match kind {
-            Kind::Script => Some(INSTALL_SH),
+            Kind::Script => Some(if cfg!(windows) { INSTALL_PS1 } else { INSTALL_SH }),
             Kind::Brew => Some("brew upgrade illogical && illogicald install"),
             Kind::App | Kind::Source => None,
         },

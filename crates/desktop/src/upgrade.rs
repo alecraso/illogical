@@ -127,6 +127,13 @@ fn service_running() -> bool {
     if agent_running() {
         return true;
     }
+    // Windows: `illogicald install`'s scheduled task (M59).
+    if cfg!(windows) {
+        return Command::new("schtasks")
+            .args(["/Query", "/TN", "illogicald"])
+            .output()
+            .is_ok_and(|o| o.status.success());
+    }
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return false };
     if cfg!(target_os = "macos") {
         if !home.join("Library/LaunchAgents/illogicald.plist").is_file() {

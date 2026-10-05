@@ -42,24 +42,11 @@ pub struct Local {
     pub control: Option<String>,
 }
 
-/// The control a machine joins by default (the daemon's `setup::CONTROL`).
-const CONTROL: &str = "https://control.illogical.widgets.wtf";
-
 static LOCAL: Mutex<Option<Local>> = Mutex::new(None);
 /// "Just this machine" for the rest of this run.
 static LOCAL_ONLY: Mutex<bool> = Mutex::new(false);
 
 pub fn local() -> Local {
-    if crate::DAEMONLESS {
-        // No daemon to ask: this computer's name, and the default control.
-        let control = std::env::var("ILLOGICAL_CONTROL").unwrap_or_else(|_| CONTROL.into());
-        let l = Local {
-            name: std::env::var("COMPUTERNAME").unwrap_or_default(),
-            control: Some(control.trim_end_matches('/').to_owned()),
-        };
-        *LOCAL.lock().unwrap() = Some(l.clone());
-        return l;
-    }
     let read = || -> Option<Local> {
         let mut req = agent().get(&format!("{}/api/host", crate::page()));
         if let Some(b) = crate::bearer() {
@@ -185,18 +172,11 @@ pub struct Status {
     name: String,
     /// `ILLOGICAL_SIGNIN_AUTO=1` (for tests): start signing in on load.
     auto: bool,
-    /// No local daemon (Windows until M59): no "just this machine".
-    daemonless: bool,
 }
 
 #[tauri::command]
 pub fn cloud_status() -> Status {
-    Status {
-        control: control(),
-        name: device_name(),
-        auto: std::env::var_os("ILLOGICAL_SIGNIN_AUTO").is_some(),
-        daemonless: crate::DAEMONLESS,
-    }
+    Status { control: control(), name: device_name(), auto: std::env::var_os("ILLOGICAL_SIGNIN_AUTO").is_some() }
 }
 
 #[derive(serde::Serialize)]
@@ -309,9 +289,6 @@ fn await_grant(listener: &std::net::TcpListener, id: &str, control: &str) -> Opt
 /// "Just this machine": the local page, for the rest of this run.
 #[tauri::command]
 pub fn cloud_local(window: tauri::WebviewWindow) -> Result<(), String> {
-    if crate::DAEMONLESS {
-        return Err("this computer can't run panes yet".into());
-    }
     set_local_only(true);
     window.navigate(crate::page_at("/")).map_err(|e| e.to_string())
 }

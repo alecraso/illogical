@@ -353,11 +353,13 @@ screenshots:
     cd web && pnpm exec playwright test -c screenshots.config.ts
     scripts/webp
 
-# The project page (site/) with install.sh beside it, in target/site.
+# The project page (site/) with install.sh and install.ps1 beside it, in
+# target/site.
 site:
     rm -rf target/site && mkdir -p target/site
     cp -r site/. target/site/
     cp scripts/install.sh target/site/install.sh
+    cp scripts/install.ps1 target/site/install.ps1
 
 # Publish the page (wrangler.jsonc: static assets on Cloudflare, at
 # illogical.widgets.wtf). Uses wrangler's login, or CLOUDFLARE_API_TOKEN.

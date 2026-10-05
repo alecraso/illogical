@@ -60,16 +60,19 @@ case "${1:-}" in
   sums)
     ensure_release "$2"
     dir=$(mktemp -d)
-    gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-desktop-*' -D "$dir"
+    gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-desktop-*' -p 'illogical-[0-9]*.zip' -D "$dir"
     n=$(find "$dir" -name "illogical-[0-9]*.tar.gz" | wc -l | tr -d " ")
     [ "$n" = 4 ] || { echo "expected 4 tarballs, found $n" >&2; exit 1; }
+    # Windows' zip (install.ps1's, M59).
+    w=$(find "$dir" -name "illogical-[0-9]*-x86_64-pc-windows-msvc.zip" | wc -l | tr -d " ")
+    [ "$w" = 1 ] || { echo "expected the Windows zip, found $w" >&2; exit 1; }
     # Every desktop download a release has (the updater's .app.tar.gz and
     # .sig files come too when TAURI_SIGNING_PRIVATE_KEY is set).
     # The arm64 Linux app comes back with GitHub's arm runner (#287).
     for f in illogical-desktop-linux-x86_64.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe; do
       [ -f "$dir/$f" ] || { echo "the release has no $f" >&2; exit 1; }
     done
-    (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
+    (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-[0-9]*.zip illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
     ;;
   homebrew)
