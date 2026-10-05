@@ -8,7 +8,8 @@
 //!
 //! - registration with `attestation: "none"` (the authenticator's make
 //!   and model aren't checked; the key is what matters);
-//! - ES256 (P-256) and Ed25519 credential keys;
+//! - ES256 (P-256), Ed25519 and RS256 credential keys (RS256 for the
+//!   Windows Hello setups and security keys that only do RSA, #205);
 //! - user verification required, the RP id is control's host, and the
 //!   origin must be control's own.
 
@@ -36,6 +37,7 @@ use crate::{ApiError, App, auth, err};
 const CHALLENGE_TTL_MS: u64 = 5 * 60 * 1000;
 const ES256: i64 = -7;
 const EDDSA: i64 = -8;
+const RS256: i64 = -257;
 
 /// Flags in authenticator data.
 const UP: u8 = 0x01;
@@ -134,7 +136,11 @@ pub async fn register_start(
         "challenge": challenge,
         "rp": { "id": rp_id(&app), "name": "illogical" },
         "user": { "id": B64.encode(&user_id), "name": name, "displayName": name },
-        "pubKeyCredParams": [{ "type": "public-key", "alg": EDDSA }, { "type": "public-key", "alg": ES256 }],
+        "pubKeyCredParams": [
+            { "type": "public-key", "alg": EDDSA },
+            { "type": "public-key", "alg": ES256 },
+            { "type": "public-key", "alg": RS256 },
+        ],
         "authenticatorSelection": { "residentKey": "required", "userVerification": "required" },
         "attestation": "none",
         "timeout": CHALLENGE_TTL_MS,
@@ -190,7 +196,8 @@ fn map_get(m: &[(Cbor, Cbor)], k: i64) -> Option<&Cbor> {
     m.iter().find(|(key, _)| key.as_integer().and_then(|i| i64::try_from(i).ok()) == Some(k)).map(|(_, v)| v)
 }
 
-/// A COSE key as (alg, public key bytes): SEC1 for P-256, raw for Ed25519.
+/// A COSE key as (alg, public key bytes): SEC1 for P-256, raw for
+/// Ed25519, X.509 SubjectPublicKeyInfo DER for RSA.
 fn cose_key(v: &Cbor) -> Result<(i64, Vec<u8>), ApiError> {
     let m = v.as_map().ok_or_else(|| bad("bad credential key"))?;
     let int = |k| map_get(m, k).and_then(|v| v.as_integer()).and_then(|i| i64::try_from(i).ok());
@@ -207,7 +214,20 @@ fn cose_key(v: &Cbor) -> Result<(i64, Vec<u8>), ApiError> {
         }
         // OKP, EdDSA, Ed25519.
         (Some(1), Some(EDDSA)) if int(-1) == Some(6) => Ok((EDDSA, bytes(-2).ok_or_else(|| bad("bad Ed25519 key"))?)),
-        _ => Err(bad("unsupported passkey algorithm (ES256 or Ed25519 only)")),
+        // RSA, RS256 (PKCS#1 v1.5 with SHA-256): n is -1, e is -2.
+        (Some(3), Some(RS256)) => {
+            use aws_lc_rs::encoding::AsDer;
+            let (n, e) = bytes(-1).zip(bytes(-2)).ok_or_else(|| bad("bad RSA key"))?;
+            let strip = |b: &[u8]| b.iter().position(|&x| x != 0).map(|i| b[i..].to_vec()).unwrap_or_default();
+            let key = aws_lc_rs::rsa::PublicKeyComponents { n: strip(&n), e: strip(&e) };
+            // 2048 bits at least, as verification will insist.
+            if key.n.len() < 256 {
+                return Err(bad("RSA passkey shorter than 2048 bits"));
+            }
+            let der = key.as_der().map_err(|_| bad("bad RSA key"))?;
+            Ok((RS256, der.as_ref().to_vec()))
+        }
+        _ => Err(bad("unsupported passkey algorithm (ES256, Ed25519 or RS256 only)")),
     }
 }
 
@@ -328,6 +348,11 @@ fn login(app: &Arc<App>, headers: &HeaderMap, a: Assertion) -> Result<header::He
                 .map(|k| k.verify_strict(&msg, &ed25519_dalek::Signature::from_bytes(&sig)).is_ok())
                 .unwrap_or(false)
         }
+        RS256 => {
+            aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::RSA_PKCS1_2048_8192_SHA256, &pk.public)
+                .verify(&msg, &sig)
+                .is_ok()
+        }
         _ => false,
     };
     if !ok {
@@ -355,7 +380,116 @@ mod tests {
             (Cbor::from(-2), Cbor::Bytes(vec![7; 32])),
         ]);
         assert_eq!(cose_key(&ed).unwrap(), (EDDSA, vec![7; 32]));
+        // RSA with no modulus or exponent.
         let rsa = Cbor::Map(vec![(Cbor::from(1), Cbor::from(3)), (Cbor::from(3), Cbor::from(-257))]);
         assert!(cose_key(&rsa).is_err());
+        // An algorithm nobody offered.
+        let ps256 = Cbor::Map(vec![(Cbor::from(1), Cbor::from(3)), (Cbor::from(3), Cbor::from(-37))]);
+        assert!(cose_key(&ps256).is_err());
+    }
+
+    fn rsa_cose(k: &aws_lc_rs::rsa::KeyPair) -> Cbor {
+        use aws_lc_rs::signature::KeyPair as _;
+        let c = aws_lc_rs::rsa::PublicKeyComponents::<Vec<u8>>::from(k.public_key());
+        Cbor::Map(vec![
+            (Cbor::from(1), Cbor::from(3)),
+            (Cbor::from(3), Cbor::from(RS256)),
+            (Cbor::from(-1), Cbor::Bytes(c.n)),
+            (Cbor::from(-2), Cbor::Bytes(c.e)),
+        ])
+    }
+
+    #[tokio::test]
+    async fn rs256_is_offered() {
+        let app = App::for_tests("http://control.test");
+        let mut h = HeaderMap::new();
+        h.insert(header::ORIGIN, app.cfg.origin.parse().unwrap());
+        let opts = register_start(
+            State(Arc::new(app)),
+            ConnectInfo("127.0.0.1:1".parse().unwrap()),
+            h,
+            Some(Json(Start { name: Some("Sam Stranger".into()) })),
+        )
+        .await
+        .unwrap();
+        let algs: Vec<i64> =
+            opts.0["pubKeyCredParams"].as_array().unwrap().iter().map(|p| p["alg"].as_i64().unwrap()).collect();
+        assert_eq!(algs, [EDDSA, ES256, RS256]);
+    }
+
+    /// An RSA passkey registers (a new account) and signs in.
+    #[tokio::test]
+    async fn rs256_registers_and_signs_in() {
+        use aws_lc_rs::{rand::SystemRandom, rsa::KeySize, signature::RSA_PKCS1_SHA256};
+        let app = Arc::new(App::for_tests("http://control.test"));
+        let mut h = HeaderMap::new();
+        h.insert(header::ORIGIN, app.cfg.origin.parse().unwrap());
+        let client = |kind: &str, challenge: &str| {
+            let cd = json!({ "type": kind, "challenge": challenge, "origin": app.cfg.origin });
+            B64.encode(serde_json::to_vec(&cd).unwrap())
+        };
+        let rp = Sha256::digest(rp_id(&app).as_bytes()).to_vec();
+
+        let k = aws_lc_rs::rsa::KeyPair::generate(KeySize::Rsa2048).unwrap();
+        let cred = vec![9u8; 16];
+        let mut data = rp.clone();
+        data.push(UP | UV | AT);
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&[0; 16]);
+        data.extend_from_slice(&(cred.len() as u16).to_be_bytes());
+        data.extend_from_slice(&cred);
+        ciborium::into_writer(&rsa_cose(&k), &mut data).unwrap();
+        let att = Cbor::Map(vec![
+            (Cbor::from("fmt"), Cbor::from("none")),
+            (Cbor::from("attStmt"), Cbor::Map(vec![])),
+            (Cbor::from("authData"), Cbor::Bytes(data)),
+        ]);
+        let mut att_bytes = vec![];
+        ciborium::into_writer(&att, &mut att_bytes).unwrap();
+        let challenge = app.passkeys.issue(Purpose::Register { account: None, name: "Sam Stranger".into() });
+        let r = Registration {
+            id: B64.encode(&cred),
+            client_data: client("webauthn.create", &challenge),
+            attestation: B64.encode(&att_bytes),
+        };
+        let (account, cookie) = register(&app, &h, r).await.unwrap();
+        assert!(cookie.is_some());
+        let stored = app.db.passkey(&B64.encode(&cred)).unwrap().unwrap();
+        assert_eq!((stored.alg, stored.account.as_str()), (RS256, account.as_str()));
+
+        let sign_in = |sig_with: &aws_lc_rs::rsa::KeyPair| {
+            let challenge = app.passkeys.issue(Purpose::Login);
+            let cd = client("webauthn.get", &challenge);
+            let mut data = rp.clone();
+            data.push(UP | UV);
+            data.extend_from_slice(&0u32.to_be_bytes());
+            let mut msg = data.clone();
+            msg.extend_from_slice(&Sha256::digest(B64.decode(&cd).unwrap()));
+            let mut sig = vec![0; sig_with.public_modulus_len()];
+            sig_with.sign(&RSA_PKCS1_SHA256, &SystemRandom::new(), &msg, &mut sig).unwrap();
+            login(
+                &app,
+                &h,
+                Assertion {
+                    id: B64.encode(&cred),
+                    client_data: cd,
+                    authenticator_data: B64.encode(&data),
+                    signature: B64.encode(&sig),
+                },
+            )
+        };
+        assert!(sign_in(&k).is_ok());
+        // Another key's signature doesn't.
+        let other = aws_lc_rs::rsa::KeyPair::generate(KeySize::Rsa2048).unwrap();
+        assert!(sign_in(&other).is_err());
+    }
+
+    #[test]
+    fn short_rsa_keys_are_refused() {
+        let mut short = rsa_cose(&aws_lc_rs::rsa::KeyPair::generate(aws_lc_rs::rsa::KeySize::Rsa2048).unwrap());
+        if let Cbor::Map(m) = &mut short {
+            m[2].1 = Cbor::Bytes(vec![0xc5; 128]);
+        }
+        assert!(cose_key(&short).is_err());
     }
 }
