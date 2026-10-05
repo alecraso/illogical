@@ -366,6 +366,23 @@ pub enum Response {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct PromptArgs {
+    /// An agent block, or a terminal running an agent (Claude Code, Codex).
+    pub pane: PaneArg,
+    /// The prompt.
+    pub text: String,
+    /// It's waiting on an approval or a question and this answers it.
+    /// Without it, an agent waiting on someone isn't typed at: its
+    /// question comes back instead.
+    #[serde(default)]
+    pub answering: bool,
+    /// Seconds before answering "still running" (default 100): then wait
+    /// until idle.
+    #[serde(default)]
+    pub timeout: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct RespondArgs {
     /// The agent block, or a terminal running Claude Code.
     pub pane: PaneArg,
@@ -740,6 +757,16 @@ fn defs() -> Vec<Def> {
             open_world: true,
         },
         Def {
+            name: "prompt_agent",
+            title: "Prompt an agent and wait",
+            description: "Give an agent (an agent block, or Claude Code or Codex in a terminal) a prompt and wait for its turn in one call: returns when the turn ends (done), when it asks for someone (needs_input, with the question: agent_respond answers it), or stalled with its screen's last lines if it shows no sign of work within a few seconds (no agent there, the prompt not submitted, the agent gone). An agent already waiting on an approval or question isn't typed at; its question comes back (pass answering to type the answer).",
+            schema: schema_for_type::<PromptArgs>,
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
             name: "agent_respond",
             title: "Answer an agent",
             description: "Allow or deny an agent's pending permission request, or answer or skip its pending question (as wait until needs_input showed it).",
@@ -1028,6 +1055,10 @@ impl<'a> Call<'a> {
             },
             "open_conversation" => match parse(args) {
                 Ok(a) => self.open_conversation(a).await,
+                Err(e) => Err(e),
+            },
+            "prompt_agent" => match parse(args) {
+                Ok(a) => self.prompt_agent(a).await,
                 Err(e) => Err(e),
             },
             "agent_respond" => match parse(args) {
@@ -2305,6 +2336,36 @@ impl<'a> Call<'a> {
         done(summary, v)
     }
 
+    async fn prompt_agent(&self, a: PromptArgs) -> Out {
+        use illogical_proto::api::PromptResult;
+        let pane = a.pane.id()?;
+        self.drivable(pane).await?;
+        let limit = Self::limit(a.timeout);
+        let app = self.app.clone();
+        let by = self.by();
+        let fut = async move { crate::api::prompt(&app, pane, a.text, a.answering, crate::api::STALL, Some(by)).await };
+        let r = self.waiting(&format!("waiting for %{pane}'s turn"), limit, fut).await;
+        let r = match r {
+            Some(r) => r?,
+            None => return self.not_yet(pane, limit, Some("end of its turn")).await,
+        };
+        let summary = match &r {
+            PromptResult::Done => format!("%{pane} finished its turn; read_output or capture_screen for what it said"),
+            PromptResult::NeedsInput { question, .. } => {
+                format!("%{pane} asks: {}; agent_respond answers it", question.as_deref().unwrap_or("for someone"))
+            }
+            PromptResult::Blocked { question, .. } => format!(
+                "%{pane} was already waiting on someone ({}), so nothing was typed; agent_respond answers it, or pass answering",
+                question.as_deref().unwrap_or("a question")
+            ),
+            PromptResult::Stalled { why, .. } => format!("%{pane} stalled: {why}"),
+            PromptResult::StillRunning => format!("%{pane} is still working: wait until idle"),
+        };
+        let mut v = serde_json::to_value(&r).map_err(|e| e.to_string())?;
+        v["pane"] = json!(pane);
+        done(summary, v)
+    }
+
     async fn respond(&self, a: RespondArgs) -> Out {
         use illogical_proto::Action;
         let pane = a.pane.id()?;
@@ -2678,7 +2739,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 31);
+        assert_eq!(all.len(), 32);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))

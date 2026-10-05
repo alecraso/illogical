@@ -434,6 +434,11 @@ pub enum Policy {
     Rerun { confirm: bool },
     /// A fixed command, such as `claude --continue`.
     Hook { command: String },
+    /// The agent conversation that was running in it, by its session id
+    /// (#146): `claude --resume <id>`, `codex resume <id>`. If none was, a
+    /// shell; if its transcript or directory is gone, a shell that says so.
+    /// A pane running Claude Code gets this unless someone picked another.
+    Resume,
 }
 
 /// Control messages from the server.
@@ -832,6 +837,10 @@ pub struct PaneInfo {
     /// and agents.
     #[serde(default, rename = "kind", skip_serializing_if = "Option::is_none")]
     pub work: Option<WorkKind>,
+    /// What a restart resumes (#146): the agent conversation running in
+    /// it, as "Claude Code conversation <title>", when its policy says to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumes: Option<String>,
     /// The git repository it works in, if any (M23).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<Project>,

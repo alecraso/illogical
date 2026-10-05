@@ -2,9 +2,18 @@
 //! haiku each), so they only run when asked:
 //!
 //! ```sh
-//! ILLOGICAL_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp,mcp-cc cargo test -p illogicald --test agents_real
+//! ILLOGICAL_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp,mcp-cc,screen cargo test -p illogicald --test agents_real
 //! ```
 //!
+//! - `screen` (#145, #146, #147): Claude Code's TUI in a terminal pane with
+//!   no hooks at all (`--setting-sources local`). Its approval read off the
+//!   screen as NeedsInput naming the command, `prompt` waited through to
+//!   the end of the turn, then a daemon restart resumes the same
+//!   conversation (`claude --resume <id>`, the id from its session file).
+//!   With `ANTHROPIC_API_KEY` set (CI's secret) it runs in a
+//!   `CLAUDE_CONFIG_DIR` of its own; without, on your login. The replayed
+//!   versions of all of this run every time (`agent_screens`, `prompt`,
+//!   `resume`).
 //! - `questions` (M6c): Claude Code's AskUserQuestion in an agent block,
 //!   answered from its card.
 //! - `tui` (M6c): Claude Code's TUI in a terminal pane with the
@@ -494,4 +503,58 @@ fn claude_code_outside_runs_a_build_through_mcp() {
     if on_vm {
         assert!(!d.get("/api/machines").as_array().unwrap().is_empty(), "on a VM");
     }
+}
+
+/// #145, #146, #147 against the real Claude Code: no hooks, so everything
+/// it knows comes from the screen and Claude Code's own session files.
+#[test]
+fn claude_code_by_its_screen_prompted_and_resumed() {
+    if !wanted("screen") {
+        return;
+    }
+    let scratch = Scratch::new("real-screen");
+    let repo = scratch.join("repo");
+    std::process::Command::new("git").arg("init").arg("-q").arg(&repo).status().unwrap();
+    // With an API key (CI), a Claude Code config of its own.
+    let config = scratch.join("claude");
+    let mut env: Vec<(&str, String)> = vec![];
+    if std::env::var_os("ANTHROPIC_API_KEY").is_some() {
+        env.push(("CLAUDE_CONFIG_DIR", config.display().to_string()));
+    }
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let mut d = Daemon::child_env(&[], &env);
+    let unset: String = CLAUDE_ENV.iter().map(|v| format!("-u {v} ")).collect();
+    let cmd = format!("cd {} && env {unset}claude --model haiku --setting-sources local", repo.display());
+    d.post("/api/panes/1/send", json!({ "text": cmd, "enter": true }));
+    let s = until(&d, 1, "its prompt or the trust dialog", 60, |s| {
+        s.contains("? for shortcuts") || s.contains("trust this folder")
+    });
+    if s.contains("trust this folder") {
+        // Read off the screen as a question for you.
+        d.wait_for("needs input", || d.get("/api/panes")[0]["attention"] == "needs_input");
+        d.post("/api/panes/1/keys", json!({ "keys": ["Down", "Enter"] }));
+        until(&d, 1, "its prompt", 60, |s| s.contains("? for shortcuts"));
+    }
+    let prompt = |text: &str, answering: bool| {
+        d.post("/api/panes/1/prompt", json!({ "text": text, "answering": answering, "timeout": 180 }))
+    };
+    let v = prompt("Run this shell command: touch made-by-claude.txt", false);
+    assert_eq!(v["result"], "needs_input", "{v}\n{}", screen(&d, 1));
+    assert!(v["question"].as_str().unwrap_or_default().contains("touch made-by-claude.txt"), "{v}");
+    let v = prompt("", true);
+    assert_eq!(v["result"], "done", "{v}\n{}", screen(&d, 1));
+    assert!(repo.join("made-by-claude.txt").exists(), "{}", screen(&d, 1));
+    let det = d.get("/api/panes/1/detection");
+    assert_eq!(det["shown"], "idle", "{det}");
+
+    // Its conversation, from its session file, resumed after a restart.
+    d.wait_for("its conversation known", || d.get("/api/panes")[0]["resumes"].is_string());
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let layout: Value = serde_json::from_str(&std::fs::read_to_string(d.state.join("layout.json")).unwrap()).unwrap();
+    let id = layout["panes"]["1"]["session"]["id"].as_str().unwrap().to_owned();
+    d.stop();
+    d.start();
+    let resumed = || d.raw("GET", "/api/panes/1/process", None).1.contains(&id);
+    d.wait_for("claude --resume <id>", resumed);
+    until(&d, 1, "the conversation back", 60, |s| s.contains("made-by-claude.txt"));
 }

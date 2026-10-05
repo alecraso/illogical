@@ -1,0 +1,24 @@
+title: ◐ made-by-claude.txt
+ ▐▛███▛█   Claude Code v2.1.289
+▝▜██████▀  Haiku 4.5 · Claude Max
+ ▝▝   ▝▝   ~/src/demo
+
+
+❯ Run this shell command: sleep 4 && touch made-by-claude.txt
+
+⏺ Bash(sleep 4 && touch made-by-claude.txt)
+  ⎿  (No output)
+
+                                      09:23 PM claude-haiku-4-5-20251001
+⏺ Done. The file made-by-claude.txt has been created in the working directory
+  after a 4-second delay.
+
+✻ Crunched for 7s · done 9:23 PM
+
+❯ Run this shell command: sleep 6 && touch made-again.txt
+
+⏺ Bash(sleep 6 && touch made-again.txt)
+  ⎿  Running…
+
+────────────────────────────────────────────────────────────────────────────────
+  Showing detailed transcript · ctrl+o to toggle · ctrl+e to show all   verbose

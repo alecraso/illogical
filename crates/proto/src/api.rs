@@ -6,6 +6,7 @@
 //! | GET | `/api/panes` | | `[PaneSummary]` |
 //! | POST | `/api/run` | `RunRequest` | `{"pane": N}` |
 //! | POST | `/api/panes/N/send` | `SendRequest` | `{}` |
+//! | POST | `/api/panes/N/prompt` | `PromptRequest` | `PromptResult`: the agent's turn, waited through (#147) |
 //! | POST | `/api/panes/N/keys` | `KeysRequest` | `{}` |
 //! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
@@ -30,6 +31,7 @@
 //! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |
 //! | GET | `/api/panes/N/capture` | `format=text\|ansi\|html`, `scope=screen\|scrollback\|last-command` | text |
 //! | GET | `/api/panes/N/process` | | `Process` |
+//! | GET | `/api/panes/N/detection` | | how its agent's screen reads, rule by rule (#145) |
 //! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `until=OFFSET`, `follow=1`, `text=1` | bytes (streamed with follow); other blocks: their text |
 //! | GET | `/api/panes/N/wait` | `until=command-end\|exit\|match\|idle\|needs-input`, `re=`, `timeout=` secs | `WaitResult` |
 //! | GET | `/api/panes/N/export.cast` | | asciicast v3 |
@@ -241,6 +243,53 @@ pub struct SendRequest {
     /// Press Enter afterwards.
     #[serde(default)]
     pub enter: bool,
+}
+
+/// Prompt the agent in a pane (a terminal running one, or an agent block)
+/// and wait for its turn, in one call (#147): the wait starts before the
+/// prompt is typed, so it can't miss the agent starting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromptRequest {
+    pub text: String,
+    /// It's waiting on an approval or a question, and this answers it.
+    /// Without it, an agent that's waiting on someone isn't typed at.
+    #[serde(default)]
+    pub answering: bool,
+    /// Seconds to wait for any sign of work before `stalled` (default 5).
+    #[serde(default)]
+    pub stall: Option<f64>,
+    /// Seconds to wait in all before `still_running` (default 100).
+    #[serde(default)]
+    pub timeout: Option<f64>,
+}
+
+/// What prompting an agent came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum PromptResult {
+    /// Its turn ended.
+    Done,
+    /// It asks for someone: an approval or a question.
+    NeedsInput {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask: Option<Box<crate::ask::Ask>>,
+    },
+    /// It was already waiting on someone, so nothing was typed (typing
+    /// would answer it); `answering` says it's meant to.
+    Blocked {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask: Option<Box<crate::ask::Ask>>,
+    },
+    /// No sign of work within the stall window: no agent there, the
+    /// prompt wasn't submitted, or the agent died. With the screen's last
+    /// lines, to see which.
+    Stalled { why: String, screen: String },
+    /// Still working at the timeout: wait until idle.
+    StillRunning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

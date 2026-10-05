@@ -80,6 +80,35 @@ pub struct PaneMeta {
     /// Started through MCP (M16): by which client, for which agent block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<illogical_proto::StartedBy>,
+    /// The agent conversation running in it (#146), for a restart to
+    /// resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<AgentSession>,
+    /// Someone picked its restart policy (a pane left at the default that
+    /// runs Claude Code resumes its conversation).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub policy_set: bool,
+}
+
+/// An agent's conversation in a pane (#146), as its hooks or Claude
+/// Code's session files said.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSession {
+    /// `claude`, `codex`.
+    pub agent: String,
+    /// Its session id: checked by [`crate::resume::valid_id`] before it's
+    /// kept, and passed as an argument, never as shell text.
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
+    /// Where it runs: it's resumed there (the pane's shell may be
+    /// elsewhere, after `cd dir && claude`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// The agent was running in the pane when last looked: a restart
+    /// resumes only then.
+    #[serde(default)]
+    pub running: bool,
 }
 
 fn is_terminal(k: &BlockType) -> bool {

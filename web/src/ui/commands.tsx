@@ -272,6 +272,11 @@ function restartItems(client: Client, id: PaneId): MenuItem[] {
         if (command?.trim()) set({ kind: "hook", command: command.trim() });
       },
     },
+    {
+      label: info?.resumes ? `Resume ${short(info.resumes)}` : "Resume the agent's conversation",
+      checked: p.kind === "resume",
+      run: () => set({ kind: "resume" }),
+    },
     { label: "Nothing (wait for Enter)", checked: p.kind === "none", run: () => set({ kind: "none" }) },
   ];
 }

@@ -40,6 +40,7 @@ mod provider_tunnel;
 mod push;
 mod remote;
 mod resident;
+mod resume;
 mod review;
 mod roots;
 mod rules;

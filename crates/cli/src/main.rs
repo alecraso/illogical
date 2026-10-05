@@ -128,8 +128,14 @@ enum Command {
     },
     /// Type `cd DIR` into a pane's shell, if it's waiting at its prompt.
     Cd { pane: Pane, dir: String },
-    /// A block's type, place and state (any type).
-    Describe { block: Pane },
+    /// A block's type, place and state (any type). With `--detection`, how
+    /// the screen of the agent in a terminal pane reads: each rule, the
+    /// text it looked at, and which one fired.
+    Describe {
+        block: Pane,
+        #[arg(long)]
+        detection: bool,
+    },
     /// Call one of a block's methods, e.g. `call %4 navigate '{"url":"…"}'`.
     Call {
         block: Pane,
@@ -430,7 +436,12 @@ enum Command {
         /// The first prompt.
         prompt: Vec<String>,
     },
-    /// Type text into a pane (`-` reads stdin).
+    /// Type text into a pane (`-` reads stdin). With `--wait`, it's a
+    /// prompt for the agent there (Claude Code or Codex in the terminal, or
+    /// an agent block): sent with Enter, then waited through. Prints what
+    /// it came to and exits 0 when the turn ended, 2 when it needs someone
+    /// (or already did, so nothing was typed), 3 when it stalled (no sign
+    /// of work), 4 still running at --timeout.
     Send {
         pane: Pane,
         #[arg(required = true)]
@@ -438,6 +449,15 @@ enum Command {
         /// Press Enter afterwards.
         #[arg(short, long)]
         enter: bool,
+        /// Prompt the agent there and wait for its turn.
+        #[arg(long)]
+        wait: bool,
+        /// With --wait: it's waiting on a question and this answers it.
+        #[arg(long, requires = "wait")]
+        answering: bool,
+        /// With --wait: seconds before giving up waiting (default 100).
+        #[arg(long, requires = "wait")]
+        timeout: Option<f64>,
     },
     /// Press named keys: C-c, M-x, Up, Enter, F5, Space, ...
     Keys {
@@ -1033,6 +1053,61 @@ fn split_of(split: Option<&str>) -> anyhow::Result<Option<u32>> {
     })
 }
 
+/// What `send --wait` came to, for people, and its exit code.
+fn prompted(pane: u32, r: &Value) -> (String, i32) {
+    let q = |r: &Value| r["question"].as_str().unwrap_or("a question").to_owned();
+    match r["result"].as_str().unwrap_or_default() {
+        "done" => (format!("%{pane} finished its turn"), 0),
+        "needs_input" => (format!("%{pane} asks: {}", q(r)), 2),
+        "blocked" => (
+            format!("%{pane} was already waiting on someone ({}); nothing was typed (--answering to answer it)", q(r)),
+            2,
+        ),
+        "stalled" => {
+            let screen = r["screen"].as_str().unwrap_or_default();
+            (format!("%{pane} stalled: {}\n{screen}", r["why"].as_str().unwrap_or_default()), 3)
+        }
+        "still_running" => (format!("%{pane} is still working (illogical wait %{pane} --idle)"), 4),
+        other => (format!("%{pane}: {other}"), 1),
+    }
+}
+
+/// `describe %N --detection` for people: what fired, then each rule with
+/// the text it saw, highest priority first.
+fn detection_text(pane: u32, v: &Value) -> String {
+    use std::fmt::Write;
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_owned();
+    let Some(agent) = v["agent"].as_str() else {
+        return match v["command"].as_str() {
+            Some(c) => format!("%{pane} runs `{c}`: no agent with screen rules\n"),
+            None => format!("%{pane} is at its shell: no agent with screen rules\n"),
+        };
+    };
+    let mut out = format!("%{pane} runs {} ({agent})", s(&v["name"]));
+    match v["fired"].as_str() {
+        Some(rule) => {
+            let state = v["rules"].as_array().into_iter().flatten().find(|r| r["rule"] == rule);
+            let _ = write!(out, ": {} by rule {rule}", state.map(|r| s(&r["state"])).unwrap_or_default());
+        }
+        None => out.push_str(": no rule matches"),
+    }
+    let _ = writeln!(out, " (shown: {})", v["shown"].as_str().unwrap_or("nothing yet"));
+    let _ = writeln!(out, "title: {}", s(&v["title"]));
+    for r in v["rules"].as_array().into_iter().flatten() {
+        let mark = if r["matched"] == true { "matched" } else { "no match" };
+        let _ =
+            writeln!(out, "\n{} ({}, {}) {}: {mark}", s(&r["rule"]), s(&r["state"]), r["priority"], s(&r["region"]));
+        let text = r["text"].as_array().cloned().unwrap_or_default();
+        if text.iter().all(|l| l.as_str().is_none_or(|l| l.trim().is_empty())) {
+            out.push_str("  (empty)\n");
+        }
+        for l in text.iter().filter_map(|l| l.as_str()).filter(|l| !l.trim().is_empty()) {
+            let _ = writeln!(out, "  | {}", l.trim_end());
+        }
+    }
+    out
+}
+
 /// A block's `describe` once it has read what it shows (M11's views read
 /// in the background; at most 30s).
 fn loaded(sock: &http::Target, block: u64) -> anyhow::Result<Value> {
@@ -1072,8 +1147,9 @@ fn policy(s: &str) -> anyhow::Result<Value> {
         "none" => json!({"kind": "none"}),
         "rerun" => json!({"kind": "rerun", "confirm": false}),
         "rerun-ask" => json!({"kind": "rerun", "confirm": true}),
+        "resume" => json!({"kind": "resume"}),
         h if h.starts_with("hook:") => json!({"kind": "hook", "command": &h[5..]}),
-        _ => bail!("policy: shell, none, rerun, rerun-ask or hook:COMMAND"),
+        _ => bail!("policy: shell, none, rerun, rerun-ask, resume or hook:COMMAND"),
     })
 }
 
@@ -1588,7 +1664,11 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 );
             }
         }
-        Command::Describe { block } => {
+        Command::Describe { block, detection: true } => {
+            let v = request(&sock, "GET", &format!("/api/panes/{}/detection", block.0), None)?.json()?;
+            print!("{}", detection_text(block.0, &v));
+        }
+        Command::Describe { block, .. } => {
             print_json(&request(&sock, "GET", &format!("/api/blocks/{}", block.0), None)?.json()?);
         }
         Command::Call { block, method, args } => {
@@ -2457,11 +2537,18 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 return Ok(w["code"].as_i64().unwrap_or(1) as i32);
             }
         }
-        Command::Send { pane, text, enter } => {
+        Command::Send { pane, text, enter, wait, answering, timeout } => {
             let mut text = text.join(" ");
             if text == "-" {
                 text.clear();
                 std::io::stdin().read_to_string(&mut text)?;
+            }
+            if wait {
+                let body = json!({"text": text, "answering": answering, "timeout": timeout});
+                let r = request(&sock, "POST", &format!("/api/panes/{}/prompt", pane.0), Some(&body))?.json()?;
+                let (line, code) = prompted(pane.0, &r);
+                println!("{line}");
+                return Ok(code);
             }
             request(
                 &sock,
@@ -2826,6 +2913,28 @@ fn secret_input(prompt: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn detection_for_people() {
+        let v = serde_json::json!({
+            "agent": "claude", "name": "Claude Code", "shown": "blocked", "fired": "permission_prompt",
+            "title": "✳ Create a file",
+            "rules": [
+                {"rule": "permission_prompt", "state": "blocked", "priority": 1000, "region": "after the last rule",
+                 "text": [" Do you want to proceed?", "", " ❯ 1. Yes"], "matched": true},
+                {"rule": "title_idle", "state": "idle", "priority": 250, "region": "title", "text": [""], "matched": false},
+            ],
+        });
+        let text = super::detection_text(4, &v);
+        assert!(
+            text.starts_with("%4 runs Claude Code (claude): blocked by rule permission_prompt (shown: blocked)\n"),
+            "{text}"
+        );
+        assert!(text.contains("\npermission_prompt (blocked, 1000) after the last rule: matched\n  |  Do you want to proceed?\n  |  ❯ 1. Yes\n"), "{text}");
+        assert!(text.contains("\ntitle_idle (idle, 250) title: no match\n  (empty)\n"), "{text}");
+        let none = super::detection_text(2, &serde_json::json!({"agent": null, "command": "vim notes"}));
+        assert_eq!(none, "%2 runs `vim notes`: no agent with screen rules\n");
+    }
+
     #[test]
     fn web_link_over_ssh() {
         assert_eq!(super::ssh_hint("http://127.0.0.1:7681", false), None);
