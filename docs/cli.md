@@ -100,6 +100,8 @@ illogical attention [--json]                  # what wants you and why: ask, fai
 illogical ask                                 # Claude Code's AskUserQuestion hook (below)
 illogical hook                                # Claude Code's permission prompts as cards anyone on the team answers (below)
 illogical inbox                               # Claude Code's background Stop hook: follow-ups from the team (below)
+illogical hooks install [--project DIR] [--dry-run]  # add all of those to Claude Code's settings.json, keeping yours
+illogical hooks status                        # which of them are there (below)
 illogical hosts                               # the home daemon's other hosts, last seen, and control's machines once logged in
 illogical login [--account FP]                # make this CLI one of your devices on control (approve its code on a signed-in device)
 illogical --host mini capture %2              # a machine on your control account, direct or relayed (nothing in hosts.json)
@@ -264,7 +266,10 @@ Claude Code in an ordinary pane can tell you when it needs you, put its
 questions and permission prompts on cards anyone on the team who may
 answer can answer (from the pane, the swarm's rail or a notification), and
 take its next instruction from them. All of it is hooks, in
-`~/.claude/settings.json`:
+`~/.claude/settings.json`. `illogical hooks install` writes exactly this
+(merged into what's there, never replacing it; `--project DIR` for a
+project's `.claude/settings.json`, `--dry-run` to see the result first),
+and `illogical hooks status` checks it:
 
 ```json
 {
