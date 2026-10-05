@@ -2,7 +2,8 @@
 //! chunked (streamed) responses. Over the daemon's Unix socket by default,
 //! or to another daemon's URL (`--host`), with TLS for `https://`, or to a
 //! host reached through the local daemon (on its socket, under `/h/<host>`
-//! for a dial-out host, `/tunnel/<host>` for a provider host).
+//! for a dial-out host, `/tunnel/<host>` for a provider host), or to a box
+//! over ssh (one ssh channel per connection; `crate::ssh`).
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -28,6 +29,9 @@ pub enum Target {
     /// socket, with every path under this prefix: `/h/NAME` for a dial-out
     /// host, `/tunnel/NAME` for a provider host (M4b).
     Via(PathBuf, String),
+    /// A box's daemon over ssh (M51): each connection is a channel running
+    /// `illogical bridge` there.
+    Ssh(crate::ssh::Remote),
 }
 
 /// `http(s)://host[:port]`, taken apart.
@@ -77,7 +81,7 @@ impl Target {
     /// The Host header, and the WebSocket URL's authority.
     pub fn authority(&self) -> &str {
         match self {
-            Target::Socket(_) | Target::Via(..) => "localhost",
+            Target::Socket(_) | Target::Via(..) | Target::Ssh(_) => "localhost",
             Target::Url(u) => &u.authority,
         }
     }
@@ -135,6 +139,7 @@ impl Target {
                 UnixStream::connect(path)
                     .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
             )),
+            Target::Ssh(r) => Ok(Box::new(r.channel()?)),
             Target::Url(u) => {
                 let tcp = TcpStream::connect((u.host.as_str(), u.port))
                     .with_context(|| format!("can't reach {}:{}", u.host, u.port))?;

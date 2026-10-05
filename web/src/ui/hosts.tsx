@@ -103,6 +103,13 @@ export function HostButton() {
       groups.size > 1
         ? [...groups.values()].flatMap((g) => [{ header: g.label } as MenuItem, ...g.names.map(item)])
         : directory.names.map(item);
+    // M51: boxes reached over ssh, which only a terminal can open.
+    if (directory.sshOnly.length) {
+      items.push("separator", { header: "From a terminal (ssh)" } as MenuItem);
+      for (const h of directory.sshOnly) {
+        items.push({ label: `    ${h.name}  · illogical --host ${h.name} tui`, disabled: true, run: () => {} });
+      }
+    }
     items.push("separator", { label: "Swarm: every pane at once", run: openSwarm });
     if (fleet?.notice) items.push("separator", { label: fleet.notice, disabled: true, run: () => {} });
     if (directory.stale) {
