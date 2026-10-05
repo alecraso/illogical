@@ -64,7 +64,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${1:-ssh}"; shift || true
-# shellcheck source=env.sh
+# shellcheck source-path=SCRIPTDIR source=env.sh
 . "$HERE/env.sh"
 CFG="$STATE/ssh_config"
 BREAK="${BREAK:-}"

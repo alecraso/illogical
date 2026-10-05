@@ -265,10 +265,33 @@ These skip, saying why, unless what they need is there:
 | `resident.rs`, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token and `just static` |
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
-| `just testnet test ssh`, `ssh.rs` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
+| `just testnet test ssh` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
 | `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries |
 | `mcp.spec.ts`, "the real Claude Code runs a build over MCP" | `ANTHROPIC_API_KEY` and `claude` on PATH (costs a few cents) |
 | `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" | `ILLOGICAL_TESTNET_PHONES=1`, Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
+
+## The test stack
+
+[`testnet/`](../testnet/README.md) is a Docker Compose stack, one profile per
+network shape, for what one host's loopback can't show. Its README has the
+profiles, the claims each one checks (and how `BREAK=1` breaks them), and
+how to run two stacks side by side (`COMPOSE_PROJECT_NAME`). Tests built on
+it:
+
+| What | Where | Run |
+|---|---|---|
+| M51: `--ssh` installs illogical on a bare box behind a bastion, runs and captures panes, forwards the agent; a `git push` from a pane reaches the stack's git server with the forwarded agent and is refused without it | `crates/daemon/tests/ssh.rs` | `just testnet up ssh`, `just static <arch>`, then `cargo test -p illogicald --test ssh` |
+| #26: a lingering daemon on box-systemd survives `docker restart` (twice): up with nobody logged in, layout, directories and coloured scrollback back with `── restored`, every pane by its policy, the browser and agent blocks, "saved for shutdown" and "restored" in the journal | `crates/daemon/tests/reboot.rs` | as above, plus `cd web && pnpm install`; `cargo test -p illogicald --test reboot` |
+| A headless web client attached across that restart reconnects by itself, without reloading | `web/reconnect-watch.ts`, driven by `reboot.rs` | (in `reboot.rs`) |
+| S28: the same daemon over `--ssh` and over a tailnet (headscale and two Tailscale nodes), timed | `testnet/measure-tailnet.sh` | `just testnet up tailnet`, `just static <arch>`, `just testnet measure tailnet` |
+
+These require Docker: without it they fail, and they bring the stack's
+profile up themselves when it isn't. They also need `just static <arch>`
+(`reboot.rs` also node and Playwright's Chromium in `web/`), and fail saying
+so without it. `ILLOGICAL_SKIP_DOCKER=1` is the only way to skip them, and
+they print that nothing ran. They recreate the boxes they use, so give each
+worktree its own stack (`COMPOSE_PROJECT_NAME` and
+`ILLOGICAL_TESTNET_SSH_PORT`). The stack isn't in CI yet (#200).
 
 ## By hand
 
@@ -284,7 +307,8 @@ Tracked in #200:
 
 - More `testnet/` profiles: `ssh` (boxes behind a bastion) and `control`
   (control with its relay, reached by boxes that only dial out) exist;
-  Fountain and Forgejo don't yet.
+  `tailnet` (headscale and two Tailscale nodes) exists too; Fountain and
+  Forgejo don't yet.
 - Client fixtures: recorded daemon sessions a client can replay against,
   and a daemon check against previous releases' fixtures.
 - The Playwright suite in CI.

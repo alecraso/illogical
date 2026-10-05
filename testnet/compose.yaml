@@ -23,7 +23,7 @@ networks:
 
 x-sshd: &sshd
   build: ./sshd
-  image: illogical-testnet-sshd
+  image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-sshd
   volumes:
     - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
 
@@ -51,7 +51,7 @@ services:
   box-systemd:
     profiles: [ssh]
     build: ./sshd-systemd
-    image: illogical-testnet-sshd-systemd
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-sshd-systemd
     container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-box-systemd
     hostname: box-systemd
     privileged: true
@@ -66,7 +66,7 @@ services:
   git:
     profiles: [ssh]
     build: ./git
-    image: illogical-testnet-git
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-git
     container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-git
     hostname: git
     volumes:
@@ -125,3 +125,40 @@ services:
     ports:
       - "127.0.0.1:${ILLOGICAL_TESTNET_FAKES_PORT:-22981}:9001"
     networks: [outer]
+
+  # S28's tailnet comparison: headscale and two Tailscale nodes on the inner
+  # network. ts-box is a box (userspace tailscaled, sshd); ts-client is
+  # where the CLI runs, over ssh or over the tailnet, to the same daemon.
+  headscale:
+    profiles: [tailnet]
+    image: headscale/headscale:0.29.4
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-headscale
+    hostname: headscale
+    command: serve
+    volumes:
+      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+    networks: [inner]
+
+  ts-box:
+    profiles: [tailnet]
+    build: ./tailnet
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-tailnet
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-ts-box
+    hostname: ts-box
+    environment: { TESTNET_NAME: ts-box, TS_TUN: userspace-networking }
+    volumes:
+      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+    networks: [inner]
+
+  ts-client:
+    profiles: [tailnet]
+    build: ./tailnet
+    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-tailnet
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-ts-client
+    hostname: ts-client
+    environment: { TESTNET_NAME: ts-client, TS_TUN: tailscale0 }
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    volumes:
+      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+    networks: [inner]
