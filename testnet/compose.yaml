@@ -1,29 +1,31 @@
 # The local test stack (#200). One profile per scenario; `just testnet up
 # <profile>` brings one up. Everything is named illogical-testnet-*, so
 # `just testnet down` removes it and nothing else. See testnet/README.md.
+# COMPOSE_PROJECT_NAME replaces the illogical-testnet prefix, so two stacks
+# can run side by side; the scripts give each its own state directory.
 name: illogical-testnet
 
 networks:
   # The outer network. The bastion is the only thing on it so far.
   outer:
-    name: illogical-testnet
+    name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}
   # Only ssh gets through: no route out, and nothing published to the host.
   # The bastion is on both networks.
   inner:
-    name: illogical-testnet-inner
+    name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-inner
     internal: true
 
 x-sshd: &sshd
   build: ./sshd
   image: illogical-testnet-sshd
   volumes:
-    - ./.state:/keys:ro
+    - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
 
 services:
   bastion:
     <<: *sshd
     profiles: [ssh]
-    container_name: illogical-testnet-bastion
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-bastion
     hostname: bastion
     environment: { TESTNET_NAME: bastion }
     ports:
@@ -33,7 +35,7 @@ services:
   box-bare:
     <<: *sshd
     profiles: [ssh]
-    container_name: illogical-testnet-box-bare
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-box-bare
     hostname: box-bare
     environment: { TESTNET_NAME: box-bare }
     networks: [inner]
@@ -44,11 +46,23 @@ services:
     profiles: [ssh]
     build: ./sshd-systemd
     image: illogical-testnet-sshd-systemd
-    container_name: illogical-testnet-box-systemd
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-box-systemd
     hostname: box-systemd
     privileged: true
     cgroup: private
     tmpfs: [/run, /run/lock, /tmp]
     volumes:
-      - ./.state:/keys:ro
+      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+    networks: [inner]
+
+  # A git server (bare repositories over ssh) for M51's `git push` from a
+  # pane with the agent forwarded through `illogical --ssh`. git@git:repo.git.
+  git:
+    profiles: [ssh]
+    build: ./git
+    image: illogical-testnet-git
+    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-git
+    hostname: git
+    volumes:
+      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
     networks: [inner]

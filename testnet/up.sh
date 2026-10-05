@@ -4,7 +4,8 @@
 #
 #   testnet/up.sh ssh     bastion, box-bare and box-systemd (see README.md)
 #
-# Makes the stack's keys in testnet/.state (a client key and one host key per
+# Makes the stack's keys in testnet/.state (.state-<name> for another
+# COMPOSE_PROJECT_NAME) (a client key and one host key per
 # box) and writes testnet/.state/ssh_config, which reaches every box by name
 # with strict host key checking:
 #
@@ -16,7 +17,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${1:-ssh}"
-STATE="$HERE/.state"
+# shellcheck source=env.sh
+. "$HERE/env.sh"
 PORT="${ILLOGICAL_TESTNET_SSH_PORT:-22922}"
 
 log() { echo "[testnet up $PROFILE] $*" >&2; }
@@ -26,7 +28,7 @@ command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exi
 docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 
 case "$PROFILE" in
-  ssh) boxes="bastion box-bare box-systemd" ;;
+  ssh) boxes="bastion box-bare box-systemd git" ;;
   *) echo "usage: testnet/up.sh ssh   (the only profile so far)" >&2; exit 2 ;;
 esac
 
