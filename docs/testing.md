@@ -95,6 +95,28 @@ These skip, saying why, unless what they need is there:
 | `resident.rs`, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token and `just static` |
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
+| `ssh.rs`, `reboot.rs` | the test stack's `ssh` profile and `just static <arch>` (below) |
+| `reboot.rs` | also node and Playwright's Chromium in `web/` |
+
+## The test stack
+
+[`testnet/`](../testnet/README.md) is a Docker Compose stack, one profile per
+network shape, for what one host's loopback can't show. Its README has the
+profiles, the claims each one checks (and how `BREAK=1` breaks them), and
+how to run two stacks side by side (`COMPOSE_PROJECT_NAME`). Tests built on
+it:
+
+| What | Where | Run |
+|---|---|---|
+| M51: `--ssh` installs illogical on a bare box behind a bastion, runs and captures panes, forwards the agent; a `git push` from a pane reaches the stack's git server with the forwarded agent and is refused without it | `crates/daemon/tests/ssh.rs` | `just testnet up ssh`, `just static <arch>`, then `cargo test -p illogicald --test ssh` |
+| #26: a lingering daemon on box-systemd survives `docker restart` (twice): up with nobody logged in, layout, directories and coloured scrollback back with `── restored`, every pane by its policy, the browser and agent blocks, "saved for shutdown" and "restored" in the journal | `crates/daemon/tests/reboot.rs` | as above, plus `cd web && pnpm install`; `cargo test -p illogicald --test reboot` |
+| A headless web client attached across that restart reconnects by itself, without reloading | `web/reconnect-watch.ts`, driven by `reboot.rs` | (in `reboot.rs`) |
+| S28: the same daemon over `--ssh` and over a tailnet (headscale and two Tailscale nodes), timed | `testnet/measure-tailnet.sh` | `just testnet up tailnet`, `just static <arch>`, `just testnet measure tailnet` |
+
+The Rust tests say SKIP and pass when the stack isn't up. They recreate the
+boxes they use, so run them against your own stack
+(`COMPOSE_PROJECT_NAME`), not someone else's. The stack isn't in CI yet
+(#200).
 
 ## By hand
 
@@ -108,9 +130,8 @@ These skip, saying why, unless what they need is there:
 
 Tracked in #200:
 
-- `testnet/`, a Compose stack with profiles for network shapes and real
-  services: ssh boxes behind a bastion, control and a box that can only
-  dial out, Fountain, Forgejo. Modelled on terragucci's `stack/`.
+- More `testnet/` profiles: control and a box that can only dial out,
+  Fountain, Forgejo; and the stack in CI.
 - Client fixtures: recorded daemon sessions a client can replay against,
   and a daemon check against previous releases' fixtures.
 - A shared harness crate in place of the per-file `Daemon` copies.
