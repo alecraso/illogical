@@ -22,7 +22,7 @@ trap 'rm -f "$tmp" "$dtmp"' EXIT
 
 cargo about generate about.hbs >"$tmp"
 scripts/web-notices >>"$tmp"
-(cd crates/desktop && cargo about generate -c about.toml ../../about.hbs) >"$dtmp"
+(cd crates/desktop && cargo about generate --features native-calls -c about.toml ../../about.hbs) >"$dtmp"
 
 mv "$tmp" THIRD_PARTY.md
 mv "$dtmp" crates/desktop/THIRD_PARTY.md

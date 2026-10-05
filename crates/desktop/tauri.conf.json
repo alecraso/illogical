@@ -43,7 +43,7 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libc6 (>= 2.35)"],
+        "depends": ["libc6 (>= 2.35)", "libasound2", "libstdc++6"],
         "recommends": ["python3-nautilus"],
         "desktopTemplate": "linux/illogical.desktop",
         "files": {

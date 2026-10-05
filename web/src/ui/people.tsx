@@ -13,6 +13,7 @@ import { CopyText } from "./copy";
 
 /** Control mode (M19): people are accounts there, and links go through it. */
 let control: ControlSession | null = null;
+export const getControlSession = () => control;
 export function setControlSession(s: ControlSession | null) {
   control = s;
 }

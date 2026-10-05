@@ -17,7 +17,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl wget file pkg-config patchelf xdg-utils \
       libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev \
+      libasound2-dev libopus-dev ninja-build clang libclang-dev python3-pip git \
     && rm -rf /var/lib/apt/lists/*
+
+# Huddles (M63, the app's `native-calls`): WebRTC's echo cancellation is
+# built with meson, newer than 22.04's.
+RUN pip3 install --no-cache-dir 'meson>=0.63'
+# Opus linked into the app, not a library it needs: audiopus finds
+# `$LIBOPUS_LIB_DIR/lib/libopus.a` (build-linux.sh).
+RUN mkdir -p /opt/opus/lib && ln -s "/usr/lib/$(gcc -print-multiarch)/libopus.a" /opt/opus/lib/libopus.a
 
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN" \
     && cargo install tauri-cli --version "=$TAURI_CLI" --locked \

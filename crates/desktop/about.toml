@@ -26,3 +26,28 @@ targets = [
 ]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
+
+# Huddles (M63, the `native-calls` feature): WebRTC's audio processing
+# (AEC3) through these crates, which have no license field. Their COPYING is
+# Google's BSD-3-Clause (WebRTC's, with its PATENTS grant), which the
+# license scanner misreads.
+[webrtc-audio-processing.clarify]
+license = "BSD-3-Clause"
+[[webrtc-audio-processing.clarify.files]]
+path = "COPYING"
+license = "BSD-3-Clause"
+checksum = "6db9d4840c6ff0fb3c37ace8e32cfd3eb6c6e759c67b4ecbee969cd8d75154a9"
+
+[webrtc-audio-processing-config.clarify]
+license = "BSD-3-Clause"
+[[webrtc-audio-processing-config.clarify.files]]
+path = "COPYING"
+license = "BSD-3-Clause"
+checksum = "9b79539028e216e813e152d45f5c1ed5fdd0554426ad50270fb03134e7082dac"
+
+[webrtc-audio-processing-sys.clarify]
+license = "BSD-3-Clause"
+[[webrtc-audio-processing-sys.clarify.files]]
+path = "COPYING"
+license = "BSD-3-Clause"
+checksum = "9b79539028e216e813e152d45f5c1ed5fdd0554426ad50270fb03134e7082dac"

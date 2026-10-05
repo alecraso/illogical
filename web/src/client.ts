@@ -11,6 +11,7 @@ import {
   encodeFrame,
   FrameKind,
   type ActRequest,
+  type Call,
   type AttachPane,
   type ClientId,
   type ClientMsg,
@@ -438,6 +439,37 @@ export class Client {
     const s = this.thread(t);
     if (!s || (!s.unread && !s.mention)) return;
     void this.request("POST", `/api/threads/${threadKey(t)}/read`, { upto }).catch(() => {});
+  }
+
+  // ---- huddles (M63)
+
+  private callListeners = new Set<(m: Extract<ServerMsg, { type: "call_signal" }>) => void>();
+
+  /** The huddle on a session, if there is one. */
+  call(session: SessionId): Call | undefined {
+    return this.state?.calls?.find((c) => c.session === session);
+  }
+
+  /** Descriptions from other huddle members, as they come. */
+  onCallSignal(fn: (m: Extract<ServerMsg, { type: "call_signal" }>) => void): () => void {
+    this.callListeners.add(fn);
+    return () => this.callListeners.delete(fn);
+  }
+
+  /** Whether this daemon has huddles (unknown means no, like threads). */
+  hasCalls(): boolean {
+    return this.features?.calls === true;
+  }
+
+  /** Whether this page talks to the daemon with a device key: what it
+   * says in a huddle is signed. */
+  signs(): boolean {
+    return !!this.e2e;
+  }
+
+  /** The device key this page signs with, through control. */
+  deviceKeys(): DeviceKeys | undefined {
+    return this.e2e?.keys;
   }
 
   /** Whether this person may post in a thread (drivers and owners). */
@@ -959,6 +991,9 @@ export class Client {
       case "thread":
         for (const fn of this.threadListeners.get(threadKey(msg.target)) ?? []) fn(msg.msg);
         break;
+      case "call_signal":
+        for (const fn of this.callListeners) fn(msg);
+        break;
       case "block": {
         const b = this.blocks.get(msg.block);
         if (b) {
@@ -994,6 +1029,7 @@ export class Client {
       machines: d.machines ?? old.machines,
       presence: d.presence ?? old.presence,
       threads: d.threads ?? old.threads,
+      calls: d.calls ?? old.calls,
     };
     if (added || d.gone?.length) return this.applyState(state, false);
     this.state = state;

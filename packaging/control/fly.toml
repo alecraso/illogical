@@ -3,7 +3,9 @@
 # when its secrets are set. Secrets (fly secrets set): GITHUB_CLIENT_ID,
 # GITHUB_CLIENT_SECRET; LITESTREAM_BUCKET, LITESTREAM_ENDPOINT,
 # LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY (docs/control.md,
-# "Operating the hosted one"). Deploy with `just control-deploy`.
+# "Operating the hosted one"); CLOUDFLARE_TURN_KEY_ID,
+# CLOUDFLARE_TURN_API_TOKEN (TURN for huddles, M63). Deploy with
+# `just control-deploy`.
 app = "illogical-control"
 primary_region = "ewr"
 # On a stop, control lets Litestream sync one last time (up to 10 s).

@@ -6,6 +6,8 @@
 //
 // The shown host's threads come from the page's own connection; the other
 // hosts' from the fleet's summary connections, which get threads too.
+//
+// A session's huddle (M63) shows on its channel row and in its header.
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
@@ -15,6 +17,7 @@ import { threadKey, type SessionId, type ThreadSummary, type ThreadTarget } from
 import { getFleet } from "./hosts";
 import { usePhone } from "./hooks";
 import { closeThread, ThreadBody, type Quote } from "./threads";
+import { HuddleButton, HuddleChip } from "./huddle";
 
 // ---- the route
 
@@ -253,6 +256,7 @@ function ChatView({ client, route }: { client: Client; route: { host?: string; k
               >
                 <span class="chat-sigil">{"pane" in r.target ? "↳" : "#"}</span>
                 <span class="chat-label">{r.label}</span>
+                {"session" in r.target && <HuddleChip client={s.client} session={r.target.session} />}
                 {n > 0 && <span class={r.summary?.mention ? "chat-count mention" : "chat-count"}>{r.summary?.mention ? `@${n}` : n}</span>}
               </button>
             );
@@ -319,6 +323,9 @@ function ChatThread({ s, target, phone, multi }: { s: Source; target: ThreadTarg
           <strong>{name}</strong>
           {where && <span>{where}</span>}
         </div>
+        {session !== null && c.state?.sessions.some((x) => x.id === session) && (
+          <HuddleButton client={c} session={session} label />
+        )}
         {alive && (
           <button class="chat-go" data-chat-go onClick={() => goTo(s, target)}>
             {pane !== null ? "Go to pane" : "Go to session"}

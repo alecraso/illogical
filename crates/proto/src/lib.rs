@@ -72,6 +72,18 @@ pub enum ClientMsg {
     /// Follow an editor (M28): its cursor, selection and the file it shows
     /// come as [`ServerMsg::Follow`] while `on`. Viewer access is enough.
     Follow { pane: PaneId, on: bool },
+    /// Join the huddle on `session` (M63), starting one if there's none.
+    /// Anyone with a role in the session may, up to [`CALL_MAX`] people.
+    CallJoin { session: SessionId },
+    /// Leave it. The huddle ends when its last member leaves.
+    CallLeave { session: SessionId },
+    /// Show everyone in the huddle that this client is (un)muted.
+    CallMute { session: SessionId, muted: bool },
+    /// A WebRTC description for another member of the huddle, passed on
+    /// untouched as [`ServerMsg::CallSignal`]. `signal` is
+    /// `{type: "offer"|"answer", sdp, sig?}`: `sig` signs the SDP's
+    /// fingerprints with the device key ([`call_fingerprint_body`]).
+    CallSignal { session: SessionId, to: ClientId, signal: serde_json::Value },
     /// This client is a hand (S33): device tools agents may call through
     /// the daemon's MCP server. `tools` empty: it stops being one. A hand
     /// that isn't connected is woken by a push to its device.
@@ -98,6 +110,19 @@ pub struct HandTool {
     /// Its arguments, as a JSON Schema object.
     #[serde(default)]
     pub schema: serde_json::Value,
+}
+
+/// The most people in one huddle: every member sends to every other
+/// (S30: CPU and how it sounds are the limit, not bandwidth).
+pub const CALL_MAX: usize = 5;
+
+/// What a huddle member signs with its device key when it sends a
+/// description: the call, who it's for, and the SDP's `a=fingerprint:`
+/// lines in order. Naming the call and the recipient keeps a daemon from
+/// replaying it into another call or to another member.
+pub fn call_fingerprint_body(call: &str, from: ClientId, to: ClientId, sdp: &str) -> String {
+    let fps: Vec<&str> = sdp.lines().map(str::trim).filter(|l| l.starts_with("a=fingerprint:")).collect();
+    format!("illogical call v1\ncall {call}\nfrom {from}\nto {to}\n{}\n", fps.join("\n"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -508,6 +533,19 @@ pub enum ServerMsg {
     /// A new message in a pane's or session's thread (M61), sent to every
     /// client whose person may read it.
     Thread { target: ThreadTarget, msg: ThreadMsg },
+    /// A huddle member's description for this client (M63). `cert` is the
+    /// sender's device certificate as the daemon verified it, when it
+    /// connected with one: the receiver checks `signal.sig` against it and
+    /// checks the certificate itself, so the daemon can't swap the
+    /// fingerprints. No `cert`: the sender has no device key (tailnet or
+    /// local), and the client says the peer isn't verified.
+    CallSignal {
+        session: SessionId,
+        from: ClientId,
+        signal: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cert: Option<serde_json::Value>,
+    },
     /// An agent calls one of this hand's tools (S33). `from` says who, for
     /// the person to decide. Answer with [`ClientMsg::HandReply`].
     HandCall { id: u64, tool: String, args: serde_json::Value, from: String },
@@ -530,6 +568,8 @@ pub struct Delta {
     pub presence: Option<Vec<Presence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threads: Option<Vec<ThreadSummary>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calls: Option<Vec<Call>>,
 }
 
 impl Delta {
@@ -539,6 +579,7 @@ impl Delta {
             && self.machines.is_none()
             && self.presence.is_none()
             && self.threads.is_none()
+            && self.calls.is_none()
     }
 }
 
@@ -577,6 +618,9 @@ impl State {
         }
         if let Some(t) = &delta.threads {
             self.threads = t.clone();
+        }
+        if let Some(c) = &delta.calls {
+            self.calls = c.clone();
         }
     }
 }
@@ -651,6 +695,42 @@ pub struct State {
     /// many they haven't read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threads: Vec<ThreadSummary>,
+    /// Huddles (M63) on the sessions this person has a role in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<Call>,
+}
+
+/// A huddle: a voice call on a session (M63), peer to peer between its
+/// members, signaled through this daemon.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Call {
+    pub session: SessionId,
+    /// New each time a huddle starts on the session, so what's signed for
+    /// one can't be used in the next.
+    pub id: String,
+    /// When it started (ms since the epoch).
+    pub started: u64,
+    /// In the order they joined.
+    pub members: Vec<CallMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallMember {
+    pub client: ClientId,
+    /// Their principal id.
+    pub who: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pic: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
+    /// When they joined (ms since the epoch).
+    pub joined: u64,
+    /// Their device's id, when they connected with a device key (through
+    /// control): their fingerprints are signed. Absent for a tailnet or
+    /// local connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
 }
 
 pub type MachineId = u32;
@@ -1260,6 +1340,7 @@ mod tests {
             roles: Some(vec![(1, illogical_core::Role::Viewer), (4, illogical_core::Role::Editor)]),
             presence: vec![],
             threads: vec![],
+            calls: vec![],
         };
         let msg = ServerMsg::State { state };
         let back: ServerMsg = serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();

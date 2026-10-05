@@ -15,6 +15,7 @@ declare global {
       remotes: { client(host: string): Client | undefined };
       control: ControlSession | null;
       fleet: import("../src/fleet").Fleet;
+      huddle: import("../src/call").Huddle | null;
       summaries(): Client;
       text(pane: PaneId): string;
       screen(pane: PaneId): string;

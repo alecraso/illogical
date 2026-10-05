@@ -43,6 +43,8 @@ pub const PEOPLE: (&str, usize) = ("people", 120);
 pub const ENROLLS: (&str, usize) = ("enroll", 30);
 /// Teams made, per account.
 pub const TEAMS: (&str, usize) = ("team", 20);
+/// TURN credentials per daemon: it caches them, so a few an hour is plenty.
+pub const TURNS: (&str, usize) = ("turn", 60);
 /// Invite links made, per account.
 pub const TEAM_INVITES: (&str, usize) = ("team-invite", 120);
 /// Checkout pages asked for, per account.

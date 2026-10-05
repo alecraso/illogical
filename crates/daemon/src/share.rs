@@ -280,7 +280,7 @@ async fn view(
     let (data, mut data_rx) = client_queue();
     let (ctrl, mut ctrl_rx) = mpsc::unbounded_channel();
     // Watches one pane only; never sends the mux anything.
-    let sub = Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner, name: None };
+    let sub = Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner, name: None, device: None };
     // The viewer page keeps as much scrollback as the app (share.ts).
     let want = crate::pane::Want { history: Some(VIEWER_SCROLLBACK), ..Default::default() };
     handle.attach_with(sub.clone(), want);

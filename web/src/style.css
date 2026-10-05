@@ -5097,6 +5097,174 @@ button.thread-quote:hover {
   background: #f9e2af;
 }
 
+/* ---- huddles (M63) */
+
+.huddle-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: var(--dim);
+  flex: none;
+}
+.huddle-button:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--fg);
+}
+.huddle-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.huddle-button.live {
+  color: var(--letterbox);
+  background: #a6e3a1;
+}
+.huddle-button.live:hover:not(:disabled) {
+  background: #94e2d5;
+  color: var(--letterbox);
+}
+.huddle-button.here {
+  outline: 2px solid #a6e3a1;
+  outline-offset: 1px;
+}
+.huddle-count {
+  font: 600 11px system-ui, sans-serif;
+}
+
+.huddle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #a6e3a1;
+}
+.huddle-chip .avatar {
+  width: 16px;
+  height: 16px;
+  font-size: 8px;
+  box-shadow: none;
+  cursor: default;
+}
+.huddle-more {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.huddle-bar {
+  position: fixed;
+  left: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 6px 8px 6px 10px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, #a6e3a1 45%, var(--divider));
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+}
+.huddle-bar.ended {
+  border-color: var(--divider);
+}
+.huddle-bar.error {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--divider));
+}
+.huddle-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #a6e3a1;
+  font-weight: 600;
+  min-width: 0;
+}
+.huddle-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14em;
+}
+.huddle-members {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.huddle-member {
+  position: relative;
+  display: inline-grid;
+}
+.huddle-member .avatar {
+  cursor: default;
+  box-shadow: 0 0 0 2px var(--surface);
+  transition: box-shadow 0.12s;
+}
+.huddle-member.speaking .avatar {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px #a6e3a1;
+}
+.huddle-member.connecting .avatar {
+  opacity: 0.5;
+}
+.huddle-member.refused .avatar {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.huddle-member.unverified::after {
+  content: "?";
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  font: 700 9px system-ui, sans-serif;
+  color: var(--letterbox);
+  background: #f9e2af;
+  border-radius: 50%;
+  width: 11px;
+  height: 11px;
+  display: grid;
+  place-items: center;
+}
+.huddle-muted {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: var(--letterbox);
+}
+.huddle-muted svg {
+  width: 10px;
+  height: 10px;
+}
+.huddle-why {
+  color: var(--dim);
+  font-size: 12px;
+}
+.huddle-act {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--raised);
+}
+.huddle-act:hover {
+  background: var(--raised-hover);
+}
+.huddle-act.on {
+  background: var(--danger);
+  color: var(--letterbox);
+}
+.huddle-act.leave {
+  background: color-mix(in srgb, var(--danger) 25%, var(--raised));
+}
+.huddle-act.leave:hover {
+  background: var(--danger);
+  color: var(--letterbox);
 /* The chat view (ui/chat.tsx): every thread, under the bar. */
 .chat-button {
   padding: 0 10px;

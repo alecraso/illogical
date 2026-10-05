@@ -65,7 +65,7 @@ export async function deviceId(noise: Uint8Array, sign: Uint8Array): Promise<str
 
 export const fingerprint = (id: string) => id.match(/.{1,4}/g)?.join("-") ?? id;
 
-async function verify(signHex: string, msg: string, sigHex: string): Promise<boolean> {
+export async function verify(signHex: string, msg: string, sigHex: string): Promise<boolean> {
   try {
     const key = await subtle.importKey("raw", unhex(signHex), { name: "Ed25519" }, false, ["verify"]);
     return await subtle.verify("Ed25519", key, unhex(sigHex), enc.encode(msg));

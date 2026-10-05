@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "setup",
+  "description": "The app's own pages (the setup page shown when the daemon can't be reached, and signing in): the app's commands for them. Not for remote pages.",
+  "windows": [
+    "*"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-daemon-status",
+    "allow-retry",
+    "allow-cloud-status",
+    "allow-cloud-signin",
+    "allow-cloud-local"
+  ]
+}

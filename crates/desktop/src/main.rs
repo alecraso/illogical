@@ -48,6 +48,8 @@
 //!   the app is control's client only, so a window opens on sign-in or
 //!   control's page, and nothing local is installed, watched or offered.
 
+#[cfg(all(target_os = "linux", feature = "native-calls"))]
+mod calls;
 mod cloud;
 #[cfg(target_os = "macos")]
 mod finder;
@@ -407,6 +409,8 @@ fn open_outside(url: &tauri::Url) {
 /// control's origin too: when joined, the window shows control's page, and
 /// without them its bar can't move, minimize, maximize or close the window
 /// on Linux. The control is only known at run time, and can change (#204).
+/// Control's page also runs huddles through the app (M63), as the daemon's
+/// page does.
 fn allow_control(app: &AppHandle) {
     static ALLOWED: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let Some(origin) = cloud::control()
@@ -427,10 +431,17 @@ fn allow_control(app: &AppHandle) {
         .permission("core:window:allow-toggle-maximize")
         .permission("core:window:allow-internal-toggle-maximize")
         .permission("core:window:allow-close")
-        .permission("core:window:allow-start-dragging");
+        .permission("core:window:allow-start-dragging")
+        .permission("allow-call-native-start")
+        .permission("allow-call-native-peer")
+        .permission("allow-call-native-remote")
+        .permission("allow-call-native-drop")
+        .permission("allow-call-native-mute")
+        .permission("allow-call-native-stop")
+        .permission("allow-call-native-status");
     match app.add_capability(cap) {
         Ok(()) => allowed.push(origin),
-        Err(e) => eprintln!("illogical: letting {origin} move its window: {e}"),
+        Err(e) => eprintln!("illogical: letting {origin} use its window and calls: {e}"),
     }
 }
 
@@ -462,6 +473,15 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
         .title("illogical")
         .inner_size(1280.0, 820.0)
         .initialization_script(cloud::init_script())
+        // Huddles (M63): the microphone for the client's own pages (macOS
+        // still asks, once, for the app); nobody else's.
+        .on_permission_request(|w, kind| match kind {
+            tauri::webview::PermissionKind::Microphone if w.url().is_ok_and(|u| ours(&u)) => {
+                tauri::webview::PermissionResponse::Allow
+            }
+            tauri::webview::PermissionKind::Microphone => tauri::webview::PermissionResponse::Deny,
+            _ => tauri::webview::PermissionResponse::Default,
+        })
         // A link with target=_blank: the client's own pages in a window of
         // ours, anything else in the browser. A webview drops these unless
         // the app handles them.
@@ -770,14 +790,30 @@ fn main() {
     if updater {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
+    #[cfg(all(target_os = "linux", feature = "native-calls"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        daemon_status,
+        retry,
+        cloud::cloud_status,
+        cloud::cloud_signin,
+        cloud::cloud_local,
+        calls::call_native_start,
+        calls::call_native_peer,
+        calls::call_native_remote,
+        calls::call_native_drop,
+        calls::call_native_mute,
+        calls::call_native_stop,
+        calls::call_native_status
+    ]);
+    #[cfg(not(all(target_os = "linux", feature = "native-calls")))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        daemon_status,
+        retry,
+        cloud::cloud_status,
+        cloud::cloud_signin,
+        cloud::cloud_local
+    ]);
     builder
-        .invoke_handler(tauri::generate_handler![
-            daemon_status,
-            retry,
-            cloud::cloud_status,
-            cloud::cloud_signin,
-            cloud::cloud_local
-        ])
         .menu(|app| {
             #[cfg(target_os = "macos")]
             {

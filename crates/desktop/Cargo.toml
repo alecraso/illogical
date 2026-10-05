@@ -5,6 +5,18 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "illogical's desktop app: the web client in a native window, with native notifications"
 
+[features]
+native-calls = [
+  "dep:webrtc",
+  "dep:rtc",
+  "dep:cpal",
+  "dep:opus",
+  "dep:webrtc-audio-processing",
+  "dep:webrtc-audio-processing-config",
+  "dep:async-trait",
+  "dep:tokio",
+]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -35,6 +47,18 @@ notify-rust = "4"
 gtk = "0.18"
 # The running WebKitGTK's version, for the window's profile (profile.rs).
 webkit2gtk-sys = "2"
+# Huddles (M63, `native-calls`): WebKitGTK has no WebRTC, so the call runs
+# here (S30's native peer). Off by default: they need ALSA, Opus, meson,
+# ninja and libclang to build, which the release container has
+# (packaging/desktop/Containerfile).
+webrtc = { version = "0.21", optional = true }
+rtc = { version = "0.21", default-features = false, optional = true }
+cpal = { version = "0.18", optional = true }
+opus = { version = "0.3", optional = true }
+webrtc-audio-processing = { version = "2.1", features = ["bundled"], optional = true }
+webrtc-audio-processing-config = { version = "2.1", optional = true }
+async-trait = { version = "0.1", optional = true }
+tokio = { version = "1", features = ["sync", "time"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Toasts whose click opens the pane (M59).

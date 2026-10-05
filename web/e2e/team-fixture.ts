@@ -26,7 +26,8 @@ export class TeamControl {
     return d;
   }
 
-  async start() {
+  /** `extra`: more arguments for control. */
+  async start(extra: string[] = []) {
     this.gh = createServer((req, res) => {
       const u = new URL(req.url!, "http://github");
       if (u.pathname === "/login/oauth/authorize") {
@@ -57,6 +58,7 @@ export class TeamControl {
           ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
           ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
           ...["--github-url", this.github, "--github-api", this.github],
+          ...extra,
         ],
         { stdio: "ignore" },
       ),

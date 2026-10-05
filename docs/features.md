@@ -1051,6 +1051,26 @@ the daemon stopping, crashing, or the machine rebooting:
   to the output. `@agent` (or `@claude`) in a pane's thread goes to that
   pane's agent as a follow-up, from whoever may drive it, and agents read
   and answer with the MCP tools `read_thread` and `post_thread`.
+- **Huddles** (M63). A voice call on a session, for the people working in
+  it: the headphones button by the session's name (or *Start a huddle* in
+  the session menu) starts one, and everyone with the session sees it's on
+  (the button goes green with how many are in) and joins with a click. Up
+  to 5 people. The huddle bar stays in the corner while you move between
+  tabs, sessions and the chat view: who's in, who's talking, who's muted,
+  *Mute* (Ctrl/Cmd+Shift+Space) and *Leave*. Audio goes straight between
+  devices, encrypted end to end (WebRTC, DTLS-SRTP), through a TURN relay
+  when there's no direct path; the machine only introduces the members.
+  Through control, each device signs its call fingerprints with its device
+  key and the others check them, so neither the machine nor control can
+  listen in by standing in the middle: one of your own devices shows as
+  verified, someone else's as signed, and a mismatch is refused. A
+  connection with no device key (over a tailnet, or local) shows as
+  unverified. Someone whose access is removed drops out at once. A machine
+  restart ends its huddles, and the page joins again when it's back. On an
+  iPhone the mic stops while the app is in the background; the bar says
+  so. The Linux desktop app's web view has no WebRTC, so the app runs the
+  call itself (WebRTC in Rust, Opus, and WebRTC's echo cancellation and
+  noise suppression), with the same bar and buttons.
 - **Chat: every thread in one place.** *Chat* in the bar (or the phone's
   sheet, or the command palette; `/#chat`) shows every thread on every
   machine you can reach, like a team chat: each machine's sessions are the

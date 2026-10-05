@@ -19,6 +19,7 @@ import { openPicker } from "./picker";
 import { NotifySection } from "./notify";
 import { openGettingStarted } from "./welcome";
 import { openPalette } from "./palette";
+import { HuddleButton } from "./huddle";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -35,6 +36,7 @@ export function PhoneHeader({ client }: { client: Client }) {
           {tab && client.tabMachine(tab.id) && <span class="host-tag">VM</span>}
           <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
         </button>
+        {session && <HuddleButton client={client} session={session.id} />}
         {panes.length > 1 && (
           <span class="pane-count">
             {panes.indexOf(active ?? -1) + 1}/{panes.length}

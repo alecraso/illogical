@@ -154,6 +154,25 @@ menu, *Session thread* in the session menu, or the bubble on a pane.
 - *Quote selection in thread* (pane menu) posts what you selected in the
   terminal; clicking the quote jumps back to it.
 
+## Talking out loud: huddles
+
+A session can have a huddle (M63), a voice call for the people in it: the
+headphones button by the session's name, or *Start a huddle* in the
+session menu. Up to 5 people.
+
+- **Who can join:** anyone the session is shared with, watchers too. A
+  read-only link can't. Someone whose share is removed drops out at once.
+- **Where the audio goes:** straight between the devices in the call,
+  encrypted end to end. When two devices can't reach each other directly
+  it goes through a TURN relay (Cloudflare's, for the hosted control),
+  which carries only ciphertext; Cloudflare sees addresses and how much is
+  sent. The machine that runs the session only introduces the members.
+- **Who you're talking to:** through control, each device signs its call
+  fingerprints with its device key. Your own devices show as verified,
+  other people's as signed (by the device their machine vouches for), and
+  a mismatch is refused. Over a tailnet there are no device keys, so
+  members show as unverified.
+
 ## Over a tailnet
 
 Without control, the same sharing works between Tailscale logins:

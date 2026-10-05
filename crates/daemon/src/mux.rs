@@ -12,9 +12,10 @@ use std::{
 
 use illogical_core::{Effect, Intent, Mux, Role};
 use illogical_proto::{
-    Action, Activity, AskRef, AskWhat, Attention, BlockType, ClientId, ClientMsg, CommandInfo, Delta, Driver, Event,
-    EventKind, Machine, MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence, Quote, Reason,
-    ReasonKind, ServerMsg, SessionId, State, TabId, TabView, ThreadMsg, ThreadSummary, ThreadTarget, WorkKind,
+    Action, Activity, AskRef, AskWhat, Attention, BlockType, Call, CallMember, ClientId, ClientMsg, CommandInfo, Delta,
+    Driver, Event, EventKind, Machine, MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence,
+    Quote, Reason, ReasonKind, ServerMsg, SessionId, State, TabId, TabView, ThreadMsg, ThreadSummary, ThreadTarget,
+    WorkKind,
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::{Ask, AskKind},
 };
@@ -739,6 +740,8 @@ struct Daemon {
     store: StateDir,
     /// Threads on panes and sessions (M61).
     threads: crate::threads::Threads,
+    /// Huddles on sessions (M63).
+    calls: crate::calls::Calls,
     notices: NoticeSink,
     events: broadcast::Sender<Event>,
     push: Option<Push>,
@@ -825,8 +828,9 @@ enum Dirty {
     All,
 }
 
-/// What one person sees besides panes: machines, who's here, threads.
-type People = (Vec<Machine>, Vec<Presence>, Vec<ThreadSummary>);
+/// What one person sees besides panes: machines, who's here, threads,
+/// huddles.
+type People = (Vec<Machine>, Vec<Presence>, Vec<ThreadSummary>, Vec<Call>);
 /// A pane as one client has it.
 type PaneJson = serde_json::Map<String, serde_json::Value>;
 /// The changed panes as one person sees them (`None`: not any more).
@@ -840,6 +844,7 @@ struct Sent {
     machines: Vec<Machine>,
     presence: Vec<Presence>,
     threads: Vec<ThreadSummary>,
+    calls: Vec<Call>,
 }
 
 /// A pane's working directory and foreground command, as the OS showed
@@ -909,6 +914,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, Kept>, push:
         sizes: BTreeMap::new(),
         config,
         threads: crate::threads::Threads::open(store.root()),
+        calls: Default::default(),
         store: store.clone(),
         notices,
         events: events.clone(),
@@ -2023,6 +2029,7 @@ impl Daemon {
                 self.refused.remove(&client);
                 self.viewing.remove(&client);
                 self.zoomed.remove(&client);
+                self.calls.leave_all(client);
                 // Their last client left: they no longer drive anything.
                 if let Some(who) = gone
                     && !self.clients.values().any(|c| c.principal.id() == who.id() && !self.summary.contains(&c.client))
@@ -3239,6 +3246,18 @@ impl Daemon {
                 self.soon();
             }
             ClientMsg::Follow { pane, on } => self.follow(client, pane, on),
+            ClientMsg::CallJoin { session } => self.call_join(&sub, session),
+            ClientMsg::CallLeave { session } => {
+                if self.calls.leave(session, client) {
+                    self.soon();
+                }
+            }
+            ClientMsg::CallMute { session, muted } => {
+                if self.calls.mute(session, client, muted) {
+                    self.soon();
+                }
+            }
+            ClientMsg::CallSignal { session, to, signal } => self.call_signal(&sub, session, to, signal),
             // The server hands these to `App::hands` (S33).
             ClientMsg::Hand { .. } | ClientMsg::HandReply { .. } => {}
             ClientMsg::Focus { pane } => {
@@ -3643,9 +3662,9 @@ impl Daemon {
                     })
                     .collect()
             });
-            let (machines, presence, threads) = people
-                .entry(who.clone())
-                .or_insert_with(|| (self.machines_for(&who), self.presence(&who), self.threads_for(&who)));
+            let (machines, presence, threads, calls) = people.entry(who.clone()).or_insert_with(|| {
+                (self.machines_for(&who), self.presence(&who), self.threads_for(&who), self.calls_for(&who))
+            });
             let Some(sent) = self.sent.get_mut(&client) else { continue };
             let mut delta = Delta::default();
             for (id, v) in view.iter() {
@@ -3688,6 +3707,10 @@ impl Daemon {
                 sent.threads = threads.clone();
                 delta.threads = Some(threads.clone());
             }
+            if sent.calls != *calls {
+                sent.calls = calls.clone();
+                delta.calls = Some(calls.clone());
+            }
             if !delta.is_empty()
                 && let Some(c) = self.clients.get(&client)
             {
@@ -3707,6 +3730,7 @@ impl Daemon {
             machines: state.machines.clone(),
             presence: state.presence.clone(),
             threads: state.threads.clone(),
+            calls: state.calls.clone(),
         };
         let mut panes = Vec::with_capacity(state.panes.len());
         for p in &state.panes {
@@ -4259,6 +4283,71 @@ impl Daemon {
     }
 
     /// Who is connected and where they look, within what `viewer` sees.
+    /// `who`'s role in the session a huddle is on: anyone with one may
+    /// join it (watchers, drivers, a shared session's guests), except
+    /// whoever holds a read-only link, who could be anyone.
+    fn call_role(&self, who: &Principal, session: SessionId) -> Option<Role> {
+        self.mux.sessions.iter().find(|s| s.id == session)?;
+        if who.is_owner() {
+            return Some(Role::Owner);
+        }
+        if who.id().starts_with("link:") {
+            return None;
+        }
+        self.config.acl.role(who, session)
+    }
+
+    /// The huddles on sessions `who` has a role in.
+    fn calls_for(&self, who: &Principal) -> Vec<Call> {
+        self.calls.all().filter(|c| self.call_role(who, c.session).is_some()).cloned().collect()
+    }
+
+    fn call_join(&mut self, sub: &Subscriber, session: SessionId) {
+        let who = &sub.principal;
+        let refuse = |message: String| {
+            let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id: None, message }));
+        };
+        if self.call_role(who, session).is_none() {
+            return refuse("no such session".into());
+        }
+        // Huddles on sessions that closed end with them.
+        let sessions: std::collections::HashSet<SessionId> = self.mux.sessions.iter().map(|s| s.id).collect();
+        self.calls.retain(|s, _| sessions.contains(&s));
+        let member = CallMember {
+            client: sub.client,
+            who: who.id().to_owned(),
+            name: sub.name.clone().unwrap_or_else(|| self.name_of(who)),
+            pic: match who {
+                Principal::User { pic, .. } => pic.clone(),
+                Principal::Owner => self.config.owner_pic.clone(),
+            },
+            muted: false,
+            joined: crate::store::now_ms(),
+            device: sub.device.as_ref().map(|d| d.device.clone()),
+        };
+        match self.calls.join(session, member) {
+            Ok(true) => {
+                info!(session, client = sub.client, who = who.id(), "joined a huddle");
+                self.soon();
+            }
+            Ok(false) => {}
+            Err(why) => refuse(why),
+        }
+    }
+
+    /// Pass a description from one huddle member to another, with the
+    /// sender's device certificate for the receiver to check it against.
+    fn call_signal(&mut self, sub: &Subscriber, session: SessionId, to: ClientId, signal: serde_json::Value) {
+        if self.calls.member(session, sub.client).is_none() || self.calls.member(session, to).is_none() {
+            tracing::debug!(session, from = sub.client, to, "dropped a signal outside a huddle");
+            return;
+        }
+        let Some(dest) = self.clients.get(&to) else { return };
+        let cert = sub.device.as_ref().and_then(|d| serde_json::to_value(d).ok());
+        let msg = ServerMsg::CallSignal { session, from: sub.client, signal, cert };
+        let _ = dest.ctrl.send(ToClient::Msg(msg));
+    }
+
     fn presence(&self, viewer: &Principal) -> Vec<Presence> {
         let mut out: Vec<Presence> = self
             .clients
@@ -4339,6 +4428,13 @@ impl Daemon {
                 p.detach(client);
             }
         }
+        // Whoever lost the session leaves its huddle (and whoever was
+        // disconnected, every huddle).
+        let who: HashMap<ClientId, Principal> = self.clients.iter().map(|(id, c)| (*id, c.principal.clone())).collect();
+        self.calls.retain(|s, m| {
+            who.get(&m.client)
+                .is_some_and(|p| p.is_owner() || (!p.id().starts_with("link:") && acl.role(p, s).is_some()))
+        });
         // Sessions and roles changed with them: everyone starts over.
         self.full = true;
         self.broadcast();
@@ -4351,6 +4447,7 @@ impl Daemon {
         let mut st = self.state();
         st.presence = self.presence(who);
         st.threads = self.threads_for(who);
+        st.calls = self.calls_for(who);
         if who.is_owner() {
             return st;
         }
@@ -4666,6 +4763,7 @@ impl Daemon {
             roles: None,
             presence: Vec::new(),
             threads: Vec::new(),
+            calls: Vec::new(),
         }
     }
 }

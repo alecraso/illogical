@@ -152,8 +152,15 @@ pub fn is_control_signin(url: &tauri::Url) -> bool {
 /// gives this device, and no passkey button where passkeys can't work.
 pub fn init_script() -> String {
     let control = control().unwrap_or_default();
-    format!(
-        "window.__illogicalApp = {{ name: {}, platform: {:?} }};\n\
+    // Debug builds only: a test's script for the page (the native huddle
+    // check drives the window with it; nothing else can).
+    #[cfg(debug_assertions)]
+    let test =
+        std::env::var_os("ILLOGICAL_TEST_SCRIPT").and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+    #[cfg(not(debug_assertions))]
+    let test = String::new();
+    let s = format!(
+        "window.__illogicalApp = {{ name: {}, platform: {:?}, nativeCalls: {} }};\n\
          if ({control:?} && location.origin === new URL({control:?}).origin) {{\n\
            addEventListener('DOMContentLoaded', () => {{\n\
              const s = document.createElement('style');\n\
@@ -163,7 +170,14 @@ pub fn init_script() -> String {
          }}",
         serde_json::to_string(&device_name()).unwrap(),
         if cfg!(target_os = "macos") { "macos" } else { "linux" },
-    )
+        // Huddles run in Rust here (M63, crates/desktop/src/calls.rs).
+        cfg!(all(target_os = "linux", feature = "native-calls")),
+    );
+    #[cfg(debug_assertions)]
+    if !test.is_empty() {
+        eprintln!("illogical: a test script for the page ({} bytes)", test.len());
+    }
+    s + "\n" + &test
 }
 
 #[derive(serde::Serialize)]

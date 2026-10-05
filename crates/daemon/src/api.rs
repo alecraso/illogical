@@ -62,6 +62,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/hook", post(hook))
         .route("/api/panes/{id}/inbox", post(inbox))
         .route("/api/panes/{id}/followup", post(followup))
+        .route("/api/turn", get(turn))
         .route("/api/threads/{target}", get(thread_get).post(thread_post))
         .route("/api/threads/{target}/read", post(thread_read))
         .route("/api/panes/{id}/close", post(close))
@@ -146,7 +147,10 @@ fn tap(pane: PaneHandle, from: u64) -> Tap {
     let client = NEXT_TAP.fetch_add(1, Ordering::Relaxed);
     let (data, rx) = crate::pane::client_queue();
     let (ctrl, _ctrl) = mpsc::unbounded_channel();
-    pane.attach(Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner, name: None }, Some(from));
+    pane.attach(
+        Subscriber { client, data, ctrl, principal: crate::acl::Principal::Owner, name: None, device: None },
+        Some(from),
+    );
     Tap { pane, client, rx, _ctrl }
 }
 
@@ -2485,4 +2489,9 @@ async fn studio_follower(Path(name): Path<String>, Json(req): Json<FollowerLink>
 async fn studio_unfollow(Path(name): Path<String>) -> Res<Json<serde_json::Value>> {
     studio()?.set_follower(&name, None).map_err(bad)?;
     Ok(Json(serde_json::json!({})))
+}
+
+/// ICE servers for a huddle (M63): TURN credentials from control, or STUN.
+async fn turn(State(app): AppState) -> Json<serde_json::Value> {
+    Json(app.control.ice_servers().await)
 }

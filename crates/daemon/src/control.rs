@@ -263,6 +263,8 @@ pub struct Control {
     pub no_relay: bool,
     /// Control takes v2 request signatures (see [`auth_header`]).
     auth_v2: std::sync::atomic::AtomicBool,
+    /// TURN credentials for huddles (M63), and when they were fetched.
+    turn: tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>,
 }
 
 fn read_saved(dir: &Path) -> anyhow::Result<Option<Saved>> {
@@ -321,6 +323,7 @@ impl Control {
             published: Default::default(),
             no_relay,
             auth_v2: Default::default(),
+            turn: Default::default(),
         });
         me.reload();
         me
@@ -704,6 +707,31 @@ impl Control {
             return Err(v["error"].as_str().map_or_else(|| format!("control said {status}"), str::to_owned));
         }
         Ok(v)
+    }
+
+    /// ICE servers for a huddle (M63): control's TURN credentials, kept
+    /// for an hour of their eight; public STUN when this daemon isn't
+    /// joined to control or control can't be reached.
+    pub async fn ice_servers(&self) -> serde_json::Value {
+        let stun =
+            || serde_json::json!({ "ice_servers": [{ "urls": ["stun:stun.cloudflare.com:3478"] }], "turn": false });
+        let Some(e) = self.enrolled() else { return stun() };
+        let mut cached = self.turn.lock().await;
+        if let Some((at, v)) = &*cached
+            && at.elapsed() < Duration::from_secs(3600)
+        {
+            return v.clone();
+        }
+        match self.get::<serde_json::Value>(&e, "/api/daemon/turn").await {
+            Ok(v) => {
+                *cached = Some((std::time::Instant::now(), v.clone()));
+                v
+            }
+            Err(err) => {
+                warn!(error = %err, "no TURN credentials from control: STUN only");
+                stun()
+            }
+        }
     }
 
     /// A hosted sandbox's last session closed (M20): control deletes it.

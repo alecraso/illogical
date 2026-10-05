@@ -272,6 +272,7 @@ export interface Delta {
   machines?: Machine[];
   presence?: Presence[];
   threads?: ThreadSummary[];
+  calls?: Call[];
 }
 
 export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "workspace" | "app" | "forge" | "fountain";
@@ -344,6 +345,53 @@ export interface State {
   presence?: Presence[];
   /** M61: the threads this person may read that have messages. */
   threads?: ThreadSummary[];
+  /** M63: huddles on the sessions this person has a role in. */
+  calls?: Call[];
+}
+
+/** M63: a huddle, a voice call on a session, peer to peer between its
+ * members and signaled through the daemon. */
+export interface Call {
+  session: SessionId;
+  /** New each time a huddle starts on the session; signatures name it. */
+  id: string;
+  started: number;
+  /** In the order they joined. */
+  members: CallMember[];
+}
+
+export interface CallMember {
+  client: ClientId;
+  who: string;
+  name: string;
+  pic?: string;
+  muted?: boolean;
+  joined: number;
+  /** Their device's id when they came with a device key (through
+   * control): their fingerprints are signed. */
+  device?: string;
+}
+
+/** M63: the most people in one huddle. */
+export const CALL_MAX = 5;
+
+/** What a huddle member signs with its device key: the call, who from and
+ * to, and the SDP's `a=fingerprint:` lines (the daemon's
+ * `call_fingerprint_body`). */
+export function callFingerprintBody(call: string, from: ClientId, to: ClientId, sdp: string): string {
+  const fps = sdp
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("a=fingerprint:"));
+  return `illogical call v1\ncall ${call}\nfrom ${from}\nto ${to}\n${fps.join("\n")}\n`;
+}
+
+/** M63: a description one huddle member sends another. */
+export interface CallSignal {
+  type: "offer" | "answer";
+  sdp: string;
+  /** Hex Ed25519 signature of `callFingerprintBody` by the device key. */
+  sig?: string;
 }
 
 /** M61: what a thread is about. */
@@ -395,6 +443,8 @@ export interface HostFeatures {
   studio: boolean;
   /** M61: threads on panes and sessions (absent: an older daemon). */
   threads?: boolean;
+  /** M63: huddles on sessions (absent: an older daemon). */
+  calls?: boolean;
 }
 
 export type Intent =
@@ -429,6 +479,11 @@ export type ClientMsg =
   | { type: "subscribe"; summary: boolean }
   /** M28: follow an editor's cursor and file (viewer access). */
   | { type: "follow"; pane: PaneId; on: boolean }
+  /** M63: huddles. */
+  | { type: "call_join"; session: SessionId }
+  | { type: "call_leave"; session: SessionId }
+  | { type: "call_mute"; session: SessionId; muted: boolean }
+  | { type: "call_signal"; session: SessionId; to: ClientId; signal: CallSignal }
   /** S33: this client lends device tools to agents (none: it stops). */
   | { type: "hand"; tools: HandTool[]; name?: string }
   | { type: "hand_reply"; id: number; result?: unknown; error?: string };
@@ -454,6 +509,9 @@ export type ServerMsg =
   | { type: "delta"; delta: Delta }
   | { type: "follow"; pane: PaneId; msg: FollowMsg }
   | { type: "thread"; target: ThreadTarget; msg: ThreadMsg }
+  /** M63: a huddle member's description; `cert` is its device
+   * certificate as the daemon has it, when it has one. */
+  | { type: "call_signal"; session: SessionId; from: ClientId; signal: CallSignal; cert?: unknown }
   /** S33: an agent calls one of this hand's tools; `from` says who. */
   | { type: "hand_call"; id: number; tool: string; args: Record<string, unknown>; from: string };
 

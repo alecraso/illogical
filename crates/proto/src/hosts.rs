@@ -132,6 +132,9 @@ pub struct HostFeatures {
     /// them. Older daemons leave it out, and pages hide threads there.
     #[serde(default)]
     pub threads: bool,
+    /// Huddles on sessions (M63), likewise.
+    #[serde(default)]
+    pub calls: bool,
 }
 
 /// A machine's Fountain runner, for its line in the machine panel and the

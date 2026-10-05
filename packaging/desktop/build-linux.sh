@@ -35,7 +35,10 @@ runnable() {
 }
 tools() { runnable /root/.cache/tauri/*.AppImage; }
 tools 2>/dev/null || true
-cargo tauri build --bundles deb,rpm,appimage "$@" || { tools; cargo tauri build --bundles deb,rpm,appimage "$@"; }
+# Huddles run in Rust here (M63): Opus linked in, not a library to install.
+export LIBOPUS_STATIC=1 LIBOPUS_NO_PKG=1 LIBOPUS_LIB_DIR=/opt/opus
+build() { cargo tauri build --bundles deb,rpm,appimage --features native-calls "$@"; }
+build "$@" || { tools; build "$@"; }
 out=$CARGO_TARGET_DIR/release/bundle
 # linuxdeploy patches an RPATH into every ELF in usr/bin, which breaks the
 # static-pie sidecars (they segfault at start, so the app could never

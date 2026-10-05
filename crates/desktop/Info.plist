@@ -6,9 +6,12 @@
      shows the service without enabling it in the keyboard settings first.
      CFBundleDocumentTypes: the app can open folders (a new tab there) and
      .command scripts (run in a new tab), as an alternate handler, so it
-     never takes them from Terminal unless someone picks it. -->
+     never takes them from Terminal unless someone picks it.
+     NSMicrophoneUsageDescription: huddles (M63). -->
 <plist version="1.0">
 <dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>illogical uses the microphone for huddles: voice calls with the people in a session.</string>
   <key>NSServices</key>
   <array>
     <dict>

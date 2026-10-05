@@ -50,6 +50,7 @@ test("menus offer only what this machine is set up for", async ({ page }) => {
     fountain: false,
     studio: false,
     threads: true,
+    calls: true,
   });
   const [term] = await panes(page);
   const hidden = ["New VM pane on the right", "New VM tab", "Sandboxes…", "Fountain agents…", "Fountain runner…", "Open a studio app…"];

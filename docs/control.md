@@ -25,6 +25,10 @@ repository (below).
     `illogicald` and the CLI don't come from control.
   - **hosted sandboxes.** They run on control's provider, which writes
     their trust files; the operator can read them.
+- **Huddles** (voice calls, M63) don't go through control. Control hands
+  machines short-lived TURN credentials (from Cloudflare, for the hosted
+  control); a relayed call's audio is encrypted end to end, so the relay
+  sees only addresses and volume.
 
 **What it costs.** The hosted control is free during the beta. It's
 provided as is, without guarantees, and its pricing may change; any change
@@ -310,6 +314,22 @@ To turn it on:
   device and machine was there, and replication carried on.
 
 Fly's own daily volume snapshots (kept 5 days) still run.
+
+**TURN for huddles (M63).** Machines ask control for TURN credentials for
+their huddles (`GET /api/daemon/turn`), and control asks Cloudflare's TURN
+service for short-lived ones (8 hours; a machine reuses them for an hour).
+Without a key, machines get Cloudflare's public STUN only, which is enough
+unless both ends are behind strict NATs. In the Cloudflare dashboard,
+*Realtime → TURN Server → Create*, then:
+
+```
+fly secrets set -a illogical-control \
+  CLOUDFLARE_TURN_KEY_ID=… CLOUDFLARE_TURN_API_TOKEN=…
+```
+
+`fly logs` says `no CLOUDFLARE_TURN_KEY_ID/CLOUDFLARE_TURN_API_TOKEN` at
+start when they're missing. A self-hosted control can run coturn instead
+(not wired up yet).
 
 **A spend alert** isn't something this repository sets: it belongs to
 the Fly organization's billing settings in Fly's dashboard (#174 leaves
