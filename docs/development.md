@@ -23,7 +23,8 @@ release tarballs in `dist/`.
 
 `just dev` runs a separate daemon on 7682 (state in
 `~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
-alone. `just check` is what CI runs; `just e2e` drives the system Chrome
+alone. [testing.md](testing.md) covers the tests, fakes and fixtures.
+`just check` is what CI runs; `just e2e` drives the system Chrome
 against throwaway daemons, or `just e2e https://home.<tailnet>.ts.net`
 against the running one. `workspace.spec.ts` runs the real chant: its first run
 installs the pinned version into `web/e2e/fixtures/chant-workspace` with
