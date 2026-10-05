@@ -251,6 +251,8 @@ pub struct Control {
     pub changed: watch::Sender<u64>,
     /// Direct URLs to give the directory.
     pub direct_urls: Vec<String>,
+    /// The control to join when nobody names one (`--control`, #207).
+    pub default_url: String,
     /// Control said the account's devices changed: refresh now.
     nudge: tokio::sync::Notify,
     http: reqwest::Client,
@@ -304,13 +306,20 @@ async fn takes_v2(http: &reqwest::Client, url: &str) -> bool {
 const AUTH: &str = "x-illogical-auth";
 
 impl Control {
-    pub fn new(state_dir: &Path, direct_urls: Vec<String>, acl: Arc<Acl>, no_relay: bool) -> Arc<Self> {
+    pub fn new(
+        state_dir: &Path,
+        direct_urls: Vec<String>,
+        default_url: String,
+        acl: Arc<Acl>,
+        no_relay: bool,
+    ) -> Arc<Self> {
         let me = Arc::new(Self {
             state_dir: state_dir.to_owned(),
             acl,
             now: RwLock::new(None),
             changed: watch::channel(0).0,
             direct_urls,
+            default_url,
             nudge: tokio::sync::Notify::new(),
             http: crate::roots::http().timeout(Duration::from_secs(20)).build().expect("http client"),
             published: Default::default(),

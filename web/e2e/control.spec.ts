@@ -440,7 +440,7 @@ test("Getting started asks to check the account's fingerprint before the machine
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", ANY, "--name", "starter", "--state-dir", state],
+        ...["--listen", ANY, "--name", "starter", "--state-dir", state, "--control", base],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },
@@ -458,14 +458,16 @@ test("Getting started asks to check the account's fingerprint before the machine
     }
     await start.locator('[data-start-seg="cloud"]').click();
   };
-  // Asks this test's control for a code (the button asks the hosted one),
-  // approves it on the laptop from the link the panel shows, and returns
-  // the account the laptop showed.
+  // The daemon's --control (#207): the button asks this test's control
+  // for a code. Approves it on the laptop from the link the panel shows,
+  // and returns the account the laptop showed.
+  expect((await (await page.request.get(`${local}/api/setup?part=control`)).json()).control.url).toBe(base);
   const approve = async () => {
-    const r = await page.request.post(`${local}/api/setup/control`, { data: { url: base } });
-    expect(((await r.json()) as { pending?: { approve: string } }).pending?.approve).toContain(base);
-    await page.reload();
     await cloud();
+    const connect = start.locator("[data-start-connect]");
+    await expect(connect).toHaveText(`Connect to ${new URL(base).host}`);
+    await connect.click();
+    await expect(start.locator("[data-start-approve]")).toBeVisible({ timeout: 20_000 });
     const link = (await start.locator("[data-start-approve]").getAttribute("href"))!;
     expect(link.startsWith(`${base}/#join=`)).toBe(true);
     await laptop.goto(link);
@@ -494,8 +496,12 @@ test("Getting started asks to check the account's fingerprint before the machine
   // The laptop sees it in the account.
   await laptop.goto("/");
   await expect.poll(() => hostNames(laptop), { timeout: 20_000 }).toContain("starter");
-  await panel(laptop, "devices");
-  await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account);
+  // The page may switch machine as the new one arrives, mounting the
+  // overlay afresh: ask for the panel until it's there.
+  await expect(async () => {
+    await panel(laptop, "devices");
+    await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account, { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
   await laptop.getByRole("button", { name: "Done" }).click();
 });
 
