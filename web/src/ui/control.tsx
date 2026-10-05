@@ -432,6 +432,9 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     const open = (e: Event) => setPanel((e as CustomEvent<Panel>).detail);
     addEventListener("hashchange", on);
     addEventListener("illogical:control-panel", open);
+    // Says the panel event has a listener, so a test can wait for it
+    // rather than send one into nothing.
+    document.documentElement.dataset.controlPanels = "";
     // Mounted afresh (the page switches machine when one is approved, and
     // that happens before the prompt clears the hash): catch up with a
     // hashchange that fired before this listener was there.
@@ -439,6 +442,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     return () => {
       removeEventListener("hashchange", on);
       removeEventListener("illogical:control-panel", open);
+      delete document.documentElement.dataset.controlPanels;
     };
   }, []);
   if (s.phase !== "ready") return null;
