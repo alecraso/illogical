@@ -5305,4 +5305,56 @@ button.thread-quote:hover {
   font-size: 22px;
   line-height: 1;
   color: var(--dim);
+/* ---- S33: a hand's requests from agents */
+
+.hand-cards {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.hand-card {
+  background: var(--raised);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.hand-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.hand-card .prompt-buttons {
+  flex-wrap: wrap;
+}
+
+.hand-card .prompt-buttons button {
+  padding: 10px 16px;
+}
+
+.hand-card button.primary {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.hand-answer {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  font: inherit;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  padding: 6px;
 }

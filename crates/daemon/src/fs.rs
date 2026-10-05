@@ -811,7 +811,7 @@ mod tests {
         symlink(&state, home.join("st")).unwrap();
         let s = Scope::new(home.clone(), vec![state.clone()]);
         // macOS has no /proc (or /sys) for the links to lead into.
-        let (reads, lists): (&[&str], &[&str]) = if cfg!(target_os = "linux") {
+        let (reads, lists): (&[&str], &[&str]) = if cfg!(any(target_os = "linux", target_os = "android")) {
             (
                 &["/proc/self/environ", "/proc/1/environ", "~/env", "~/me/environ", "/sys/kernel", "/dev/zero"],
                 &["/proc", "~/me", "~/st", "~/state", "/tmp/../proc/self"],

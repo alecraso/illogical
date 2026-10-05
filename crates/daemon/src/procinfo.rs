@@ -86,7 +86,7 @@ pub fn wait_gone(pid: u32) -> bool {
     imp::wait_gone(pid)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod imp {
     use std::{
         ffi::OsString,

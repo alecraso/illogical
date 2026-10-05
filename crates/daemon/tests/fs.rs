@@ -110,7 +110,7 @@ fn this_hosts_files_cd_and_names() {
     // Refused: kernel files, a link into them, the daemon's own state.
     // (macOS has no /proc: there the link leads nowhere, a 404.)
     let mut refused = vec!["/proc/self/environ".to_owned(), d.state.join("daemon-id").display().to_string()];
-    if cfg!(target_os = "linux") {
+    if cfg!(any(target_os = "linux", target_os = "android")) {
         refused.push(format!("{r}/env"));
     }
     for p in refused {

@@ -3239,6 +3239,8 @@ impl Daemon {
                 self.soon();
             }
             ClientMsg::Follow { pane, on } => self.follow(client, pane, on),
+            // The server hands these to `App::hands` (S33).
+            ClientMsg::Hand { .. } | ClientMsg::HandReply { .. } => {}
             ClientMsg::Focus { pane } => {
                 let before = self.focus.get(&client).copied();
                 match pane.filter(|p| self.sees(&who, *p)) {

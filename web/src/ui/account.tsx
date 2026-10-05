@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { api, type ControlSession } from "../control";
+import { currentHand, lending, setLending } from "../hand";
 
 interface SessionRow {
   id: string;
@@ -172,6 +173,7 @@ export function AccountPanel({ s, close }: { s: ControlSession; close: () => voi
           ) : null}
         </>
       ) : null}
+      <LendDevice s={s} />
       <h3 class="control-group">Delete your account</h3>
       <p class="dim">
         Removes your account from this control, with your devices, machines, sessions and passkeys.{" "}
@@ -270,6 +272,42 @@ function DeleteAccount({ s, back }: { s: ControlSession; back: () => void }) {
           Delete my account
         </button>
       </div>
+    </>
+  );
+}
+
+/** S33: this device's tools for agents on your machines. */
+function LendDevice({ s }: { s: ControlSession }) {
+  const [on, setOn] = useState(lending());
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const h = currentHand();
+    if (!h) return;
+    const fn = () => tick((n) => n + 1);
+    h.listeners.add(fn);
+    return () => void h.listeners.delete(fn);
+  }, [on]);
+  const reached = currentHand()?.connected() ?? 0;
+  return (
+    <>
+      <h3 class="control-group">Lend this device to agents</h3>
+      <p class="dim">
+        Agents on your machines may ask to use this device: its location, camera, microphone, clipboard, or you. You allow or
+        deny each request here, while this page is open.
+      </p>
+      <label class="control-confirm">
+        <input
+          type="checkbox"
+          data-lend-device
+          checked={on}
+          onChange={(e) => {
+            const v = (e.target as HTMLInputElement).checked;
+            setLending(s, v);
+            setOn(v);
+          }}
+        />{" "}
+        Lend this device{on ? ` (reaching ${reached} machine${reached === 1 ? "" : "s"})` : ""}
+      </label>
     </>
   );
 }

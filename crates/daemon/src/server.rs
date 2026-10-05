@@ -62,6 +62,8 @@ pub struct App {
     pub mcp: Arc<crate::mcp::Tokens>,
     /// Invites for guests with only OpenSSH (M65).
     pub guests: Arc<crate::guest_ssh::Guests>,
+    /// Devices lending their tools to agents (S33).
+    pub hands: Arc<crate::hand::Hands>,
     next_client: AtomicU64,
     /// The owner has reached us over the tailnet (#110: the phone step).
     pub tailnet_seen: std::sync::atomic::AtomicBool,
@@ -82,6 +84,7 @@ impl App {
         acl: Arc<crate::acl::Acl>,
         mcp: Arc<crate::mcp::Tokens>,
         guests: Arc<crate::guest_ssh::Guests>,
+        hands: Arc<crate::hand::Hands>,
     ) -> Arc<Self> {
         Arc::new(Self {
             access,
@@ -97,6 +100,7 @@ impl App {
             acl,
             mcp,
             guests,
+            hands,
             next_client: AtomicU64::new(1),
             tailnet_seen: Default::default(),
         })
@@ -475,6 +479,7 @@ async fn connection(app: Arc<App>, mut socket: WebSocket, who: Principal) {
     info!(client, who = who.id(), "client connected");
     let (data_tx, mut data_rx) = client_queue();
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
+    app.hands.connect(client, ctrl_tx.clone(), who.is_owner(), None);
     app.mux.send(Cmd::Connect { sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: who, name: None } });
 
     loop {
@@ -498,15 +503,17 @@ async fn connection(app: Arc<App>, mut socket: WebSocket, who: Principal) {
         }
     }
     app.mux.send(Cmd::Disconnect { client });
+    app.hands.disconnect(client);
     info!(client, "client disconnected");
 }
 
 pub(crate) fn handle(app: &App, client: ClientId, msg: Message) -> anyhow::Result<()> {
     match msg {
-        Message::Text(text) => {
-            let msg = serde_json::from_str::<ClientMsg>(&text)?;
-            app.mux.send(Cmd::Msg { client, msg });
-        }
+        Message::Text(text) => match serde_json::from_str::<ClientMsg>(&text)? {
+            ClientMsg::Hand { tools, name } => app.hands.offer(client, tools, name),
+            ClientMsg::HandReply { id, result, error } => app.hands.reply(client, id, result, error),
+            msg => app.mux.send(Cmd::Msg { client, msg }),
+        },
         Message::Binary(bytes) => {
             let frame = Frame::decode(&bytes)?;
             match frame.kind {

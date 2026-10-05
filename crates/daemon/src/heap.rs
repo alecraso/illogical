@@ -11,12 +11,12 @@
 
 /// Blocks this big or bigger are mmapped; free memory past this much at the
 /// top of a heap is given back.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[cfg(all(any(target_os = "linux", target_os = "android"), target_env = "gnu"))]
 const THRESHOLD: i32 = 128 * 1024;
 
 /// Fix the thresholds. Call before the first thread starts.
 pub fn tune() {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[cfg(all(any(target_os = "linux", target_os = "android"), target_env = "gnu"))]
     // SAFETY: mallopt only sets allocator parameters.
     unsafe {
         nix::libc::mallopt(nix::libc::M_MMAP_THRESHOLD, THRESHOLD);
@@ -27,7 +27,7 @@ pub fn tune() {
 /// Give free heap memory back to the system, from every arena (after a pane
 /// closes: its thread's arena is mostly free then).
 pub fn trim() {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[cfg(all(any(target_os = "linux", target_os = "android"), target_env = "gnu"))]
     // SAFETY: malloc_trim only releases free memory.
     unsafe {
         nix::libc::malloc_trim(0);

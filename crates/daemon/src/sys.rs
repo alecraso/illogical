@@ -53,18 +53,18 @@ fn notify_with_fds(state: &str, fds: &[RawFd]) -> bool {
     let Some(path) = std::env::var_os("NOTIFY_SOCKET") else { return false };
     let path = path.to_string_lossy().into_owned();
     let addr = match path.strip_prefix('@') {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         Some(name) => UnixAddr::new_abstract(name.as_bytes()),
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         Some(_) => return false,
         None => UnixAddr::new(path.as_str()),
     };
     let Ok(addr) = addr else { return false };
     // systemd only exists on Linux, where the socket can be close-on-exec
     // from the start.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let flags = SockFlag::SOCK_CLOEXEC;
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let flags = SockFlag::empty();
     let Ok(sock) = socket(AddressFamily::Unix, SockType::Datagram, flags, None) else {
         return false;

@@ -243,12 +243,12 @@ fn watchdog(leases: &(Mutex<Leases>, Condvar), master: &OwnedFd, child: libc::pi
 /// it may be in a shared temp dir).
 fn same_user(conn: &UnixStream) -> bool {
     let me = nix::unistd::getuid().as_raw();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
         getsockopt(conn, PeerCredentials).is_ok_and(|c| c.uid() == me)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let (mut uid, mut gid) = (0, 0);
         // SAFETY: getpeereid writes two ids.

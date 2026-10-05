@@ -430,7 +430,10 @@ impl App {
                 ServerMsg::TrustRequest { name, pane, .. } => {
                     self.say(format!("{name} asks to be trusted with %{pane}"))
                 }
-                ServerMsg::Pong { .. } | ServerMsg::Follow { .. } | ServerMsg::Thread { .. } => {}
+                ServerMsg::Pong { .. }
+                | ServerMsg::Follow { .. }
+                | ServerMsg::Thread { .. }
+                | ServerMsg::HandCall { .. } => {}
             },
         }
     }

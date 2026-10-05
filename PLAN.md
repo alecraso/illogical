@@ -4622,6 +4622,80 @@ Where WebKitGTK has none, measure str0m or webrtc-rs with cpal on the Tauri side
 
 An SFU with SFrame, keyed from the MLS group or the session's participants, never by the SFU. Channel calls signaled through control with device-signed messages.
 
+### Mobile track (S31, S33, M68–M69, added 2026-10-05)
+
+Terminals that run *on* a phone, and phones as more than clients. Every phone is already a client, through the web page and M48's apps. This track asks whether a phone can also be a machine, with panes that every other client drives, and if not, what else it can offer.
+
+**Decisions (Jake, 2026-10-05):**
+
+- **"Runs terminals" means the phone is a machine.** illogicald runs on the phone and joins control like any other machine, as in the no-special-machines track. Local-only panes for the app's own use weren't the goal.
+- **Real devices:** the iPhone 15 Pro (through jake-air) and Jake's Android phone. The Android phone's checks were deferred to #276, so S31's Android numbers come from an Android 16 emulator on geek.
+- **iOS stays a client.** The idea of the phone as a "hand" for agents (S33) came from S31's iOS answer.
+
+**Order:**
+
+1. S31.
+2. M68 (Termux) and #276 (the real phone).
+3. M69, the app.
+
+S33 is independent of the Android work. The tracker is #277.
+
+#### S31: a phone as a machine (#246)
+
+**Done (2026-10-05, PR #273). Android: go. iOS: no-go.** See `spikes/s31-mobile/README.md`.
+
+- **Android: illogicald builds** for `aarch64-` and `x86_64-linux-android` (NDK r29, Zig 0.16 with `ANDROID_NDK_HOME`). It needed Android counted as Linux in 14 `cfg` gates, and the local token renamed into place, because SELinux refuses hard links in app data.
+- **It runs from an ordinary app** targeting API 36. The daemon ships as a native lib (`libillogicald.so`), the only place such an app may exec from, and runs under a `specialUse` foreground service. Panes get real ptys, Android's `sh` and toybox.
+- **Userland:**
+  - Files the app writes can't be exec'd, but `/system/bin/linker64 FILE` runs them.
+  - **Debian under proot works.** `apt-get install git python3` took 22 s. Stat-heavy work is about 15× slower (386 ms against 23–31 ms for a `find` over 5,784 files); spawning and CPU work are fine.
+  - **Termux works as is.**
+- **The phantom process killer** kills an app's children beyond 32, the daemon included. Each pane costs two processes (`_shim` and shell). "Disable child process restrictions" in Developer options lifts the limit: 119 processes ran with no kills.
+- **Doze:** a foreground service kept a pane's timer and TCP traffic on time through 5 minutes of forced deep idle with the screen off. Real CPU suspend needs the real phone (#276).
+- **iOS (iPhone 15 Pro, iOS 26.6):**
+  - `fork`, `posix_spawn` and `openpty` all fail with `EPERM`.
+  - Commands must be compiled into the app (ios_system), or run under a wasm interpreter (wasm3, about 4.4× native).
+  - The app is frozen about 1 s after leaving the screen; a background task buys 30 s.
+  - Daemon-shaped Rust (axum, reqwest, wss, lib-vt) works while it's open.
+  - App Review has precedent for local terminals (iSH, a-Shell, Blink), but none for a phone that remote people and agents drive.
+
+#### M68: illogicald on Android, in Termux (#274)
+
+- CI builds and releases the Android target.
+- S31's source changes land, with `renameat2(RENAME_NOREPLACE)` for the token.
+- The daemon picks its port on Android, since loopback ports are shared across apps.
+- `install.sh` knows Termux: `$PREFIX/bin`, a `termux-services` service, and pointers to `termux-wake-lock` and the child-process toggle.
+- **Done when:** on a real phone, Termux installs illogical, the phone joins control, and another client runs `git status` on it with the screen off for 10 minutes.
+
+#### M69: the illogical Android app as a machine (#275, after M68 and #276)
+
+- The daemon runs as a native lib under a foreground service, with a wakelock setting.
+- The web client runs in a WebView, and the app is M48's cloud client too.
+- Debian under proot is the default userland, with Android's `sh` as the fallback.
+- Panes run without `_shim` to fit the process budget, and setup explains the child-process toggle.
+- Distribution starts on GitHub and F-Droid. Google Play's rule on downloading executable code is checked before Play is promised.
+- **Done when:** on a real phone, 20 Debian panes, `apt-get install` and an hour with the screen off all survive, with the battery cost recorded.
+
+**Later, on a trigger:** Android 16's Linux Terminal (an AVF Debian VM) as a native-speed userland where it exists, if proot's file-system cost hurts in daily use.
+
+#### S33: the phone as a hand (#268)
+
+Can the phone, iPhone included, serve tools that agents on any machine call through control?
+
+- The calls are: camera, photos, location, contacts, calendar, Shortcuts / App Intents, NFC, and the on-device model.
+- A call goes from the agent to its daemon's MCP server (M16), then over control's relay, end to end encrypted, to the phone.
+- MCP comes first. A2A is tried only if the phone acts as an agent itself, backed by the on-device model.
+
+The questions:
+
+- reaching a phone that isn't open (a silent push against a notification the person taps);
+- which tools can run in the background on each platform;
+- consent per call and standing grants (M29's cards, #166's rules);
+- large results through the Images track's upload (#267);
+- App Review.
+
+**Done when:** `spikes/s33-phone-hand/README.md` has the answers. An agent in a pane on geek gets a photo and the phone's location from both phones, and a track shape is recommended.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |

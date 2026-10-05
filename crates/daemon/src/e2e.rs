@@ -163,6 +163,12 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     let client = app.new_client_id();
     let (data_tx, mut data_rx) = client_queue();
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
+    app.hands.connect(
+        client,
+        ctrl_tx.clone(),
+        principal.is_owner(),
+        Some((device.device.clone(), device.name.clone())),
+    );
     app.mux.send(Cmd::Connect {
         sub: Subscriber { client, data: data_tx, ctrl: ctrl_tx, principal: principal.clone(), name },
     });
@@ -213,6 +219,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
         }
     };
     app.mux.send(Cmd::Disconnect { client });
+    app.hands.disconnect(client);
     info!(device = device.device, "channel closed");
     result
 }

@@ -1,0 +1,151 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* main.m */; };
+		A10000000000000000000002 /* probe.c in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* probe.c */; };
+		A10000000000000000000003 /* wasmhost.c in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* wasmhost.c */; };
+		A10000000000000000000004 /* bench.c in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* bench.c */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+		A20000000000000000000002 /* probe.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = probe.c; sourceTree = "<group>"; };
+		A20000000000000000000003 /* wasmhost.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = wasmhost.c; sourceTree = "<group>"; };
+		A20000000000000000000004 /* bench.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ../wasm/bench.c; sourceTree = "<group>"; };
+		A20000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000009 /* S31Probe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = S31Probe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000000000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001,
+				A20000000000000000000002,
+				A20000000000000000000003,
+				A20000000000000000000004,
+				A20000000000000000000005,
+				A40000000000000000000002,
+			);
+			sourceTree = "<group>";
+		};
+		A40000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (A20000000000000000000009);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* S31Probe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A70000000000000000000002;
+			buildPhases = (
+				A30000000000000000000002,
+				A30000000000000000000001,
+				A30000000000000000000003,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = S31Probe;
+			productName = S31Probe;
+			productReference = A20000000000000000000009;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A60000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {LastUpgradeCheck = 1600; TargetAttributes = {A50000000000000000000001 = {CreatedOnToolsVersion = 16.0;};};};
+			buildConfigurationList = A70000000000000000000001;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = A40000000000000000000001;
+			productRefGroup = A40000000000000000000002;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A50000000000000000000001);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A30000000000000000000003 /* Embed helpers */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Embed helpers";
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nAPP=\"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\nOUT=\"$PROJECT_DIR/../build\"\ncp \"$OUT/hello\" \"$APP/hello\"\nmkdir -p \"$APP/Frameworks\"\nrm -rf \"$APP/Frameworks/S31Cmd.framework\"\ncp -R \"$OUT/S31Cmd.framework\" \"$APP/Frameworks/\"\ncp \"$PROJECT_DIR/../wasm/bench.wasm\" \"$PROJECT_DIR/../wasm/repl.wasm\" \"$APP/\"\ncodesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \"$APP/hello\"\ncodesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" \"$APP/Frameworks/S31Cmd.framework\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A30000000000000000000002 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001,
+				A10000000000000000000002,
+				A10000000000000000000003,
+				A10000000000000000000004,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A80000000000000000000001 /* project Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_MODULES = YES;
+				GCC_OPTIMIZATION_LEVEL = 3;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				ENABLE_BITCODE = NO;
+			};
+			name = Release;
+		};
+		A80000000000000000000002 /* target Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jhgaylor.s31probe;
+				PRODUCT_NAME = S31Probe;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/../build/wasm3/source";
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/../build";
+				OTHER_LDFLAGS = "-ls31rt -lm3 -lc++ -framework Security -framework SystemConfiguration -framework CoreFoundation";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A70000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000001); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A70000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A60000000000000000000001;
+}

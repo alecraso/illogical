@@ -1,0 +1,45 @@
+01:32:20  Acquired tunnel connection to device.
+01:32:20  Enabling developer disk image services.
+01:32:20  Acquired usage assertion.
+Launched application with com.jhgaylor.s31probe bundle identifier.
+Waiting for the application to terminate…
+S31 iOS 26.6.1 on iPhone
+S31 --- processes
+S31 FAIL fork: 1 Operation not permitted
+S31 FAIL posix_spawn /private/var/containers/Bundle/Application/A8D084D7-E31E-4DBA-B213-0AB93BCFABAC/S31Probe.app/hello: 1 Operation not permitted
+S31 FAIL posix_spawn /bin/sh: 1 Operation not permitted
+S31 FAIL posix_spawn /var/mobile/Containers/Data/Application/AD3E1F19-C2A6-4E48-98DE-2B096FB4CFCB/Documents/hello-copy: 1 Operation not permitted
+S31 info /bin/sh: No such file or directory
+S31 info /usr/bin/env: No such file or directory
+S31 info /usr/lib/libSystem.B.dylib: No such file or directory
+S31 --- pty
+S31 FAIL openpty: 1 Operation not permitted
+S31 FAIL posix_openpt: 1 Operation not permitted
+S31 --- in-process commands
+S31 ok   dlopen bundled framework + cmd_main on a thread: rc 42, "cmd_main on thread 0x16d7e7000, argc 3: ls -l /tmp"
+S31 FAIL dlopen a copy in Documents (runtime-installed code): dlopen(/var/mobile/Containers/Data/Application/AD3E1F19-C2A6-4E48-98DE-2B096FB4CFCB/Documents/S31Cmd-copy.dylib, 0x0002): tried: '/var/mobile/Containers/Data/Application/AD3E1F19-C2A6-4E48-98DE-2B096FB4CFCB/Documents/S31Cmd-copy.dylib' (code signature invalid in <C7767FFE-B2B9-311A-BBB9-D709EBADB114> '/private/var/mobile/Containers/Data/Application/AD3E1F19-C2A6-4E48-98DE-2B096FB4CFCB/Documents/S31Cmd-copy.dylib' (errno=1) sliceOffset=0x00000000, codeBlobOffset=0x0000C120, codeBlobSize=0x000049C0), '/private/preboot/Cryptexes/OS/var/mobile/Containers/Data/Application/AD3E1F19-C2A6-4E48-98DE-2B096FB4CFCB/Documents/S31Cmd-copy.dylib' (no such file), '/var/mobile/Containers/Data/Application/AD3E1F19-C2A6-4E48-98DE-2B096FB4CFCB/Documents/S31Cmd-copy.dylib' (code signature invalid in <C7767FFE-B2B9-311A-BBB9-D709EBADB114> '/private/var/mobile/Containers/Data/Application/AD3E1F19-C2A6-4E48-98DE-2B096FB4CFCB/Documents/S31Cmd-copy.dylib' (errno=1) sliceOffset
+S31 --- code generation
+S31 ok   mmap RWX anonymous: mapped
+S31 FAIL mmap MAP_JIT: Operation not permitted
+S31 ok   mprotect RW -> RX: allowed
+S31 --- native bench
+S31 info native bench(5): 28.0 ms, checksum 291926310
+S31 --- wasm3 (interpreter)
+S31 info wasm3 bench(5): 119.2 ms, checksum 291926310
+S31 ok   wasi repl started: "wasi repl ready"
+S31      -> hello      answered in 0.27 ms: "[1] you said: hello (5 bytes)"
+S31      -> ls -la     answered in 0.03 ms: "[2] you said: ls -la (6 bytes)"
+S31      -> bench      answered in 24.47 ms: "[3] bench -> 2733565866"
+S31      -> a much lon answered in 0.03 ms: "[4] you said: a much longer line of input typed into the wasm program (55 bytes)"
+S31      -> exit       answered in 0.07 ms: "bye after 5 lines"
+S31 --- rust: tokio, axum, reqwest, tungstenite, lib-vt
+S31 ok   axum bind 127.0.0.1 (0.3 ms): port 63806
+S31 ok   GET loopback (0.9 ms): illogical-ish
+S31 ok   ws loopback (0.5 ms): echo:hi
+S31 ok   GET https://control.illogical.widgets.wtf/ (70.9 ms): HTTP 200 OK
+S31 ok   GET https://github.com/ (59.4 ms): HTTP 200 OK
+S31 ok   wss echo.websocket.org (platform verifier) (254.3 ms): echoed s31
+S31 ok   lib-vt feed 2000 lines + snapshot (16.9 ms): snapshot 110675 bytes, last line "line 1999 hello from the phone"
+S31 --- done
+S31 info jit exec: calling generated code (a crash here means it's refused)
+App terminated due to signal 9.

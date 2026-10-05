@@ -802,7 +802,7 @@ fn iterm2s_conversation_gets_tmuxs_answers() {
         compared += 1;
         // The fixture's vi screen is Debian's vim (ruler on by default);
         // other systems' vim draws it differently.
-        if !cfg!(target_os = "linux") && key.starts_with("capture-pane") {
+        if !cfg!(any(target_os = "linux", target_os = "android")) && key.starts_with("capture-pane") {
             continue;
         }
         if let Err(e) = compare(&cmd, &(ok, body), &theirs) {

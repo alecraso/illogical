@@ -645,7 +645,25 @@ impl Control {
         if let Some(serde_json::Value::Object(extra)) = extra {
             payload.as_object_mut().unwrap().extend(extra);
         }
-        let payload = payload.to_string();
+        self.deliver(e, subs, payload.to_string());
+    }
+
+    /// Notify one device (S33: wake a hand). False when control has no
+    /// subscription from it that we trust.
+    pub fn push_device(self: &Arc<Self>, device: &str, payload: serde_json::Value) -> bool {
+        let Some(e) = self.enrolled() else { return false };
+        let subs: Vec<PushSub> = e.push.iter().filter(|(_, s)| s.device == device).map(|(_, s)| s.clone()).collect();
+        if subs.is_empty() {
+            return false;
+        }
+        let mut payload = payload;
+        payload["daemon"] = e.saved.cert.device.clone().into();
+        self.deliver(e, subs, payload.to_string());
+        true
+    }
+
+    /// Encrypt `payload` for each subscription and hand it to control.
+    fn deliver(self: &Arc<Self>, e: Arc<Enrolled>, subs: Vec<PushSub>, payload: String) {
         let me = self.clone();
         tokio::spawn(async move {
             use base64::Engine;

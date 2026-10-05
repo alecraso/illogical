@@ -1,5 +1,6 @@
 // illogical web client: tabs and splits of terminals owned by the daemon.
 
+import { setLending } from "./hand";
 import { render } from "preact";
 import "./style.css";
 import { Client } from "./client";
@@ -44,6 +45,8 @@ if (info && linkMatch) {
   // Keep the key out of the address bar (and of anything that reads it).
   history.replaceState(null, "", "/");
 }
+// S33: lend this device's tools to agents, if it was turned on.
+setLending(session);
 if (session) {
   setHostMenuExtras(() => controlMenuItems(session));
   // A tapped notice from control (#104): what waits shows now.

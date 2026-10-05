@@ -73,7 +73,14 @@ pub fn load_or_create(path: &Path) -> anyhow::Result<String> {
                 crate::perm::open_mode(std::fs::OpenOptions::new().write(true).create_new(true), 0o600).open(&tmp)?;
             f.write_all(token.as_bytes())?;
             f.sync_all()?;
-            let linked = std::fs::hard_link(&tmp, path);
+            let mut linked = std::fs::hard_link(&tmp, path);
+            // Android's SELinux refuses hard links (S31). Renaming in loses
+            // the "theirs wins" race, which a phone's one daemon never runs.
+            if cfg!(target_os = "android")
+                && linked.as_ref().is_err_and(|e| e.kind() == io::ErrorKind::PermissionDenied)
+            {
+                linked = std::fs::rename(&tmp, path);
+            }
             let _ = std::fs::remove_file(&tmp);
             match linked {
                 Ok(()) => Ok(token),
@@ -91,7 +98,7 @@ pub fn load_or_create(path: &Path) -> anyhow::Result<String> {
 /// owner's own. Where that can't be told (macOS), it is.
 #[cfg(unix)]
 pub fn serve_peer_ok(peer: SocketAddr, port: u16) -> bool {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "android")) {
         return true;
     }
     match loopback_uid(peer, port) {
@@ -207,7 +214,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn a_real_connection_is_ours() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

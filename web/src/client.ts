@@ -182,6 +182,11 @@ export class Client {
     readonly summary = false,
   ) {}
 
+  /** S33: a hand's connection is told when it's up and when an agent
+   * calls (see hand.ts). */
+  onHello?: () => void;
+  onHandCall?: (msg: Extract<ServerMsg, { type: "hand_call" }>) => void;
+
   /** How an end-to-end client is connected, for the host chip. */
   path: "direct" | "relayed" | null = null;
 
@@ -906,6 +911,7 @@ export class Client {
         this.applyState(msg.state, true);
         if (msg.state.roles) void this.loadNotify();
         void this.loadFeatures();
+        this.onHello?.();
         break;
       case "state":
         this.applyState(msg.state, false);
@@ -942,6 +948,10 @@ export class Client {
           { pane: msg.pane, who: msg.who, name: msg.name },
         ];
         this.emit();
+        break;
+      case "hand_call":
+        if (this.onHandCall) this.onHandCall(msg);
+        else this.send({ type: "hand_reply", id: msg.id, error: "this page doesn't lend tools" });
         break;
       case "follow":
         for (const fn of this.editorFollows.get(msg.pane) ?? []) fn(msg.msg);

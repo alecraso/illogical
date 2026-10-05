@@ -983,7 +983,47 @@ fn defs() -> Vec<Def> {
             idempotent: true,
             open_world: false,
         },
+        Def {
+            name: "list_devices",
+            title: "List the user's devices lending tools",
+            description: "The user's devices (their phone, say) that lend tools to agents (S33): each with its tools and their arguments, and whether it's connected now. One that isn't can still be called: it's woken with a notification, which the user has to open.",
+            schema: schema_for_type::<NoArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        Def {
+            name: "device_call",
+            title: "Use a tool on the user's device",
+            description: "Call a tool on one of the user's devices (list_devices shows them): take a photo, where the phone is, and so on. The user sees each call on the device and allows or denies it there, so it can take a while; it waits up to timeout seconds (default 100). A photo comes back as a file path on this host. If the device isn't connected, it's woken with a notification first.",
+            schema: schema_for_type::<DeviceCallArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
     ]
+}
+
+/// No arguments.
+#[derive(Deserialize, JsonSchema)]
+pub struct NoArgs {}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct DeviceCallArgs {
+    /// The tool's name, from list_devices.
+    pub tool: String,
+    /// Its arguments.
+    #[serde(default)]
+    pub args: Option<Value>,
+    /// Which device: its id or part of its name. Optional when there's one.
+    #[serde(default)]
+    pub device: Option<String>,
+    /// Seconds to wait for the answer, including waking the device
+    /// (default 100, at most 3600).
+    #[serde(default)]
+    pub timeout: Option<f64>,
 }
 
 /// The tools `scope` may call.
@@ -1065,6 +1105,21 @@ impl<'a> Call<'a> {
             },
             "capture_screen" => match parse(args) {
                 Ok(a) => self.capture(a).await,
+                Err(e) => Err(e),
+            },
+            "list_devices" => {
+                let devices = self.app.hands.list();
+                let summary = match devices.len() {
+                    0 => "No device lends tools here yet.".to_owned(),
+                    n => format!(
+                        "{n} device(s): {}",
+                        devices.iter().map(|d| d["name"].as_str().unwrap_or("?")).collect::<Vec<_>>().join(", ")
+                    ),
+                };
+                done(summary, json!({ "devices": devices }))
+            }
+            "device_call" => match parse(args) {
+                Ok(a) => self.device_call(a).await,
                 Err(e) => Err(e),
             },
             "wait" => match parse(args) {
@@ -1219,6 +1274,27 @@ impl<'a> Call<'a> {
     }
 
     /// The block whose token this is.
+    async fn device_call(&self, a: DeviceCallArgs) -> Out {
+        let from = format!("{} on {}", self.client, self.app.hosts.name());
+        let call = self.app.hands.call(
+            &self.app.control,
+            a.device.as_deref(),
+            &a.tool,
+            a.args.unwrap_or_else(|| json!({})),
+            &from,
+        );
+        let limit = Self::limit(a.timeout);
+        let Some(r) = self.waiting(&format!("waiting for the device ({})", a.tool), limit, call).await else {
+            return Err(format!("no answer from the device within {}s", limit.as_secs()));
+        };
+        let c = r?;
+        let woke = c.woke_ms.map_or(String::new(), |ms| format!(" (woken: back in {:.1}s)", ms as f64 / 1000.0));
+        done(
+            format!("{} answered {}{woke}", c.name, a.tool),
+            json!({ "device": c.device, "name": c.name, "result": c.result, "woke_ms": c.woke_ms, "answer_ms": c.answer_ms }),
+        )
+    }
+
     fn me(&self) -> Option<PaneId> {
         match self.caller.scope {
             Scope::Block(b) => Some(b),
@@ -2871,7 +2947,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 34);
+        assert_eq!(all.len(), 36);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -2892,7 +2968,8 @@ mod tests {
                 "read_issue",
                 "list_agents",
                 "read_agent",
-                "read_file"
+                "read_file",
+                "list_devices"
             ]
         );
         assert_eq!(list(Scope::Read).len(), ro.len(), "a read token sees the read-only tools only");

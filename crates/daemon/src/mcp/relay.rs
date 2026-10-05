@@ -394,7 +394,7 @@ mod tests {
         a.send(json!({ "jsonrpc": "2.0", "id": 2, "method": "slow" }));
         std::thread::sleep(Duration::from_millis(300));
         // (It finds its predecessor in /proc, which guests have.)
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", target_os = "android")) {
             let _ = relay.kill();
         }
         let (mut relay2, pipe) = local_relay(&sock);
