@@ -17,11 +17,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect, test, type FrameLocator, type Page } from "@playwright/test";
-import { menu, paneEl, panes, ready, reset, run } from "./helpers";
+import { menu, paneEl, panes, ready, reset, run, closeContexts } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { tokenCookies } from "./local-token";
 import { ANY, blockPort, daemonPort } from "./ports";
 import { iphone, launchWebkit, pixel7 } from "./phones";
+
+test.afterAll(closeContexts);
 
 let PORT = 0;
 let BLOCKS = 0;

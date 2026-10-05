@@ -11,8 +11,10 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { controlPanel, ready, run } from "./helpers";
+import { controlPanel, ready, run, closeContexts } from "./helpers";
 import { ANY, controlPort, listen } from "./ports";
+
+test.afterAll(closeContexts);
 
 let base = "";
 let github = "";

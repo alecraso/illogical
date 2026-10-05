@@ -12,8 +12,10 @@ import { createServer, type Server } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { ready, run, text } from "./helpers";
+import { ready, run, text, closeContexts } from "./helpers";
 import { controlPort, listen } from "./ports";
+
+test.afterAll(closeContexts);
 
 const HOST = "127.0.0.1";
 let base = "";

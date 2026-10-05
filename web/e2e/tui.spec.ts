@@ -8,8 +8,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { menu, open, paneEl, panes, ready, tab, text, type } from "./helpers";
+import { menu, open, paneEl, panes, ready, tab, text, type, closeContexts } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 let base = "";
 const TMUX = ["-L", `illogical-e2e-tui-${process.pid}`];

@@ -12,9 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Frame, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
-import { menu, open, paneEl, panes, reset } from "./helpers";
+import { menu, open, paneEl, panes, reset, closeContexts } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { ANY, blockPort, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 let BLOCKS = 0;
 let VITE = 0;

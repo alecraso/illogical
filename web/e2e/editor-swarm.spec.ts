@@ -15,6 +15,9 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { ANY, daemonPort } from "./ports";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 let APP = "";
 let VSCODE = "";

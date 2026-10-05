@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { ANY, daemonPort } from "./ports";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 let homeUrl = "";
 

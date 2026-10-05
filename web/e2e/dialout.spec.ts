@@ -10,8 +10,10 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { active, menu, paneEl, ready, run, text } from "./helpers";
+import { active, menu, paneEl, ready, run, text, closeContexts } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 let HOME = 0;
 let SANDBOX = 0;

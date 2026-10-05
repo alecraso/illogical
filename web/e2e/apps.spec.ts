@@ -16,8 +16,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { menu, paneEl, panes, reset } from "./helpers";
+import { menu, paneEl, panes, reset, closeContexts } from "./helpers";
 import { listen } from "./ports";
+
+test.afterAll(closeContexts);
 
 const TOKEN = "e2e-studio-token";
 let studio = "";

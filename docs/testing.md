@@ -137,6 +137,13 @@ first of these turned up a daemon bug: a pane read its agent's screen
 only when no command had come for a whole tick, so polling more often
 than that kept the screen from being read at all.
 
+Two connections don't keep each other's order: in `team-answers.spec.ts`
+the owner's trust grant goes over one and the teammate's follow-up over
+another, so the spec waits for the pane's `trusted` before sending (#258).
+A shell command that has to pause until the test is ready waits for a
+file the test creates (`reattach.spec.ts`), not for a `sleep`: 2000 runs
+of `sleep 0.0005` took 17 s on a Mac.
+
 ### Standing permission rules
 
 Standing permission rules (#166) are tested in `agents.rs`
@@ -256,6 +263,13 @@ Make temp directories in `beforeAll`, not at the top of a spec: Playwright
 loads each spec in the runner as well as the worker (#62).
 `E2E_DAEMON_LOG=<file>` keeps the test daemon's debug log, and
 `E2E_CONTROL_LOG=1` shows control's output in `sandboxes.spec.ts`.
+
+The whole run shares one browser, and Playwright closes only the contexts
+its `context` fixture made. A context a spec opens with
+`browser.newContext()` stays open, its pages still connected and drawing,
+through every spec after it, so later specs ran on a busier machine than
+they do alone (#258). Every spec that uses `browser` has
+`test.afterAll(closeContexts)` (from `helpers.ts`); a new one should too.
 
 A check that should hold in Chrome and WebKit goes in a plain module both
 projects' specs import, since a spec importing another spec registers its

@@ -22,6 +22,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { devices, expect, test, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
 import { ANY, controlPort, listen } from "./ports";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 let base = "";
 let github = "";
@@ -301,6 +304,10 @@ test("Sam's follow-up needs Jake's trust on his machine, then reaches the agent"
   await jake.evaluate(() => (location.hash = ""));
   await expect(jake.locator('[data-trust-request="1"]')).toBeVisible({ timeout: 15_000 });
   await jake.locator("[data-trust]").click();
+  // The grant goes over Jake's connection and the follow-up over Sam's:
+  // send it once the daemon says Sam is trusted, or it can get there first
+  // and be refused again.
+  await expect.poll(() => jake.evaluate(() => window.__illogical.fleet.panes.find((p) => p.key === "mac:1")?.info.trusted?.length ?? 0)).toBe(1);
   await done.locator(".followup input").fill("now run the tests");
   await done.locator(".followup button").tap();
   await expect(done.locator(".followup-sent")).toHaveText("Sent.");

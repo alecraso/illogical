@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ANY, controlPort, daemonPort, listen } from "./ports";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 let base = "";
 const procs: ChildProcess[] = [];

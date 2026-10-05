@@ -9,8 +9,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { active, at, dragTo, menu, open, paneEl, panes, ready, run, text, type } from "./helpers";
+import { active, at, dragTo, menu, open, paneEl, panes, ready, run, text, type, closeContexts } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 let homeUrl = "";
 let otherUrl = "";

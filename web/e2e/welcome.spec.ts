@@ -2,7 +2,9 @@
 // and the phone's sheet. #96: what a phone that can't be notified is told.
 
 import { devices, expect, test } from "@playwright/test";
-import { reset } from "./helpers";
+import { reset, closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 // The app doesn't greet automation (every other spec wants a clean first
 // screen); these pretend to be a person.

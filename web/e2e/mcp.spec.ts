@@ -11,8 +11,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { open, reset, ready, screen, text } from "./helpers";
+import { open, reset, ready, screen, text, closeContexts } from "./helpers";
 import { pixel7 } from "./phones";
+
+test.afterAll(closeContexts);
 
 /** One MCP session over Streamable HTTP, as Codex speaks it (2025-06-18). */
 async function mcp(request: APIRequestContext, name: string) {

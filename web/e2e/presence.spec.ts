@@ -9,8 +9,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { ready, run, text } from "./helpers";
+import { ready, run, text, closeContexts } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 let base = "";
 const OWNER = "me@example.com";

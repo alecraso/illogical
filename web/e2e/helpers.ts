@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Browser, type Locator, type Page } from "@playwright/test";
 import type { Client } from "../src/client";
 import type { HostDirectory } from "../src/hosts";
 import type { ControlSession } from "../src/control";
@@ -23,6 +23,16 @@ declare global {
       selection(pane: PaneId): string;
     };
   }
+}
+
+/** The run shares one browser, and Playwright closes only the contexts of
+ * its own `context` fixture: one a spec opens with `browser.newContext()`
+ * (or a helper does for it) would keep its pages drawing, polling and
+ * reconnecting through every later spec, which then run on a busier
+ * machine than they do alone (#258). Every spec that uses `browser` closes
+ * what's left when it ends: `test.afterAll(closeContexts)`. */
+export async function closeContexts({ browser }: { browser: Browser }) {
+  await Promise.all(browser.contexts().map((c) => c.close()));
 }
 
 export async function open(page: Page) {

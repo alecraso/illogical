@@ -15,9 +15,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
-import { menu, open, paneEl } from "./helpers";
+import { menu, open, paneEl, closeContexts } from "./helpers";
 import type { PaneId, Reason } from "../src/proto";
 import { ANY, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 const OWNER = "me@example.com";
 const FRIEND = "friend@example.com";

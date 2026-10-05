@@ -8,8 +8,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { controlPanel } from "./helpers";
+import { controlPanel, closeContexts } from "./helpers";
 import { ANY, controlPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 // WebAuthn needs a domain name; localhost counts as secure.
 let base = "";

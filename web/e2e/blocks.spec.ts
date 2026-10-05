@@ -5,7 +5,9 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
-import { menu, paneEl, panes, reset } from "./helpers";
+import { menu, paneEl, panes, reset, closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 let server: Server;
 let base = "";
