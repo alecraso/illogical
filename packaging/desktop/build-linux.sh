@@ -21,7 +21,21 @@ v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 for b in illogicald illogical; do
   [ -s "binaries/$b-$host" ] || { echo "missing binaries/$b-$host (just static $arch)" >&2; exit 1; }
 done
-cargo tauri build --bundles deb,rpm,appimage "$@"
+# An AppImage marks itself with "AI\2" in the ELF header's padding, which
+# the binfmt_misc entries for emulation (qemu-user, Docker Desktop's
+# Rosetta) require to be zero: under emulation the kernel refuses to run
+# linuxdeploy's plugins ("Exec format error"). Clear the mark on the tools
+# tauri caches; the AppImage runtime doesn't need it. A first build
+# downloads them mid-way, so it runs again once they're there.
+runnable() {
+  for f in "$@"; do
+    [ "$(dd if="$f" bs=1 skip=8 count=3 2>/dev/null | od -An -c | tr -d ' ')" = 'AI002' ] || continue
+    printf '\0\0\0' | dd of="$f" bs=1 seek=8 count=3 conv=notrunc 2>/dev/null
+  done
+}
+tools() { runnable /root/.cache/tauri/*.AppImage; }
+tools 2>/dev/null || true
+cargo tauri build --bundles deb,rpm,appimage "$@" || { tools; cargo tauri build --bundles deb,rpm,appimage "$@"; }
 out=$CARGO_TARGET_DIR/release/bundle
 # linuxdeploy patches an RPATH into every ELF in usr/bin, which breaks the
 # static-pie sidecars (they segfault at start, so the app could never
@@ -39,9 +53,12 @@ name=illogical-desktop-linux-$arch
 cp "$out/deb/illogical_${v}_$deb.deb" "/dist/$name.deb"
 cp "$out/rpm/illogical-$v-1.$arch.rpm" "/dist/$name.rpm"
 cp "$out/appimage/$appimage" "/dist/$name.AppImage"
-# The sidecars as the app will run them: they must start.
+# The sidecars as the app will run them: they must start (from a copy
+# without the mark, which the shipped AppImage keeps).
 x=$(mktemp -d)
-(cd "$x" && "/dist/$name.AppImage" --appimage-extract >/dev/null \
+cp "/dist/$name.AppImage" "$x/app.AppImage"
+runnable "$x/app.AppImage"
+(cd "$x" && ./app.AppImage --appimage-extract >/dev/null \
   && for b in illogicald illogical; do squashfs-root/usr/bin/$b --version >/dev/null || { echo "the AppImage's $b doesn't run" >&2; exit 1; }; done)
 rm -rf "$x"
 if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then

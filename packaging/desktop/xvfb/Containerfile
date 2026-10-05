@@ -1,10 +1,16 @@
 # The Linux desktop app under Xvfb (#204, M46): the app's build image
 # (../Containerfile) plus a virtual display, a window manager (Openbox, for
-# minimize, maximize and moves), input (xdotool) and what the tests need.
+# minimize, maximize and moves), input (xdotool) and what the tests need:
+# Nautilus with nautilus-python for M47's right-click, and pyatspi to find
+# and click its menu item.
 ARG BASE
 FROM ${BASE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb xauth dbus dbus-x11 at-spi2-core python3 procps \
       openbox xdotool x11-utils xdg-utils desktop-file-utils \
+      nautilus python3-nautilus python3-pyatspi gir1.2-atspi-2.0 \
     && rm -rf /var/lib/apt/lists/*
+# 22.04's arm64 python3-nautilus opens /usr/lib/libpython3.10.so.1.0, not
+# the multiarch path (amd64's is right), so no extension loads without this.
+RUN if [ "$(uname -m)" = aarch64 ]; then ln -s aarch64-linux-gnu/libpython3.10.so.1.0 /usr/lib/libpython3.10.so.1.0; fi

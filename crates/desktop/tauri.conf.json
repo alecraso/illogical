@@ -43,7 +43,19 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libc6 (>= 2.35)"]
+        "depends": ["libc6 (>= 2.35)"],
+        "recommends": ["python3-nautilus"],
+        "desktopTemplate": "linux/illogical.desktop",
+        "files": {
+          "/usr/share/nautilus-python/extensions/illogical.py": "linux/nautilus/illogical.py"
+        }
+      },
+      "rpm": {
+        "recommends": ["nautilus-python"],
+        "desktopTemplate": "linux/illogical.desktop",
+        "files": {
+          "/usr/share/nautilus-python/extensions/illogical.py": "linux/nautilus/illogical.py"
+        }
       }
     },
     "externalBin": [

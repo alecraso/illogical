@@ -2,9 +2,10 @@
 # The Linux packages install on a fresh system (`just desktop-packages
 # ARCH`): the .deb on Ubuntu 22.04 and the .rpm on Fedora, each in a
 # container of ARCH. After the install: the app and both sidecars are in
-# /usr/bin and run, every library the app needs resolves, and the desktop
+# /usr/bin and run, every library the app needs resolves, the desktop
 # file claims illogical:// links (x-scheme-handler/illogical), which
-# xdg-mime then hands to it.
+# xdg-mime then hands to it, passes the link on (%u) and offers a New Tab
+# action, and Nautilus's extension (M47) is where nautilus-python looks.
 set -euo pipefail
 arch=${1:-$(uname -m)}
 [ "$arch" = arm64 ] && arch=aarch64
@@ -21,10 +22,15 @@ missing=$(ldd /usr/bin/illogical-desktop | grep "not found" || true)
 [ -z "$missing" ] || { echo "missing libraries: $missing"; exit 1; }
 desktop=$(grep -l "^Exec=illogical-desktop" /usr/share/applications/*.desktop)
 grep -q "^MimeType=.*x-scheme-handler/illogical" "$desktop" || { echo "$desktop has no x-scheme-handler/illogical"; exit 1; }
+grep -qx "Exec=illogical-desktop %u" "$desktop" || { echo "$desktop: $(grep ^Exec= "$desktop" | head -1), not passing the link"; exit 1; }
+grep -qx "Exec=illogical-desktop illogical://open" "$desktop" || { echo "$desktop has no New Tab action"; exit 1; }
+ext=/usr/share/nautilus-python/extensions/illogical.py
+test -f $ext || { echo "no $ext"; exit 1; }
+python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" $ext
 update-desktop-database /usr/share/applications 2>/dev/null || true
 handler=$(HOME=/root xdg-mime query default x-scheme-handler/illogical)
 [ "$handler" = "$(basename "$desktop")" ] || { echo "xdg-mime picks \"$handler\" for illogical://"; exit 1; }
-echo "installed: $(basename "$desktop") handles illogical://"'
+echo "installed: $(basename "$desktop") handles illogical://, with the Nautilus extension"'
 
 run() {
   local what=$1 image=$2 install=$3 file=$4
@@ -37,6 +43,6 @@ $check" 2>&1); then
   fi
 }
 run "deb $arch" docker.io/library/ubuntu:22.04 \
-  'export DEBIAN_FRONTEND=noninteractive; apt-get update -q && apt-get install -y -q xdg-utils desktop-file-utils && apt-get install -y -q' "$name.deb"
-run "rpm $arch" docker.io/library/fedora:42 'dnf install -y -q xdg-utils desktop-file-utils && dnf install -y -q' "$name.rpm"
+  'export DEBIAN_FRONTEND=noninteractive; apt-get update -q && apt-get install -y -q xdg-utils desktop-file-utils python3 && apt-get install -y -q' "$name.deb"
+run "rpm $arch" docker.io/library/fedora:42 'dnf install -y -q xdg-utils desktop-file-utils python3 && dnf install -y -q' "$name.rpm"
 exit $failed

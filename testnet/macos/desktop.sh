@@ -18,6 +18,10 @@
 #             leave the app running and its window up
 #   links     `open illogical://open?cwd=DIR` opens a tab there and shows
 #             it; `open illogical://pane/%N` shows pane N
+#   finder    M47: the app's service is registered; right-clicking a
+#             folder in Finder and picking *New illogical Tab Here* opens a
+#             tab there in the running app and shows it; a .command file
+#             opened with the app runs in a new tab
 #   tabs      Cmd-N opens a window as a native tab of the first
 #   hotkey    off by default; on (desktop.json), Ctrl-Option-Space hides
 #             the app and brings it back
@@ -31,6 +35,7 @@
 # (#177) removes. VM name: $ILLOGICAL_MACOS_VM (default illogical-macos-l).
 # Exit codes: 0 every claim held (or no tart: a clean skip), 1 a claim
 # failed, 2 usage.
+# shellcheck disable=SC2016,SC2329 # strings run in the VM expand there; claims run as claim_$c
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,7 +49,7 @@ DMG="${ILLOGICAL_DMG:-$ROOT/dist/illogical-desktop-macos-arm64.dmg}"
 [ -f "$DMG" ] || { echo "no .dmg (ILLOGICAL_DMG, or build one: just desktop)" >&2; exit 2; }
 
 claims=("$@")
-[ ${#claims[@]} -gt 0 ] || claims=(install agent pane keys links tabs hotkey restart)
+[ ${#claims[@]} -gt 0 ] || claims=(install agent pane keys links finder tabs hotkey restart)
 failed=0
 v() { "$V" "$1" "$VM" "${@:2}"; }
 vs() { v ssh "$@"; }
@@ -53,19 +58,24 @@ fail() { echo "[macos desktop $1] FAIL: $2" >&2; failed=1; }
 wait_for() {
   local until=$((SECONDS + $1)); shift
   until "$@"; do
-    [ $SECONDS -lt $until ] || return 1
+    [ "$SECONDS" -lt "$until" ] || return 1
     sleep 1
   done
 }
 # AppleScript in the VM's GUI session.
 osa() { vs "osascript -e $(printf %q "$1")"; }
 keys() { osa "tell application \"System Events\" to $1"; }
-il() { vs "~/.local/bin/illogical $*"; }
+il() { vs "\$HOME/.local/bin/illogical $*"; }
 # Pane ids, and one pane's field.
 panes() { il --json ls | python3 -c 'import json, sys; [print(p["id"]) for p in json.load(sys.stdin)]'; }
 pane_cwd() { il --json ls | python3 -c 'import json, sys; [print(p["cwd"]) for p in json.load(sys.stdin) if p["id"] == int(sys.argv[1])]' "$1"; }
+# Conditions for wait_for, which runs its command again each time.
+has_window() { [ "$(windows)" -ge 1 ]; }
+more_panes_than() { [ "$(panes | wc -l)" -gt "$1" ]; }
+fewer_panes_than() { [ "$(panes | wc -l)" -lt "$1" ]; }
 app_running() { vs 'pgrep -x illogical-desktop >/dev/null'; }
 windows() { osa 'tell application "System Events" to count windows of process "illogical-desktop"' 2>/dev/null || echo 0; }
+visible() { osa 'tell application "System Events" to get visible of process "illogical-desktop"'; }
 front() { osa 'tell application "System Events" to set frontmost of process "illogical-desktop" to true' >/dev/null; sleep 0.5; }
 # Size (rows cols) of the pane that recorded into DIR in the VM.
 recorder() {
@@ -100,25 +110,31 @@ claim_agent() {
     fail agent "the launch agent isn't running: $(vs 'launchctl print gui/$(id -u)/wtf.widgets.illogical.daemon 2>&1 | grep -E "state|exit"' | xargs)"
   fi
   local s; s=$(vs '/Applications/illogical.app/Contents/MacOS/illogical-desktop --agent status' || true)
-  [ "$s" = enabled ] && pass agent "SMAppService: $s" || fail agent "SMAppService: $s"
+  if [ "$s" = enabled ]; then pass agent "SMAppService: $s"; else fail agent "SMAppService: $s"; fi
   if vs 'sudo sfltool dumpbtm 2>/dev/null | grep -q "8.wtf.widgets.illogical.daemon"'; then
     pass agent "Login Items (BTM) lists it"
   else
     fail agent "BTM has no record of the agent"
   fi
-  if wait_for 30 vs '~/.local/bin/illogical ls >/dev/null 2>&1'; then
-    pass agent "the daemon answers the linked CLI ($(vs 'readlink ~/.local/bin/illogical'))"
+  if wait_for 30 vs '$HOME/.local/bin/illogical ls >/dev/null 2>&1'; then
+    pass agent "the daemon answers the linked CLI ($(vs 'readlink $HOME/.local/bin/illogical'))"
   else
-    fail agent "~/.local/bin/illogical can't reach a daemon"
+    fail agent "the linked CLI in ~/.local/bin can't reach a daemon"
   fi
-  vs 'test ! -e ~/Library/LaunchAgents/illogicald.plist' && pass agent "no illogicald install plist beside it" \
-    || fail agent "an illogicald install plist exists too"
-  vs 'pgrep -fl "Contents/MacOS/illogicald$" >/dev/null' && pass agent "the daemon is the bundle's" \
-    || fail agent "the running daemon isn't the bundle's: $(vs 'pgrep -fl illogicald' | head -1)"
+  if vs 'test ! -e $HOME/Library/LaunchAgents/illogicald.plist'; then
+    pass agent "no illogicald install plist beside it"
+  else
+    fail agent "an illogicald install plist exists too"
+  fi
+  if vs 'pgrep -fl "Contents/MacOS/illogicald$" >/dev/null'; then
+    pass agent "the daemon is the bundle's"
+  else
+    fail agent "the running daemon isn't the bundle's: $(vs 'pgrep -fl illogicald' | head -1)"
+  fi
 }
 
 claim_pane() {
-  wait_for 60 test "$(windows)" -ge 1 || { fail pane "no window"; return; }
+  wait_for 60 has_window || { fail pane "no window"; return; }
   sleep 3
   front
   # Getting started opens on a new profile; Escape closes it.
@@ -140,9 +156,9 @@ claim_pane() {
 
 claim_keys() {
   local dir=/tmp/rec-keys
-  local p; p=$(il --json run -- sh -c "$(printf %q "$(recorder $dir)")" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+  local p; p=$(il --json run -- sh -c "$(printf %q "$(recorder "$dir")")" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
   vs "open 'illogical://pane/%25$p'"
-  wait_for 15 shown $dir || { fail keys "the window never showed the recorder %$p"; return; }
+  wait_for 15 shown "$dir" || { fail keys "the window never showed the recorder %$p"; return; }
   front
   vs ": > $dir/keys"
   # ^W ^T ^N ^Q Tab, then Option-x (with Option as Meta off, a character).
@@ -154,31 +170,36 @@ claim_keys() {
   sleep 1.5
   local got want=17140e1109
   got=$(vs "od -An -tx1 -v $dir/keys" | tr -d ' \n')
-  [ "$got" = "$want" ] && pass keys "Ctrl-W, T, N, Q and Tab reached the pane ($got)" || fail keys "the pane got '$got', want $want"
+  if [ "$got" = "$want" ]; then
+    pass keys "Ctrl-W, T, N, Q and Tab reached the pane ($got)"
+  else
+    fail keys "the pane got '$got', want $want"
+  fi
   # Cmd-W: the pane goes, the window stays.
   local n; n=$(panes | wc -l)
   keys 'keystroke "w" using command down'
-  if wait_for 10 test "$(panes | wc -l)" -lt "$n" && ! panes | grep -qx "$p"; then
+  if wait_for 10 fewer_panes_than "$n" && ! panes | grep -qx "$p"; then
     pass keys "Cmd-W closed %$p"
   else
     fail keys "Cmd-W didn't close %$p ($(panes | xargs))"
   fi
   sleep 1
-  [ "$(windows)" -ge 1 ] && app_running && pass keys "and the window stayed" || fail keys "Cmd-W closed the window"
+  if [ "$(windows)" -ge 1 ] && app_running; then pass keys "and the window stayed"; else fail keys "Cmd-W closed the window"; fi
   n=$(panes | wc -l)
   front
   keys 'keystroke "t" using command down'
-  wait_for 10 test "$(panes | wc -l)" -gt "$n" && pass keys "Cmd-T opened a tab" || fail keys "Cmd-T opened no tab"
+  if wait_for 10 more_panes_than "$n"; then pass keys "Cmd-T opened a tab"; else fail keys "Cmd-T opened no tab"; fi
   for k in q h m; do
+    local K; K=$(echo "$k" | tr '[:lower:]' '[:upper:]')
     front
     keys "keystroke \"$k\" using command down"
     sleep 1.5
     local vis; vis=$(osa 'tell application "System Events" to get visible of process "illogical-desktop"' 2>/dev/null || echo gone)
     local mini; mini=$(osa 'tell application "System Events" to get value of attribute "AXMinimized" of window 1 of process "illogical-desktop"' 2>/dev/null || echo none)
     if app_running && [ "$vis" = true ] && [ "$mini" = false ]; then
-      pass keys "Cmd-$(echo $k | tr a-z A-Z) reached the page: the app runs, shown, not minimized"
+      pass keys "Cmd-$K reached the page: the app runs, shown, not minimized"
     else
-      fail keys "after Cmd-$(echo $k | tr a-z A-Z): running=$(app_running && echo yes || echo no) visible=$vis minimized=$mini"
+      fail keys "after Cmd-$K: running=$(app_running && echo yes || echo no) visible=$vis minimized=$mini"
       vs 'open -a /Applications/illogical.app'; sleep 3
     fi
   done
@@ -189,7 +210,7 @@ claim_links() {
   vs "mkdir -p $dir"
   local n; n=$(panes | wc -l)
   vs "open 'illogical://open?cwd=%2Ftmp%2Flinked-dir'"
-  if wait_for 15 test "$(panes | wc -l)" -gt "$n"; then
+  if wait_for 15 more_panes_than "$n"; then
     local p; p=$(panes | tail -1)
     local cwd; cwd=$(pane_cwd "$p")
     case "$cwd" in
@@ -200,13 +221,67 @@ claim_links() {
     fail links "illogical://open?cwd= made no pane"
   fi
   local odir=/tmp/rec-link
-  local q; q=$(il --json run -- sh -c "$(printf %q "$(recorder $odir)")" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+  local q; q=$(il --json run -- sh -c "$(printf %q "$(recorder "$odir")")" | python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
   sleep 2
-  if shown $odir; then
+  if shown "$odir"; then
     fail links "%$q was shown before its link"
   else
     vs "open 'illogical://pane/%25$q'"
-    wait_for 15 shown $odir && pass links "illogical://pane/%$q showed it ($(size_of $odir))" || fail links "illogical://pane/%$q didn't show it"
+    if wait_for 15 shown "$odir"; then
+      pass links "illogical://pane/%$q showed it ($(size_of "$odir"))"
+    else
+      fail links "illogical://pane/%$q didn't show it"
+    fi
+  fi
+}
+
+# The newest pane, once there are more than $1.
+newest_after() { wait_for 20 more_panes_than "$1" && panes | tail -1; }
+
+claim_finder() {
+  vs '/System/Library/CoreServices/pbs -update; sleep 1'
+  if vs '/System/Library/CoreServices/pbs -dump 2>/dev/null | grep -q "New illogical Tab Here"'; then
+    pass finder "the services list has New illogical Tab Here"
+  else
+    fail finder "pbs doesn't list the app's service"
+  fi
+  local dir=/Users/admin/m47/some-project
+  vs "mkdir -p $dir"
+  local n; n=$(panes | wc -l)
+  # Finder on ~/m47 in a list view, the folder selected by typing its name
+  # (no Apple Events to Finder: those need a person's yes); then a
+  # right-click on it and *New illogical Tab Here* (finder-menu.js).
+  vs 'open /Users/admin/m47'
+  sleep 2
+  keys 'keystroke "2" using command down'
+  sleep 0.5
+  keys 'keystroke "some-project"'
+  sleep 1
+  v push "$HERE/finder-menu.js" /tmp/finder-menu.js
+  local how
+  how=$(vs "osascript -l JavaScript /tmp/finder-menu.js some-project 'New illogical Tab Here'" 2>&1) \
+    || { fail finder "right-click > New illogical Tab Here: $how"; return; }
+  local p; p=$(newest_after "$n") || { fail finder "$how, but no new pane"; return; }
+  local cwd; cwd=$(pane_cwd "$p")
+  if [ "$cwd" = "$dir" ]; then
+    pass finder "$how: %$p opened in $cwd"
+  else
+    fail finder "$how: the new pane %$p is in $cwd, not $dir"
+  fi
+  local front; front=$(osa 'tell application "System Events" to get name of first process whose frontmost is true')
+  if [ "$front" = illogical-desktop ]; then
+    pass finder "and the app came to the front with it"
+  else
+    fail finder "the front app is $front"
+  fi
+  # A .command file opened with the app (Open With, as a person picks it).
+  vs "printf '#!/bin/sh\\necho ran > /tmp/m47-command\\nexec sleep 600\\n' > /Users/admin/m47/hello.command; chmod +x /Users/admin/m47/hello.command; rm -f /tmp/m47-command"
+  n=$(panes | wc -l)
+  vs 'open -a /Applications/illogical.app /Users/admin/m47/hello.command'
+  if wait_for 20 vs 'grep -qx ran /tmp/m47-command'; then
+    pass finder "a .command file opened with the app ran in a new pane ($(newest_after "$n" | sed 's/^/%/'))"
+  else
+    fail finder "opening hello.command with the app ran nothing"
   fi
 }
 
@@ -228,31 +303,35 @@ claim_hotkey() {
   front
   keys 'key code 49 using {control down, option down}'
   sleep 2
-  [ "$(osa 'tell application "System Events" to get visible of process "illogical-desktop"')" = true ] \
-    && pass hotkey "off by default: Ctrl-Option-Space left it alone" || fail hotkey "with no settings the hotkey hid the app"
+  if [ "$(visible)" = true ]; then
+    pass hotkey "off by default: Ctrl-Option-Space left it alone"
+  else
+    fail hotkey "with no settings the hotkey hid the app"
+  fi
   vs 'osascript -e "quit app \"illogical\""; sleep 2; pkill -x illogical-desktop; d=~/Library/Application\ Support/wtf.widgets.illogical; mkdir -p "$d"; echo "{\"hotkey_on\": true}" > "$d/desktop.json"; open -a /Applications/illogical.app'
-  wait_for 30 test "$(windows)" -ge 1 || { fail hotkey "the app didn't come back"; return; }
+  wait_for 30 has_window || { fail hotkey "the app didn't come back"; return; }
   sleep 3
   front
   keys 'key code 49 using {control down, option down}'
   sleep 2
-  [ "$(osa 'tell application "System Events" to get visible of process "illogical-desktop"')" = false ] \
-    && pass hotkey "on: Ctrl-Option-Space hid the app" || fail hotkey "on: the app stayed visible"
+  if [ "$(visible)" = false ]; then pass hotkey "on: Ctrl-Option-Space hid the app"; else fail hotkey "on: the app stayed visible"; fi
   keys 'key code 49 using {control down, option down}'
   sleep 2
-  [ "$(osa 'tell application "System Events" to get visible of process "illogical-desktop"')" = true ] \
-    && pass hotkey "and brought it back" || fail hotkey "a second press didn't bring it back"
+  if [ "$(visible)" = true ]; then pass hotkey "and brought it back"; else fail hotkey "a second press didn't bring it back"; fi
 }
 
 claim_restart() {
   local before; before=$(vs 'pgrep -f "Contents/MacOS/illogicald" | sort | xargs')
   local n; n=$(panes | wc -l)
   vs 'pkill -x illogical-desktop; sleep 2; open -a /Applications/illogical.app'
-  wait_for 30 test "$(windows)" -ge 1 || { fail restart "the app didn't start again"; return; }
+  wait_for 30 has_window || { fail restart "the app didn't start again"; return; }
   sleep 3
   local after; after=$(vs 'pgrep -f "Contents/MacOS/illogicald" | sort | xargs')
-  [ "$before" = "$after" ] && [ "$(panes | wc -l)" = "$n" ] \
-    && pass restart "the daemon and its $n panes outlived the app" || fail restart "daemon pids $before -> $after, panes $n -> $(panes | wc -l)"
+  if [ "$before" = "$after" ] && [ "$(panes | wc -l)" = "$n" ]; then
+    pass restart "the daemon and its $n panes outlived the app"
+  else
+    fail restart "daemon pids $before -> $after, panes $n -> $(panes | wc -l)"
+  fi
 }
 
 for c in "${claims[@]}"; do

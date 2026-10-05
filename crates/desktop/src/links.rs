@@ -9,8 +9,13 @@
 //! scheme in Info.plist (tauri-plugin-deep-link). Linux runs the app with
 //! the link as an argument (the .desktop file's `x-scheme-handler`), so a
 //! second launch's arguments reach the first through single-instance.
+//!
+//! The file managers (M47) use the same path: Nautilus's extension opens
+//! `illogical://open?cwd=`, and Finder's service calls `open_dir` here.
+//! A `.command` file opened with the app (`run_file`) runs in a new tab;
+//! that never comes from a link, so no web page can run a command.
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use tauri::AppHandle;
 
@@ -18,6 +23,12 @@ use tauri::AppHandle;
 pub enum Link {
     Pane(u32),
     Open { cwd: Option<String> },
+}
+
+/// What to do once the daemon answers.
+enum Act {
+    Show(u32),
+    Run { cwd: Option<String>, command: Option<String> },
 }
 
 pub fn parse(url: &str) -> Option<Link> {
@@ -49,27 +60,57 @@ pub fn in_args<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
 /// Do what `url` says. Waits (off the main thread) for the daemon, which a
 /// first launch may still be installing.
 pub fn handle(app: &AppHandle, url: String) {
+    let Some(link) = parse(&url) else {
+        eprintln!("illogical: not a link this app knows: {url}");
+        let a = app.clone();
+        let _ = app.run_on_main_thread(move || crate::focus_or_open(&a));
+        return;
+    };
+    eprintln!("illogical: opening {url}");
+    let act = match link {
+        Link::Pane(p) => Act::Show(p),
+        Link::Open { cwd } => Act::Run { cwd, command: None },
+    };
+    act_on(app, url, act);
+}
+
+/// A new tab in `dir` (Finder's service, M47). A file opens in its folder.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn open_dir(app: &AppHandle, dir: &Path) {
+    let dir = if dir.is_dir() { dir } else { dir.parent().unwrap_or(dir) };
+    eprintln!("illogical: a new tab in {}", dir.display());
+    act_on(app, dir.display().to_string(), Act::Run { cwd: Some(dir.display().to_string()), command: None });
+}
+
+/// A `.command` file opened with the app (M47): it runs in a new tab, in
+/// its own folder, as Terminal runs it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn run_file(app: &AppHandle, file: &Path) {
+    eprintln!("illogical: running {}", file.display());
+    let cwd = file.parent().map(|d| d.display().to_string());
+    act_on(app, file.display().to_string(), Act::Run { cwd, command: Some(quote(&file.display().to_string())) });
+}
+
+/// `s` as one word for the pane's shell.
+fn quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+fn act_on(app: &AppHandle, what: String, act: Act) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let Some(link) = parse(&url) else {
-            eprintln!("illogical: not a link this app knows: {url}");
-            let a = app.clone();
-            let _ = app.run_on_main_thread(move || crate::focus_or_open(&a));
-            return;
-        };
-        eprintln!("illogical: opening {url}");
         for _ in 0..240 {
             if crate::reachable() && crate::upgrade::pending().is_none() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(250));
         }
-        let pane = match link {
-            Link::Pane(p) => p,
-            Link::Open { cwd } => match run(cwd.as_deref()) {
+        let pane = match act {
+            Act::Show(p) => p,
+            Act::Run { cwd, command } => match run(cwd.as_deref(), command.as_deref()) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("illogical: {url}: {e}");
+                    eprintln!("illogical: {what}: {e}");
                     let a = app.clone();
                     let _ = app.run_on_main_thread(move || crate::focus_or_open(&a));
                     return;
@@ -81,14 +122,15 @@ pub fn handle(app: &AppHandle, url: String) {
     });
 }
 
-/// A new tab on the local daemon (`POST /api/run`), in `cwd`.
-fn run(cwd: Option<&str>) -> Result<u32, String> {
+/// A new tab on the local daemon (`POST /api/run`), in `cwd`, running
+/// `command` (or a shell).
+fn run(cwd: Option<&str>, command: Option<&str>) -> Result<u32, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into();
     let mut req = agent.post(&format!("{}/api/run", crate::page()));
     if let Some(b) = crate::bearer() {
         req = req.header("Authorization", &b);
     }
-    let body = serde_json::json!({ "cwd": cwd });
+    let body = serde_json::json!({ "cwd": cwd, "command": command });
     let mut resp = req.send_json(&body).map_err(|e| e.to_string())?;
     let v: serde_json::Value = resp.body_mut().read_json().map_err(|e| e.to_string())?;
     v["pane"].as_u64().map(|p| p as u32).ok_or_else(|| format!("the daemon answered {v}"))
@@ -111,6 +153,12 @@ mod tests {
         assert_eq!(parse("illogical://pane/"), None);
         assert_eq!(parse("illogical://delete/everything"), None);
         assert_eq!(parse("https://pane/3"), None);
+    }
+
+    #[test]
+    fn quotes_paths() {
+        assert_eq!(super::quote("/tmp/a b/x.command"), "'/tmp/a b/x.command'");
+        assert_eq!(super::quote("/tmp/it's"), r"'/tmp/it'\''s'");
     }
 
     #[test]
