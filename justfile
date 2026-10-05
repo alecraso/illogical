@@ -192,7 +192,7 @@ e2e-interop:
 
 # Browser tests in system Chrome; pass a URL to test a running daemon.
 e2e url="":
-    {{cargo}} build -p illogicald
+    {{cargo}} build -p illogicald -p illogical -p illogical-control
     cd web && pnpm run build && E2E_BASE_URL="{{url}}" pnpm exec playwright test
 
 # illogical's VS Code extension as a VSIX in target/ (M28), for Open VSX
