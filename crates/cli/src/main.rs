@@ -1105,8 +1105,9 @@ fn policy(s: &str) -> anyhow::Result<Value> {
         "none" => json!({"kind": "none"}),
         "rerun" => json!({"kind": "rerun", "confirm": false}),
         "rerun-ask" => json!({"kind": "rerun", "confirm": true}),
+        "resume" => json!({"kind": "resume"}),
         h if h.starts_with("hook:") => json!({"kind": "hook", "command": &h[5..]}),
-        _ => bail!("policy: shell, none, rerun, rerun-ask or hook:COMMAND"),
+        _ => bail!("policy: shell, none, rerun, rerun-ask, resume or hook:COMMAND"),
     })
 }
 

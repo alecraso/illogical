@@ -72,6 +72,9 @@ pub struct Live {
     pub block: Option<PaneId>,
     /// Where, for people ([`Live::place`]).
     pub place: String,
+    /// The directory it runs in (#146: where to resume it).
+    #[serde(skip)]
+    pub cwd: Option<String>,
 }
 
 impl Live {
@@ -323,6 +326,12 @@ impl Index {
     }
 }
 
+/// The conversation each of our panes' Claude Code holds now, by pane
+/// (#146: the session to resume when its hooks didn't say).
+pub fn live_in_panes(dirs: &Dirs, ours: &Ours) -> HashMap<PaneId, (String, Option<String>)> {
+    live(&dirs.claude.join("sessions"), ours).into_iter().filter_map(|(sid, l)| Some((l.pane?, (sid, l.cwd)))).collect()
+}
+
 /// Is a conversation on the default list (`all`: everything)? Terminal and
 /// desktop ones, unarchived, whose folder is still there; a desktop one
 /// whose scratch workspace went with it stays.
@@ -460,6 +469,7 @@ fn live(dir: &Path, ours: &Ours) -> HashMap<String, Live> {
             pane,
             block,
             place: String::new(),
+            cwd: v["cwd"].as_str().map(str::to_owned),
         };
         l.place = l.place();
         out.insert(session.to_owned(), l);
@@ -584,6 +594,7 @@ mod tests {
             pane: Some(76),
             block: None,
             place: String::new(),
+            cwd: None,
         };
         let theirs = l.clone().ours(|p| p == 3);
         assert_eq!((theirs.pane, theirs.block), (None, None));

@@ -74,7 +74,7 @@ fn driver_lapse() -> Duration {
 const PROC_FRESH: Duration = Duration::from_secs(1);
 /// Pane fields a summary leaves out (M23): a client that needs them reads
 /// the pane.
-const NOT_IN_SUMMARIES: &[&str] = &["epoch", "policy", "integration"];
+const NOT_IN_SUMMARIES: &[&str] = &["epoch", "policy", "resumes", "integration"];
 
 pub enum Cmd {
     Connect {
@@ -410,6 +410,30 @@ impl Config {
         Spawn { args, ..shell }
     }
 
+    /// Run `argv` (no shell text: each word its own argument, so nothing in
+    /// it is read by the shell), then carry on with an interactive shell
+    /// (#146). With `note`, print it first and run nothing else.
+    fn argv_then_shell(&self, pane: PaneId, cwd: PathBuf, run: Run, integrate: bool) -> Spawn {
+        let shell = self.shell(pane, cwd, integrate);
+        let then = std::iter::once(shell.program.as_str()).chain(shell.args.iter().map(String::as_str));
+        let then = then.collect::<Vec<_>>().join(" ");
+        let fish = std::path::Path::new(&self.shell).file_name().is_some_and(|n| n == "fish");
+        let (script, words) = match (run, fish) {
+            (Run::Argv(argv), false) => (format!("\"$@\"; exec {then}"), argv),
+            (Run::Argv(argv), true) => (format!("$argv; exec {then}"), argv),
+            (Run::Note(note), false) => (format!("printf '\\033[2m[%s]\\033[0m\\n' \"$1\"; exec {then}"), vec![note]),
+            (Run::Note(note), true) => (format!("printf '\\033[2m[%s]\\033[0m\\n' $argv[1]; exec {then}"), vec![note]),
+        };
+        let mut args: Vec<String> = self.shell_args.iter().filter(|a| *a != "--posix").cloned().collect();
+        args.extend(["-c".into(), script]);
+        // `sh -c SCRIPT NAME ARGS…`: NAME is $0. fish has no $0.
+        if !fish {
+            args.push("illogical".into());
+        }
+        args.extend(words);
+        Spawn { args, ..shell }
+    }
+
     /// Run `command` by itself (`illogical run`): the pane holds when it
     /// ends, so its output and exit code can still be read.
     fn run_only(&self, pane: PaneId, cwd: PathBuf, command: &str) -> Spawn {
@@ -431,6 +455,25 @@ impl Config {
             None => self.run_then_shell(pane, cwd.clone(), command, on),
         };
         let note = |s: &str| format!("\x1b[2m[{s}]\x1b[0m\r\n");
+        // The agent conversation it ran, by its session id (#146).
+        if meta.host.is_none() {
+            let transcript = |id: &str| {
+                let mut ix = crate::conversations::Index::new(crate::conversations::Dirs::from_env());
+                ix.find(id).ok().map(|c| c.path.display().to_string())
+            };
+            let cwd = crate::resume::dir(meta).map(PathBuf::from).unwrap_or_else(|| cwd.clone());
+            match crate::resume::plan(meta, transcript) {
+                Some(Ok(argv)) => {
+                    info!(pane, ?argv, "resuming its agent's conversation");
+                    return Start::Now(self.argv_then_shell(pane, cwd, Run::Argv(argv), on));
+                }
+                Some(Err(why)) => {
+                    info!(pane, why, "not resuming its agent's conversation");
+                    return Start::Now(self.argv_then_shell(pane, cwd, Run::Note(why), on));
+                }
+                None => {}
+            }
+        }
         match (&meta.policy, &meta.command) {
             (Policy::None, _) => Start::Wait { banner: note("press Enter for a shell"), enter: shell, escape: None },
             (Policy::Rerun { confirm: true }, Some(cmd)) => Start::Wait {
@@ -440,7 +483,7 @@ impl Config {
             },
             (Policy::Rerun { confirm: false }, Some(cmd)) => Start::Now(then(cmd)),
             (Policy::Hook { command }, _) => Start::Now(then(command)),
-            (Policy::Shell | Policy::Rerun { .. }, _) => Start::Now(shell),
+            (Policy::Shell | Policy::Rerun { .. } | Policy::Resume, _) => Start::Now(shell),
         }
     }
 
@@ -486,6 +529,12 @@ impl Config {
         let args = vec!["-lc".into(), format!("{command}; exec {}", then.collect::<Vec<_>>().join(" "))];
         Spawn { args, ..shell }
     }
+}
+
+/// What [`Config::argv_then_shell`] runs before the shell.
+enum Run {
+    Argv(Vec<String>),
+    Note(String),
 }
 
 /// What was last written to layout.json, to skip writing it unchanged.
@@ -2246,7 +2295,46 @@ impl Daemon {
     }
 
     /// One of Claude Code's hook events in a terminal (M29).
+    /// The conversation Claude Code in a pane holds, from any of its hooks
+    /// (#146): every hook's input names it.
+    fn note_session(&mut self, pane: PaneId, hook: &serde_json::Value) {
+        let Some(id) = hook["session_id"].as_str() else { return };
+        if !self.panes.contains_key(&pane) {
+            return;
+        }
+        if !crate::resume::valid_id(id) {
+            warn!(pane, "a hook gave a session id that isn't one; not keeping it");
+            return;
+        }
+        let transcript = hook["transcript_path"].as_str().map(str::to_owned);
+        let cwd = hook["cwd"].as_str().map(str::to_owned);
+        self.set_session(pane, "claude", id, transcript, cwd);
+    }
+
+    fn set_session(&mut self, pane: PaneId, agent: &str, id: &str, transcript: Option<String>, cwd: Option<String>) {
+        let m = self.meta.entry(pane).or_default();
+        let old = m.session.as_ref().filter(|s| s.agent == agent && s.id == id);
+        let new = |a: Option<String>, b: Option<&String>| a.is_none() || a.as_ref() == b;
+        if old.is_some_and(|s| new(transcript.clone(), s.transcript.as_ref()) && new(cwd.clone(), s.cwd.as_ref())) {
+            return;
+        }
+        let transcript = transcript.or_else(|| old.and_then(|s| s.transcript.clone()));
+        let cwd = cwd.or_else(|| old.and_then(|s| s.cwd.clone()));
+        info!(pane, agent, session = id, "agent conversation");
+        // Its hooks speak while it runs.
+        m.session =
+            Some(crate::store::AgentSession { agent: agent.into(), id: id.into(), transcript, cwd, running: true });
+        // A pane running Claude Code resumes it, unless someone said
+        // otherwise.
+        if !m.policy_set && m.policy == Policy::Shell {
+            m.policy = Policy::Resume;
+        }
+        self.mark(pane);
+        self.save_due.get_or_insert_with(|| Instant::now() + SAVE_DEBOUNCE);
+    }
+
     fn hook(&mut self, pane: PaneId, hook: &serde_json::Value) {
+        self.note_session(pane, hook);
         let event = hook["hook_event_name"].as_str().unwrap_or_default();
         let session = session_key(hook);
         let open = self
@@ -2424,7 +2512,8 @@ impl Daemon {
         result?;
         let pane = self.mux.panes().into_iter().find(|p| !before.contains(p)).ok_or("no pane was created")?;
         if let Some(policy) = req.policy {
-            self.meta.entry(pane).or_default().policy = policy;
+            let m = self.meta.entry(pane).or_default();
+            (m.policy, m.policy_set) = (policy, true);
         }
         Ok(pane)
     }
@@ -2959,7 +3048,8 @@ impl Daemon {
                         PaneOp::Attention { state } => self.set_attention(pane, state, "set by a client"),
                         PaneOp::SetPolicy { policy } => {
                             info!(pane, ?policy, "restart policy");
-                            self.meta.entry(pane).or_default().policy = policy;
+                            let m = self.meta.entry(pane).or_default();
+                            (m.policy, m.policy_set) = (policy, true);
                         }
                         _ => {}
                     }
@@ -2974,7 +3064,8 @@ impl Daemon {
                 match op {
                     PaneOp::SetPolicy { policy } => {
                         info!(pane, ?policy, "restart policy");
-                        self.meta.entry(pane).or_default().policy = policy;
+                        let m = self.meta.entry(pane).or_default();
+                        (m.policy, m.policy_set) = (policy, true);
                     }
                     PaneOp::Purge => {
                         info!(pane, "purging history");
@@ -3408,6 +3499,7 @@ impl Daemon {
                 file: None,
                 editor: None,
                 diff: None,
+                resumes: None,
                 ..info
             };
         }
@@ -3867,6 +3959,7 @@ impl Daemon {
     /// run, and mark the panes where either changed.
     fn refresh_meta(&mut self) {
         let mut changed = vec![];
+        let mut changed_running = vec![];
         let mut agents = vec![];
         for (id, h) in &self.panes {
             if !h.running() {
@@ -3896,6 +3989,33 @@ impl Daemon {
         for id in changed {
             self.procs.borrow_mut().remove(&id);
             self.mark(id);
+        }
+        // Whether each pane's agent conversation is still the one running.
+        for (id, agent) in &agents {
+            if let Some(s) = self.meta.get_mut(id).and_then(|m| m.session.as_mut())
+                && s.running != (agent.as_deref() == Some(s.agent.as_str()))
+            {
+                s.running = !s.running;
+                changed_running.push(*id);
+            }
+        }
+        for id in changed_running {
+            self.mark(id);
+        }
+        // Claude Code without hooks: its session files say which
+        // conversation each holds (#146).
+        if agents.iter().any(|(_, a)| a.as_deref() == Some("claude")) {
+            let ours = crate::conversations::Ours {
+                panes: self.panes.iter().filter_map(|(id, h)| Some((h.pid_now()?, *id))).collect(),
+                ..Default::default()
+            };
+            let live = crate::conversations::live_in_panes(&crate::conversations::Dirs::from_env(), &ours);
+            for (id, (sid, cwd)) in live {
+                let claude = agents.iter().any(|(p, a)| *p == id && a.as_deref() == Some("claude"));
+                if claude && crate::resume::valid_id(&sid) {
+                    self.set_session(id, "claude", &sid, None, cwd);
+                }
+            }
         }
         for (id, agent) in agents {
             self.watch_named(id, agent);
@@ -3964,6 +4084,9 @@ impl Daemon {
         let running = p.running();
         let status = p.status();
         let seen = if running { Some(self.proc_seen(p)) } else { None };
+        let resumes = crate::resume::applies(&meta).map(|s| {
+            format!("{} conversation {}", crate::resume::name(&s.agent), s.id.chars().take(8).collect::<String>())
+        });
         let cwd = status.cwd.clone().or_else(|| seen.as_ref().and_then(|s| s.cwd.clone())).or(meta.cwd);
         // The process's own command line sees through aliases; the typed
         // text is next best (a command that hasn't started its process yet).
@@ -3974,6 +4097,7 @@ impl Daemon {
         };
         let command = if running { seen.and_then(|s| s.command) } else { meta.command };
         PaneInfo {
+            resumes,
             id: p.id,
             epoch: p.epoch,
             project: cwd.as_deref().and_then(crate::classify::project),
@@ -4028,6 +4152,7 @@ impl Daemon {
             cwd: s.cwd,
             file: s.file,
             command: None,
+            resumes: None,
             running: true,
             policy: meta.policy,
             current: None,

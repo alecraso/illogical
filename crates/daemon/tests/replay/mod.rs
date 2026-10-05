@@ -54,17 +54,12 @@ impl Replay {
         }
     }
 
-    /// Each time it was started: `{argv, cwd}`.
+    /// Each time it was started: `{argv, cwd, pane}`.
     pub fn starts(&self) -> Vec<Value> {
         std::fs::read_to_string(self.side("argv"))
             .unwrap_or_default()
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect()
-    }
-
-    /// Where `--resume <id>` finds its transcripts: a file per id.
-    pub fn sessions(&self) -> PathBuf {
-        self.side("sessions")
     }
 }

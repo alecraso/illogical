@@ -16,11 +16,15 @@ names another recording.
 - Each marker ("m") it reaches is appended to `<self>.log` (`m working`),
   with `start` first and `end` last, so a test can wait for a point in the
   recording rather than sleep.
-- Every start appends its argv and working directory to `<self>.argv` as a
-  JSON line: `{"argv": [...], "cwd": "..."}` (the resume tests read it).
-- With `--resume <id>`, the id must name a transcript in
-  `<self>.sessions/<id>`; if it doesn't, it says so and exits 1, as Claude
-  Code does.
+- Every start appends its argv, working directory and pane to
+  `<self>.argv` as a JSON line: `{"argv": [...], "cwd": "...", "pane":
+  "3"}` (the resume tests read it).
+- As Claude Code does, with `$ILLOGICAL_REPLAY_CONFIG` set (a test's
+  stand-in for Claude Code's `$CLAUDE_CONFIG_DIR`, never the real one), it
+  holds a conversation: `sessions/<pid>.json` says which while it runs, and
+  `projects/<dir>/<id>.jsonl` is its transcript. The id is `--resume`'s,
+  else `$ILLOGICAL_REPLAY_SESSION`, else a new one. `--resume <id>` with no
+  transcript says so and exits 1, as Claude Code does.
 - `$ILLOGICAL_REPLAY_PAUSE=working=8` stops for 8 seconds at the first
   `working` marker, printing nothing: a long think, or a tool call that's
   slow to say anything.
@@ -29,7 +33,7 @@ names another recording.
 
 Standard library only.
 """
-import json, os, re, sys, termios, time, tty
+import json, os, re, sys, termios, time, tty, uuid
 
 ME = os.path.abspath(sys.argv[0])
 REPORT = re.compile(rb"\x1b(\[[0-9;?<>=]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|P[^\x1b]*\x1b\\|O.|.)")
@@ -56,16 +60,51 @@ def tokens(raw):
     return out
 
 
+def hold(config, sid, resumed):
+    """Claude Code's records of a conversation: its transcript, and which
+    process holds it. Returns the session file, to remove at exit."""
+    cwd = os.getcwd()
+    project = os.path.join(config, "projects", re.sub(r"[^A-Za-z0-9]", "-", cwd))
+    transcript = os.path.join(project, f"{sid}.jsonl")
+    if resumed and not os.path.isfile(transcript):
+        return None
+    os.makedirs(project, exist_ok=True)
+    if not resumed:
+        line = {"type": "user", "sessionId": sid, "cwd": cwd, "entrypoint": "cli", "version": "replay",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                "message": {"role": "user", "content": "a replayed conversation"}}
+        with open(transcript, "a") as f:
+            f.write(json.dumps(line) + "\n")
+    sessions = os.path.join(config, "sessions")
+    os.makedirs(sessions, exist_ok=True)
+    held = os.path.join(sessions, f"{os.getpid()}.json")
+    with open(held, "w") as f:
+        json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": cwd, "kind": "interactive", "entrypoint": "cli",
+                   "status": "idle"}, f)
+    return held
+
+
 def main():
     with open(ME + ".argv", "a") as f:
-        f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd()}) + "\n")
+        f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "pane": os.environ.get("ILLOGICAL_PANE")}) + "\n")
     args = sys.argv[1:]
-    if "--resume" in args:
-        i = args.index("--resume")
-        sid = args[i + 1] if i + 1 < len(args) else ""
-        if not os.path.isfile(os.path.join(ME + ".sessions", sid)):
+    resume = args[args.index("--resume") + 1] if "--resume" in args[:-1] else None
+    config = os.environ.get("ILLOGICAL_REPLAY_CONFIG")
+    held = None
+    if config:
+        sid = resume or os.environ.get("ILLOGICAL_REPLAY_SESSION") or str(uuid.uuid4())
+        held = hold(config, sid, resume is not None)
+        if held is None:
             print(f"No conversation found with session ID: {sid}")
             return 1
+    try:
+        return play()
+    finally:
+        if held:
+            os.remove(held)
+
+
+def play():
     cast = os.environ.get("ILLOGICAL_REPLAY") or os.path.splitext(ME)[0] + ".cast"
     speed = float(os.environ.get("ILLOGICAL_REPLAY_SPEED") or 1)
     pause = dict(p.split("=", 1) for p in (os.environ.get("ILLOGICAL_REPLAY_PAUSE") or "").split(",") if "=" in p)
