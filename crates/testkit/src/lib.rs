@@ -380,7 +380,8 @@ impl Daemon {
         self.wait_up();
     }
 
-    fn halt(&mut self) {
+    /// Kill it if it's running, as dropping it does, but keep its state.
+    pub fn halt(&mut self) {
         match &mut self.run {
             Run::Child(c) => {
                 if let Some(mut c) = c.take() {
