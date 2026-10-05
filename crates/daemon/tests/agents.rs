@@ -238,7 +238,7 @@ fn a_restart_mid_turn_keeps_the_agent_and_its_pending_approval() {
     assert!(alive(pid));
 
     // A crash too.
-    if let How::Service(unit) = &d.how {
+    if let Some(unit) = d.unit() {
         assert!(systemctl(&["kill", "--kill-whom=main", "--signal=SIGKILL", unit]));
         std::thread::sleep(Duration::from_millis(300));
         d.wait_up();

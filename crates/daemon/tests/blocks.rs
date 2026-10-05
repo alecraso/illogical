@@ -2,123 +2,16 @@
 //! block on ordinary pages): open, describe, call, capture, restore after a
 //! restart, close.
 
-mod listen;
-mod strays;
-
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{Read, Write},
     net::TcpListener,
-    os::unix::net::UnixStream,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
 };
 
-use serde_json::{Value, json};
+use illogical_testkit::{Daemon, illogicald};
+use serde_json::json;
 
-struct Daemon {
-    child: Option<Child>,
-    state: PathBuf,
-    port: u16,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-        strays::remove(&self.state);
-    }
-}
-
-impl Daemon {
-    fn new() -> Self {
-        let state = std::env::temp_dir().join(format!("ilg-blk-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&state);
-        let mut d = Self { child: None, state, port: 0 };
-        d.start();
-        d
-    }
-
-    /// Start it: on a port of its choosing, then on the same one again.
-    fn start(&mut self) {
-        let first = self.port == 0;
-        let addr = if first { listen::ANY.to_owned() } else { format!("127.0.0.1:{}", self.port) };
-        let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", &addr, "--shell", "bash --norc --noprofile"])
-            .args(["--no-manager-env", "--wisp-token-file", "/nonexistent"])
-            .arg("--state-dir")
-            .arg(&self.state)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        self.child = Some(child);
-        if first {
-            self.port = listen::wait_port(&self.state);
-        }
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while UnixStream::connect(self.sock()).is_err() {
-            assert!(Instant::now() < deadline, "daemon did not start");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-
-    fn stop(&mut self) {
-        let mut c = self.child.take().unwrap();
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(c.id() as i32), nix::sys::signal::SIGTERM).unwrap();
-        c.wait().unwrap();
-    }
-
-    fn sock(&self) -> PathBuf {
-        self.state.join("sock")
-    }
-
-    fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
-        let mut s = UnixStream::connect(self.sock()).unwrap();
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
-        s.write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        let mut r = BufReader::new(s);
-        let mut line = String::new();
-        r.read_line(&mut line).unwrap();
-        let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-        while {
-            line.clear();
-            r.read_line(&mut line).unwrap();
-            !line.trim().is_empty()
-        } {}
-        let mut out = String::new();
-        r.read_to_string(&mut out).unwrap();
-        (status, out)
-    }
-
-    fn get(&self, path: &str) -> Value {
-        let (status, body) = self.raw("GET", path, None);
-        assert_eq!(status, 200, "{path}: {body}");
-        serde_json::from_str(&body).unwrap_or(Value::String(body))
-    }
-
-    fn post(&self, path: &str, body: Value) -> Value {
-        let (status, text) = self.raw("POST", path, Some(body));
-        assert_eq!(status, 200, "{path}: {text}");
-        serde_json::from_str(&text).unwrap()
-    }
-
-    fn wait_for(&self, what: &str, f: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !f() {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
+fn start() -> Daemon {
+    illogicald!("blk").no_wisp().wait_secs(10).start()
 }
 
 /// A page that allows framing, with a title, on a port of its own.
@@ -144,7 +37,7 @@ fn serve_page() -> u16 {
 
 #[test]
 fn a_browser_block_opens_describes_calls_restores_and_closes() {
-    let mut d = Daemon::new();
+    let mut d = start();
     let first = d.get("/api/panes")[0]["id"].as_u64().unwrap();
     let page = serve_page();
 

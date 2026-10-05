@@ -12,6 +12,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 
-docker compose -f "$HERE/compose.yaml" --profile ssh --profile tailnet down -v --remove-orphans
+docker compose -f "$HERE/compose.yaml" --profile ssh --profile control --profile tailnet down -v --remove-orphans
 rm -rf "$STATE"
 echo "$TESTNET removed"

@@ -475,6 +475,37 @@ impl PaneHandle {
     }
 }
 
+/// The running command, the last one that ended, and the directory, as a
+/// pane's index recorded them: what a daemon adopting the pane's program
+/// knew before. A restore (a new program) ends whatever was running.
+fn status_from(events: &[(u64, Event)]) -> (Option<CommandRec>, Option<CommandRec>, Option<String>) {
+    let (mut current, mut last, mut dir) = (None::<CommandRec>, None, None);
+    for (at, e) in events {
+        match e {
+            Event::Command { at_ms, text, cwd, by } => {
+                current = Some(CommandRec {
+                    text: text.clone(),
+                    cwd: cwd.clone(),
+                    start: *at,
+                    started_ms: *at_ms,
+                    by: by.clone(),
+                    ..Default::default()
+                });
+            }
+            Event::End { at_ms, exit } => {
+                if let Some(mut rec) = current.take() {
+                    (rec.end, rec.ended_ms, rec.exit) = (Some(*at), Some(*at_ms), *exit);
+                    last = Some(rec);
+                }
+            }
+            Event::Restore { .. } => current = None,
+            Event::Cwd { path } => dir = Some(path.clone()),
+            _ => {}
+        }
+    }
+    (current, last, dir)
+}
+
 fn shell_quote(arg: &str) -> String {
     if !arg.is_empty() && arg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:,+@%".contains(&b)) {
         arg.to_owned()
@@ -1319,6 +1350,15 @@ impl State {
                     self.pid.store(p.pid, Ordering::Relaxed);
                     self.running.store(true, Ordering::Relaxed);
                     self.process = Some(Backend::Local(p));
+                    // The same program carries on: so does what the last
+                    // daemon knew of it (#208: `illogical ls` lost the
+                    // command of a pane `illogical run` started).
+                    if let Some(log) = &self.log {
+                        let (current, last, cwd) = status_from(&log.events());
+                        let mut st = self.status.lock().unwrap();
+                        (st.current, st.last) = (current, last);
+                        st.cwd = st.cwd.take().or(cwd);
+                    }
                 }
                 Err(e) => {
                     info!(pane = id, error = %e, "can't adopt; treating as ended");
@@ -2037,6 +2077,27 @@ mod tests {
         assert!(tx.try_send_output(chunk.clone()).is_ok());
         // Refused items don't count.
         assert_eq!(rx.bytes.load(Ordering::Relaxed), chunk.len());
+    }
+
+    #[test]
+    fn an_adopted_panes_status_comes_from_its_index() {
+        let cmd = |at_ms, text: &str| Event::Command { at_ms, text: Some(text.into()), cwd: None, by: None };
+        let events = vec![
+            (0, Event::Cwd { path: "/src".into() }),
+            (10, cmd(1, "make")),
+            (20, Event::End { at_ms: 2, exit: Some(0) }),
+            (30, cmd(3, "sleep 300")),
+        ];
+        let (current, last, cwd) = status_from(&events);
+        let current = current.unwrap();
+        assert_eq!((current.text.as_deref(), current.start, current.started_ms), (Some("sleep 300"), 30, 3));
+        let last = last.unwrap();
+        assert_eq!((last.text.as_deref(), last.end, last.exit), (Some("make"), Some(20), Some(0)));
+        assert_eq!(cwd.as_deref(), Some("/src"));
+        // A restore started a new program: nothing of the old one runs.
+        let mut restored = events.clone();
+        restored.push((40, Event::Restore { at_ms: 4 }));
+        assert!(status_from(&restored).0.is_none());
     }
 
     #[test]

@@ -147,6 +147,34 @@ desktop:
     esac
     ls -la "$dist"/illogical-desktop-*
 
+# The Linux desktop app under Xvfb, in a container (#204): builds the app
+# (debug, no bundle) in its build image (packaging/desktop/Containerfile)
+# and runs packaging/desktop/xvfb/test.sh against a static daemon and a
+# stand-in control. Needs podman or docker; the container runs the host's
+# architecture (aarch64 under Docker Desktop on a Mac).
+desktop-xvfb:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root={{justfile_directory()}}
+    engine=$(command -v podman || command -v docker) || { echo "the desktop test needs podman or docker" >&2; exit 1; }
+    arch=$(uname -m); [ "$arch" = arm64 ] && arch=aarch64
+    just static "$arch"
+    host=$arch-unknown-linux-gnu
+    mkdir -p crates/desktop/binaries
+    for b in illogicald illogical; do install -m 755 "{{target_dir}}/$arch-unknown-linux-musl/release/$b" "crates/desktop/binaries/$b-$host"; done
+    toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
+    base=illogical-desktop-build:jammy-$toolchain
+    "$engine" build -q -t "$base" -f packaging/desktop/Containerfile --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
+    "$engine" build -q -t illogical-desktop-xvfb:jammy-$toolchain -f packaging/desktop/xvfb/Containerfile --build-arg BASE="$base" packaging/desktop/xvfb
+    target={{target_dir}}/desktop-xvfb-$arch
+    mkdir -p "$target"
+    "$engine" run --rm --security-opt label=disable \
+      -v "$root:/src" -v "$target:/target" -v illogical-desktop-cargo:/opt/cargo/registry \
+      -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
+      illogical-desktop-xvfb:jammy-$toolchain bash -c 'set -euo pipefail
+        cargo tauri build --debug --no-bundle
+        /src/packaging/desktop/xvfb/test.sh /target/debug/illogical-desktop /src/crates/desktop/binaries/illogicald-'"$host"
+
 # Lint the desktop app (its own workspace) without building its sidecars.
 desktop-check:
     #!/usr/bin/env bash
@@ -228,9 +256,19 @@ e2e-sandbox: static
     cd web && pnpm exec playwright test e2e/sandbox.spec.ts
 
 # The local Docker test stack (testnet/README.md): up|test|break|measure|down [profile] [claim...].
+# The control profile builds what it runs: the static binaries for Docker's
+# architecture (unless ILLOGICAL_TESTNET_BINARIES names others) and the CLI.
 testnet cmd="test" profile="ssh" *claims:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ {{profile}} = control ] && docker info >/dev/null 2>&1; then
+      case "{{cmd}}" in
+        up) arch=$(docker info --format '{{{{.Architecture}}')
+            case "$arch" in arm64) arch=aarch64 ;; amd64) arch=x86_64 ;; esac
+            [ -n "${ILLOGICAL_TESTNET_BINARIES:-}" ] || just static "$arch" >&2 ;;
+        test|break) {{cargo}} build -q -p illogical ;;
+      esac
+    fi
     case "{{cmd}}" in
       up) testnet/up.sh {{profile}} ;;
       test) testnet/test.sh {{profile}} {{claims}} ;;

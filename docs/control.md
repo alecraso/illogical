@@ -217,7 +217,9 @@ illogical-control --public-url https://control.example.com --listen 127.0.0.1:76
   continuously with Litestream (below).
 
 Daemons join a self-hosted control the same way:
-`illogicald join https://control.example.com`.
+`illogicald join https://control.example.com`. To have Getting started's
+*Connect* button join it too, start the daemon with
+`--control https://control.example.com` (or `ILLOGICAL_CONTROL`).
 
 ## Operating the hosted one
 

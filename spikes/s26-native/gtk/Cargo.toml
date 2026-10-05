@@ -1,0 +1,11 @@
+[package]
+name = "s26-gtk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+s26-core = { path = "../core" }
+async-channel = "2"
+gtk = { package = "gtk4", version = "0.10", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.8", features = ["v1_6"] }
+webkit6 = "0.5"

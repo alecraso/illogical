@@ -52,5 +52,6 @@ workspace = true
 
 [dev-dependencies]
 futures-util = "0.3.34"
+illogical-testkit = { path = "../testkit" }
 rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-streamable-http-client-unix-socket", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 rcgen = "0.14.10"

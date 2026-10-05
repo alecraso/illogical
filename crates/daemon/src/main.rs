@@ -198,6 +198,11 @@ struct RunArgs {
     #[arg(long = "direct-url", env = "ILLOGICAL_DIRECT_URL", value_delimiter = ',')]
     direct_urls: Vec<String>,
 
+    /// The control Getting started's *Connect* button joins (#207): your
+    /// own, say. `illogicald join URL` takes any control regardless.
+    #[arg(long = "control", env = "ILLOGICAL_CONTROL", value_name = "URL", default_value = setup::CONTROL)]
+    control_url: String,
+
     /// Extra origins whose pages may use this daemon (WebSocket and API),
     /// exactly as the browser sends them: the Vite dev server, or the home
     /// daemon whose host list this daemon is on (`https://geek.….ts.net`).
@@ -910,7 +915,13 @@ async fn run(
         }
     });
     let mcp_serve = mcp_link.as_ref().map(|l| l.serve.clone());
-    let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone(), args.no_relay);
+    let control = control::Control::new(
+        &state_dir,
+        direct_urls.clone(),
+        args.control_url.trim_end_matches('/').to_owned(),
+        acl.clone(),
+        args.no_relay,
+    );
     // M40: forge blocks' live updates (control's GitHub App, hooks here).
     forge::live::init(state_dir.clone(), Some(&control), direct_urls.clone());
     // Claude Code's IDE (M28): its relay keeps the connections.

@@ -4,18 +4,12 @@
 //! reload's WebSocket passes, other origins are refused both by the site and
 //! by the app, and a server that dies and comes back is noticed both ways.
 
-mod listen;
-mod strays;
-
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Write},
     net::{SocketAddr, TcpListener},
     os::unix::net::UnixStream,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 use axum::{
@@ -26,6 +20,7 @@ use axum::{
     routing::get,
 };
 use futures_util::{SinkExt, StreamExt};
+use illogical_testkit::{Daemon, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
@@ -33,108 +28,24 @@ fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
-struct Daemon {
-    child: Option<Child>,
-    state: PathBuf,
-    port: u16,
-    blocks: u16,
+fn start() -> Daemon {
+    illogicald!("sites").block_listen().no_wisp().start()
 }
 
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-        strays::remove(&self.state);
-    }
-}
-
-impl Daemon {
-    fn new() -> Self {
-        let state = std::env::temp_dir().join(format!("ilg-sites-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&state);
-        let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", listen::ANY, "--block-listen", listen::ANY])
-            .args(["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"])
-            .arg("--state-dir")
-            .arg(&state)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let mut d = Self { child: Some(child), state, port: 0, blocks: 0 };
-        d.port = listen::wait_port(&d.state);
-        d.blocks = listen::wait_block_port(&d.state);
-        let blocks = d.blocks;
-        d.wait_for("daemon", || UnixStream::connect(d.sock()).is_ok());
-        d.wait_for("block listener", || std::net::TcpStream::connect(("127.0.0.1", blocks)).is_ok());
-        d
-    }
-
-    /// `Authorization` with the local token loopback callers show.
-    fn bearer(&self) -> String {
-        format!("Bearer {}", std::fs::read_to_string(self.state.join("local-token")).unwrap().trim())
-    }
-
-    fn sock(&self) -> PathBuf {
-        self.state.join("sock")
-    }
-
-    fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
-        let mut s = UnixStream::connect(self.sock()).unwrap();
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
-        s.write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        let mut r = BufReader::new(s);
-        let mut line = String::new();
-        r.read_line(&mut line).unwrap();
-        let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-        while {
-            line.clear();
-            r.read_line(&mut line).unwrap();
-            !line.trim().is_empty()
-        } {}
-        let mut out = String::new();
-        r.read_to_string(&mut out).unwrap();
-        (status, out)
-    }
-
-    fn get(&self, path: &str) -> Value {
-        let (status, body) = self.raw("GET", path, None);
-        assert_eq!(status, 200, "{path}: {body}");
-        serde_json::from_str(&body).unwrap()
-    }
-
-    fn wait_for(&self, what: &str, f: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while !f() {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-
-    /// The event stream, collected as it comes.
-    fn events(&self) -> Arc<Mutex<Vec<Value>>> {
-        let got = Arc::new(Mutex::new(vec![]));
-        let mut s = UnixStream::connect(self.sock()).unwrap();
-        write!(s, "GET /api/events?follow=1 HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
-        let g = got.clone();
-        std::thread::spawn(move || {
-            for line in BufReader::new(s).lines().map_while(Result::ok) {
-                if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
-                    g.lock().unwrap().push(v);
-                }
+/// The event stream, collected as it comes.
+fn events(d: &Daemon) -> Arc<Mutex<Vec<Value>>> {
+    let got = Arc::new(Mutex::new(vec![]));
+    let mut s = UnixStream::connect(d.sock()).unwrap();
+    write!(s, "GET /api/events?follow=1 HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+    let g = got.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(s).lines().map_while(Result::ok) {
+            if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
+                g.lock().unwrap().push(v);
             }
-        });
-        got
-    }
+        }
+    });
+    got
 }
 
 /// A stand-in dev server: a page, an echo of the request's headers, and a
@@ -191,16 +102,17 @@ async fn websocket(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_port_through_its_own_site() {
-    let d = Daemon::new();
+    let d = start();
     let dev_port = free_port();
     let server = dev_server(dev_port).await;
-    let events = d.events();
+    let events = events(&d);
 
     // Opening the daemon's own ports is refused; a dev server's isn't.
     let (status, body) = d.raw("POST", "/api/blocks", Some(json!({"type": "browser", "config": {"port": d.port}})));
     assert_eq!(status, 400, "{body}");
     assert!(body.contains("illogical's own"), "{body}");
-    let (status, body) = d.raw("POST", "/api/blocks", Some(json!({"type": "browser", "config": {"port": d.blocks}})));
+    let (status, body) =
+        d.raw("POST", "/api/blocks", Some(json!({"type": "browser", "config": {"port": d.block_port}})));
     assert_eq!(status, 400, "{body}");
     let (status, body) =
         d.raw("POST", "/api/blocks", Some(json!({"type": "browser", "config": {"port": dev_port, "path": "/"}})));
@@ -214,13 +126,13 @@ async fn a_port_through_its_own_site() {
     let origin = url.trim_end_matches('/').to_owned();
     let host = origin.trim_start_matches("http://").split(':').next().unwrap().to_owned();
     assert!(host.starts_with(&format!("b-{id}-")) && host.ends_with(".localhost"), "{host}");
-    assert_eq!(origin, format!("http://{host}:{}", d.blocks));
+    assert_eq!(origin, format!("http://{host}:{}", d.block_port));
     // Its config keeps the name's key, so the origin (and its storage)
     // survives restarts.
     let (_, saved) = d.raw("GET", "/api/panes", None);
     assert!(saved.contains("browser"), "{saved}");
 
-    let http = client(&host, d.blocks);
+    let http = client(&host, d.block_port);
     let page = http.get(&url).send().await.unwrap();
     assert_eq!(page.status(), 200);
     let csp: Vec<String> =
@@ -253,8 +165,8 @@ async fn a_port_through_its_own_site() {
     }
 
     // Hot reload's socket passes, from the block's own origin.
-    let ws_url = format!("ws://{host}:{}/hmr", d.blocks);
-    let mut ws = websocket(d.blocks, &ws_url, &origin).await.unwrap_or_else(|s| panic!("hmr socket: {s}"));
+    let ws_url = format!("ws://{host}:{}/hmr", d.block_port);
+    let mut ws = websocket(d.block_port, &ws_url, &origin).await.unwrap_or_else(|s| panic!("hmr socket: {s}"));
     let Some(Ok(Message::Text(first))) = ws.next().await else { panic!("no hello") };
     let upgrade: HashMap<String, String> = serde_json::from_str(&first).unwrap();
     assert_eq!(upgrade["host"], format!("localhost:{dev_port}"));
@@ -270,10 +182,10 @@ async fn a_port_through_its_own_site() {
         "https://evil.example",
         "null",
         &app_origin,
-        &format!("https://{host}:{}", d.blocks),
-        &format!("http://{host}:{}", d.blocks + 1),
+        &format!("https://{host}:{}", d.block_port),
+        &format!("http://{host}:{}", d.block_port + 1),
     ] {
-        assert_eq!(websocket(d.blocks, &ws_url, bad).await.err(), Some(403), "websocket from {bad}");
+        assert_eq!(websocket(d.block_port, &ws_url, bad).await.err(), Some(403), "websocket from {bad}");
         let r = http.post(format!("{origin}/headers")).header("origin", bad).send().await.unwrap();
         assert_eq!(r.status(), 403, "POST from {bad}");
     }
@@ -286,9 +198,9 @@ async fn a_port_through_its_own_site() {
     let nav = http.get(&url).header("sec-fetch-site", "cross-site").header("sec-fetch-mode", "navigate");
     assert_eq!(nav.send().await.unwrap().status(), 200, "a page navigation (the app's frame) is fine");
     let wrong = format!("b-{id}-wrongkeywrongkeywrong.localhost");
-    let r = client(&wrong, d.blocks).get(format!("http://{wrong}:{}/", d.blocks)).send().await.unwrap();
+    let r = client(&wrong, d.block_port).get(format!("http://{wrong}:{}/", d.block_port)).send().await.unwrap();
     assert_eq!(r.status(), 404, "wrong key");
-    let r = reqwest::get(format!("http://127.0.0.1:{}/", d.blocks)).await.unwrap();
+    let r = reqwest::get(format!("http://127.0.0.1:{}/", d.block_port)).await.unwrap();
     assert_eq!(r.status(), 404, "no name at all");
 
     // And the app refuses the block's origin: its socket and its API.
@@ -322,7 +234,7 @@ async fn a_port_through_its_own_site() {
     server.abort();
     let _ = server.await;
     // (A new connection: an old one may still reach the dying server.)
-    let r = client(&host, d.blocks).get(&url).send().await.unwrap();
+    let r = client(&host, d.block_port).get(&url).send().await.unwrap();
     assert_eq!(r.status(), 502);
     d.wait_for("needs input", || d.get(&format!("/api/blocks/{id}"))["info"]["attention"] == "needs_input");
     assert!(d.get(&format!("/api/blocks/{id}"))["state"]["error"].as_str().unwrap().contains("nothing is answering"));
@@ -345,7 +257,7 @@ async fn a_port_through_its_own_site() {
     d.wait_for("site gone", || {
         std::process::Command::new("curl")
             .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", "--resolve"])
-            .arg(format!("{host}:{}:127.0.0.1", d.blocks))
+            .arg(format!("{host}:{}:127.0.0.1", d.block_port))
             .arg(&url)
             .output()
             .map(|o| o.stdout == b"404")

@@ -13,14 +13,18 @@ just testnet break ssh         # each claim under BREAK=1; all must fail
 just testnet down              # remove containers, networks and .state
 ssh -F testnet/.state/ssh_config box-bare   # or bastion, box-systemd
 
+just testnet up control        # the ssh profile, plus illogical-control and its fakes
+just testnet test control m52  # M52 end to end
 just testnet up tailnet        # headscale and two Tailscale nodes
 just testnet measure tailnet   # S28: ssh against the tailnet path
 ```
 
-The Rust tests that drive illogical against the stack skip without it:
+The Rust tests that drive illogical against the stack,
 `crates/daemon/tests/ssh.rs` (M51, box-bare and git) and
-`crates/daemon/tests/reboot.rs` (#26, box-systemd). Both recreate the boxes
-they use and need `just static <arch>` for the box's binaries.
+`crates/daemon/tests/reboot.rs` (#26, box-systemd), bring the `ssh` profile
+up when it isn't, and fail without Docker (`ILLOGICAL_SKIP_DOCKER=1` skips
+them and says nothing ran). Both recreate the boxes they use and need `just
+static <arch>` for the box's binaries.
 
 Every script prints `SKIP: Docker is not available` and exits 0 without
 Docker. The claims expect fresh boxes: after installing anything on one,
@@ -31,10 +35,11 @@ Docker. The claims expect fresh boxes: after installing anything on one,
 | Profile | Services | Status | For |
 |---|---|---|---|
 | `ssh` | `bastion`, `box-bare`, `box-systemd`, `git` | validated | S28, M51, M52's install step, #26 |
+| `control` | `ssh`'s, and `control`, `fakes` | validated | M52's join, the relay, a box with no way out |
 | `tailnet` | `headscale`, `ts-box`, `ts-client` | validated | S28's tailnet comparison |
 
-The other profiles in #200 (`control`, `relay`, `fountain`, `forgejo`) are
-added when a milestone needs them.
+The other profiles in #200 (`relay`, `fountain`, `forgejo`) are added when
+a milestone needs them.
 
 ### `ssh`
 
@@ -77,6 +82,31 @@ ts-client, then times the same requests over both paths (S28's numbers are
 in `spikes/s28-ssh/README.md`). Tailscale SSH isn't here: its check mode
 needs a login at an identity provider, which a test can't do.
 
+### `control`
+
+Everything in `ssh`, and:
+
+- `control`: this tree's `illogical-control`, its relay included, from the
+  static build (`just static aarch64` on Apple silicon, `just static` on
+  x86_64; `just testnet up control` runs it), mounted rather than built
+  into an image. It's on both networks. On the inner one it has a fixed
+  address, `10.229.80.10` (`ILLOGICAL_TESTNET_INNER_NET` changes the first
+  three octets), and that address is its public URL,
+  `http://10.229.80.10:8080`: the boxes reach it by dialing out, as joined
+  machines do, and a private address lets a daemon use plain http. The host
+  reaches it on `127.0.0.1:22980` (`ILLOGICAL_TESTNET_CONTROL_PORT`).
+- `fakes`: `web/fixtures/fakes.ts` in Node, the same fakes `just
+  control-smoke` uses: GitHub sign-in (published on `127.0.0.1:22981`,
+  `ILLOGICAL_TESTNET_FAKES_PORT`, for the browser's redirect), Stripe and a
+  Web Push endpoint. Only control talks to the last two.
+
+A person on the host is `web/fixtures/device-cli.ts`, the headless
+approving device (docs/testing.md): it signs in, enrolls, approves join
+codes and opens panes through the relay. `up.sh` writes
+`.state/control.env` with control's URL and the `--via` mappings it needs.
+The claims run the CLI from this tree (`cargo build -p illogical`, which
+`just testnet test control` does) and need `node`.
+
 ## Claims
 
 A claim checks one property of a running profile. `BREAK=1` breaks that
@@ -94,6 +124,15 @@ every claim does, which shows each one can catch what it's about.
 | `push` | `git push` from box-bare to `git` with the key only in the forwarded agent | `ForwardAgent=no` |
 | `linger` | on box-systemd, `loginctl enable-linger` works from an ssh login with no sudo | polkit masked |
 
+The `control` profile's:
+
+| Claim | Checks | Broken by |
+|---|---|---|
+| `signin` | a person signs in from the host with (the fake) GitHub; their first device is trusted on enrollment | GitHub down (`fakes` stopped) |
+| `reach` | box-systemd, with no route out, reaches control at its inner address | control taken off the inner network |
+| `m52` | on a fresh box-systemd, `illogical --ssh box-systemd join` installs, starts the daemon and shows a code; the device approves it; the box is on the account's device list and online; with the ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the box is back on the relay and the pane answers | polkit masked, so no lingering: the daemon doesn't come back after the restart |
+| `unreachable` | box-bare joining the hosted control (no route out) is told it can't reach control, with `illogical --ssh box-bare tui` as the way in, and `--ssh` still works | joining the stack's control, which it can reach |
+
 ## Conventions
 
 - Containers, networks and the images are named `illogical-testnet*`; `down`
@@ -102,7 +141,9 @@ every claim does, which shows each one can catch what it's about.
   per worktree): `COMPOSE_PROJECT_NAME=illo-a2` gives containers and images
   `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
   `testnet/.state-illo-a2`. Give it its own `ILLOGICAL_TESTNET_SSH_PORT`
-  too. The tests read the same variables.
+  and `ILLOGICAL_TESTNET_INNER_NET` (the inner network's subnet is fixed),
+  and for `control` its own `ILLOGICAL_TESTNET_CONTROL_PORT` and
+  `ILLOGICAL_TESTNET_FAKES_PORT`. The tests read the same variables.
 - Host ports are off the defaults and each can be overridden with an
   `ILLOGICAL_TESTNET_*_PORT` variable.
 - The scripts run on Linux and macOS (bash 3.2) and pass `shellcheck`.
@@ -111,5 +152,8 @@ every claim does, which shows each one can catch what it's about.
 
 - CI. A `testnet` job needs Docker on geek's runner (an open question in
   #200); until then the stack is run by hand.
+- The illogical binaries on the `ssh` profile's boxes. When S28 and M51
+  need them on a box, they arrive over ssh from the client (`just static`),
+  which is what the claims guard.
 - Claims for the tailnet profile; its check is the measurement, which fails
   when either path doesn't reach the daemon.

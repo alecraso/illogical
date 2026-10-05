@@ -28,7 +28,8 @@
 //!   goes on the dock badge (macOS) and the tray.
 //! - **Every machine, through illogical cloud** (M48, #159): once this
 //!   machine is joined, the window is control's own client, signed in
-//!   through the person's browser (`cloud.rs`).
+//!   through the person's browser (`cloud.rs`). A join (or a leave) while
+//!   the app is open moves the window there too (#204).
 //! - **Its own profile per older WebKitGTK** (Linux): the .deb and the
 //!   AppImage share one, and a newer WebKitGTK's storage breaks an older
 //!   one (`profile.rs`).
@@ -255,14 +256,53 @@ fn ours(url: &tauri::Url) -> bool {
             if control.is_some_and(|c| c.origin() == url.origin()) {
                 return true;
             }
-            url.host_str().zip(url.port_or_known_default()).is_some_and(|(h, p)| {
-                let at = format!("{h}:{p}");
-                at == addr() || (h == "tauri.localhost") || (h == "localhost" && addr().ends_with(&format!(":{p}")))
-            })
+            daemons(url) || url.host_str() == Some("tauri.localhost")
         }
         _ => false,
     }
 }
+
+/// The local daemon's own page (or its sign-in link).
+fn daemons(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str().zip(url.port_or_known_default()).is_some_and(|(h, p)| {
+            format!("{h}:{p}") == addr() || (h == "localhost" && addr().ends_with(&format!(":{p}")))
+        })
+}
+
+/// Follows the daemon's join (#204): when it joins control (from the CLI,
+/// or Getting started's button) or leaves, windows showing the old home
+/// move to the new one (`cloud::moves`), as a restart would have.
+fn follow_join(app: AppHandle) {
+    let mut was = cloud::control();
+    loop {
+        std::thread::sleep(JOIN_POLL);
+        if !reachable() {
+            continue;
+        }
+        let now = cloud::local().control;
+        if now == was {
+            continue;
+        }
+        eprintln!("illogical: this machine's control is now {}", now.as_deref().unwrap_or("none"));
+        // A new control: "just this machine" was said of the old one.
+        cloud::set_local_only(false);
+        let home = home(&app);
+        for w in app.webview_windows().into_values() {
+            let Ok(url) = w.url() else { continue };
+            if cloud::moves(was.as_deref(), now.as_deref(), &url, daemons(&url)) {
+                let to = home.clone();
+                let _ = app.run_on_main_thread(move || {
+                    let _ = w.navigate(to);
+                });
+            }
+        }
+        was = now;
+    }
+}
+
+/// How often the app asks the daemon whether it joined or left control.
+const JOIN_POLL: Duration = Duration::from_secs(2);
 
 /// Another site, in the person's own browser: control's approval page,
 /// Tailscale's admin console, docs.
@@ -574,6 +614,8 @@ fn main() {
                 .build(app)?;
             let handle = app.handle().clone();
             std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
+            let handle = app.handle().clone();
+            std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
             Ok(())
         })
         .build(tauri::generate_context!())

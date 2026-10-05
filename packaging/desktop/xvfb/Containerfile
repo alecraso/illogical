@@ -1,0 +1,8 @@
+# The Linux desktop app under Xvfb (#204): the app's build image
+# (../Containerfile) plus a virtual display and what the test needs.
+ARG BASE
+FROM ${BASE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      xvfb xauth dbus dbus-x11 at-spi2-core python3 procps \
+    && rm -rf /var/lib/apt/lists/*

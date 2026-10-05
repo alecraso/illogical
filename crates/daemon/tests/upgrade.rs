@@ -3,9 +3,6 @@
 //! systemd user service, so it needs a systemd user manager; it skips
 //! itself where there isn't one.
 
-mod listen;
-mod strays;
-
 use std::{
     path::PathBuf,
     process::Command,
@@ -15,6 +12,7 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use illogical_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg, State};
+use illogical_testkit::{listen, strays};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
@@ -330,4 +328,55 @@ async fn shims_keep_panes_without_systemd() {
         assert!(Instant::now() < deadline, "shell {pid} outlived the grace period");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// The daemon's HTTP API, as its owner (the local token).
+async fn api(d: &Plain, method: reqwest::Method, path: &str, body: Option<serde_json::Value>) -> serde_json::Value {
+    let port = listen::port(&d.state).expect("listening");
+    let token = std::fs::read_to_string(d.state.join("local-token")).unwrap();
+    let mut req =
+        reqwest::Client::new().request(method, format!("http://127.0.0.1:{port}{path}")).bearer_auth(token.trim());
+    if let Some(b) = body {
+        req = req.json(&b);
+    }
+    let res = req.send().await.unwrap();
+    assert!(res.status().is_success(), "{path}: {}", res.status());
+    res.json().await.unwrap()
+}
+
+/// What `illogical ls` shows for a pane: the command it runs.
+async fn ls_command(d: &Plain, pane: u64) -> Option<String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let panes = api(d, reqwest::Method::GET, "/api/panes", None).await;
+        let p = panes.as_array().unwrap().iter().find(|p| p["id"] == pane).expect("the pane").clone();
+        if p["running"] == true {
+            return p["current"]["text"].as_str().or(p["command"].as_str()).map(str::to_owned);
+        }
+        assert!(Instant::now() < deadline, "pane %{pane} isn't running: {p}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// #208: a pane `illogical run` started is still listed with its command
+/// after a restart. What the last daemon knew of it was only in memory;
+/// the adopting one reads it back from the pane's index.
+#[tokio::test]
+async fn a_run_panes_command_survives_a_restart() {
+    use nix::sys::signal::Signal;
+    let mut d = Plain::new();
+    let _ = d.connect().await;
+    let run = api(&d, reqwest::Method::POST, "/api/run", Some(serde_json::json!({ "command": "sleep 300" }))).await;
+    let pane = run["pane"].as_u64().unwrap();
+    assert_eq!(ls_command(&d, pane).await.as_deref(), Some("sleep 300"));
+
+    d.signal(Signal::SIGTERM);
+    d.start();
+    let _ = d.connect().await;
+    assert_eq!(ls_command(&d, pane).await.as_deref(), Some("sleep 300"), "after a restart");
+    // And after another (the daemon that adopted it saved what it read).
+    d.signal(Signal::SIGKILL);
+    d.start();
+    let _ = d.connect().await;
+    assert_eq!(ls_command(&d, pane).await.as_deref(), Some("sleep 300"), "after a crash");
 }
