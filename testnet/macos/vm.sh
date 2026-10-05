@@ -10,6 +10,7 @@
 #   testnet/macos/vm.sh restart [NAME]   tart stop, then run again
 #   testnet/macos/vm.sh down [NAME]      stop and delete the clone
 #   testnet/macos/vm.sh ip [NAME]
+#   testnet/macos/vm.sh sshcmd [NAME]    an ssh command line into it, quoted
 #
 # NAME defaults to illogical-macos. Every test VM is an APFS clone of one
 # local base VM, illogical-macos-base, which is never booted; `down`
@@ -31,7 +32,7 @@ BASE=illogical-macos-base
 # Never let a clone prune tart's cache (other images) to make room.
 export TART_NO_AUTO_PRUNE=1
 
-usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 command -v tart >/dev/null 2>&1 || { echo "SKIP: tart is not installed (brew install cirruslabs/cli/tart)"; exit 0; }
 
@@ -108,5 +109,6 @@ case "$cmd" in
     rm -f "$STATE/$name.log"
     ;;
   ip) ip ;;
+  sshcmd) printf '%q ' ssh "${SSH_OPTS[@]}" "admin@$(ip)"; echo ;;
   *) usage ;;
 esac
