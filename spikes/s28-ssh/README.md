@@ -33,8 +33,11 @@ token (`server.rs:153`), which is the trust an ssh login already has.
 When forwarding is off (`AllowStreamLocalForwarding no`,
 `DisableForwarding yes`, some managed sshds), the prototype stdio bridge here
 (`src/main.rs`, `ssh box s28-bridge`: one daemon connection per ssh channel)
-worked for the same commands, including `tui`. So M51 should do both:
-the forward first, and the bridge when a probe through the forward fails.
+worked for the same commands, including `tui`. M51 uses the bridge for
+everything: it works whatever the box's sshd allows, and it needs neither
+the far socket's path nor a socket file on the client. The forward is about
+11 ms faster per new connection (below), which is worth adding if a real
+network shows it matters.
 
 ### What does each path cost?
 
@@ -88,6 +91,12 @@ otherwise.
   with no CA certificates (`apps/studio.rs:87`, reqwest finds none). 0.16.0
   bundles its roots (#199) and starts. An install over ssh to a minimal box
   needs 0.16.0 or later.
+
+- **The agent comes from the master.** Through a ControlMaster, a channel
+  gets the agent the master was started with, and only if the master was
+  started with `ForwardAgent=yes`; `-A` on the channel alone forwards
+  nothing. So the master has to be started with the agent forwarded, and
+  it's the client's agent at that moment that the box sees.
 
 ### Installing when the box has none
 
@@ -151,9 +160,9 @@ Today nothing checks: the TUI ignores `Hello.version` (`tui/app.rs:189`) and
 the CLI never asks. Every pair tested worked through the bridge: clients
 0.12.0, 0.15.0 and 0.16.0 against daemons 0.12.0, 0.15.0 and 0.16.0 (`ls`,
 `run` and `capture`, `attach`). Ruling 7's rule (refuse a different major
-version, offer to upgrade) has nothing to catch yet. While the version is
-0.x, "major" has to mean the minor number. The cheapest place for the check
-is the probe the client already needs (`GET /api/host` returns `version`).
+version, offer to upgrade) has nothing to catch yet, and reading 0.x minors
+as majors would refuse pairs that work. The cheapest place for the check is
+the probe the client already needs (`GET /api/host` returns `version`).
 
 ### `illogicald join` from an ssh session
 
@@ -166,15 +175,16 @@ against a control yet; M52 does that with the test stack's `control` profile.
 ## Recommendations for M51 and M52
 
 - M51's ssh transport: one ControlMaster per box (short `ControlPath`,
-  keepalives), a forward of the daemon's socket, a probe through it, and
-  `illogical bridge` (this spike's one-stream bridge, in the CLI) when the
-  probe fails. `Target::Ssh` in `cli/src/http.rs` returns streams from either.
-  Mark it remote (`REMOTE`) and fix `run`'s cwd.
+  keepalives, the agent forwarded), and `illogical bridge` (this spike's
+  one-stream bridge, in the CLI) on a channel per connection. `Target::Ssh`
+  in `cli/src/http.rs` returns those. Mark it remote (`REMOTE`) and fix
+  `run`'s cwd. The socket forward can come later as a speedup.
 - The bridge must not pass a half-close to the daemon.
 - Install when missing: probe `~/.local/bin/illogical`, ask once, stream the
   release tarball for the box's architecture over ssh.
 - Version: compare `GET /api/host`'s version in the probe; refuse a different
-  major (minor while 0.x) and offer the install path to upgrade.
+  major and offer the install path to upgrade. Treating 0.x minors as majors
+  would refuse pairs that work (every pair above), so 0.x is one major.
 - M52: `illogicald install`, then `loginctl enable-linger` (offer sudo if
   refused), then `illogicald join` over the same ssh session.
 
