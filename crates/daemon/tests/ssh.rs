@@ -9,7 +9,8 @@
 //! Needs Docker (it brings the stack's `ssh` profile up if it isn't) and the
 //! box's static binaries from this tree (`just static aarch64` on Apple
 //! silicon, `just static` on x86_64), or ILLOGICAL_SSH_BINARIES; without
-//! them it fails. ILLOGICAL_SKIP_DOCKER=1 skips it, loudly. It recreates
+//! them, or with ones older than this tree or another version, it fails
+//! naming `just static`. ILLOGICAL_SKIP_DOCKER=1 skips it, loudly. It recreates
 //! box-bare, so a run starts from a box with nothing on it.
 
 use std::{
@@ -56,6 +57,52 @@ fn push(branch: &str) -> String {
         "cd \"$(mktemp -d)\" && git init -q && git -c user.name=illo -c user.email=illo@box-bare commit -q --allow-empty -m {branch} \
          && git push -q git@git:/srv/git/repo.git HEAD:refs/heads/{branch} && echo pushed-$((6*7)) || echo push-failed-$((6*7))"
     )
+}
+
+/// #259: stale static binaries are named as such, without Docker.
+#[test]
+fn stale_static_binaries_are_refused() {
+    let root = std::env::temp_dir().join(format!("ilg-stale-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let krate = root.join("crates/x");
+    std::fs::create_dir_all(krate.join("src")).unwrap();
+    std::fs::write(root.join("Cargo.lock"), "").unwrap();
+    let src = krate.join("src/main.rs");
+    std::fs::write(&src, "fn main() {}").unwrap();
+    let dir = root.join("target/aarch64-unknown-linux-musl/release");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Built after the source, from this tree, at this version.
+    std::thread::sleep(Duration::from_millis(20));
+    let build = |version: &str, from: &Path| {
+        for bin in ["illogical", "illogicald"] {
+            std::fs::write(dir.join(bin), format!("ELF..\0illogical-version={version}\0..")).unwrap();
+            std::fs::write(dir.join(format!("{bin}.d")), format!("{}: {}\n", dir.join(bin).display(), from.display()))
+                .unwrap();
+        }
+    };
+    let current = |v: &str| testnet::binaries_current(&dir, v, &krate);
+    build("1.2.3", &src);
+    assert_eq!(current("1.2.3"), Ok(()));
+    let e = current("1.3.0").unwrap_err();
+    assert!(e.contains("illogical is 1.2.3, this build is 1.3.0"), "{e}");
+
+    // The source changes afterwards.
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(&src, "fn main() { }").unwrap();
+    let e = current("1.2.3").unwrap_err();
+    assert!(e.contains("main.rs changed after illogical was built"), "{e}");
+
+    // Built from another checkout (a copied target directory).
+    build("1.2.3", Path::new("/elsewhere/crates/x/src/main.rs"));
+    let e = current("1.2.3").unwrap_err();
+    assert!(e.contains("built from another tree"), "{e}");
+
+    // No mark at all (an older build).
+    std::fs::write(dir.join("illogical"), "ELF").unwrap();
+    assert!(current("1.2.3").unwrap_err().contains("no version mark"));
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

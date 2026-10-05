@@ -681,6 +681,11 @@ fn log_to_file() {
     unsafe { std::env::remove_var("ILLOGICAL_LOG_FILE") };
 }
 
+/// The version, findable in the binary's bytes: the testnet tests read it
+/// from a box's static build they can't run here (#259).
+#[used]
+static VERSION_MARK: &str = concat!("\0illogical-version=", env!("CARGO_PKG_VERSION"), "\0");
+
 fn main() -> anyhow::Result<()> {
     // The pane shim forks, so it runs before any threads exist.
     let argv: Vec<String> = std::env::args().collect();

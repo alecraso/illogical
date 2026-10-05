@@ -1340,6 +1340,11 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
 }
 
+/// The version, findable in the binary's bytes: the testnet tests read it
+/// from a box's static build they can't run here (#259).
+#[used]
+static VERSION_MARK: &str = concat!("\0illogical-version=", env!("CARGO_PKG_VERSION"), "\0");
+
 fn main() {
     // Run as `tmux` (a link, or a copy on an ssh host's PATH): be tmux's
     // control mode, with tmux's own arguments.
