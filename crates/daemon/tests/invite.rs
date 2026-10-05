@@ -5,6 +5,9 @@
 //! refuses and relays as the real one does. Team pins come from the
 //! owner's browser; the daemon checks the roster against the pin itself.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{
