@@ -4035,6 +4035,49 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
   - a scoped runner key (the key is readable by the runner's own agents);
   - the `games` environment's broken `love` package.
 
+### No special machines track (S27, M49–M50, added 2026-10-04)
+
+geek has been a hub: its page listed jake-mini (added by hand to its `hosts.json`, with `--allow-origin https://geek.<tailnet>` on jake-mini), and only geek has block sites (`--block-listen`, a wildcard DNS record, a Cloudflare token). Everything that works on geek should work on any machine joined to control, with nothing set up by hand, and control's page is the way in to all of them.
+
+**Decisions (2026-10-04, Jake):**
+
+- **Control's page is the only front door.** It already lists every joined machine, direct or relayed. A daemon's own page shows that daemon (and its tailnet `hosts.json`, kept for setups without control). The plan from the onboarding work, where a joined daemon lists the account's other machines and relays to them with its own key, is dropped: it would make whichever page you open a hub.
+- **Blocks go through control, end to end encrypted.** A port or editor block on any joined machine works from control's page with no DNS, certificate or token on the machine. Control still never sees what the block says. A spike decides whether that holds up (S27).
+- **The daemon only.** geek stays the Fountain runner and one of the two CI runners; those are placement choices, not illogical's.
+- **Done by hand on 2026-10-04:** jake-mini removed from geek's host list, jake-mini reinstalled without `--allow-origin`, both on 0.13.0. geek keeps its block flags until M50 replaces them.
+
+**Order:** S27 (#148) and M49 (#149) in parallel; M50 (#150) after S27 says go. Tracker #151.
+
+#### S27: blocks through control, end to end (#148)
+
+Today a block site is `https://b-<id>.<domain>` on the daemon's own listener (`sites.rs`): the browser must reach the machine over the tailnet, and the machine needs a wildcard name and certificate. Control's page may already frame blocks while the daemon is enrolled (`set_control_origin`), but only where the browser reaches the block origin directly.
+
+The shape to try:
+
+- **Control serves the block origins:** `https://b-<key>.<block domain>`, one wildcard certificate on control. `<key>` is random per block, so origins stay unguessable and separate, as today. The block domain should be a registrable domain of its own (not under `widgets.wtf`), so a block's code is cross-site to control's page and to everything else on `widgets.wtf`; the spike checks what that costs (a service worker in a third-party frame, storage partitioning).
+- **A first load serves only a bootstrap page and a service worker,** both control's own static files. The service worker carries every request of the block's page over a Noise channel to the daemon, through the relay (or directly, when the parent page has a direct path), and the daemon answers it from `sites.rs`'s proxy as it does today.
+- **The block's key:** the block origin can't use the device key (it lives in control's origin). The parent page makes a one-off X25519 key for the block, signs a grant for it with its device key (scoped to one block, short-lived), and hands both to the frame by `postMessage`. That's read-only links' shape (a one-off key the daemon lists for one session), applied to one block.
+- **WebSockets** (hot reload, code-server): a service worker can't intercept them, so `set_head_script` puts a `WebSocket` shim first in the block's pages, carrying them over the same channel.
+- **Trust:** control serves the bootstrap code, as it serves its own page's code today; no new party. Write down what a malicious control could do here and how it compares.
+
+**Questions it answers:** does Vite's hot reload, a Next dev server and code-server work through it; the latency added per request against the tailnet path; whether a service worker in a third-party frame registers at all on Safari (iOS and macOS) and in the desktop app's WebKitGTK; and what happens on a hard reload, a crashed worker, a block left open for a day. Go/no-go per browser, as S15 did for PRF.
+
+**Done when:** `spikes/s27-blocks/README.md` has the answers, with a demo of Vite on jake-mini (no block flags) reloading on save inside control's page on geek's Chrome and on the phone.
+
+#### M49: the CLI and the daemon page without a hub (#149)
+
+- **`illogical --host <machine>` through control:** names come from control's directory (the account's and the team's machines), not only `hosts.json`. The CLI connects over a Noise channel, direct when it can, else through the relay, with a `cli` device key of its own (the kind already exists in device certificates). The first use enrolls it the way a browser enrolls (a code to approve on another device). `illogical hosts` lists both sources, marked.
+- **A joined daemon's page says where the others are:** the host menu shows *All your machines…*, opening control's page. It doesn't list them itself.
+- **Docs:** "A Mac as another host" leads with joining control, and the hand-added tailnet host becomes the setup for people without control.
+
+**Done when:** from a pane on jake-mini, `illogical --host geek run …`, `list` and `capture` work with nothing in jake-mini's `hosts.json`, relayed when Tailscale is down on jake-mini; and the same from geek to jake-air.
+
+#### M50: blocks through control (#150, after S27)
+
+Built from S27's findings: block sites on control for every enrolled daemon, with the daemon-served schemes (tailnet, dev) kept for people without control. A port or editor block opened on any joined machine shows in control's page wherever that page is open. The host menu says "direct" or "relayed" for blocks too.
+
+**Done when:** on jake-mini and jake-air, with no block flags, *Open a port…* on a Vite server and *Open in editor* both work from control's page on geek, on the phone and in the desktop app; then geek's own block flags are removed and the same holds there.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
