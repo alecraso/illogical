@@ -172,3 +172,34 @@ export const controlPanel = (page: Page, panel: string) =>
     panel,
     { timeout: 20_000 },
   );
+
+/** M70: paste a file onto a pane's terminal, as a browser does when an
+ * image is on the clipboard. */
+export async function pasteFile(page: Page, pane: PaneId, bytes: Buffer, name: string, type: string) {
+  await paneEl(page, pane)
+    .locator(".term-host")
+    .first()
+    .evaluate(
+      (host, [b64, name, type]) => {
+        const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const dt = new DataTransfer();
+        dt.items.add(new File([data], name, { type }));
+        host.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      },
+      [bytes.toString("base64"), name, type] as const,
+    );
+}
+
+/** M70: the path of an upload as it shows on a pane's screen once pasted
+ * (wrapped lines joined). */
+export async function uploadedPath(page: Page, pane: PaneId, ext = "png"): Promise<string> {
+  const re = new RegExp(`/\\S*?illogical-uploads/\\d+/[0-9a-f]{16}\\.${ext}`);
+  let path = "";
+  await expect
+    .poll(async () => {
+      path = re.exec((await text(page, pane)).replace(/\n/g, ""))?.[0] ?? "";
+      return path;
+    })
+    .not.toBe("");
+  return path;
+}

@@ -38,6 +38,7 @@ import { SCROLLBACK, TerminalView } from "./terminal-view";
 import { makeBlockView, type BlockView } from "./blocks";
 import { E2ESocket, type DaemonRef } from "./e2e/channel.ts";
 import type { DeviceKeys } from "./e2e/keys.ts";
+import { pick, upload } from "./upload";
 
 /** Ack about this often (bytes drawn); the daemon allows 512 KB. */
 const ACK_EVERY = 64 * 1024;
@@ -257,7 +258,11 @@ export class Client {
       // Another daemon (on this machine, its sign-in cookie; it allows
       // credentials only from our exact origin).
       credentials: /^https?:/.test(this.base) ? "include" : "same-origin",
-      ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+      ...(body === undefined
+        ? {}
+        : body instanceof Uint8Array
+          ? { headers: { "Content-Type": "application/octet-stream" }, body: body as BodyInit }
+          : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     });
     return { ok: res.ok, status: res.status, json: <T,>() => res.json() as Promise<T>, text: () => res.text() };
   }
@@ -1130,8 +1135,24 @@ export class Client {
       this.emit();
     });
     view.onFocus(() => this.setActive(id));
+    view.onFiles((files) => void this.sendFiles(id, files));
     this.panes.set(id, entry);
     return entry;
+  }
+
+  /** M70: files onto the pane's host, their paths pasted into it. */
+  sendFiles(pane: PaneId, files: File[]): Promise<void> {
+    if (!this.mayType(pane)) {
+      this.toast("you can't type in this pane, so you can't paste files into it");
+      return Promise.resolve();
+    }
+    return upload((m, p, b) => this.request(m, p, b), pane, files, this.panes.get(pane)?.view.chip);
+  }
+
+  /** M70: pick files (a phone's photos or camera too) for the pane. */
+  async attachFiles(pane: PaneId) {
+    const files = await pick();
+    if (files.length) await this.sendFiles(pane, files);
   }
 
   private fixSelection() {

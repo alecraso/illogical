@@ -482,6 +482,9 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
             tauri::webview::PermissionKind::Microphone => tauri::webview::PermissionResponse::Deny,
             _ => tauri::webview::PermissionResponse::Default,
         })
+        // Files dropped on a pane are the page's (M70: uploaded to the
+        // pane's host); the webview would otherwise take them itself.
+        .disable_drag_drop_handler()
         // A link with target=_blank: the client's own pages in a window of
         // ours, anything else in the browser. A webview drops these unless
         // the app handles them.

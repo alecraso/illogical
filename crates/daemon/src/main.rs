@@ -76,6 +76,8 @@ mod tailscale;
 mod threads;
 mod tls;
 mod update;
+#[cfg(unix)]
+mod upload;
 mod workspace;
 
 use std::{net::SocketAddr, path::PathBuf};
@@ -557,6 +559,9 @@ fn start_reach(r: &ReachArgs, app: &std::sync::Arc<server::App>, name: String) -
         info!(to = opts.origin, live = opts.live, "syncing history to the home daemon");
         tokio::spawn(sync::keep_pushing(opts, app.mux.store.clone()));
     }
+    // M70: uploads older than a day go, from now.
+    #[cfg(unix)]
+    tokio::spawn(upload::keep_sweeping());
     // Synced history expires a day at a time.
     let synced = app.synced.clone();
     tokio::spawn(async move {

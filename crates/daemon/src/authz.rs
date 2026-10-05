@@ -55,7 +55,7 @@ fn policy(method: &Method, path: &str) -> Policy {
             "panes",
             id,
             "send" | "prompt" | "keys" | "mouse" | "attention" | "close" | "ask" | "cd" | "permit" | "hook" | "inbox"
-            | "followup",
+            | "followup" | "upload" | "paste",
         ] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         ["api", "panes", id, "ask", "withdraw"] if !get => {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
@@ -99,6 +99,13 @@ fn policy(method: &Method, path: &str) -> Policy {
     }
 }
 
+/// What drives a pane, so needs the owner's trust on their machine (M14).
+/// A follow-up (M29) is an instruction to an agent running there; an upload
+/// (M70) writes a file where the pane runs, and a paste is typing.
+fn drives(path: &str) -> bool {
+    ["/send", "/keys", "/mouse", "/followup", "/upload", "/paste"].iter().any(|s| path.ends_with(s))
+}
+
 fn refuse(status: StatusCode, why: &str) -> Response {
     (status, Json(json!({ "error": why }))).into_response()
 }
@@ -121,9 +128,7 @@ pub async fn check(State(app): State<Arc<App>>, req: Request, next: Next) -> Res
                 // Typing into a pane on the owner's machine needs their trust
                 // (M14).
                 let path = req.uri().path();
-                // A follow-up (M29) is an instruction to an agent running
-                // there: the same rule.
-                if ["/send", "/keys", "/mouse", "/followup"].iter().any(|s| path.ends_with(s)) {
+                if drives(path) {
                     let who = req.extensions().get::<Principal>().cloned().unwrap_or(Principal::Owner);
                     if let Some(Err(why)) = app.mux.api(|r| Api::MayDrive(who, pane, r)).await {
                         return refuse(StatusCode::FORBIDDEN, &why);
@@ -168,6 +173,11 @@ mod tests {
         assert_eq!(policy(&g, "/api/host"), Policy::Anyone);
         assert_eq!(policy(&g, "/api/panes/3/capture"), Policy::On(3, Role::Viewer));
         assert_eq!(policy(&p, "/api/panes/3/send"), Policy::On(3, Role::Editor));
+        for path in ["/api/panes/3/upload", "/api/panes/3/paste"] {
+            assert_eq!(policy(&p, path), Policy::On(3, Role::Editor), "{path}");
+            assert!(drives(path), "{path}");
+        }
+        assert!(!drives("/api/panes/3/capture"));
         assert_eq!(policy(&p, "/api/blocks/7/call/approve"), Policy::On(7, Role::Editor));
         assert_eq!(policy(&p, "/api/panes/3/capture"), Policy::Owner);
         assert_eq!(policy(&g, "/api/panes"), Policy::Owner);

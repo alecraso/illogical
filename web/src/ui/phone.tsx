@@ -264,6 +264,7 @@ export function KeyBar({ client }: { client: Client }) {
   const enc = new TextEncoder();
   return (
     <div class="keybar" role="toolbar" aria-label="Extra keys">
+      <div class="keybar-keys">
       {KEYS.map((k) => {
         const on = k.mod ? client.modifiers[k.mod] : false;
         return (
@@ -290,6 +291,21 @@ export function KeyBar({ client }: { client: Client }) {
           </button>
         );
       })}
+      </div>
+      {/* M70: a photo, or the camera, into the pane. Pinned at the end,
+          outside the keys that scroll, so it's always in sight. */}
+      <button
+        class="key attach"
+        title="Attach file"
+        aria-label="Attach file"
+        onPointerDown={(e) => e.preventDefault()}
+        onClick={() => {
+          const pane = client.active();
+          if (pane !== undefined) void client.attachFiles(pane);
+        }}
+      >
+        📎
+      </button>
     </div>
   );
 }

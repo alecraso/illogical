@@ -490,6 +490,21 @@ enum Command {
         #[arg(required = true)]
         keys: Vec<String>,
     },
+    /// Copy files onto the pane's host and paste their paths into it (M70),
+    /// for an agent there to read: a screenshot into a `claude` on another
+    /// machine, say. Only into a shell or an agent unless `--force`; exits
+    /// 2 if it wasn't pasted, printing the paths.
+    Upload {
+        pane: Pane,
+        #[arg(required = true)]
+        files: Vec<std::path::PathBuf>,
+        /// Paste even if what's in front isn't a shell or an agent.
+        #[arg(long)]
+        force: bool,
+        /// Only upload them, and print where they went.
+        #[arg(long, conflicts_with = "force")]
+        no_paste: bool,
+    },
     /// Click, press, release or drag at a cell (from 1,1).
     Mouse {
         pane: Pane,
@@ -1266,6 +1281,70 @@ fn loaded(sock: &http::Target, block: u64) -> anyhow::Result<Value> {
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+/// What one upload request carries (the daemon takes up to 4 MB).
+const UPLOAD_CHUNK: usize = 4 << 20;
+
+/// `illogical upload`: each file to the pane's host in chunks, then their
+/// paths pasted together.
+fn upload(
+    sock: &http::Target,
+    pane: u32,
+    files: &[std::path::PathBuf],
+    force: bool,
+    no_paste: bool,
+) -> anyhow::Result<i32> {
+    let mut paths = Vec::new();
+    for f in files {
+        let bytes = std::fs::read(f).with_context(|| format!("can't read {}", f.display()))?;
+        let ext: String = f
+            .extension()
+            .and_then(|e| e.to_str())
+            .filter(|e| e.len() <= 8 && e.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        // A name of our own: std's hasher is seeded at random.
+        let id = {
+            use std::hash::{BuildHasher, Hasher};
+            let mut h = std::hash::RandomState::new().build_hasher();
+            h.write(f.as_os_str().as_encoded_bytes());
+            format!("{:016x}", h.finish())
+        };
+        let mut at = 0;
+        let path = loop {
+            let end = (at + UPLOAD_CHUNK).min(bytes.len());
+            let last = end == bytes.len();
+            let q = format!("id={id}&ext={ext}&offset={at}{}", if last { "&last=true" } else { "" });
+            let path = format!("/api/panes/{pane}/upload?{q}");
+            let headers = [("Content-Type", "application/octet-stream")];
+            let r = http::send(sock, "POST", &path, &headers, &bytes[at..end])?
+                .json()
+                .with_context(|| format!("can't upload {}", f.display()))?;
+            if last {
+                break r["path"].as_str().unwrap_or_default().to_owned();
+            }
+            at = end;
+        };
+        paths.push(path);
+    }
+    if no_paste {
+        for p in &paths {
+            println!("{p}");
+        }
+        return Ok(0);
+    }
+    let r = request(sock, "POST", &format!("/api/panes/{pane}/paste"), Some(&json!({"paths": paths, "force": force})))?
+        .json()?;
+    if r["pasted"] == true {
+        return Ok(0);
+    }
+    let front = r["front"].as_str().unwrap_or("something");
+    eprintln!("not pasted: `{front}` is in front of %{pane}, not a shell or an agent (--force pastes anyway)");
+    for p in &paths {
+        println!("{p}");
+    }
+    Ok(2)
 }
 
 fn here(p: Option<Pane>) -> anyhow::Result<u32> {
@@ -2780,6 +2859,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             )?
             .json()?;
         }
+        Command::Upload { pane, files, force, no_paste } => return upload(&sock, pane.0, &files, force, no_paste),
         Command::Keys { pane, keys } => {
             request(&sock, "POST", &format!("/api/panes/{}/keys", pane.0), Some(&json!({"keys": keys})))?.json()?;
         }

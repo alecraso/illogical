@@ -6,12 +6,12 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { controlPanel, ready, run, text, closeContexts } from "./helpers";
+import { closeContexts, controlPanel, pasteFile, ready, run, text, uploadedPath } from "./helpers";
 import { ANY, controlPort, daemonPort, listen } from "./ports";
 
 test.afterAll(closeContexts);
@@ -251,6 +251,15 @@ test("two machines join by code; one direct, one only through the relay", async 
   await shell(laptop, "mac");
   expect(await laptop.evaluate(() => window.__illogical.client.path)).toBe("relayed");
   await expect(laptop.locator(".host-button [data-path]")).toHaveText("relayed");
+
+  // M70: a pasted image goes through the relay in chunks (2.5 MB: three),
+  // inside the end-to-end channel, and lands on the machine whole.
+  const pane = await laptop.evaluate(() => window.__illogical.client.active()!);
+  const png = Buffer.from(Array.from({ length: 2_500_000 }, (_, i) => (i * 7) % 256));
+  await pasteFile(laptop, pane, png, "relayed.png", "image/png");
+  expect(readFileSync(await uploadedPath(laptop, pane))).toEqual(png);
+  // The path waits on the prompt line: clear it for what's typed next.
+  await laptop.evaluate((p) => window.__illogical.client.input(p, new TextEncoder().encode("\x15")), pane);
 });
 
 async function phoneContext(browser: Browser) {

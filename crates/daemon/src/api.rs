@@ -46,7 +46,7 @@ use crate::{
 type AppState = State<Arc<App>>;
 
 pub fn routes() -> Router<Arc<App>> {
-    Router::new()
+    let r = Router::new()
         .route("/api/panes", get(panes))
         .route("/api/run", post(run))
         .route("/api/panes/{id}/send", post(send))
@@ -105,7 +105,16 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/push/key", get(push_key))
         .route("/api/push/subscribe", post(push_subscribe))
         .route("/api/push/test", post(push_test))
-        .route("/api/notify", get(notify_get).post(notify_set))
+        .route("/api/notify", get(notify_get).post(notify_set));
+    // M70: a file onto the pane's host, and its path pasted.
+    #[cfg(unix)]
+    let r = r
+        .route(
+            "/api/panes/{id}/upload",
+            post(crate::upload::upload).layer(axum::extract::DefaultBodyLimit::max(crate::upload::CHUNK_MAX)),
+        )
+        .route("/api/panes/{id}/paste", post(crate::upload::paste));
+    r
 }
 
 pub struct ApiError(pub StatusCode, pub String);
@@ -120,9 +129,9 @@ fn bad(msg: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
 }
 
-type Res<T> = Result<T, ApiError>;
+pub(crate) type Res<T> = Result<T, ApiError>;
 
-async fn pane(app: &App, id: PaneId) -> Res<PaneHandle> {
+pub(crate) async fn pane(app: &App, id: PaneId) -> Res<PaneHandle> {
     app.mux.api(|r| Api::Pane(id, r)).await.flatten().ok_or(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}")))
 }
 

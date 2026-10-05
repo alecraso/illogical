@@ -11,6 +11,7 @@ illogical send %3 'git status' -e             # type a line and press Enter
 illogical send %4 --wait 'fix the test'       # prompt the agent there and wait for its turn (exit 0 done,
                                               #   2 it asks for you, 3 stalled: nothing started)
 illogical keys %3 C-c Up Enter                # named keys
+illogical upload %4 shot.png                  # a file onto %4's host, its path pasted in (for a claude there)
 illogical wait %3 --command-end               # exit code of what that started
 illogical wait %3 --match 'listening on' --timeout 30
 illogical tail %3 -f --text                   # follow output, escapes stripped

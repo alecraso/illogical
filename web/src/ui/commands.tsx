@@ -95,6 +95,9 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
       ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
       : []),
     "separator",
+    // M70: a file onto this pane's host, its path pasted in (for an agent
+    // there to read).
+    ...(entry && client.mayType(id) ? [{ label: "Attach file…", run: () => void client.attachFiles(id) } as MenuItem] : []),
     moveToTab,
     { label: "Go to directory…", shortcut: PICKER_KEY, run: () => openPicker(client, id, phone) },
     { label: "Copy working directory", disabled: !cwd, run: () => cwd && void navigator.clipboard?.writeText(cwd) },

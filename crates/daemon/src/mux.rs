@@ -3454,6 +3454,8 @@ impl Daemon {
                     self.ids.lock().unwrap().remove(&pane);
                     if let Some(p) = self.panes.remove(&pane) {
                         p.close();
+                        #[cfg(unix)]
+                        crate::upload::forget(pane);
                     }
                     if let Some(b) = self.blocks.remove(&pane) {
                         b.close();
@@ -3465,6 +3467,12 @@ impl Daemon {
                     // A pane's own machine goes with it (a tab's, with the tab).
                     if let Some(m) = self.machine_of(pane).filter(|m| m.owner == Owner::Pane(pane)) {
                         self.delete_machine(m.id);
+                    } else if let (Some(m), Some(p)) = (self.machine_of(pane), &self.config.provider) {
+                        // M70: a machine that stays keeps nothing of the pane's.
+                        #[cfg(unix)]
+                        crate::upload::forget_on(p.clone(), m.sprite.clone(), pane);
+                        #[cfg(not(unix))]
+                        let _ = (m, p);
                     }
                     self.sizes.remove(&pane);
                     self.meta.remove(&pane);

@@ -246,6 +246,35 @@ html[data-desktop="macos"] .bar {
   height: 100%;
 }
 
+.term-host {
+  position: relative;
+}
+
+/* An upload into the pane (M70): its progress, then what became of it. */
+.term-chip {
+  position: absolute;
+  z-index: 5;
+  top: 8px;
+  right: 16px;
+  max-width: calc(100% - 32px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px #0006;
+  font-size: 13px;
+}
+
+.term-chip.error {
+  color: var(--danger);
+}
+
+.term-chip button:not(.link) {
+  white-space: nowrap;
+}
+
 .pane::after {
   content: "";
   position: absolute;
@@ -805,8 +834,22 @@ html[data-desktop="macos"] .bar {
   gap: 4px;
   padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
   background: var(--surface);
+}
+
+/* The keys scroll sideways when they don't fit; the faded edge says there
+   are more. */
+.keybar-keys {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+
+.keybar .attach {
+  flex: none;
 }
 
 .key {

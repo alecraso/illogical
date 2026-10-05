@@ -7,6 +7,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { theme } from "./theme";
+import type { Chip } from "./upload";
 
 export const FONT_FAMILY = '"JetBrains Mono", "Fira Code", ui-monospace, Menlo, monospace';
 export const FONT_SIZE = 14;
@@ -72,6 +73,7 @@ export class TerminalView {
     this.swallowQueries();
     this.watchCommands();
     this.term.attachCustomKeyEventHandler((e) => this.clipboardKeys(e));
+    this.takeFiles();
     this.term.open(this.host);
     this.touchScroll();
   }
@@ -280,6 +282,69 @@ export class TerminalView {
   onMarkMenu(cb: (mark: CommandMark, e: MouseEvent) => void) {
     this.markMenu = cb;
   }
+
+  private filesCb: ((files: File[]) => void) | undefined;
+  /** Files pasted or dropped on the terminal (M70). */
+  onFiles(cb: (files: File[]) => void) {
+    this.filesCb = cb;
+  }
+
+  /** A paste or drop with files in it goes to `onFiles`. The listeners
+   * capture on the host, so they run before xterm's paste handler, which
+   * reads only the text and stops the event. */
+  private takeFiles() {
+    const take = (e: Event, files: FileList | undefined | null) => {
+      if (!files?.length || !this.filesCb) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.filesCb([...files]);
+    };
+    this.host.addEventListener("paste", (e) => take(e, e.clipboardData?.files), true);
+    this.host.addEventListener(
+      "dragover",
+      (e) => {
+        if (this.filesCb && e.dataTransfer?.types.includes("Files")) e.preventDefault();
+      },
+      true,
+    );
+    this.host.addEventListener("drop", (e) => take(e, e.dataTransfer?.files), true);
+  }
+
+  private chipEl: HTMLDivElement | undefined;
+  private chipTimer: number | undefined;
+  /** A note over the terminal's corner, with buttons (M70: an upload's
+   * progress, then what became of it). */
+  readonly chip: Chip = {
+    show: (text, opts = {}) => {
+      clearTimeout(this.chipTimer);
+      if (!this.chipEl) {
+        this.chipEl = document.createElement("div");
+        this.chipEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+        this.host.append(this.chipEl);
+      }
+      const el = this.chipEl;
+      el.className = opts.error ? "term-chip error" : "term-chip";
+      el.dataset.chip = "";
+      el.replaceChildren(Object.assign(document.createElement("span"), { textContent: text }));
+      for (const a of opts.actions ?? []) {
+        const b = Object.assign(document.createElement("button"), { textContent: a.label });
+        b.addEventListener("click", () => a.run());
+        el.append(b);
+      }
+      if (opts.actions?.length || opts.error) {
+        const x = Object.assign(document.createElement("button"), { textContent: "×", title: "Dismiss" });
+        x.className = "link";
+        x.addEventListener("click", () => this.chip.hide());
+        el.append(x);
+      }
+      if (opts.hideAfterMs) this.chipTimer = window.setTimeout(() => this.chip.hide(), opts.hideAfterMs);
+    },
+    hide: () => {
+      clearTimeout(this.chipTimer);
+      this.chipEl?.remove();
+      this.chipEl = undefined;
+    },
+  };
 
   /** Ctrl+Shift+C copies the selection; Ctrl+Shift+V is left to the
    * browser's paste event, which xterm.js handles. */

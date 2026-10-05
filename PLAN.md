@@ -4706,6 +4706,82 @@ The questions:
 
 **Done when:** `spikes/s33-phone-hand/README.md` has the answers. An agent in a pane on geek gets a photo and the phone's location from both phones, and a track shape is recommended.
 
+### Images track (S32, M70–M72, added 2026-10-05)
+
+A screenshot should get into a Claude Code session in any pane, from any client, including the phone. Today none of Claude Code's three ways in works reliably here:
+
+- **Ctrl+V** reads the clipboard of the machine `claude` runs on (osascript, xclip, wl-paste). In illogical that's the pane's host, often headless or a VM, while the screenshot is on the client. Over ssh, some versions ask the terminal with an OSC 52 read, which only a few terminals answer and which regressed in 2.1.181 (anthropics/claude-code#69330).
+- **A dropped or pasted path to an image** becomes `[Image #N]`. A browser drop has no path, and a desktop one names a file on the client, not on the pane's host. Which forms get turned into a chip varies by terminal and version (anthropics/claude-code#48153 and #57623 there).
+- **A path in the prompt**, read with the Read tool. This always works if the file is on the pane's host.
+
+The phone has none of these. There is no repo history on this: the image work so far (S1/S5) is about showing Kitty graphics, not taking input.
+
+**Prior art (2026-10-05):**
+
+- **ssh clipboard shims:** clipssh uploads the clipboard and copies a remote path to paste. cc-clip and clipaste put a fake `xclip` on the remote that fetches the image through an ssh tunnel. These are the workarounds people use today.
+- **iTerm2:** Option-drag with shell integration uploads over scp. OSC 1337 `RequestUpload` (which `it2ul` uses) returns a picked file as a base64 tgz. It's proposed for Claude Code (anthropics/claude-code#77864, open).
+- **kitty:** the OSC 5522 clipboard protocol reads by MIME type (images too), plus a drag-and-drop protocol and the transfer kitten. Ghostty is adding 5522. Claude Code closed "use OSC 52/5522" as not planned (anthropics/claude-code#42712).
+- **Wave Terminal:** drag a file onto a remote connection's block to upload it.
+- **ACP:** a prompt can carry image content blocks when the agent advertises `promptCapabilities.image`. Agent blocks already speak ACP (`claude-agent-acp`).
+
+**Shape:** illogical owns both ends (the client that holds the image and the daemon on the pane's host), so it doesn't need a terminal protocol. The client takes the bytes (paste, drop, a picker, the phone's photos or camera), uploads them to the pane's host, and pastes the resulting path into the pane through the ordinary input path (bracketed when the program asked). Nothing in the transport is Claude-specific: Codex, aider or `cat` get the same path. Agent blocks send the image natively over ACP.
+
+**Decisions (2026-10-05):**
+
+- **Files land in a per-pane uploads folder on the pane's host:** `illogical-uploads/<pane>/` under `$XDG_RUNTIME_DIR` when it's set (as the daemon's socket already does), else `$TMPDIR`, else `/tmp/illogical-<uid>`. They're called *uploads*, not *inbox*, because `inbox` already means M29's follow-ups (`/api/panes/<id>/inbox`, `illogical inbox`).
+  - We choose the names (`img-<time>.<ext>`), so there are no spaces or escaping.
+  - The folder is made with `O_NOFOLLOW` and refused unless the owner and mode (`0700`) are right, so another local user can't pre-create it in a shared `/tmp`. Files are written with `O_EXCL` and mode `0600`.
+  - It's removed when the pane closes and swept after 24h, including on the daemon's start. There's a quota per host (200 MB) as well as the cap per file.
+  - On a machine (a VM pane), the folder is `~/.cache/illogical/uploads/<pane>/` inside it. S32 finds out who owns the files `write_file` makes there.
+  - The state dir was rejected because it holds secrets and a VM pane can't see it. The pane's cwd was rejected because it would litter repos.
+  - Windows (Windows track) uses `%TEMP%` with an ACL for the user. Nothing here needs more than that.
+- **Any file, capped at 20 MB.** Images are the case we test and polish (HEIC conversion, downscaling), but a PDF or a log goes the same way.
+- **Plain Ctrl+V is left alone for now.** Cmd+V, Ctrl+Shift+V, a drop and the picker do the upload. S32 records what Claude's Ctrl+V sends, and answering its clipboard read is built only if S32 finds it stable across a few Claude Code versions. Taking over Ctrl+V when `claude` is in the foreground (`navigator.clipboard.read()`, a permission prompt, no Firefox) is not planned.
+- **Anyone who can type into the pane can upload.** That's two checks, as for `/send`: `Role::Editor` in `authz.rs`'s table, and M14's `MayDrive` trust on the owner's machine. The `MayDrive` check is picked by path suffix, so the new route has to be added to that list too. Otherwise an untrusted editor could write files where they can't type. Viewers on read-only links can't upload.
+
+**Order:** S32 (#248) first, then M70 (#249). M71 (#250) starts once M70's daemon route has landed (its fallback uses it). M72 (#251) is gated. Tracker #267.
+
+#### S32: images into a pane, measured (#248)
+
+- **Claude Code's forms:** which pasted strings become `[Image #N]` in the current version (an absolute path, bracketed or not, quoted, under `/tmp`, in a VM pane), and what Codex does with the same.
+- **Claude's Ctrl+V in a pane:** record the bytes it writes (an OSC 52 read or 5522?) with a pty fixture, see what `osc.rs` and xterm.js do with them today, and work out what reply would satisfy it.
+- **Browsers:** whether a paste event exposes `clipboardData.files` (Chrome, Safari, Firefox, the desktop app's WKWebView and WebKitGTK, iOS Safari, Android Chrome); drops on xterm's element; `<input type=file accept=image/*>` on the phone; HEIC from an iPhone (Claude takes PNG, JPEG, GIF and WebP, so convert it in the browser).
+- **Transport:** a 20 MB upload through `/h/NAME`, `/tunnel/NAME`, dial-out (its WebSocket caps a message at 1 MB) and control's relay (a request is one e2e message, held in memory, on the one channel a phone has). Measure chunked PUTs of 1 MB against one body. Axum's default body limit is 2 MB, so the route needs its own.
+- **Machines:** who owns a file `write_file` writes in a sprite, and whether `claude` there can read it. Cleanup goes through `run` (providers have no delete). Also what an upload to a sleeping machine does.
+- **Conversation blocks:** whether *continue* runs `claude` in a pane (then M70 covers it) or not.
+
+**Done when:** `spikes/s30-images/README.md` has the answers, with a hacked demo: a screenshot from the phone pasted into a `claude` pane on geek, which describes it.
+
+#### M70: images into terminal panes (#249)
+
+- **Daemon:** `/api/panes/<id>/upload` writes to the pane's host, on its own filesystem or through the provider for a machine, and returns the path. It takes chunks (the size S32 settles on), for progress and so one upload doesn't hold up a relay channel. It has its own `DefaultBodyLimit`, the Editor and `MayDrive` checks, the caps, and cleanup, all as decided above.
+- **The daemon does the paste:** with `paste: true` it pastes the path through the vt's `paste::encode`, bracketed when the program asked. Every client (`illogical attach` too) brackets the same way, and control characters that could end the bracket are stripped. `/send` writes raw bytes today, so it can't do this.
+- **Where the path goes:** before pasting, the daemon checks the pane's foreground process (procinfo). If it's a shell or a known agent, the path is pasted. If it's `ssh`, a container exec, a password prompt (echo off) or anything else, the path probably doesn't exist where that program runs, so the client shows the path with *Copy* and *Paste anyway* instead. A pane in the TUI's copy mode gets the same.
+- **Client:** a paste with images, files dropped on a pane, and *Attach file…* in the pane's menu and the phone's key bar (photos or camera). Several files at once are pasted as space-separated paths. A chip shows progress, then the result or the error (too big, over quota, refused). Large images are scaled down, and HEIC is converted.
+- **CLI:** `illogical attach %p <file>…` uploads from wherever the CLI runs and pastes the paths. With `--host` and (after M51) `--ssh` it goes to that host. This is the scriptable form and covers the TUI for now.
+
+**Done when:**
+
+- **A Playwright test:** a PNG pasted into a pane running a stand-in that echoes its input arrives as a file on the host with the same bytes, and its path arrives bracketed. The same through a relayed host, dial-out and a VM pane.
+- **The refusals:** a viewer and an untrusted editor get 403, a file over the cap gets 413, and the quota is enforced.
+- **Cleanup:** the folder is gone after the pane closes, and the 24h sweep runs after a daemon restart.
+- **The foreground check:** with `ssh` in the foreground, nothing is pasted and *Copy* is offered.
+- **With a real `claude` on geek:** it shows `[Image #1]` after a paste from the phone, the desktop app and Chrome. This is done by hand, or as a check in #214's no-person-in-the-loop suite.
+
+#### M71: images in agent blocks (#250)
+
+The composer takes a paste, a drop or a picked file and sends ACP image content blocks when the agent advertises `promptCapabilities.image`; otherwise it uploads with M70's route and puts the path in the text. The transcript shows the image (the converter prints `[image]` today) where the transcript holds its data. An MCP tool, `attach`, lets an agent driving a pane put a file of its own there (say a screenshot from `capture_screen`), under the same checks as the route.
+
+**Done when:** a test against a stand-in ACP agent shows that a pasted image reaches it as an image content block, that an agent without `promptCapabilities.image` gets a path instead, and that the transcript shows the image. By hand: the same from the phone against `claude-agent-acp`.
+
+#### M72: the TUI and iTerm2 (#251, gated, after M70)
+
+- **Trigger:** someone runs `claude` through `illogical tui` or tmux `-CC` and `illogical attach` isn't enough for them.
+
+The TUI and iTerm2 send only text, so an image can only arrive as a path. A pasted path that exists on the client's machine but not on the pane's host gets uploaded and rewritten. Where the outer terminal answers OSC 5522 (kitty, Ghostty), the TUI passes Claude's clipboard read through to it.
+
+**Done when:** in kitty and iTerm2 on jake-air, `illogical tui --ssh geek` gets a dropped screenshot into `claude` on geek as `[Image #1]`.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |

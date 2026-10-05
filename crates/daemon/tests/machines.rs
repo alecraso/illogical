@@ -134,3 +134,45 @@ fn a_vm_pane_survives_a_restart_and_takes_its_machine_when_it_closes() {
     assert_eq!(status, 200);
     assert!(tail.contains("AFTER-42"), "{tail}");
 }
+
+/// M70: an upload into a VM pane lands on its machine, in the user's
+/// private folder there, readable by them, and its path pastes in.
+#[test]
+fn an_upload_into_a_vm_pane_lands_on_its_machine() {
+    use std::{io::Read, io::Write, os::unix::net::UnixStream};
+    if token().is_none() {
+        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
+        return;
+    }
+    let d = Daemon::new();
+    let pane = d.post("/api/run", json!({"vm": true}))["pane"].as_u64().unwrap();
+    d.wait_for("the guest prompt", || {
+        d.get("/api/panes").as_array().unwrap().iter().any(|p| p["id"] == pane && p["cwd"] == "/home/sprite")
+    });
+    let chunk = |path: &str, body: &[u8]| -> Value {
+        let mut s = UnixStream::connect(d.sock()).unwrap();
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        s.write_all(head.as_bytes()).unwrap();
+        s.write_all(body).unwrap();
+        let mut res = String::new();
+        s.read_to_string(&mut res).unwrap();
+        assert!(res.starts_with("HTTP/1.1 200"), "{res}");
+        serde_json::from_str(res.split_once("\r\n\r\n").unwrap().1).unwrap()
+    };
+    let up = format!("/api/panes/{pane}/upload?id=0c&ext=png");
+    chunk(&format!("{up}&offset=0"), b"first half, ");
+    let v = chunk(&format!("{up}&offset=12&last=true"), b"second half");
+    let path = v["path"].as_str().unwrap().to_owned();
+    assert_eq!(path, format!("/home/sprite/.cache/illogical/uploads/{pane}/0c.png"));
+
+    // The user there reads it; its folder is theirs alone.
+    let send = |text: &str| d.post(&format!("/api/panes/{pane}/send"), json!({"text": text, "enter": true}));
+    send(&format!("echo GOT-$(cat {path}) MODE-$(stat -c %a%U $(dirname {path}))"));
+    d.wait_for("the file on the machine", || d.log(pane).contains("GOT-first half, second half MODE-700sprite"));
+    let v = d.post(&format!("/api/panes/{pane}/paste"), json!({"paths": [path]}));
+    assert_eq!(v["pasted"], true, "{v}");
+    d.post(&format!("/api/panes/{pane}/close"), json!({}));
+}

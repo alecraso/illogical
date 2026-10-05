@@ -1,0 +1,23 @@
+bracketed abs /tmp                           ❯ [Image #2]
+unbracketed abs (typed)                      ❯ /tmp/illogical-s32/img-red.png
+bracketed $TMPDIR uploads                    ❯ [Image #3]
+bracketed /private/tmp                       ❯ [Image #4]
+bracketed single-quoted                      ❯ [Image #5]
+bracketed space, backslash                   ❯ [Image #6]
+bracketed space, quoted                      ❯ [Image #7]
+bracketed space, raw                         ❯ [Image #8]
+bracketed two, space-sep                     ❯ [Image #9] [Image #10]
+bracketed two, newline-sep                   ❯ [Image #11] [Image #12]
+bracketed no extension (PNG)                 ❯ /tmp/illogical-s32/noext
+bracketed tilde                              ❯ ~/../../tmp/illogical-s32/img-red.png
+bracketed file:// URL                        ❯ file:///tmp/illogical-s32/img-red.png
+text + path in one paste                     ❯ [Image #13]look at
+after typed text                             ❯ describe [Image #14]
+bracketed missing file                       ❯ /tmp/illogical-s32/nope.png
+img.jpg                        ❯ [Image #15]
+img.gif                        ❯ [Image #16]
+img.heic                       ❯ /tmp/illogical-s32/img.heic
+img.tiff                       ❯ /tmp/illogical-s32/img.tiff
+IMG.PNG                        ❯ [Image #17]
+doc.pdf                        ❯ /tmp/illogical-s32/doc.pdf
+notes.txt                      ❯ /tmp/illogical-s32/notes.txt

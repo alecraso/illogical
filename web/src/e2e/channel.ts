@@ -293,7 +293,9 @@ export class E2ESocket {
   /** An HTTP request to the daemon's API, through the channel. */
   request(method: string, path: string, body?: unknown, timeoutMs = 30_000): Promise<Response> {
     const id = this.nextId++;
-    const json = body === undefined ? undefined : JSON.stringify(body);
+    // Raw bytes (an upload's chunk, M70) go as they are.
+    const raw = body instanceof Uint8Array ? body : undefined;
+    const json = body === undefined || raw ? undefined : JSON.stringify(body);
     return new Promise((res, rej) => {
       if (!this.open) return rej(new Error("not connected"));
       const t = setTimeout(() => {
@@ -313,8 +315,12 @@ export class E2ESocket {
       this.put({
         kind: "request",
         id,
-        head: { method, path, ...(json === undefined ? {} : { content_type: "application/json" }) },
-        body: json === undefined ? new Uint8Array() : enc.encode(json),
+        head: {
+          method,
+          path,
+          ...(raw ? { content_type: "application/octet-stream" } : json === undefined ? {} : { content_type: "application/json" }),
+        },
+        body: raw ?? (json === undefined ? new Uint8Array() : enc.encode(json)),
       });
     });
   }

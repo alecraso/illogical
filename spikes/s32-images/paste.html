@@ -1,0 +1,26 @@
+<!doctype html><meta charset=utf-8>
+<link rel=stylesheet href="../../web/node_modules/@xterm/xterm/css/xterm.css">
+<div id=host style="width:600px;height:300px"></div>
+<script src="../../web/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script>
+// What S32 needs to know: does an image paste reach a capture listener on
+// xterm's container, with the file, before xterm's own handler eats it?
+window.log = [];
+const term = new Terminal();
+term.open(document.getElementById("host"));
+term.onData((d) => log.push({ xtermData: d }));
+const host = document.getElementById("host");
+host.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files ?? [])];
+  const items = [...(e.clipboardData?.items ?? [])].map((i) => `${i.kind}:${i.type}`);
+  log.push({ paste: true, files: files.map((f) => ({ name: f.name, type: f.type, size: f.size })), items,
+             text: e.clipboardData?.getData("text/plain") ?? null });
+  if (files.length) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+host.addEventListener("dragover", (e) => e.preventDefault(), true);
+host.addEventListener("drop", (e) => {
+  e.preventDefault();
+  log.push({ drop: true, files: [...e.dataTransfer.files].map((f) => ({ name: f.name, type: f.type, size: f.size })) });
+}, true);
+window.term = term;
+</script>
