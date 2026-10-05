@@ -346,6 +346,15 @@ enum Command {
         #[arg(long)]
         diffs: Option<String>,
     },
+    /// Standing permission rules (#166): what agent blocks on this daemon
+    /// allow without asking, made by "Always" for a directory or for every
+    /// block. `--forget N` forgets one; `--forget-all`, all of them.
+    Rules {
+        #[arg(long, conflicts_with = "forget_all")]
+        forget: Option<usize>,
+        #[arg(long)]
+        forget_all: bool,
+    },
     /// The shell environment blocks that run your tools get (your login
     /// shell's, read once): its PATH. `--refresh` reads it again, after
     /// you change an rc file.
@@ -2187,6 +2196,25 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 bail!("{editor} --install-extension failed");
             }
             println!("Installed. In the editor: \"illogical: Show this workspace in the swarm\".");
+        }
+        Command::Rules { forget, forget_all } => {
+            if forget_all {
+                request(&sock, "DELETE", "/api/rules", None)?.json()?;
+            } else if let Some(i) = forget {
+                request(&sock, "DELETE", &format!("/api/rules/{i}"), None)?.json()?;
+            }
+            let v: Value = request(&sock, "GET", "/api/rules", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let rules = v["rules"].as_array().cloned().unwrap_or_default();
+            if rules.is_empty() {
+                println!("No standing rules: agent blocks ask (\"Always\" for a directory or everywhere makes one)");
+            }
+            for r in rules {
+                println!("{:>3}  {}", r["index"], r["text"].as_str().unwrap_or(""));
+            }
         }
         Command::Ide { diffs } => {
             let v = match diffs {

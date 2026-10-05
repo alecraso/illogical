@@ -87,6 +87,27 @@ taken before the daemon binds it, #66); `strays`, the cleanup above; and
 on it for agent block tests: a sessions dir for the fake agent, and helpers
 to open blocks and wait on them.
 
+Waiting on something that takes as long as the machine is busy (a flood
+of output, a build): stop it or wait for its end, never sleep a fixed time
+and hope, and make deadlines failure limits that are generous (tens of
+seconds) rather than waits. A reader that has to keep up with a flood
+(the tmux client in `tmux.rs`) does as little per line as it can and lets
+its own timeouts expire while lines keep coming. `falling_behind_pauses_the_pane`
+failed under a load average of 30 because a fixed 40 MB flood was still
+running after `continue`; it now runs `yes` until the pane pauses, sends
+^C and waits for the prompt in a capture.
+
+Standing permission rules (#166) are tested in `agents.rs`
+(`standing_rules_outlive_the_block_that_made_them`: a `cwd` rule answers a
+new block below that directory and not one elsewhere, an `everywhere`
+prefix rule allows its command with arguments but not `cargo testify` or
+`cargo test; rm`, the rules survive a restart in `rules.json`, and
+forgetting one brings the card back), in `rules.rs`'s unit tests (matching,
+prefixes, the file) and in `web/e2e/agents.spec.ts` (*From now on…* on a
+card, a second block that never asks, and *Permission rules…* in the
+session menu forgetting it). The browser test clears the rules first: the
+suite's daemon keeps them between specs.
+
 The fakes:
 
 - `fake_acp.py`: an ACP agent, standing in for Claude Code's adapter and

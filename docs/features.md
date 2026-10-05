@@ -278,6 +278,11 @@ the daemon stopping, crashing, or the machine rebooting:
     it; it never picks the agent's own "always", which would write
     `.claude/settings.local.json` into your repo. Claude Code runs with no
     settings sources, so your own hooks don't fire inside it.
+  - *From now on…* on a card keeps a standing rule on this machine
+    (#166): the tool, or commands starting with a prefix, in the block's
+    directory and below or in every agent block. New blocks never ask for
+    what a rule allows. *Permission rules…* in the session menu (or
+    `illogical rules`) lists them, and forgets them.
   - A block can start with rules and a mode (#163): `illogical agent
     --allow Bash --permission-mode auto`, or `allow` and `permission_mode`
     on MCP `start_agent`, so a lead pre-authorizes its subagents (an agent

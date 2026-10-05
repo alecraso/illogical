@@ -257,9 +257,20 @@ function ToolCard({ t, live, openAt }: { t: Tool; live: boolean; openAt?: (path:
   );
 }
 
-function PermCard({ client, id, p }: { client: Client; id: PaneId; p: Perm }) {
+/** The first word of a command: what a standing rule allows by default
+ * (#166). Anything else is the whole tool. */
+function firstWord(p: Perm): string {
+  return p.tool === "Bash" ? (p.command ?? p.title).trim().split(/\s+/)[0] ?? "" : "";
+}
+
+function PermCard({ client, id, p, cwd, owner }: { client: Client; id: PaneId; p: Perm; cwd: string | null; owner: boolean }) {
   const call = (method: string, args: unknown) => void client.api(`/api/blocks/${id}/call/${method}`, args, `couldn't ${method}`);
   const always = p.options.some((o) => o.kind === "allow_once");
+  // #166: "From now on…" makes a standing rule the daemon keeps, for this
+  // directory or every block (the owner's to make).
+  const [standing, setStanding] = useState(false);
+  const [scope, setScope] = useState<"cwd" | "everywhere">(cwd ? "cwd" : "everywhere");
+  const [prefix, setPrefix] = useState(() => firstWord(p));
   return (
     <div class="agent-perm" role="alertdialog" aria-label={`Allow ${p.title}?`}>
       <div class="agent-perm-q">
@@ -287,7 +298,43 @@ function PermCard({ client, id, p }: { client: Client; id: PaneId; p: Perm }) {
         >
           Deny with reason…
         </button>
+        {always && owner && !standing && (
+          <button class="link" onClick={() => setStanding(true)}>
+            From now on…
+          </button>
+        )}
       </div>
+      {standing && (
+        <form
+          class="agent-perm-standing"
+          aria-label="A standing rule"
+          onSubmit={(e) => {
+            e.preventDefault();
+            call("approve", { id: p.id, option: "always", scope, prefix: prefix.trim() || undefined });
+          }}
+        >
+          <label>
+            Allow {p.tool}
+            <input name="prefix" value={prefix} placeholder="any" onInput={(e) => setPrefix(e.currentTarget.value)} />
+            <span class="hint">{prefix.trim() ? "commands starting with this" : "anything"}</span>
+          </label>
+          <label>
+            <select name="scope" value={scope} onChange={(e) => setScope(e.currentTarget.value as "cwd" | "everywhere")}>
+              {cwd && <option value="cwd">in {cwd} and below</option>}
+              <option value="everywhere">in every agent block</option>
+            </select>
+          </label>
+          <div class="agent-perm-buttons">
+            <button class="primary" type="submit">
+              Allow from now on
+            </button>
+            <button type="button" class="link" onClick={() => setStanding(false)}>
+              Cancel
+            </button>
+          </div>
+          <p class="hint">On this machine; forget it from the session menu, Permission rules…</p>
+        </form>
+      )}
     </div>
   );
 }
@@ -454,7 +501,7 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
       {answered && !s.pending.length && !open.length && <div class="agent-answered">{answeredLine(answered)}</div>}
       {s.pending.map((p) =>
         can ? (
-          <PermCard key={p.id} client={client} id={id} p={p} />
+          <PermCard key={p.id} client={client} id={id} p={p} cwd={s.cwd} owner={!client.state?.roles} />
         ) : (
           <div key={p.id} class="agent-perm" role="alertdialog" aria-label={`Allow ${p.title}?`}>
             <div class="agent-perm-q">{p.tool} wants to run</div>

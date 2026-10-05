@@ -14,6 +14,7 @@ import { pickApp } from "./apps";
 import { openPicker } from "./picker";
 import { agentNotifyItems, notificationItems } from "./notify";
 import { openGettingStarted } from "./welcome";
+import { openRules } from "./rules";
 
 /** Chords, as menus and the palette show them. */
 export const PICKER_KEY = "Ctrl+Shift+G";
@@ -180,6 +181,8 @@ export function sessionItems(client: Client, session: SessionId, rename: () => v
     "separator",
     ...notificationItems(client),
     ...agentNotifyItems(client, session),
+    // #166: this machine's standing permission rules, the owner's.
+    ...(client.state?.roles ? [] : [{ label: "Permission rules…", run: () => openRules(client) } as MenuItem]),
     { label: "Getting started", run: () => openGettingStarted(undefined, client) },
     "separator",
     { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session }) },
