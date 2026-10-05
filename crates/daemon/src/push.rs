@@ -122,28 +122,51 @@ impl Push {
         extra: Option<serde_json::Value>,
         to: impl Fn(&str) -> bool,
     ) {
-        let subs: Vec<Subscription> =
-            self.subs.lock().unwrap().iter().filter(|s| to(s.who.as_deref().unwrap_or("owner"))).cloned().collect();
+        let subs = self.picked(to);
         if subs.is_empty() {
             return;
         }
         let payload = serde_json::Value::Object(payload(pane, title, body, extra)).to_string();
         let this = self.clone();
-        tokio::spawn(async move {
-            for sub in subs {
-                match this.deliver(&sub, payload.as_bytes()).await {
-                    Ok(status) if status == 404 || status == 410 => {
-                        info!(endpoint = %sub.endpoint, "push subscription expired; dropping it");
-                        let mut subs = this.subs.lock().unwrap();
-                        subs.retain(|s| s.endpoint != sub.endpoint);
-                        let _ = write_atomic(&this.path, &serde_json::to_vec_pretty(&*subs).unwrap_or_default());
-                    }
-                    Ok(status) if !(200..300).contains(&status) => warn!(status, "push rejected"),
-                    Ok(_) => {}
-                    Err(e) => warn!(error = %e, "push failed"),
+        tokio::spawn(async move { this.post_all(subs, &payload).await });
+    }
+
+    /// [`Push::send_to`], waited for (#233): how many subscriptions `to`
+    /// picked, and how many push services took it.
+    pub async fn send_report(
+        &self,
+        pane: u32,
+        title: &str,
+        body: &str,
+        extra: Option<serde_json::Value>,
+        to: impl Fn(&str) -> bool,
+    ) -> (usize, usize) {
+        let subs = self.picked(to);
+        let payload = serde_json::Value::Object(payload(pane, title, body, extra)).to_string();
+        (subs.len(), self.post_all(subs, &payload).await)
+    }
+
+    fn picked(&self, to: impl Fn(&str) -> bool) -> Vec<Subscription> {
+        self.subs.lock().unwrap().iter().filter(|s| to(s.who.as_deref().unwrap_or("owner"))).cloned().collect()
+    }
+
+    /// Post to each; how many push services took it.
+    async fn post_all(&self, subs: Vec<Subscription>, payload: &str) -> usize {
+        let mut took = 0;
+        for sub in subs {
+            match self.deliver(&sub, payload.as_bytes()).await {
+                Ok(status) if status == 404 || status == 410 => {
+                    info!(endpoint = %sub.endpoint, "push subscription expired; dropping it");
+                    let mut subs = self.subs.lock().unwrap();
+                    subs.retain(|s| s.endpoint != sub.endpoint);
+                    let _ = write_atomic(&self.path, &serde_json::to_vec_pretty(&*subs).unwrap_or_default());
                 }
+                Ok(status) if !(200..300).contains(&status) => warn!(status, "push rejected"),
+                Ok(_) => took += 1,
+                Err(e) => warn!(error = %e, "push failed"),
             }
-        });
+        }
+        took
     }
 
     async fn deliver(&self, sub: &Subscription, payload: &[u8]) -> anyhow::Result<u16> {

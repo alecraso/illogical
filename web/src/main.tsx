@@ -101,9 +101,20 @@ const connect = () => {
     const c = client;
     directory.setPath(null);
     let hadSessions = false;
+    let pinned = false;
     c.subscribe(() => {
       if (c !== client) return;
       directory.setPath(c.connected ? c.path : null);
+      // A machine of yours learns the teams this browser pinned (#233), so
+      // their members can be invited there; it checks each roster itself.
+      const id = c.e2e?.daemon.id;
+      if (c.connected && c.state && !c.state.roles && !pinned && id && session.owns(id)) {
+        const pins = session.teamPins();
+        if (Object.keys(pins).length) {
+          pinned = true;
+          void c.request("POST", "/api/team-pins", { pins }).catch(() => (pinned = false));
+        }
+      }
       // A hosted VM whose last tab closed is done (M20): delete it.
       const n = c.state?.sessions.length ?? 0;
       if (n > 0) hadSessions = true;

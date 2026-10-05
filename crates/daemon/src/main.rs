@@ -30,6 +30,7 @@ mod holder;
 mod hosts;
 mod ide;
 mod install;
+mod invite;
 mod keys;
 mod localauth;
 mod machine;

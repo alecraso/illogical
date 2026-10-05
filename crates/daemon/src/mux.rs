@@ -61,6 +61,11 @@ const TYPING: Duration = Duration::from_secs(5);
 /// next to type drives (#118).
 const DRIVER_LAPSE: Duration = Duration::from_secs(10 * 60);
 
+/// A minute of trust (M14), or `ILLOGICAL_TRUST_MINUTE_MS` (for tests).
+fn trust_minute_ms() -> u64 {
+    std::env::var("ILLOGICAL_TRUST_MINUTE_MS").ok().and_then(|ms| ms.parse().ok()).unwrap_or(60_000)
+}
+
 /// [`DRIVER_LAPSE`], or `ILLOGICAL_DRIVER_LAPSE_MS` (for tests).
 fn driver_lapse() -> Duration {
     std::env::var("ILLOGICAL_DRIVER_LAPSE_MS")
@@ -178,6 +183,16 @@ pub enum Api {
     ThreadPost(ThreadPost, oneshot::Sender<Result<(ThreadMsg, bool), ThreadError>>),
     /// `who` has read a thread up to a message.
     ThreadRead(ThreadTarget, crate::acl::Principal, u64),
+    /// Where an invite to a session opens (#233): the pane given, if it's
+    /// in the session, else the session's first; and the session's name.
+    InviteTo(SessionId, Option<PaneId>, oneshot::Sender<Result<(PaneId, String), String>>),
+    /// Trust someone (by principal id) with a pane on this machine for so
+    /// many minutes (#233: an invite's `drive_minutes`), as the owner's
+    /// pane menu does (M14). Nothing on a VM, a block or a team's machine
+    /// (false).
+    Trust(PaneId, String, u32, oneshot::Sender<bool>),
+    /// A notice for whoever (by principal id) is connected.
+    Tell(String, String),
     /// Where each pane of a session's output ends now (a "from now" share
     /// starts there).
     SessionEnds(SessionId, oneshot::Sender<Option<BTreeMap<PaneId, u64>>>),
@@ -2022,6 +2037,32 @@ impl Daemon {
                     self.soon();
                 }
             }
+            Api::InviteTo(session, pane, reply) => {
+                let r = match self.mux.session(session) {
+                    Err(_) => Err(format!("no session ${session}")),
+                    Ok(s) => {
+                        let panes: Vec<PaneId> =
+                            s.tabs.iter().filter_map(|t| self.mux.tab(*t).ok()).flat_map(|t| t.root.panes()).collect();
+                        let name = s.name.clone();
+                        match pane {
+                            Some(p) if panes.contains(&p) => Ok((p, name)),
+                            Some(p) => Err(format!("%{p} isn't in {name}")),
+                            None => panes.first().map(|p| (*p, name.clone())).ok_or(format!("{name} has no panes")),
+                        }
+                    }
+                };
+                let _ = reply.send(r);
+            }
+            Api::Trust(pane, to, minutes, reply) => {
+                let here = self.machine_of(pane).is_none() && !self.blocks.contains_key(&pane);
+                let ok = here && !self.config.control.is_team();
+                if ok {
+                    self.trust_with(pane, &to, minutes);
+                    self.broadcast();
+                }
+                let _ = reply.send(ok);
+            }
+            Api::Tell(who, message) => self.tell(&who, ServerMsg::Notice { message }),
             Api::SessionEnds(session, reply) => {
                 let ends = self.mux.session(session).ok().map(|s| {
                     s.tabs
@@ -3862,20 +3903,7 @@ impl Daemon {
                 self.refuse_to(client, "only the owner trusts people with panes on this machine");
                 return true;
             }
-            PaneOp::GrantTrust { to, minutes } => {
-                let minutes = (*minutes).clamp(1, 24 * 60);
-                let until = now_ms() + u64::from(minutes) * 60_000;
-                self.trust.insert((pane, to.clone()), until);
-                info!(pane, to, minutes, "trusted with a local pane");
-                let message = format!("you may drive %{pane} for {minutes} minutes");
-                self.tell(to, ServerMsg::Notice { message });
-                let expire = self.tx.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(u64::from(minutes) * 60_000 + 50)).await;
-                    // Show everyone it ended.
-                    let _ = expire.send(Cmd::AclChanged);
-                });
-            }
+            PaneOp::GrantTrust { to, minutes } => self.trust_with(pane, to, *minutes),
             PaneOp::RevokeTrust { to } => {
                 self.trust.remove(&(pane, to.clone()));
                 if self.drivers.get(&pane).is_some_and(|d| &d.who == to) {
@@ -3904,6 +3932,22 @@ impl Daemon {
         }
         self.broadcast();
         true
+    }
+
+    /// Trust `to` with a pane on this machine for `minutes` (M14).
+    fn trust_with(&mut self, pane: PaneId, to: &str, minutes: u32) {
+        let minutes = minutes.clamp(1, 24 * 60);
+        let ms = u64::from(minutes) * trust_minute_ms();
+        self.trust.insert((pane, to.to_owned()), now_ms() + ms);
+        info!(pane, to, minutes, "trusted with a local pane");
+        let message = format!("you may drive %{pane} for {minutes} minutes");
+        self.tell(to, ServerMsg::Notice { message });
+        let expire = self.tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(ms + 50)).await;
+            // Show everyone it ended.
+            let _ = expire.send(Cmd::AclChanged);
+        });
     }
 
     fn refuse_to(&self, client: ClientId, why: &str) {

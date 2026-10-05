@@ -974,6 +974,20 @@ the daemon stopping, crashing, or the machine rebooting:
   instruction, as its sender's input; on someone's own machine a teammate
   needs their trust first. Cards show who else is looking. Who gets
   notified is opt-in per person (*Notify me about its agents*).
+- **Invites** (#233). "Bring Sam into this" in one step: *Share and
+  notify* in *Share session…*, `illogical invite sam`, or `POST
+  /api/invite` (the owner's only) shares the session (or upgrades a
+  share; never downgrades one) and pushes that one person, "Alex brought
+  you into api-work: take a look at the flaky test", opening at the pane,
+  whatever anyone's notification settings. It reports what happened, not
+  what was tried: *sent* when a subscription took it, *pending* while
+  someone outside your teams hasn't accepted the machine (retried after
+  each refresh for a day), else *unreachable* with why. People are named
+  as the machine itself knows them: tailnet logins, people already shared
+  with, and members of rosters it checked against a team pin your own
+  browser gave it, never on control's word. A team's members on a team's
+  machine already hold their role: they're just told. `--drive N` also
+  trusts an editor to type on your machine for N minutes. Audit-logged.
 - **The swarm** (M26, `/#swarm`, *Swarm* beside the tabs). Every pane on
   every machine you and your team can see, as one field of tiles coloured
   by kind and lit by activity, clustered by project (or directory, outside

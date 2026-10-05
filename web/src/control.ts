@@ -757,6 +757,21 @@ export class ControlSession {
     this.teams = out;
   }
 
+  /** The teams this browser pinned and checked, for a machine of this
+   * account's to check their rosters by (#233): `<founder>.<founder's
+   * root>` by team. */
+  teamPins(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const t of this.teams) if (t.verified && t.role !== null) out[t.team] = `${t.pin.founder}.${t.pin.founder_root}`;
+    return out;
+  }
+
+  /** A machine of this account's own: not a team's, not someone else's. */
+  owns(id: string): boolean {
+    const d = this.daemons.find((x) => x.id === id);
+    return !!d && (!d.account || d.account === this.account) && !d.team;
+  }
+
   sawJoined() {
     this.joined = null;
     this.emit();

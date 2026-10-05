@@ -47,10 +47,11 @@ use crate::{
 };
 
 pub const FILE: &str = "control.json";
+const PINS_FILE: &str = "team-pins.json";
+const INVITES_FILE: &str = "invites.json";
 pub const KEY_FILE: &str = "daemon.key";
 const REFRESH: Duration = Duration::from_secs(60);
 /// How long [`Control::refresh_now`] waits by default (#232).
-#[cfg_attr(not(test), allow(dead_code))] // #233's invites wait on it.
 pub const REFRESH_WAIT: Duration = Duration::from_secs(10);
 /// What this daemon tells control it understands, so control offers only
 /// what every daemon checking a team can take (presigned invites' rosters).
@@ -282,6 +283,41 @@ pub struct Control {
     pub no_relay: bool,
     /// Control takes v2 request signatures (see [`auth_header`]).
     auth_v2: std::sync::atomic::AtomicBool,
+    /// Teams the owner's browser pinned (#233), by id: `<founder
+    /// device>.<founder's root>`, in `team-pins.json`. Their rosters are
+    /// fetched and checked as a shared team's, so their members can be
+    /// named; they let no one in.
+    team_pins: RwLock<BTreeMap<String, String>>,
+    /// Invites waiting for their person to be reachable (#233), in
+    /// `invites.json`: tried again after each refresh, for a day.
+    invites: std::sync::Mutex<Vec<Waiting>>,
+}
+
+/// An invite pushed to nobody yet (#233): its person hasn't accepted the
+/// share, or control didn't answer in time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Waiting {
+    /// Whom, by principal id.
+    pub who: String,
+    pub pane: u32,
+    pub title: String,
+    pub body: String,
+    pub extra: serde_json::Value,
+    /// When it was made (ms); a day later it stops waiting.
+    pub at: u64,
+}
+
+/// How long an invite waits for its person (#233).
+const INVITE_WAIT_MS: u64 = 24 * 3600 * 1000;
+
+/// Someone a roster this daemon checked names (#233): its own team's, or
+/// a team's the owner pinned or shared with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Known {
+    pub account: String,
+    pub root: String,
+    pub name: String,
+    pub role: TeamRole,
 }
 
 fn read_saved(dir: &Path) -> anyhow::Result<Option<Saved>> {
@@ -342,6 +378,18 @@ impl Control {
             published: Default::default(),
             no_relay,
             auth_v2: Default::default(),
+            team_pins: RwLock::new(
+                std::fs::read(state_dir.join(PINS_FILE))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or_default(),
+            ),
+            invites: std::sync::Mutex::new(
+                std::fs::read(state_dir.join(INVITES_FILE))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or_default(),
+            ),
         });
         me.reload();
         me
@@ -366,7 +414,6 @@ impl Control {
     /// before it: a grant, say), false if none has within `timeout`. One
     /// already under way when called doesn't count: it may have read the
     /// grants before the change.
-    #[cfg_attr(not(test), allow(dead_code))] // #233's invites wait on it.
     pub async fn refresh_now(&self, timeout: Duration) -> bool {
         let mut done = self.refreshed.subscribe();
         let before = self.started.load(std::sync::atomic::Ordering::SeqCst);
@@ -383,6 +430,106 @@ impl Control {
         }
         let m = e.saved.roster.as_ref()?.member(account)?;
         Some(e.saved.team_names.get(account).unwrap_or(&m.name).clone())
+    }
+
+    /// Teams the owner's browser pinned (#233).
+    pub fn team_pins(&self) -> BTreeMap<String, String> {
+        self.team_pins.read().unwrap().clone()
+    }
+
+    /// Pin more (a newer pin of the same team replaces it); true if any
+    /// changed. Only the owner's browser sends these: control never does.
+    pub fn add_team_pins(&self, pins: BTreeMap<String, String>) -> std::io::Result<bool> {
+        let mut p = self.team_pins.write().unwrap();
+        let before = p.clone();
+        p.extend(pins);
+        if *p == before {
+            return Ok(false);
+        }
+        crate::store::write_atomic(&self.state_dir.join(PINS_FILE), &serde_json::to_vec_pretty(&*p)?)?;
+        Ok(true)
+    }
+
+    /// Teams whose roster checked out from its pin, by id.
+    pub fn checked_teams(&self) -> Vec<String> {
+        self.enrolled().map(|e| e.saved.shared_teams.keys().cloned().collect()).unwrap_or_default()
+    }
+
+    /// Everyone the rosters this daemon checked name (#233): its own
+    /// team's (a team daemon) and those of teams pinned or shared with;
+    /// not this account.
+    pub fn known(&self) -> Vec<Known> {
+        let Some(e) = self.enrolled() else { return Vec::new() };
+        let rosters = e.saved.roster.iter().chain(e.saved.shared_teams.values().map(|t| &t.roster));
+        let mut out: Vec<Known> = Vec::new();
+        for m in rosters.flat_map(|r| &r.members) {
+            if m.account == e.saved.cert.account || out.iter().any(|k| k.account == m.account) {
+                continue;
+            }
+            out.push(Known { account: m.account.clone(), root: m.root.clone(), name: m.name.clone(), role: m.role });
+        }
+        out
+    }
+
+    /// Whether this daemon's own team (a team daemon) has `account` as an
+    /// owner: an owner here already.
+    pub fn owns_here(&self, account: &str) -> bool {
+        self.enrolled().is_some_and(|e| {
+            e.saved.roster.as_ref().and_then(|r| r.member(account)).is_some_and(|m| m.role == TeamRole::Owner)
+        })
+    }
+
+    /// Whether this daemon is a team's (M19).
+    pub fn is_team(&self) -> bool {
+        self.enrolled().is_some_and(|e| e.saved.team.is_some())
+    }
+
+    /// Whether someone (by principal id) has devices this daemon lets in
+    /// through control: control routes them here.
+    pub fn reaches(&self, id: &str) -> bool {
+        self.enrolled().is_some_and(|e| e.others.iter().any(|(_, p)| p.id() == id))
+    }
+
+    /// Keep an invite for later (#233): pushed after a refresh that finds
+    /// its person reachable, or dropped after a day.
+    pub fn wait_invite(&self, w: Waiting) {
+        let mut l = self.invites.lock().unwrap();
+        l.push(w);
+        self.save_invites(&l);
+    }
+
+    fn save_invites(&self, l: &[Waiting]) {
+        let r = serde_json::to_vec_pretty(l)
+            .map_err(std::io::Error::other)
+            .and_then(|b| crate::store::write_atomic(&self.state_dir.join(INVITES_FILE), &b));
+        if let Err(e) = r {
+            warn!(error = %e, "can't save waiting invites");
+        }
+    }
+
+    /// Try the waiting invites again: each goes once a subscription took
+    /// it, or after a day stops waiting.
+    pub async fn retry_invites(&self) {
+        let waiting = self.invites.lock().unwrap().clone();
+        if waiting.is_empty() {
+            return;
+        }
+        let mut done = Vec::new();
+        for w in &waiting {
+            if w.at + INVITE_WAIT_MS <= now_ms() {
+                info!(who = w.who, "an invite waited a day; it's unreachable");
+                done.push(w.clone());
+                continue;
+            }
+            let got = self.push_report(w.pane, &w.title, &w.body, Some(w.extra.clone()), |p| p.id() == w.who).await;
+            if got.relayed > 0 {
+                info!(who = w.who, "a waiting invite went out");
+                done.push(w.clone());
+            }
+        }
+        let mut l = self.invites.lock().unwrap();
+        l.retain(|w| !done.contains(w));
+        self.save_invites(&l);
     }
 
     /// Who a Noise key belongs to, if this daemon lets them in: a device of
@@ -565,8 +712,9 @@ impl Control {
         saved.peers = peers;
 
         // Teams sessions were shared with (M30): each roster checked from
-        // the founder the grant pinned.
-        let pins: BTreeMap<String, TeamPin> = self
+        // the founder the grant pinned. And those the owner's browser
+        // pinned (#233), checked the same way, for naming their members.
+        let mut pins: BTreeMap<String, TeamPin> = self
             .acl
             .list()
             .iter()
@@ -575,6 +723,11 @@ impl Control {
                 Some((team.to_owned(), team_pin(team, g.root.as_deref()?)?))
             })
             .collect();
+        for (team, root) in self.team_pins() {
+            if let Some(p) = team_pin(&team, &root) {
+                pins.entry(team).or_insert(p);
+            }
+        }
         saved.shared_teams = BTreeMap::new();
         if !pins.is_empty() {
             #[derive(Deserialize)]
@@ -665,7 +818,6 @@ impl Control {
     /// matched, how many control took, and how many it refused (someone
     /// it doesn't route to this daemon). `extra.tag` names the
     /// notification (`invite-7`) in place of the pane's.
-    #[cfg_attr(not(test), allow(dead_code))] // #233's invites say how it went.
     pub async fn push_report(
         &self,
         pane: u32,
@@ -832,7 +984,11 @@ impl Control {
                         last_refresh = std::time::Instant::now();
                         match me.refresh().await {
                             // Roles may have changed: re-filter everyone.
-                            Ok(_) => acl_changed(),
+                            // Someone an invite waits for may be reachable.
+                            Ok(_) => {
+                                acl_changed();
+                                me.retry_invites().await;
+                            }
                             Err(e) => warn!(error = %e, "can't refresh certificates from control"),
                         }
                         stamp = file_stamp(&me.state_dir);
@@ -1748,6 +1904,44 @@ mod tests {
         let t = std::time::Instant::now();
         assert!(!c.refresh_now(Duration::from_millis(500)).await);
         assert!(t.elapsed() >= Duration::from_millis(500));
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// #233: a waiting invite goes out after the refresh that finds its
+    /// person reachable, once; one that waited a day stops waiting,
+    /// unpushed. Kept across restarts.
+    #[tokio::test]
+    async fn waiting_invites_go_once_or_stop_after_a_day() {
+        let r = rig("waiting").await;
+        let c = r.daemon().await;
+        let w = |at, tag: &str| Waiting {
+            who: "account:b1".into(),
+            pane: 1,
+            title: "alex brought you into api".into(),
+            body: "b".into(),
+            extra: serde_json::json!({ "tag": tag }),
+            at,
+        };
+        c.wait_invite(w(now_ms() - INVITE_WAIT_MS - 1, "invite-old"));
+        c.wait_invite(w(now_ms(), "invite-new"));
+        c.retry_invites().await;
+        assert_eq!(c.invites.lock().unwrap().len(), 1, "the old one stopped waiting");
+        let kept = Control::new(&r.dir, vec![], String::new(), r.acl.clone(), false);
+        assert_eq!(kept.invites.lock().unwrap().len(), 1, "kept in invites.json");
+
+        r.fake.lock().unwrap().routed = true;
+        r.grant();
+        assert!(c.refresh_now(REFRESH_WAIT).await);
+        let t = std::time::Instant::now();
+        while r.opened().is_empty() && t.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let tags: Vec<_> = r.opened().iter().map(|n| n["tag"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(tags, ["invite-new"]);
+        assert!(c.invites.lock().unwrap().is_empty());
+        assert!(c.refresh_now(REFRESH_WAIT).await);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(r.opened().len(), 1, "once");
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 

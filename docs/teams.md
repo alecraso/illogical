@@ -127,6 +127,18 @@ To share a session (a set of tabs) instead of a whole machine:
     wants to share a session on {machine} with you* and *Accept* or
     *Decline*. Until they accept, the machine isn't listed for them and
     its notifications don't reach them. Teammates aren't asked.
+- **Share and notify:** a note, then *Share and notify* instead of
+  *Share*: they're shared with and get a notification, them alone (not
+  you, not whoever else is notified about that session), "*{you}* brought
+  you into *{session}*: *{note}*", which opens at the session's first
+  pane. The dialog says whether it reached them: *notified*; *will be
+  notified* (someone outside your teams is asked to accept first, and the
+  machine tries again for a day); or *wasn't notified*, and why (they
+  haven't turned notifications on). A teammate is named by their login:
+  your browser tells your own machines which teams it checked, and each
+  machine checks the team's roster from that itself. Anyone else is
+  looked up on control and checked by fingerprint first, as for *Share*.
+  `illogical invite` does the same from a terminal (see the CLI docs).
 - **A team:** *Share with everyone in {team}*, as members come and go.
   Each member gets the role you picked.
 - **A read-only link:** *Make a read-only link*. Anyone with it watches,
@@ -159,6 +171,9 @@ menu, *Session thread* in the session menu, or the bubble on a pane.
 Without control, the same sharing works between Tailscale logins:
 
 - In *Share session…*, give their **tailnet login** (`them@example.com`).
+  *Share and notify* (or `illogical invite them@example.com`) pushes them
+  only if they turned on notifications on this machine before; someone
+  shared with for the first time hasn't, and sees it once they connect.
 - **They have to reach the machine too.** If they're not on your tailnet,
   share the machine with them in Tailscale's admin console
   ([node sharing](https://tailscale.com/kb/1084/sharing)), then they open
