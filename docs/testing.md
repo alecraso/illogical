@@ -128,6 +128,25 @@ loads each spec in the runner as well as the worker (#62).
 `E2E_DAEMON_LOG=<file>` keeps the test daemon's debug log, and
 `E2E_CONTROL_LOG=1` shows control's output in `sandboxes.spec.ts`.
 
+A check that should hold in Chrome and WebKit goes in a plain module both
+projects' specs import, since a spec importing another spec registers its
+tests twice. The command palette (#139) is the example:
+`web/e2e/palette-steps.ts` holds the checks, `palette.spec.ts` runs them in
+Chrome (desktop and a Pixel 7) and `palette.webkit.spec.ts` in WebKit
+(Ctrl+Shift+P, Cmd+Shift+P, and an iPhone 13). They cover the chord
+opening the palette from a focused terminal without the shell seeing it,
+the palette listing exactly the pane menu's actions, running actions by
+typing (split, a restart policy, move to a new tab, rename the tab through
+a prompt), recent picks listed first, jumping to a tab, and the phone's
+full-height sheet from the sheet's Commands button. Run them with:
+
+```sh
+cargo build -p illogicald && (cd web && pnpm run build)
+cd web && pnpm exec playwright test e2e/palette.spec.ts e2e/palette.webkit.spec.ts
+```
+
+WebKit needs `pnpm exec playwright install webkit` once.
+
 ## A device that approves things
 
 Anything that waits for a person to approve it on a signed-in device (a

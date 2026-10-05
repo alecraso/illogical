@@ -4,7 +4,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 
 export type MenuItem =
-  | { label: string; run: () => void; danger?: boolean; disabled?: boolean; checked?: boolean }
+  | {
+      label: string;
+      run: () => void;
+      danger?: boolean;
+      disabled?: boolean;
+      checked?: boolean;
+      /** Its chord, shown beside it here and in the command palette. */
+      shortcut?: string;
+    }
   | { header: string }
   | "separator";
 
@@ -89,6 +97,7 @@ export function MenuLayer() {
             key={i}
             role={item.checked === undefined ? "menuitem" : "menuitemradio"}
             aria-checked={item.checked}
+            aria-keyshortcuts={item.shortcut?.replace("Ctrl", "Control")}
             class={item.danger ? "menu-item danger" : "menu-item"}
             disabled={item.disabled}
             onClick={() => {
@@ -98,6 +107,11 @@ export function MenuLayer() {
           >
             {item.checked !== undefined && <span class="menu-check">{item.checked ? "●" : ""}</span>}
             {item.label}
+            {item.shortcut && (
+              <kbd class="menu-key" aria-hidden="true">
+                {item.shortcut}
+              </kbd>
+            )}
           </button>
         ),
       )}

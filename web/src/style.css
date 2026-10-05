@@ -1700,6 +1700,71 @@ button {
   flex-basis: 100%;
 }
 
+/* ---- command palette (#139) */
+
+.picker.palette {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(620px, calc(100vw - 32px));
+  height: min(460px, 70vh);
+}
+
+.picker.palette.phone {
+  width: auto;
+  height: var(--app-height);
+}
+
+.palette-row {
+  font-family: inherit;
+}
+
+.palette-group {
+  flex: none;
+  min-width: 4.5em;
+  font-size: 11px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.palette-row .picker-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.palette-row.danger .picker-label {
+  color: var(--danger);
+}
+
+.palette-row.disabled .picker-label {
+  color: var(--dim);
+}
+
+.palette-detail,
+.palette-recent {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.palette-recent {
+  color: var(--accent);
+}
+
+.menu-key {
+  float: right;
+  margin-left: 2em;
+  font: 11px ui-monospace, monospace;
+  color: var(--dim);
+}
+
+.palette-row .menu-key {
+  float: none;
+  margin-left: 0;
+}
+
 /* ---- questions and forms from agents (M6c) ---- */
 
 .agent-asks {

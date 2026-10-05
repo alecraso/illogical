@@ -17,6 +17,7 @@ import { openSandboxes } from "./sandboxes";
 import { openPicker } from "./picker";
 import { NotifySection } from "./notify";
 import { openGettingStarted } from "./welcome";
+import { openPalette } from "./palette";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -123,6 +124,9 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
         ))}
         <NotifySection client={client} session={client.session} />
         <div class="sheet-actions">
+          <button data-open-palette onClick={act(() => openPalette(client, true))}>
+            Commands
+          </button>
           <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
             New tab
           </button>
