@@ -26,8 +26,7 @@ PORT="${ILLOGICAL_TESTNET_SSH_PORT:-22922}"
 log() { echo "[testnet up $PROFILE] $*" >&2; }
 die() { log "FAIL: $*"; exit 1; }
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+need_docker
 
 case "$PROFILE" in
   ssh) boxes="bastion box-bare box-systemd git"; profiles="--profile ssh" ;;
