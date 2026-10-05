@@ -4,8 +4,8 @@
 //!
 //! ```ignore
 //! let d = illogical_testkit::illogicald!("api").env("PS1", "$ ").start();
-//! let pane = d.post("/api/run", json!({"command": "true"}))["pane"].as_u64().unwrap();
-//! d.wait_for("the pane", || d.raw("GET", &format!("/api/panes/{pane}"), None).0 == 200);
+//! let pane = d.post("/api/run", json!({"command": "exit 4"}))["pane"].as_u64().unwrap();
+//! assert_eq!(d.get(&format!("/api/panes/{pane}/wait?until=exit&timeout=10"))["code"], 4);
 //! ```
 
 pub mod listen;

@@ -30,19 +30,61 @@ check` on Linux (geek), `just test` on macOS (jake-mini). See
 ## The daemon's integration tests
 
 `crates/daemon/tests/*.rs` start `illogicald` (`CARGO_BIN_EXE_illogicald`)
-with `--listen 127.0.0.1:0`, a short state directory under the temp dir,
-and usually `--shell "bash --norc --noprofile"`, then drive it over its
-Unix socket and HTTP API. Shared pieces:
+through `crates/testkit`, then drive it over its Unix socket and HTTP API.
 
-- `listen/`: waits for the port the daemon took (it writes it to
-  `state/listen`). Don't pick a free port yourself and pass it in: it can be
-  taken before the daemon binds it (#66).
-- `strays/`: removes what a test daemon leaves behind, programs and its
-  state directory (#35, #68).
-- `agentd/`: a daemon for agent block tests, driven over its socket.
+```rust
+use illogical_testkit::{Daemon, illogicald};
 
-Most files still have their own `Daemon` struct and start function; a
-shared harness is planned in #200.
+let d = illogicald!("api").env("PS1", "$ ").no_wisp().start();
+let pane = d.post("/api/run", json!({"command": "exit 4"}))["pane"].as_u64().unwrap();
+assert_eq!(d.get(&format!("/api/panes/{pane}/wait?until=exit&timeout=10"))["code"], 4);
+d.wait_for("its history", || d.get(&format!("/api/history?pane={pane}"))[0]["exit"] == 4);
+```
+
+`illogicald!(tag)` gives a `Builder` for the test's own daemon binary. Every
+daemon it starts gets `--listen 127.0.0.1:0`, `--no-manager-env`,
+`--shell "bash --norc --noprofile"` (`.shell()` or `.default_shell()` to
+change it), a short state dir under the temp dir named after the tag
+(`.state_dir()` for one of the test's own), and no `NOTIFY_SOCKET`; its
+output goes nowhere. The rest is the test's to say:
+
+- `.arg()`, `.args()`; `.no_wisp()` and `.no_tailscale()` keep this host's
+  wispd and tailscaled out of it; `.block_listen()` adds
+  `--block-listen 127.0.0.1:0`.
+- `.env()`, `.envs()`, `.env_remove()`, and `.path()` for its `PATH`, so a
+  test can keep it from finding something installed on this machine (chant,
+  say).
+- `.wait_secs()`: how long `wait_for` waits (15 s by default).
+- `.start()` runs it as a child of the test; `.service()` as a transient
+  systemd user service (FD store and scopes as in production), or `None`,
+  saying so, without a user manager.
+
+`start()` returns once the daemon answers on its socket and ports, and
+panics if it exits first. A `Daemon` has its `port`, `block_port` and
+`state` dir, and:
+
+- `raw`, `get`, `post`: requests over the socket (the owner's, so no
+  credential); `tcp`: one over TCP with exactly the headers given; `ws`: a
+  WebSocket request with the local token; `token`, `bearer`, `url`, `sock`.
+- `wait_for(what, f)`, and `illogical_testkit::wait_for` with a timeout of
+  its own.
+- `stop` (SIGTERM, as systemd stops it), `kill` (SIGKILL), `signal`, then
+  `start` to bring it back on the same ports and state; `restart_service`
+  and `unit` for a service.
+
+Dropping it kills it, kills what its panes left running and removes its
+state dir (#35, #68). With `ILLOGICAL_KEEP_TEST_STATE=1` the dir stays and
+its path is printed. A file that needs more (deleting machines it made,
+stopping the code-servers it started) wraps the `Daemon` in a struct of its
+own with a `Drop` that does that first, as `machines.rs` and `editors.rs`
+do.
+
+Also in the crate: `listen`, which reads the port a daemon took from
+`state/listen` (don't pick a free port yourself and pass it in: it can be
+taken before the daemon binds it, #66); `strays`, the cleanup above; and
+`Scratch`, a temp dir removed on drop. `crates/daemon/tests/agentd/` builds
+on it for agent block tests: a sessions dir for the fake agent, and helpers
+to open blocks and wait on them.
 
 The fakes:
 
@@ -113,5 +155,4 @@ Tracked in #200:
   dial out, Fountain, Forgejo. Modelled on terragucci's `stack/`.
 - Client fixtures: recorded daemon sessions a client can replay against,
   and a daemon check against previous releases' fixtures.
-- A shared harness crate in place of the per-file `Daemon` copies.
 - The Playwright suite in CI.
