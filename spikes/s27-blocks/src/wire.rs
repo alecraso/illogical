@@ -64,7 +64,10 @@ impl Grant {
         ensure!(self.daemon == daemon, "a grant for another daemon");
         ensure!(self.key.eq_ignore_ascii_case(&hex::encode(remote)), "a grant for another key");
         ensure!(self.expires > now, "the grant expired");
-        ensure!(trusted.iter().any(|t| t.eq_ignore_ascii_case(&self.by)), "signed by a device this daemon doesn't trust");
+        ensure!(
+            trusted.iter().any(|t| t.eq_ignore_ascii_case(&self.by)),
+            "signed by a device this daemon doesn't trust"
+        );
         let key: [u8; 32] = hex::decode(&self.by)?.try_into().map_err(|_| anyhow::anyhow!("bad signing key"))?;
         let sig: [u8; 64] = hex::decode(&self.sig)?.try_into().map_err(|_| anyhow::anyhow!("bad signature"))?;
         VerifyingKey::from_bytes(&key)?

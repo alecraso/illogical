@@ -4,7 +4,7 @@
 // restarting under it, and a parent page whose clock is a day off.
 
 import { type Page } from "@playwright/test";
-import { admin, controlStats, expect, type Opened, openBlock, record, type Stack, test, trustParent, workerStats } from "./stack.ts";
+import { admin, controlStats, expect, type Opened, openBlock, openDirect, record, type Stack, test, trustParent, workerStats } from "./stack.ts";
 
 /** A WebSocket echo in the block's page (through the shim), kept on
  * `window.echo`; `say` sends and waits for the echo. */
@@ -119,6 +119,7 @@ test("an idle worker is stopped by the browser; the block carries on", async ({ 
   const idle = Number(process.env.S27_IDLE_MS ?? 45_000);
   test.setTimeout(idle + 60_000);
   const b = await openBlock(parent, stack);
+  const today = await openDirect(parent, stack);
   await openEcho(b);
   const before = await workerStats(b.frame);
   // Nothing for a while: no requests, no messages to the worker.
@@ -131,7 +132,10 @@ test("an idle worker is stopped by the browser; the block carries on", async ({ 
   await record("idle-worker", browserName, {
     idleMs: idle,
     workerRestarted: after.started !== before.started,
+    workerReconnects: after.connects - (after.started === before.started ? before.connects : 0),
     firstRequestMs: first.ms,
+    secondRequestMs: (await get(b)).ms,
+    todayFirstRequestMs: (await get(today)).ms,
   });
 });
 

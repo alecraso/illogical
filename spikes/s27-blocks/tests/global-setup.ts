@@ -10,7 +10,8 @@ export default async function () {
   const port = Number(process.env.S27_PROXY_PORT ?? 7753);
   const server = http.createServer((_, res) => res.writeHead(405).end());
   const open = new Set<net.Socket>();
-  server.on("connect", (req, client, head) => {
+  server.on("connect", (req, duplex, head) => {
+    const client = duplex as net.Socket;
     open.add(client);
     client.on("close", () => open.delete(client));
     const [host, p] = (req.url ?? "").split(":");

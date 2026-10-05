@@ -5,7 +5,7 @@
 import { test as base, expect, type Frame, type Page } from "@playwright/test";
 
 export { admin, controlStats, freePort, MARKER, type Stack } from "./servers.ts";
-import { admin, controlStats, type Stack, startStack } from "./servers.ts";
+import { admin, type Stack, startStack } from "./servers.ts";
 
 let nextBlock = 1;
 

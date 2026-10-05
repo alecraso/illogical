@@ -118,7 +118,10 @@ pub fn admin(d: Arc<Daemon>) -> Router {
         port: u16,
     }
     Router::new()
-        .route("/info", get(|State(d): State<Arc<Daemon>>| async move { Json(json!({ "id": d.id(), "noise": d.noise() })) }))
+        .route(
+            "/info",
+            get(|State(d): State<Arc<Daemon>>| async move { Json(json!({ "id": d.id(), "noise": d.noise() })) }),
+        )
         .route(
             "/trust",
             post(|State(d): State<Arc<Daemon>>, Json(t): Json<Trust>| async move {
@@ -386,7 +389,8 @@ async fn serve(d: Arc<Daemon>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::
                     let (d, out) = (d.clone(), out.clone());
                     let h = tokio::spawn(async move {
                         if let Err(e) = proxy(&d, &out, sid, port, head, body).await {
-                            let _ = out.frame(wire::json_frame(b'X', sid, &json!({ "message": format!("{e:#}") }))).await;
+                            let _ =
+                                out.frame(wire::json_frame(b'X', sid, &json!({ "message": format!("{e:#}") }))).await;
                         }
                     });
                     streams.insert(sid, Stream::Running(h, None));
@@ -606,11 +610,8 @@ async fn direct_handler(State(d): State<Arc<Daemon>>, req: Request) -> Response 
 }
 
 async fn direct_proxy(d: &Daemon, port: u16, mut req: Request) -> anyhow::Result<Response> {
-    let pairs: Vec<(String, String)> = req
-        .headers()
-        .iter()
-        .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
-        .collect();
+    let pairs: Vec<(String, String)> =
+        req.headers().iter().filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned()))).collect();
     let upgrade = req.headers().get(header::UPGRADE).cloned();
     let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/").to_owned();
     let mut headers = request_headers(&pairs, port);

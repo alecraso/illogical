@@ -97,7 +97,7 @@ class ShimSocket extends EventTarget {
             this.fire(new Event("open"));
           },
           onMessage: (text, data) => {
-            const d = text ? dec.decode(data) : this.binaryType === "arraybuffer" ? data.buffer : new Blob([data]);
+            const d = text ? dec.decode(data) : this.binaryType === "arraybuffer" ? data.buffer : new Blob([data as Uint8Array<ArrayBuffer>]);
             this.fire(new MessageEvent("message", { data: d, origin: location.origin }));
           },
           onClose: (code, reason) => this.closed(code, reason),

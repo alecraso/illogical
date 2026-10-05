@@ -161,7 +161,8 @@ async fn by_host(State(c): State<Arc<Control>>, req: Request) -> Response {
             }
         }
         _ => {
-            let (mode, dest, site, sw) = (h("sec-fetch-mode"), h("sec-fetch-dest"), h("sec-fetch-site"), h("service-worker"));
+            let (mode, dest, site, sw) =
+                (h("sec-fetch-mode"), h("sec-fetch-dest"), h("sec-fetch-site"), h("service-worker"));
             if sw == "script" {
                 c.stats.app_workers.fetch_add(1, Ordering::Relaxed);
                 // The block's app registering a worker of its own: control
@@ -169,7 +170,10 @@ async fn by_host(State(c): State<Arc<Control>>, req: Request) -> Response {
                 // its own worker, which fetches the app's through the
                 // channel and runs it inside (see web/sw.ts).
                 let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
-                let body = format!("self.S27_APP_SW={};importScripts(\"/.s27/sw.js\");\n", serde_json::to_string(path).unwrap());
+                let body = format!(
+                    "self.S27_APP_SW={};importScripts(\"/.s27/sw.js\");\n",
+                    serde_json::to_string(path).unwrap()
+                );
                 let mut r = Response::new(Body::from(body));
                 r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(JS));
                 r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
@@ -204,10 +208,7 @@ fn boot(c: &Control) -> Response {
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(HTML));
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_str(&format!("frame-ancestors {}", c.origin)).unwrap(),
-    );
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_str(&format!("frame-ancestors {}", c.origin)).unwrap());
     r
 }
 
