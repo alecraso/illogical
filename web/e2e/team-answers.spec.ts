@@ -20,8 +20,10 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { devices, expect, test, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
-import { text } from "./helpers";
+import { text, closeContexts } from "./helpers";
 import { ANY, controlPort, listen } from "./ports";
+
+test.afterAll(closeContexts);
 
 let base = "";
 let github = "";
@@ -242,6 +244,10 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
   await ask.tap();
   await expect(jake.locator(`[data-trust-request="${pane}"]`)).toBeVisible();
   await jake.locator("[data-trust]").click();
+  // The grant goes over Jake's connection and the follow-up over Sam's:
+  // send it once the daemon says Sam is trusted, or it can get there first
+  // and be refused again.
+  await expect.poll(() => jake.evaluate((p) => window.__illogical.client.info(p)?.trusted?.length ?? 0, pane)).toBe(1);
   await box.fill("then open a PR");
   await sam.locator(`[data-pane="${pane}"] .followup button`).tap();
   await expect(sam.locator(`[data-pane="${pane}"] .followup-sent`)).toHaveText("Sent.");
@@ -331,11 +337,24 @@ test("a notification's Allow answers over the service worker's own channel", asy
     approve: { id: "toolu_push", title: "Bash: cargo publish --dry-run" },
     reason: { kind: "ask", actions: ["allow", "deny", "dismiss"] },
   };
-  await cdp.send("ServiceWorker.deliverPushMessage", { origin: base, registrationId, data: JSON.stringify(payload) });
+  // A notification exists only once its icon has loaded (from control, here),
+  // and that takes as long as the machine is busy: wait for the worker's
+  // showNotification to finish rather than polling getNotifications against
+  // expect's few seconds. (The worker stays up while DevTools is attached.)
   const worker = ctx.serviceWorkers()[0] ?? (await ctx.waitForEvent("serviceworker"));
-  await expect
-    .poll(() => worker.evaluate(async () => (await (self as unknown as { registration: ServiceWorkerRegistration }).registration.getNotifications()).map((n) => n.title)))
-    .toContain("Needs you");
+  await worker.evaluate(() => {
+    const g = self as unknown as { registration: ServiceWorkerRegistration; shown?: Promise<string> };
+    const r = g.registration;
+    const show = r.showNotification.bind(r);
+    g.shown = new Promise((resolve) => {
+      r.showNotification = (title, options) => show(title, options).then(() => resolve(title));
+    });
+  });
+  await cdp.send("ServiceWorker.deliverPushMessage", { origin: base, registrationId, data: JSON.stringify(payload) });
+  expect(await worker.evaluate(() => (self as unknown as { shown?: Promise<string> }).shown)).toBe("Needs you");
+  expect(
+    await worker.evaluate(async () => (await (self as unknown as { registration: ServiceWorkerRegistration }).registration.getNotifications()).map((n) => n.title)),
+  ).toContain("Needs you");
   await worker.evaluate(async () => {
     const g = self as unknown as { registration: ServiceWorkerRegistration; dispatchEvent(e: Event): boolean };
     const [n] = await g.registration.getNotifications({ tag: undefined });

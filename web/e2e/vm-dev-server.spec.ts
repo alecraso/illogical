@@ -10,9 +10,11 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Frame, type Page } from "@playwright/test";
-import { menu, open, paneEl, text, type as typeIn } from "./helpers";
+import { menu, open, paneEl, text, type as typeIn, closeContexts } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { ANY, blockPort, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 let BLOCKS = 0;
 let APP = "";

@@ -11,8 +11,10 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { controlPanel, ready, run, text } from "./helpers";
+import { controlPanel, ready, run, text, closeContexts } from "./helpers";
 import { ANY, controlPort, daemonPort, listen } from "./ports";
+
+test.afterAll(closeContexts);
 
 let base = "";
 const procs: ChildProcess[] = [];

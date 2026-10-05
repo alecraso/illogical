@@ -11,6 +11,9 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { FakeFleet } from "./fake-fleet";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 let fake: FakeFleet;
 

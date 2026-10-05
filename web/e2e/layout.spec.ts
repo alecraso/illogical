@@ -18,7 +18,10 @@ import {
   tabsInSession,
   text,
   type,
+  closeContexts,
 } from "./helpers";
+
+test.afterAll(closeContexts);
 
 test("split from the context menu, use both panes, close one", async ({ page }) => {
   await reset(page);

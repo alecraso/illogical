@@ -23,6 +23,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { tokenCookies } from "./local-token";
 import { daemon, iphone, launchWebkit, pixel7 } from "./phones";
 import { listen } from "./ports";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 const TOKEN = "e2e-studio-token";
 const OWNER = "me@example.com";

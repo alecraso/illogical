@@ -7,8 +7,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { active, menu, open, paneEl, panes, ready, tab, tabsInSession, text, type } from "./helpers";
+import { active, menu, open, paneEl, panes, ready, tab, tabsInSession, text, type, closeContexts } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+
+test.afterAll(closeContexts);
 
 let base = "";
 let daemon: ChildProcess;

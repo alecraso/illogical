@@ -20,6 +20,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron, devices, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath } from "@vscode/test-electron";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 const enabled = process.env.ILLOGICAL_TESTNET_EDITORS === "1";
 const port = Number(process.env.ILLOGICAL_TESTNET_EDITORS_DAEMON_PORT) || 17752;

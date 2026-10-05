@@ -18,6 +18,9 @@ import { join, resolve } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { iphone, launchWebkit, pixel7 } from "./phones";
 import { call, groups, home, keys, live, show, TeamControl } from "./team-fixture";
+import { closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 const control = new TeamControl("tswarm-phones");
 let webkit: Browser;

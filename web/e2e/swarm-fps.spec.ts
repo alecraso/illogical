@@ -4,7 +4,9 @@
 // synthetic fleet (src/swarm/fake.ts), drawn with physics awake throughout.
 
 import { devices, expect, test, type Page } from "@playwright/test";
-import { open } from "./helpers";
+import { open, closeContexts } from "./helpers";
+
+test.afterAll(closeContexts);
 
 /** What each theme's scene has that the others don't, to know it's drawn. */
 const MARK = { city: "lotOf", hive: "cellOf", timeline: "runsOf" } as const;
