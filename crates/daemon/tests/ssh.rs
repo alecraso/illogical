@@ -5,9 +5,11 @@
 //! client's agent, survives the connection going away, and a saved ssh host
 //! works with `--host`.
 //!
-//! Needs `just testnet up ssh` and the box's static binaries from this tree
-//! (`just static aarch64` on Apple silicon, `just static` on x86_64), or
-//! ILLOGICAL_SSH_BINARIES. Without them it says SKIP and passes. It
+//! Needs Docker, and the box's static binaries from this tree (`just static
+//! aarch64` on Apple silicon, `just static` on x86_64) or
+//! ILLOGICAL_SSH_BINARIES. It brings the stack up itself if it isn't (`just
+//! testnet up ssh`). Without Docker or the binaries it fails, saying what to
+//! run; only ILLOGICAL_SKIP_DOCKER=1 skips it, saying it didn't run. It
 //! recreates box-bare, so a run starts from a box with nothing on it.
 
 use std::{
@@ -145,21 +147,37 @@ fn agent(runtime: &Path) -> Agent {
     Agent(child, sock)
 }
 
+/// The ssh profile up: brought up here if it isn't. `false` only when
+/// ILLOGICAL_SKIP_DOCKER=1 and there's no Docker; without Docker otherwise,
+/// it fails.
+fn stack_up() -> bool {
+    let quiet = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    if !quiet(Command::new("docker").arg("info")) {
+        if std::env::var("ILLOGICAL_SKIP_DOCKER").as_deref() == Ok("1") {
+            eprintln!("SKIP (ILLOGICAL_SKIP_DOCKER=1): no Docker, so this test did NOT run");
+            return false;
+        }
+        panic!(
+            "Docker is not available (`docker info` failed): this test needs it. Start Docker, or set ILLOGICAL_SKIP_DOCKER=1 to skip it on purpose."
+        );
+    }
+    let reachable = || {
+        ssh_config().exists()
+            && quiet(Command::new("ssh").arg("-F").arg(ssh_config()).args(["-o", "BatchMode=yes", "box-bare", "true"]))
+    };
+    if !reachable() {
+        let up = Command::new(root().join("testnet/up.sh")).arg("ssh").status().unwrap();
+        assert!(up.success() && reachable(), "the test stack didn't come up: run `just testnet up ssh` and see why");
+    }
+    true
+}
+
 #[test]
 fn ssh_installs_runs_forwards_the_agent_and_saved_hosts_work() {
-    let cfg = ssh_config();
-    let reachable = cfg.exists()
-        && Command::new("ssh")
-            .arg("-F")
-            .arg(&cfg)
-            .args(["-o", "BatchMode=yes", "box-bare", "true"])
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-    if !reachable {
-        eprintln!("SKIP: the test stack isn't up (`just testnet up ssh`)");
+    if !stack_up() {
         return;
     }
+    let cfg = ssh_config();
     // A box with nothing on it.
     let st = Command::new("docker")
         .args(["compose", "-f"])
@@ -175,8 +193,10 @@ fn ssh_installs_runs_forwards_the_agent_and_saved_hosts_work() {
     )
     .unwrap();
     let Some(binaries) = box_binaries(arch.trim()) else {
-        eprintln!("SKIP: no static binaries for {} (`just static {}`)", arch.trim(), arch.trim());
-        return;
+        panic!(
+            "no static binaries for the box ({0}): run `just static {0}`, or set ILLOGICAL_SSH_BINARIES",
+            arch.trim()
+        );
     };
 
     // A short directory for the masters (a socket path is at most 104

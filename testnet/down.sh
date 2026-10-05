@@ -7,8 +7,16 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+# Docker is required: without it this fails. ILLOGICAL_SKIP_DOCKER=1 skips
+# on purpose, and says loudly that nothing ran.
+if ! docker info >/dev/null 2>&1; then
+  if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
+    echo "SKIP (ILLOGICAL_SKIP_DOCKER=1): Docker is not available, so the testnet did NOT run" >&2
+    exit 0
+  fi
+  echo "FAIL: Docker is not available (\`docker info\` failed). The testnet needs it: start Docker, or set ILLOGICAL_SKIP_DOCKER=1 to skip on purpose." >&2
+  exit 1
+fi
 
 docker compose -f "$HERE/compose.yaml" --profile ssh down -v --remove-orphans
 rm -rf "$HERE/.state"

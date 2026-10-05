@@ -14,8 +14,9 @@ just testnet down              # remove containers, networks and .state
 ssh -F testnet/.state/ssh_config box-bare   # or bastion, box-systemd
 ```
 
-Every script prints `SKIP: Docker is not available` and exits 0 without
-Docker. The claims expect fresh boxes: after installing anything on one,
+Docker is required: without it every script fails, saying so. Only
+`ILLOGICAL_SKIP_DOCKER=1` skips, and then the script prints that the testnet
+did not run. CI never sets it. The claims expect fresh boxes: after installing anything on one,
 `just testnet down` and `up` again (`bare` fails otherwise, as it should).
 
 ## Profiles
