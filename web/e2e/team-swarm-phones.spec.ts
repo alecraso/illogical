@@ -7,10 +7,10 @@
 // machine is a card on Bob's iPhone, Bob reruns it from there, and Alice's
 // phone sees it run again. A tap on a tile opens the pane.
 //
-// "Different networks" for real is the testnet's job: the gated test at
-// the end runs a machine in a container on its own Docker network with
-// `tc netem`, joined to this control, and the phones reach it only through
-// the relay. It runs with ILLOGICAL_TESTNET_PHONES=1 and Docker; see there.
+// "Different networks" for real is the testnet's job: the test at the end
+// runs a machine in a container on its own Docker network with `tc netem`,
+// joined to this control, and the phones reach it only through the relay.
+// It needs Docker and fails without it; see there.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
@@ -155,14 +155,21 @@ test("a tap on a tile opens the pane, on both phones", async () => {
 // `tc netem`, running the static illogicald (`just static aarch64` or
 // x86_64, per Docker's architecture). It joins this control, approved from
 // Alice's phone, and both phones' swarms reach it through the relay only
-// (the container's address isn't routable from here). Needs Docker and
-// ILLOGICAL_TESTNET_PHONES=1; elsewhere it skips.
+// (the container's address isn't routable from here). It needs Docker
+// and the static binary, and fails without them; only
+// ILLOGICAL_SKIP_DOCKER=1 skips it, saying so.
 test("a machine on another network, behind netem, in both phones' swarms", async () => {
-  test.skip(process.env.ILLOGICAL_TESTNET_PHONES !== "1", "set ILLOGICAL_TESTNET_PHONES=1 (needs Docker and a static illogicald)");
+  if (process.env.ILLOGICAL_SKIP_DOCKER === "1") console.log("SKIP: team-swarm-phones across networks (ILLOGICAL_SKIP_DOCKER=1)");
+  test.skip(process.env.ILLOGICAL_SKIP_DOCKER === "1", "ILLOGICAL_SKIP_DOCKER=1");
   test.setTimeout(300_000);
-  const arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], { encoding: "utf8" }).trim().replace("arm64", "aarch64");
+  let arch: string;
+  try {
+    arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], { encoding: "utf8" }).trim().replace("arm64", "aarch64");
+  } catch (e) {
+    throw new Error(`this test needs Docker (ILLOGICAL_SKIP_DOCKER=1 skips it): ${e}`);
+  }
   const bin = resolve(`../target/${arch}-unknown-linux-musl/release/illogicald`);
-  test.skip(!existsSync(bin), `no ${bin}: run just static ${arch}`);
+  expect(existsSync(bin), `no ${bin}: run just static ${arch}`).toBe(true);
   const project = process.env.COMPOSE_PROJECT_NAME ?? "illo-b4";
   const name = `${project}-netem-box`;
   const net = `${project}-netem`;

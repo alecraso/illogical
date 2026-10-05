@@ -463,8 +463,13 @@ These skip, saying why, unless what they need is there:
 | `just testnet test ssh` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
 | `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries |
 | `mcp.spec.ts`, "the real Claude Code runs a build over MCP" | `ANTHROPIC_API_KEY` and `claude` on PATH (costs a few cents) |
-| `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" | `ILLOGICAL_TESTNET_PHONES=1`, Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
 | `just macos launchd`, `safari`, `iterm2`, `app` | tart on an Apple silicon Mac, about 35 GB free, and network for the image, iTerm2 and the app's zip |
+
+`team-swarm-phones.spec.ts`'s "a machine on another network, behind netem"
+doesn't skip: it needs Docker and `just static <arch>` and fails without
+them (only `ILLOGICAL_SKIP_DOCKER=1` skips it, and prints SKIP). It builds
+a small Debian image with `tc` and `socat`, names its container and
+network after `COMPOSE_PROJECT_NAME`, and removes them after.
 
 ## The test stack
 
