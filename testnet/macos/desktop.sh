@@ -39,7 +39,8 @@ V="$HERE/vm.sh"
 VM="${ILLOGICAL_MACOS_VM:-illogical-macos-l}"
 DMG="${ILLOGICAL_DMG:-$ROOT/dist/illogical-desktop-macos-arm64.dmg}"
 
-command -v tart >/dev/null 2>&1 || { echo "SKIP: tart is not installed (brew install cirruslabs/cli/tart)"; exit 0; }
+# shellcheck source=testnet/macos/need-tart.sh
+. "$HERE/need-tart.sh"
 [ -f "$DMG" ] || { echo "no .dmg (ILLOGICAL_DMG, or build one: just desktop)" >&2; exit 2; }
 
 claims=("$@")

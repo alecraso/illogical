@@ -2621,6 +2621,7 @@ The launch issues (#19–#27: licence, releases, install, quickstart) come first
   - read-only links: a one-off X25519 key in the fragment, held by the daemon as a "from now" viewer until it expires, with an anonymous relay route only while links are live.
   - `e2e/teams.spec.ts` covers the done-when.
 - **Trust on first use:** each browser pins other accounts' roots, and team founders, the first time it sees them, and a fingerprint is shown to compare. Control could lie at that first sight, the same limit as Tailnet Lock's first sign-in.
+- **Presigned invites and expiry (#136, from #126).** The roster rule checks a redeem's `at` against the invite's `expires`, but the invitee writes `at`, so only control checks expiry with a clock of its own. The gap: an invitee holding the link redeems after expiry with a backdated `at`, no owner has written a roster version since the invite expired, and control lets it through. Decision (2026-10-04, from Jake via the user): accept the gap. A daemon doesn't check invite expiry against its own clock; control's check stands.
 - **Not covered by tests:** sharing a single session with a person outside a team (it's built, but not exercised end to end), and `illogical team lock` from the CLI (the lock is in the Teams panel).
 
 
@@ -4170,6 +4171,14 @@ One command: install over ssh, set up the service to outlive the login, run `ill
 - `illogical join` passes `--account` through to `illogicald join`, so the join runs with no terminal to confirm the fingerprint in.
 - A box that can't reach control: the CLI recognises `illogicald join`'s "can't reach control at" and says so, naming the box and control, with `illogical --ssh box tui` as the way that still works. The `unreachable` claim checks it on box-bare, which has no route out, joining the hosted control.
 - Not covered by the stack: jake-mini with no GUI session (launchd), which needs Track E's macOS harness.
+
+**A Mac with no GUI login (decided 2026-10-04):** Track E's tart VM showed that `illogicald install` over ssh fails for a user who hasn't logged in to the desktop: there's no `gui/UID` domain (`Bootstrap failed: 125`). A Background agent in `user/UID` installs without sudo and survives logging out but not a reboot; a LaunchDaemon with `UserName` survives both and needs sudo once.
+
+- `illogicald install` keeps the GUI-domain LaunchAgent when a GUI session exists. With no `gui/UID` domain it installs the same plist with `LimitLoadToSessionType` Background into `user/UID`, and prints plainly that the daemon won't start again after a reboot until the user logs in or runs `illogicald install --system`.
+- `illogicald install --system` installs `/Library/LaunchDaemons/illogicald.USER.plist` with `UserName`. It's run as the user, not root, says it needs sudo and prints each `sudo` command before running it; it never sudoes silently. It removes the user's LaunchAgent, so a later login doesn't start a second daemon. A later plain `install` keeps the LaunchDaemon (an upgrade shouldn't drop boot start); `illogicald uninstall` first goes back to an agent.
+- `illogicald uninstall` (new) removes whichever is installed: either agent, the LaunchDaemon (with sudo), or the systemd user service on Linux. Binaries and state stay.
+- `illogical --ssh box …` (M51/M52's `prepare`) starts a Mac box's daemon with `illogicald install` and passes its `note:` line through, so `illogical --ssh box join` shows the reboot warning. After a reboot the next `illogical --ssh` to the box starts it again. Upgrading a box over ssh restarts a LaunchAgent; a LaunchDaemon keeps the old binary until it restarts, since that needs sudo.
+- Tested by `just macos launchd` (docs/testing.md): default install over ssh with no GUI, the warning, logout, uninstall, the `--ssh` path, `--system` through a VM restart with its pane, and uninstall of the LaunchDaemon, with a `BREAK=1` form.
 
 #### SSH track: the person-free checks (2026-10-04)
 

@@ -4,7 +4,8 @@ Every test runs the real binaries as child processes, each with its own
 temp state directory and a port the OS picks. Anything outside illogical
 (GitHub, Fountain, an agent, Stripe) is a fake served by the test or a
 small script, or a response recorded from the real service and checked in.
-Nothing in the default run reaches the network or costs money.
+Nothing in the default run costs money, and no test waits for a person:
+what still needs one is listed under [By hand](#by-hand).
 
 ```sh
 just test        # Rust tests, the web typecheck, e2e-interop, control-smoke
@@ -12,16 +13,26 @@ just check       # just test, plus rustfmt and clippy (what CI runs on Linux)
 just e2e         # the browser tests, in the system Chrome and WebKit
 ```
 
+A test that can't run without its infrastructure fails, saying what to
+run. Missing Docker fails ([Tests that need Docker](#tests-that-need-docker)),
+and so do missing tart and its base VM ([the tart VM](#a-fresh-mac-the-tart-vm-harness)).
+Only `ILLOGICAL_SKIP_DOCKER=1` and `ILLOGICAL_SKIP_MACOS_VM=1` skip them,
+and they print that nothing ran; CI sets neither. Tests that need a secret
+or an account skip without it and name what's missing
+([Tests that skip without a secret](#tests-that-skip-without-a-secret)).
+
 ## What runs where
 
 | Command | What it runs | In CI |
 |---|---|---|
-| `cargo test --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/` | Linux and macOS |
+| `cargo test --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/`, `ssh.rs` and `reboot.rs` among them (Docker) | Linux and macOS |
 | `just e2e-interop` (in `just test`) | the browser's end-to-end crypto (`web/src/e2e`) against Rust's (`crates/e2e`): certificate vectors made by `crates/e2e/examples/interop.rs`, and a Noise handshake with its `responder` | Linux and macOS |
 | `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and real daemons; headless devices sign in, enroll, approve the daemons' join codes and reach them directly and through the relay; the CLI (M49) logs in with a code the device approves and, with no daemon of its own, runs, lists and captures on one machine directly and one through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one): the `chrome` project, and `webkit` for `*.webkit.spec.ts` | Linux (Playwright's Chromium and WebKit) |
 | `just e2e-webkit` | only the `webkit` project: Safari's engine, for device keys (#94) and the one-click invite (#137) | macOS |
 | `just testnet up`, `test`, `break` (`ssh`, then `control`) | the Docker test stack's claims ([testnet/README.md](../testnet/README.md)), then each claim under `BREAK=1`, where it must fail | Linux |
+| `just forges`, `just testnet-hosts`, `just testnet-editors` | real forges, two hosts and VS Code over Remote-SSH, in Docker ([below](#real-forges-two-hosts-vs-code-over-remote-ssh)) | the forges nightly (`forges-nightly.yml`) |
+| `just macos <test>` | the tart VM's checks: launchd with no GUI session, real Safari, iTerm2, the desktop app ([below](#a-fresh-mac-the-tart-vm-harness)) | no |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
 | `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): `join` (#204) and `m46` (see [The desktop app's tests](#the-desktop-apps-tests)) | no |
 | `just desktop-packages ARCH` | the .deb on Ubuntu 22.04 and the .rpm on Fedora 42 install and claim `illogical://` (after `just desktop-linux ARCH`) | no |
@@ -29,13 +40,18 @@ just e2e         # the browser tests, in the system Chrome and WebKit
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
 CI (`.github/workflows/check.yml`) runs on pushes, on our own machines: the
-testnet's ssh and control profiles, `just check` and `just e2e` on Linux (geek); `just
-test` and `just e2e-webkit` on macOS (jake-mini). Both runners need Docker
-(the testnet, and `ssh.rs` in `just test`): without it the run fails.
-`just browsers` installs Playwright's browsers (with their system
-libraries on Linux, if sudo needs no password; otherwise run `sudo pnpm exec
-playwright install-deps` in `web/` once). See
+testnet's ssh and control profiles, `just check` and `just e2e` on Linux
+(geek); `just test` and `just e2e-webkit` on macOS (jake-mini). Both
+runners need Docker (the testnet, and `ssh.rs` in `just test`): without it
+the run fails. `just browsers` installs Playwright's browsers (with their
+system libraries on Linux, if sudo needs no password; otherwise run `sudo
+pnpm exec playwright install-deps` in `web/` once). See
 [development.md](development.md) for the runners.
+
+Not tests, but useful while working: `just dev` (a separate daemon on 7682
+and Vite on 5173), `just fake-fleet` (three throwaway daemons with
+scripted work on 7730-7732, for the swarm) and `just screenshots` (the
+images in `site/img/`, from a scripted session).
 
 ## The daemon's integration tests
 
@@ -96,6 +112,8 @@ taken before the daemon binds it, #66); `strays`, the cleanup above; and
 on it for agent block tests: a sessions dir for the fake agent, and helpers
 to open blocks and wait on them.
 
+### Waiting
+
 Waiting on something that takes as long as the machine is busy (a flood
 of output, a build): stop it or wait for its end, never sleep a fixed time
 and hope, and make deadlines failure limits that are generous (tens of
@@ -119,6 +137,8 @@ first of these turned up a daemon bug: a pane read its agent's screen
 only when no command had come for a whole tick, so polling more often
 than that kept the screen from being read at all.
 
+### Standing permission rules
+
 Standing permission rules (#166) are tested in `agents.rs`
 (`standing_rules_outlive_the_block_that_made_them`: a `cwd` rule answers a
 new block below that directory and not one elsewhere, an `everywhere`
@@ -130,7 +150,7 @@ card, a second block that never asks, and *Permission rules…* in the
 session menu forgetting it). The browser test clears the rules first: the
 suite's daemon keeps them between specs.
 
-The fakes:
+### The fakes
 
 - `fake_acp.py`: an ACP agent, standing in for Claude Code's adapter and
   for `fountain`.
@@ -142,38 +162,6 @@ The fakes:
 - Fakes inside the test files themselves: Fountain's API (`fountain.rs`),
   control's relay socket and GitHub App token endpoint, GitHub and Forgejo
   with stand-in `gh` and `tea` (`forge_live.rs`), `systemctl` and `sudo`.
-
-### Guest ssh (M54)
-
-`crates/daemon/tests/guest_ssh.rs` runs the system OpenSSH client
-(`/usr/bin/ssh`, 8.5 or later for `KnownHostsCommand`) against a dev
-daemon started with `--guest-ssh 127.0.0.1:0 --guest-ssh-host 127.0.0.1`.
-Each guest is the command the daemon printed, run by `sh` on a
-pseudo-terminal that is its controlling terminal (so a resize reaches ssh as
-SIGWINCH), with `-F /dev/null -o BatchMode=yes` added so the runner's own
-ssh config and agent stay out of it. They check:
-
-- a read-only guest sees the screen and live output, its typing never
-  reaches the pane, and a single-use token can't log in twice;
-- a read-write guest types under its label (`/api/panes/N/drivers`),
-  drives, sizes the pane (`stty size`), and holds off a second guest on the
-  same reusable invite;
-- revoking cuts a live guest off within a second or two, expiry ends a live
-  session and refuses new logins, and closing the pane ends the session and
-  its invite;
-- a wrong token gets `Permission denied` with no prompt; a different host
-  key in the command fails host-key verification before the token is sent
-  (the invite stays unspent); `exec` is refused; the port closes once the
-  last invite is gone;
-- `illogical share --guest` prints a command that works, and `illogical
-  guests` lists and revokes.
-
-Run them with `cargo test -p illogicald --test guest_ssh`. They skip,
-saying so, if there's no `ssh` on PATH. The relay path through control is a
-skipped stub until it's built (PLAN.md, M54). `web/e2e/guest-ssh.spec.ts`
-covers *Invite over ssh…* in the pane menu, on desktop and phone viewports,
-with the same system ssh (`pnpm exec playwright test e2e/guest-ssh.spec.ts`
-in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
 
 ## The replay agent
 
@@ -243,6 +231,7 @@ Recorded from real systems and checked in, so tests see real shapes:
 | `crates/vt/fixtures/agents/` | Claude Code and Codex sessions with their timing, for the replay agent | `crates/vt/fixtures/agents/record.py NAME` |
 | `crates/daemon/tests/fixtures/github`, `gitlab`, `forgejo` | API responses for real PRs and issues (from S23) | by hand, as in `spikes/s23-forge/` |
 | `crates/daemon/tests/fixtures/conversations/` | Claude Code transcripts, one per shape (S20) | by hand, as in `spikes/s20-conversations/` |
+| `crates/daemon/tests/fixtures/conversations/desktop/` | the Claude desktop app's Code tab session records (#81, #83), made up from the fields S20 saw | by hand |
 | `crates/daemon/tests/fixtures/s13-*`, `s18-*` | Claude Code hook payloads | by hand |
 | `crates/daemon/tests/fixtures/fountain/`, `chant/` | Fountain API and chant output | by hand |
 
@@ -287,7 +276,7 @@ cd web && pnpm exec playwright test e2e/palette.spec.ts e2e/palette.webkit.spec.
 
 WebKit needs `pnpm exec playwright install webkit` once.
 
-## Spike: blocks through control (S27)
+### Spike: blocks through control (S27)
 
 `spikes/s27-blocks/` has its own Playwright suite for #148 (blocks served
 from control's block domain, carried to the daemon over Noise by a service
@@ -316,9 +305,9 @@ each spec checks:
 
 Measurements are appended to `.run/results.jsonl` with the load average.
 `safari/safari.ts --print-setup` lists what a Mac needs first (sudo:
-`safaridriver --enable`, the test certificate trusted, `/etc/hosts`);
-the tart VM harness (below) is where it runs unattended. `--driver
-playwright-webkit` checks the script itself without Safari.
+`safaridriver --enable`, the test certificate trusted, `/etc/hosts`).
+Running it unattended in the tart VM isn't done yet ([Planned](#planned)).
+`--driver playwright-webkit` checks the script itself without Safari.
 
 ## A device that approves things
 
@@ -411,23 +400,12 @@ Three tests cover M49, from fastest to most faithful:
 - `web/e2e/host-menu-control.spec.ts` (`just e2e`): a daemon joined by
   code (approved by the device) has *All your machines…* in its host menu,
   opening control's page; one that isn't joined doesn't.
-- The testnet's `m49` claim, which needs Docker:
-
-  ```sh
-  just testnet up control
-  just testnet test control m49        # PASS
-  BREAK=1 just testnet test control m49  # must FAIL: the CLI isn't logged in
-  ```
-
-  box-systemd and box-bare join the stack's control over ssh; box-bare's
-  daemon is restarted listening on the inner network with
-  `ILLOGICAL_DIRECT_URL=http://box-bare:7681`, and box-systemd lists no
-  URL, so it's only reachable through the relay. The CLI runs on the
-  bastion (on the inner network, no daemon, no `hosts.json`): `illogical
-  login` there prints a code that `device-cli.ts approve` approves, then
-  `--host box-bare` must report "direct" and `--host box-systemd`
-  "relayed" (`ILLOGICAL_VERBOSE=1`), and both `run`, `ls` and `capture`.
-  Beside another worktree's stack: `COMPOSE_PROJECT_NAME=illo-j
+- The testnet's `m49` claim (`just testnet test control m49`; Docker):
+  the CLI on the bastion, with no daemon, logs in and reaches box-bare
+  directly and box-systemd through the relay. It's in the
+  [SSH track's table](#the-ssh-tracks-tests) and
+  [testnet/README.md](../testnet/README.md#claims). Beside another
+  worktree's stack: `COMPOSE_PROJECT_NAME=illo-j
   ILLOGICAL_TESTNET_INNER_NET=10.229.85 ILLOGICAL_TESTNET_SSH_PORT=22955
   ILLOGICAL_TESTNET_CONTROL_PORT=22985 ILLOGICAL_TESTNET_FAKES_PORT=22986`.
 
@@ -463,157 +441,46 @@ people signed in on any browser context, and machines joined to it.
 | M11 | `changes.spec.ts` (Pixel 7), `changes.webkit.spec.ts` (iPhone) | Changes, a hunk's line, a live file block; a failed build's push through the fake service, and Rerun from the notification (Pixel 7) or Needs you (iPhone) |
 | M16 | `mcp.spec.ts`, "watched from a phone" | an MCP client's build drawn live on a Pixel 7, Failed on its Needs you, fixed and rerun by the client |
 | M27 | `editors.spec.ts` | an editor block opened from a Pixel 7 and from an iPhone, the file at its line in under 3 s on a warm server |
-| M26, M30 | `team-swarm-phones.spec.ts` | two teammates' swarms on a Pixel 7 (Chrome's network emulation, 150 ms, 1.6 Mbit/s) and an iPhone: grouped by person, cards along the bottom, a rerun from the iPhone's card seen on the Pixel, a tile tap opening the pane |
+| M26, M30 | `team-swarm-phones.spec.ts` | two teammates' swarms on a Pixel 7 (Chrome's network emulation, 150 ms, 1.6 Mbit/s) and an iPhone: grouped by person, cards along the bottom, a rerun from the iPhone's card seen on the Pixel, a tile tap opening the pane; and a machine on another network behind netem (Docker, [below](#tests-that-need-docker)) |
 | #86 | `studio-phone.spec.ts` | a studio app from the template through the token API (a fake studio and box), `illogical studio login`, `hud share --role follower`, `illogical studio follower`, `illogical app`; a question answered from a Pixel 7 and a gate approved from an iPhone, with hud told who |
 
 Run one with `cd web && E2E_PORT=<port> pnpm exec playwright test
 e2e/<spec>`; `editors.spec.ts` needs code-server, which its first test
 downloads.
 
-## A fresh Mac: the tart VM harness
-
-macOS checks that need a whole Mac (a user who never logged in to the GUI,
-real Safari, iTerm2, the desktop app) run in a throwaway macOS VM made with
-[tart](https://tart.run), driven over ssh. No person and no window on the
-host: everything with a GUI happens inside the VM, whose image logs `admin`
-in to its own GUI session at boot. The scripts are in `testnet/macos/`.
-
-```sh
-just macos launchd           # launchd with no GUI session (S28, M52)
-just macos safari            # web/safari against real Safari (#94, #137)
-just macos iterm2            # M5 (tmux -CC) and M32 (OSC 52) in iTerm2
-just macos app               # the desktop app in cloud mode (#178)
-just macos up | ssh CMD | down   # the VM by hand
-```
-
-`just macos <test>` builds the debug binaries first, then runs
-`testnet/macos/test.sh <test>`. Each test clones a fresh VM, runs, and
-deletes the clone (`KEEP=1` leaves it running for a look). `BREAK=1` breaks
-what each check is about, and every check must then fail, as in the
-testnet's claims.
-
-### Setup
-
-- **tart.** `brew install cirruslabs/cli/tart`, or, while that tap's
-  formula fails on current Homebrew, `tart.tar.gz` from its GitHub release
-  (`tart.app` into `~/Applications`, `tart` on `PATH`). Without tart every
-  script prints `SKIP: tart is not installed` and exits 0.
-- **The base image.** `vm.sh up` makes a local VM `illogical-macos-base`
-  from `ghcr.io/cirruslabs/macos-tahoe-base:latest` (macOS 26.6, Safari,
-  the Command Line Tools, no Xcode; `ILLOGICAL_MACOS_IMAGE` picks another),
-  then empties tart's OCI cache (`tart prune --entries=caches`), so the disk
-  holds one copy, about 30 GB, not two. The base is never booted.
-- **Clones.** Every test VM is an APFS clone of the base (`tart clone`,
-  nearly free on disk), booted headless (`tart run --no-graphics`). `up`
-  puts the harness key (`testnet/macos/.state/`, ignored by git) into
-  admin's `authorized_keys` through the tart guest agent; after that it's
-  plain ssh as `admin` (whose password is `admin`, with passwordless sudo).
-  `down` deletes the clone. Keep it to the base plus one running clone:
-  macOS allows two VMs per host, and each clone grows as it's used.
-
-### The tests
-
-| Test | Checks | How |
-|---|---|---|
-| `launchd` (`install`, `logout`, `reboot`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, installs the daemon and starts a pane; the daemon and pane outlive the ssh session; after `tart stop` and `run`, with nobody logged in as them, the daemon is back with its pane. | `ILLOGICAL_MACOS_INSTALL` picks the install: `product` (`illogicald install`, the default), `background` (the plist bootstrapped into `user/UID` with `LimitLoadToSessionType` Background, no sudo) or `system` (a LaunchDaemon with `UserName`, sudo once). |
-| `safari` | `/key-probe.html` puts its verdict in the DOM (`data-verdict` on `#verdict`: `keys`, `wrapped` or `none`, and JSON in `#result`), and it's `keys` or `wrapped`. A signed-out invitee opens a presigned invite, signs in through GitHub and joins in one click; the owner's Chrome sees them in the roster. | `web/safari/safari.spec.ts` with a small WebDriver client (`web/safari/webdriver.ts`). safaridriver runs in the VM (`sudo safaridriver --enable` once); its port comes to the host over ssh, and control and the fake GitHub, run on the host, are forwarded to the same ports on the VM's loopback. `SAFARIDRIVER_URL` alone runs the spec against any safaridriver. |
-| `iterm2` (`attach`, `type`, `output`, `split`, `tab`, `osc52`) | iTerm2 runs `illogical tmux -CC` and opens a native window for the daemon's tab; text written there runs in the pane; the pane's output shows in iTerm2; a split in iTerm2 adds a pane; a daemon tab becomes an iTerm2 tab. `illogical tui` in iTerm2 copies a line in copy mode, and `pbpaste` has it. | iTerm2's latest stable zip, driven by AppleScript over ssh. The VM's TCC database (SIP is off in the image) gets Apple Events for sshd and osascript to iTerm2 before it starts, so nothing asks. |
-| `app` (`signin`, `approve`, `machines`, `reach`) | The release's app (`ILLOGICAL_MACOS_APP_ZIP` for another) signs in to control through the browser hand-over, is approved as a new device, lists every machine on the account (one on the host, and the Mac's own daemon once it joins), and keystrokes in its terminal run in that machine's pane. | `testnet/macos/app-cloud.ts`. Control, the fake GitHub and the host's machine run here; `web/fixtures/device.ts` is the person: it reads the app's `/#app=` page from Safari (AppleScript), allows it, hands the grant to the app's loopback port, and approves the app. The app's window is read through accessibility (JXA and System Events). |
-
-What they found (2026-10-05, macOS 26.6.2 in the VM):
-
-- **launchd:** `illogicald install` over ssh with no GUI session fails:
-  there's no `gui/UID` domain until the user logs in to the GUI
-  (`Bootstrap failed: 125: Domain does not support specified action`). A
-  Background agent in `user/UID` installs without sudo and survives the
-  logout, but not a restart: nothing loads it until that user logs in to
-  the GUI again, and an ssh login doesn't. A LaunchDaemon with `UserName`
-  survives both, with its panes restored. So `launchd` fails today in its
-  default mode, `background` passes `install` and `logout`, and `system`
-  passes all three.
-- **Safari 26.6.2:** Ed25519 keys survive a reload, X25519 keys come back
-  from IndexedDB as null, and the wrapped fallback works (verdict
-  `wrapped`), as in Playwright's WebKit. The presigned invite passes.
-- **iTerm2 3.7.3:** every check passes. In copy mode, `[` `o` (a command's
-  output by its marks) found nothing in the TUI over macOS's bash 3.2; the
-  test copies a line instead.
-- **The app (0.17.0):** every check passes.
-
-### On the macos-arm64 runner
-
-The same scripts run on the self-hosted runner (jake-mini) once tart is
-installed there: Apple silicon runs the VMs without nesting. A job would
-run `just macos launchd`, `safari`, `iterm2` and `app` in turn (never two
-at once), and needs about 35 GB free for the base and one clone. It should
-make the base once and keep it between runs (the prune leaves no cache
-behind), and always end with `vm.sh down`. Not tried there yet: tart
-needs the runner's user to be able to use Virtualization.framework from
-the runner service. The Safari spec could also run on the runner's own
-Safari, without a VM, after a one-time `sudo safaridriver --enable` there
-and with a GUI login on the runner.
-
-### What isn't automated
-
-- **The iOS Simulator** (`safari:useSimulator`): the base image has no
-  Xcode. cirruslabs' Xcode images have it, at roughly twice the disk; the
-  spec would need only that capability. Not run.
-- **A physical iPhone's Safari and keychain.** The Simulator approximates
-  it; nothing drives a real phone.
-- **The Claude desktop app signed in (#81, #83).** It needs a real
-  Anthropic account, so its Code tab session records are a fixture
-  (`crates/daemon/tests/fixtures/conversations/desktop/`, made up from the
-  fields S20 saw) and `conversations.rs` checks the daemon reads them where
-  the app keeps them on each OS. What the app shows after illogical
-  continues or forks one of its sessions needs the signed-in app.
-- **Gatekeeper on a downloaded app.** The test fetches the zip with curl,
-  which sets no quarantine flag, so the first-launch prompt a browser
-  download gets isn't covered (the app is ad hoc signed until #177).
-- **iTerm2 beyond tmux's basics:** dragging dividers, resizing windows,
-  detach and reattach from development.md's script aren't in `iterm2` yet;
-  they can be, with the same AppleScript.
-
 ## Tests that need Docker
 
 Docker is required for these. Without it they fail, saying what to run;
 they don't skip. Only `ILLOGICAL_SKIP_DOCKER=1` skips them, and each then
-prints that it did not run. CI never sets it.
+prints that it did not run. CI never sets it. The ones that use the test
+stack recreate the boxes they use, so give each worktree its own stack
+(`COMPOSE_PROJECT_NAME` and the `ILLOGICAL_TESTNET_*` ports,
+[testnet/README.md](../testnet/README.md#conventions)).
 
-| Test | Needs |
-|---|---|
-| `just testnet up`, `test`, `break`, `down` | Docker ([testnet/README.md](../testnet/README.md)) |
-| `crates/daemon/tests/ssh.rs`, `reboot.rs` (in `just test`) | Docker, and the box's binaries: `just static aarch64` on Apple silicon, `just static` on x86_64 (or `ILLOGICAL_SSH_BINARIES`). They bring the ssh profile up themselves if it isn't. |
-| `just testnet test control` (M52 and M49 end to end) | Docker and node, and `just testnet up control` first, which needs the static binaries |
-| `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" (in `just e2e`) | Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
+| Test | Also needs | Run |
+|---|---|---|
+| the testnet's claims | `ssh`: nothing more. `control`: node, and the static binaries (`just static aarch64` on Apple silicon, `just static` on x86_64) | `just testnet up ssh` (or `control`), `just testnet test ssh`, `just testnet break ssh`, `just testnet down` |
+| `crates/daemon/tests/ssh.rs`, `reboot.rs` (in `just test`) | the box's static binaries (or `ILLOGICAL_SSH_BINARIES`); `reboot.rs` also node and Playwright's Chromium in `web/` (`cd web && pnpm install`) | `cargo test -p illogicald --test ssh` (or `--test reboot`); they bring the `ssh` profile up themselves |
+| `testnet/measure-tailnet.sh` (S28) | the static binaries | `just testnet measure tailnet`; it brings the `tailnet` profile up itself |
+| `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" (in `just e2e`) | `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after | `just e2e` |
+| `just desktop-xvfb` | podman or Docker | `just desktop-xvfb` |
+| forges, two hosts, VS Code over Remote-SSH | see [below](#real-forges-two-hosts-vs-code-over-remote-ssh) | their own recipes |
 
-## The test stack
+What the stack-based tests guard is in [The SSH track's
+tests](#the-ssh-tracks-tests).
+
+### The test stack
 
 [`testnet/`](../testnet/README.md) is a Docker Compose stack, one profile per
-network shape, for what one host's loopback can't show. Its README has the
-profiles, the claims each one checks (and how `BREAK=1` breaks them), and
-how to run two stacks side by side (`COMPOSE_PROJECT_NAME`). Tests built on
-it:
+network shape, for what one host's loopback can't show: `ssh` (a bastion,
+a bare box, a systemd box and a git server), `control` (`ssh`'s, plus
+control and its fakes) and `tailnet` (headscale and two Tailscale nodes).
+Its README has each container, the claims each profile checks (and how
+`BREAK=1` breaks them), and how to run two stacks side by side.
 
-| What | Where | Run |
-|---|---|---|
-| M51: `--ssh` installs illogical on a bare box behind a bastion, runs and captures panes, forwards the agent; a `git push` from a pane reaches the stack's git server with the forwarded agent and is refused without it | `crates/daemon/tests/ssh.rs` | `just testnet up ssh`, `just static <arch>`, then `cargo test -p illogicald --test ssh` |
-| #26: a lingering daemon on box-systemd survives `docker restart` (twice): up with nobody logged in, layout, directories and coloured scrollback back with `── restored`, every pane by its policy, the browser and agent blocks, "saved for shutdown" and "restored" in the journal | `crates/daemon/tests/reboot.rs` | as above, plus `cd web && pnpm install`; `cargo test -p illogicald --test reboot` |
-| A headless web client attached across that restart reconnects by itself, without reloading | `web/reconnect-watch.ts`, driven by `reboot.rs` | (in `reboot.rs`) |
-| S28: the same daemon over `--ssh` and over a tailnet (headscale and two Tailscale nodes), timed | `testnet/measure-tailnet.sh` | `just testnet up tailnet`, `just static <arch>`, `just testnet measure tailnet` |
+### Real forges, two hosts, VS Code over Remote-SSH
 
-These require Docker: without it they fail, and they bring the stack's
-profile up themselves when it isn't. They also need `just static <arch>`
-(`reboot.rs` also node and Playwright's Chromium in `web/`), and fail saying
-so without it. `ILLOGICAL_SKIP_DOCKER=1` is the only way to skip them, and
-they print that nothing ran. They recreate the boxes they use, so give each
-worktree its own stack (`COMPOSE_PROJECT_NAME` and
-`ILLOGICAL_TESTNET_SSH_PORT`). CI runs them in `just check` and `just test`,
-and the ssh and control profiles' claims on Linux (see "What runs where").
-
-## Docker stacks: real forges, two hosts, VS Code over Remote-SSH
-
-These need Docker. Without it they fail (non-zero exit); only
-`ILLOGICAL_SKIP_DOCKER=1` skips them, and then they print that nothing
-ran. They aren't part of `just check`: each has its own recipe.
+These aren't part of `just check`: each has its own recipe.
 
 | What | Run | Details |
 |---|---|---|
@@ -627,11 +494,11 @@ The forge tests are `crates/daemon/tests/forges_real.rs`, marked
 `up.sh` started, and they fail if it isn't there. The other two are
 Playwright specs (`web/e2e/testnet-hosts.spec.ts`,
 `web/e2e/editor-remote-ssh.spec.ts`) that bring their stack up and down
-themselves; `just e2e` lists them as skipped unless their recipe's
-variable (`ILLOGICAL_TESTNET_HOSTS=1`, `ILLOGICAL_TESTNET_EDITORS=1`) is
-set.
+themselves. A plain `just e2e` lists them as skipped, since they belong to
+their own recipes, which set `ILLOGICAL_TESTNET_HOSTS=1` or
+`ILLOGICAL_TESTNET_EDITORS=1`; with that set and no Docker they fail.
 
-### The nightly job against github.com
+#### The nightly job against github.com
 
 `.github/workflows/forges-nightly.yml` runs every night and on demand
 (never on pull requests): the Forgejo and GitLab tests above, and
@@ -655,6 +522,241 @@ Control is stood in for in that test, and the App's deliveries are read
 back through GitHub's API (a runner has no public URL), so control
 checking GitHub's signature on a real delivery is not covered there.
 
+## The SSH track's tests
+
+S28 (#153), M51 (#154), M52 (#155) and M54 (#198) each promise something
+about reaching a machine over ssh (PLAN.md, "SSH track" and M54). The
+tests below guard those promises, so when one fails, the table says which
+promise broke.
+
+The promises:
+
+1. A box you can ssh into needs nothing set up first: the first `illogical
+   --ssh box` command installs illogical there and starts its daemon.
+2. The daemon outlives the ssh login: a lingering systemd user service on
+   Linux, and on macOS a launchd service for a user with no GUI session.
+3. Only the owner's forwarded agent reaches panes, so `git push` from a
+   pane works while the owner is attached with their agent, and not
+   without it.
+4. ssh is enough to join control (M52). Afterwards control reaches the box
+   with ssh closed, and again after the box reboots.
+5. A box that can't reach control is told so clearly, and stays reachable
+   over `--ssh`.
+6. A guest with only OpenSSH can watch or drive one pane, and nothing else
+   (M54).
+
+### What the stack stands for
+
+Each container in [`testnet/`](../testnet/README.md#profiles) stands in for
+a machine in those promises:
+
+- `bastion`: a ProxyJump host in front of a private network. It's the only
+  container the host can reach (`127.0.0.1:22922`).
+- `box-bare`: a fresh machine. No illogical, no state, no route out; it's
+  reached only through the bastion, so anything installed on it arrived
+  over ssh.
+- `box-systemd`: a Linux server with systemd as PID 1, logind and polkit,
+  for lingering. `docker restart` is its reboot: systemd shuts down
+  cleanly and boots again, and its journal is kept.
+- `git`: a forge's ssh git server, bare repositories behind `git-shell`.
+  It knows only the client's key, and the boxes have no key of their own,
+  so a push from a box can only have used a forwarded agent.
+- `control` and `fakes` (the `control` profile): `illogical-control` with
+  its relay, at a private address on the inner network that the boxes
+  reach by dialing out, and fake GitHub, Stripe and Web Push.
+  `web/fixtures/device-cli.ts` on the host is the person's phone or
+  browser ([A device that approves things](#a-device-that-approves-things)).
+- `headscale`, `ts-box` and `ts-client` (the `tailnet` profile): the
+  tailnet path that S28 compares ssh against.
+
+launchd needs a Mac, so it runs in the [tart VM](#a-fresh-mac-the-tart-vm-harness):
+a user made with `sysadminctl` who has never logged in to the GUI and is
+reached only over ssh.
+
+### What each test guards
+
+| Test | Closes | What it does | A failure means |
+|---|---|---|---|
+| `just testnet test ssh` (`login`, `jump`, `inner`, `bare`, `stdio`, `agent`, `push`, `linger`) | the ground under #153 (S28) and #154 (M51) | checks the stack is the shape the other tests assume: the key and host keys work, ProxyJump works, box-bare has no route out and no illogical, 1 MiB of random bytes cross ssh's stdio unchanged, a forwarded agent shows on the box, `git push` works with only the forwarded agent, and a user turns on lingering with no sudo | the environment changed, not illogical: read it before any other failure. `bare` fails on a box an earlier run installed on (`just testnet down` and `up`); `stdio` means the transport S28's bridge rides on isn't clean; `linger` means no Linux box could keep a daemon past logout without sudo |
+| `crates/daemon/tests/ssh.rs` | #154 (M51): "an e2e test drives it against a local sshd"; `git push` uses the client's agent | on a recreated box-bare: the first `--ssh box-bare ls` installs and starts the daemon; `run` and `capture` a pane; the client's key shows in a pane while a client is attached; a `git push` from a pane reaches the git server; the same push with `ILLOGICAL_SSH_AGENT=no` is refused; the pane outlives the connection; a saved `ssh://box-bare` host works with `--host`, and an option as a destination (`ssh://-oProxyCommand=id`) is refused | promise 1 (no install or no daemon on a fresh box), promise 3 (the push failed with the agent, or worked without it, so panes see some other agent or none), promise 2 (the pane went with the connection), or the host list |
+| `crates/daemon/tests/reboot.rs` | #26; M52's "the box survives a reboot" on Linux | installs over `--ssh` as a lingering user service, builds #26's session (splits, a nested directory, coloured output, every restart policy, a browser block, an agent block), then `docker restart` twice with nobody logged in; checks the daemon is up, the journal's "saved for shutdown" and "restored", layout, directories, scrollback with `── restored`, each pane by its policy, both blocks, and a headless web client (`web/reconnect-watch.ts`) reconnecting without a reload | promise 2 on Linux if the daemon isn't up after the restart (lingering, the user service); otherwise a restore regressed (#26), named by the assertion |
+| `just testnet test control signin reach` | the ground under #155 (M52) | a device signs in with the fake GitHub and is trusted; box-systemd reaches control at its inner address | the stack, not M52: the fakes or the inner network |
+| `just testnet test control m52` | #155 (M52): one step plus the approval, the pane opens from the phone, ssh out of the picture, the box survives a reboot | on a fresh box-systemd, `illogical --ssh box-systemd join` installs and starts the daemon and prints a code; the device approves it; the box is on the device list and online; with the CLI's ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the pane answers over the relay again | promise 4: the join over ssh, the approval, the relay with ssh gone, or coming back after a reboot (which also rests on promise 2) |
+| `just testnet test control unreachable` | #155 (M52): "a box that can't reach control says so and stays reachable over `--ssh`" | box-bare, with no route out, joins the hosted control; the output must name the box and control and give `illogical --ssh box-bare tui`, and `--ssh box-bare ls` still works | promise 5 |
+| `just testnet test control m49` | #149 (M49) | box-systemd and box-bare join over ssh; the CLI on the bastion, with no daemon, logs in with a code the device approves, lists both from control, and runs, lists and captures on box-bare directly and box-systemd through the relay ([M49](#m49-the-cli-through-control)) | the CLI through control (login, `hosts`, direct or relayed routing); the joins it starts with are promise 4 |
+| `crates/daemon/tests/guest_ssh.rs`, `web/e2e/guest-ssh.spec.ts` | #198 (M54): the direct path and the pane menu entry | the system OpenSSH client as a guest against a dev daemon ([below](#guest-ssh-m54)) | promise 6; the test's name says which part (read-only, read-write, ending a session, refusals, the CLI) |
+| `testnet/measure-tailnet.sh` (`just testnet measure tailnet`) | #153 (S28): the tailnet comparison | installs illogical on ts-box over ssh from ts-client, checks both paths see the same panes, then times `illogical ls` and an 8 MiB `illogical export` over `--ssh` and over the tailnet | one path no longer reaches the daemon, or the two disagree about its panes. Slower numbers don't fail it: compare them with `spikes/s28-ssh/README.md` |
+| `just macos launchd` | #153 (S28) and #155 (M52): jake-mini with no GUI session | in a fresh macOS VM, a user who never had a GUI session runs `illogicald install` over ssh: it installs the background agent, warns that it won't start after a reboot by itself, and the daemon and pane outlive the ssh session; `illogical --ssh` from the host starts it and passes the warning on; `install --system` survives a VM restart with nobody logged in, its pane restored; `uninstall` leaves nothing of either ([its claims](#the-tests)) | promise 2 on macOS: the install a Mac reached only over ssh gets, and what it says about reboots |
+
+### What BREAK=1 proves
+
+Every testnet claim, and `just macos launchd`, has a `BREAK=1` form that
+breaks the one property the claim is about (each claim's breakage is in
+[testnet/README.md](../testnet/README.md#claims)). `just testnet break
+ssh` and `just testnet break control` run every claim that way and pass
+only if each one fails. That shows a pass isn't vacuous: the claim can
+see the thing it checks go wrong. For the SSH track that means:
+
+- `push` fails with `ForwardAgent=no`, so a passing push used the
+  forwarded agent and nothing else on the box.
+- `m52` fails with polkit masked (no lingering), at the restart, so a
+  passing `m52` proves the box came back by itself rather than through
+  something the test left running.
+- `unreachable` fails when the box joins a control it can reach, so the
+  message check doesn't match just any failed join.
+- `bare` fails with a stub `illogical` on the box, so a passing `bare`
+  means the tests after it really start from nothing.
+
+`BREAK=1` doesn't prove a claim covers the whole promise, only that it can
+fail. The Rust tests have no `BREAK=1` form; they carry their own negative
+case instead (`ssh.rs`'s push with `ILLOGICAL_SSH_AGENT=no`,
+`guest_ssh.rs`'s wrong token and different host key).
+
+### Guest ssh (M54)
+
+`crates/daemon/tests/guest_ssh.rs` runs the system OpenSSH client
+(`/usr/bin/ssh`, 8.5 or later for `KnownHostsCommand`) against a dev
+daemon started with `--guest-ssh 127.0.0.1:0 --guest-ssh-host 127.0.0.1`.
+Each guest is the command the daemon printed, run by `sh` on a
+pseudo-terminal that is its controlling terminal (so a resize reaches ssh as
+SIGWINCH), with `-F /dev/null -o BatchMode=yes` added so the runner's own
+ssh config and agent stay out of it. They check:
+
+- a read-only guest sees the screen and live output, its typing never
+  reaches the pane, and a single-use token can't log in twice;
+- a read-write guest types under its label (`/api/panes/N/drivers`),
+  drives, sizes the pane (`stty size`), and holds off a second guest on the
+  same reusable invite;
+- revoking cuts a live guest off within a second or two, expiry ends a live
+  session and refuses new logins, and closing the pane ends the session and
+  its invite;
+- a wrong token gets `Permission denied` with no prompt; a different host
+  key in the command fails host-key verification before the token is sent
+  (the invite stays unspent); `exec` is refused; the port closes once the
+  last invite is gone;
+- `illogical share --guest` prints a command that works, and `illogical
+  guests` lists and revokes.
+
+Run them with `cargo test -p illogicald --test guest_ssh`. They skip,
+saying so, if there's no `ssh` on PATH. `web/e2e/guest-ssh.spec.ts`
+covers *Invite over ssh…* in the pane menu, on desktop and phone viewports,
+with the same system ssh (`pnpm exec playwright test e2e/guest-ssh.spec.ts`
+in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
+
+### Not covered here
+
+- **Tailscale SSH's check mode** (S28): it sends the user to an identity
+  provider's login, so no test can answer whether its prompt shows in the
+  client's terminal. It's in [By hand](#by-hand).
+- **The guest ssh relay path** (M54, through control's ssh jump host):
+  not built. `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host`
+  in `guest_ssh.rs` is an `#[ignore]`d stub until it is, and its test will
+  run against the `control` profile.
+- **M49's attach, `tui` and event streams through control, and team
+  machines through control**: not built, so `m49` covers `run`, `ls` and
+  `capture` only.
+- **M53**, the desktop app over ssh: gated (PLAN.md), no tests.
+
+The relay path and M49's streams are in [Planned](#planned).
+
+## A fresh Mac: the tart VM harness
+
+macOS checks that need a whole Mac (a user who never logged in to the GUI,
+real Safari, iTerm2, the desktop app) run in a throwaway macOS VM made with
+[tart](https://tart.run), driven over ssh. No person and no window on the
+host: everything with a GUI happens inside the VM, whose image logs `admin`
+in to its own GUI session at boot. The scripts are in `testnet/macos/`.
+
+```sh
+just macos base              # make the base VM, once (about 30 GB)
+just macos launchd           # launchd with no GUI session (S28, M52)
+just macos safari            # web/safari against real Safari (#94, #137)
+just macos iterm2            # M5 (tmux -CC) and M32 (OSC 52) in iTerm2
+just macos app               # the desktop app in cloud mode (#178)
+just macos up | ssh CMD | down   # the VM by hand
+```
+
+`just macos <test>` builds the debug binaries first, then runs
+`testnet/macos/test.sh <test>`. Each test clones a fresh VM, runs, and
+deletes the clone (`KEEP=1` leaves it running for a look). `BREAK=1` breaks
+what each check is about, and every check must then fail, as in the
+testnet's claims.
+
+Without tart, or without the base VM, every script fails and says what to
+run; a test that didn't run isn't a pass. Only `ILLOGICAL_SKIP_MACOS_VM=1`
+skips, and it prints that no VM test ran. They need an Apple silicon Mac,
+about 35 GB free, and the network for the image, iTerm2 and the app's zip.
+
+### Setup
+
+- **tart.** `brew install cirruslabs/cli/tart`, or, while that tap's
+  formula fails on current Homebrew, `tart.tar.gz` from its GitHub release
+  (`tart.app` into `~/Applications`, `tart` on `PATH`).
+- **The base image.** `just macos base` (`vm.sh base`) makes a local VM
+  `illogical-macos-base` from `ghcr.io/cirruslabs/macos-tahoe-base:latest`
+  (macOS 26.6, Safari, the Command Line Tools, no Xcode;
+  `ILLOGICAL_MACOS_IMAGE` picks another), then empties tart's OCI cache
+  (`tart prune --entries=caches`), so the disk holds one copy, about 30
+  GB, not two. The base is never booted.
+- **Clones.** Every test VM is an APFS clone of the base (`tart clone`,
+  nearly free on disk), booted headless (`tart run --no-graphics`). `up`
+  puts the harness key (`testnet/macos/.state/`, ignored by git) into
+  admin's `authorized_keys` through the tart guest agent; after that it's
+  plain ssh as `admin` (whose password is `admin`, with passwordless sudo).
+  `down` deletes the clone. Keep it to the base plus one running clone:
+  macOS allows two VMs per host, and each clone grows as it's used.
+
+### The tests
+
+| Test | Checks | How |
+|---|---|---|
+| `launchd` (`install`, `warning`, `logout`, `uninstall-agent`, `ssh`, `system`, `reboot`, `uninstall`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, runs `illogicald install`. With no GUI session that's the background agent (with one it's the usual GUI LaunchAgent, which this VM's `admin` has and `illo` never does): it installs, warns that the daemon won't start after a reboot by itself, and the daemon and a pane outlive the ssh session. `illogicald uninstall` leaves nothing behind. `illogical --ssh illo@vm ls` from the host starts the daemon there and passes the warning through. `illogicald install --system` switches to a LaunchDaemon cleanly; after a clean shutdown and `tart run`, with nobody logged in as them, the daemon is back with its pane's output; `illogicald uninstall` removes the LaunchDaemon too. | One VM, in that order. "Nothing behind" means no plist in `~/Library/LaunchAgents` or `/Library/LaunchDaemons`, no `illogicald` service in `gui/UID`, `user/UID` or `system`, and no `illogicald` process for the user. The user gets passwordless sudo before `system`, as an admin would have. `BREAK=1` boots the service out before install, logout, system and reboot, drops the `note:` line before warning, installs again after each uninstall, and has the daemon already running when the ssh check would start it. |
+| `safari` | `/key-probe.html` puts its verdict in the DOM (`data-verdict` on `#verdict`: `keys`, `wrapped` or `none`, and JSON in `#result`), and it's `keys` or `wrapped`. A signed-out invitee opens a presigned invite, signs in through GitHub and joins in one click; the owner's Chrome sees them in the roster. | `web/safari/safari.spec.ts` with a small WebDriver client (`web/safari/webdriver.ts`). safaridriver runs in the VM (`sudo safaridriver --enable` once); its port comes to the host over ssh, and control and the fake GitHub, run on the host, are forwarded to the same ports on the VM's loopback. `SAFARIDRIVER_URL` alone runs the spec against any safaridriver. |
+| `iterm2` (`attach`, `type`, `output`, `split`, `tab`, `osc52`) | iTerm2 runs `illogical tmux -CC` and opens a native window for the daemon's tab; text written there runs in the pane; the pane's output shows in iTerm2; a split in iTerm2 adds a pane; a daemon tab becomes an iTerm2 tab. `illogical tui` in iTerm2 copies a line in copy mode, and `pbpaste` has it. | iTerm2's latest stable zip, driven by AppleScript over ssh. The VM's TCC database (SIP is off in the image) gets Apple Events for sshd and osascript to iTerm2 before it starts, so nothing asks. |
+| `app` (`signin`, `approve`, `machines`, `reach`) | The release's app (`ILLOGICAL_MACOS_APP_ZIP` for another) signs in to control through the browser hand-over, is approved as a new device, lists every machine on the account (one on the host, and the Mac's own daemon once it joins), and keystrokes in its terminal run in that machine's pane. | `testnet/macos/app-cloud.ts`. Control, the fake GitHub and the host's machine run here; `web/fixtures/device.ts` is the person: it reads the app's `/#app=` page from Safari (AppleScript), allows it, hands the grant to the app's loopback port, and approves the app. The app's window is read through accessibility (JXA and System Events). |
+
+What they found (2026-10-05, macOS 26.6.2 in the VM):
+
+- **launchd:** before 2026-10-04, `illogicald install` over ssh with no
+  GUI session failed: there's no `gui/UID` domain until the user logs in
+  to the GUI (`Bootstrap failed: 125: Domain does not support specified
+  action`). A Background agent in `user/UID` installs without sudo and
+  survives the logout, but not a restart: nothing loads it until that user
+  logs in to the GUI again, and an ssh login doesn't. A LaunchDaemon with
+  `UserName` survives both, with its panes restored. `illogicald install`
+  now picks the Background agent when there's no GUI domain and says the
+  restart caveat, and `--system` installs the LaunchDaemon (PLAN.md, M52);
+  every `launchd` check passes, and every one fails with `BREAK=1`.
+- **A hard stop loses recent pane output.** `tart stop` on this image is
+  a power cut (the guest doesn't shut down in time), and a pane made a
+  few seconds before it came back with no output; panes saved at an
+  earlier shutdown kept theirs. `vm.sh restart` now shuts the guest down
+  first, as a person's restart does. Losing the last output on a power
+  cut is expected, not checked.
+- **Safari 26.6.2:** Ed25519 keys survive a reload, X25519 keys come back
+  from IndexedDB as null, and the wrapped fallback works (verdict
+  `wrapped`), as in Playwright's WebKit. The presigned invite passes.
+- **iTerm2 3.7.3:** every check passes. In copy mode, `[` `o` (a command's
+  output by its marks) found nothing in the TUI over macOS's bash 3.2; the
+  test copies a line instead.
+- **The app (0.17.0):** every check passes.
+
+### On the macos-arm64 runner
+
+The same scripts can run on the self-hosted runner (jake-mini) once tart
+is installed there: Apple silicon runs the VMs without nesting. A job
+would run `just macos launchd`, `safari`, `iterm2` and `app` in turn (never
+two at once), and needs about 35 GB free for the base and one clone. It
+should make the base once and keep it between runs (the prune leaves no
+cache behind), and always end with `vm.sh down`. Not tried there yet: tart
+needs the runner's user to be able to use Virtualization.framework from
+the runner service. The Safari spec could also run on the runner's own
+Safari, without a VM, after a one-time `sudo safaridriver --enable` there
+and with a GUI login on the runner.
+
+What the VM can't check is under [By hand](#by-hand); what it could and
+doesn't yet is under [Planned](#planned).
+
 ## Tests that skip without a secret
 
 These skip without their secret, account or tool, and print `SKIP:` with
@@ -666,34 +768,55 @@ what's missing:
 | `mcp.spec.ts`, "the real Claude Code runs a build over MCP" | `ANTHROPIC_API_KEY` and `claude` on PATH (costs a few cents) |
 | `resident.rs`, `machines.rs`, `fs.rs`, `mcp.rs`'s VM test, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token (`ILLOGICAL_WISP_TOKEN_FILE` or `~/.local/share/wisp/token`), and `just static` for the resident tests |
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
-| `workspace.spec.ts` | network on its first run, to install the pinned chant |
-| `just testnet test ssh`, `ssh.rs` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
-| `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries |
-| `testnet/macos/desktop.sh`, `update.sh` | tart (`brew install cirruslabs/cli/tart`) and the base VM; the .dmg from `just desktop-macos` |
+| `forges_github_real.rs` | the test organization's variables and secrets ([the nightly job](#the-nightly-job-against-githubcom)) |
+| `guest_ssh.rs`, `guest-ssh.spec.ts` | an `ssh` client on PATH |
 | `scripts/macos-sign` in the release | the `APPLE_*` secrets (a Developer ID, #177); without them it says which is missing and leaves the ad-hoc signature |
 | updater signatures and `latest.json` in the release | `TAURI_SIGNING_PRIVATE_KEY` (and its password), and the matching public key in `crates/desktop/tauri.conf.json` |
-
-| `just macos launchd`, `safari`, `iterm2`, `app` | tart on an Apple silicon Mac, about 35 GB free, and network for the image, iTerm2 and the app's zip |
 
 `workspace.spec.ts` needs the network on its first run, to install the
 pinned chant.
 
 ## By hand
 
-- `just dev`: a separate daemon on 7682 and Vite on 5173.
-- `just fake-fleet`: three throwaway daemons with scripted work on
-  7730-7732, for the swarm.
-- `just screenshots`: the images in `site/img/`, from a scripted session.
-- iTerm2's tmux mode beyond what `just macos iterm2` checks (dividers,
-  resizing, detach and reattach): [development.md](development.md#testing-iterm2).
+Only what no test can do:
+
+- **A physical iPhone's Safari and keychain.** Playwright's WebKit with an
+  iPhone context and real Safari in the VM cover the engine; nothing
+  drives a real phone.
+- **The Claude desktop app signed in (#81, #83).** It needs a real
+  Anthropic account, so its Code tab session records are a fixture
+  ([Fixtures](#fixtures)) and `conversations.rs` checks the daemon reads
+  them where the app keeps them on each OS. What the app shows after
+  illogical continues or forks one of its sessions needs the signed-in app.
+- **Gatekeeper on a downloaded app.** The VM's `app` test fetches the zip
+  with curl, which sets no quarantine flag, so the first-launch prompt a
+  browser download gets isn't covered (the app is ad hoc signed until
+  #177).
+- **Tailscale SSH's check mode** (S28): the check sends the user to an
+  identity provider's login.
+- **Publishing the VS Code extension** to the Marketplace and Open VSX
+  (M28): a publisher account and a release step.
 
 ## Planned
 
-Tracked in #200:
+Real gaps, each one automatable:
 
-- More `testnet/` profiles: `ssh` (boxes behind a bastion), `control`
-  (control with its relay, reached by boxes that only dial out) and
-  `tailnet` (headscale and two Tailscale nodes) exist, and Forgejo and
-  GitLab are in `testnet/forges` (above); Fountain doesn't have one yet.
-- Client fixtures: recorded daemon sessions a client can replay against,
-  and a daemon check against previous releases' fixtures.
+- **The iOS Simulator** (`safari:useSimulator`): the VM's base image has
+  no Xcode. cirruslabs' Xcode images have it, at roughly twice the disk;
+  the Safari spec would need only that capability.
+- **iTerm2 beyond tmux's basics:** dragging dividers, resizing windows,
+  detach and reattach ([development.md](development.md#testing-iterm2))
+  aren't in `just macos iterm2` yet; they can be, with the same
+  AppleScript.
+- **S27 in real Safari:** `spikes/s27-blocks/safari/safari.ts` (and
+  `--ios`) in the tart VM, unattended.
+- **The tart tests in CI** on the macos-arm64 runner ([above](#on-the-macos-arm64-runner)).
+- **The guest ssh relay path** (M54), once control's jump host is built.
+- **M49's attach, `tui` and event streams, and team machines, through
+  control**, once built.
+- **Control checking GitHub's signature on a real webhook delivery**: it
+  needs a URL github.com can reach.
+- **Cursor's Remote-SSH and the Dev Containers extension** (M28).
+- **A Fountain profile** in `testnet/` (#200).
+- **Client fixtures** (#200): recorded daemon sessions a client can replay
+  against, and a daemon check against previous releases' fixtures.

@@ -2,20 +2,21 @@
 #
 # A throwaway macOS VM (tart) that tests drive over ssh.
 #
+#   testnet/macos/vm.sh base             make the base VM (once; ~30 GB)
 #   testnet/macos/vm.sh up [NAME]        clone the base VM, boot the clone
 #                                        headless, wait for ssh
 #   testnet/macos/vm.sh ssh [NAME] [--as USER] CMD
 #                                        run CMD in it, as admin unless USER
 #   testnet/macos/vm.sh push [NAME] SRC... DEST   copy files in (scp)
-#   testnet/macos/vm.sh restart [NAME]   tart stop, then run again
+#   testnet/macos/vm.sh restart [NAME]   shut the guest down, then run again
 #   testnet/macos/vm.sh down [NAME]      stop and delete the clone
 #   testnet/macos/vm.sh ip [NAME]
 #   testnet/macos/vm.sh sshcmd [NAME]    an ssh command line into it, quoted
 #
 # NAME defaults to illogical-macos. Every test VM is an APFS clone of one
 # local base VM, illogical-macos-base, which is never booted; `down`
-# deletes the clone, so tests always start from a fresh Mac. The first `up`
-# makes the base from $ILLOGICAL_MACOS_IMAGE (default
+# deletes the clone, so tests always start from a fresh Mac. `base` makes
+# it from $ILLOGICAL_MACOS_IMAGE (default
 # ghcr.io/cirruslabs/macos-tahoe-base:latest: no Xcode) and then empties
 # tart's OCI cache, so the disk holds one ~30 GB copy, not two. Keep it to
 # the base plus one running clone (CI on the runner too). The image's
@@ -32,9 +33,10 @@ BASE=illogical-macos-base
 # Never let a clone prune tart's cache (other images) to make room.
 export TART_NO_AUTO_PRUNE=1
 
-usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-command -v tart >/dev/null 2>&1 || { echo "SKIP: tart is not installed (brew install cirruslabs/cli/tart)"; exit 0; }
+# shellcheck source=testnet/macos/need-tart.sh
+. "$HERE/need-tart.sh"
 
 cmd="${1:-}"; shift || true
 name="illogical-macos"
@@ -47,6 +49,7 @@ key() {
 }
 
 ip() { tart ip --wait 120 "$name"; }
+have() { tart list -q 2>/dev/null | grep -qx "$1"; }
 
 # Fresh VMs get fresh host keys, so none are kept.
 SSH_OPTS=(-i "$STATE/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no
@@ -76,14 +79,16 @@ boot() {
 }
 
 case "$cmd" in
+  base)
+    if have "$BASE"; then echo "$BASE is there"; exit 0; fi
+    have "$IMAGE" || tart pull "$IMAGE"
+    tart clone "$IMAGE" "$BASE"
+    tart prune --entries=caches --older-than=0 >/dev/null
+    echo "made $BASE"
+    ;;
   up)
     key
-    have() { tart list -q 2>/dev/null | grep -qx "$1"; }
-    if ! have "$BASE"; then
-      have "$IMAGE" || tart pull "$IMAGE"
-      tart clone "$IMAGE" "$BASE"
-      tart prune --entries=caches --older-than=0 >/dev/null
-    fi
+    have "$BASE" || { echo "no base VM $BASE, so no macOS VM test can run: make it once with \`just macos base\` (pulls $IMAGE, about 30 GB)" >&2; exit 1; }
     have "$name" || tart clone "$BASE" "$name"
     tart list 2>/dev/null | awk -v n="$name" '$2 == n && $NF == "running" { r = 1 } END { exit !r }' || boot
     # The guest agent starts a little after the network does.
@@ -99,7 +104,14 @@ case "$cmd" in
     scp -q "${SSH_OPTS[@]}" "${@:1:$#-1}" "admin@$(ip):$dest"
     ;;
   restart)
-    tart stop "$name" >/dev/null
+    # A clean shutdown, as a person's restart is (launchd stops daemons and
+    # they save), then tart's stop if the guest doesn't go within a minute.
+    vssh 'sudo shutdown -h now' >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+      tart list 2>/dev/null | awk -v n="$name" '$2 == n && $NF == "running" { r = 1 } END { exit r }' && break
+      sleep 2
+    done
+    tart stop "$name" >/dev/null 2>&1 || true
     boot
     wait_ssh
     ;;

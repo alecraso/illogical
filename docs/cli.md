@@ -127,6 +127,8 @@ illogical --ssh me@box tui                    # a box you can ssh into; installs
 illogical hosts add box ssh://me@box          # saved: `illogical --host box …` runs your ssh to it
 illogical --ssh me@box join                   # set the box up over ssh and add it to control (approve the code from your phone)
 illogical --ssh me@box join --account FP      # the same, checking the account's fingerprint instead of asking
+illogicald install --system                   # macOS: start the daemon at boot, with nobody logged in (sudo)
+illogicald uninstall                          # remove the service install set up (binaries and state stay)
 illogical fs ls -l ~/src                      # files on this host (read-only)
 illogical fs cat %4:~/app/log.txt             # on the host %4 runs on (its VM); mN:PATH for machine N
 illogical fs watch ~/src                      # changes, as NDJSON (also stat, recent)
