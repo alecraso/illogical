@@ -97,6 +97,19 @@ failed under a load average of 30 because a fixed 40 MB flood was still
 running after `continue`; it now runs `yes` until the pane pauses, sends
 ^C and waits for the prompt in a capture.
 
+The same goes for a step that has to have happened before the next one
+makes sense: wait for the daemon to say it happened. Before a ^C, wait
+until the pane's `current` command is the one you ran (typed isn't
+running: a ^C while bash expands PS0 cancels the line with no command
+end, `mcp.rs`). Before drawing an agent's next screen, wait until
+`/api/panes/N/detection` shows the last one (`api.rs`). Something that
+should be busy for a while runs until the test stops it, not for a fixed
+time (`summaries.rs`). Two requests alike in the same millisecond carry a
+nonce, or control takes the second for a replay (`forge_wire.rs`). The
+first of these turned up a daemon bug: a pane read its agent's screen
+only when no command had come for a whole tick, so polling more often
+than that kept the screen from being read at all.
+
 Standing permission rules (#166) are tested in `agents.rs`
 (`standing_rules_outlive_the_block_that_made_them`: a `cwd` rule answers a
 new block below that directory and not one elsewhere, an `everywhere`
