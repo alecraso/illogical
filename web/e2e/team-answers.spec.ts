@@ -310,14 +310,18 @@ test("a notification's Allow answers over the service worker's own channel", asy
   await expect.poll(() => askOf(sam, pane), { timeout: 15_000 }).toMatchObject({ kind: "permission", id: "toolu_push" });
   // Close the app's card view on this page so the answer can only come from
   // the worker: deliver the push the daemon would send, and press Allow.
+  // This page's registration: listen before enabling (enable reports the
+  // registrations at once), and take the one for control's scope, not the
+  // first in a list that can hold others.
   const cdp = await ctx.newCDPSession(sam);
-  await cdp.send("ServiceWorker.enable");
-  const registrationId = await new Promise<string>((resolve) => {
+  const registered = new Promise<string>((resolve) => {
     cdp.on("ServiceWorker.workerRegistrationUpdated", (e) => {
-      const r = e.registrations.find((x) => !x.isDeleted);
+      const r = e.registrations.find((x) => !x.isDeleted && x.scopeURL === `${base}/`);
       if (r) resolve(r.registrationId);
     });
   });
+  await cdp.send("ServiceWorker.enable");
+  const registrationId = await registered;
   const payload = {
     title: "Needs you",
     body: "Bash: cargo publish --dry-run",
