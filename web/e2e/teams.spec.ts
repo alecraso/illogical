@@ -342,6 +342,15 @@ test("a presigned invite: someone already in a team joins another in one click",
   await expect(dave.locator(".control-prompt .control-error")).toContainText("expired, was used, or never was");
   expect(sent.some((r) => r.includes("/auth/github"))).toBe(true);
   expect(sent.filter((r) => r.includes(seed))).toEqual([]);
+  // A name with a space: the signed roster keeps one word, the team list
+  // shows the name as she set it (#208).
+  await carol.evaluate(() => window.__illogical.control!.setName("Carol  Day"));
+  const carolId = await carol.evaluate(() => window.__illogical.control!.account);
+  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await alice.evaluate(() => window.dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+  await expect(alice.locator(`[data-member="${carolId}"] [data-member-name]`).first()).toHaveText("Carol Day");
+  expect(await alice.evaluate(() => window.__illogical.control!.teams.flatMap((t) => t.roster.members.map((m) => m.name)))).toContain("carol");
+  await alice.getByRole("button", { name: "Done" }).click();
 });
 
 test("a read-only link works logged out, and dies at expiry", async ({ browser }) => {

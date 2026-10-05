@@ -76,6 +76,9 @@ export interface Team {
   role: TeamRole | null;
   requests: { account: string; root: string; name: string; role: TeamRole; created: number }[];
   certs: AccountCerts;
+  /** Members' names as they set them, by account (#208): the roster's
+   * one-word form ("Sam-Stranger") is only what's signed. */
+  names?: Record<string, string>;
   /** The founder is the one this browser pinned on first sight. */
   verified: boolean;
 }

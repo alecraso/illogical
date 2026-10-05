@@ -98,6 +98,19 @@ fn certs_for<'a>(app: &App, accounts: impl Iterator<Item = &'a str>) -> anyhow::
     Ok(out)
 }
 
+/// Members' names as they set them (#208): a roster carries one word per
+/// member (it's signed text), so "Sam Stranger" is "Sam-Stranger" there.
+/// What to show; the roster's word stays what's checked.
+fn names_of<'a>(app: &App, accounts: impl Iterator<Item = &'a str>) -> anyhow::Result<HashMap<String, String>> {
+    let mut out = HashMap::new();
+    for a in accounts {
+        if let Some(x) = app.db.account(a)?.filter(|x| !x.name.is_empty()) {
+            out.insert(a.to_owned(), x.name);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 pub fn certs_for_test(app: &App, accounts: &[String]) -> AccountCerts {
     certs_for(app, accounts.iter().map(String::as_str)).unwrap()
@@ -235,17 +248,23 @@ pub async fn list(State(app): State<Arc<App>>, s: Session) -> R {
         let mine = role_in(&r, &s.account);
         let requests = if mine == Some(TeamRole::Owner) { app.db.requests(&r.team)? } else { vec![] };
         let certs = certs_for(&app, r.members.iter().map(|m| m.account.as_str()))?;
+        let names = names_of(&app, r.members.iter().map(|m| m.account.as_str()))?;
         out.push(json!({
             "team": t.id, "pin": pin(&t), "locked": t.locked, "roster": r, "role": mine,
-            "requests": requests, "certs": certs,
+            "requests": requests, "certs": certs, "names": names,
         }));
     }
     // Teams I asked to join, and whose yes I'm waiting for (#103).
     let mut asked = Vec::new();
     for team in app.db.asked(&s.account)? {
         let Ok(r) = latest(&app, &team) else { continue };
-        let owners: Vec<&str> =
-            r.members.iter().filter(|m| m.role == TeamRole::Owner).map(|m| m.name.as_str()).collect();
+        let names = names_of(&app, r.members.iter().map(|m| m.account.as_str()))?;
+        let owners: Vec<&str> = r
+            .members
+            .iter()
+            .filter(|m| m.role == TeamRole::Owner)
+            .map(|m| names.get(&m.account).unwrap_or(&m.name).as_str())
+            .collect();
         asked.push(json!({ "team": team, "name": r.name, "owners": owners }));
     }
     Ok(Json(json!({ "teams": out, "asked": asked })))
@@ -569,7 +588,8 @@ pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Q
     accounts.sort();
     accounts.dedup();
     let certs = certs_for(&app, accounts.iter().map(String::as_str))?;
-    Ok(Json(json!({ "team": pin(&t), "locked": t.locked, "rosters": rosters, "certs": certs })))
+    let names = names_of(&app, accounts.iter().map(String::as_str))?;
+    Ok(Json(json!({ "team": pin(&t), "locked": t.locked, "rosters": rosters, "certs": certs, "names": names })))
 }
 
 #[derive(Deserialize)]
@@ -608,9 +628,12 @@ pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
         accounts.sort();
         accounts.dedup();
         let certs = certs_for(&app, accounts.iter().map(String::as_str))?;
+        let names = names_of(&app, accounts.iter().map(String::as_str))?;
         out.insert(
             team.to_owned(),
-            json!({ "team": pin(&t), "name": t.name, "locked": t.locked, "rosters": rosters, "certs": certs }),
+            json!({
+                "team": pin(&t), "name": t.name, "locked": t.locked, "rosters": rosters, "certs": certs, "names": names,
+            }),
         );
     }
     Ok(Json(Value::Object(out)))

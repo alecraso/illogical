@@ -75,6 +75,10 @@ pub struct Saved {
     pub roster: Option<Roster>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub team_certs: AccountCerts,
+    /// The team's members' names as they set them (#208); the roster has
+    /// one word each ("Sam-Stranger").
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub team_names: BTreeMap<String, String>,
     /// The team is locked: only its owners get in.
     #[serde(default)]
     pub locked: bool,
@@ -100,6 +104,9 @@ pub struct SharedTeam {
     pub roster: Roster,
     #[serde(default)]
     pub certs: AccountCerts,
+    /// Members' names as they set them (#208).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub names: BTreeMap<String, String>,
     #[serde(default)]
     pub locked: bool,
 }
@@ -122,6 +129,7 @@ fn take_move(saved: &mut Saved, m: Move) {
         saved.team = m.team;
         saved.roster = None;
         saved.team_certs = Default::default();
+        saved.team_names = Default::default();
         saved.locked = false;
     }
     saved.moved_at = m.at;
@@ -174,7 +182,8 @@ impl Enrolled {
                     TeamRole::Editor | TeamRole::Viewer => {
                         let role = if m.role == TeamRole::Editor { Role::Editor } else { Role::Viewer };
                         team_roles.insert(format!("account:{}", m.account), role);
-                        Principal::User { id: format!("account:{}", m.account), name: m.name.clone(), pic: None }
+                        let name = saved.team_names.get(&m.account).unwrap_or(&m.name).clone();
+                        Principal::User { id: format!("account:{}", m.account), name, pic: None }
                     }
                 };
                 for c in r.devices(&m.account, &saved.team_certs).devices.into_values() {
@@ -208,7 +217,7 @@ impl Enrolled {
                 }
                 let id = format!("account:{}", m.account);
                 roles.insert(id.clone(), if m.role == TeamRole::Viewer { Role::Viewer } else { Role::Editor });
-                let who = Principal::User { id, name: m.name.clone(), pic: None };
+                let who = Principal::User { id, name: t.names.get(&m.account).unwrap_or(&m.name).clone(), pic: None };
                 for c in t.roster.devices(&m.account, &t.certs).devices.into_values().filter(|c| c.kind.connects()) {
                     others.push((c, who.clone()));
                 }
@@ -333,7 +342,8 @@ impl Control {
         if account == e.saved.cert.account {
             return Some(e.saved.login.clone()).filter(|l| !l.is_empty());
         }
-        e.saved.roster.as_ref()?.member(account).map(|m| m.name.clone())
+        let m = e.saved.roster.as_ref()?.member(account)?;
+        Some(e.saved.team_names.get(account).unwrap_or(&m.name).clone())
     }
 
     /// Who a Noise key belongs to, if this daemon lets them in: a device of
@@ -469,6 +479,8 @@ impl Control {
                 locked: bool,
                 rosters: Vec<Roster>,
                 certs: AccountCerts,
+                #[serde(default)]
+                names: BTreeMap<String, String>,
             }
             let since = saved.roster.as_ref().map_or(0, |r| r.version);
             let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}&features={}", features())).await?;
@@ -487,8 +499,11 @@ impl Control {
             if let Some(r) = &cur {
                 certs.retain(|a, _| r.member(a).is_some());
             }
+            let mut names = t.names;
+            names.retain(|a, _| cur.as_ref().is_some_and(|r| r.member(a).is_some()));
             saved.roster = cur;
             saved.team_certs = certs;
+            saved.team_names = names;
             saved.locked = t.locked;
         }
 
@@ -527,6 +542,8 @@ impl Control {
                 locked: bool,
                 rosters: Vec<Roster>,
                 certs: AccountCerts,
+                #[serde(default)]
+                names: BTreeMap<String, String>,
             }
             let ids: Vec<&str> = pins.keys().map(String::as_str).collect();
             let got: BTreeMap<String, Got> =
@@ -545,7 +562,9 @@ impl Control {
                 if let Some(roster) = cur {
                     let mut certs = g.certs;
                     certs.retain(|a, _| roster.member(a).is_some());
-                    saved.shared_teams.insert(team, SharedTeam { roster, certs, locked: g.locked });
+                    let mut names = g.names;
+                    names.retain(|a, _| roster.member(a).is_some());
+                    saved.shared_teams.insert(team, SharedTeam { roster, certs, names, locked: g.locked });
                 }
             }
         }
@@ -566,7 +585,8 @@ impl Control {
                 e.saved.locked,
                 e.saved.peers.clone(),
             )
-            || saved.team_certs != e.saved.team_certs;
+            || saved.team_certs != e.saved.team_certs
+            || saved.team_names != e.saved.team_names;
         if changed {
             write_saved(&self.state_dir, &saved)?;
         }
@@ -1097,6 +1117,7 @@ pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
         team: pin.clone(),
         roster: None,
         team_certs: Default::default(),
+        team_names: Default::default(),
         locked: false,
         peers: Default::default(),
         shared_teams: Default::default(),
@@ -1356,6 +1377,7 @@ mod tests {
             team: None,
             roster: None,
             team_certs: Default::default(),
+            team_names: Default::default(),
             locked: false,
             peers: Default::default(),
             shared_teams: Default::default(),
@@ -1378,5 +1400,59 @@ mod tests {
         // Control replays the move into the team: too old.
         take_move(&mut saved, into);
         assert_eq!(saved.team, None);
+    }
+
+    /// #208: a team member is called what they set ("Sam Stranger"), not
+    /// the roster's one-word form, once control says it.
+    #[test]
+    fn team_members_go_by_the_names_they_set() {
+        let (keys, root) = device("a", Kind::Browser);
+        let (_, daemon) = device("a", Kind::Daemon);
+        let (_, sam) = device("s", Kind::Browser);
+        let roster = Roster {
+            v: 1,
+            team: "t1".into(),
+            name: "Acme".into(),
+            version: 1,
+            at: 1,
+            members: vec![illogical_e2e::team::Member {
+                account: "s".into(),
+                root: sam.device.clone(),
+                role: TeamRole::Editor,
+                name: "Sam-Stranger".into(),
+            }],
+            spent: vec![],
+            redeem: None,
+            by: String::new(),
+            sig: String::new(),
+        };
+        let mut saved = Saved {
+            url: String::new(),
+            trust: Trust { account: "a".into(), root: root.device.clone() },
+            cert: daemon,
+            certs: vec![root],
+            revocations: vec![],
+            team: None,
+            roster: Some(roster),
+            team_certs: [("s".to_owned(), (vec![sam], vec![]))].into_iter().collect(),
+            team_names: Default::default(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: String::new(),
+            moved_at: 0,
+        };
+        let dir = std::env::temp_dir().join(format!("illogical-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let acl = Acl::open(&dir);
+        let keys = Arc::new(keys);
+        let name = |saved: &Saved| match &Enrolled::build(saved.clone(), keys.clone(), &acl).others[0].1 {
+            Principal::User { name, .. } => name.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(name(&saved), "Sam-Stranger");
+        saved.team_names.insert("s".into(), "Sam Stranger".into());
+        assert_eq!(name(&saved), "Sam Stranger");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

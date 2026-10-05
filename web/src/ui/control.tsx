@@ -1270,14 +1270,14 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
       <ul class="control-devices">
         {t.roster.members.map((m) => (
           <li key={m.account} data-member={m.account}>
-            <span>
-              {m.name}
+            <span data-member-name>
+              {t.names?.[m.account] ?? m.name}
               {m.account === s.account ? " (you)" : ""}
             </span>
             {owner && m.account !== s.account ? (
               <select
                 value={m.role}
-                aria-label={`${m.name}'s role`}
+                aria-label={`${t.names?.[m.account] ?? m.name}'s role`}
                 onChange={(e) => {
                   const r = (e.target as HTMLSelectElement).value as TeamRole;
                   act(() => s.changeTeam(t.team, (ms) => ms.map((x) => (x.account === m.account ? { ...x, role: r } : x))));
