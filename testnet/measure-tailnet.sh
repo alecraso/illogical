@@ -30,14 +30,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 N="${1:-30}"
 C="$TESTNET-ts-client"
 
-if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
-  echo "!!!! SKIPPED (ILLOGICAL_SKIP_DOCKER=1): the tailnet measurement did NOT run; nothing was measured !!!!" >&2
-  exit 0
-fi
-if ! docker info >/dev/null 2>&1; then
-  echo "FAIL: Docker is not available (ILLOGICAL_SKIP_DOCKER=1 skips this)" >&2
-  exit 1
-fi
+need_docker
 docker exec "$C" true 2>/dev/null || "$HERE/up.sh" tailnet
 
 arch="$(docker exec "$C" uname -m)"
