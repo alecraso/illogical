@@ -17,6 +17,7 @@ mod db;
 mod forge;
 #[cfg(test)]
 mod forge_wire;
+mod guest_jump;
 mod limit;
 mod passkey;
 mod push;
@@ -177,6 +178,17 @@ struct Args {
     /// copy (development).
     #[arg(long)]
     static_dir: Option<PathBuf>,
+
+    /// An ssh jump host for guests of daemons behind NAT (M65: a daemon's
+    /// `illogical share --guest` goes through it when the daemon has no
+    /// address of its own), listening here. Off unless set.
+    #[arg(long, env = "ILLOGICAL_CONTROL_GUEST_SSH")]
+    guest_ssh: Option<SocketAddr>,
+
+    /// The host[:port] guests dial for the jump host [default: the public
+    /// URL's host, and --guest-ssh's port].
+    #[arg(long, env = "ILLOGICAL_CONTROL_GUEST_SSH_HOST")]
+    guest_ssh_host: Option<String>,
 }
 
 pub struct Github {
@@ -215,6 +227,10 @@ pub struct App {
     pub app_logins: app_login::Tickets,
     /// Daemon signatures (and join proofs) already taken.
     pub daemon_sigs: auth::Replays,
+    /// The ssh jump host for guests (M65), when it's on, and the routes
+    /// daemons registered for it.
+    pub jump: Option<guest_jump::Jump>,
+    pub guest_routes: guest_jump::Routes,
 }
 
 #[cfg(test)]
@@ -245,6 +261,8 @@ impl App {
             forge: Default::default(),
             app_logins: Default::default(),
             daemon_sigs: Default::default(),
+            jump: None,
+            guest_routes: Default::default(),
         }
     }
 }
@@ -384,6 +402,8 @@ async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>)
         "daemon_auth": 2,
         // The CLI joins with a code and signs its requests (M49).
         "cli_join": 1,
+        // The ssh jump host for guests of daemons behind NAT (M65).
+        "guest_ssh": app.jump.as_ref().map(guest_jump::Jump::describe),
     }))
 }
 
@@ -567,6 +587,31 @@ async fn main() -> anyhow::Result<()> {
         a.stripe_minutes_price,
         a.stripe_minutes_event,
     )?;
+    // The guests' jump host: bound now, so its port is known.
+    let guest_ssh = match a.guest_ssh {
+        Some(addr) => {
+            let l = tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("listening for guest ssh on {addr}"))?;
+            let port = l.local_addr()?.port();
+            // `host:port`, or a host (an IPv6 address has more than one colon).
+            let (host, port) = match set(a.guest_ssh_host.clone()) {
+                Some(h) => match h.split_once(':') {
+                    Some((name, p)) if !p.contains(':') => {
+                        (name.to_owned(), p.parse().context("--guest-ssh-host's port")?)
+                    }
+                    _ => (h, port),
+                },
+                None => (url::Url::parse(&public_url)?.host_str().unwrap_or("localhost").to_owned(), port),
+            };
+            Some((l, guest_jump::Jump::new(&guest_jump::key_path(&a.db), host, port)?))
+        }
+        None => None,
+    };
+    let (guest_listener, jump) = match guest_ssh {
+        Some((l, j)) => (Some(l), Some(j)),
+        None => (None, None),
+    };
     let app = Arc::new(App {
         cfg: Config {
             push_hosts: a.push_hosts,
@@ -593,7 +638,13 @@ async fn main() -> anyhow::Result<()> {
         forge: Default::default(),
         app_logins: Default::default(),
         daemon_sigs: Default::default(),
+        jump,
+        guest_routes: Default::default(),
     });
+    if let (Some(l), Some(j)) = (guest_listener, &app.jump) {
+        info!(addr = %l.local_addr()?, host = %j.host, port = j.port, "guest ssh jump host");
+        tokio::spawn(guest_jump::serve(app.clone(), l));
+    }
     if !app.cfg.old_daemon_signatures {
         info!("refusing daemons' pre-0.17 request signatures");
     }

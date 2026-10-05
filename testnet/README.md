@@ -97,6 +97,8 @@ Everything in `ssh`, and:
   `http://10.229.80.10:8080`: the boxes reach it by dialing out, as joined
   machines do, and a private address lets a daemon use plain http. The host
   reaches it on `127.0.0.1:22980` (`ILLOGICAL_TESTNET_CONTROL_PORT`).
+  Its ssh jump host for guests (M65) is published on `127.0.0.1:22982`
+  (`ILLOGICAL_TESTNET_GUEST_SSH_PORT`), the address invites name.
 - `fakes`: `web/fixtures/fakes.ts` in Node, the same fakes `just
   control-smoke` uses: GitHub sign-in (published on `127.0.0.1:22981`,
   `ILLOGICAL_TESTNET_FAKES_PORT`, for the browser's redirect), Stripe and a
@@ -148,8 +150,8 @@ The `control` profile's:
   `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
   `testnet/.state-illo-a2`. Give it its own `ILLOGICAL_TESTNET_SSH_PORT`
   and `ILLOGICAL_TESTNET_INNER_NET` (the inner network's subnet is fixed),
-  and for `control` its own `ILLOGICAL_TESTNET_CONTROL_PORT` and
-  `ILLOGICAL_TESTNET_FAKES_PORT`. The tests read the same variables.
+  and for `control` its own `ILLOGICAL_TESTNET_CONTROL_PORT`,
+  `ILLOGICAL_TESTNET_FAKES_PORT` and `ILLOGICAL_TESTNET_GUEST_SSH_PORT`. The tests read the same variables.
 - Host ports are off the defaults and each can be overridden with an
   `ILLOGICAL_TESTNET_*_PORT` variable.
 - The scripts run on Linux and macOS (bash 3.2) and pass `shellcheck`.

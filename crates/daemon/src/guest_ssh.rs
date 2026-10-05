@@ -18,6 +18,16 @@
 //! drive it. Revoking an invite drops its sessions at once; expiry ends
 //! them at the deadline; closing the pane ends them and the invite. The
 //! daemon keeps only each token's hash, in `guests.json`.
+//!
+//! A daemon behind NAT is reached through control (the relay step): when
+//! it's joined to a control that runs a jump host and no address for
+//! guests is set, the command hops through control first (`ssh -W` to the
+//! daemon's id, as `-J` does, with control's key pinned too). The hop's
+//! username is a route, a second token whose hash the daemon registers
+//! with control over its relay socket while the invite lives. Control
+//! splices the hop onto a raw `ssh-guest` stream over that socket, and the
+//! stream comes here, to the same ssh server: the session is end to end,
+//! and control sees ciphertext.
 
 use std::{
     collections::HashMap,
@@ -60,6 +70,10 @@ use crate::{
 
 /// Where it listens unless `--guest-ssh` says otherwise.
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:7684";
+/// The raw stream kind control opens for a guest through its jump host.
+pub const STREAM_KIND: &[u8] = b"ssh-guest";
+/// How long making a relayed invite waits for control to take its route.
+const ROUTE_WITHIN: Duration = Duration::from_secs(10);
 const DEFAULT_TTL_SECS: u64 = 3600;
 /// A read-only invite lasts at most a day...
 const MAX_TTL_SECS: u64 = 24 * 3600;
@@ -87,6 +101,9 @@ struct Saved {
     expires_ms: u64,
     #[serde(default)]
     used: bool,
+    /// Through control: the hash of the route registered for it there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    route: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -124,6 +141,12 @@ pub struct Guests {
     listening: tokio::sync::Mutex<Option<Listening>>,
     key: Mutex<Option<PrivateKey>>,
     connections: Arc<AtomicUsize>,
+    /// The latest `guest.routes` message for control's relay socket.
+    routes_out: watch::Sender<Option<String>>,
+    route_seq: AtomicU64,
+    /// The highest `seq` control has taken, and what it said if it has no
+    /// jump host.
+    routes_taken: watch::Sender<(u64, Option<String>)>,
 }
 
 fn random_bytes<const N: usize>() -> [u8; N] {
@@ -147,6 +170,49 @@ fn plain_host(h: &str) -> bool {
 /// How known-hosts files name `host` on `port`.
 fn known_name(host: &str, port: u16) -> String {
     if port == 22 { host.to_owned() } else { format!("[{host}]:{port}") }
+}
+
+/// A route: the jump host's username for one invite (`r` and 32 hex
+/// digits).
+fn random_route() -> String {
+    format!("r{}", random_bytes::<16>().iter().map(|x| format!("{x:02x}")).collect::<String>())
+}
+
+/// The command for a guest of a daemon behind NAT: through control's jump
+/// host to the daemon, by its id. It's what `ssh -J route@jump token@id`
+/// does (OpenSSH turns `-J` into this `ProxyCommand`), spelled out because
+/// ssh doesn't pass `-o` options to a `-J` hop: written this way the hop
+/// pins control's key too, rather than asking the guest about it and
+/// saving it in their known-hosts file. The hop never prompts
+/// (`BatchMode`): with a route that has ended, OpenSSH would otherwise ask
+/// for a password the jump host doesn't take.
+pub fn relay_command(token: &str, id: &str, known_hosts: &str, route: &str, jump: &Jump) -> String {
+    let p = if jump.port == 22 { String::new() } else { format!("-p {} ", jump.port) };
+    format!(
+        "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes \
+         -o 'KnownHostsCommand=/bin/echo {known_hosts}' \
+         -o 'ProxyCommand=ssh {p}-o BatchMode=yes -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes \
+         -o \"KnownHostsCommand=/bin/echo {jk}\" -W %h:%p {route}@{jh}' {token}@{id}",
+        jk = jump.known_hosts,
+        jh = jump.host,
+    )
+}
+
+/// Control's jump host, as its `/control.json` describes it.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Jump {
+    pub host: String,
+    pub port: u16,
+    pub known_hosts: String,
+}
+
+impl Jump {
+    /// Nothing in it a shell would read as more than words.
+    fn plain(&self) -> bool {
+        plain_host(&self.host)
+            && self.known_hosts.split(' ').count() == 3
+            && self.known_hosts.chars().all(|c| c.is_ascii_alphanumeric() || " []:.-+/=@".contains(c))
+    }
 }
 
 /// The command a guest pastes: the host key pinned, nothing written to
@@ -174,7 +240,69 @@ impl Guests {
             listening: tokio::sync::Mutex::new(None),
             key: Mutex::new(None),
             connections: Arc::default(),
+            routes_out: watch::channel(None).0,
+            route_seq: AtomicU64::new(0),
+            routes_taken: watch::channel((0, None)).0,
         })
+        .with_routes()
+    }
+
+    fn with_routes(self: Arc<Self>) -> Arc<Self> {
+        self.publish_routes();
+        self
+    }
+
+    /// Tell control (over the relay socket, now or when it's next up) the
+    /// routes of the invites that live; the `seq` it will answer with.
+    fn publish_routes(&self) -> u64 {
+        let routes: Vec<String> = {
+            let now = now_ms();
+            let s = self.inner.lock().unwrap();
+            s.invites.iter().filter(|x| x.expires_ms > now).filter_map(|x| x.route.clone()).collect()
+        };
+        let seq = self.route_seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let msg = serde_json::json!({ "t": "guest.routes", "seq": seq, "routes": routes }).to_string();
+        self.routes_out.send_replace(Some(msg));
+        seq
+    }
+
+    /// The messages for control's relay socket about routes.
+    pub fn routes_messages(&self) -> watch::Receiver<Option<String>> {
+        self.routes_out.subscribe()
+    }
+
+    /// A text message from control's relay socket: whether it was ours.
+    pub fn heard_from_control(&self, text: &str) -> bool {
+        #[derive(Deserialize)]
+        struct Msg {
+            t: String,
+            #[serde(default)]
+            seq: u64,
+            #[serde(default)]
+            off: Option<String>,
+        }
+        let Ok(m) = serde_json::from_str::<Msg>(text) else { return false };
+        if m.t != "guest.routes.ok" {
+            return false;
+        }
+        self.routes_taken.send_modify(|(seq, off)| {
+            *seq = (*seq).max(m.seq);
+            *off = m.off;
+        });
+        true
+    }
+
+    /// Wait until control has taken the routes as of `seq`.
+    async fn route_taken(&self, seq: u64) -> Result<(), String> {
+        let mut rx = self.routes_taken.subscribe();
+        let got = tokio::time::timeout(ROUTE_WITHIN, rx.wait_for(|(s, _)| *s >= seq)).await;
+        match got {
+            Ok(Ok(r)) => match &r.1 {
+                Some(off) => Err(format!("control says: {off}")),
+                None => Ok(()),
+            },
+            _ => Err("control's relay didn't take the invite's route; is this machine connected to control?".into()),
+        }
     }
 
     fn save(&self, s: &SavedInvites) {
@@ -193,6 +321,8 @@ impl Guests {
         let gone = s.invites.len() != before;
         if gone {
             self.save(&s);
+            drop(s);
+            self.publish_routes();
         }
         gone
     }
@@ -225,7 +355,9 @@ impl Guests {
         Ok(key)
     }
 
-    fn mint(&self, req: &GuestInviteRequest) -> (GuestInvite, String) {
+    /// A new invite, and its token. `route`: through control, with this
+    /// route's hash.
+    fn mint(&self, req: &GuestInviteRequest, route: Option<String>) -> (GuestInvite, String) {
         let token = random_token();
         let created_ms = now_ms();
         let max = if req.rw { MAX_RW_TTL_SECS } else { MAX_TTL_SECS };
@@ -243,6 +375,7 @@ impl Guests {
             created_ms,
             expires_ms: created_ms + ttl * 1000,
             used: false,
+            route,
         };
         s.invites.push(saved.clone());
         self.save(&s);
@@ -267,6 +400,8 @@ impl Guests {
             fingerprint: None,
             host: None,
             port: None,
+            relay: x.route.is_some(),
+            jump: None,
         }
     }
 
@@ -290,6 +425,7 @@ impl Guests {
         };
         if gone {
             info!(id, "ssh invite revoked");
+            self.publish_routes();
             self.ended.send_modify(|n| *n += 1);
         }
         gone
@@ -308,6 +444,7 @@ impl Guests {
             gone
         };
         if gone {
+            self.publish_routes();
             self.ended.send_modify(|n| *n += 1);
         }
     }
@@ -437,46 +574,69 @@ async fn serve(
                 }
             },
         };
-        if guests.connections.fetch_add(1, Ordering::Relaxed) >= MAX_CONNECTIONS {
-            guests.connections.fetch_sub(1, Ordering::Relaxed);
-            debug!(%peer, "guest ssh: too many connections");
-            continue;
-        }
         let _ = tcp.set_nodelay(true);
-        let authed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let conn = Conn {
-            guests: guests.clone(),
-            app: app.clone(),
-            peer,
-            granted: None,
-            channel: None,
-            size: (80, 24),
-            term: None,
-            tx: None,
-            authed: authed.clone(),
-            _slot: Slot(guests.connections.clone()),
+        connection(&guests, &app, config.clone(), tcp, peer.to_string());
+    }
+}
+
+/// One guest's connection, on whatever carries it: a TCP connection, or a
+/// raw stream from control's jump host.
+fn connection<S>(guests: &Arc<Guests>, app: &Arc<App>, config: Arc<russh::server::Config>, io: S, peer: String)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    if guests.connections.fetch_add(1, Ordering::Relaxed) >= MAX_CONNECTIONS {
+        guests.connections.fetch_sub(1, Ordering::Relaxed);
+        debug!(%peer, "guest ssh: too many connections");
+        return;
+    }
+    let authed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let conn = Conn {
+        guests: guests.clone(),
+        app: app.clone(),
+        peer: peer.clone(),
+        granted: None,
+        channel: None,
+        size: (80, 24),
+        term: None,
+        tx: None,
+        authed: authed.clone(),
+        _slot: Slot(guests.connections.clone()),
+    };
+    tokio::spawn(async move {
+        let s = match tokio::time::timeout(LOGIN_WITHIN, russh::server::run_stream(config, io, conn)).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => return debug!(%peer, error = %e, "guest ssh handshake"),
+            Err(_) => return debug!(%peer, "guest ssh: no handshake in time"),
         };
-        let config = config.clone();
+        let handle = s.handle();
+        let p = peer.clone();
         tokio::spawn(async move {
-            let s = match tokio::time::timeout(LOGIN_WITHIN, russh::server::run_stream(config, tcp, conn)).await {
-                Ok(Ok(s)) => s,
-                Ok(Err(e)) => return debug!(%peer, error = %e, "guest ssh handshake"),
-                Err(_) => return debug!(%peer, "guest ssh: no handshake in time"),
-            };
-            let handle = s.handle();
-            tokio::spawn(async move {
-                tokio::time::sleep(LOGIN_WITHIN).await;
-                if !authed.load(Ordering::Relaxed) {
-                    debug!(%peer, "guest ssh: no login in time");
-                    let _ = handle
-                        .disconnect(russh::Disconnect::ByApplication, "no login in time".into(), String::new())
-                        .await;
-                }
-            });
-            if let Err(e) = s.await {
-                debug!(%peer, error = %e, "guest ssh session ended");
+            tokio::time::sleep(LOGIN_WITHIN).await;
+            if !authed.load(Ordering::Relaxed) {
+                debug!(peer = %p, "guest ssh: no login in time");
+                let _ =
+                    handle.disconnect(russh::Disconnect::ByApplication, "no login in time".into(), String::new()).await;
             }
         });
+        if let Err(e) = s.await {
+            debug!(%peer, error = %e, "guest ssh session ended");
+        }
+    });
+}
+
+impl Guests {
+    /// A guest's connection through control's jump host: the same server
+    /// as on the port, so the session ends here.
+    pub fn serve_relayed(self: &Arc<Self>, app: &Arc<App>, stream: tokio::io::DuplexStream) {
+        if self.listen.is_none() || !self.any() {
+            return debug!("guest ssh: a relayed connection with guest ssh off or no invites");
+        }
+        let key = match self.host_key() {
+            Ok(k) => k,
+            Err(e) => return warn!(error = %e, "guest ssh: no host key"),
+        };
+        connection(self, app, Arc::new(config(key)), stream, "control's relay".into());
     }
 }
 
@@ -498,7 +658,7 @@ enum FromGuest {
 struct Conn {
     guests: Arc<Guests>,
     app: Arc<App>,
-    peer: SocketAddr,
+    peer: String,
     granted: Option<Granted>,
     /// The one session channel it may open.
     channel: Option<ChannelId>,
@@ -806,7 +966,19 @@ async fn mint(State(app): AppState, Json(req): Json<GuestInviteRequest>) -> Resp
         Some(_) => {}
     }
     let guests = &app.guests;
-    let host = req.host.clone().or_else(|| guests.host.clone()).unwrap_or_else(hostname);
+    let named = req.host.clone().or_else(|| guests.host.clone());
+    // Through control when asked, or when this machine is joined to one
+    // and no address for guests is set: it may well be behind NAT.
+    let relay = req.relay.unwrap_or(named.is_none() && app.control.enrolled().is_some() && !app.control.no_relay);
+    if relay {
+        match relayed(&app, &req).await {
+            Ok(invite) => return Json(invite).into_response(),
+            // Asked for nothing in particular: the direct path, then.
+            Err((false, why)) if req.relay.is_none() => info!(%why, "guest ssh: not through control"),
+            Err((_, why)) => return error(StatusCode::SERVICE_UNAVAILABLE, why),
+        }
+    }
+    let host = named.unwrap_or_else(hostname);
     if !plain_host(&host) {
         return error(StatusCode::BAD_REQUEST, format!("{host:?} isn't a host name or address"));
     }
@@ -819,7 +991,7 @@ async fn mint(State(app): AppState, Json(req): Json<GuestInviteRequest>) -> Resp
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, format!("no host key: {e}")),
     };
     let public = key.public_key().to_openssh().unwrap_or_default();
-    let (mut invite, token) = guests.mint(&req);
+    let (mut invite, token) = guests.mint(&req, None);
     let known = format!("{} {public}", known_name(&host, addr.port()));
     invite.command = Some(command(&token, &host, addr.port(), &known));
     invite.known_hosts = Some(known);
@@ -828,6 +1000,42 @@ async fn mint(State(app): AppState, Json(req): Json<GuestInviteRequest>) -> Resp
     invite.port = Some(addr.port());
     invite.token = Some(token);
     Json(invite).into_response()
+}
+
+/// An invite through control's jump host, or why not (`true`: control
+/// has a jump host, and something else went wrong).
+async fn relayed(app: &Arc<App>, req: &GuestInviteRequest) -> Result<GuestInvite, (bool, String)> {
+    let guests = &app.guests;
+    if guests.listen.is_none() {
+        return Err((true, "guest ssh is off on this machine (--guest-ssh off)".into()));
+    }
+    let Some(e) = app.control.enrolled() else {
+        return Err((false, "this machine isn't joined to control".into()));
+    };
+    let jump = match app.control.guest_jump().await {
+        Ok(Some(j)) if j.plain() => j,
+        Ok(Some(j)) => return Err((true, format!("control's jump host {:?} isn't a plain host and key", j.host))),
+        Ok(None) => return Err((false, format!("control at {} has no ssh jump host for guests", e.saved.url))),
+        Err(err) => return Err((false, format!("can't ask control about its jump host: {err}"))),
+    };
+    let key = guests.host_key().map_err(|err| (true, format!("no host key: {err}")))?;
+    let id = e.saved.cert.device.clone();
+    let route = random_route();
+    let (mut invite, token) = guests.mint(req, Some(digest(&route)));
+    let seq = guests.publish_routes();
+    if let Err(why) = guests.route_taken(seq).await {
+        guests.revoke(invite.id);
+        return Err((true, why));
+    }
+    let known = format!("{id} {}", key.public_key().to_openssh().unwrap_or_default());
+    invite.command = Some(relay_command(&token, &id, &known, &route, &jump));
+    invite.known_hosts = Some(format!("{known}\n{}", jump.known_hosts));
+    invite.fingerprint = Some(key.public_key().fingerprint(HashAlg::Sha256).to_string());
+    invite.host = Some(id);
+    invite.jump = Some(if jump.port == 22 { jump.host } else { format!("{}:{}", jump.host, jump.port) });
+    invite.token = Some(token);
+    info!(id = invite.id, "ssh invite through control's jump host");
+    Ok(invite)
 }
 
 async fn list(State(app): AppState) -> Json<Vec<GuestInvite>> {
@@ -858,7 +1066,7 @@ mod tests {
     fn invites_are_spent_capped_revoked_and_kept_as_hashes() {
         let d = dir("store");
         let g = Guests::open(&d, None, None);
-        let (once, token) = g.mint(&GuestInviteRequest { pane: 3, ..Default::default() });
+        let (once, token) = g.mint(&GuestInviteRequest { pane: 3, ..Default::default() }, None);
         assert!(token.starts_with('g') && token.len() == 33, "{token}");
         assert_eq!(once.label, "guest");
         assert!(g.claim("gwrong").is_none());
@@ -866,7 +1074,7 @@ mod tests {
         assert_eq!((got.pane, got.rw), (3, false));
         assert!(g.claim(&token).is_none(), "single use");
         assert!(g.list()[0].used);
-        let (many, t2) = g.mint(&GuestInviteRequest { pane: 4, reusable: true, rw: true, ..Default::default() });
+        let (many, t2) = g.mint(&GuestInviteRequest { pane: 4, reusable: true, rw: true, ..Default::default() }, None);
         assert!(g.claim(&t2).is_some() && g.claim(&t2).is_some(), "reusable");
         let saved = std::fs::read_to_string(d.join("guests.json")).unwrap();
         assert!(!saved.contains(&token) && !saved.contains(&t2));
@@ -876,16 +1084,61 @@ mod tests {
         assert!(g.revoke(many.id) && !g.revoke(many.id));
         assert!(g.claim(&t2).is_none());
         // Closing the pane ends its invites.
-        let (p, t3) = g.mint(&GuestInviteRequest { pane: 9, reusable: true, ..Default::default() });
+        let (p, t3) = g.mint(&GuestInviteRequest { pane: 9, reusable: true, ..Default::default() }, None);
         g.pane_closed(9);
         assert!(!g.live(p.id) && g.claim(&t3).is_none());
         // Caps: a day read-only, two hours read-write.
-        let (ro, _) = g.mint(&GuestInviteRequest { pane: 3, ttl_secs: Some(10 * MAX_TTL_SECS), ..Default::default() });
+        let (ro, _) =
+            g.mint(&GuestInviteRequest { pane: 3, ttl_secs: Some(10 * MAX_TTL_SECS), ..Default::default() }, None);
         assert_eq!(ro.expires_ms - ro.created_ms, MAX_TTL_SECS * 1000);
         let (rw, _) =
-            g.mint(&GuestInviteRequest { pane: 3, rw: true, ttl_secs: Some(MAX_TTL_SECS), ..Default::default() });
+            g.mint(&GuestInviteRequest { pane: 3, rw: true, ttl_secs: Some(MAX_TTL_SECS), ..Default::default() }, None);
         assert_eq!(rw.expires_ms - rw.created_ms, MAX_RW_TTL_SECS * 1000);
         std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[tokio::test]
+    async fn routes_are_told_to_control_while_their_invites_live() {
+        let d = dir("routes");
+        let g = Guests::open(&d, None, None);
+        let routes = |g: &Guests| -> serde_json::Value {
+            serde_json::from_str(g.routes_out.borrow().as_deref().unwrap()).unwrap()
+        };
+        assert_eq!(routes(&g)["routes"], serde_json::json!([]));
+        let route = random_route();
+        let (x, _) = g.mint(&GuestInviteRequest { pane: 3, ..Default::default() }, Some(digest(&route)));
+        let seq = g.publish_routes();
+        let m = routes(&g);
+        assert_eq!((m["t"].as_str(), m["seq"].as_u64()), (Some("guest.routes"), Some(seq)));
+        assert_eq!(m["routes"], serde_json::json!([digest(&route)]), "the hash only");
+        assert!(g.list()[0].relay);
+        // Control takes it, or says it has no jump host.
+        assert!(!g.heard_from_control(r#"{"t":"forge.poke"}"#));
+        assert!(g.heard_from_control(&format!(r#"{{"t":"guest.routes.ok","seq":{seq}}}"#)));
+        g.route_taken(seq).await.unwrap();
+        g.heard_from_control(&format!(r#"{{"t":"guest.routes.ok","seq":{seq},"off":"no jump host"}}"#));
+        assert!(g.route_taken(seq).await.unwrap_err().contains("no jump host"));
+        // A restart tells control again; revoking withdraws it.
+        let g = Guests::open(&d, None, None);
+        assert_eq!(routes(&g)["routes"], serde_json::json!([digest(&route)]));
+        g.revoke(x.id);
+        assert_eq!(routes(&g)["routes"], serde_json::json!([]));
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn the_relayed_command_pins_both_hops() {
+        let jump = Jump { host: "control".into(), port: 2222, known_hosts: "[control]:2222 ssh-ed25519 BBBB".into() };
+        assert!(jump.plain());
+        assert!(!Jump { known_hosts: "x' ; rm -rf ~".into(), ..jump.clone() }.plain());
+        let c = relay_command("gabc", "0123abcd", "0123abcd ssh-ed25519 AAAA", "rdef", &jump);
+        assert_eq!(
+            c,
+            "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes \
+             -o 'KnownHostsCommand=/bin/echo 0123abcd ssh-ed25519 AAAA' \
+             -o 'ProxyCommand=ssh -p 2222 -o BatchMode=yes -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes \
+             -o \"KnownHostsCommand=/bin/echo [control]:2222 ssh-ed25519 BBBB\" -W %h:%p rdef@control' gabc@0123abcd"
+        );
     }
 
     #[test]

@@ -3,6 +3,8 @@
 //! /dev/null` and `BatchMode`, so the runner's own ssh config stays out of
 //! it), on a pseudo-terminal, against a dev daemon.
 
+mod testnet;
+
 use illogical_testkit::{listen, strays};
 
 use std::{
@@ -473,12 +475,178 @@ fn the_cli_prints_a_command_that_works_and_lists_and_revokes() {
     assert!(list.contains("no ssh invites"), "{list}");
 }
 
-/// The relay path (M65's next step, PLAN.md): `ssh -J <route>@<control>
-/// <token>@<daemon id>` through control's jump host to a daemon behind NAT,
-/// with control seeing only ssh ciphertext. Control has no ssh listener,
-/// route table or raw stream kind on the dial-out mux yet.
+/// `testnet/.state*/control.env`'s settings: control's URL as the boxes
+/// reach it, and the device's `--via` mappings to reach it from here.
+fn control_env() -> (String, Vec<String>) {
+    let env =
+        std::fs::read_to_string(testnet::state().join("control.env")).expect("control.env: testnet/up.sh control");
+    let get = |k: &str| {
+        env.lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}=")))
+            .unwrap_or_else(|| panic!("no {k} in control.env"))
+            .trim_matches('"')
+            .to_owned()
+    };
+    let via = get("CONTROL_VIA").split_whitespace().map(str::to_owned).collect();
+    (get("CONTROL_URL"), via)
+}
+
+/// The headless approving device (web/fixtures/device-cli.ts).
+fn device(state: &std::path::Path, args: &[&str]) -> Value {
+    let o = Command::new("node")
+        .args(["--experimental-strip-types", "--no-warnings"])
+        .arg(testnet::root().join("web/fixtures/device-cli.ts"))
+        .arg("--state")
+        .arg(state)
+        .args(args)
+        .output()
+        .expect("node, for the approving device");
+    assert!(o.status.success(), "device {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    serde_json::from_slice(&o.stdout).unwrap()
+}
+
+/// A shell script that runs its arguments (the hop's ssh) with what goes
+/// in and out copied to `dir/up` and `dir/down`: everything control's jump
+/// host carries for the guest's session, as control sees it.
+fn tap(dir: &std::path::Path) -> PathBuf {
+    let script = dir.join("tap");
+    std::fs::write(&script, format!("#!/bin/sh\ntee \"{0}/up\" | \"$@\" | tee \"{0}/down\"\n", dir.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+/// The relay path: box-systemd, on the stack's inner network with no route
+/// out but to control, joins control and shares a pane with `illogical
+/// share --guest`. Nothing reaches the box from here, so the invite goes
+/// through control's jump host; a guest on this machine runs it with a
+/// stock OpenSSH and sees the pane. Control carries the session and can't
+/// read it: the bytes it relayed (tapped at the hop) are ssh ciphertext,
+/// with neither the pane's text nor the token in them, and neither is in
+/// its log.
 #[test]
-#[ignore = "not built: control's ssh jump host, routes and a raw dial-out stream (PLAN.md, M65's relay step)"]
 fn a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host() {
-    unimplemented!("M65 relay step");
+    if skip() || !testnet::require("control", "box-systemd", "guest_ssh.rs (M65's relay)") {
+        return;
+    }
+    testnet::recreate(&["box-systemd"]);
+    let arch = String::from_utf8(testnet::ssh().args(["box-systemd", "uname", "-m"]).output().unwrap().stdout).unwrap();
+    let runtime = PathBuf::from(format!("/tmp/ilg-gr-{}", std::process::id()));
+    std::fs::create_dir_all(&runtime).unwrap();
+    let env = testnet::Env {
+        cli: testnet::cli_bin(),
+        binaries: testnet::require_binaries(arch.trim()),
+        runtime: runtime.clone(),
+        agent: None,
+        sock: None,
+        owner: Some("box-systemd".into()),
+    };
+
+    // Someone signs in to the stack's control, and box-systemd joins it
+    // over ssh, approved by their device.
+    let (control, via) = control_env();
+    let dev = runtime.join("device.json");
+    let mut signin = vec!["signin", "--control", &control, "--login"];
+    let login = format!("guest-relay-{}", std::process::id());
+    signin.push(&login);
+    signin.extend(via.iter().map(String::as_str));
+    let fp = device(&dev, &signin)["fingerprint"].as_str().unwrap().to_owned();
+    let out = runtime.join("join.out");
+    let mut join = env
+        .cmd(&["--ssh", "box-systemd", "join", &control, "--account", &fp])
+        .stdout(std::fs::File::create(&out).unwrap())
+        .stderr(std::fs::File::create(runtime.join("join.err")).unwrap())
+        .spawn()
+        .unwrap();
+    let mut code = String::new();
+    testnet::wait_up_to(Duration::from_secs(60), "the join code", || {
+        let text = std::fs::read_to_string(&out).unwrap_or_default()
+            + &std::fs::read_to_string(runtime.join("join.err")).unwrap_or_default();
+        if let Some(i) = text.find("#join=") {
+            code = text[i + 6..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        }
+        !code.is_empty()
+    });
+    device(&dev, &["approve", &code]);
+    assert!(join.wait().unwrap().success(), "join: {}", std::fs::read_to_string(runtime.join("join.err")).unwrap());
+    device(&dev, &["online", "box-systemd", "60"]);
+
+    // A pane on the box, and an invite to it.
+    let pane = env
+        .ok(&[
+            "--ssh",
+            "box-systemd",
+            "run",
+            "--",
+            "sh",
+            "-c",
+            "echo RELAYED-$((6*7)); sleep 5; echo LIVE-$((5*5)); sleep 600",
+        ])
+        .trim()
+        .trim_start_matches('%')
+        .to_owned();
+    let inv: Value = serde_json::from_str(&env.ok(&[
+        "--ssh",
+        "box-systemd",
+        "--json",
+        "share",
+        "--guest",
+        "--reusable",
+        &format!("%{pane}"),
+    ]))
+    .unwrap();
+    let cmd = inv["command"].as_str().unwrap().to_owned();
+    let token = inv["token"].as_str().unwrap().to_owned();
+    let id = inv["host"].as_str().unwrap().to_owned();
+    let jump_port = std::env::var("ILLOGICAL_TESTNET_GUEST_SSH_PORT").unwrap_or_else(|_| "22982".into());
+    assert_eq!(inv["relay"], true, "{inv}");
+    assert_eq!(inv["jump"].as_str(), Some(format!("127.0.0.1:{jump_port}").as_str()), "{inv}");
+    assert!(cmd.ends_with(&format!("{token}@{id}")), "{cmd}");
+    assert!(cmd.contains("ProxyCommand=ssh ") && cmd.contains(" -W %h:%p r"), "{cmd}");
+    let route = cmd.split(" -W %h:%p ").nth(1).unwrap().split('@').next().unwrap().to_owned();
+    assert!(!cmd.contains("box-systemd") && !control.contains(&id));
+
+    // The guest, with the hop tapped.
+    let tapped = |cmd: &str, name: &str| {
+        let dir = runtime.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let c = cmd.replacen("ProxyCommand=ssh ", &format!("ProxyCommand={} ssh ", tap(&dir).display()), 1);
+        (Guest::run(&c), dir)
+    };
+    let (g, taps) = tapped(&cmd, "tap");
+    g.wait_for("RELAYED-42");
+    g.wait_for("LIVE-25");
+    let list = env.ok(&["--ssh", "box-systemd", "guests"]);
+    assert!(list.contains("1 connected"), "{list}");
+    drop(g);
+
+    // What control carried: an ssh session (the daemon's banner, then
+    // ciphertext), with nothing of the pane or the token in it.
+    let up = std::fs::read(taps.join("up")).unwrap();
+    let down = std::fs::read(taps.join("down")).unwrap();
+    assert!(down.starts_with(b"SSH-2.0-"), "the daemon's ssh, end to end: {:?}", &down[..down.len().min(40)]);
+    assert!(down.len() > 1000, "the pane's screen came through the hop");
+    let has = |hay: &[u8], needle: &str| hay.windows(needle.len()).any(|w| w == needle.as_bytes());
+    for secret in ["RELAYED-42", "LIVE-25", token.as_str()] {
+        assert!(!has(&up, secret) && !has(&down, secret), "control's hop carried {secret:?} in the clear");
+    }
+    let logs = Command::new("docker").args(["logs", &testnet::container("control")]).output().unwrap();
+    let logs = [logs.stdout, logs.stderr].concat();
+    assert!(has(&logs, "guest ssh: a hop to a daemon"), "control logged no hop");
+    for secret in ["RELAYED-42", "LIVE-25", token.as_str(), route.as_str()] {
+        assert!(!has(&logs, secret), "control's log has {secret:?}");
+    }
+
+    // A wrong route is refused at the hop: nothing reaches the daemon.
+    let refused_at_the_hop = |cmd: &str, name: &str| {
+        let (mut g, dir) = tapped(cmd, name);
+        assert_ne!(g.exited(Duration::from_secs(15)), 0, "{:?}", g.text());
+        assert!(g.text().contains("Permission denied"), "{:?}", g.text());
+        assert_eq!(std::fs::read(dir.join("down")).unwrap_or_default(), b"", "{name}: the hop opened");
+    };
+    refused_at_the_hop(&cmd.replace(&format!("{route}@"), "rnot-a-route@"), "wrong-route");
+
+    // Revoking the (reusable) invite withdraws its route.
+    env.ok(&["--ssh", "box-systemd", "guests", "revoke", inv["id"].to_string().as_str()]);
+    refused_at_the_hop(&cmd, "revoked");
 }

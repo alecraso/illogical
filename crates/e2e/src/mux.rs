@@ -9,7 +9,10 @@
 //!
 //! Each binary message is one frame: `kind (1) | stream (4, BE) | payload`.
 //!
-//! - `OPEN`: a new stream (home to host only).
+//! - `OPEN`: a new stream (home to host only). An empty payload is a
+//!   stream of Noise messages, as always; a payload names a raw stream's
+//!   kind (M65: `ssh-guest`, a guest's ssh connection that ends at the
+//!   host). A host that doesn't take that kind resets it.
 //! - `DATA`: bytes, at most what the receiver has granted.
 //! - `FIN`: the sender won't write any more (the reader sees end of file).
 //! - `RESET`: the stream is gone, in both directions.
@@ -59,6 +62,8 @@ struct Inner {
     next: AtomicU32,
     /// The host end: where streams the home daemon opens are handed over.
     accept: Option<mpsc::UnboundedSender<DuplexStream>>,
+    /// The host end: where raw streams go, with their kind.
+    raw: Option<mpsc::UnboundedSender<(Vec<u8>, DuplexStream)>>,
 }
 
 struct Slot {
@@ -80,19 +85,39 @@ impl Mux {
     /// `accept`: this is the host end, and streams the other end opens are
     /// sent there. Without it, this is the home end and refuses them.
     pub fn new(accept: Option<mpsc::UnboundedSender<DuplexStream>>) -> (Self, mpsc::UnboundedReceiver<Vec<u8>>) {
+        Self::with_raw(accept, None)
+    }
+
+    /// The host end, taking raw streams too: they go to `raw` with their
+    /// kind.
+    pub fn with_raw(
+        accept: Option<mpsc::UnboundedSender<DuplexStream>>,
+        raw: Option<mpsc::UnboundedSender<(Vec<u8>, DuplexStream)>>,
+    ) -> (Self, mpsc::UnboundedReceiver<Vec<u8>>) {
         let (out, rx) = mpsc::unbounded_channel();
-        let inner = Inner { out, streams: Mutex::new(HashMap::new()), next: AtomicU32::new(1), accept };
+        let inner = Inner { out, streams: Mutex::new(HashMap::new()), next: AtomicU32::new(1), accept, raw };
         (Self { inner: Arc::new(inner) }, rx)
     }
 
     /// Open a stream to the other end (the home end only).
     pub fn open(&self) -> std::io::Result<DuplexStream> {
+        self.open_kind(&[])
+    }
+
+    /// Open a raw stream of `kind` (not empty) to the other end: bytes as
+    /// they are, not Noise messages.
+    pub fn open_raw(&self, kind: &[u8]) -> std::io::Result<DuplexStream> {
+        assert!(!kind.is_empty(), "a raw stream has a kind");
+        self.open_kind(kind)
+    }
+
+    fn open_kind(&self, kind: &[u8]) -> std::io::Result<DuplexStream> {
         if self.inner.out.is_closed() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "the tunnel is closed"));
         }
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
         let user = self.stream(id);
-        self.send(OPEN, id, &[]);
+        self.send(OPEN, id, kind);
         Ok(user)
     }
 
@@ -109,9 +134,19 @@ impl Mux {
                     if self.inner.streams.lock().unwrap().contains_key(&id) {
                         return Err(format!("stream {id} opened twice"));
                     }
-                    let user = self.stream(id);
-                    if accept.send(user).is_err() {
-                        self.reset(id);
+                    if payload.is_empty() {
+                        let user = self.stream(id);
+                        if accept.send(user).is_err() {
+                            self.reset(id);
+                        }
+                    } else if let Some(raw) = &self.inner.raw {
+                        let user = self.stream(id);
+                        if raw.send((payload.to_vec(), user)).is_err() {
+                            self.reset(id);
+                        }
+                    } else {
+                        // A kind this end doesn't take.
+                        self.send(RESET, id, &[]);
                     }
                 }
                 // Not a hub: a host can't open anything here.
@@ -301,6 +336,43 @@ mod tests {
         assert_eq!(home.streams(), 0);
         assert!(home.handle(&[1, 2]).is_err(), "short");
         assert!(home.handle(&frame(77, 1, &[])).is_err(), "unknown kind");
+    }
+
+    #[tokio::test]
+    async fn raw_streams_go_apart_and_an_end_without_them_resets_them() {
+        let (accept_tx, mut accept) = mpsc::unbounded_channel();
+        let (raw_tx, mut raw) = mpsc::unbounded_channel();
+        let (home, mut home_out) = Mux::new(None);
+        let (host, mut host_out) = Mux::with_raw(Some(accept_tx), Some(raw_tx));
+        let (h, s) = (home.clone(), host.clone());
+        tokio::spawn(async move {
+            while let Some(f) = home_out.recv().await {
+                s.handle(&f).unwrap();
+            }
+        });
+        tokio::spawn(async move {
+            while let Some(f) = host_out.recv().await {
+                h.handle(&f).unwrap();
+            }
+        });
+        let mut a = home.open_raw(b"ssh-guest").unwrap();
+        let (kind, mut b) = raw.recv().await.unwrap();
+        assert_eq!(kind, b"ssh-guest");
+        a.write_all(b"SSH-2.0-x\r\n").await.unwrap();
+        let mut buf = [0u8; 11];
+        b.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"SSH-2.0-x\r\n");
+        // Noise streams still go to `accept`.
+        let _n = home.open().unwrap();
+        assert!(accept.recv().await.is_some());
+        assert!(raw.try_recv().is_err());
+
+        // An end that takes no raw streams resets them.
+        let (accept_tx, _accept) = mpsc::unbounded_channel();
+        let (old, mut old_out) = Mux::new(Some(accept_tx));
+        old.handle(&frame(OPEN, 3, b"ssh-guest")).unwrap();
+        assert_eq!(old_out.recv().await.unwrap(), frame(RESET, 3, &[]));
+        assert_eq!(old.streams(), 0);
     }
 
     #[tokio::test]

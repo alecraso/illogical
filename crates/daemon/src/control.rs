@@ -335,6 +335,24 @@ impl Control {
         self.now.read().unwrap().clone()
     }
 
+    /// Control's ssh jump host for guests (M65), from its `/control.json`;
+    /// `None` when it runs none.
+    pub async fn guest_jump(&self) -> anyhow::Result<Option<crate::guest_ssh::Jump>> {
+        let Some(e) = self.enrolled() else { return Ok(None) };
+        let v: serde_json::Value = self
+            .http
+            .get(format!("{}/control.json", e.saved.url.trim_end_matches('/')))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(match &v["guest_ssh"] {
+            serde_json::Value::Null => None,
+            j => Some(serde_json::from_value(j.clone())?),
+        })
+    }
+
     /// Look again soon (grants changed here, say).
     pub fn poke(&self) {
         self.nudge.notify_one();
@@ -782,11 +800,22 @@ async fn keep_relay(control: Arc<Control>, app: Arc<App>) {
             tokio::spawn(crate::e2e::serve_stream(a.clone(), s));
         }
     });
+    // Raw streams: a guest's ssh connection through control's jump host
+    // (M65), which ends here.
+    let (raw, mut raws) = mpsc::unbounded_channel::<(Vec<u8>, tokio::io::DuplexStream)>();
+    let a = app.clone();
+    tokio::spawn(async move {
+        while let Some((kind, s)) = raws.recv().await {
+            if kind == crate::guest_ssh::STREAM_KIND {
+                a.guests.serve_relayed(&a, s);
+            }
+        }
+    });
     let mut backoff = Duration::from_secs(1);
     loop {
         let Some(e) = control.enrolled() else { return };
         let started = std::time::Instant::now();
-        match relay_once(&control, &e, &accept).await {
+        match relay_once(&control, &app, &e, &accept, &raw).await {
             Ok(()) => info!("relay socket closed"),
             Err(err) => warn!(error = %err, "can't reach control's relay"),
         }
@@ -801,8 +830,10 @@ async fn keep_relay(control: Arc<Control>, app: Arc<App>) {
 
 async fn relay_once(
     control: &Control,
+    app: &Arc<App>,
     e: &Enrolled,
     accept: &mpsc::UnboundedSender<tokio::io::DuplexStream>,
+    raw: &mpsc::UnboundedSender<(Vec<u8>, tokio::io::DuplexStream)>,
 ) -> anyhow::Result<()> {
     let path = "/api/relay/dial";
     let mut url = reqwest::Url::parse(&e.saved.url)?.join(path)?;
@@ -813,10 +844,18 @@ async fn relay_once(
     let signed = format!("{}?{}", url.path(), url.query().unwrap_or_default());
     let ws = crate::dial::open_ws(&url, &[(AUTH, &control.sign(e, "GET", &signed, b""))]).await?;
     info!(control = e.saved.url, "connected to control's relay");
-    // M40: forge subscriptions out, pokes and heartbeats in.
-    let texts = crate::forge::live::watch_messages()
-        .map(|out| crate::dial::Texts { on_text: &crate::forge::live::from_control, out });
-    crate::dial::serve_mux(ws, accept, Some(&control.nudge), texts).await
+    // M40: forge subscriptions out, pokes and heartbeats in. M65: guest
+    // routes out, control's answers in.
+    let guests = app.guests.clone();
+    let on_text = move |t: &str| {
+        if !guests.heard_from_control(t) {
+            crate::forge::live::from_control(t);
+        }
+    };
+    let mut out = vec![app.guests.routes_messages()];
+    out.extend(crate::forge::live::watch_messages());
+    let texts = crate::dial::Texts { on_text: &on_text, out };
+    crate::dial::serve_mux(ws, accept, Some(raw), Some(&control.nudge), Some(texts)).await
 }
 
 // ---------------------------------------------------------------- join

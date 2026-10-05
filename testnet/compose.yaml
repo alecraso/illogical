@@ -97,6 +97,10 @@ services:
       - --stripe-seat-price=price_seat
       - --stripe-minutes-price=price_min
       - --push-host=fakes:9003
+      # The ssh jump host for guests of boxes behind NAT (M65), as the
+      # host reaches it.
+      - --guest-ssh=0.0.0.0:2222
+      - --guest-ssh-host=127.0.0.1:${ILLOGICAL_TESTNET_GUEST_SSH_PORT:-22982}
     environment:
       RUST_LOG: illogical_control=debug
       STRIPE_SECRET_KEY: sk_test_testnet
@@ -106,6 +110,7 @@ services:
     tmpfs: [/var/lib/illogical-control]
     ports:
       - "127.0.0.1:${ILLOGICAL_TESTNET_CONTROL_PORT:-22980}:8080"
+      - "127.0.0.1:${ILLOGICAL_TESTNET_GUEST_SSH_PORT:-22982}:2222"
     networks:
       outer: {}
       inner:
