@@ -21,7 +21,9 @@ just e2e         # the browser tests, in the system Chrome
 | `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and a real daemon; headless devices sign in, enroll, approve the daemon's join code and reach it directly and through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one) | no |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
-| `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): it opens on a static daemon's page, follows a join to the app's sign-in (a stand-in control) and a leave back (#204) | no |
+| `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): `join` (#204) and `m46` (see [The desktop app's tests](#the-desktop-apps-tests)) | no |
+| `just desktop-packages ARCH` | the .deb on Ubuntu 22.04 and the .rpm on Fedora 42 install and claim `illogical://` (after `just desktop-linux ARCH`) | no |
+| `testnet/macos/desktop.sh`, `testnet/macos/update.sh` | the macOS app from its .dmg in a fresh tart VM, and its updater | no |
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
 CI (`.github/workflows/check.yml`) runs on pushes, on our own machines: `just
@@ -176,6 +178,33 @@ d pane box MARKER                                         # round-trip through i
 `signin` printed. `just control-smoke` and the testnet's `control` claims
 use both.
 
+## The desktop app's tests
+
+M46's promises, each checked with nobody at the keyboard. Linux runs in a
+container under Xvfb and Openbox with xdotool typing; macOS runs in a fresh
+tart VM clone (`testnet/macos/vm.sh`) where System Events types into the
+logged-in session over ssh.
+
+| Claim | Linux (`just desktop-xvfb m46 CLAIM`) | macOS (`testnet/macos/desktop.sh CLAIM`) | A failure means |
+|---|---|---|---|
+| Chords reach the page | `keys`: Ctrl-W, T, N, Q, Tab, F1, F10, Alt-x arrive in a recording pane as bytes | `keys`: Ctrl-W, T, N, Q, Tab as bytes; Cmd-W closes the pane and not the window; Cmd-T opens a tab; Cmd-Q, H, M leave the app up | a menu or the toolkit took a key the terminal needs |
+| Tabs in the titlebar | `titlebar`: no decorations; dragging the bar moves the window; the bar's maximize and minimize work | `tabs`: Cmd-N opens a window as a native tab | the window can't be moved or managed without the system's titlebar |
+| `illogical://` | `links`: a second launch with `illogical://open?cwd=DIR` opens a tab in DIR in the running app and shows it; `illogical://pane/%N` shows N | `links`: the same through `open URL` (the URL scheme in Info.plist) | links start a second app, or open nothing |
+| Global hotkey | `hotkey`: off by default; on, Ctrl+Alt+Space hides the focused window and brings it back | `hotkey`: the same with Ctrl-Option-Space | |
+| Service registration | (the systemd unit: `illogicald install`, unchanged) | `agent`: the first start registers the launch agent through SMAppService, BTM lists it, the bundle's daemon answers the linked CLI, no second plist | the app runs a daemon that isn't the one Login Items shows, or two |
+| Working pane, no terminal | | `install`, `pane`: the .dmg installs, and a command typed into the window runs | |
+| Panes outlive the app | | `restart`: the daemon's pids and panes are the same after the app restarts | |
+| Packages | `just desktop-packages ARCH`: .deb and .rpm install, libraries resolve, xdg-mime hands `illogical://` to the app | `install` above | |
+| Updates | | `update.sh`: 0.17.0 refuses a manifest signed with another key, then replaces itself with 0.17.1 and restarts; a running vim and a counting build carry on | |
+
+`update.sh` makes a throwaway updater key and builds the app twice with
+it. Both versions carry the same daemon, so the daemon isn't restarted by
+that test; `upgrade.rs`'s path (a newer bundled daemon replaces the
+running one, panes kept) is #176's. The macOS app is copied in without
+the quarantine flag: an ad-hoc signed download needs a person's
+right-click > Open past Gatekeeper, which only a notarized build (#177)
+removes.
+
 ## Tests that need something extra
 
 These skip, saying why, unless what they need is there:
@@ -188,6 +217,9 @@ These skip, saying why, unless what they need is there:
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
 | `just testnet test ssh`, `ssh.rs` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
 | `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries |
+| `testnet/macos/desktop.sh`, `update.sh` | tart (`brew install cirruslabs/cli/tart`) and the base VM; the .dmg from `just desktop-macos` |
+| `scripts/macos-sign` in the release | the `APPLE_*` secrets (a Developer ID, #177); without them it says which is missing and leaves the ad-hoc signature |
+| updater signatures and `latest.json` in the release | `TAURI_SIGNING_PRIVATE_KEY` (and its password), and the matching public key in `crates/desktop/tauri.conf.json` |
 
 ## By hand
 

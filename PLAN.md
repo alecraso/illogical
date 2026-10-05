@@ -4190,6 +4190,18 @@ See #130. From S25:
 
 **Also done when (S25's macOS half):** on jake-mini, the bench against Chrome; Cmd-W, T, N, Q, H and M reach the page; Japanese and Korean IME; a notification click opens the pane; the dock badge shows the needs-you count. And on geek, a notification click opens the pane.
 
+#### M46: the gaps, as built (2026-10-05)
+
+The audit's M46 gaps, each with a test that needs no person (docs/testing.md, "The desktop app's tests"):
+
+- **SMAppService.** The bundle carries a launch agent (`Contents/Library/LaunchAgents/wtf.widgets.illogical.daemon.plist`) that runs the bundled `illogicald`; a Mac with no daemon registers it on first start, so it shows under Login Items, and an update restarts it on the new binary. Decision: the plist uses `Program` with the fixed path `/Applications/illogical.app/Contents/MacOS/illogicald`, because under an ad-hoc signature launchd can't resolve `BundleProgram` ("The specified path is not a bundle"). An app run from anywhere else, or a Mac where `illogicald install` already wrote a plist, uses `illogicald install` as before. Re-check `BundleProgram` once there's a Developer ID (#177). The daemon logs to `ILLOGICAL_LOG_FILE` (`~/Library/Logs/illogicald.log`), since launchd can't expand `~`.
+- **Tabs in the titlebar.** The client's bar is the titlebar: an overlay titlebar on macOS, no decorations on Linux with the bar's own minimize, maximize and close. On macOS new windows (Cmd-N, the tray's *New window*) join as native tabs, and *Move Tab to New Window* is AppKit's. A tab's menu has *Open in new window*. Cmd-W closes the pane, Cmd-T opens a tab.
+- **Global hotkey**, off by default: the tray's *Global hotkey* item, or `hotkey_on` and `hotkey` in `desktop.json` (default `Ctrl+Alt+Space`). It hides a focused window and brings it back. On Linux the app stays in the tray when its last window closes while the hotkey is on.
+- **`illogical://`**: `illogical://pane/%N` and `illogical://open?cwd=DIR`. macOS through `CFBundleURLTypes`, Linux through the packages' `x-scheme-handler/illogical` and single-instance (an AppImage registers itself).
+- **Packaging.** `.deb`, `.rpm` and AppImage for x86_64 and aarch64 (`just desktop-linux ARCH`; the release builds arm64 under qemu-user), and a `.dmg` made with `hdiutil` beside the zip. The `.rpm` declares no glibc version: Tauri writes the whole string as a package name.
+- **Updates.** The Tauri updater against `latest.json` on the latest release, registered only in builds with a public key in `tauri.conf.json`. Decision: it updates the macOS app and the AppImage only; a .deb or .rpm belongs to the package manager. A downloaded update is in place at once and runs from the next start (the tray offers *Restart to update*).
+- **Notarization** waits on the Developer ID: `scripts/macos-sign` signs, notarizes and staples when the `APPLE_*` secrets are set, and otherwise says it skipped and why.
+
 #### M47: OS integration
 
 See #130.
