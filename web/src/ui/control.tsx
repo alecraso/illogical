@@ -10,7 +10,7 @@ import { directory } from "../hosts";
 import { CopyButton, CopyText, download } from "./copy";
 import { ROLE_HELP, roleAs, roleLabel } from "./roles";
 import type { MenuItem } from "./menu";
-import type { ShareOffer, Team } from "../control";
+import type { PresignedInvite, ShareOffer, Team } from "../control";
 import type { TeamRole } from "../e2e/team.ts";
 import { qr, qrPath } from "./qr";
 import { AccountPanel } from "./account";
@@ -432,6 +432,9 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     const open = (e: Event) => setPanel((e as CustomEvent<Panel>).detail);
     addEventListener("hashchange", on);
     addEventListener("illogical:control-panel", open);
+    // Says the panel event has a listener, so a test can wait for it
+    // rather than send one into nothing.
+    document.documentElement.dataset.controlPanels = "";
     // Mounted afresh (the page switches machine when one is approved, and
     // that happens before the prompt clears the hash): catch up with a
     // hashchange that fired before this listener was there.
@@ -439,6 +442,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     return () => {
       removeEventListener("hashchange", on);
       removeEventListener("illogical:control-panel", open);
+      delete document.documentElement.dataset.controlPanels;
     };
   }, []);
   if (s.phase !== "ready") return null;
@@ -450,7 +454,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   const appLogin = /^#app=([0-9a-f]{16,128})$/.exec(hash)?.[1];
   if (appLogin && !s.pending[0]) return <AppLoginPrompt s={s} id={appLogin} />;
   if (hash === "#app-done" && !s.pending[0]) return <AppLoginDone />;
-  const invite = inviteInHash(hash);
+  const invite = inviteInHash(hash) ?? inviteInHash(usedLink);
   if (invite)
     return invite.presigned ? (
       <PresignedPrompt s={s} team={invite.team} seed={invite.code} />
@@ -465,6 +469,8 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   const offer = s.offers[0];
   if (offer) return <ShareOfferPrompt s={s} o={offer} />;
   if (s.joined) return <Joined s={s} />;
+  const notice = s.notices[0];
+  if (notice) return <Notice s={s} n={notice} />;
   if (panel === "devices") return <Devices s={s} close={() => setPanel(null)} />;
   if (panel === "teams") return <Teams s={s} close={() => setPanel(null)} />;
   if (panel === "plan") return <Plan s={s} close={() => setPanel(null)} />;
@@ -494,8 +500,19 @@ function Modal({ children, close }: { children: preact.ComponentChildren; close?
 }
 
 function clearHash() {
+  usedLink = "";
   history.replaceState(null, "", location.pathname + location.search);
   dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
+/** An invite link that was used: out of the address bar, so a reload
+ * doesn't offer it again (#208), but its prompt stays up until closed,
+ * through the overlay mounting afresh. */
+let usedLink = "";
+
+function dropHash() {
+  if (location.hash) usedLink = location.hash;
+  history.replaceState(null, "", location.pathname + location.search);
 }
 
 function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
@@ -522,6 +539,8 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
     if (j) void s.rejectJoin(j.code).catch(() => {});
     clearHash();
   };
+  // M49: the illogical CLI on a machine, asking to be one of your devices.
+  if (j?.cert.kind === "cli") return <CliJoin s={s} j={j} cancel={cancel} />;
   return (
     <Modal close={clearHash}>
       <h2>Add a machine?</h2>
@@ -587,6 +606,57 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
             setBusy(true);
             try {
               await s.approveJoin(j.code, j.cert, team?.team ?? null);
+              clearHash();
+            } catch (e) {
+              setErr((e as Error).message);
+              setBusy(false);
+            }
+          }}
+        >
+          Approve
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** M49: the illogical CLI on some machine asks to be one of this account's
+ * devices (`illogical login`). Approved, it reaches the account's machines
+ * and can approve devices and machines, as this browser can. */
+function CliJoin({ s, j, cancel }: { s: ControlSession; j: JoinRequest; cancel: () => void }) {
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal close={clearHash}>
+      <h2>Add a terminal?</h2>
+      {err ? <p class="control-error">{err}</p> : null}
+      <p data-join-cli={j.cert.name}>
+        The illogical command line on <b>{j.cert.name}</b> asks to be one of your devices, with code <b data-join-code={j.code}>{j.code}</b>. Check it's the code
+        it shows where you ran <code>illogical login</code>.
+      </p>
+      <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
+      {s.enrollment ? (
+        <p>
+          Your account:{" "}
+          <b class="fingerprint" data-join-account={s.enrollment.root}>
+            {fingerprint(s.enrollment.root)}
+          </b>
+          . Once you approve, it shows its account's fingerprint: check it's this one there.
+        </p>
+      ) : null}
+      <p class="dim">It reaches your machines (directly or through control's relay, end to end encrypted) and can approve devices, as this one can.</p>
+      <div class="prompt-buttons">
+        <button data-cancel-join onClick={cancel}>
+          Cancel
+        </button>
+        <button
+          class="primary"
+          data-approve-join
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await s.approveJoin(j.code, j.cert);
               clearHash();
             } catch (e) {
               setErr((e as Error).message);
@@ -1078,6 +1148,22 @@ function Joined({ s }: { s: ControlSession }) {
   );
 }
 
+/** Something control kept to tell this account (#206: a team it was in
+ * was deleted while this page wasn't open, or was). */
+function Notice({ s, n }: { s: ControlSession; n: ControlSession["notices"][number] }) {
+  return (
+    <Modal close={() => void s.sawNotice(n.id)}>
+      <h2 data-notice={n.id}>{n.title}</h2>
+      <p>{n.body}</p>
+      <div class="prompt-buttons">
+        <button class="primary" onClick={() => void s.sawNotice(n.id)}>
+          OK
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code: string }) {
   const [info, setInfo] = useState<{ name: string; role: TeamRole } | null>(null);
   const [err, setErr] = useState("");
@@ -1102,7 +1188,15 @@ function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code
             class="primary"
             data-accept-invite
             disabled={!info}
-            onClick={() => s.acceptInvite(team, code).then(() => setDone(true), (e: Error) => setErr(e.message))}
+            onClick={() =>
+              s.acceptInvite(team, code).then(
+                () => {
+                  dropHash();
+                  setDone(true);
+                },
+                (e: Error) => setErr(e.message),
+              )
+            }
           >
             Join
           </button>
@@ -1121,7 +1215,7 @@ function PresignedPrompt({ s, team, seed }: { s: ControlSession; team: string; s
   // prompt as the team's machines arrive).
   const member = s.teams.find((t) => t.team === team && t.role);
   useEffect(() => {
-    if (member) return;
+    if (member) return dropHash();
     s.showPresigned(team, seed).then(
       (p) => setInfo({ name: p.name, role: p.invite.role }),
       (e: Error) => setErr(e.message),
@@ -1130,6 +1224,7 @@ function PresignedPrompt({ s, team, seed }: { s: ControlSession; team: string; s
   const join = () => {
     setBusy(true);
     s.redeem(team, seed)
+      .then(dropHash)
       .catch((e: Error) => setErr(e.message))
       .finally(() => setBusy(false));
   };
@@ -1235,6 +1330,20 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
   // Which button waits for a second click: "lock", or a member to remove.
   const [confirming, setConfirming] = useState<string | null>(null);
   const owner = t.role === "owner";
+  // One-click links not used yet (#134), each with Cancel.
+  const [unused, setUnused] = useState<PresignedInvite[]>([]);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (!owner) return setUnused([]);
+    let live = true;
+    s.presignedInvites(t.team).then(
+      (l) => live && setUnused(l),
+      () => live && setUnused([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [s, t.team, owner, t.locked, t.roster.version, link, reload]);
   return (
     <section class="team" data-team={t.team}>
       <h3>
@@ -1255,14 +1364,14 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
       <ul class="control-devices">
         {t.roster.members.map((m) => (
           <li key={m.account} data-member={m.account}>
-            <span>
-              {m.name}
+            <span data-member-name>
+              {t.names?.[m.account] ?? m.name}
               {m.account === s.account ? " (you)" : ""}
             </span>
             {owner && m.account !== s.account ? (
               <select
                 value={m.role}
-                aria-label={`${m.name}'s role`}
+                aria-label={`${t.names?.[m.account] ?? m.name}'s role`}
                 onChange={(e) => {
                   const r = (e.target as HTMLSelectElement).value as TeamRole;
                   act(() => s.changeTeam(t.team, (ms) => ms.map((x) => (x.account === m.account ? { ...x, role: r } : x))));
@@ -1337,6 +1446,35 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
               <CopyText text={link} share data-invite-link />
             </p>
           ) : null}
+          {unused.length ? (
+            <>
+              <p class="dim">One-click links nobody has used yet:</p>
+              <ul class="control-devices" data-presigned-list>
+                {unused.map((i) => (
+                  <li key={i.key} data-presigned={i.key}>
+                    <span>
+                      {roleAs(i.role).replace(/^as /, "for ")}
+                      {i.by === s.account ? "" : `, from ${i.by_name}`}
+                    </span>
+                    <span class="dim">{expiresIn(i.expires)}</span>
+                    <button
+                      class="control-revoke"
+                      data-cancel-presigned={i.key}
+                      title="Nobody can join with this link any more"
+                      onClick={() =>
+                        act(async () => {
+                          await s.cancelPresigned(t.team, i.key);
+                          setReload((n) => n + 1);
+                        })
+                      }
+                    >
+                      Cancel
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
           {confirming === "lock" ? (
             <p class="control-error" data-lock-warning>
               Lock: only owners reach the team's machines; open invites and requests are dropped.
@@ -1361,6 +1499,12 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
       ) : null}
     </section>
   );
+}
+
+/** How long a link has left, roughly. */
+function expiresIn(at: number): string {
+  const min = Math.max(1, Math.round((at - Date.now()) / 60_000));
+  return min < 90 ? `expires in ${min} min` : `expires in ${Math.round(min / 60)} h`;
 }
 
 function RoleOptions() {

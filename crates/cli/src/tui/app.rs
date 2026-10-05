@@ -1000,6 +1000,12 @@ impl App {
                 matches!(p, Policy::Hook { .. }),
                 Act::Ask(Ask::Hook(id)),
             ));
+            let resumes = info.and_then(|i| i.resumes.clone());
+            m.push(check(
+                &resumes.map_or("Resume the agent's conversation".into(), |r| format!("Resume {}", short(&r))),
+                matches!(p, Policy::Resume),
+                set(Policy::Resume),
+            ));
             m.push(check("Nothing (wait for Enter)", matches!(p, Policy::None), set(Policy::None)));
             m.push(heading(""));
             let on = info.is_none_or(|i| i.integration);

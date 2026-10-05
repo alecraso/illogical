@@ -55,7 +55,12 @@ A team shares its machines with its members.
    - If a machine in the team runs an older illogical, the link asks you
      first instead, and says which machine to update. Once someone has
      joined with one, a machine on an older illogical can't join the team
-     until it's updated.
+     until it's updated, and one that was downgraded since gets no member
+     list changes: it logs that illogical needs an update.
+   - The team lists the links nobody has used yet, each with *Cancel*.
+     Cancel one you sent to the wrong person: control refuses it from then
+     on. Machines never hear of a link until it's used, so a cancel holds
+     only as long as control is honest, which is enough for a lost link.
    - **Ask me first** (and every owner invite) makes the old kind of link:
      it lasts a week, anyone with it can ask to join, and each request
      waits for an owner.

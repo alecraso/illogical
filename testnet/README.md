@@ -15,10 +15,20 @@ ssh -F testnet/.state/ssh_config box-bare   # or bastion, box-systemd
 
 just testnet up control        # the ssh profile, plus illogical-control and its fakes
 just testnet test control m52  # M52 end to end
+just testnet test control m49  # M49: the CLI logged in, reaching a direct and a relayed box
+just testnet up tailnet        # headscale and two Tailscale nodes
+just testnet measure tailnet   # S28: ssh against the tailnet path
 ```
 
-Every script prints `SKIP: Docker is not available` and exits 0 without
-Docker. The claims expect fresh boxes: after installing anything on one,
+The Rust tests that drive illogical against the stack,
+`crates/daemon/tests/ssh.rs` (M51, box-bare and git) and
+`crates/daemon/tests/reboot.rs` (#26, box-systemd), bring the `ssh` profile
+up when it isn't. Both recreate the boxes they use and need `just static
+<arch>` for the box's binaries.
+
+Docker is required: without it every script and test here fails, saying
+so. Only `ILLOGICAL_SKIP_DOCKER=1` skips, and then each prints that it did
+not run. CI never sets it. The claims expect fresh boxes: after installing anything on one,
 `just testnet down` and `up` again (`bare` fails otherwise, as it should).
 
 ## Profiles
@@ -27,6 +37,7 @@ Docker. The claims expect fresh boxes: after installing anything on one,
 |---|---|---|---|
 | `ssh` | `bastion`, `box-bare`, `box-systemd`, `git` | validated | S28, M51, M52's install step, #26 |
 | `control` | `ssh`'s, and `control`, `fakes` | validated | M52's join, the relay, a box with no way out |
+| `tailnet` | `headscale`, `ts-box`, `ts-client` | validated | S28's tailnet comparison |
 
 The other profiles in #200 (`relay`, `fountain`, `forgejo`) are added when
 a milestone needs them.
@@ -52,6 +63,25 @@ The boxes have one user, `illo`, who logs in with the stack's key only. Agent an
 TCP forwarding are on. `up.sh` writes `testnet/.state/`: the client key,
 a host key per box, `known_hosts`, and an `ssh_config` that reaches each box
 by name with strict host key checking and `BatchMode`.
+
+### `tailnet`
+
+- `headscale`: a control server for the stack's own tailnet, plain http on
+  the inner network. `up.sh` makes a user, `illo`, and a reusable,
+  ephemeral preauthorized key (`tailnet-authkey` in the state directory)
+  that both nodes join with.
+- `ts-box`: a box with sshd and Tailscale in userspace mode, as a sandbox
+  runs it: its netstack forwards tailnet connections to the daemon's port
+  on loopback, and the daemon asks tailscaled who is connecting.
+- `ts-client`: the client, with Tailscale on a real `tailscale0` interface
+  (`NET_ADMIN` and `/dev/net/tun`), so programs on it dial the tailnet.
+
+The nodes share a network and connect directly (`tailscale ping` says
+"direct"). headscale requires a DERP map, so its embedded DERP server is on,
+unused. `measure-tailnet.sh` installs illogical on ts-box over ssh from
+ts-client, then times the same requests over both paths (S28's numbers are
+in `spikes/s28-ssh/README.md`). Tailscale SSH isn't here: its check mode
+needs a login at an identity provider, which a test can't do.
 
 ### `control`
 
@@ -103,26 +133,30 @@ The `control` profile's:
 | `reach` | box-systemd, with no route out, reaches control at its inner address | control taken off the inner network |
 | `m52` | on a fresh box-systemd, `illogical --ssh box-systemd join` installs, starts the daemon and shows a code; the device approves it; the box is on the account's device list and online; with the ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the box is back on the relay and the pane answers | polkit masked, so no lingering: the daemon doesn't come back after the restart |
 | `unreachable` | box-bare joining the hosted control (no route out) is told it can't reach control, with `illogical --ssh box-bare tui` as the way in, and `--ssh` still works | joining the stack's control, which it can reach |
+| `m49` | box-systemd and box-bare join the stack's control (the device approves both); box-bare's daemon also listens on the inner network and lists `http://box-bare:7681`, box-systemd lists no URL. On the bastion (the CLI copied there, no daemon, so no `hosts.json`), `illogical login` shows a code and the device approves it; `illogical hosts` lists both from control, marked; `--host box-bare` (direct) and `--host box-systemd` (relayed) each `run`, `ls` and `capture` | the CLI isn't logged in: neither name resolves |
 
 ## Conventions
 
 - Containers, networks and the images are named `illogical-testnet*`; `down`
   removes those and `testnet/.state`, nothing else.
 - `COMPOSE_PROJECT_NAME` renames a stack, so two can run side by side (one
-  per worktree): `COMPOSE_PROJECT_NAME=illo-a2` gives containers
+  per worktree): `COMPOSE_PROJECT_NAME=illo-a2` gives containers and images
   `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
   `testnet/.state-illo-a2`. Give it its own `ILLOGICAL_TESTNET_SSH_PORT`
-  too (and for `control`, its own `ILLOGICAL_TESTNET_CONTROL_PORT`,
-  `ILLOGICAL_TESTNET_FAKES_PORT` and `ILLOGICAL_TESTNET_INNER_NET`). The
-  tests read the same variables.
+  and `ILLOGICAL_TESTNET_INNER_NET` (the inner network's subnet is fixed),
+  and for `control` its own `ILLOGICAL_TESTNET_CONTROL_PORT` and
+  `ILLOGICAL_TESTNET_FAKES_PORT`. The tests read the same variables.
 - Host ports are off the defaults and each can be overridden with an
   `ILLOGICAL_TESTNET_*_PORT` variable.
 - The scripts run on Linux and macOS (bash 3.2) and pass `shellcheck`.
+- CI (`.github/workflows/check.yml`) runs `up`, `test` and `break` for the
+  `ssh` and `control` profiles on the Linux runner; both runners run
+  `ssh.rs` and `reboot.rs`, so both need Docker.
 
 ## Not yet
 
-- CI. A `testnet` job needs Docker on geek's runner (an open question in
-  #200); until then the stack is run by hand.
 - The illogical binaries on the `ssh` profile's boxes. When S28 and M51
   need them on a box, they arrive over ssh from the client (`just static`),
   which is what the claims guard.
+- Claims for the tailnet profile; its check is the measurement, which fails
+  when either path doesn't reach the daemon.

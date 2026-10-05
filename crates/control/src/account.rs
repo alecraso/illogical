@@ -12,7 +12,9 @@
 //! - **A team it founded goes with it** (and so does one where nobody
 //!   else is left): the signed history starts at the founder's key, so it
 //!   can't outlive the account. Its machines stay their owners', now
-//!   personal; its members hear it was deleted.
+//!   personal, and their relay sockets are hung up at once so nothing
+//!   relayed for the team outlasts it (#206); its members hear it was
+//!   deleted, by push and by a notice in the app.
 //! - **A team someone else founded** stays. A plain member can delete
 //!   right away: the roster keeps listing their name, with no devices
 //!   behind it, until an owner removes it, and the owners hear of it. An
@@ -146,10 +148,8 @@ pub async fn note_agent(
 
 /// `GET /api/me/passkeys`: the account's passkeys, and its GitHub link.
 pub async fn passkeys(State(app): State<Arc<App>>, s: Session) -> R {
-    let list: Vec<Value> =
-        app.db.passkeys(&s.account)?.into_iter().map(|(id, created)| json!({ "id": id, "created": created })).collect();
     Ok(Json(json!({
-        "passkeys": list, "github": app.db.github_identity(&s.account)?.map(|(_, login)| login), "ways": app.db.sign_ins(&s.account)?,
+        "passkeys": app.db.passkeys(&s.account)?, "github": app.db.github_identity(&s.account)?.map(|(_, login)| login), "ways": app.db.sign_ins(&s.account)?,
     })))
 }
 
@@ -287,10 +287,11 @@ pub async fn delete_account(app: &Arc<App>, account: &str, typed: &str) -> Resul
     }
     // Who to tell, and which machines to nudge, before the rows go.
     let mut nudge: Vec<String> = Vec::new();
+    let mut hang_up: Vec<String> = Vec::new();
     let mut told: Vec<(Vec<String>, String, String, String)> = Vec::new();
     let me = app.db.account(account)?.map(|a| a.name).filter(|n| !n.is_empty()).unwrap_or_else(|| "A member".into());
     for (team, name, _) in &p.disband {
-        nudge.extend(app.db.team_daemons(team)?);
+        hang_up.extend(app.db.team_daemons(team)?);
         if let Some(body) = app.db.latest_roster(team)?
             && let Ok(r) = serde_json::from_str::<Roster>(&body)
         {
@@ -320,9 +321,20 @@ pub async fn delete_account(app: &Arc<App>, account: &str, typed: &str) -> Resul
         app.relay.drop_daemon(d);
     }
     app.relay.account_gone(account);
-    nudge.retain(|d| !daemons.contains(d));
+    // The team's machines that stay (someone else's, now personal) were
+    // relaying for its members: hang those connections up now (#206).
+    hang_up.retain(|d| !daemons.contains(d));
+    app.relay.redial(&hang_up);
+    nudge.retain(|d| !daemons.contains(d) && !hang_up.contains(d));
     app.relay.nudge(&nudge);
+    // Told twice: a push, and a notice in the app for whoever has no push.
+    let now = now_ms();
     for (to, tag, title, body) in told {
+        for a in &to {
+            if let Err(e) = app.db.add_notice(a, &title, &body, now) {
+                warn!(error = %e, "keeping a notice");
+            }
+        }
         crate::push::notify(app, to, &tag, title, body);
     }
     info!(account, machines = daemons.len(), teams = disband.len(), "account deleted");
@@ -475,9 +487,14 @@ mod tests {
         assert_eq!(app.db.mentions("acct-alice"), Vec::<String>::new());
         assert_eq!(app.db.mentions(&ac.device), Vec::<String>::new());
         assert_eq!(app.db.mentions(&box1), Vec::<String>::new());
-        assert!(app.db.mentions("t1").is_empty(), "{:?}", app.db.mentions("t1"));
+        // Only Bob's notice that it went, which names it.
+        assert_eq!(app.db.mentions("t1"), ["notices.title"]);
+        assert_eq!(app.db.notices("acct-bob").unwrap()[0].1, "team t1 was deleted");
         // Its machine is refused; Bob's is his own again, untouched.
         assert!(app.db.daemon_cert(&box1).unwrap().is_none());
+        // It's told why if it asks again (#208); Bob's isn't on that list.
+        assert!(app.db.daemon_account_deleted(&box1).unwrap());
+        assert!(!app.db.daemon_account_deleted(&bobs).unwrap());
         assert!(app.db.daemon_cert(&bobs).unwrap().is_some());
         assert_eq!(app.db.daemon_team(&bobs).unwrap(), None);
         assert!(app.db.team("t2").unwrap().is_some());

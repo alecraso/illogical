@@ -22,16 +22,46 @@ import type { TerminalView } from "../terminal-view";
 /** A pane never seen on its host is taken as gone only after this long:
  * the host's layout can arrive after the home daemon's. */
 const GONE_GRACE_MS = 5000;
+/** A host that dropped off the network closes nothing: its connection
+ * just goes quiet. Ask a quiet host to answer this often... */
+const HEARTBEAT_MS = 3000;
+/** ...and give up on a link that said nothing for this long, or that
+ * hasn't connected in this long, and connect again as after any drop. */
+const SILENT_MS = 6000;
 
 interface HostLink {
   client: Client;
   /** The views showing each of its panes. */
   views: Map<PaneId, Set<RemoteView>>;
+  /** When the connect under way started (ms), if one is. */
+  trying: number | null;
 }
 
 /** Every host this page shows remote panes of, and its connection. */
 class RemoteHosts {
   private hosts = new Map<string, HostLink>();
+  private timer: number | undefined;
+
+  /** Heartbeats, and dropping links that went quiet (as the fleet does). */
+  private tick = () => {
+    const now = Date.now();
+    for (const l of this.hosts.values()) {
+      const c = l.client;
+      if (c.connected) {
+        l.trying = null;
+        if (now - c.lastHeard > SILENT_MS) c.drop();
+        else if (now - c.lastHeard > HEARTBEAT_MS) c.heartbeat();
+      } else if (c.linked) {
+        l.trying ??= now;
+        if (now - l.trying > SILENT_MS) {
+          l.trying = null;
+          c.drop();
+        }
+      } else {
+        l.trying = null;
+      }
+    }
+  };
 
   /** Whether `host` can be reached from this page: a host in the home
    * daemon's list (not control's directory, which has no home daemon). */
@@ -45,7 +75,7 @@ class RemoteHosts {
     if (!link) {
       const client = new Client(directory.base(host));
       client.only = new Set();
-      const l: HostLink = { client, views: new Map() };
+      const l: HostLink = { client, views: new Map(), trying: null };
       // Typing in a pane there makes this window the one whose size counts,
       // here and there.
       client.claim = (tab: TabId) => {
@@ -54,6 +84,7 @@ class RemoteHosts {
       };
       client.connect();
       this.hosts.set(host, l);
+      this.timer ??= window.setInterval(this.tick, 1000);
       link = l;
     }
     (link.views.get(pane) ?? link.views.set(pane, new Set()).get(pane)!).add(view);
@@ -70,6 +101,10 @@ class RemoteHosts {
     if (link.views.size === 0) {
       link.client.close();
       this.hosts.delete(host);
+      if (this.hosts.size === 0 && this.timer !== undefined) {
+        window.clearInterval(this.timer);
+        this.timer = undefined;
+      }
     }
   }
 

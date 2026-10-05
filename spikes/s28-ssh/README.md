@@ -8,8 +8,9 @@ logind and polkit). Daemons and clients were 0.16.0 from this tree, plus the
 0.12.0 and 0.15.0 release tarballs for skew.
 
 Not answered yet, because they need machines this run didn't have (see the
-end): the comparison with the tailnet path on geek, launchd on jake-mini with
-no GUI login, and Tailscale SSH's check prompt.
+end): launchd on jake-mini with no GUI login, and Tailscale SSH's check
+prompt. The comparison with the tailnet path was run on 2026-10-04 in the
+test stack's `tailnet` profile instead of on geek (below).
 
 ## Answers
 
@@ -61,6 +62,32 @@ needed for M51's first cut. The CLI has no tokio and doesn't depend on
 illogical-e2e (PLAN.md: "the CLI stays without tokio"), so the bridge should
 stay one stream per channel until a measurement on a real network says
 otherwise.
+
+### ssh against the tailnet path
+
+Measured on 2026-10-04 with the stack's `tailnet` profile (`just testnet up
+tailnet && just testnet measure tailnet`): headscale 0.29.4 and Tailscale
+1.102.4 in containers, a box (`ts-box`, userspace tailscaled, as sandboxes
+run it) and a client (`ts-client`, a real `tailscale0`), connected directly
+on one Docker network. The same daemon on ts-box, the same CLI on
+ts-client, timed there; four runs, ms:
+
+| | median | p90 |
+|---|---|---|
+| `illogical ls` over `--ssh` (bridge channel on a warm master) | 11.7–13.6 | 13.7–18.5 |
+| `illogical ls` over the tailnet (`--host http://100.64.0.2:7681`) | 2.3–3.3 | 2.8–10.0 |
+| `illogical export` of an 8 MiB pane over `--ssh` | 36–40 | 39–51 |
+| the same over the tailnet | 25–28 | 27–29 |
+
+So on a fast link the tailnet path is about 10 ms quicker per new
+connection (the bridge's exec channel, as above) and about a third quicker
+for bulk output, where ssh's encryption and the bridge's copy both cost.
+Neither is noticeable for a person at a terminal; it matters for scripts
+that run many short commands, which is what the socket forward or a mux
+over one channel would fix. One bulk transfer over the tailnet took
+36 s in an earlier run of five; the eighty in the four runs above all took
+under 32 ms, so it's noted, not explained. A real network (geek to a
+box elsewhere) adds the same round trips to both paths.
 
 ### Gotchas found on the way
 
@@ -190,14 +217,16 @@ against a control yet; M52 does that with the test stack's `control` profile.
 
 ## Still to do (needs a person or a machine)
 
-- From geek: the same measurements over a real network, and against the
-  tailnet path to the same box.
+- From geek: the same measurements over a real network. The comparison
+  itself is done (above) in containers.
 - jake-mini in person: `illogicald install` from an ssh session with no GUI
   login (does `launchctl bootstrap gui/<uid>` work, or does it need the
   `user/<uid>` domain?), and whether it survives logout and reboot.
 - Tailscale SSH's check prompt (`tailscale ssh` with a check policy): does it
   appear in the client's terminal on the first connection, and does a
-  ControlMaster keep later connections from asking again?
+  ControlMaster keep later connections from asking again? Check mode sends
+  the user to an identity provider's login, so no test can answer it; it
+  stays a known limit (#214, "What stays human").
 - The done-when's `illogical tui --ssh <fresh box>` from geek and into
   jake-mini. `--ssh` itself is M51's; here the same path was driven with
   `ssh -L` and `--socket`.

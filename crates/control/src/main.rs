@@ -314,6 +314,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/me/passkeys", get(account::passkeys))
         .route("/api/me/passkeys/{id}/remove", post(account::remove_passkey))
         .route("/api/me/delete", get(account::preview).post(account::delete))
+        .route("/api/me/notices/{id}/seen", post(teams::notice_seen))
         .route("/api/devices", get(api::devices).post(api::enroll))
         .route("/api/devices/{id}", get(api::device))
         .route("/api/devices/{id}/approve", post(api::approve))
@@ -334,6 +335,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/teams", get(teams::list).post(teams::create))
         .route("/api/teams/{id}/roster", post(teams::set_roster))
         .route("/api/teams/{id}/invites", post(teams::invite))
+        .route("/api/teams/{id}/presigned", get(teams::list_presigned))
+        .route("/api/teams/{id}/presigned/{key}", axum::routing::delete(teams::cancel_presigned))
         .route("/api/teams/{id}/requests/{account}/reject", post(teams::reject))
         .route("/api/teams/{id}/lock", post(teams::lock))
         .route("/api/invites/{team}/{code}", get(teams::show_invite))
@@ -379,6 +382,8 @@ async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>)
         // How daemons sign their requests here (auth.rs): 2 takes body
         // hashes and nonces.
         "daemon_auth": 2,
+        // The CLI joins with a code and signs its requests (M49).
+        "cli_join": 1,
     }))
 }
 

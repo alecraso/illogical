@@ -1049,6 +1049,28 @@ permissions.
     `claude-agent-acp` writes that rule into `.claude/settings.local.json` at
     the git root of the agent's cwd (your repo), even with
     `settingSources: []`.
+  - **Standing rules (#166, decided 2026-10-04 for Jake: the daemon
+    store).** "Always" can also be kept by the daemon, for the block's
+    directory (and below) or for every agent block, in `rules.json` in the
+    daemon's state dir. They're this machine's: not synced between machines,
+    and not written into Claude Code's settings (`--user-settings` still
+    reads those; illogical never writes them).
+    - *As built:* `approve {option: "always", scope: "cwd"|"everywhere",
+      prefix?}`. Without a prefix the rule allows the whole tool; with one,
+      titles that start with it word for word, and never one with a shell
+      separator, substitution or redirect in it. A rule for a VM agent's
+      directory names the VM.
+    - Every agent block checks the daemon's rules as they are now, after its
+      own, so a new block inherits them and forgetting one takes effect at
+      once. The transcript says which rule answered.
+    - Only the owner makes them (a guest or an MCP caller can't: the MCP
+      `agent_respond` has no scope). `GET /api/rules`, `DELETE
+      /api/rules/{index}` and `DELETE /api/rules`, owner only;
+      `illogical rules [--forget N | --forget-all]`; the session menu's
+      *Permission rules…* lists them with Forget. The card's *From now on…*
+      offers the prefix (Bash's first word by default) and the scope.
+    - Limit: an agent with a shell on this host can edit `rules.json` (as it
+      can `layout.json`); the daemon reads it at start only.
   - **When the block cancels a turn,** it answers every open request with
     `cancelled`.
   - **A card clears when its tool call goes `completed` or `failed`.**
@@ -4064,6 +4086,21 @@ The shape to try:
 
 **Done when:** `spikes/s27-blocks/README.md` has the answers, with a demo of Vite on jake-mini (no block flags) reloading on save inside control's page on geek's Chrome and on the phone.
 
+**Done-when, automated (2026-10-05):** the demo on jake-mini, geek's Chrome and the phone is replaced by tests that need no person: the spike's Playwright suite (Chromium and WebKit on macOS, WebKit on Linux in a container) runs a real Vite, Next and code-server through control's block origins, and `safari/safari.ts` runs the same checks in real Safari and the iOS Simulator through safaridriver on Track E's macOS VM. What's still open is listed in the README under "What still needs a real machine".
+
+#### S27: findings (2026-10-05)
+
+Answers in `spikes/s27-blocks/README.md`. Go for M50, per browser:
+
+| Browser | Verdict | On what |
+|---|---|---|
+| Chrome / Chromium | **go** | every check, including code-server's webviews; about 0.2 ms added per request on loopback |
+| Safari, macOS | **go, provisional** | Playwright's WebKit on macOS passes every check; real Safari waits on `safari/safari.ts` in Track E's VM |
+| Safari, iOS | **unknown** | not run; `safari/safari.ts --ios` in the same VM's Simulator |
+| Desktop app (WebKitGTK) | **go, provisional** | Playwright's Linux WebKit passes; the app's older Ubuntu 22.04 WebKitGTK not checked yet |
+
+What M50 takes from it: the grant in Noise message 1 (`Responder::read` returning the payload), WebSockets on the page's own channel rather than the worker's, control's worker hosting apps' own service workers (VS Code's webviews need it), `frame-ancestors 'self'` plus control, a stable origin key per block, grant expiry against the daemon's clock from the device channel (a page a day off can't open blocks), and the worker keeping each block's cookie jar. Throughput through the worker tops out near 140 MB/s (WebCrypto), against 300–900 MB/s today.
+
 #### M49: the CLI and the daemon page without a hub (#149)
 
 - **`illogical --host <machine>` through control:** names come from control's directory (the account's and the team's machines), not only `hosts.json`. The CLI connects over a Noise channel, direct when it can, else through the relay, with a `cli` device key of its own (the kind already exists in device certificates). The first use enrolls it the way a browser enrolls (a code to approve on another device). `illogical hosts` lists both sources, marked.
@@ -4071,6 +4108,15 @@ The shape to try:
 - **Docs:** "A Mac as another host" leads with joining control, and the hand-added tailnet host becomes the setup for people without control.
 
 **Done when:** from a pane on jake-mini, `illogical --host geek run …`, `list` and `capture` work with nothing in jake-mini's `hosts.json`, relayed when Tailscale is down on jake-mini; and the same from geek to jake-air.
+
+#### M49: as built (2026-10-04)
+
+- **Enrollment is a join.** `illogical login [URL]` asks `/api/join` with a `cli` certificate and a proof signed with its new key (as `illogicald join` does), prints `URL/#join=CODE`, polls, and pins the account root from the approval after checking the fingerprint (`--account FP`, or asking). The approve page says *Add a terminal?* and offers no team. Approving adds a device, not a machine, and nudges the account's daemons so they take its key. The URL defaults to the local daemon's control, else the hosted one. Key and pin: `~/.config/illogical/cli-key` and `cli-control.json`.
+- **No session cookie.** The CLI signs every request to control with its key, in the daemons' `x-illogical-auth` v2 format (`illogical_e2e::cert::request_auth`, now shared). Control treats a signature from an approved, unrevoked `cli` device as a session for its account; `DaemonAuth` takes daemon keys only. Nothing expires after 30 days.
+- **`--host NAME`:** the local daemon's list first, then control's directory (the account's own machines; team and shared machines need another account's root, which the CLI doesn't pin, so they're left out for now). The machine's certificate is checked against the pinned root; the CLI tries each URL the machine lists (`/e2e`, 3 s), then control's relay. One Noise channel per command carries each HTTP request as a `Q`/`R` message, so `run`, `ls`, `capture` and the rest work unchanged; `attach`, `tui` and streamed answers (`events --follow`) don't go through control yet. `ILLOGICAL_VERBOSE=1` prints which way it went. No local daemon is needed.
+- **`illogical hosts`** prints control's machines (online, direct URLs or relayed, and which control) above the local list; `--json` has both.
+- **Host menu:** a joined daemon's page shows the host button even alone, with *All your machines…* opening control's page.
+- **Tests, in place of jake-mini/geek/jake-air:** control-smoke (CI) logs the CLI in and drives a direct and a relayed machine with no daemon of its own; `web/e2e/host-menu-control.spec.ts`; and the testnet `control` profile's `m49` claim: box-systemd (no URL, relayed) and box-bare (listing `http://box-bare:7681`, direct) joined, the CLI on the bastion logged in by the headless device, `run`/`ls`/`capture` on both, `BREAK=1` without the login. The "relayed when Tailscale is down" case is the relayed box: a machine whose URLs don't answer is the same path.
 
 #### M50: blocks through control (#150, after S27)
 
@@ -4133,6 +4179,16 @@ One command: install over ssh, set up the service to outlive the login, run `ill
 - `illogical --ssh box …` (M51/M52's `prepare`) starts a Mac box's daemon with `illogicald install` and passes its `note:` line through, so `illogical --ssh box join` shows the reboot warning. After a reboot the next `illogical --ssh` to the box starts it again. Upgrading a box over ssh restarts a LaunchAgent; a LaunchDaemon keeps the old binary until it restarts, since that needs sudo.
 - Tested by `just macos launchd` (docs/testing.md): default install over ssh with no GUI, the warning, logout, uninstall, the `--ssh` path, `--system` through a VM restart with its pane, and uninstall of the LaunchDaemon, with a `BREAK=1` form.
 
+#### SSH track: the person-free checks (2026-10-04)
+
+Engineering calls made while turning the SSH track's in-person checks into tests (#214):
+
+- **`git push` (M51).** The test stack's `ssh` profile has a `git` server (bare repositories over ssh, `git-shell`, the stack's key). `crates/daemon/tests/ssh.rs` pushes from a pane on box-bare while a client is attached over `--ssh`, and the same push with `ILLOGICAL_SSH_AGENT=no` must be refused, so the push can only have used the forwarded agent. This stands in for "from jake-air".
+- **#26 in a container.** `crates/daemon/tests/reboot.rs` uses `docker restart` of box-systemd as the reboot: systemd stops the user service (the daemon logs "saved for shutdown") and boots again with lingering. The container keeps the host's boot id, so the journal is checked by counting lines, not with `-b`. The "phone reconnects" check is the web app in headless Chromium (`web/reconnect-watch.ts`) through an ssh forward the test re-opens after the boot; the daemon's Host check wants `localhost:7681`, so Chromium maps that name to the forward instead of the test changing the daemon. VM tabs across a real kernel reboot stay a separate check (wisp, #214 section 4).
+- **A rerun pane forgets its command after one restart.** Found by the reboot test: a restored rerun ran `bash -c 'CMD; exec $SHELL'`, which nothing recorded, so the second restart gave a shell. Fixed with `Start::Rerun` (recorded as `run`'s command is); the clean-stop test restarts twice now.
+- **Stacks per worktree.** `COMPOSE_PROJECT_NAME` names a stack's containers, images, networks and state directory, so parallel worktrees don't share boxes or rebuild each other's images.
+- **The tailnet comparison (S28)** is done in containers (`tailnet` profile: headscale, a userspace box, a client with `tailscale0`) rather than on geek; numbers in `spikes/s28-ssh/README.md`. Over a real network both paths add the same round trips, so the container numbers are the overhead difference. Tailscale SSH's check mode needs an identity provider's login and stays untested (a limit in #214).
+
 #### M53: the desktop app over ssh (#156, gated, after M51)
 
 Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this only covers boxes that never join control. M46 shipped in 0.14.0 (#144), so only M51 is left as a dependency.
@@ -4142,6 +4198,34 @@ Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this on
 The host menu lists ssh hosts and has *Connect over ssh…*. The app runs the system `ssh` with M51's options and the user's agent and `~/.ssh/config`, and shows any password or 2FA prompt. It serves only itself, so it isn't a hub. This is the GUI for boxes that will never join control.
 
 **Done when:** on jake-air and geek, the desktop app opens a pane on a box reached only over ssh (Tailscale off, not joined to control), including through a ProxyJump bastion.
+
+#### M54: a pane for a guest who has only OpenSSH (#198, decided 2026-10-04)
+
+Someone with nothing but `ssh` joins one of your panes from a pasted command. This is separate from M51–M53, which are you reaching your own boxes: here the guest has no client, no account and no tailnet. Jake said build it (2026-10-04).
+
+**Decisions (2026-10-04):**
+
+- **The credential is a token in the username**, not a throwaway key. The invite is one command to paste and nothing to save. The username travels inside the encrypted transport, after key exchange, and the host key is pinned and checked before user auth starts, so someone in the middle never gets as far as seeing it. A throwaway key would mean writing a private key to a file with mode 0600 first (ssh refuses a readable one), so the invite becomes two steps and leaves a key on the guest's disk. The token's cost is that it sits in the guest's shell history, and in `ps` on their machine while they're connected. That's acceptable because tokens are short-lived (an hour by default), single use by default, revocable, and the daemon stores only their hash.
+- **Auth is ssh's `none` method.** The server accepts `none` for a live token, so the guest's ssh never prompts and never offers keys. A wrong, expired or used token is refused, and `none` is the only method offered, so there's no password prompt to wait at.
+- **The host key is pinned in the command**, and nothing is written to the guest's `~/.ssh/known_hosts`:
+  `ssh -p 7684 -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o 'KnownHostsCommand=/bin/echo [box]:7684 ssh-ed25519 AAAA…' <token>@box`.
+  `KnownHostsCommand` needs OpenSSH 8.5 or later (2021). For older clients the invite also gives the known-hosts line on its own, to save into a file named with `-o UserKnownHostsFile=`. The key is ed25519, made once per daemon and kept in the state directory, so pins survive restarts.
+- **The daemon runs its own ssh server (russh)**, not the box's `sshd`, on its own port: `--guest-ssh` (default `0.0.0.0:7684`, next to the app's 7681; 7683 is the e2e daemon's; `off` turns the feature off). It listens only while at least one invite exists and closes the port when the last one ends. It has no shell and no accounts. A session can do one thing: a pty and a shell request, attached to the invite's pane. `exec`, subsystems (sftp), port forwarding, agent forwarding and X11 are all refused. That's the attack-surface answer: off by default, on only while you have something shared, and the only pre-auth input it acts on is a hash lookup.
+- **Read-only is the default.** `--rw` lets the guest type. A read-write invite is M14's trust grant made up front by the owner, so its life is capped at two hours like a trust grant (read-only invites at a day). Typing still follows the one-driver rule: the guest drives only if nobody else is driving, or in a pair-mode pane; otherwise their keys go nowhere and the terminal title says who is driving.
+- **Input is labeled** with the name given at invite time (`--name`, default `guest`), as principal `guest-ssh:<invite id>:<connection>`, so `illogical log --who` and command history show it. A token holder has no other identity.
+- **Size and `TERM`.** A read-write guest who is driving sizes the pane from their window (claiming the tab, zoomed to the pane, as `illogical attach` does) and keeps doing so on window changes. A read-only guest never resizes; they see the stream at the driver's size, so a smaller terminal wraps. A plain terminal can't letterbox, and we don't redraw for it. The guest's `TERM` is recorded and not applied: the program in the pane is already running against the pane's terminal, and colors pass through as it writes them.
+- **Revocation is immediate.** `illogical guests revoke ID` (and the pane menu) drops live sessions at once. Expiry drops them at the deadline, and closing the pane ends them. A single-use invite is spent at its first successful login: the session lasts, but reconnecting needs a reusable invite (`--reusable`), which also lets several guests watch at once and survives detach and reconnect.
+- **Where invites are made:** `illogical share --guest [%N]` prints the command (`--rw`, `--reusable`, `--ttl`, `--name`, and `--addr` for the address the guest should use; it defaults to `--guest-ssh-host` or the machine's hostname). The issue said `share --ssh`, but `--ssh` is M51's global flag for reaching a box, so the invite flag is `--guest`; `illogical --ssh box share --guest %3` makes an invite on that box. `illogical guests` lists invites. The pane menu on the web and phone gets *Invite over ssh…*.
+- **Boxes behind NAT go through control's relay with ProxyJump**, as a later step (below). The direct path comes first: a box with an address the guest can reach.
+
+**Status (2026-10-04):** the direct path is built (`crates/daemon/src/guest_ssh.rs`, `illogical share --guest`, `illogical guests`, *Invite over ssh…* in the pane menu). Tests: `crates/daemon/tests/guest_ssh.rs` runs the system `ssh` on a pty against a dev daemon (read-only can't type and a spent single-use token is refused; read-write types as its label, drives, sizes the pane and holds off a second guest; revoke, expiry and pane close end sessions; a wrong token and a different host key are refused, the latter before the token is sent; `exec` is refused; the port closes with the last invite; the CLI's printed command works). `web/e2e/guest-ssh.spec.ts` makes the invite from the pane menu, on desktop and phone viewports, and runs ssh with it. The relay has a skipped test stub, `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host`.
+
+**The relay (next step, not built):** `ssh -J <route>@<control-host> <token>@<daemon id>`. Control runs an ssh jump host. The route is a second, separate token the daemon registers with control over its relay socket while an invite is live, and withdraws when it ends. At the jump hop control accepts `none` auth for a registered route and nothing else, allows only a `direct-tcpip` channel whose target is that route's daemon, and splices the channel onto a new raw stream over the daemon's dial-out mux. The daemon hands that stream to the same russh server (`run_stream` takes any byte stream), so the inner session is end to end and control sees ssh ciphertext only. Control never learns the secret token: the route opens the hop to one daemon, and the daemon still wants the secret. Host-key pinning names the daemon id with `HostKeyAlias`. What's needed: an ssh listener in control (russh), a route table fed by a new relay-socket message, a raw stream kind on the dial-out mux next to the Noise streams, and its test against the `control` testnet profile (Track A).
+
+**Done when:**
+- the direct path: a stock OpenSSH client against a dev daemon, unattended. A read-only guest sees the pane and can't type; a read-write guest types and their input is labeled; a resize from a driving guest reaches the pane; revoke disconnects a live guest at once; an expired invite is refused and a live session ends at expiry; closing the pane ends the session; a wrong token is refused; a different host key is refused by the pinned command; a used single-use token is refused;
+- the relay path, when built: the same over `-J` through control, with control unable to read the pane;
+- the pane menu entry, with a Playwright test.
 
 ### Desktop track (S25, M46–M48, added 2026-10-04)
 
@@ -4198,6 +4282,18 @@ See #130. From S25:
 
 **Also done when (S25's macOS half):** on jake-mini, the bench against Chrome; Cmd-W, T, N, Q, H and M reach the page; Japanese and Korean IME; a notification click opens the pane; the dock badge shows the needs-you count. And on geek, a notification click opens the pane.
 
+#### M46: the gaps, as built (2026-10-05)
+
+The audit's M46 gaps, each with a test that needs no person (docs/testing.md, "The desktop app's tests"):
+
+- **SMAppService.** The bundle carries a launch agent (`Contents/Library/LaunchAgents/wtf.widgets.illogical.daemon.plist`) that runs the bundled `illogicald`; a Mac with no daemon registers it on first start, so it shows under Login Items, and an update restarts it on the new binary. Decision: the plist uses `Program` with the fixed path `/Applications/illogical.app/Contents/MacOS/illogicald`, because under an ad-hoc signature launchd can't resolve `BundleProgram` ("The specified path is not a bundle"). An app run from anywhere else, or a Mac where `illogicald install` already wrote a plist, uses `illogicald install` as before. Re-check `BundleProgram` once there's a Developer ID (#177). The daemon logs to `ILLOGICAL_LOG_FILE` (`~/Library/Logs/illogicald.log`), since launchd can't expand `~`.
+- **Tabs in the titlebar.** The client's bar is the titlebar: an overlay titlebar on macOS, no decorations on Linux with the bar's own minimize, maximize and close. On macOS new windows (Cmd-N, the tray's *New window*) join as native tabs, and *Move Tab to New Window* is AppKit's. A tab's menu has *Open in new window*. Cmd-W closes the pane, Cmd-T opens a tab.
+- **Global hotkey**, off by default: the tray's *Global hotkey* item, or `hotkey_on` and `hotkey` in `desktop.json` (default `Ctrl+Alt+Space`). It hides a focused window and brings it back. On Linux the app stays in the tray when its last window closes while the hotkey is on.
+- **`illogical://`**: `illogical://pane/%N` and `illogical://open?cwd=DIR`. macOS through `CFBundleURLTypes`, Linux through the packages' `x-scheme-handler/illogical` and single-instance (an AppImage registers itself).
+- **Packaging.** `.deb`, `.rpm` and AppImage for x86_64 and aarch64 (`just desktop-linux ARCH`; the release builds arm64 under qemu-user), and a `.dmg` made with `hdiutil` beside the zip. The `.rpm` declares no glibc version: Tauri writes the whole string as a package name.
+- **Updates.** The Tauri updater against `latest.json` on the latest release, registered only in builds with a public key in `tauri.conf.json`. Decision: it updates the macOS app and the AppImage only; a .deb or .rpm belongs to the package manager. A downloaded update is in place at once and runs from the next start (the tray offers *Restart to update*).
+- **Notarization** waits on the Developer ID: `scripts/macos-sign` signs, notarizes and staples when the `APPLE_*` secrets are set, and otherwise says it skipped and why.
+
 #### M47: OS integration
 
 See #130.
@@ -4205,6 +4301,23 @@ See #130.
 #### M48: native transport
 
 See #130.
+
+### Command palette (#139, built 2026-10-04)
+
+- **Chord:** Ctrl+Shift+P, and Cmd+Shift+P on a Mac (the desktop app's Edit-only menu leaves Cmd chords to the page). Caught on `window` in the capture phase like the picker's Ctrl+Shift+G, so a focused terminal never sees it. Firefox keeps Ctrl+Shift+P for a private window; the session menu's *Command palette…* opens it there. Blocks in a cross-origin iframe (web pages, editors, studio apps) keep their keys until focus is back on the page.
+- **One registry:** `web/src/ui/commands.tsx` builds the pane, tab, `+` and session menus, and the palette reads the same lists, so a menu item is a palette command without more work. A `MenuItem` can carry a `shortcut`, shown in both.
+- **Also in it:** jumps to sessions, tabs, panes (in split tabs) and workspace blocks by name; the swarm, and the next pane that needs you (in the tabs or in the swarm).
+- **Recent picks** come first, kept in `localStorage` (per browser; nothing synced).
+- **Phone:** a full-height sheet like the picker's, from the sheet's *Commands* button; the keyboard stays down until the filter is tapped.
+- **Not in it:** pane contents and history (`search`). Names and actions only.
+
+### Agents in terminal panes (#145, #146, #147): as built (2026-10-04)
+
+- **Replay agent.** `crates/vt/fixtures/agents/`: `record.py` records the real Claude Code (2.1.289, haiku) with its timing and state markers; Codex is drawn from the 0.155 screens because it isn't installed where this was made. `replay.py` plays a recording as a program named `claude` or `codex`, waits where someone typed, logs markers and every start's argv, and keeps Claude Code's session file and transcript under a test's own config dir. docs/testing.md has the details.
+- **#145 leftovers.** The detection unit tests play both recordings and check every marker, including the transcript view (Ctrl-O) idle and working, which only the title tells apart. `agent_screens.rs` does the same live, with no hooks. Found and fixed on the way: a dialog drawn during the 1 s startup grace and never redrawn (the trust dialog) was never read. `classify::agent` resolves the agent through runners, interpreters, `python -m`, Nix wrappers and Homebrew's `Python`, and `python -c codex` isn't Codex. `GET /api/panes/N/detection` and `illogical describe %N --detection` show each rule's region text and which fired. Still open: the chant agent inventory, and the live check on geek.
+- **#147.** `POST /api/panes/N/prompt`, the `prompt_agent` MCP tool and `illogical send %N --wait`: `done`, `needs_input` with the question, `blocked` (already waiting on someone, nothing typed) or `stalled` with the screen's last lines (5 s). Decision: no `until` parameter; a turn that stops at a question returns there, since nothing more happens without someone. Typing alone marks a terminal "working", so where the agent's screen is read, the screen says when it started. Enter goes 150 ms after the text so it isn't taken for a paste. A pane with no agent is never typed at.
+- **#146.** `Policy::Resume`; `PaneMeta.session` (agent, id, transcript, cwd, running) from any Claude Code hook's `session_id`, else from `sessions/<pid>.json` under the pane's process. A pane left at the default policy that gets a session switches to `resume`; a policy someone picked (`policy_set`) is kept. On restore: `claude --resume <id>` (or `codex resume <id>`) in the agent's own directory, through `sh -c '"$@"; exec SHELL' illogical claude --resume ID`, so the id is an argument and never shell text; ids are also checked (`[A-Za-z0-9._-]`, 128 at most). A missing transcript or directory, or a bad id, gives a shell with a one-line note. `resume.rs` covers two panes in one repo, a deleted transcript, and a metacharacter id (refused from a hook and from a hand-edited layout). The reboot of a real box (`docker restart`) is Track A's; the helpers in `tests/replay/` work there too. The restart menus (web, TUI) show "Resume Claude Code conversation <id>"; the title isn't looked up yet.
+- **Real agents.** `ILLOGICAL_REAL_AGENTS=screen` runs all three against the real Claude Code, on `ANTHROPIC_API_KEY` in its own config dir when that's set.
 
 ## Acceptance tests (automated where possible)
 

@@ -32,6 +32,9 @@ pub enum Target {
     /// A box's daemon over ssh (M51): each connection is a channel running
     /// `illogical bridge` there.
     Ssh(crate::ssh::Remote),
+    /// A machine in control's directory (M49), over an end-to-end channel
+    /// from this CLI's `cli` device key, direct or through control's relay.
+    Control(std::sync::Arc<crate::control::Link>),
 }
 
 /// `http(s)://host[:port]`, taken apart.
@@ -81,7 +84,7 @@ impl Target {
     /// The Host header, and the WebSocket URL's authority.
     pub fn authority(&self) -> &str {
         match self {
-            Target::Socket(_) | Target::Via(..) | Target::Ssh(_) => "localhost",
+            Target::Socket(_) | Target::Via(..) | Target::Ssh(_) | Target::Control(_) => "localhost",
             Target::Url(u) => &u.authority,
         }
     }
@@ -140,18 +143,46 @@ impl Target {
                     .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
             )),
             Target::Ssh(r) => Ok(Box::new(r.channel()?)),
-            Target::Url(u) => {
-                let tcp = TcpStream::connect((u.host.as_str(), u.port))
-                    .with_context(|| format!("can't reach {}:{}", u.host, u.port))?;
-                tcp.set_nodelay(true)?;
-                if !u.tls {
-                    return Ok(Box::new(tcp));
-                }
-                let name = rustls::pki_types::ServerName::try_from(u.host.clone())?;
-                let conn = rustls::ClientConnection::new(tls_config()?, name)?;
-                Ok(Box::new(Tls(rustls::StreamOwned::new(conn, tcp))))
-            }
+            Target::Control(l) => Ok(Box::new(l.stream()?)),
+            Target::Url(u) => u.connect(None),
         }
+    }
+}
+
+impl Url {
+    /// A connection to it, TLS for `https://`; within `timeout` if given
+    /// (a machine that's away shouldn't hold a command up for a minute).
+    pub fn connect(&self, timeout: Option<std::time::Duration>) -> anyhow::Result<Box<dyn Stream>> {
+        let cant = || format!("can't reach {}:{}", self.host, self.port);
+        let tcp = match timeout {
+            None => TcpStream::connect((self.host.as_str(), self.port)).with_context(cant)?,
+            Some(t) => {
+                use std::net::ToSocketAddrs;
+                let mut last = None;
+                let mut got = None;
+                for a in (self.host.as_str(), self.port).to_socket_addrs().with_context(cant)? {
+                    match TcpStream::connect_timeout(&a, t) {
+                        Ok(s) => {
+                            got = Some(s);
+                            break;
+                        }
+                        Err(e) => last = Some(e),
+                    }
+                }
+                match (got, last) {
+                    (Some(s), _) => s,
+                    (None, Some(e)) => return Err(anyhow::Error::from(e).context(cant())),
+                    (None, None) => bail!("{}: no address", cant()),
+                }
+            }
+        };
+        tcp.set_nodelay(true)?;
+        if !self.tls {
+            return Ok(Box::new(tcp));
+        }
+        let name = rustls::pki_types::ServerName::try_from(self.host.clone())?;
+        let conn = rustls::ClientConnection::new(tls_config()?, name)?;
+        Ok(Box::new(Tls(rustls::StreamOwned::new(conn, tcp))))
     }
 }
 
@@ -174,6 +205,7 @@ fn tls_config() -> anyhow::Result<Arc<rustls::ClientConfig>> {
 pub trait Stream: Read + Write + Send {
     fn fd(&self) -> BorrowedFd<'_>;
     fn set_nonblocking(&self, on: bool) -> std::io::Result<()>;
+    fn set_timeout(&self, t: Option<std::time::Duration>) -> std::io::Result<()>;
 }
 
 impl Stream for UnixStream {
@@ -183,6 +215,10 @@ impl Stream for UnixStream {
     fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
         UnixStream::set_nonblocking(self, on)
     }
+    fn set_timeout(&self, t: Option<std::time::Duration>) -> std::io::Result<()> {
+        self.set_read_timeout(t)?;
+        self.set_write_timeout(t)
+    }
 }
 
 impl Stream for TcpStream {
@@ -191,6 +227,10 @@ impl Stream for TcpStream {
     }
     fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
         TcpStream::set_nonblocking(self, on)
+    }
+    fn set_timeout(&self, t: Option<std::time::Duration>) -> std::io::Result<()> {
+        self.set_read_timeout(t)?;
+        self.set_write_timeout(t)
     }
 }
 
@@ -217,6 +257,10 @@ impl Stream for Tls {
     }
     fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
         self.0.sock.set_nonblocking(on)
+    }
+    fn set_timeout(&self, t: Option<std::time::Duration>) -> std::io::Result<()> {
+        self.0.sock.set_read_timeout(t)?;
+        self.0.sock.set_write_timeout(t)
     }
 }
 
@@ -265,20 +309,34 @@ pub fn send(
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> anyhow::Result<Response> {
-    let mut stream = target.connect()?;
+    let stream = target.connect()?;
+    let token;
+    let mut all: Vec<(&str, &str)> = headers.to_vec();
+    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        && let Some(t) = target.local_token()
+    {
+        token = format!("Bearer {t}");
+        all.push(("Authorization", &token));
+    }
+    send_on(stream, method, &format!("{}{path}", target.prefix()), target.authority(), &all, body)
+}
+
+/// One request on a connection of the caller's, with exactly these headers
+/// (no local token): control's API from the CLI (M49).
+pub fn send_on(
+    mut stream: Box<dyn Stream>,
+    method: &str,
+    path: &str,
+    authority: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> anyhow::Result<Response> {
     let mut head = format!(
-        "{method} {}{path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: {}\r\n",
-        target.prefix(),
-        target.authority(),
+        "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nContent-Length: {}\r\n",
         body.len()
     );
     for (k, v) in headers {
         head.push_str(&format!("{k}: {v}\r\n"));
-    }
-    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
-        && let Some(t) = target.local_token()
-    {
-        head.push_str(&format!("Authorization: Bearer {t}\r\n"));
     }
     head.push_str("\r\n");
     stream.write_all(head.as_bytes())?;

@@ -309,7 +309,64 @@ fn detail(d: &Detail, lines: &[String]) -> Option<String> {
     Some(d.with.replace("{}", &got))
 }
 
+/// One rule as it saw the screen, for `illogical describe --detection`:
+/// the text of its region and whether it matched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Look {
+    pub rule: &'static str,
+    pub state: AgentState,
+    pub priority: u16,
+    /// Where it looked: `title`, `last 12 lines`, `after the last rule`,
+    /// `prompt box`.
+    pub region: String,
+    pub text: Vec<String>,
+    pub matched: bool,
+}
+
+impl Region {
+    fn describe(self) -> String {
+        match self {
+            Title => "title".into(),
+            Bottom(n) => format!("last {n} non-empty lines"),
+            AfterLastRule => "after the last rule".into(),
+            PromptBox => "prompt box".into(),
+        }
+    }
+}
+
+impl AgentState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Working => "working",
+            Blocked => "blocked",
+            Idle => "idle",
+        }
+    }
+}
+
 impl Agent {
+    /// Every rule, highest priority first, with what it saw: why
+    /// [`Agent::detect`] answered as it did.
+    pub fn explain(&self, title: &str, lines: &[String]) -> Vec<Look> {
+        let mut rules: Vec<&Rule> = self.rules.iter().collect();
+        rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
+        rules
+            .into_iter()
+            .map(|r| {
+                let text = region(r.region, title, lines);
+                let lower = text.join("\n").to_lowercase();
+                Look {
+                    rule: r.id,
+                    state: r.state,
+                    priority: r.priority,
+                    region: r.region.describe(),
+                    matched: r.when.iter().all(|c| holds(c, &text, &lower)),
+                    text: text.into_iter().map(str::to_owned).collect(),
+                }
+            })
+            .collect()
+    }
+
     /// What `lines` (the active screen, top to bottom) and `title` say this
     /// agent is doing; `None` when no rule matches.
     pub fn detect(&self, title: &str, lines: &[String]) -> Option<Detection> {
@@ -345,6 +402,9 @@ const CONFIRM_CAP: Duration = Duration::from_millis(700);
 #[derive(Debug)]
 pub struct Debounce {
     started: Instant,
+    /// It has looked since the grace period ended: what was drawn during
+    /// it (a dialog the agent opens with, then waits on) has been seen.
+    looked: bool,
     shown: Option<AgentState>,
     /// Idle, seen this many times, first and last when.
     idle: Option<(u8, Instant, Instant)>,
@@ -352,7 +412,7 @@ pub struct Debounce {
 
 impl Debounce {
     pub fn new(now: Instant) -> Self {
-        Self { started: now, shown: None, idle: None }
+        Self { started: now, looked: false, shown: None, idle: None }
     }
 
     /// The state last reported.
@@ -360,10 +420,10 @@ impl Debounce {
         self.shown
     }
 
-    /// Whether it wants another look soon (still in its grace period, or
-    /// waiting to confirm idle).
-    pub fn pending(&self, now: Instant) -> bool {
-        now.duration_since(self.started) < GRACE || self.idle.is_some()
+    /// Whether it wants another look soon (it hasn't looked since its grace
+    /// period, or it's waiting to confirm idle).
+    pub fn pending(&self) -> bool {
+        !self.looked || self.idle.is_some()
     }
 
     /// What the screen shows at `now` (`None`: can't tell). Returns the new
@@ -372,6 +432,7 @@ impl Debounce {
         if now.duration_since(self.started) < GRACE {
             return None;
         }
+        self.looked = true;
         let Some(seen) = seen else {
             self.idle = None;
             return None;

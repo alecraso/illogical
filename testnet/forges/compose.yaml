@@ -1,0 +1,79 @@
+# Real forges for the forge blocks' tests (#93): Forgejo and GitLab CE, each
+# its own profile. A Compose project of its own, so it comes and goes
+# without touching the ssh profile's stack. See testnet/forges/README.md.
+#
+# Both are published on loopback only. Webhooks come back to a daemon on
+# the host through host.docker.internal (Docker Desktop's name for the
+# host; on Linux, the host-gateway entry below), which each forge is told
+# to allow.
+name: illogical-testnet-forges
+
+services:
+  forgejo:
+    profiles: [forgejo]
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    hostname: forgejo
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__ROOT_URL: "http://127.0.0.1:${ILLOGICAL_TESTNET_FORGEJO_PORT:-17746}/"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__actions__ENABLED: "false"
+      # The question #93 left open: hooks may only go where this allows.
+      FORGEJO__webhook__ALLOWED_HOST_LIST: "${ILLOGICAL_TESTNET_FORGEJO_HOOK_HOSTS:-host.docker.internal}"
+      FORGEJO__webhook__DELIVER_TIMEOUT: "5"
+      FORGEJO__log__LEVEL: Warn
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports:
+      - "127.0.0.1:${ILLOGICAL_TESTNET_FORGEJO_PORT:-17746}:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  # GitLab CE answers on the same port inside and out, so the URLs it
+  # writes (web_url, clone URLs) work from the host. Heavy: 4 GB of memory
+  # and a few minutes to start.
+  gitlab:
+    profiles: [gitlab]
+    image: gitlab/gitlab-ce:18.4.1-ce.0
+    hostname: gitlab
+    shm_size: 256m
+    environment:
+      # up.sh makes one at random; the tests never sign in as root.
+      GITLAB_ROOT_PASSWORD: "${ILLOGICAL_TESTNET_GITLAB_ROOT_PASSWORD:-}"
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://127.0.0.1:${ILLOGICAL_TESTNET_GITLAB_PORT:-17747}'
+        nginx['listen_port'] = ${ILLOGICAL_TESTNET_GITLAB_PORT:-17747}
+        gitlab_rails['initial_root_password'] = ENV['GITLAB_ROOT_PASSWORD']
+        gitlab_rails['gitlab_shell_ssh_port'] = 22
+        puma['worker_processes'] = 0
+        sidekiq['concurrency'] = 5
+        prometheus_monitoring['enable'] = false
+        gitlab_kas['enable'] = false
+        registry['enable'] = false
+        mattermost['enable'] = false
+        gitlab_pages['enable'] = false
+        letsencrypt['enable'] = false
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports:
+      - "127.0.0.1:${ILLOGICAL_TESTNET_GITLAB_PORT:-17747}:${ILLOGICAL_TESTNET_GITLAB_PORT:-17747}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${ILLOGICAL_TESTNET_GITLAB_PORT:-17747}/-/readiness >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 90
+      start_period: 60s
+
+  # A shell-executor runner, so a pipeline can go red and be retried.
+  gitlab-runner:
+    profiles: [gitlab]
+    image: gitlab/gitlab-runner:v18.4.0
+    hostname: gitlab-runner
+    entrypoint: ["sleep", "infinity"]

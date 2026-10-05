@@ -165,6 +165,69 @@ try {
   const echoed = await phoneDev.roundTrip(d!.id, "SECRET-MARKER", { timeoutMs: 5000 }).catch((e: Error) => e.message);
   check("relayed: a command's output comes back", echoed.includes("SECRET-MARKER-42"));
 
+  // 5b. The CLI (M49): `illogical login` shows a code, the laptop approves
+  // it, and with no daemon of its own (so nothing in any hosts.json) it
+  // reaches the account's machines by name: "box" straight at its URL, and
+  // "box2", which lists none, through the relay.
+  {
+    const home = temp("cli");
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_STATE_HOME: join(home, ".state"), ILLOGICAL_SOCK: join(home, "no-daemon.sock"), ILLOGICAL_VERBOSE: "1" };
+    const cli = (args: string[]) =>
+      new Promise<{ code: number; out: string; err: string }>((res) => {
+        const p = spawn(`${target}/illogical`, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+        procs.push(p);
+        let out = "";
+        let err = "";
+        p.stdout!.on("data", (d) => (out += d));
+        p.stderr!.on("data", (d) => (err += d));
+        p.on("exit", (code) => res({ code: code ?? 1, out, err }));
+      });
+    const state2b = temp("daemon-box2");
+    check("illogicald join finished (box2)", (await joinAs("box2", state2b, laptop.id)) === 0);
+    procs.push(
+      spawn(`${target}/illogicald`, [
+        ...["--listen", "127.0.0.1:0", "--name", "box2", "--state-dir", state2b],
+        ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent", "--no-claude-ide"],
+      ], { stdio: "ignore" }),
+    );
+    await me.waitOnline("box2", 10_000).catch(() => undefined);
+    const before = await cli(["--host", "box", "ls"]);
+    check("before logging in, the CLI can't find box and says how to", before.code !== 0 && before.err.includes("illogical login"), before.err.trim());
+    const login = spawn(`${target}/illogical`, ["login", base, "--name", "smoke cli", "--account", laptop.id], { env, stdio: ["ignore", "pipe", "inherit"] });
+    procs.push(login);
+    let said = "";
+    const cliCode = await new Promise<string>((res) => {
+      login.stdout!.on("data", (d) => {
+        said += d;
+        const m = said.match(/#join=([A-Z0-9]{5}-[A-Z0-9]{5})/);
+        if (m) res(m[1]);
+      });
+    });
+    const approvedCli = await me.approveJoin(cliCode);
+    check("the CLI's code is its key's, and it's a cli device", approvedCli.kind === "cli" && (await joinCode(approvedCli)) === cliCode, cliCode);
+    const loginExit = await new Promise<number>((r) => login.on("exit", (c) => r(c ?? 1)));
+    check("illogical login finished", loginExit === 0 && said.includes("Logged in."), said.split("\n").slice(-3).join(" "));
+    check("the CLI is one of the account's devices", (await me.trusted()).get(approvedCli.device)?.kind === "cli");
+    const hosts = await cli(["hosts"]);
+    check("illogical hosts lists control's machines, marked", /box\s.*direct.*\(control: /.test(hosts.out) && /box2\s.*relayed.*\(control: /.test(hosts.out), hosts.out.trim());
+    for (const [name, how] of [
+      ["box", "direct"],
+      ["box2", "relayed"],
+    ] as const) {
+      const run = await cli(["--host", name, "--json", "run", "--", `echo M49-${name}-$((6*7))`]);
+      const pane = run.code === 0 ? (JSON.parse(run.out) as { pane: number }).pane : undefined;
+      check(`--host ${name} run: ${how}`, pane !== undefined && run.err.includes(`${name}: ${how}`), (run.err + run.out).trim().slice(0, 200));
+      const ls = await cli(["--host", name, "ls"]);
+      check(`--host ${name} ls`, ls.code === 0 && ls.out.includes(`%${pane}`), (ls.err + ls.out).trim().slice(0, 200));
+      let cap = { code: 1, out: "", err: "" };
+      for (let i = 0; i < 30 && !cap.out.includes(`M49-${name}-42`); i++) {
+        cap = await cli(["--host", name, "capture", `${pane}`]);
+        await sleep(200);
+      }
+      check(`--host ${name} capture`, cap.out.includes(`M49-${name}-42`), (cap.err + cap.out).trim().slice(-200));
+    }
+  }
+
   // 6. A device the account doesn't trust gets nowhere.
   const stranger = await generateKeys();
   const nope = await E2ESocket.connect([{ url: `ws://127.0.0.1:${DAEMON}/e2e`, timeoutMs: 3000 }], { id: d!.id, noise: dcert!.noise }, stranger).then(
@@ -342,7 +405,8 @@ try {
   check("signed out: the account is gone", await leaver.api("/api/me").then(() => false, (e: Error) => / 401 /.test(e.message)));
   // Hung up on, and refused when it dials again.
   const since = () => Buffer.concat(daemon2Log).subarray(before).toString().replace(/\x1b\[[0-9;]*m/g, "");
-  const refused2 = /can't reach control's relay.*401.*not an enrolled daemon/;
+  // It's told why (#208).
+  const refused2 = /can't reach control's relay.*401.*this machine's account was deleted/;
   for (let i = 0; i < 100 && !refused2.test(since()); i++) await sleep(100);
   check("its machine is refused from then on", refused2.test(since()), since().split("\n").filter((l) => /relay/.test(l)).slice(-1)[0]);
   const rows = new DatabaseSync(db, { readOnly: true });

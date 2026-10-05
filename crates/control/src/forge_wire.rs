@@ -109,10 +109,14 @@ async fn fake_github(h: Shared) -> String {
     at
 }
 
-fn sign_header(keys: &DeviceKeys, method: &str, path: &str) -> String {
+/// Signed as a 0.17 daemon signs: with a nonce, so two requests alike in
+/// the same millisecond aren't one signature twice (control refuses a
+/// replay).
+fn sign_header(keys: &DeviceKeys, method: &str, path: &str, body: &[u8]) -> String {
     let ms = now_ms();
-    let msg = crate::auth::daemon_auth_message(method, path, ms);
-    format!("{} {ms} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())))
+    let nonce = hex::encode(illogical_e2e::random::<16>());
+    let msg = crate::auth::daemon_auth_message_v2(method, path, ms, &nonce, body);
+    format!("v2 {} {ms} {nonce} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())))
 }
 
 fn daemon(app: &App, account: &str, name: &str) -> DeviceKeys {
@@ -127,7 +131,7 @@ type Sock = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream
 
 async fn dial(base: &str, keys: &DeviceKeys) -> Sock {
     let mut req = format!("{}/api/relay/dial", base.replace("http://", "ws://")).into_client_request().unwrap();
-    req.headers_mut().insert("x-illogical-auth", sign_header(keys, "GET", "/api/relay/dial").parse().unwrap());
+    req.headers_mut().insert("x-illogical-auth", sign_header(keys, "GET", "/api/relay/dial", b"").parse().unwrap());
     tokio_tungstenite::connect_async(req).await.unwrap().0
 }
 
@@ -299,10 +303,12 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
 
     // A hosted box reads through the App: a token for one repository.
     let ask = |k: &DeviceKeys, repo: &str| {
+        let body = json!({ "repo": repo }).to_string();
         reqwest::Client::new()
             .post(format!("{base}/api/daemon/github/token"))
-            .header("x-illogical-auth", sign_header(k, "POST", "/api/daemon/github/token"))
-            .json(&json!({ "repo": repo }))
+            .header("x-illogical-auth", sign_header(k, "POST", "/api/daemon/github/token", body.as_bytes()))
+            .header("content-type", "application/json")
+            .body(body)
             .send()
     };
     let r = ask(&k1, "jhgaylor/hud").await.unwrap();

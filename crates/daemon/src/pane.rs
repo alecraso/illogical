@@ -316,7 +316,33 @@ enum Cmd {
     },
     /// Read this agent's state off the screen from now on (`None`: stop).
     Agent(Option<&'static Agent>),
+    /// How the agent's screen reads now, rule by rule (`describe
+    /// --detection`); `None` when no agent's screen is read.
+    Detection(Sender<Option<Detection>>),
     Close,
+}
+
+/// How a pane's agent screen reads now, rule by rule (#145).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Detection {
+    pub agent: &'static str,
+    pub name: &'static str,
+    /// What was last reported (after the debounce).
+    pub shown: Option<&'static str>,
+    /// The rule that matches now, if any.
+    pub fired: Option<&'static str>,
+    pub title: String,
+    pub rules: Vec<DetectionRule>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DetectionRule {
+    pub rule: &'static str,
+    pub state: &'static str,
+    pub priority: u16,
+    pub region: String,
+    pub text: Vec<String>,
+    pub matched: bool,
 }
 
 #[derive(Clone)]
@@ -403,6 +429,13 @@ impl PaneHandle {
     pub fn watch_agent(&self, agent: Option<&'static Agent>) {
         let _ = self.tx.send(Cmd::Agent(agent));
     }
+    /// How its agent's screen reads now, rule by rule; `None` when no
+    /// agent's screen is read (or the pane didn't answer).
+    pub fn detection(&self) -> Option<Detection> {
+        let (tx, rx) = bounded(1);
+        self.tx.send(Cmd::Detection(tx)).ok()?;
+        rx.recv_timeout(Duration::from_secs(5)).ok().flatten()
+    }
     pub fn purge(&self) {
         let _ = self.tx.send(Cmd::Purge);
     }
@@ -475,6 +508,37 @@ impl PaneHandle {
     }
 }
 
+/// The running command, the last one that ended, and the directory, as a
+/// pane's index recorded them: what a daemon adopting the pane's program
+/// knew before. A restore (a new program) ends whatever was running.
+fn status_from(events: &[(u64, Event)]) -> (Option<CommandRec>, Option<CommandRec>, Option<String>) {
+    let (mut current, mut last, mut dir) = (None::<CommandRec>, None, None);
+    for (at, e) in events {
+        match e {
+            Event::Command { at_ms, text, cwd, by } => {
+                current = Some(CommandRec {
+                    text: text.clone(),
+                    cwd: cwd.clone(),
+                    start: *at,
+                    started_ms: *at_ms,
+                    by: by.clone(),
+                    ..Default::default()
+                });
+            }
+            Event::End { at_ms, exit } => {
+                if let Some(mut rec) = current.take() {
+                    (rec.end, rec.ended_ms, rec.exit) = (Some(*at), Some(*at_ms), *exit);
+                    last = Some(rec);
+                }
+            }
+            Event::Restore { .. } => current = None,
+            Event::Cwd { path } => dir = Some(path.clone()),
+            _ => {}
+        }
+    }
+    (current, last, dir)
+}
+
 fn shell_quote(arg: &str) -> String {
     if !arg.is_empty() && arg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:,+@%".contains(&b)) {
         arg.to_owned()
@@ -511,10 +575,20 @@ pub enum Start {
         spawn: Spawn,
         text: String,
     },
-    /// Show `banner` and wait: Enter runs `enter`, Escape runs `escape`.
+    /// A `rerun` pane's command again after a restart, recorded like `Run`
+    /// so the pane goes on knowing its command (and a second restart runs
+    /// it again). `spawn` ends in a shell, whose first prompt ends the
+    /// record (that prompt reports no exit code).
+    Rerun {
+        spawn: Spawn,
+        text: String,
+    },
+    /// Show `banner` and wait: Enter runs `enter` (recorded as `Rerun` does
+    /// when it has `text`), Escape runs `escape`.
     Wait {
         banner: String,
         enter: Spawn,
+        text: Option<String>,
         escape: Option<Spawn>,
     },
 }
@@ -932,6 +1006,8 @@ impl Ring {
 
 struct Waiting {
     enter: Spawn,
+    /// What `enter` runs, to record it as a command.
+    text: Option<String>,
     escape: Option<Spawn>,
 }
 
@@ -947,6 +1023,8 @@ struct State {
     /// A resumed session that turns out to be gone starts like this.
     resume_otherwise: Option<Start>,
     waiting: Option<Waiting>,
+    /// The next prompt ends the command `Start::Rerun` recorded.
+    prompt_ends: bool,
     ring: Ring,
     log: Option<PaneLog>,
     subs: HashMap<ClientId, Subscriber>,
@@ -1023,6 +1101,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             exec_saved: None,
             resume_otherwise: None,
             waiting: None,
+            prompt_ends: false,
             ring: Ring::new(log.end()),
             log: Some(log),
             subs: HashMap::new(),
@@ -1133,7 +1212,26 @@ fn local_time(ms: u64) -> String {
 }
 
 fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
+    // When the chores last ran. They run on time however busy the
+    // channels are: commands arriving more often than a tick (a client
+    // polling, acks) mustn't keep the agent's screen from being read or the
+    // pane from going quiet.
+    let mut chores = Instant::now();
     loop {
+        let due = chores + st.tick();
+        if Instant::now() >= due {
+            chores = Instant::now();
+            st.look_if_due(true);
+            if st.last_tick.elapsed() >= Duration::from_secs(1) {
+                st.last_tick = Instant::now();
+                if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
+                    st.checkpoint();
+                }
+                st.check_quiet();
+                st.save_exec();
+            }
+            continue;
+        }
         // What clients ask goes first: an attach, an ack or a Ctrl-C must
         // not wait behind a flood of output.
         let cmd = match rx.try_recv() {
@@ -1149,18 +1247,7 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
                     Ok(cmd) => cmd,
                     Err(_) => continue,
                 },
-                default(st.tick()) => {
-                    st.look_if_due(true);
-                    if st.last_tick.elapsed() >= Duration::from_secs(1) {
-                        st.last_tick = Instant::now();
-                        if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
-                            st.checkpoint();
-                        }
-                        st.check_quiet();
-                        st.save_exec();
-                    }
-                    continue;
-                }
+                default(due.saturating_duration_since(Instant::now())) => continue,
             },
         };
         match cmd {
@@ -1187,6 +1274,9 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
             Cmd::Resize { cols, rows } => st.resize(cols, rows),
             Cmd::Purge => st.purge(),
             Cmd::Agent(agent) => st.watch_agent(agent),
+            Cmd::Detection(reply) => {
+                let _ = reply.send(st.detection());
+            }
             Cmd::Checkpoint(done) => {
                 st.checkpoint();
                 let _ = done.send(());
@@ -1220,6 +1310,7 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
                 st.ended();
                 st.forget_exec();
                 st.waiting = None;
+                st.prompt_ends = false;
                 st.resume_otherwise = None;
                 let end = {
                     let mut s = st.status.lock().unwrap();
@@ -1296,20 +1387,22 @@ impl State {
         let id = self.id;
         match start {
             Start::Now(spawn) => self.start(&spawn),
-            Start::Run { spawn, text } => {
-                if self.host.is_none() {
-                    self.status.lock().unwrap().cwd = Some(spawn.cwd.display().to_string());
-                }
-                let at = self.ring.end();
-                self.signal(at, Signal::CommandLine { text });
-                self.signal(at, Signal::CommandStart);
-                self.start(&spawn);
-            }
+            Start::Run { spawn, text } => self.run(&spawn, text, false),
+            Start::Rerun { spawn, text } => self.run(&spawn, text, true),
             Start::Adopt(master) => match Process::adopt(master, &self.record, id, self.program.clone()) {
                 Ok(p) => {
                     self.pid.store(p.pid, Ordering::Relaxed);
                     self.running.store(true, Ordering::Relaxed);
                     self.process = Some(Backend::Local(p));
+                    // The same program carries on: so does what the last
+                    // daemon knew of it (#208: `illogical ls` lost the
+                    // command of a pane `illogical run` started).
+                    if let Some(log) = &self.log {
+                        let (current, last, cwd) = status_from(&log.events());
+                        let mut st = self.status.lock().unwrap();
+                        (st.current, st.last) = (current, last);
+                        st.cwd = st.cwd.take().or(cwd);
+                    }
                 }
                 Err(e) => {
                     info!(pane = id, error = %e, "can't adopt; treating as ended");
@@ -1324,11 +1417,24 @@ impl State {
                 self.resume_otherwise = Some(*otherwise);
                 self.attach_exec(&host, Begin::Resume { session, received });
             }
-            Start::Wait { banner, enter, escape } => {
+            Start::Wait { banner, enter, text, escape } => {
                 self.output(banner.as_bytes());
-                self.waiting = Some(Waiting { enter, escape });
+                self.waiting = Some(Waiting { enter, text, escape });
             }
         }
+    }
+
+    /// Start `spawn` recorded as the command `text`; with `then_shell`, the
+    /// shell it ends in ends the record at its first prompt.
+    fn run(&mut self, spawn: &Spawn, text: String, then_shell: bool) {
+        if self.host.is_none() {
+            self.status.lock().unwrap().cwd = Some(spawn.cwd.display().to_string());
+        }
+        let at = self.ring.end();
+        self.signal(at, Signal::CommandLine { text });
+        self.signal(at, Signal::CommandStart);
+        self.prompt_ends = then_shell;
+        self.start(spawn);
     }
 
     fn attach_exec(&mut self, host: &Host, begin: Begin) {
@@ -1382,7 +1488,7 @@ impl State {
             "lost the session on the machine · press Enter for a shell"
         };
         self.output(format!("\r\n\x1b[0m\x1b[2m[{note}]\x1b[0m\r\n").as_bytes());
-        self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+        self.waiting = Some(Waiting { enter: self.shell.clone(), text: None, escape: None });
         self.notify(What::Exited { code: None, close: false });
     }
 
@@ -1475,14 +1581,14 @@ impl State {
                 let c = code.unwrap_or(-1);
                 let note = format!("\r\n\x1b[0m\x1b[2m[exited with code {c} · press Enter for a shell]\x1b[0m\r\n");
                 self.output(note.as_bytes());
-                self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+                self.waiting = Some(Waiting { enter: self.shell.clone(), text: None, escape: None });
                 self.notify(What::Exited { code, close: false });
             }
             Some(sig) => {
                 let note =
                     format!("\r\n\x1b[0m\x1b[2m[process ended by signal {sig} · press Enter for a shell]\x1b[0m\r\n");
                 self.output(note.as_bytes());
-                self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+                self.waiting = Some(Waiting { enter: self.shell.clone(), text: None, escape: None });
                 self.notify(What::Exited { code: Some(128 + sig), close: false });
             }
         }
@@ -1518,17 +1624,20 @@ impl State {
             return;
         }
         let Some(w) = &self.waiting else { return };
-        let spawn = if data.iter().any(|b| *b == b'\r' || *b == b'\n') {
-            Some(w.enter.clone())
+        let (spawn, text) = if data.iter().any(|b| *b == b'\r' || *b == b'\n') {
+            (Some(w.enter.clone()), w.text.clone())
         } else if data == [0x1b] {
-            w.escape.clone()
+            (w.escape.clone(), None)
         } else {
-            None
+            (None, None)
         };
         if let Some(spawn) = spawn {
             self.waiting = None;
             self.output(b"\x1b[0m\r\n");
-            self.start(&spawn);
+            match text {
+                Some(text) => self.run(&spawn, text, true),
+                None => self.start(&spawn),
+            }
             self.hold = false;
             self.notify(What::Started);
         }
@@ -1653,9 +1762,8 @@ impl State {
     /// How long the pane's thread waits for something to do before its
     /// chores: less while an agent's screen wants another look.
     fn tick(&self) -> Duration {
-        let now = Instant::now();
         match &self.watch {
-            Some(w) if w.dirty || w.debounce.pending(now) => LOOK_EVERY,
+            Some(w) if w.dirty || w.debounce.pending() => LOOK_EVERY,
             _ => Duration::from_secs(1),
         }
     }
@@ -1668,12 +1776,36 @@ impl State {
         self.watch = agent.map(|agent| Watch { agent, debounce: Debounce::new(now), looked: now, dirty: true });
     }
 
+    fn detection(&self) -> Option<Detection> {
+        let w = self.watch.as_ref()?;
+        let (title, lines) = (self.engine.title(), self.engine.screen_lines());
+        let rules = w.agent.explain(&title, &lines);
+        Some(Detection {
+            agent: w.agent.id,
+            name: w.agent.name,
+            shown: w.debounce.shown().map(AgentState::as_str),
+            fired: rules.iter().find(|r| r.matched).map(|r| r.rule),
+            title,
+            rules: rules
+                .into_iter()
+                .map(|r| DetectionRule {
+                    rule: r.rule,
+                    state: r.state.as_str(),
+                    priority: r.priority,
+                    region: r.region,
+                    text: r.text,
+                    matched: r.matched,
+                })
+                .collect(),
+        })
+    }
+
     /// Read the agent's state off the screen, if it's been long enough
     /// (`idle`: or there's no output to wait for), and say when it changes.
     fn look_if_due(&mut self, idle: bool) {
         let now = Instant::now();
         let Some(w) = &mut self.watch else { return };
-        if !(w.dirty || w.debounce.pending(now)) || (!idle && now.duration_since(w.looked) < LOOK_EVERY) {
+        if !(w.dirty || w.debounce.pending()) || (!idle && now.duration_since(w.looked) < LOOK_EVERY) {
             return;
         }
         w.looked = now;
@@ -1713,6 +1845,9 @@ impl State {
         let ms = now_ms();
         match &signal {
             Signal::Prompt => {
+                if std::mem::take(&mut self.prompt_ends) && self.status.lock().unwrap().current.is_some() {
+                    self.signal(at, Signal::CommandEnd { exit: None });
+                }
                 self.status.lock().unwrap().at_prompt = true;
                 self.index(at, Event::Prompt { at_ms: ms })
             }
@@ -2009,6 +2144,27 @@ mod tests {
         assert!(tx.try_send_output(chunk.clone()).is_ok());
         // Refused items don't count.
         assert_eq!(rx.bytes.load(Ordering::Relaxed), chunk.len());
+    }
+
+    #[test]
+    fn an_adopted_panes_status_comes_from_its_index() {
+        let cmd = |at_ms, text: &str| Event::Command { at_ms, text: Some(text.into()), cwd: None, by: None };
+        let events = vec![
+            (0, Event::Cwd { path: "/src".into() }),
+            (10, cmd(1, "make")),
+            (20, Event::End { at_ms: 2, exit: Some(0) }),
+            (30, cmd(3, "sleep 300")),
+        ];
+        let (current, last, cwd) = status_from(&events);
+        let current = current.unwrap();
+        assert_eq!((current.text.as_deref(), current.start, current.started_ms), (Some("sleep 300"), 30, 3));
+        let last = last.unwrap();
+        assert_eq!((last.text.as_deref(), last.end, last.exit), (Some("make"), Some(20), Some(0)));
+        assert_eq!(cwd.as_deref(), Some("/src"));
+        // A restore started a new program: nothing of the old one runs.
+        let mut restored = events.clone();
+        restored.push((40, Event::Restore { at_ms: 4 }));
+        assert!(status_from(&restored).0.is_none());
     }
 
     #[test]

@@ -5,6 +5,7 @@
 
 mod ask;
 mod attach;
+mod control;
 mod fountain_runner;
 mod fs;
 mod hook;
@@ -32,8 +33,9 @@ struct Cli {
     /// $XDG_STATE_HOME/illogical/sock].
     #[arg(long, global = true, env = "ILLOGICAL_SOCK")]
     socket: Option<PathBuf>,
-    /// Talk to another daemon: a name from the local daemon's host list
-    /// (`illogical hosts`), or a URL.
+    /// Talk to another daemon: a name from the local daemon's host list or
+    /// from control's directory once this CLI is logged in (`illogical
+    /// hosts` lists both), or a URL.
     #[arg(long, global = true, conflicts_with = "ssh")]
     host: Option<String>,
     /// Talk to the daemon on a box you can ssh into (`user@box`, or a Host
@@ -128,8 +130,14 @@ enum Command {
     },
     /// Type `cd DIR` into a pane's shell, if it's waiting at its prompt.
     Cd { pane: Pane, dir: String },
-    /// A block's type, place and state (any type).
-    Describe { block: Pane },
+    /// A block's type, place and state (any type). With `--detection`, how
+    /// the screen of the agent in a terminal pane reads: each rule, the
+    /// text it looked at, and which one fired.
+    Describe {
+        block: Pane,
+        #[arg(long)]
+        detection: bool,
+    },
     /// Call one of a block's methods, e.g. `call %4 navigate '{"url":"…"}'`.
     Call {
         block: Pane,
@@ -346,6 +354,15 @@ enum Command {
         #[arg(long)]
         diffs: Option<String>,
     },
+    /// Standing permission rules (#166): what agent blocks on this daemon
+    /// allow without asking, made by "Always" for a directory or for every
+    /// block. `--forget N` forgets one; `--forget-all`, all of them.
+    Rules {
+        #[arg(long, conflicts_with = "forget_all")]
+        forget: Option<usize>,
+        #[arg(long)]
+        forget_all: bool,
+    },
     /// The shell environment blocks that run your tools get (your login
     /// shell's, read once): its PATH. `--refresh` reads it again, after
     /// you change an rc file.
@@ -421,7 +438,12 @@ enum Command {
         /// The first prompt.
         prompt: Vec<String>,
     },
-    /// Type text into a pane (`-` reads stdin).
+    /// Type text into a pane (`-` reads stdin). With `--wait`, it's a
+    /// prompt for the agent there (Claude Code or Codex in the terminal, or
+    /// an agent block): sent with Enter, then waited through. Prints what
+    /// it came to and exits 0 when the turn ended, 2 when it needs someone
+    /// (or already did, so nothing was typed), 3 when it stalled (no sign
+    /// of work), 4 still running at --timeout.
     Send {
         pane: Pane,
         #[arg(required = true)]
@@ -429,6 +451,15 @@ enum Command {
         /// Press Enter afterwards.
         #[arg(short, long)]
         enter: bool,
+        /// Prompt the agent there and wait for its turn.
+        #[arg(long)]
+        wait: bool,
+        /// With --wait: it's waiting on a question and this answers it.
+        #[arg(long, requires = "wait")]
+        answering: bool,
+        /// With --wait: seconds before giving up waiting (default 100).
+        #[arg(long, requires = "wait")]
+        timeout: Option<f64>,
     },
     /// Press named keys: C-c, M-x, Up, Enter, F5, Space, ...
     Keys {
@@ -604,11 +635,40 @@ enum Command {
     },
     /// A read-only link to a pane: whoever opens it on the tailnet sees it
     /// live and can't type, resize or see anything else.
+    ///
+    /// With --guest: an invite for someone with only OpenSSH. It prints an
+    /// `ssh` command to send them, with this machine's host key pinned.
+    /// Read-only unless --rw; one login unless --reusable.
     Share {
         pane: Option<Pane>,
-        /// How long it works (e.g. 30m, 2h, 7d; a week at most).
+        /// How long it works (e.g. 30m, 2h, 7d; a week at most, a day with
+        /// --guest, two hours with --rw).
         #[arg(long, default_value = "1h")]
         ttl: String,
+        /// An ssh invite instead of a link (M54). (`--ssh` is taken: it
+        /// reaches a box over ssh, so `--ssh box share --guest` makes an
+        /// invite there.)
+        #[arg(long)]
+        guest: bool,
+        /// They may type, when nobody else is driving the pane.
+        #[arg(long, requires = "guest")]
+        rw: bool,
+        /// Good for any number of logins until it ends.
+        #[arg(long, requires = "guest")]
+        reusable: bool,
+        /// What to call them on their input [default: guest].
+        #[arg(long, requires = "guest")]
+        name: Option<String>,
+        /// The address they should ssh to [default: the daemon's
+        /// --guest-ssh-host, else its hostname].
+        #[arg(long = "addr", requires = "guest")]
+        addr: Option<String>,
+    },
+    /// ssh invites that still work (`share --guest`); `guests revoke ID` ends
+    /// one and cuts off anyone using it.
+    Guests {
+        #[command(subcommand)]
+        cmd: Option<SharesCmd>,
     },
     /// Who else can reach which sessions: `access` lists grants,
     /// `access grant SESSION WHO ROLE`, `access revoke SESSION WHO`, `access
@@ -660,6 +720,25 @@ enum Command {
         #[arg(long, value_name = "FINGERPRINT")]
         account: Option<String>,
     },
+    /// Make this CLI one of your devices on illogical control (M49), so
+    /// `--host NAME` reaches every machine on your account, directly or
+    /// through control's relay. Shows a code to approve on a signed-in
+    /// device.
+    Login {
+        /// The control [default: the one this machine's daemon joined, else
+        /// https://control.illogical.widgets.wtf].
+        url: Option<String>,
+        /// What the account calls this terminal [default: illogical CLI on
+        /// <hostname>].
+        #[arg(long)]
+        name: Option<String>,
+        /// The account's fingerprint, as the approving device shows it:
+        /// checked instead of asking.
+        #[arg(long, value_name = "FINGERPRINT")]
+        account: Option<String>,
+    },
+    /// Forget this CLI's key for control (`illogical login` makes a new one).
+    Logout,
     /// On a box a client reaches over ssh (`--ssh`): join stdin and stdout
     /// to this daemon's socket. Clients run it; people don't.
     #[command(hide = true)]
@@ -995,6 +1074,61 @@ fn split_of(split: Option<&str>) -> anyhow::Result<Option<u32>> {
     })
 }
 
+/// What `send --wait` came to, for people, and its exit code.
+fn prompted(pane: u32, r: &Value) -> (String, i32) {
+    let q = |r: &Value| r["question"].as_str().unwrap_or("a question").to_owned();
+    match r["result"].as_str().unwrap_or_default() {
+        "done" => (format!("%{pane} finished its turn"), 0),
+        "needs_input" => (format!("%{pane} asks: {}", q(r)), 2),
+        "blocked" => (
+            format!("%{pane} was already waiting on someone ({}); nothing was typed (--answering to answer it)", q(r)),
+            2,
+        ),
+        "stalled" => {
+            let screen = r["screen"].as_str().unwrap_or_default();
+            (format!("%{pane} stalled: {}\n{screen}", r["why"].as_str().unwrap_or_default()), 3)
+        }
+        "still_running" => (format!("%{pane} is still working (illogical wait %{pane} --idle)"), 4),
+        other => (format!("%{pane}: {other}"), 1),
+    }
+}
+
+/// `describe %N --detection` for people: what fired, then each rule with
+/// the text it saw, highest priority first.
+fn detection_text(pane: u32, v: &Value) -> String {
+    use std::fmt::Write;
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_owned();
+    let Some(agent) = v["agent"].as_str() else {
+        return match v["command"].as_str() {
+            Some(c) => format!("%{pane} runs `{c}`: no agent with screen rules\n"),
+            None => format!("%{pane} is at its shell: no agent with screen rules\n"),
+        };
+    };
+    let mut out = format!("%{pane} runs {} ({agent})", s(&v["name"]));
+    match v["fired"].as_str() {
+        Some(rule) => {
+            let state = v["rules"].as_array().into_iter().flatten().find(|r| r["rule"] == rule);
+            let _ = write!(out, ": {} by rule {rule}", state.map(|r| s(&r["state"])).unwrap_or_default());
+        }
+        None => out.push_str(": no rule matches"),
+    }
+    let _ = writeln!(out, " (shown: {})", v["shown"].as_str().unwrap_or("nothing yet"));
+    let _ = writeln!(out, "title: {}", s(&v["title"]));
+    for r in v["rules"].as_array().into_iter().flatten() {
+        let mark = if r["matched"] == true { "matched" } else { "no match" };
+        let _ =
+            writeln!(out, "\n{} ({}, {}) {}: {mark}", s(&r["rule"]), s(&r["state"]), r["priority"], s(&r["region"]));
+        let text = r["text"].as_array().cloned().unwrap_or_default();
+        if text.iter().all(|l| l.as_str().is_none_or(|l| l.trim().is_empty())) {
+            out.push_str("  (empty)\n");
+        }
+        for l in text.iter().filter_map(|l| l.as_str()).filter(|l| !l.trim().is_empty()) {
+            let _ = writeln!(out, "  | {}", l.trim_end());
+        }
+    }
+    out
+}
+
 /// A block's `describe` once it has read what it shows (M11's views read
 /// in the background; at most 30s).
 fn loaded(sock: &http::Target, block: u64) -> anyhow::Result<Value> {
@@ -1034,8 +1168,9 @@ fn policy(s: &str) -> anyhow::Result<Value> {
         "none" => json!({"kind": "none"}),
         "rerun" => json!({"kind": "rerun", "confirm": false}),
         "rerun-ask" => json!({"kind": "rerun", "confirm": true}),
+        "resume" => json!({"kind": "resume"}),
         h if h.starts_with("hook:") => json!({"kind": "hook", "command": &h[5..]}),
-        _ => bail!("policy: shell, none, rerun, rerun-ask or hook:COMMAND"),
+        _ => bail!("policy: shell, none, rerun, rerun-ask, resume or hook:COMMAND"),
     })
 }
 
@@ -1226,6 +1361,26 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         let err = std::process::Command::new(&daemon).args(&args).exec();
         bail!("running {}: {err}", daemon.display());
     }
+    if let Command::Login { url, name, account } = &cli.cmd {
+        let url = match url {
+            Some(u) => u.clone(),
+            None => http::request(&http::Target::Socket(socket(&cli)), "GET", "/api/host", None)
+                .and_then(|r| r.json())
+                .ok()
+                .and_then(|v| v["control"].as_str().map(String::from))
+                .unwrap_or_else(|| ssh::CONTROL.to_owned()),
+        };
+        let name = name.clone().unwrap_or_else(|| {
+            let h = nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok()).unwrap_or_default();
+            if h.is_empty() { "illogical CLI".into() } else { format!("illogical CLI on {h}") }
+        });
+        control::login(&url, &name, account.as_deref())?;
+        return Ok(0);
+    }
+    if let Command::Logout = cli.cmd {
+        control::logout()?;
+        return Ok(0);
+    }
     if let Command::Bridge { probe } = cli.cmd {
         // On a box, for a client that ssh'd in: this daemon's socket on
         // stdin and stdout.
@@ -1299,7 +1454,65 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         flag.or(gone.clone()).map(|h| format!("host={}", enc(if h == "all" { "*" } else { &h })))
     };
     match cli.cmd {
-        Command::Share { pane, ttl } => {
+        Command::Share { pane, ttl, guest: true, rw, reusable, name, addr } => {
+            let body = json!({
+                "pane": here(pane)?, "ttl_secs": duration(&ttl)?, "rw": rw, "reusable": reusable,
+                "label": name, "host": addr,
+            });
+            let v = request(&sock, "POST", "/api/guests", Some(&body))?.json()?;
+            if json_out {
+                print_json(&v);
+            } else {
+                println!("{}", v["command"].as_str().unwrap_or_default());
+                let left = v["expires_ms"].as_u64().unwrap_or(0).saturating_sub(now_ms()) / 1000;
+                eprintln!(
+                    "Invite {}: {}, {}, for {}. `illogical guests revoke {}` ends it.\n\
+                     The host key is pinned in the command ({}). ssh older than 8.5 has no \
+                     KnownHostsCommand: save this line to a file and pass -o UserKnownHostsFile=<file>:\n{}",
+                    v["id"],
+                    if rw { "read-write" } else { "read-only" },
+                    if reusable { "reusable" } else { "one login" },
+                    span(left),
+                    v["id"],
+                    v["fingerprint"].as_str().unwrap_or_default(),
+                    v["known_hosts"].as_str().unwrap_or_default(),
+                );
+            }
+        }
+        Command::Guests { cmd: None } => {
+            let v = request(&sock, "GET", "/api/guests", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let list = v.as_array().cloned().unwrap_or_default();
+            if list.is_empty() {
+                println!("no ssh invites");
+            }
+            for g in list {
+                let left = g["expires_ms"].as_u64().unwrap_or(0).saturating_sub(now_ms()) / 1000;
+                let kind = match (g["rw"].as_bool(), g["reusable"].as_bool()) {
+                    (Some(true), Some(true)) => "rw, reusable",
+                    (Some(true), _) => "rw",
+                    (_, Some(true)) => "ro, reusable",
+                    _ => "ro",
+                };
+                println!(
+                    "{:<4} %{:<4} {:<12} {:<14} {} connected{}, expires in {}",
+                    g["id"],
+                    g["pane"],
+                    g["label"].as_str().unwrap_or(""),
+                    kind,
+                    g["sessions"],
+                    if g["used"] == true && g["reusable"] != true { ", spent" } else { "" },
+                    span(left)
+                );
+            }
+        }
+        Command::Guests { cmd: Some(SharesCmd::Revoke { id }) } => {
+            request(&sock, "DELETE", &format!("/api/guests/{id}"), None)?.json()?;
+        }
+        Command::Share { pane, ttl, .. } => {
             let body = json!({"pane": here(pane)?, "ttl_secs": duration(&ttl)?});
             let v = request(&sock, "POST", "/api/shares", Some(&body))?.json()?;
             if json_out {
@@ -1456,7 +1669,12 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
-        Command::Install { .. } | Command::Web { .. } | Command::Bridge { .. } | Command::Join { .. } => {
+        Command::Install { .. }
+        | Command::Web { .. }
+        | Command::Bridge { .. }
+        | Command::Join { .. }
+        | Command::Login { .. }
+        | Command::Logout => {
             unreachable!("handled before connecting")
         }
         Command::Tmux { args } => return tmux::run(sock, &args),
@@ -1492,7 +1710,11 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 );
             }
         }
-        Command::Describe { block } => {
+        Command::Describe { block, detection: true } => {
+            let v = request(&sock, "GET", &format!("/api/panes/{}/detection", block.0), None)?.json()?;
+            print!("{}", detection_text(block.0, &v));
+        }
+        Command::Describe { block, .. } => {
             print_json(&request(&sock, "GET", &format!("/api/blocks/{}", block.0), None)?.json()?);
         }
         Command::Call { block, method, args } => {
@@ -2188,6 +2410,25 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             }
             println!("Installed. In the editor: \"illogical: Show this workspace in the swarm\".");
         }
+        Command::Rules { forget, forget_all } => {
+            if forget_all {
+                request(&sock, "DELETE", "/api/rules", None)?.json()?;
+            } else if let Some(i) = forget {
+                request(&sock, "DELETE", &format!("/api/rules/{i}"), None)?.json()?;
+            }
+            let v: Value = request(&sock, "GET", "/api/rules", None)?.json()?;
+            if json_out {
+                print_json(&v);
+                return Ok(0);
+            }
+            let rules = v["rules"].as_array().cloned().unwrap_or_default();
+            if rules.is_empty() {
+                println!("No standing rules: agent blocks ask (\"Always\" for a directory or everywhere makes one)");
+            }
+            for r in rules {
+                println!("{:>3}  {}", r["index"], r["text"].as_str().unwrap_or(""));
+            }
+        }
         Command::Ide { diffs } => {
             let v = match diffs {
                 Some(d) => {
@@ -2342,11 +2583,18 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 return Ok(w["code"].as_i64().unwrap_or(1) as i32);
             }
         }
-        Command::Send { pane, text, enter } => {
+        Command::Send { pane, text, enter, wait, answering, timeout } => {
             let mut text = text.join(" ");
             if text == "-" {
                 text.clear();
                 std::io::stdin().read_to_string(&mut text)?;
+            }
+            if wait {
+                let body = json!({"text": text, "answering": answering, "timeout": timeout});
+                let r = request(&sock, "POST", &format!("/api/panes/{}/prompt", pane.0), Some(&body))?.json()?;
+                let (line, code) = prompted(pane.0, &r);
+                println!("{line}");
+                return Ok(code);
             }
             request(
                 &sock,
@@ -2711,6 +2959,28 @@ fn secret_input(prompt: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn detection_for_people() {
+        let v = serde_json::json!({
+            "agent": "claude", "name": "Claude Code", "shown": "blocked", "fired": "permission_prompt",
+            "title": "✳ Create a file",
+            "rules": [
+                {"rule": "permission_prompt", "state": "blocked", "priority": 1000, "region": "after the last rule",
+                 "text": [" Do you want to proceed?", "", " ❯ 1. Yes"], "matched": true},
+                {"rule": "title_idle", "state": "idle", "priority": 250, "region": "title", "text": [""], "matched": false},
+            ],
+        });
+        let text = super::detection_text(4, &v);
+        assert!(
+            text.starts_with("%4 runs Claude Code (claude): blocked by rule permission_prompt (shown: blocked)\n"),
+            "{text}"
+        );
+        assert!(text.contains("\npermission_prompt (blocked, 1000) after the last rule: matched\n  |  Do you want to proceed?\n  |  ❯ 1. Yes\n"), "{text}");
+        assert!(text.contains("\ntitle_idle (idle, 250) title: no match\n  (empty)\n"), "{text}");
+        let none = super::detection_text(2, &serde_json::json!({"agent": null, "command": "vim notes"}));
+        assert_eq!(none, "%2 runs `vim notes`: no agent with screen rules\n");
+    }
+
     #[test]
     fn web_link_over_ssh() {
         assert_eq!(super::ssh_hint("http://127.0.0.1:7681", false), None);

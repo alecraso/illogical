@@ -54,7 +54,9 @@ export type Policy =
   | { kind: "none" }
   | { kind: "shell" }
   | { kind: "rerun"; confirm: boolean }
-  | { kind: "hook"; command: string };
+  | { kind: "hook"; command: string }
+  /** #146: the agent conversation that was running, by its session id. */
+  | { kind: "resume" };
 
 export type Attention = "idle" | "working" | "needs_input" | "done";
 
@@ -155,6 +157,8 @@ export interface PaneInfo {
   /** False while a restored pane waits for Enter. */
   running: boolean;
   policy: Policy;
+  /** #146: what a restart resumes ("Claude Code conversation 0f3c2a9e"). */
+  resumes?: string;
   current: CommandInfo | null;
   last: CommandInfo | null;
   attention: Attention;

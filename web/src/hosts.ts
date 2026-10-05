@@ -77,6 +77,10 @@ export class HostDirectory {
   /** The page is illogical control's (M17): the list comes from control,
    * and there's no home daemon. */
   control = false;
+  /** The control this page's daemon joined (`/api/host`'s `control`), if
+   * any: the host menu links to its page for the account's other machines
+   * (M49), rather than listing them here. */
+  joined: string | null = null;
   /** Control mode: how the shown host is reached, for the host chip. */
   path: "direct" | "relayed" | null = null;
 
@@ -206,6 +210,12 @@ export class HostDirectory {
       }
     } catch {
       this.stale = true;
+    }
+    try {
+      const res = await fetch("/api/host");
+      if (res.ok) this.joined = ((await res.json()) as { control?: string }).control ?? null;
+    } catch {
+      // Keep what we knew.
     }
     this.emit();
   }

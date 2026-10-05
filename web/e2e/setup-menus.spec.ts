@@ -74,6 +74,13 @@ test("menus offer only what this machine is set up for", async ({ page }) => {
     for (const h of hidden) expect(got).not.toContain(h);
     await page.keyboard.press("Escape");
   }
+
+  // Sharing says nothing about VMs it has no way to make (#208).
+  await page.locator(".session-button").click();
+  await page.getByRole("menuitem", { name: "Share session…" }).click();
+  await expect(page.locator("[data-share-note]")).toHaveText(
+    "People you share with see its panes but can't open their own here, and can't type on this machine unless you trust them with a pane.",
+  );
 });
 
 test("Open a port… and Open in editor say how to turn block sites on", async ({ page }) => {

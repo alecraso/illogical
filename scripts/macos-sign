@@ -1,0 +1,70 @@
+#!/bin/sh
+# macos-sign app PATH.app | dmg PATH.dmg: sign with the Developer ID,
+# notarize and staple (#177). Needs these secrets in the environment:
+#
+#   APPLE_CERTIFICATE           the Developer ID Application certificate
+#                               and key, a base64 .p12
+#   APPLE_CERTIFICATE_PASSWORD  its password
+#   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Name (TEAMID)"
+#   APPLE_ID, APPLE_PASSWORD (an app-specific password), APPLE_TEAM_ID
+#                               for notarytool
+#
+# Without APPLE_CERTIFICATE it says so and leaves the ad-hoc signature
+# (exit 0): releases stay unsigned until there's a Developer ID.
+set -eu
+what=$1
+path=$2
+[ -e "$path" ] || { echo "macos-sign: no $path" >&2; exit 2; }
+if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+  echo "macos-sign: skipped for $(basename "$path"): the APPLE_CERTIFICATE secret isn't set (#177); it stays ad-hoc signed"
+  exit 0
+fi
+for v in APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+  eval "[ -n \"\${$v:-}\" ]" || { echo "macos-sign: APPLE_CERTIFICATE is set but $v isn't" >&2; exit 1; }
+done
+
+# A keychain of our own for the run, deleted after.
+tmp=$(mktemp -d)
+keychain=$tmp/sign.keychain-db
+kpass=$(openssl rand -hex 16)
+cleanup() {
+  security delete-keychain "$keychain" 2>/dev/null || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+printf '%s' "$APPLE_CERTIFICATE" | base64 --decode >"$tmp/cert.p12"
+security create-keychain -p "$kpass" "$keychain"
+security set-keychain-settings -lut 3600 "$keychain"
+security unlock-keychain -p "$kpass" "$keychain"
+security import "$tmp/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+security set-key-partition-list -S apple-tool:,apple: -s -k "$kpass" "$keychain" >/dev/null
+# shellcheck disable=SC2046 # the existing search list, one path each
+security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+sign() { codesign --force --timestamp --options runtime --keychain "$keychain" -s "$APPLE_SIGNING_IDENTITY" "$@"; }
+notarize() {
+  xcrun notarytool submit "$1" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+}
+
+case "$what" in
+  app)
+    # Inside out: the sidecars, then the app.
+    for f in "$path"/Contents/MacOS/*; do
+      [ "$(basename "$f")" = illogical-desktop ] || sign "$f"
+    done
+    sign "$path"
+    codesign --verify --deep --strict "$path"
+    ditto -c -k --keepParent "$path" "$tmp/notarize.zip"
+    notarize "$tmp/notarize.zip"
+    xcrun stapler staple "$path"
+    spctl --assess --type execute -vv "$path"
+    ;;
+  dmg)
+    sign "$path"
+    notarize "$path"
+    xcrun stapler staple "$path"
+    spctl --assess --type open --context context:primary-signature -vv "$path"
+    ;;
+  *) echo "macos-sign: app or dmg" >&2; exit 2 ;;
+esac
+echo "macos-sign: $(basename "$path") is signed, notarized and stapled"
