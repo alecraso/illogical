@@ -7,7 +7,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use futures_util::{SinkExt, StreamExt};
 use illogical_e2e::{
     Cert, DeviceKeys, Kind, now_ms,
-    team::{Member, Roster, TeamRole},
+    team::{Invite, Member, Roster, TeamRole},
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -423,6 +423,116 @@ async fn a_team_daemon_too_old_for_presigned_rosters_is_told_to_update() {
     let (st, v) = c.daemon_get(&d, new).await;
     assert_eq!(st, 200);
     assert_eq!(v["rosters"].as_array().unwrap().len(), 2);
+}
+
+/// A presigned invite to `team` as an editor, signed by `owner`; and its
+/// one-time key.
+fn presigned(team: &str, owner: &DeviceKeys) -> (Invite, DeviceKeys) {
+    let once = DeviceKeys::generate();
+    let mut inv = Invite {
+        team: team.into(),
+        role: TeamRole::Editor,
+        expires: now_ms() + 3_600_000,
+        key: hex::encode(once.sign_public()),
+        by: String::new(),
+        sig: String::new(),
+    };
+    inv.sign_with(owner);
+    (inv, once)
+}
+
+#[tokio::test]
+async fn owners_list_and_cancel_presigned_invites() {
+    let c = control(|_| {}).await;
+    let owner_root = person(&c.app, "owner", "own1");
+    let mate_root = person(&c.app, "mate", "mate1");
+    let joiner_root = person(&c.app, "joiner", "join1");
+    let team = "0123456789abcdee";
+    // Alice's team, with a member who isn't an owner.
+    let owner = session(&c.app, "own1");
+    let one = roster(team, 1, vec![member("own1", &owner_root, TeamRole::Owner)], &owner_root);
+    assert_eq!(c.as_person(&owner, "POST", "/api/teams", Some(json!({ "roster": one.clone() }))).await.0, 200);
+    let mate = session(&c.app, "mate1");
+    let (_, inv) =
+        c.as_person(&owner, "POST", &format!("/api/teams/{team}/invites"), Some(json!({ "role": "editor" }))).await;
+    let code = inv["code"].as_str().unwrap();
+    c.as_person(&mate, "POST", &format!("/api/invites/{team}/{code}/accept"), Some(json!({}))).await;
+    let two = roster(
+        team,
+        2,
+        vec![member("own1", &owner_root, TeamRole::Owner), member("mate1", &mate_root, TeamRole::Viewer)],
+        &owner_root,
+    );
+    let path = format!("/api/teams/{team}/roster");
+    assert_eq!(c.as_person(&owner, "POST", &path, Some(json!({ "roster": two.clone() }))).await.0, 200);
+
+    // Two presigned links.
+    let (a, a_key) = presigned(team, &owner_root);
+    let (b, _) = presigned(team, &owner_root);
+    for inv in [&a, &b] {
+        let (st, v) = c
+            .as_person(
+                &owner,
+                "POST",
+                &format!("/api/teams/{team}/invites"),
+                Some(json!({ "role": "editor", "presigned": inv })),
+            )
+            .await;
+        assert_eq!(st, 200, "{v}");
+    }
+    // Owners see them; nobody else does.
+    let list = format!("/api/teams/{team}/presigned");
+    let (st, v) = c.as_person(&owner, "GET", &list, None).await;
+    assert_eq!(st, 200);
+    let mut keys: Vec<&str> = v["invites"].as_array().unwrap().iter().map(|i| i["key"].as_str().unwrap()).collect();
+    keys.sort();
+    let mut want = vec![a.key.as_str(), b.key.as_str()];
+    want.sort();
+    assert_eq!(keys, want);
+    assert_eq!(v["invites"][0]["role"], "editor");
+    assert_eq!(v["invites"][0]["by_name"], "owner");
+    assert!(v["invites"][0].get("sig").is_none() && v["invites"][0].get("body").is_none());
+    assert_eq!(c.as_person(&mate, "GET", &list, None).await.0, 403);
+    let joiner = session(&c.app, "join1");
+    assert_eq!(c.as_person(&joiner, "GET", &list, None).await.0, 403);
+
+    // Only an owner cancels, only this team's, and only once.
+    let cancel = format!("/api/teams/{team}/presigned/{}", a.key);
+    assert_eq!(c.as_person(&mate, "DELETE", &cancel, None).await.0, 403);
+    assert_eq!(
+        c.as_person(&owner, "DELETE", &format!("/api/teams/{team}/presigned/{}", "cd".repeat(32)), None).await.0,
+        404
+    );
+    assert_eq!(c.as_person(&owner, "DELETE", &cancel, None).await.0, 200);
+    assert_eq!(c.as_person(&owner, "DELETE", &cancel, None).await.0, 404);
+    let (_, v) = c.as_person(&owner, "GET", &list, None).await;
+    assert_eq!(v["invites"].as_array().unwrap().len(), 1);
+    assert_eq!(v["invites"][0]["key"], b.key.as_str());
+
+    // The cancelled link is dead: its page has nothing, and redeeming it
+    // is refused.
+    let show = format!("/api/presigned/{team}/{}", a.key);
+    assert_eq!(c.as_person(&joiner, "GET", &show, None).await.0, 404);
+    let me = member("join1", &joiner_root, TeamRole::Editor);
+    let mut three = two.clone();
+    three.v = 2;
+    three.version = 3;
+    three.at = now_ms();
+    three.members.push(me.clone());
+    three.spent = vec![illogical_e2e::team::Spent { key: a.key.clone(), expires: a.expires }];
+    three.redeem = Some(illogical_e2e::team::Redeem {
+        invite: a.clone(),
+        proof: hex::encode(a_key.signature(a.redeem_body(3, &me).as_bytes())),
+    });
+    three.by = a.key.clone();
+    three.sig = hex::encode(a_key.signature(three.body().as_bytes()));
+    assert!(three.follows(
+        Some(&two),
+        &illogical_e2e::team::TeamPin { team: team.into(), founder: "own1".into(), founder_root: owner_root.id() },
+        &crate::teams::certs_for_test(&c.app, &["own1".into(), "mate1".into(), "join1".into()])
+    ));
+    let (st, v) = c.as_person(&joiner, "POST", &path, Some(json!({ "roster": three }))).await;
+    assert_eq!(st, 410, "{v}");
 }
 
 #[tokio::test]

@@ -413,6 +413,37 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
     ))
 }
 
+/// A team's outstanding presigned invites, for its owners (#134): who
+/// each is for (the role), when it expires and who made it. Used ones are
+/// gone already (the redeem drops them).
+pub async fn list_presigned(State(app): State<Arc<App>>, s: Session, Path(team): Path<String>) -> R {
+    if role_in(&latest(&app, &team)?, &s.account) != Some(TeamRole::Owner) {
+        return Err(err(StatusCode::FORBIDDEN, "owners see invites"));
+    }
+    let mut out = Vec::new();
+    for (key, body, expires, by) in app.db.presigned_of(&team, illogical_e2e::now_ms())? {
+        let inv: Invite = serde_json::from_str(&body)?;
+        let by_name = app.db.account(&by)?.map(|a| a.name).unwrap_or_default();
+        out.push(json!({ "key": key, "role": inv.role, "expires": expires, "by": by, "by_name": by_name }));
+    }
+    Ok(Json(json!({ "invites": out })))
+}
+
+/// Cancel a presigned invite before it's used (#134): control refuses it
+/// at redeem from then on. Daemons never knew of it, so this is only as
+/// good as control is honest, which is fine for a lost link.
+pub async fn cancel_presigned(State(app): State<Arc<App>>, s: Session, Path((team, key)): Path<(String, String)>) -> R {
+    if role_in(&latest(&app, &team)?, &s.account) != Some(TeamRole::Owner) {
+        return Err(err(StatusCode::FORBIDDEN, "owners cancel invites"));
+    }
+    app.db
+        .presigned(&key, illogical_e2e::now_ms())?
+        .filter(|(t, _, _)| *t == team)
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, was used, or never was"))?;
+    app.db.drop_presigned(&key)?;
+    Ok(Json(json!({})))
+}
+
 pub async fn show_invite(State(app): State<Arc<App>>, _s: Session, Path((team, code)): Path<(String, String)>) -> R {
     let (t, role) = app
         .db
