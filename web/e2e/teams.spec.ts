@@ -193,17 +193,21 @@ async function startJoin(name: string, state: string, extra: string[] = [], env:
   return { link, exited, confirm, out: () => out, err: () => err };
 }
 
-function runDaemon(name: string, state: string) {
-  procs.push(
-    spawn(
-      "../target/debug/illogicald",
-      [
-        ...["--listen", ANY, "--name", name, "--state-dir", state],
-        ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
-      ],
-      { stdio: "ignore" },
-    ),
+/** The daemon, and what it has logged when `log` is set. */
+function runDaemon(name: string, state: string, opts: { env?: NodeJS.ProcessEnv; log?: boolean } = {}) {
+  const d = spawn(
+    "../target/debug/illogicald",
+    [
+      ...["--listen", ANY, "--name", name, "--state-dir", state],
+      ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
+    ],
+    { stdio: opts.log ? ["ignore", "pipe", "pipe"] : "ignore", env: { ...process.env, ...opts.env } },
   );
+  procs.push(d);
+  let log = "";
+  d.stdout?.on("data", (b) => (log += b));
+  d.stderr?.on("data", (b) => (log += b));
+  return { proc: d, log: () => log };
 }
 
 test("a team-owned box joins; both use it through the relay and pass control", async () => {
@@ -380,6 +384,27 @@ test("removing a member cuts them off within a second", async () => {
   await remove.click();
   await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected), { timeout: 3000, intervals: [50] }).toBe(false);
   expect(Date.now() - t).toBeLessThan(1500);
+});
+
+test("a machine downgraded after a one-click join is told to update", async () => {
+  // #135: a team box joins now that the team's history has a presigned
+  // version, then runs an illogical from before them (played by one that
+  // says it understands nothing). Control won't hand it rosters it would
+  // stop at, and it says why.
+  const state = temp("downbox");
+  const j = await startJoin("downbox", state, ["--team", team]);
+  await alice.goto(j.link);
+  await expect(alice.locator("[data-join-to]")).toHaveValue(team);
+  const answer = await j.confirm(alice);
+  await alice.locator("[data-approve-join]").click();
+  answer();
+  expect(await j.exited).toBe(0);
+  const d = runDaemon("downbox", state, { env: { ILLOGICAL_FEATURES: "" }, log: true });
+  await expect.poll(d.log, { timeout: 30_000 }).toContain("update illogical to keep up with the team");
+  d.proc.kill("SIGKILL");
+  // Out of the team again, so the tests after see only their machines.
+  const left = spawn("../target/debug/illogicald", ["leave", "--state-dir", state], { stdio: "ignore" });
+  expect(await new Promise((r) => left.on("exit", r))).toBe(0);
 });
 
 const mineState = temp("mine");
