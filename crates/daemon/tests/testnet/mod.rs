@@ -134,7 +134,13 @@ pub fn binaries_current(dir: &Path, version: &str, workspace: &Path) -> Result<(
         // `dir` is <target>/<triple>/release; build scripts' output is
         // under <target>, wherever that is.
         let target = dir.parent().and_then(Path::parent).unwrap_or(dir);
+        // The embedded web client (web/dist) is rebuilt by every `just
+        // check` and isn't what these tests exercise on the box.
+        let web = root.join("web/dist");
         for src in sources.split_whitespace().map(Path::new) {
+            if lexical(src).starts_with(&web) {
+                continue;
+            }
             if !src.starts_with(root) && !src.starts_with(target) {
                 return Err(format!("{bin} was built from another tree ({})", src.display()));
             }
@@ -146,6 +152,21 @@ pub fn binaries_current(dir: &Path, version: &str, workspace: &Path) -> Result<(
         }
     }
     Ok(())
+}
+
+/// `p` with `.` and `..` taken out without touching the disk.
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn version_mark(bytes: &[u8]) -> Option<&str> {
