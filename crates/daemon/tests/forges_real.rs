@@ -4,9 +4,10 @@
 //! makes and writes to `testnet/forges/.state/<forge>.json`.
 //!
 //! Every test makes a repository of its own, so they run in any order and
-//! again. Without `ILLOGICAL_TESTNET_FORGES` (the directory with those
-//! files), or without the file for a forge, its tests say SKIP and pass:
-//! `just forges test` sets it.
+//! again. They need the containers, so a plain `cargo test` ignores them;
+//! `just forges test` runs them with `--ignored` and
+//! `ILLOGICAL_TESTNET_FORGES` (the directory with those files). Run without
+//! the stack, they fail.
 //!
 //! What's checked, as #93's boxes ask for a person to check by hand:
 //! - a review asked of you reaches the rail (and the phone) and is approved
@@ -56,26 +57,26 @@ struct Real {
 
 impl Real {
     /// The forge, or `None` (and a SKIP line) when the stack isn't up.
-    fn load(kind: &'static str) -> Option<Self> {
-        let Some(dir) = std::env::var_os("ILLOGICAL_TESTNET_FORGES") else {
-            eprintln!("SKIP: ILLOGICAL_TESTNET_FORGES is not set (just forges up {kind} && just forges test {kind})");
-            return None;
-        };
+    /// The forge, as up.sh left it; a test run without it fails.
+    fn load(kind: &'static str) -> Self {
+        let dir = std::env::var_os("ILLOGICAL_TESTNET_FORGES").unwrap_or_else(|| {
+            panic!(
+                "ILLOGICAL_TESTNET_FORGES is not set: run these with just forges up {kind} && just forges test {kind}"
+            )
+        });
         let file = PathBuf::from(dir).join(format!("{kind}.json"));
-        let Ok(text) = std::fs::read_to_string(&file) else {
-            eprintln!("SKIP: no {} (just forges up {kind})", file.display());
-            return None;
-        };
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{}: {e} (just forges up {kind})", file.display()));
         let v: Value = serde_json::from_str(&text).unwrap();
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        Some(Self {
+        Self {
             kind,
             url: v["url"].as_str().unwrap().trim_end_matches('/').to_owned(),
             hook_host: v["hook_host"].as_str().unwrap_or("host.docker.internal").to_owned(),
             users: v["users"].clone(),
             rt,
             http: reqwest::Client::new(),
-        })
+        }
     }
 
     fn token(&self, user: &str) -> String {
@@ -324,8 +325,9 @@ impl Real {
 }
 
 #[test]
+#[ignore = "needs Forgejo in Docker: just forges up forgejo && just forges test forgejo"]
 fn forgejo_a_review_asked_of_you_reaches_the_rail_and_is_approved_as_you() {
-    let Some(fj) = Real::load("forgejo") else { return };
+    let fj = Real::load("forgejo");
     let dir = scratch("fj-review");
     let pr = fj.fj_pr(&fj.fj_repo("review"), "feature");
     // The reviewer's daemon, with a phone subscribed, and the PR open on it
@@ -374,8 +376,9 @@ fn forgejo_a_review_asked_of_you_reaches_the_rail_and_is_approved_as_you() {
 }
 
 #[test]
+#[ignore = "needs Forgejo in Docker: just forges up forgejo && just forges test forgejo"]
 fn forgejo_an_agents_pr_comment_waits_and_goes_out_edited_as_you() {
-    let Some(fj) = Real::load("forgejo") else { return };
+    let fj = Real::load("forgejo");
     let dir = scratch("fj-draft");
     let pr = fj.fj_pr(&fj.fj_repo("draft"), "feature");
     let d = fj.daemon(&dir, AUTHOR, &[]);
@@ -425,8 +428,9 @@ fn forgejo_an_agents_pr_comment_waits_and_goes_out_edited_as_you() {
 }
 
 #[test]
+#[ignore = "needs Forgejo in Docker: just forges up forgejo && just forges test forgejo"]
 fn forgejo_agent_on_this_works_on_a_branch_and_its_pr_joins_the_tab() {
-    let Some(fj) = Real::load("forgejo") else { return };
+    let fj = Real::load("forgejo");
     let dir = scratch("fj-agent");
     let repo = fj.fj_repo("agent");
     let issue = fj.api(
@@ -480,8 +484,9 @@ fn forgejo_agent_on_this_works_on_a_branch_and_its_pr_joins_the_tab() {
 }
 
 #[test]
+#[ignore = "needs Forgejo in Docker: just forges up forgejo && just forges test forgejo"]
 fn forgejo_live_updates_make_a_real_hook_the_forge_delivers_to() {
-    let Some(fj) = Real::load("forgejo") else { return };
+    let fj = Real::load("forgejo");
     let dir = scratch("fj-live");
     let pr = fj.fj_pr(&fj.fj_repo("live"), "feature");
     // Polls a minute apart: anything sooner came through the hook.
@@ -529,8 +534,9 @@ fn forgejo_live_updates_make_a_real_hook_the_forge_delivers_to() {
 }
 
 #[test]
+#[ignore = "needs Forgejo in Docker: just forges up forgejo && just forges test forgejo"]
 fn forgejo_a_red_check_is_a_failure_with_its_link() {
-    let Some(fj) = Real::load("forgejo") else { return };
+    let fj = Real::load("forgejo");
     let dir = scratch("fj-red");
     let pr = fj.fj_pr(&fj.fj_repo("red"), "feature");
     let d = fj.daemon(&dir, AUTHOR, &[]);
@@ -666,8 +672,9 @@ impl Real {
 }
 
 #[test]
+#[ignore = "needs GitLab in Docker: just forges up gitlab && just forges test gitlab"]
 fn gitlab_a_review_asked_of_you_is_approved_from_the_rail_with_glabs_token() {
-    let Some(gl) = Real::load("gitlab") else { return };
+    let gl = Real::load("gitlab");
     let dir = scratch("gl-review");
     let mr = gl.gl_mr(&gl.gl_project("review"), "feature", &[("feature.txt", "one\n")]);
     let d = gl.gl_daemon(&dir, REVIEWER, &[]);
@@ -709,8 +716,9 @@ fn gitlab_a_review_asked_of_you_is_approved_from_the_rail_with_glabs_token() {
 }
 
 #[test]
+#[ignore = "needs GitLab in Docker: just forges up gitlab && just forges test gitlab"]
 fn gitlab_a_red_pipeline_is_rerun_from_the_rail() {
-    let Some(gl) = Real::load("gitlab") else { return };
+    let gl = Real::load("gitlab");
     let dir = scratch("gl-rerun");
     let ci = "test:\n  script:\n    - echo red on purpose\n    - exit 1\n";
     let mr = gl.gl_mr(&gl.gl_project("rerun"), "feature", &[(".gitlab-ci.yml", ci)]);
@@ -746,8 +754,9 @@ fn gitlab_a_red_pipeline_is_rerun_from_the_rail() {
 }
 
 #[test]
+#[ignore = "needs GitLab in Docker: just forges up gitlab && just forges test gitlab"]
 fn gitlab_live_updates_make_a_real_hook_the_forge_delivers_to() {
-    let Some(gl) = Real::load("gitlab") else { return };
+    let gl = Real::load("gitlab");
     let dir = scratch("gl-live");
     let mr = gl.gl_mr(&gl.gl_project("live"), "feature", &[("feature.txt", "one\n")]);
     let mut d = gl.gl_daemon(&dir, AUTHOR, &[("ILLOGICAL_FORGE_POLL_MS", "60000,60000")]);

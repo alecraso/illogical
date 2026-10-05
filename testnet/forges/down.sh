@@ -9,8 +9,16 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FORGE="${1:-all}"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+# These tests need Docker: without it they fail, unless ILLOGICAL_SKIP_DOCKER=1
+# asks to skip them, which says loudly that nothing ran.
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
+    echo "!!! ILLOGICAL_SKIP_DOCKER=1 and no Docker: NOTHING RAN (testnet/forges) !!!" >&2
+    exit 0
+  fi
+  echo "FAIL: Docker is not available, and testnet/forges needs it (ILLOGICAL_SKIP_DOCKER=1 skips, running nothing)" >&2
+  exit 1
+fi
 
 case "$FORGE" in
   forgejo | gitlab) profiles=("--profile" "$FORGE") ;;

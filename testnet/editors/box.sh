@@ -9,7 +9,7 @@
 # `up` writes testnet/editors/.state/ssh_config, which reaches the box as
 # `m28-box` with strict host key checking (VS Code's Remote-SSH reads it).
 # Needs the static build for this machine and ILLOGICAL_LOCAL_TOKEN_FILE.
-# Without Docker it says SKIP and exits 0.
+#
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,8 +19,16 @@ COMPOSE=(docker compose -f "$HERE/compose.yaml")
 SSH_PORT="${ILLOGICAL_TESTNET_EDITORS_SSH_PORT:-17751}"
 DAEMON_PORT="${ILLOGICAL_TESTNET_EDITORS_DAEMON_PORT:-17752}"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+# These tests need Docker: without it they fail, unless ILLOGICAL_SKIP_DOCKER=1
+# asks to skip them, which says loudly that nothing ran.
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
+    echo "!!! ILLOGICAL_SKIP_DOCKER=1 and no Docker: NOTHING RAN (testnet/editors) !!!" >&2
+    exit 0
+  fi
+  echo "FAIL: Docker is not available, and testnet/editors needs it (ILLOGICAL_SKIP_DOCKER=1 skips, running nothing)" >&2
+  exit 1
+fi
 
 arch="$(uname -m)"; [ "$arch" = arm64 ] && arch=aarch64
 export ILLOGICAL_TESTNET_BIN="${ILLOGICAL_TESTNET_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/$arch-unknown-linux-musl/release}"

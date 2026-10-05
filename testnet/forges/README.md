@@ -12,10 +12,11 @@ just forges test gitlab
 just forges down            # both, with their volumes and tokens
 ```
 
-Every script prints `SKIP: Docker is not available` and exits 0 without
-Docker. The tests themselves skip unless `ILLOGICAL_TESTNET_FORGES` names
-the state directory, which `just forges test` sets, so `just check` never
-needs the forges.
+They need Docker: without it every script fails, unless
+`ILLOGICAL_SKIP_DOCKER=1`, which skips and says nothing ran. The tests are
+`#[ignore]`d in a plain `cargo test`; `just forges test` runs them with
+`--ignored` and `ILLOGICAL_TESTNET_FORGES` naming the state directory, and
+a test fails if its forge's file isn't there.
 
 ## What's in it
 

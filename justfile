@@ -243,6 +243,8 @@ testnet cmd="test" profile="ssh" *claims:
 testnet-hosts:
     #!/usr/bin/env bash
     set -euo pipefail
+    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    if ! docker info >/dev/null 2>&1; then testnet/hosts/net.sh check; exit $?; fi
     a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
     just static "$a"
     {{cargo}} build -p illogicald
@@ -252,6 +254,8 @@ testnet-hosts:
 testnet-editors:
     #!/usr/bin/env bash
     set -euo pipefail
+    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    if ! docker info >/dev/null 2>&1; then testnet/editors/box.sh check; exit $?; fi
     a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
     just static "$a"
     {{cargo}} build -p illogicald

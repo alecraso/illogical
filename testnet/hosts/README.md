@@ -17,6 +17,9 @@ recipe sets. `net.sh up|offline HOST|online HOST|down` does each step by
 hand; it needs `ILLOGICAL_LOCAL_TOKEN_FILE`, the e2e tests' local token,
 which both daemons take too.
 
+It needs Docker: without it the recipe fails, unless `ILLOGICAL_SKIP_DOCKER=1`,
+which skips and says nothing ran.
+
 ## Layout
 
 | Box | Daemon | Host port | Address |

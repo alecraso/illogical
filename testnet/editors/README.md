@@ -41,6 +41,9 @@ What it checks, from M28's "not covered":
 - an edit proposed by the stand-in Claude Code in a pane on the box is
   accepted from the phone's rail and lands in the file there.
 
+It needs Docker: without it the recipe fails, unless `ILLOGICAL_SKIP_DOCKER=1`,
+which skips and says nothing ran.
+
 ## Where it runs, and what it doesn't cover
 
 - macOS: VS Code opens a window on the logged-in session's screen for the

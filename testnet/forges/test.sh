@@ -6,16 +6,23 @@
 #   testnet/forges/test.sh gitlab      ... gitlab_*
 #   testnet/forges/test.sh all         every forge that's up
 #
-# Needs `testnet/forges/up.sh <forge>` first. Without Docker it says SKIP
-# and exits 0, as the rest of the testnet does.
+# Needs `testnet/forges/up.sh <forge>` first, and Docker.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 FORGE="${1:-forgejo}"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+# These tests need Docker: without it they fail, unless ILLOGICAL_SKIP_DOCKER=1
+# asks to skip them, which says loudly that nothing ran.
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
+    echo "!!! ILLOGICAL_SKIP_DOCKER=1 and no Docker: NOTHING RAN (testnet/forges) !!!" >&2
+    exit 0
+  fi
+  echo "FAIL: Docker is not available, and testnet/forges needs it (ILLOGICAL_SKIP_DOCKER=1 skips, running nothing)" >&2
+  exit 1
+fi
 
 case "$FORGE" in
   forgejo | gitlab) filter="${FORGE}_"; files="$FORGE.json" ;;
@@ -27,4 +34,4 @@ for f in $files; do
 done
 
 cd "$ROOT"
-ILLOGICAL_TESTNET_FORGES="$HERE/.state" mise exec -- cargo test -p illogicald --test forges_real -- "$filter"
+ILLOGICAL_TESTNET_FORGES="$HERE/.state" mise exec -- cargo test -p illogicald --test forges_real -- --ignored "$filter"

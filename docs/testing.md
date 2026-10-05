@@ -96,6 +96,52 @@ These skip, saying why, unless what they need is there:
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
 
+## Docker stacks: real forges, two hosts, VS Code over Remote-SSH
+
+These need Docker. Without it they fail (non-zero exit); only
+`ILLOGICAL_SKIP_DOCKER=1` skips them, and then they print that nothing
+ran. They aren't part of `just check`: each has its own recipe.
+
+| What | Run | Details |
+|---|---|---|
+| Forgejo and GitLab CE with two bot users and webhooks (#93, M36-M40) | `just forges up forgejo && just forges test forgejo`, the same with `gitlab` (3-5 minutes and 4 GB to start), `just forges down` | [testnet/forges/README.md](../testnet/forges/README.md) |
+| #17 on two machines: home's layout holds panes on `mac`, which drops off the network (`docker network disconnect`) and comes back | `just testnet-hosts` | [testnet/hosts/README.md](../testnet/hosts/README.md) |
+| M28 in real VS Code (downloaded by `@vscode/test-electron`) over Microsoft's Remote-SSH into a box running illogicald: a phone follows the cursor, a breakpoint is a card it continues, an edit is accepted from its rail | `just testnet-editors` (downloads VS Code, its server and Remote-SSH; on Linux it runs under `xvfb-run`) | [testnet/editors/README.md](../testnet/editors/README.md) |
+
+The forge tests are `crates/daemon/tests/forges_real.rs`, marked
+`#[ignore]` so `cargo test` doesn't need the containers;
+`testnet/forges/test.sh` runs them with `--ignored` against the stack
+`up.sh` started, and they fail if it isn't there. The other two are
+Playwright specs (`web/e2e/testnet-hosts.spec.ts`,
+`web/e2e/editor-remote-ssh.spec.ts`) that bring their stack up and down
+themselves; `just e2e` lists them as skipped unless their recipe's
+variable (`ILLOGICAL_TESTNET_HOSTS=1`, `ILLOGICAL_TESTNET_EDITORS=1`) is
+set.
+
+### The nightly job against github.com
+
+`.github/workflows/forges-nightly.yml` runs every night and on demand
+(never on pull requests): the Forgejo and GitLab tests above, and
+`crates/daemon/tests/forges_github_real.rs` against github.com, which
+covers #93's GitHub boxes (a review approved from the rail, a red Actions
+check rerun, a box with no `gh` login reading through the App's
+installation token and refusing writes, and the App's webhook poking the
+block). Without its secrets the GitHub job passes with a notice naming
+each one that's missing, and each test prints `SKIP <test>: not set: ...`.
+It needs, in the repository's Actions settings:
+
+| Name | Kind | What |
+|---|---|---|
+| `ILLOGICAL_GH_TEST_REPO` | variable | `org/repo` in a test organization: public, both bots can write, with `.github/workflows/illogical-red.yml` on its default branch (a job that fails on pushes to `red-*`) |
+| `ILLOGICAL_GH_AUTHOR_TOKEN` | secret | the first bot's token: contents, pull requests, issues and actions, read and write, on that repository |
+| `ILLOGICAL_GH_REVIEWER_TOKEN` | secret | the second bot's token, the same |
+| `ILLOGICAL_GH_APP_ID` | variable | a test copy of illogical's GitHub App, installed on the test organization, with pull request and issue comment events |
+| `ILLOGICAL_GH_APP_PRIVATE_KEY` | secret | that App's private key (PEM) |
+
+Control is stood in for in that test, and the App's deliveries are read
+back through GitHub's API (a runner has no public URL), so control
+checking GitHub's signature on a real delivery is not covered there.
+
 ## By hand
 
 - `just dev`: a separate daemon on 7682 and Vite on 5173.
@@ -110,7 +156,8 @@ Tracked in #200:
 
 - `testnet/`, a Compose stack with profiles for network shapes and real
   services: ssh boxes behind a bastion, control and a box that can only
-  dial out, Fountain, Forgejo. Modelled on terragucci's `stack/`.
+  dial out, Fountain. Modelled on terragucci's `stack/`. (Forgejo and
+  GitLab are in `testnet/forges`, above.)
 - Client fixtures: recorded daemon sessions a client can replay against,
   and a daemon check against previous releases' fixtures.
 - A shared harness crate in place of the per-file `Daemon` copies.

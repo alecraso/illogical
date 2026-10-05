@@ -10,7 +10,7 @@
 # Needs the static build for this machine's architecture (`just static
 # aarch64` on Apple silicon, `just static` on x86_64) and
 # ILLOGICAL_LOCAL_TOKEN_FILE (the e2e tests' local token, which the
-# daemons in the boxes take too). Without Docker it says SKIP and exits 0.
+# daemons in the boxes take too).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,8 +19,16 @@ COMPOSE=(docker compose -f "$HERE/compose.yaml")
 PROJECT="${COMPOSE_PROJECT_NAME:-illogical-testnet-hosts}"
 NET="${PROJECT}_hosts"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+# These tests need Docker: without it they fail, unless ILLOGICAL_SKIP_DOCKER=1
+# asks to skip them, which says loudly that nothing ran.
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
+    echo "!!! ILLOGICAL_SKIP_DOCKER=1 and no Docker: NOTHING RAN (testnet/hosts) !!!" >&2
+    exit 0
+  fi
+  echo "FAIL: Docker is not available, and testnet/hosts needs it (ILLOGICAL_SKIP_DOCKER=1 skips, running nothing)" >&2
+  exit 1
+fi
 
 arch="$(uname -m)"; [ "$arch" = arm64 ] && arch=aarch64
 export ILLOGICAL_TESTNET_BIN="${ILLOGICAL_TESTNET_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/$arch-unknown-linux-musl/release}"
