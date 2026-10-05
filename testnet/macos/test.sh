@@ -6,6 +6,7 @@
 #   testnet/macos/test.sh launchd [claim...]   claims: install logout reboot
 #   BREAK=1 testnet/macos/test.sh launchd      every claim must fail
 #   testnet/macos/test.sh safari               web/safari against real Safari
+#   testnet/macos/test.sh iterm2 [claim...]    M5 and M32 in iTerm2 (iterm2.sh)
 #   KEEP=1 ...                                 leave the clone running
 #
 # launchd (S28 #153, M52 #155): a user made with sysadminctl who has never
@@ -143,6 +144,7 @@ failed=
 case "$test" in
   launchd) t_launchd "$@" ;;
   safari) exec "$HERE/safari.sh" "$@" ;;
+  iterm2) exec "$HERE/iterm2.sh" "$@" ;;
   *) sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
 [ -z "$failed" ]
