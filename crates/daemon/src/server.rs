@@ -60,7 +60,7 @@ pub struct App {
     pub acl: Arc<crate::acl::Acl>,
     /// MCP's tokens (M16).
     pub mcp: Arc<crate::mcp::Tokens>,
-    /// Invites for guests with only OpenSSH (M54).
+    /// Invites for guests with only OpenSSH (M65).
     pub guests: Arc<crate::guest_ssh::Guests>,
     next_client: AtomicU64,
     /// The owner has reached us over the tailnet (#110: the phone step).

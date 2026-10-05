@@ -520,7 +520,7 @@ export class Client {
     }
   }
 
-  /** An ssh invite to a terminal pane for someone with only OpenSSH (M54):
+  /** An ssh invite to a terminal pane for someone with only OpenSSH (M65):
    * read-only, one login, an hour. The command to send them, copied to the
    * clipboard when the browser lets us. */
   async guestInvite(pane: PaneId): Promise<string | null> {

@@ -4200,7 +4200,7 @@ The host menu lists ssh hosts and has *Connect over ssh…*. The app runs the sy
 
 **Done when:** on jake-air and geek, the desktop app opens a pane on a box reached only over ssh (Tailscale off, not joined to control), including through a ProxyJump bastion.
 
-#### M54: a pane for a guest who has only OpenSSH (#198, decided 2026-10-04)
+#### M65: a pane for a guest who has only OpenSSH (#198, decided 2026-10-04)
 
 Someone with nothing but `ssh` joins one of your panes from a pasted command. This is separate from M51–M53, which are you reaching your own boxes: here the guest has no client, no account and no tailnet. Jake said build it (2026-10-04).
 

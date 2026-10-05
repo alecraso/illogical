@@ -1,4 +1,4 @@
-// M54: "Invite over ssh…" on a pane's menu gives an ssh command, and the
+// M65: "Invite over ssh…" on a pane's menu gives an ssh command, and the
 // system's own ssh client, run with it, sees the pane and can't type.
 
 import { spawn, type ChildProcess } from "node:child_process";

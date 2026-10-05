@@ -108,7 +108,7 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
             },
           } as MenuItem,
         ]),
-    // M54: an ssh command for a guest with only OpenSSH. The owner's.
+    // M65: an ssh command for a guest with only OpenSSH. The owner's.
     ...(client.base.startsWith("/") || client.state?.roles
       ? []
       : [

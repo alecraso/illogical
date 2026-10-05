@@ -1,4 +1,4 @@
-//! A pane for a guest who has only OpenSSH (M54): `illogical share --guest
+//! A pane for a guest who has only OpenSSH (M65): `illogical share --guest
 //! %N` makes an invite, and the guest pastes the `ssh` command it prints.
 //!
 //! The daemon runs its own ssh server (russh) on `--guest-ssh` (default

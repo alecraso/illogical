@@ -524,8 +524,8 @@ checking GitHub's signature on a real delivery is not covered there.
 
 ## The SSH track's tests
 
-S28 (#153), M51 (#154), M52 (#155) and M54 (#198) each promise something
-about reaching a machine over ssh (PLAN.md, "SSH track" and M54). The
+S28 (#153), M51 (#154), M52 (#155) and M65 (#198) each promise something
+about reaching a machine over ssh (PLAN.md, "SSH track" and M65). The
 tests below guard those promises, so when one fails, the table says which
 promise broke.
 
@@ -543,7 +543,7 @@ The promises:
 5. A box that can't reach control is told so clearly, and stays reachable
    over `--ssh`.
 6. A guest with only OpenSSH can watch or drive one pane, and nothing else
-   (M54).
+   (M65).
 
 ### What the stack stands for
 
@@ -584,7 +584,7 @@ reached only over ssh.
 | `just testnet test control m52` | #155 (M52): one step plus the approval, the pane opens from the phone, ssh out of the picture, the box survives a reboot | on a fresh box-systemd, `illogical --ssh box-systemd join` installs and starts the daemon and prints a code; the device approves it; the box is on the device list and online; with the CLI's ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the pane answers over the relay again | promise 4: the join over ssh, the approval, the relay with ssh gone, or coming back after a reboot (which also rests on promise 2) |
 | `just testnet test control unreachable` | #155 (M52): "a box that can't reach control says so and stays reachable over `--ssh`" | box-bare, with no route out, joins the hosted control; the output must name the box and control and give `illogical --ssh box-bare tui`, and `--ssh box-bare ls` still works | promise 5 |
 | `just testnet test control m49` | #149 (M49) | box-systemd and box-bare join over ssh; the CLI on the bastion, with no daemon, logs in with a code the device approves, lists both from control, and runs, lists and captures on box-bare directly and box-systemd through the relay ([M49](#m49-the-cli-through-control)) | the CLI through control (login, `hosts`, direct or relayed routing); the joins it starts with are promise 4 |
-| `crates/daemon/tests/guest_ssh.rs`, `web/e2e/guest-ssh.spec.ts` | #198 (M54): the direct path and the pane menu entry | the system OpenSSH client as a guest against a dev daemon ([below](#guest-ssh-m54)) | promise 6; the test's name says which part (read-only, read-write, ending a session, refusals, the CLI) |
+| `crates/daemon/tests/guest_ssh.rs`, `web/e2e/guest-ssh.spec.ts` | #198 (M65): the direct path and the pane menu entry | the system OpenSSH client as a guest against a dev daemon ([below](#guest-ssh-m54)) | promise 6; the test's name says which part (read-only, read-write, ending a session, refusals, the CLI) |
 | `testnet/measure-tailnet.sh` (`just testnet measure tailnet`) | #153 (S28): the tailnet comparison | installs illogical on ts-box over ssh from ts-client, checks both paths see the same panes, then times `illogical ls` and an 8 MiB `illogical export` over `--ssh` and over the tailnet | one path no longer reaches the daemon, or the two disagree about its panes. Slower numbers don't fail it: compare them with `spikes/s28-ssh/README.md` |
 | `just macos launchd` | #153 (S28) and #155 (M52): jake-mini with no GUI session | in a fresh macOS VM, a user who never had a GUI session runs `illogicald install` over ssh: it installs the background agent, warns that it won't start after a reboot by itself, and the daemon and pane outlive the ssh session; `illogical --ssh` from the host starts it and passes the warning on; `install --system` survives a VM restart with nobody logged in, its pane restored; `uninstall` leaves nothing of either ([its claims](#the-tests)) | promise 2 on macOS: the install a Mac reached only over ssh gets, and what it says about reboots |
 
@@ -612,7 +612,7 @@ fail. The Rust tests have no `BREAK=1` form; they carry their own negative
 case instead (`ssh.rs`'s push with `ILLOGICAL_SSH_AGENT=no`,
 `guest_ssh.rs`'s wrong token and different host key).
 
-### Guest ssh (M54)
+### Guest ssh (M65)
 
 `crates/daemon/tests/guest_ssh.rs` runs the system OpenSSH client
 (`/usr/bin/ssh`, 8.5 or later for `KnownHostsCommand`) against a dev
@@ -648,7 +648,7 @@ in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
 - **Tailscale SSH's check mode** (S28): it sends the user to an identity
   provider's login, so no test can answer whether its prompt shows in the
   client's terminal. It's in [By hand](#by-hand).
-- **The guest ssh relay path** (M54, through control's ssh jump host):
+- **The guest ssh relay path** (M65, through control's ssh jump host):
   not built. `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host`
   in `guest_ssh.rs` is an `#[ignore]`d stub until it is, and its test will
   run against the `control` profile.
@@ -811,7 +811,7 @@ Real gaps, each one automatable:
 - **S27 in real Safari:** `spikes/s27-blocks/safari/safari.ts` (and
   `--ios`) in the tart VM, unattended.
 - **The tart tests in CI** on the macos-arm64 runner ([above](#on-the-macos-arm64-runner)).
-- **The guest ssh relay path** (M54), once control's jump host is built.
+- **The guest ssh relay path** (M65), once control's jump host is built.
 - **M49's attach, `tui` and event streams, and team machines, through
   control**, once built.
 - **Control checking GitHub's signature on a real webhook delivery**: it

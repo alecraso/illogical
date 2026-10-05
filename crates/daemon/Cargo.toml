@@ -27,7 +27,7 @@ p256 = { version = "0.14.0", features = ["ecdh", "ecdsa"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "json"] }
 rustls-platform-verifier = "0.7.1"
-# The guest ssh server (M54).
+# The guest ssh server (M65).
 russh = { version = "0.64.0", default-features = false, features = ["aws-lc-rs"] }
 rust-embed = { version = "8.12.0", features = ["mime-guess"] }
 # MCP (M16), pinned: 3.x moves fast (S14).

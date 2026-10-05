@@ -806,7 +806,7 @@ the daemon stopping, crashing, or the machine rebooting:
   with, say), never a tagged node, Funnel or the internet. Links expire (a
   week at most), are listed (`illogical shares`) and revocable (`shares
   revoke ID`), which cuts off anyone watching.
-- **A pane for a guest with only OpenSSH** (M54). `illogical share --guest
+- **A pane for a guest with only OpenSSH** (M65). `illogical share --guest
   %3` prints an `ssh` command to send someone: the username is a one-time
   token and the daemon's host key is pinned in the command, so nothing is
   saved on their side. The daemon's own ssh server (`--guest-ssh`, port

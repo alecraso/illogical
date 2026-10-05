@@ -1,4 +1,4 @@
-//! M54: a pane for a guest with only OpenSSH. Every test runs the system
+//! M65: a pane for a guest with only OpenSSH. Every test runs the system
 //! `ssh` with the command `illogical share --guest` prints (plus `-F
 //! /dev/null` and `BatchMode`, so the runner's own ssh config stays out of
 //! it), on a pseudo-terminal, against a dev daemon.
@@ -473,12 +473,12 @@ fn the_cli_prints_a_command_that_works_and_lists_and_revokes() {
     assert!(list.contains("no ssh invites"), "{list}");
 }
 
-/// The relay path (M54's next step, PLAN.md): `ssh -J <route>@<control>
+/// The relay path (M65's next step, PLAN.md): `ssh -J <route>@<control>
 /// <token>@<daemon id>` through control's jump host to a daemon behind NAT,
 /// with control seeing only ssh ciphertext. Control has no ssh listener,
 /// route table or raw stream kind on the dial-out mux yet.
 #[test]
-#[ignore = "not built: control's ssh jump host, routes and a raw dial-out stream (PLAN.md, M54's relay step)"]
+#[ignore = "not built: control's ssh jump host, routes and a raw dial-out stream (PLAN.md, M65's relay step)"]
 fn a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host() {
-    unimplemented!("M54 relay step");
+    unimplemented!("M65 relay step");
 }

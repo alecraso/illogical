@@ -201,7 +201,7 @@ pub enum Api {
     /// Home and the environment an agent block gets (#111: whether its
     /// adapter can start).
     AgentEnv(oneshot::Sender<(PathBuf, Vec<(String, String)>)>),
-    /// An ssh guest with a read-write invite typed (M54). Refused while
+    /// An ssh guest with a read-write invite typed (M65). Refused while
     /// someone else drives; the first keys take the pane, and its size, as
     /// `illogical attach` does.
     GuestInput {
@@ -3391,7 +3391,7 @@ impl Daemon {
         }
     }
 
-    /// An ssh guest's window (M54) sizes the pane's tab, zoomed to it.
+    /// An ssh guest's window (M65) sizes the pane's tab, zoomed to it.
     fn guest_view(&mut self, client: ClientId, pane: PaneId, (cols, rows): (u16, u16)) {
         let Ok(tab) = self.mux.tab_of(pane) else { return };
         if let Ok(true) = self.mux.view(client, tab, cols, rows, Some(pane), true) {

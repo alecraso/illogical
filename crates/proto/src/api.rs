@@ -449,7 +449,7 @@ pub struct Share {
     pub url: Option<String>,
 }
 
-/// `POST /api/guests` (M54): an invite to one terminal pane for someone
+/// `POST /api/guests` (M65): an invite to one terminal pane for someone
 /// with only OpenSSH.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuestInviteRequest {
@@ -473,7 +473,7 @@ pub struct GuestInviteRequest {
     pub host: Option<String>,
 }
 
-/// An ssh invite to a pane (M54). `token`, `command` and the pinning lines
+/// An ssh invite to a pane (M65). `token`, `command` and the pinning lines
 /// are only in the answer that made it; the daemon keeps a hash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuestInvite {

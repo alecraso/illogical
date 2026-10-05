@@ -645,7 +645,7 @@ enum Command {
         /// --guest, two hours with --rw).
         #[arg(long, default_value = "1h")]
         ttl: String,
-        /// An ssh invite instead of a link (M54). (`--ssh` is taken: it
+        /// An ssh invite instead of a link (M65). (`--ssh` is taken: it
         /// reaches a box over ssh, so `--ssh box share --guest` makes an
         /// invite there.)
         #[arg(long)]
