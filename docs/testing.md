@@ -85,6 +85,45 @@ loads each spec in the runner as well as the worker (#62).
 `E2E_DAEMON_LOG=<file>` keeps the test daemon's debug log, and
 `E2E_CONTROL_LOG=1` shows control's output in `sandboxes.spec.ts`.
 
+## Phones
+
+The phone checks (#214 section 6) run as Playwright device contexts, with
+no phone and no person. `web/e2e/phones.ts` has what they share:
+
+- `pixel7` and `iphone`: context options (viewport, user agent, touch,
+  mobile) from Playwright's Pixel 7 and iPhone 15. A Pixel 7 runs in
+  Chrome. An iPhone runs in WebKit, either as a `*.webkit.spec.ts` file
+  (the `webkit` project) or from a Chrome spec with `launchWebkit()`, which
+  drops the project's `chrome` channel.
+- `FakePush`: a web-push service on loopback. `subscription(name)` makes
+  keys the service holds, so it can decrypt what the daemon sends (RFC
+  8291, aes128gcm) and check its VAPID token (RFC 8292); `next(name, match)`
+  waits for a decrypted payload, and `refused` lists anything it turned
+  away. In Chrome, `stub(page, name)` (before the page loads) makes the
+  page's `PushManager` hand out that subscription, so *Notify this device*
+  subscribes to the fake service. WebKit in Playwright has no
+  `PushManager` or `Notification`, so an iPhone test posts the
+  subscription to `/api/push/subscribe` itself, as the page would.
+- `deliver(context, page, payload)` hands a payload to the page's service
+  worker over CDP and returns the notification's actions; `tap(context,
+  tag, action)` dispatches a `notificationclick` on it (Chrome only).
+- `daemon(state, args)`: a throwaway daemon on a port of its own.
+
+`web/e2e/team-fixture.ts` has a local control with a fake GitHub sign-in,
+people signed in on any browser context, and machines joined to it.
+
+| Milestone | Spec | What runs |
+|---|---|---|
+| M11 | `changes.spec.ts` (Pixel 7), `changes.webkit.spec.ts` (iPhone) | Changes, a hunk's line, a live file block; a failed build's push through the fake service, and Rerun from the notification (Pixel 7) or Needs you (iPhone) |
+| M16 | `mcp.spec.ts`, "watched from a phone" | an MCP client's build drawn live on a Pixel 7, Failed on its Needs you, fixed and rerun by the client |
+| M27 | `editors.spec.ts` | an editor block opened from a Pixel 7 and from an iPhone, the file at its line in under 3 s on a warm server |
+| M26, M30 | `team-swarm-phones.spec.ts` | two teammates' swarms on a Pixel 7 (Chrome's network emulation, 150 ms, 1.6 Mbit/s) and an iPhone: grouped by person, cards along the bottom, a rerun from the iPhone's card seen on the Pixel, a tile tap opening the pane |
+| #86 | `studio-phone.spec.ts` | a studio app from the template through the token API (a fake studio and box), `illogical studio login`, `hud share --role follower`, `illogical studio follower`, `illogical app`; a question answered from a Pixel 7 and a gate approved from an iPhone, with hud told who |
+
+Run one with `cd web && E2E_PORT=<port> pnpm exec playwright test
+e2e/<spec>`; `editors.spec.ts` needs code-server, which its first test
+downloads.
+
 ## Tests that need something extra
 
 These skip, saying why, unless what they need is there:
@@ -95,6 +134,8 @@ These skip, saying why, unless what they need is there:
 | `resident.rs`, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token and `just static` |
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
+| `mcp.spec.ts`, "the real Claude Code runs a build over MCP" | `ANTHROPIC_API_KEY` and `claude` on PATH (costs a few cents) |
+| `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" | `ILLOGICAL_TESTNET_PHONES=1`, Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
 
 ## By hand
 
