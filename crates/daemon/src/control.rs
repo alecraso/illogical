@@ -271,17 +271,13 @@ fn write_saved(dir: &Path, s: &Saved) -> anyhow::Result<()> {
 /// method, path and query, the time, a fresh nonce and the body's hash
 /// (`v2`), or for a control from before 0.17 the method, path and time.
 pub fn auth_header(keys: &DeviceKeys, method: &str, path_and_query: &str, body: &[u8], v2: bool) -> String {
-    use sha2::{Digest, Sha256};
-    let ms = now_ms();
     if !v2 {
+        let ms = now_ms();
         let path = path_and_query.split('?').next().unwrap_or(path_and_query);
         let msg = format!("illogical daemon auth\n{method}\n{path}\n{ms}\n");
         return format!("{} {ms} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())));
     }
-    let nonce = hex::encode(illogical_e2e::random::<16>());
-    let digest = hex::encode(Sha256::digest(body));
-    let msg = format!("illogical daemon auth v2\n{method}\n{path_and_query}\n{ms}\n{nonce}\n{digest}\n");
-    format!("v2 {} {ms} {nonce} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())))
+    illogical_e2e::cert::request_auth(keys, method, path_and_query, body)
 }
 
 /// Whether the control at `url` takes signatures over the body and a

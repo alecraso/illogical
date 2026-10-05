@@ -6,7 +6,7 @@
 use std::{path::Path, sync::Mutex};
 
 use anyhow::Context;
-use illogical_e2e::{Cert, Revocation};
+use illogical_e2e::{Cert, Kind, Revocation};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
@@ -677,11 +677,16 @@ impl Db {
     /// An approved daemon's certificate, by its id (accounts don't share
     /// daemon keys).
     pub fn daemon_cert(&self, id: &str) -> anyhow::Result<Option<Cert>> {
+        self.approved_cert(id, Kind::Daemon)
+    }
+
+    /// An approved device of this kind, by its id.
+    pub fn approved_cert(&self, id: &str, kind: Kind) -> anyhow::Result<Option<Cert>> {
         Ok(self
             .c()
             .query_row(
-                "SELECT cert FROM devices WHERE id = ?1 AND kind = 'daemon' AND approved = 1",
-                params![id],
+                "SELECT cert FROM devices WHERE id = ?1 AND kind = ?2 AND approved = 1",
+                params![id, kind.as_str()],
                 |r| cert_of(r.get(0)?),
             )
             .optional()?)

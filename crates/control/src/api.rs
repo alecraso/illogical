@@ -380,8 +380,15 @@ pub async fn join(
 ) -> R {
     app.limits.check(crate::limit::JOINS, app.limits.client_ip(peer, &headers))?;
     b.cert.check_request().map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
-    if b.cert.kind != Kind::Daemon {
-        return Err(err(StatusCode::BAD_REQUEST, "a daemon certificate"));
+    // A daemon, or the CLI (M49), which joins the same way: a code shown
+    // where it runs, approved on a signed-in device.
+    match b.cert.kind {
+        Kind::Daemon => {}
+        Kind::Cli if b.urls.is_empty() && b.team.is_none() && b.ticket.is_none() && b.proof.is_some() => {}
+        Kind::Cli => {
+            return Err(err(StatusCode::BAD_REQUEST, "a CLI joins with its key's proof and nothing else"));
+        }
+        _ => return Err(err(StatusCode::BAD_REQUEST, "a daemon certificate")),
     }
     check_urls(&b.urls)?;
     // A daemon control knows joins again only with its key: anyone may
@@ -497,11 +504,22 @@ pub async fn join_approve(
             err(StatusCode::NOT_FOUND, "no such code (expired?)")
         })?;
     let c = b.cert;
-    if c.account != s.account || c.kind != Kind::Daemon || !c.same_request(&j.cert) {
+    if c.account != s.account || c.kind != j.cert.kind || !c.same_request(&j.cert) {
         refused("join_approve", &s.account, &c, "not the daemon that asked");
         return Err(err(StatusCode::BAD_REQUEST, "that's not the daemon that asked"));
     }
     approval_ok(&app, &s.account, &c, "join_approve")?;
+    // The CLI (M49): one of the account's devices from now on, like a
+    // browser it approved. The account's machines learn of it now.
+    if c.kind == Kind::Cli {
+        if b.team.is_some() {
+            return Err(err(StatusCode::BAD_REQUEST, "a CLI joins your account, not a team"));
+        }
+        app.db.put_device(&c, true, now_ms())?;
+        app.db.approve_join(&code, &c, None)?;
+        nudge(&app, &s.account);
+        return Ok(Json(json!({ "approved": true, "device": c.device })));
+    }
     let known = app.db.device_known(&c.device)?;
     if known && !j.proven {
         refused("join_approve", &s.account, &c, "a known daemon's join without its key");

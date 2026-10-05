@@ -226,6 +226,61 @@ async fn joining_again_needs_the_machines_key() {
     assert_eq!(c.app.db.daemon_row(&other.id()).unwrap().unwrap().0, "a1");
 }
 
+#[tokio::test]
+async fn the_cli_joins_with_a_code_and_then_signs_as_its_account() {
+    let c = control(|_| {}).await;
+    let root = person(&c.app, "jake", "a1");
+    daemon(&c.app, "a1", "geek");
+    let cli = DeviceKeys::generate();
+    let ask = Cert { account: String::new(), ..Cert::new(&cli, "", Kind::Cli, "illogical CLI on mini") };
+    let post = |b: Value| c.http.post(format!("{}/api/join", c.base)).json(&b).send();
+    let proof = || {
+        let ms = now_ms();
+        json!({ "ms": ms, "sig": hex::encode(cli.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes())) })
+    };
+    // Only with its key's proof, and nothing a machine asks for.
+    assert_eq!(post(json!({ "cert": ask })).await.unwrap().status(), 400);
+    assert_eq!(post(json!({ "cert": ask, "proof": proof(), "team": "t" })).await.unwrap().status(), 400);
+    let r: Value = post(json!({ "cert": ask, "proof": proof() })).await.unwrap().json().await.unwrap();
+    let code = r["code"].as_str().unwrap().to_owned();
+    assert_eq!(code, illogical_e2e::cert::join_code(&ask));
+    let poll = r["poll"].as_str().unwrap().to_owned();
+
+    // Before it's approved its signature reaches nothing.
+    assert_eq!(c.daemon_get(&cli, "/api/directory").await.0, 401);
+
+    // Approved as a CLI, it's a device of the account, not a machine.
+    let cookie = session(&c.app, "a1");
+    let mut as_daemon = Cert { account: "a1".into(), kind: Kind::Daemon, ..ask.clone() };
+    as_daemon.sign_with(&root);
+    let (st, _) =
+        c.as_person(&cookie, "POST", &format!("/api/joins/{code}/approve"), Some(json!({ "cert": as_daemon }))).await;
+    assert_eq!(st, 400, "the approval can't change its kind");
+    let mut approval = Cert { account: "a1".into(), ..ask.clone() };
+    approval.sign_with(&root);
+    let (st, _) =
+        c.as_person(&cookie, "POST", &format!("/api/joins/{code}/approve"), Some(json!({ "cert": approval }))).await;
+    assert_eq!(st, 200);
+    assert!(c.app.db.daemon_row(&cli.id()).unwrap().is_none());
+    let got: Value =
+        c.http.get(format!("{}/api/join/{code}?poll={poll}", c.base)).send().await.unwrap().json().await.unwrap();
+    assert_eq!(got["approved"], true);
+    assert_eq!(got["trust"]["root"], root.id());
+
+    // Its signed requests are a session for its account, with no cookie
+    // and no origin.
+    let (st, dir) = c.daemon_get(&cli, "/api/directory").await;
+    assert_eq!(st, 200);
+    assert_eq!(dir["daemons"][0]["name"], "geek");
+    // It isn't a daemon, though.
+    assert_eq!(c.daemon_get(&cli, "/api/daemon/trust").await.0, 401);
+
+    // Revoked, it's refused.
+    let rev = illogical_e2e::Revocation::new("a1", &cli.id(), &root);
+    c.app.db.add_revocation(&rev).unwrap();
+    assert_eq!(c.daemon_get(&cli, "/api/directory").await.0, 401);
+}
+
 fn roster(team: &str, version: u64, members: Vec<Member>, by: &DeviceKeys) -> Roster {
     let mut r = Roster {
         v: 1,
