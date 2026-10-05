@@ -21,15 +21,15 @@ just e2e         # the browser tests, in the system Chrome and WebKit
 | `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and a real daemon; the script signs in, enrolls, approves the daemon's join code and reaches it directly and through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one): the `chrome` project, and `webkit` for `*.webkit.spec.ts` | Linux (Playwright's Chromium and WebKit) |
 | `just e2e-webkit` | only the `webkit` project: Safari's engine, for device keys (#94) and the one-click invite (#137) | macOS |
-| `just testnet up ssh`, `test ssh`, `break ssh` | the Docker test stack's claims ([testnet/README.md](../testnet/README.md)), then each claim under `BREAK=1`, where it must fail | Linux, when the runner has Docker |
+| `just testnet up ssh`, `test ssh`, `break ssh` | the Docker test stack's claims ([testnet/README.md](../testnet/README.md)), then each claim under `BREAK=1`, where it must fail | Linux |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
-CI (`.github/workflows/check.yml`) runs on pushes, on our own machines: `just
-check` and `just e2e` on Linux (geek), `just test` and `just e2e-webkit` on
-macOS (jake-mini), and the testnet's ssh profile in a job of its own on Linux.
-That job needs Docker on the runner; without it, it skips with a warning on
-the run. `just browsers` installs Playwright's browsers (with their system
+CI (`.github/workflows/check.yml`) runs on pushes, on our own machines: the
+testnet's ssh profile, `just check` and `just e2e` on Linux (geek); `just
+test` and `just e2e-webkit` on macOS (jake-mini). Both runners need Docker
+(the testnet, and `ssh.rs` in `just test`): without it the run fails.
+`just browsers` installs Playwright's browsers (with their system
 libraries on Linux, if sudo needs no password; otherwise run `sudo pnpm exec
 playwright install-deps` in `web/` once). See
 [development.md](development.md) for the runners.
@@ -96,16 +96,30 @@ loads each spec in the runner as well as the worker (#62).
 `E2E_DAEMON_LOG=<file>` keeps the test daemon's debug log, and
 `E2E_CONTROL_LOG=1` shows control's output in `sandboxes.spec.ts`.
 
-## Tests that need something extra
+## Tests that need Docker
 
-These skip, saying why, unless what they need is there:
+Docker is required for these. Without it they fail, saying what to run;
+they don't skip. Only `ILLOGICAL_SKIP_DOCKER=1` skips them, and each then
+prints that it did not run. CI never sets it.
 
 | Test | Needs |
 |---|---|
-| `agents_real.rs`, `swarm-real.spec.ts` | `ILLOGICAL_REAL_AGENTS=claude,codex,...` (real agents; costs a few cents) |
-| `resident.rs`, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token and `just static` |
+| `just testnet up`, `test`, `break`, `down` | Docker ([testnet/README.md](../testnet/README.md)) |
+| `crates/daemon/tests/ssh.rs` (in `just test`) | Docker, and the box's binaries: `just static aarch64` on Apple silicon, `just static` on x86_64 (or `ILLOGICAL_SSH_BINARIES`). It brings the ssh profile up itself if it isn't. |
+
+## Tests that skip without a secret
+
+These skip without their secret or account, and print `SKIP:` with what's
+missing:
+
+| Test | Needs |
+|---|---|
+| `agents_real.rs`, `swarm-real.spec.ts` | `ILLOGICAL_REAL_AGENTS=claude,codex,...` (real agents; costs a few cents), and for VM agents `~/.config/illogical/claude-oauth-token` or `anthropic-key` |
+| `resident.rs`, `machines.rs`, `fs.rs`, `mcp.rs`'s VM test, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token (`ILLOGICAL_WISP_TOKEN_FILE` or `~/.local/share/wisp/token`), and `just static` for the resident tests |
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
-| `workspace.spec.ts` | network on its first run, to install the pinned chant |
+
+`workspace.spec.ts` needs the network on its first run, to install the
+pinned chant.
 
 ## By hand
 
