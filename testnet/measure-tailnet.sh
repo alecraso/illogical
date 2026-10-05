@@ -58,8 +58,10 @@ ssh_=(--ssh illo@ts-box)
 tail_=(--host "http://$ip:7681")
 
 "$I" "${ssh_[@]}" ls >/dev/null 2>&1            # installs, starts the daemon, opens the master
-a="$("$I" "${ssh_[@]}" --json ls | md5sum)"
-b="$("$I" "${tail_[@]}" --json ls | md5sum)"
+ids() { "$I" "$@" --json ls | grep -o '"id": *[0-9]*' | tr -d ' ' | sort; }
+a="$(ids "${ssh_[@]}")"
+b="$(ids "${tail_[@]}")"
+[ -n "$a" ] || { echo "FAIL: no panes over ssh" >&2; exit 1; }
 [ "$a" = "$b" ] || { echo "FAIL: ssh and the tailnet see different panes" >&2; exit 1; }
 
 # A pane with about 8 MiB of output, done before timing.
