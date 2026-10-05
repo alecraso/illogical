@@ -42,7 +42,7 @@ use windows_sys::Win32::{
 
 /// How long a closed program has after its console goes before its job is
 /// ended (the shim's KILL_AFTER on Unix).
-const KILL_AFTER: Duration = Duration::from_secs(3);
+pub const KILL_AFTER: Duration = Duration::from_secs(3);
 
 type CreateFn = unsafe extern "system" fn(COORD, HANDLE, HANDLE, u32, *mut HPCON) -> i32;
 type ResizeFn = unsafe extern "system" fn(HPCON, COORD) -> i32;

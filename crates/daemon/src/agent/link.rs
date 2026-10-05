@@ -229,10 +229,11 @@ pub fn adopt_local(
 ) -> Option<(Link, u32)> {
     let (a, b) = fd_names(id);
     let (in_w, out) = (kept.remove(&a)?, kept.remove(&b)?);
+    // Windows keeps no agent servers across a restart (yet).
     #[cfg(not(unix))]
     {
-        let _ = (dir, out, fd_store, sink);
-        match in_w {}
+        let _ = (dir, in_w, out, fd_store, sink);
+        None
     }
     #[cfg(unix)]
     {

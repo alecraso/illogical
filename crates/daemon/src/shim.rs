@@ -252,12 +252,15 @@ pub fn start_time(pid: u32) -> Option<u64> {
 }
 
 /// What a record says about the program.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Record {
     pub pid: Option<(u32, u64)>,
-    /// The shim itself, from shims that take [`CLOSE`].
+    /// The shim itself, from shims that take [`CLOSE`] (on Windows, the
+    /// pane's host).
     pub shim: Option<(u32, u64)>,
     pub exit: Option<Ended>,
+    /// Windows: the pane host's pipes (`crate::host`).
+    pub pipe: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +285,7 @@ pub fn read_record(path: &std::path::Path) -> Record {
                     r.shim = Some((p, s));
                 }
             }
+            ["pipe", name] => r.pipe = Some((*name).to_owned()),
             ["exit", code] => r.exit = code.parse().ok().map(Ended::Code),
             ["signal", n] => r.exit = n.parse().ok().map(Ended::Signal),
             _ => {}
@@ -339,7 +343,7 @@ mod tests {
             "a new start replaces the old"
         );
         std::fs::write(&path, "pid 1 5\nshim 2 6\nsignal 9\npid 42 7\nshim 43 8\n").unwrap();
-        assert_eq!(read_record(&path), Record { pid: Some((42, 7)), shim: Some((43, 8)), exit: None });
+        assert_eq!(read_record(&path), Record { pid: Some((42, 7)), shim: Some((43, 8)), exit: None, pipe: None });
         std::fs::write(&path, "pid 42 7\nexit 3\n").unwrap();
         assert_eq!(read_record(&path).exit, Some(Ended::Code(3)));
         std::fs::remove_dir_all(dir).unwrap();

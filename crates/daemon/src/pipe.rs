@@ -67,7 +67,7 @@ pub fn my_sid() -> io::Result<String> {
 }
 
 /// The client on `pipe` runs as this process's user.
-fn same_user(pipe: HANDLE) -> io::Result<bool> {
+pub(crate) fn same_user(pipe: HANDLE) -> io::Result<bool> {
     // SAFETY: Win32 calls on handles we hold; the client's is closed here.
     unsafe {
         let mut pid = 0u32;
@@ -87,13 +87,13 @@ fn same_user(pipe: HANDLE) -> io::Result<bool> {
 
 /// Security attributes admitting this user and SYSTEM only. (A named
 /// pipe's default DACL gives Everyone read.)
-struct Sa(SECURITY_ATTRIBUTES);
+pub(crate) struct Sa(pub(crate) SECURITY_ATTRIBUTES);
 // The descriptor is only read, by CreateNamedPipe.
 unsafe impl Send for Sa {}
 unsafe impl Sync for Sa {}
 
 impl Sa {
-    fn mine() -> io::Result<Self> {
+    pub(crate) fn mine() -> io::Result<Self> {
         let sddl: Vec<u16> = format!("D:P(A;;GA;;;{})(A;;GA;;;SY)", my_sid()?).encode_utf16().chain(Some(0)).collect();
         let mut sd: PSECURITY_DESCRIPTOR = ptr::null_mut();
         // SAFETY: a valid SDDL string; the descriptor lives as long as the

@@ -54,3 +54,30 @@ fn an_interactive_pane_takes_input_and_splits_and_closes() {
     assert!(ids(&d).contains(&pane));
     std::thread::sleep(Duration::from_millis(100));
 }
+
+#[test]
+fn a_pane_outlives_its_daemon_and_the_next_one_adopts_it() {
+    let mut d = illogicald!("win-keep").start();
+    let pane = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+    d.wait_for("the prompt", || capture(&d, pane).contains("PS "));
+    d.post(&format!("/api/panes/{pane}/send"), json!({"text": "$x = 42; $PID\r"}));
+    d.wait_for("the shell's pid", || capture(&d, pane).lines().any(|l| l.trim().parse::<u32>().is_ok()));
+    let shell_pid: u32 = capture(&d, pane).lines().find_map(|l| l.trim().parse().ok()).unwrap();
+
+    // No chance to save anything: the pane's host keeps it.
+    d.kill();
+    d.start();
+    d.wait_for("the pane back", || capture(&d, pane).contains("PS "));
+    d.post(&format!("/api/panes/{pane}/send"), json!({"text": "'v' + $x + ' ' + $PID\r"}));
+    d.wait_for("the same shell, with its state", || capture(&d, pane).contains(&format!("v42 {shell_pid}")));
+
+    // Closing it still ends it, through the host.
+    d.post(&format!("/api/panes/{pane}/close"), json!({}));
+    d.wait_for("the shell to end", || {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {shell_pid}"), "/NH"])
+            .output()
+            .map(|o| !String::from_utf8_lossy(&o.stdout).contains(&shell_pid.to_string()))
+            .unwrap_or(false)
+    });
+}
