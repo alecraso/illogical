@@ -71,6 +71,9 @@ const MAX_CONNECTIONS: usize = 32;
 const HISTORY: u32 = 1000;
 /// Ctrl-]: leave, as `illogical attach` does.
 const DETACH: u8 = 0x1d;
+/// A connection that hasn't logged in by now is dropped, so slow ones can't
+/// hold every place.
+const LOGIN_WITHIN: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Saved {
@@ -440,6 +443,7 @@ async fn serve(
             continue;
         }
         let _ = tcp.set_nodelay(true);
+        let authed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let conn = Conn {
             guests: guests.clone(),
             app: app.clone(),
@@ -449,17 +453,28 @@ async fn serve(
             size: (80, 24),
             term: None,
             tx: None,
+            authed: authed.clone(),
             _slot: Slot(guests.connections.clone()),
         };
         let config = config.clone();
         tokio::spawn(async move {
-            match russh::server::run_stream(config, tcp, conn).await {
-                Ok(s) => {
-                    if let Err(e) = s.await {
-                        debug!(%peer, error = %e, "guest ssh session ended");
-                    }
+            let s = match tokio::time::timeout(LOGIN_WITHIN, russh::server::run_stream(config, tcp, conn)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => return debug!(%peer, error = %e, "guest ssh handshake"),
+                Err(_) => return debug!(%peer, "guest ssh: no handshake in time"),
+            };
+            let handle = s.handle();
+            tokio::spawn(async move {
+                tokio::time::sleep(LOGIN_WITHIN).await;
+                if !authed.load(Ordering::Relaxed) {
+                    debug!(%peer, "guest ssh: no login in time");
+                    let _ = handle
+                        .disconnect(russh::Disconnect::ByApplication, "no login in time".into(), String::new())
+                        .await;
                 }
-                Err(e) => debug!(%peer, error = %e, "guest ssh handshake"),
+            });
+            if let Err(e) = s.await {
+                debug!(%peer, error = %e, "guest ssh session ended");
             }
         });
     }
@@ -490,6 +505,7 @@ struct Conn {
     size: (u16, u16),
     term: Option<String>,
     tx: Option<mpsc::UnboundedSender<FromGuest>>,
+    authed: Arc<std::sync::atomic::AtomicBool>,
     _slot: Slot,
 }
 
@@ -511,6 +527,7 @@ impl Handler for Conn {
         }
         info!(peer = %self.peer, invite = g.id, pane = g.pane, "guest ssh: logged in");
         self.granted = Some(g);
+        self.authed.store(true, Ordering::Relaxed);
         Ok(Auth::Accept)
     }
 
