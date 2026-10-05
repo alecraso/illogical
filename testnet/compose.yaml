@@ -37,3 +37,18 @@ services:
     hostname: box-bare
     environment: { TESTNET_NAME: box-bare }
     networks: [inner]
+
+  # systemd as PID 1 (logind, polkit), for linger without sudo. Needs a
+  # privileged container with its own cgroup namespace.
+  box-systemd:
+    profiles: [ssh]
+    build: ./sshd-systemd
+    image: illogical-testnet-sshd-systemd
+    container_name: illogical-testnet-box-systemd
+    hostname: box-systemd
+    privileged: true
+    cgroup: private
+    tmpfs: [/run, /run/lock, /tmp]
+    volumes:
+      - ./.state:/keys:ro
+    networks: [inner]

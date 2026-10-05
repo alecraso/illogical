@@ -2,7 +2,7 @@
 #
 # Bring up one profile of the test stack.
 #
-#   testnet/up.sh ssh     bastion + box-bare (see README.md)
+#   testnet/up.sh ssh     bastion, box-bare and box-systemd (see README.md)
 #
 # Makes the stack's keys in testnet/.state (a client key and one host key per
 # box) and writes testnet/.state/ssh_config, which reaches every box by name
@@ -26,7 +26,7 @@ command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exi
 docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 
 case "$PROFILE" in
-  ssh) boxes="bastion box-bare" ;;
+  ssh) boxes="bastion box-bare box-systemd" ;;
   *) echo "usage: testnet/up.sh ssh   (the only profile so far)" >&2; exit 2 ;;
 esac
 
@@ -48,6 +48,10 @@ Host bastion
 
 Host box-bare
   HostName box-bare
+  ProxyJump bastion
+
+Host box-systemd
+  HostName box-systemd
   ProxyJump bastion
 
 Host *

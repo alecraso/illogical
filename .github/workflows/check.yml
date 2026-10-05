@@ -22,7 +22,7 @@ jobs:
       - name: install.sh and the release's glibc check
         run: shellcheck -s sh scripts/install.sh scripts/glibc-floor
       - name: The test stack's scripts
-        run: shellcheck testnet/*.sh && shellcheck -s sh testnet/sshd/entrypoint.sh
+        run: shellcheck testnet/*.sh && shellcheck -s sh testnet/sshd/entrypoint.sh testnet/sshd-systemd/keys.sh
       - name: THIRD_PARTY.md is current
         run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
       - name: No secrets

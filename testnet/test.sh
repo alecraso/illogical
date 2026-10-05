@@ -26,6 +26,9 @@
 #   agent  A key in the client's agent is usable on box-bare when the agent
 #          is forwarded through the bastion (M51's `git push`). Broken:
 #          ForwardAgent=no.
+#   linger On box-systemd, a user turns on lingering for themselves from an
+#          ssh login with no sudo (S28's lifetime question). Broken: polkit
+#          masked (and unmasked afterwards).
 #
 # Needs `testnet/up.sh <profile>` first. Exit codes: 0 every claim held (or
 # Docker is unavailable, a clean skip), 1 a claim failed, 2 usage.
@@ -36,7 +39,7 @@ PROFILE="${1:-ssh}"; shift || true
 STATE="$HERE/.state"
 CFG="$STATE/ssh_config"
 BREAK="${BREAK:-}"
-SSH_CLAIMS="login jump inner bare stdio agent"
+SSH_CLAIMS="login jump inner bare stdio agent linger"
 
 command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
@@ -122,6 +125,16 @@ claim_agent() {
   [ -n "$BREAK" ] && fwd="-o ForwardAgent=no"
   # shellcheck disable=SC2086
   s $fwd box-bare ssh-add -l 2>/dev/null | grep -qF "$want"
+}
+
+claim_linger() {
+  local b=illogical-testnet-box-systemd rc=0
+  docker exec "$b" loginctl disable-linger illo
+  if [ -n "$BREAK" ]; then docker exec "$b" systemctl mask --now polkit.service >/dev/null 2>&1; fi
+  # shellcheck disable=SC2016 # expanded on the box
+  s box-systemd 'loginctl enable-linger 2>/dev/null && [ "$(loginctl show-user "$USER" -p Linger --value)" = yes ]' || rc=1
+  if [ -n "$BREAK" ]; then docker exec "$b" sh -c 'systemctl unmask polkit.service && systemctl start polkit.service' >/dev/null 2>&1; fi
+  return "$rc"
 }
 
 failed=""

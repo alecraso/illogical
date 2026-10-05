@@ -11,20 +11,21 @@ just testnet test ssh          # every claim
 just testnet test ssh jump     # one claim
 just testnet break ssh         # each claim under BREAK=1; all must fail
 just testnet down              # remove containers, networks and .state
-ssh -F testnet/.state/ssh_config box-bare
+ssh -F testnet/.state/ssh_config box-bare   # or bastion, box-systemd
 ```
 
 Every script prints `SKIP: Docker is not available` and exits 0 without
-Docker.
+Docker. The claims expect fresh boxes: after installing anything on one,
+`just testnet down` and `up` again (`bare` fails otherwise, as it should).
 
 ## Profiles
 
 | Profile | Services | Status | For |
 |---|---|---|---|
-| `ssh` | `bastion`, `box-bare` | validated | S28, M51, M52's install step |
+| `ssh` | `bastion`, `box-bare`, `box-systemd` | validated | S28, M51, M52's install step |
 
-The other profiles in #200 (`control`, `relay`, `fountain`, `forgejo`) and
-`box-systemd` are added when a milestone needs them.
+The other profiles in #200 (`control`, `relay`, `fountain`, `forgejo`) are
+added when a milestone needs them.
 
 ### `ssh`
 
@@ -34,6 +35,9 @@ The other profiles in #200 (`control`, `relay`, `fountain`, `forgejo`) and
 - `box-bare`: the same image with no illogical and nothing set up for it,
   on an internal network with no route out. It's reached only through the
   bastion, so anything installed on it has to arrive over ssh.
+- `box-systemd`: box-bare with systemd as PID 1, logind and polkit, also on
+  the internal network. It runs privileged with its own cgroup namespace
+  (Docker Desktop on macOS runs it too), for lingering and user services.
 
 Both have one user, `illo`, who logs in with the stack's key only. Agent and
 TCP forwarding are on. `up.sh` writes `testnet/.state/`: the client key,
@@ -54,6 +58,7 @@ every claim does, which shows each one can catch what it's about.
 | `bare` | no illogical on box-bare's login PATH, no state or config dir | a stub `/usr/local/bin/illogical` |
 | `stdio` | 1 MiB of random bytes through `cat` on box-bare come back identical | a forced tty (`-tt`) |
 | `agent` | a key in the client's agent shows on box-bare when forwarded | `ForwardAgent=no` |
+| `linger` | on box-systemd, `loginctl enable-linger` works from an ssh login with no sudo | polkit masked |
 
 ## Conventions
 
