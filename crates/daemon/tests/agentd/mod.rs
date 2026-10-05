@@ -217,6 +217,13 @@ impl Daemon {
         self.wait_up();
     }
 
+    /// Set a variable for the next [`Daemon::start`] (one that needs the
+    /// port the first start took, say).
+    pub fn set_env(&mut self, key: &str, value: &str) {
+        self.env.retain(|(k, _)| k != key);
+        self.env.push((key.to_owned(), value.to_owned()));
+    }
+
     /// Stop it the way a reboot would: what it started goes too.
     pub fn stop(&mut self) {
         if let How::Child(c) = &mut self.how {

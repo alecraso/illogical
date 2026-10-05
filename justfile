@@ -239,6 +239,18 @@ testnet cmd="test" profile="ssh" *claims:
       *) echo "usage: just testnet up|test|break|down [profile] [claim...]" >&2; exit 2 ;;
     esac
 
+# Real forges in Docker for the forge blocks (testnet/forges/README.md):
+# up|test|down [forgejo|gitlab|all].
+forges cmd="test" forge="forgejo":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{cmd}}" in
+      up) testnet/forges/up.sh {{forge}} ;;
+      test) testnet/forges/test.sh {{forge}} ;;
+      down) testnet/forges/down.sh {{forge}} ;;
+      *) echo "usage: just forges up|test|down [forgejo|gitlab|all]" >&2; exit 2 ;;
+    esac
+
 # What CI runs.
 check: test
     {{cargo}} fmt --all --check
