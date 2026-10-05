@@ -53,6 +53,9 @@ jobs:
         env:
           E2E_CHROMIUM: "1"
           E2E_PORT: "7769"
+          # team-swarm-phones' variant across networks: a box in a container
+          # behind tc netem, with just static's illogicald (built above).
+          ILLOGICAL_TESTNET_PHONES: "1"
       - name: Take the test stack down
         if: always()
         run: just testnet down
