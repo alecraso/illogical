@@ -4086,6 +4086,21 @@ The shape to try:
 
 **Done when:** `spikes/s27-blocks/README.md` has the answers, with a demo of Vite on jake-mini (no block flags) reloading on save inside control's page on geek's Chrome and on the phone.
 
+**Done-when, automated (2026-10-05):** the demo on jake-mini, geek's Chrome and the phone is replaced by tests that need no person: the spike's Playwright suite (Chromium and WebKit on macOS, WebKit on Linux in a container) runs a real Vite, Next and code-server through control's block origins, and `safari/safari.ts` runs the same checks in real Safari and the iOS Simulator through safaridriver on Track E's macOS VM. What's still open is listed in the README under "What still needs a real machine".
+
+#### S27: findings (2026-10-05)
+
+Answers in `spikes/s27-blocks/README.md`. Go for M50, per browser:
+
+| Browser | Verdict | On what |
+|---|---|---|
+| Chrome / Chromium | **go** | every check, including code-server's webviews; about 0.2 ms added per request on loopback |
+| Safari, macOS | **go, provisional** | Playwright's WebKit on macOS passes every check; real Safari waits on `safari/safari.ts` in Track E's VM |
+| Safari, iOS | **unknown** | not run; `safari/safari.ts --ios` in the same VM's Simulator |
+| Desktop app (WebKitGTK) | **go, provisional** | Playwright's Linux WebKit passes; the app's older Ubuntu 22.04 WebKitGTK not checked yet |
+
+What M50 takes from it: the grant in Noise message 1 (`Responder::read` returning the payload), WebSockets on the page's own channel rather than the worker's, control's worker hosting apps' own service workers (VS Code's webviews need it), `frame-ancestors 'self'` plus control, a stable origin key per block, grant expiry against the daemon's clock from the device channel (a page a day off can't open blocks), and the worker keeping each block's cookie jar. Throughput through the worker tops out near 140 MB/s (WebCrypto), against 300–900 MB/s today.
+
 #### M49: the CLI and the daemon page without a hub (#149)
 
 - **`illogical --host <machine>` through control:** names come from control's directory (the account's and the team's machines), not only `hosts.json`. The CLI connects over a Noise channel, direct when it can, else through the relay, with a `cli` device key of its own (the kind already exists in device certificates). The first use enrolls it the way a browser enrolls (a code to approve on another device). `illogical hosts` lists both sources, marked.

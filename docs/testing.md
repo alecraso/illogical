@@ -272,6 +272,39 @@ cd web && pnpm exec playwright test e2e/palette.spec.ts e2e/palette.webkit.spec.
 
 WebKit needs `pnpm exec playwright install webkit` once.
 
+## Spike: blocks through control (S27)
+
+`spikes/s27-blocks/` has its own Playwright suite for #148 (blocks served
+from control's block domain, carried to the daemon over Noise by a service
+worker). It isn't part of `just e2e`; run it from that directory:
+
+```sh
+cd spikes/s27-blocks
+pnpm install
+./fetch-code-server.sh      # once, for tests/code-server.spec.ts (it skips without)
+pnpm test                   # builds s27 and the worker, then Chromium and WebKit
+pnpm typecheck
+./linux-webkit.sh [specs]   # WebKit on Linux in Playwright's container (Docker, Zig)
+node safari/safari.ts       # real Safari via safaridriver; --ios for the Simulator
+```
+
+Hostnames (`control.test`, `*.blocks.test`) go to 127.0.0.1 through a
+CONNECT proxy the suite runs on 7753; everything else takes port 0. What
+each spec checks:
+
+| Spec | What |
+|---|---|
+| `basics` | the worker registers in a cross-site frame; pages, POSTs, redirects, a 3 MB download and a WebSocket go through it; control relays no plaintext; cookies; refused grants |
+| `vite`, `next`, `code-server` | real dev servers: a save reloads (or hot-updates) the block; VS Code's workbench, a file and a webview |
+| `latency` | per-request time, a parallel burst, a 10 MB download and first load, relayed, worker-direct and through the daemon's own block site |
+| `lifecycle` | reloads (hard, in Chromium), a stopped worker, cleared storage, idle, grants expiring under an open block, control restarting, a skewed parent clock |
+
+Measurements are appended to `.run/results.jsonl` with the load average.
+`safari/safari.ts --print-setup` lists what a Mac needs first (sudo:
+`safaridriver --enable`, the test certificate trusted, `/etc/hosts`);
+the tart VM harness (below) is where it runs unattended. `--driver
+playwright-webkit` checks the script itself without Safari.
+
 ## A device that approves things
 
 Anything that waits for a person to approve it on a signed-in device (a
