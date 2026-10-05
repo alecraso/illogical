@@ -39,6 +39,9 @@
 //!   tabs, which *Move Tab to New Window* takes back out.
 //! - **`illogical://` links** (`links.rs`), **a global hotkey**, off by
 //!   default (`settings.rs`), and **app updates** (`updates.rs`).
+//! - **The file managers** (M47): Finder's *New illogical Tab Here*
+//!   service (`finder.rs`) and `.command` files on macOS; Nautilus's
+//!   *Open in illogical* (`linux/nautilus/illogical.py`) on Linux.
 //! - A tray icon with *New window* and *This machine*; one instance (a
 //!   second launch opens a window in the first).
 //! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
@@ -46,6 +49,8 @@
 //!   control's page, and nothing local is installed, watched or offered.
 
 mod cloud;
+#[cfg(target_os = "macos")]
+mod finder;
 mod links;
 mod profile;
 #[cfg(target_os = "macos")]
@@ -748,6 +753,8 @@ fn main() {
                 }
             }
             profile::init(app.handle());
+            #[cfg(target_os = "macos")]
+            finder::init(app.handle());
             if !DAEMONLESS {
                 upgrade::check();
             }
@@ -848,11 +855,19 @@ fn main() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { has_visible_windows: false, .. } => focus_or_open(app),
             // macOS: an illogical:// link (the app started for it, or was
-            // running).
+            // running); a folder dropped on the app or opened with it, a new
+            // tab there; a .command file, run in a new tab (M47).
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Opened { urls } => {
                 for url in urls {
-                    links::handle(app, url.to_string());
+                    match url.scheme() {
+                        "file" => match url.to_file_path() {
+                            Ok(p) if p.is_dir() => links::open_dir(app, &p),
+                            Ok(p) => links::run_file(app, &p),
+                            Err(()) => eprintln!("illogical: not a file this app opens: {url}"),
+                        },
+                        _ => links::handle(app, url.to_string()),
+                    }
                 }
             }
             _ => {}

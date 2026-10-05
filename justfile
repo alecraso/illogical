@@ -219,11 +219,12 @@ desktop-macos arch="" *tauri_args="":
 # The Linux desktop app under Xvfb, in a container: builds the app (debug,
 # no bundle) in its build image (packaging/desktop/Containerfile) and runs
 # packaging/desktop/xvfb's tests against a static daemon: `join` (#204,
-# test.sh, with a stand-in control) and `m46` (m46.sh: keys, the titlebar,
-# illogical:// links, the global hotkey). Needs podman or docker; the
+# test.sh, with a stand-in control), `m46` (m46.sh: keys, the titlebar,
+# illogical:// links, the global hotkey) and `m47` (a right-click in
+# Nautilus opens a tab). Needs podman or docker; the
 # container runs the host's architecture (aarch64 under Docker Desktop on a
 # Mac). `just desktop-xvfb m46 keys` runs one claim.
-desktop-xvfb *tests="join m46":
+desktop-xvfb *tests="join m46 m47":
     #!/usr/bin/env bash
     set -euo pipefail
     root={{justfile_directory()}}

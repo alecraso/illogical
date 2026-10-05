@@ -360,7 +360,7 @@ the testnet's `control` claims use both. `approve` takes a CLI's code from
 
 ## The desktop app's tests
 
-M46's promises, each checked with nobody at the keyboard. Linux runs in a
+M46's and M47's promises, each checked with nobody at the keyboard. Linux runs in a
 container under Xvfb and Openbox with xdotool typing; macOS runs in a fresh
 tart VM clone (`testnet/macos/vm.sh`) where System Events types into the
 logged-in session over ssh.
@@ -374,13 +374,27 @@ logged-in session over ssh.
 | Service registration | (the systemd unit: `illogicald install`, unchanged) | `agent`: the first start registers the launch agent through SMAppService, BTM lists it, the bundle's daemon answers the linked CLI, no second plist | the app runs a daemon that isn't the one Login Items shows, or two |
 | Working pane, no terminal | | `install`, `pane`: the .dmg installs, and a command typed into the window runs | |
 | Panes outlive the app | | `restart`: the daemon's pids and panes are the same after the app restarts | |
-| Packages | `just desktop-packages ARCH`: .deb and .rpm install, libraries resolve, xdg-mime hands `illogical://` to the app | `install` above | |
-| Updates | | `update.sh`: 0.17.0 refuses a manifest signed with another key, then replaces itself with 0.17.1 and restarts; a running vim and a counting build carry on | |
+| Right-click a folder (M47) | `m47` (`just desktop-xvfb m47`): with the packages' .desktop file and Nautilus extension, a right-click on a folder (and inside one) in Nautilus, *Open in illogical*, opens a tab there in the running app and shows it | `finder`: the service is registered (`pbs`); a right-click on a folder in Finder, *New illogical Tab Here*, opens a tab there; a `.command` file opened with the app runs in a new pane | the file manager's menu has no entry, or it starts a second app |
+| Packages | `just desktop-packages ARCH`: .deb and .rpm install, libraries resolve, xdg-mime hands `illogical://` to the app, the .desktop file passes the link (`%u`) and has a New Tab action, the Nautilus extension is in place | `install` above | |
+| Updates | | `update.sh`: 0.17.0 refuses a manifest signed with another key, then replaces itself with 0.17.1 and restarts; the new app carries a newer daemon and restarts its launch agent on it; a running vim and a counting build carry on | |
 
 `update.sh` makes a throwaway updater key and builds the app twice with
-it. Both versions carry the same daemon, so the daemon isn't restarted by
-that test; `upgrade.rs`'s path (a newer bundled daemon replaces the
-running one, panes kept) is #176's. The macOS app is copied in without
+it. The installed one carries a daemon one minor version older than the
+tree's (built from a copy of the tree with only the version changed, kept
+in `target/update-old`), so the update also runs `upgrade.rs`'s path: the
+new app finds the older daemon, restarts its launch agent on the bundle's
+newer one, and the panes stay.
+
+Nautilus and Finder are driven as a person would: the mouse right-clicks
+the folder (xdotool at the spot AT-SPI reports, under Xvfb; a CGEvent at
+the row's position in the VM, since System Events' `AXShowMenu` opens no
+menu on a Finder row), and the menu item is clicked through AT-SPI or
+System Events. The VM sends Finder no Apple Events: those need a person
+to allow them. The Xvfb image links `/usr/lib/libpython3.10.so.1.0`
+because 22.04's arm64 `python3-nautilus` looks for it there (amd64's
+looks in the right place).
+
+The macOS app is copied in without
 the quarantine flag: an ad-hoc signed download needs a person's
 right-click > Open past Gatekeeper, which only a notarized build (#177)
 removes.

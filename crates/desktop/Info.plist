@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the app's Info.plist by tauri build (M47).
+     NSServices: Finder's "New illogical Tab Here" for folders (finder.rs).
+     NSPortName is the app's CFBundleName; the empty NSRequiredContext
+     shows the service without enabling it in the keyboard settings first.
+     CFBundleDocumentTypes: the app can open folders (a new tab there) and
+     .command scripts (run in a new tab), as an alternate handler, so it
+     never takes them from Terminal unless someone picks it. -->
+<plist version="1.0">
+<dict>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>New illogical Tab Here</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>newTabHere</string>
+      <key>NSPortName</key>
+      <string>illogical</string>
+      <key>NSRequiredContext</key>
+      <dict/>
+      <key>NSSendFileTypes</key>
+      <array>
+        <string>public.folder</string>
+      </array>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Folder</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.folder</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Terminal shell script</string>
+      <key>CFBundleTypeRole</key>
+      <string>Shell</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.apple.terminal.shell-script</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
