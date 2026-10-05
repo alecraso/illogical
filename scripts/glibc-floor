@@ -16,8 +16,11 @@ for f in "$@"; do
   case "$f" in
     *.deb) dpkg-deb -x "$f" "$d" ;;
     *.AppImage)
-      # The AppImage runtime is static: it unpacks itself here.
+      # The AppImage runtime is static: it unpacks itself here. Its "AI\2"
+      # mark, cleared in the copy, stops it running under emulation
+      # (binfmt_misc wants those bytes zero; build-linux.sh says more).
       cp "$f" "$d/app" && chmod +x "$d/app"
+      printf '\000\000\000' | dd of="$d/app" bs=1 seek=8 count=3 conv=notrunc 2>/dev/null
       (cd "$d" && ./app --appimage-extract >/dev/null) ;;
     *) cp "$f" "$d/" ;;
   esac
