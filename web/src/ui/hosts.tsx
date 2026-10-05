@@ -78,7 +78,15 @@ function useHosts(): boolean {
   useSubscribe((fn) => directory.subscribe(fn));
   useSubscribe((fn) => fleet?.subscribe(fn) ?? (() => {}));
   useSubscribe((fn) => subscribeRunners(fn));
-  return directory.control || directory.names.length > 1 || directory.shown !== null;
+  return directory.control || directory.names.length > 1 || directory.shown !== null || !!directory.joined;
+}
+
+/** M49: on a joined daemon's own page, the way to the account's other
+ * machines is control's page, not a list here. */
+function allMachines(): MenuItem[] {
+  const url = directory.joined;
+  if (directory.control || !url) return [];
+  return [{ label: "All your machines…", run: () => void window.open(url, "_blank", "noopener") }];
 }
 
 /** Desktop: the shown host, opening a menu of the others. */
@@ -116,6 +124,8 @@ export function HostButton() {
       const what = directory.control ? "Control unreachable: saved list" : "Home daemon unreachable: saved list";
       items.push("separator", { label: what, disabled: true, run: () => {} });
     }
+    const all = allMachines();
+    if (all.length) items.push("separator", ...all);
     items.push(...extras());
     openMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, items);
   };
@@ -189,7 +199,7 @@ export function HostSection({ close }: { close: () => void }) {
           )}
         </button>
       ))}
-      {extras().flatMap((item) =>
+      {[...allMachines(), ...extras()].flatMap((item) =>
         typeof item === "object" && "run" in item
           ? [
               <button
