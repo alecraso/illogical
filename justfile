@@ -239,8 +239,16 @@ testnet cmd="test" profile="ssh" *claims:
       *) echo "usage: just testnet up|test|break|down [profile] [claim...]" >&2; exit 2 ;;
     esac
 
-# Real forges in Docker for the forge blocks (testnet/forges/README.md):
-# up|test|down [forgejo|gitlab|all].
+# #17 on two Docker machines, one dropping off the network (testnet/hosts/README.md).
+testnet-hosts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
+    just static "$a"
+    {{cargo}} build -p illogicald
+    cd web && ILLOGICAL_TESTNET_HOSTS=1 pnpm exec playwright test e2e/testnet-hosts.spec.ts
+
+# Real Forgejo and GitLab in Docker (testnet/forges/README.md): up|test|down [forgejo|gitlab|all].
 forges cmd="test" forge="forgejo":
     #!/usr/bin/env bash
     set -euo pipefail

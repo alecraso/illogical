@@ -1,0 +1,71 @@
+# Two machines side by side for #17's mixed-host layout: `home`, whose
+# layout the page shows, and `mac`, whose panes have places in it. Each
+# runs the static illogicald on its own loopback; a socat in the same
+# network namespace hands it what arrives on the box's address, so the
+# daemon sees a local peer that must show the local token, as on a laptop.
+# `docker network disconnect` on `mac` takes it, and its forwarder, off
+# the network with the daemon and its panes still running.
+# See testnet/hosts/README.md.
+name: illogical-testnet-hosts
+
+networks:
+  hosts:
+    ipam:
+      config:
+        - subnet: "${ILLOGICAL_TESTNET_HOSTS_SUBNET:-172.31.77.0/24}"
+
+x-box: &box
+  image: debian:bookworm-slim
+  init: true
+  volumes:
+    - "${ILLOGICAL_TESTNET_BIN:?the static build: target/ARCH-unknown-linux-musl/release}:/opt/illogical:ro"
+    - "${ILLOGICAL_TESTNET_TOKEN_DIR:?a directory with local-token}:/token:ro"
+  environment:
+    ILLOGICAL_LOCAL_TOKEN_FILE: /token/local-token
+
+services:
+  home:
+    <<: *box
+    hostname: home
+    command:
+      - /opt/illogical/illogicald
+      - --listen=127.0.0.1:${ILLOGICAL_TESTNET_HOME_PORT:-17748}
+      - --name=home
+      - --state-dir=/state
+      - --shell=bash --norc --noprofile
+      - --no-manager-env
+      - --tailscale-socket=/nonexistent/tailscaled.sock
+    ports:
+      - "127.0.0.1:${ILLOGICAL_TESTNET_HOME_PORT:-17748}:${ILLOGICAL_TESTNET_HOME_PORT:-17748}"
+    networks:
+      hosts:
+        ipv4_address: "${ILLOGICAL_TESTNET_HOME_IP:-172.31.77.10}"
+
+  home-fwd:
+    image: alpine/socat:1.8.0.3
+    network_mode: "service:home"
+    command: "TCP-LISTEN:${ILLOGICAL_TESTNET_HOME_PORT:-17748},bind=${ILLOGICAL_TESTNET_HOME_IP:-172.31.77.10},fork,reuseaddr TCP:127.0.0.1:${ILLOGICAL_TESTNET_HOME_PORT:-17748}"
+
+  mac:
+    <<: *box
+    hostname: mac
+    command:
+      - /opt/illogical/illogicald
+      - --listen=127.0.0.1:${ILLOGICAL_TESTNET_MAC_PORT:-17749}
+      - --name=mac
+      - --state-dir=/state
+      - --shell=bash --norc --noprofile
+      - --no-manager-env
+      - --tailscale-socket=/nonexistent/tailscaled.sock
+      # home's page connects here for mac's panes.
+      - --allow-origin=http://127.0.0.1:${ILLOGICAL_TESTNET_HOME_PORT:-17748}
+    ports:
+      - "127.0.0.1:${ILLOGICAL_TESTNET_MAC_PORT:-17749}:${ILLOGICAL_TESTNET_MAC_PORT:-17749}"
+    networks:
+      hosts:
+        ipv4_address: "${ILLOGICAL_TESTNET_MAC_IP:-172.31.77.11}"
+
+  mac-fwd:
+    image: alpine/socat:1.8.0.3
+    network_mode: "service:mac"
+    command: "TCP-LISTEN:${ILLOGICAL_TESTNET_MAC_PORT:-17749},bind=${ILLOGICAL_TESTNET_MAC_IP:-172.31.77.11},fork,reuseaddr TCP:127.0.0.1:${ILLOGICAL_TESTNET_MAC_PORT:-17749}"
