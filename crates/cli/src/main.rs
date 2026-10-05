@@ -641,6 +641,21 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Add a machine to your account on illogical control, so the web, the
+    /// phone and other machines reach it through control (M52). With
+    /// `--ssh user@box`: that box, set up over ssh first (illogical
+    /// installed, its daemon kept running after you log out); its code
+    /// shows here, to approve from a signed-in device. Without: this machine.
+    Join {
+        /// The control [default: https://control.illogical.widgets.wtf].
+        url: Option<String>,
+        /// Its name in the directory [default: its hostname].
+        #[arg(long)]
+        name: Option<String>,
+        /// Join it to a team (its id), not your account alone.
+        #[arg(long)]
+        team: Option<String>,
+    },
     /// On a box a client reaches over ssh (`--ssh`): join stdin and stdout
     /// to this daemon's socket. Clients run it; people don't.
     #[command(hide = true)]
@@ -1190,6 +1205,22 @@ fn main() {
 }
 
 fn real_main(cli: Cli) -> anyhow::Result<i32> {
+    if let Command::Join { url, name, team } = &cli.cmd {
+        let mut args = vec!["join".to_owned(), url.clone().unwrap_or_else(|| ssh::CONTROL.to_owned())];
+        for (flag, v) in [("--name", name), ("--team", team)] {
+            if let Some(v) = v {
+                args.extend([flag.to_owned(), v.clone()]);
+            }
+        }
+        if let Some(dest) = &cli.ssh {
+            return ssh::Remote::parse(dest)?.join(&args);
+        }
+        use std::os::unix::process::CommandExt;
+        let beside = std::env::current_exe()?.with_file_name("illogicald");
+        let daemon = if beside.exists() { beside } else { PathBuf::from("illogicald") };
+        let err = std::process::Command::new(&daemon).args(&args).exec();
+        bail!("running {}: {err}", daemon.display());
+    }
     if let Command::Bridge { probe } = cli.cmd {
         // On a box, for a client that ssh'd in: this daemon's socket on
         // stdin and stdout.
@@ -1420,7 +1451,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
-        Command::Install { .. } | Command::Web { .. } | Command::Bridge { .. } => {
+        Command::Install { .. } | Command::Web { .. } | Command::Bridge { .. } | Command::Join { .. } => {
             unreachable!("handled before connecting")
         }
         Command::Tmux { args } => return tmux::run(sock, &args),
