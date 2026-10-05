@@ -9,7 +9,7 @@
 // a terminal in its directory.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,7 +78,9 @@ test("the runner view shows this host's runner; Changes and Shell open beside it
   await expect.poll(async () => (await panes(page)).length).toBe(2);
   const block = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "fountain")!.id);
   const el = page.locator(`[data-fountain-block="${block}"][data-fountain-view="runner"]`);
-  await expect(el.locator('[data-runner-this="runner-1"]')).toBeVisible();
+  // The first read starts the user's shell, systemctl, sudo and fountain
+  // --version, and asks the fake Fountain: on a busy machine, seconds.
+  await expect(el.locator('[data-runner-this="runner-1"]')).toBeVisible({ timeout: 20_000 });
   await expect(el.locator("[data-runner-online]")).toHaveText("online");
   await expect(el.locator('[data-unit-active="true"]')).toBeVisible();
   const cards = el.locator(".fountain-sandboxes .fountain-card");
@@ -89,7 +91,7 @@ test("the runner view shows this host's runner; Changes and Shell open beside it
 
   // Changes: a diff of the checkout, beside it.
   await r1.locator("[data-changes]").click();
-  await expect.poll(async () => (await panes(page)).length).toBe(3);
+  await expect.poll(async () => (await panes(page)).length, { timeout: 15_000 }).toBe(3);
   const diff = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "diff")!.id);
   await expect(paneEl(page, diff)).toContainText("hello.txt");
   // Its files are fountain's: no Open file from its lines.
@@ -106,5 +108,6 @@ test("the runner view shows this host's runner; Changes and Shell open beside it
     page.evaluate((p) => window.__illogical.client.request("GET", `/api/panes/${p}/capture?format=text`).then((r) => r.text()), shell);
   await expect.poll(text).not.toBe("");
   await page.evaluate((p) => window.__illogical.client.request("POST", `/api/panes/${p}/send`, { text: "echo at=$(pwd)", enter: true }), shell);
-  await expect.poll(async () => (await text()).replaceAll("\n", "")).toContain(`at=${root}/runner-${RUNNER.replaceAll("-", "")}-2972e1a2`);
+  // pwd's path is the real one (macOS's temp dir is behind a symlink).
+  await expect.poll(async () => (await text()).replaceAll("\n", "")).toContain(`at=${realpathSync(root)}/runner-${RUNNER.replaceAll("-", "")}-2972e1a2`);
 });

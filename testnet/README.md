@@ -22,12 +22,12 @@ just testnet measure tailnet   # S28: ssh against the tailnet path
 The Rust tests that drive illogical against the stack,
 `crates/daemon/tests/ssh.rs` (M51, box-bare and git) and
 `crates/daemon/tests/reboot.rs` (#26, box-systemd), bring the `ssh` profile
-up when it isn't, and fail without Docker (`ILLOGICAL_SKIP_DOCKER=1` skips
-them and says nothing ran). Both recreate the boxes they use and need `just
-static <arch>` for the box's binaries.
+up when it isn't. Both recreate the boxes they use and need `just static
+<arch>` for the box's binaries.
 
-Every script prints `SKIP: Docker is not available` and exits 0 without
-Docker. The claims expect fresh boxes: after installing anything on one,
+Docker is required: without it every script and test here fails, saying
+so. Only `ILLOGICAL_SKIP_DOCKER=1` skips, and then each prints that it did
+not run. CI never sets it. The claims expect fresh boxes: after installing anything on one,
 `just testnet down` and `up` again (`bare` fails otherwise, as it should).
 
 ## Profiles
@@ -147,11 +147,12 @@ The `control` profile's:
 - Host ports are off the defaults and each can be overridden with an
   `ILLOGICAL_TESTNET_*_PORT` variable.
 - The scripts run on Linux and macOS (bash 3.2) and pass `shellcheck`.
+- CI (`.github/workflows/check.yml`) runs `up`, `test` and `break` for the
+  `ssh` and `control` profiles on the Linux runner; both runners run
+  `ssh.rs` and `reboot.rs`, so both need Docker.
 
 ## Not yet
 
-- CI. A `testnet` job needs Docker on geek's runner (an open question in
-  #200); until then the stack is run by hand.
 - The illogical binaries on the `ssh` profile's boxes. When S28 and M51
   need them on a box, they arrive over ssh from the client (`just static`),
   which is what the claims guard.

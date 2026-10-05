@@ -7,6 +7,8 @@
 // opening a pane, zooming to a cluster, the hover peek, a notification's
 // deep link; and the phone's strip of cards, pinch and tap.
 
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { FakeFleet } from "./fake-fleet";
 
@@ -61,7 +63,10 @@ test("clusters by project (with fallback groups), machine, kind, session and per
   await swarm(page);
   // By project: the git repositories, and directories for the rest, never
   // one "none" pile.
-  await expect.poll(() => clusters(page), { timeout: 10_000 }).toEqual(expect.arrayContaining(["api", "web", "infra", "~/scratch", "/tmp"]));
+  // The fleet's other directory is under the temp dir: /tmp's group on
+  // Linux, /private's on macOS (/var/folders is /private/var/folders).
+  const temp = `/${realpathSync(tmpdir()).split("/")[1]}`;
+  await expect.poll(() => clusters(page), { timeout: 10_000 }).toEqual(expect.arrayContaining(["api", "web", "infra", "~/scratch", temp]));
   expect(await clusters(page)).not.toContain("none");
   // Machines, kinds, sessions, people.
   await page.locator('[data-g="machine"]').click();

@@ -534,7 +534,7 @@ fn an_agent_block_in_a_vm_gets_mcp_through_the_relay() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/wisp/token"));
     if !token.exists() {
-        eprintln!("skipping: no wisp token on this host");
+        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     }
     let mut d = Daemon::child_with(&["--wisp-token-file", token.to_str().unwrap()]);

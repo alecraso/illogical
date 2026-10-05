@@ -55,7 +55,7 @@ fn wanted(what: &str) -> bool {
     let on = std::env::var("ILLOGICAL_REAL_AGENTS").unwrap_or_default();
     let yes = on.split(',').any(|w| w.trim() == what);
     if !yes {
-        eprintln!("skipping: set ILLOGICAL_REAL_AGENTS={what} to run (it costs money)");
+        eprintln!("SKIP: set ILLOGICAL_REAL_AGENTS={what} to run (it costs money)");
     }
     yes
 }
@@ -67,7 +67,7 @@ fn home() -> PathBuf {
 fn adapter(dir: &str, bin: &str) -> bool {
     let ok = home().join(".local/share/illogical/agents").join(dir).join("node_modules/.bin").join(bin).exists();
     if !ok {
-        eprintln!("skipping: {bin} isn't installed in ~/.local/share/illogical/agents/{dir}");
+        eprintln!("SKIP: {bin} isn't installed in ~/.local/share/illogical/agents/{dir}");
     }
     ok
 }
@@ -161,7 +161,7 @@ fn a_fountain_agent_asks_and_runs() {
         return;
     }
     let Ok(agent) = std::env::var("ILLOGICAL_FOUNTAIN_AGENT") else {
-        eprintln!("skipping: set ILLOGICAL_FOUNTAIN_AGENT to an existing agent");
+        eprintln!("SKIP: set ILLOGICAL_FOUNTAIN_AGENT to an existing agent");
         return;
     };
     let d = Daemon::child();
@@ -180,12 +180,12 @@ fn claude_code_in_a_vm() {
     }
     let config = home().join(".config/illogical");
     if !config.join("claude-oauth-token").exists() && !config.join("anthropic-key").exists() {
-        eprintln!("skipping: no credentials for VM agents in ~/.config/illogical");
+        eprintln!("SKIP: no credentials for VM agents (~/.config/illogical/claude-oauth-token or anthropic-key)");
         return;
     }
     let token = home().join(".local/share/wisp/token");
     if !token.exists() {
-        eprintln!("skipping: no wisp");
+        eprintln!("SKIP: no wisp token (~/.local/share/wisp/token)");
         return;
     }
     let d = Daemon::child_with(&["--wisp-token-file", token.to_str().unwrap()]);
@@ -452,7 +452,7 @@ fn claude_code_outside_runs_a_build_through_mcp() {
     let on_vm = std::env::var("ILLOGICAL_REAL_AGENTS").unwrap_or_default().split(',').any(|w| w.trim() == "mcp-vm");
     let wisp = home().join(".local/share/wisp/token");
     if on_vm && !wisp.exists() {
-        eprintln!("skipping: mcp-vm needs wisp");
+        eprintln!("SKIP: mcp-vm needs a wisp token (~/.local/share/wisp/token)");
         return;
     }
     let d = if on_vm { Daemon::child_with(&["--wisp-token-file", wisp.to_str().unwrap()]) } else { Daemon::child() };

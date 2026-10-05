@@ -59,7 +59,8 @@
 #           --ssh. Broken: it joins the stack's control, which it can reach.
 #
 # Needs `testnet/up.sh <profile>` first. Exit codes: 0 every claim held (or
-# Docker is unavailable, a clean skip), 1 a claim failed, 2 usage.
+# ILLOGICAL_SKIP_DOCKER=1 without Docker), 1 a claim failed or Docker is
+# missing, 2 usage.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,8 +72,16 @@ BREAK="${BREAK:-}"
 SSH_CLAIMS="login jump inner bare stdio agent push linger"
 CONTROL_CLAIMS="signin reach m52 unreachable"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
+# Docker is required: without it this fails. ILLOGICAL_SKIP_DOCKER=1 skips
+# on purpose, and says loudly that nothing ran.
+if ! docker info >/dev/null 2>&1; then
+  if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
+    echo "SKIP (ILLOGICAL_SKIP_DOCKER=1): Docker is not available, so the testnet did NOT run" >&2
+    exit 0
+  fi
+  echo "FAIL: Docker is not available (\`docker info\` failed). The testnet needs it: start Docker, or set ILLOGICAL_SKIP_DOCKER=1 to skip on purpose." >&2
+  exit 1
+fi
 
 case "$PROFILE" in
   ssh) CLAIMS="$SSH_CLAIMS" ;;

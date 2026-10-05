@@ -1,5 +1,8 @@
-# Every push: `just check` on Linux, build and test on macOS. Only pushes
-# (never pull requests), since these run on our own machines' hosts.
+# Every push: the testnet's claims, `just check` and the Playwright specs
+# (Chromium and WebKit) on Linux; build, test and the WebKit specs on macOS.
+# Both need Docker: the testnet (testnet/README.md) and the ssh tests in
+# `just test` fail without it. Only pushes (never pull requests), since these
+# run on our own machines' hosts.
 name: check
 on:
   push:
@@ -9,31 +12,75 @@ on:
 jobs:
   linux:
     runs-on: [self-hosted, linux-x86_64]
+    # The test stack's container names and bastion port are fixed: one
+    # stack per host at a time.
+    concurrency:
+      group: testnet-linux
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - name: Keep the build between runs
         run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/check" >> "$GITHUB_ENV"
       - run: scripts/ci-cap-target 30
       - run: just bootstrap
+      # The testnet's claims on fresh boxes, then each under BREAK=1, where
+      # it must fail.
+      - name: The testnet's ssh profile
+        run: just testnet down && just testnet up ssh && just testnet test ssh && just testnet break ssh
+      # The box's binaries, for the ssh tests in `just check` and the
+      # control profile.
+      - run: just static
       - run: just check
+      - name: The testnet's control profile (M52 end to end)
+        run: just testnet down && just testnet up control && just testnet test control && just testnet break control
+        env:
+          ILLOGICAL_TESTNET_BINARIES: ${{ env.CARGO_TARGET_DIR }}/x86_64-unknown-linux-musl/release
       - run: just check-macos
       - name: The desktop app
         run: just desktop-check
       - name: install.sh and the release's glibc check
         run: shellcheck -s sh scripts/install.sh scripts/glibc-floor
       - name: The test stack's scripts
-        run: shellcheck testnet/*.sh testnet/forges/*.sh testnet/hosts/*.sh testnet/editors/*.sh && shellcheck -s sh testnet/editors/box/entrypoint.sh testnet/sshd/entrypoint.sh testnet/sshd-systemd/keys.sh testnet/git/entrypoint.sh testnet/tailnet/entrypoint.sh
+        run: shellcheck -x testnet/*.sh testnet/forges/*.sh testnet/hosts/*.sh testnet/editors/*.sh && shellcheck -s sh testnet/editors/box/entrypoint.sh testnet/sshd/entrypoint.sh testnet/sshd-systemd/keys.sh testnet/git/entrypoint.sh testnet/tailnet/entrypoint.sh
       - name: THIRD_PARTY.md is current
         run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
       - name: No secrets
         run: gitleaks git --no-banner --redact .
+      - name: Playwright's browsers
+        run: just browsers
+      - name: The Playwright specs, in Chromium and WebKit
+        run: just e2e
+        env:
+          E2E_CHROMIUM: "1"
+          E2E_PORT: "7769"
+          # team-swarm-phones' variant across networks: a box in a container
+          # behind tc netem, with just static's illogicald (built above).
+          ILLOGICAL_TESTNET_PHONES: "1"
+      - name: Take the test stack down
+        if: always()
+        run: just testnet down
 
   macos:
     runs-on: [self-hosted, macos-arm64]
+    concurrency:
+      group: testnet-macos
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - name: Keep the build between runs
         run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/check" >> "$GITHUB_ENV"
       - run: scripts/ci-cap-target 30
       - run: just bootstrap
+      # The box's binaries, for the ssh tests in `just test` (which bring
+      # the test stack up themselves).
+      - run: just static aarch64
       - run: just test
+      - name: Playwright's WebKit
+        run: just browsers webkit
+      - name: The WebKit specs (Safari's engine)
+        run: just e2e-webkit
+        env:
+          E2E_PORT: "7769"
+      - name: Take the test stack down
+        if: always()
+        run: just testnet down
