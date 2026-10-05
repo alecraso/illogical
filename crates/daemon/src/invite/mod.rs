@@ -70,6 +70,9 @@ pub type Hook = Arc<OnceLock<Weak<App>>>;
 /// Who answers an invite card: the owner, by any route.
 pub const OWNER_ONLY: &str = "only the session's owner sends or declines an invite";
 
+/// ...and closes the block it waits on (its drafts would go with it).
+pub const CLOSE_OWNER_ONLY: &str = "only the session's owner closes an invite block";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Request {
     pub session: SessionId,

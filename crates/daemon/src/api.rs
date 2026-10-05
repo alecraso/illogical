@@ -1027,7 +1027,17 @@ async fn answer_terminal(
     }
 }
 
-async fn close(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+async fn close(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    headers: HeaderMap,
+) -> Res<Json<serde_json::Value>> {
+    // An agent's invites (#234) are the owner's to close, not an agent's.
+    let owner = who.is_none_or(|axum::Extension(w)| w.is_owner());
+    if (!owner || headers.get("x-illogical-agent").is_some()) && is_invite(&app, id).await {
+        return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::CLOSE_OWNER_ONLY.into()));
+    }
     match app.mux.api(|r| Api::Close(id, r)).await {
         Some(true) => Ok(Json(serde_json::json!({}))),
         _ => Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}"))),

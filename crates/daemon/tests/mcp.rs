@@ -955,3 +955,68 @@ fn an_agent_block_drafts_beside_itself() {
     });
     assert!(grant_of(&d, "tailnet:sam@example.com").is_some());
 }
+
+/// An intent over the WebSocket as FRIEND: the error it got, if any.
+fn intent_as_friend(d: &Daemon, intent: Value) -> Option<String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+        req.headers_mut().insert("Tailscale-User-Login", FRIEND.parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(req).await.expect("FRIEND connects");
+        let msg = json!({ "type": "intent", "id": 7, "intent": intent });
+        ws.send(Message::Text(msg.to_string().into())).await.unwrap();
+        let wait = tokio::time::timeout(Duration::from_secs(3), async {
+            while let Some(Ok(m)) = ws.next().await {
+                if let Message::Text(t) = m
+                    && let Ok(v) = serde_json::from_str::<Value>(&t)
+                    && v["type"] == "error"
+                    && v["id"] == 7
+                {
+                    return v["message"].as_str().map(str::to_owned);
+                }
+            }
+            None
+        });
+        wait.await.unwrap_or(None)
+    })
+}
+
+#[test]
+fn closing_an_invite_block_is_the_owners_and_loses_nothing() {
+    let (d, pane, _) = shared_daemon(&[]);
+    let m = Mcp::bridge(&d, Some(pane));
+    let invite = |who: &str| m.call("invite_person", json!({ "who": who, "note": "x" })).unwrap();
+    let sent = invite("tailnet:sam@example.com");
+    let block = sent["block"].as_u64().unwrap();
+    let sent = sent["draft"].as_str().unwrap().to_owned();
+    d.post(&format!("/api/blocks/{block}/call/answer"), json!({ "content": {} }));
+    assert_eq!(settled(&m, &sent, None)["status"], "sent");
+    let waiting = invite("tailnet:kim@example.com")["draft"].as_str().unwrap().to_owned();
+    d.wait_for("its card", || card_on(&d, block)["id"] == waiting.as_str());
+
+    // An editor can't close it: by the API, the pane or its tab over the
+    // WebSocket. Nor an agent, through MCP's close.
+    let (status, text) = d.raw_as(FRIEND, "POST", &format!("/api/panes/{block}/close"), Some(json!({})));
+    assert_eq!(status, 403, "{text}");
+    let why = intent_as_friend(&d, json!({ "op": "close_pane", "pane": block }));
+    assert!(why.as_deref().is_some_and(|w| w.contains("only the session's owner closes")), "{why:?}");
+    let why = intent_as_friend(&d, json!({ "op": "close_tab", "tab": tab_of(&d, block) }));
+    assert!(why.as_deref().is_some_and(|w| w.contains("only the session's owner closes")), "{why:?}");
+    let e = m.call("close", json!({ "pane": block })).unwrap_err();
+    assert!(e.contains("only the session's owner closes"), "{e}");
+    assert_eq!(as_agent(&d, &format!("/api/panes/{block}/close"), json!({})), 403);
+    assert!(invite_blocks(&d).contains(&block), "still open");
+    assert_eq!(m.call("read_invite", json!({ "draft": waiting })).unwrap()["status"], "waiting");
+
+    // The owner closes it: what waited is dropped, and said so; what was
+    // sent still says so.
+    d.post(&format!("/api/panes/{block}/close"), json!({}));
+    d.wait_for("it to close", || !invite_blocks(&d).contains(&block));
+    let r = m.call("read_invite", json!({ "draft": waiting })).unwrap();
+    assert_eq!(r["status"], "dropped", "{r}");
+    assert!(r["reason"].as_str().unwrap().contains("closed"), "{r}");
+    assert_eq!(m.call("read_invite", json!({ "draft": sent })).unwrap()["status"], "sent");
+    assert!(grant_of(&d, "tailnet:kim@example.com").is_none());
+}

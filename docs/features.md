@@ -999,7 +999,9 @@ the daemon stopping, crashing, or the machine rebooting:
   note as you left them and drive trust only if you set it; *Decline*
   tells the agent, with a reason if you give one. Editors, and agents
   (`agent_respond`, the CLI under one), are refused. Unanswered, it's
-  dropped after a day. `read_invite` tells the agent which: waiting,
+  dropped after a day. Closing the invite block is yours alone too
+  (editors and agents are refused); what still waited is dropped, and
+  `read_invite` says so. `read_invite` tells the agent which: waiting,
   sent (with the delivery), declined, dropped or failed. Each agent has at
   most five waiting. The card lives on its own block, so it never
   replaces the agent's own permission or question card. The audit log

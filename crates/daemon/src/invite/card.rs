@@ -17,6 +17,11 @@
 //! drafts, the waiting ones and the last settled, so a restart keeps them.
 //! Methods: `draft {who, person, name, role, note, session, session_name,
 //! pane, from}` (by `mcp:<client>`), `drafts`, `state`.
+//!
+//! Closing it is the owner's too (the routes refuse anyone else, and every
+//! agent). What it still waits for is dropped then, and its drafts are
+//! kept in `invites-closed.json` in the state directory, so `read_invite`
+//! still says what became of each.
 
 use std::{
     sync::{Arc, Mutex, Weak},
@@ -370,6 +375,39 @@ impl InviteBlock {
     }
 }
 
+/// Drafts of closed invite blocks kept.
+const CLOSED: usize = 200;
+
+/// A closed invite block's drafts, as `read_invite` finds them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Closed {
+    pub block: PaneId,
+    pub drafter: String,
+    pub draft: Draft,
+}
+
+fn closed_path(root: &std::path::Path) -> std::path::PathBuf {
+    root.join("invites-closed.json")
+}
+
+/// The drafts of invite blocks closed here, newest last.
+pub fn closed(root: &std::path::Path) -> Vec<Closed> {
+    std::fs::read(closed_path(root)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn keep_closed(root: &std::path::Path, block: PaneId, drafter: &str, drafts: Vec<Draft>) -> std::io::Result<()> {
+    if drafts.is_empty() {
+        return Ok(());
+    }
+    let mut all = closed(root);
+    all.extend(drafts.into_iter().map(|draft| Closed { block, drafter: drafter.to_owned(), draft }));
+    let skip = all.len().saturating_sub(CLOSED);
+    let all: Vec<Closed> = all.into_iter().skip(skip).collect();
+    let tmp = closed_path(root).with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec(&all)?)?;
+    std::fs::rename(tmp, closed_path(root))
+}
+
 /// A draft as the owner's card: who wants whom where, and why; the role,
 /// note and drive trust to edit, and a reason to give if they decline.
 pub fn card(d: &Draft) -> Ask {
@@ -470,6 +508,20 @@ impl Block for InviteBlock {
         self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some((id, token)) = self.asking.lock().unwrap().take() {
             self.ctx.withdraw(&id, token);
+        }
+        let (drafter, drafts) = {
+            let mut c = self.config.lock().unwrap();
+            for d in c.drafts.iter_mut().filter(|d| d.status == Status::Waiting) {
+                d.status = Status::Dropped;
+                d.settled_ms = Some(now_ms());
+                d.reason = Some("its invite block was closed".into());
+            }
+            (c.drafter.clone(), c.drafts.clone())
+        };
+        if let Some(root) = self.ctx.dir.parent().and_then(|b| b.parent())
+            && let Err(e) = keep_closed(root, self.ctx.id, &drafter, drafts)
+        {
+            warn!(pane = self.ctx.id, error = %e, "can't keep a closed invite block's drafts");
         }
     }
 

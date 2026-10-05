@@ -1831,7 +1831,10 @@ impl<'a> Call<'a> {
 
     async fn close(&self, a: PaneOnly) -> Out {
         let pane = a.pane.id()?;
-        self.drivable(pane).await?;
+        // An invite block (#234) is the owner's to close, never an agent's.
+        if self.drivable(pane).await?.info.kind == BlockType::Invite {
+            return Err(crate::invite::CLOSE_OWNER_ONLY.into());
+        }
         match self.app.mux.api(|r| Api::Close(pane, r)).await {
             Some(true) => done(format!("Closed %{pane}"), json!({ "pane": pane })),
             _ => Err(self.gone(pane).await),
@@ -2511,7 +2514,17 @@ impl<'a> Call<'a> {
             v["block"] = json!(block);
             return done(summary, v);
         }
-        Err(format!("no invite {id} of yours (invite_person returns one; a closed invite block takes its drafts)"))
+        // Its block was closed: what it said then.
+        let root = self.app.mux.store.root().to_owned();
+        let kept = tokio::task::spawn_blocking(move || crate::invite::card::closed(&root)).await.unwrap_or_default();
+        if let Some(c) = kept.into_iter().rev().find(|c| c.drafter == drafter && c.draft.id == id) {
+            let mut v = serde_json::to_value(&c.draft).unwrap_or_default();
+            v["draft"] = json!(id);
+            v["block"] = json!(c.block);
+            let status = v["status"].as_str().unwrap_or("").to_owned();
+            return done(format!("{id} is {status}; its invite block %{} was closed", c.block), v);
+        }
+        Err(format!("no invite {id} of yours (invite_person returns one)"))
     }
 
     async fn open(&self, req: OpenRequest) -> Result<PaneId, String> {

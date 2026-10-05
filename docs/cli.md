@@ -225,7 +225,7 @@ The tools:
 | `open_fountain` | The Fountain agent catalog as a block beside a pane (`query`, `source`); returns the list. `view: "runner"`: this host as the Fountain runner and its sandboxes instead | no |
 | `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
 | `invite_person` | Ask to bring someone (`who`: a teammate, a grantee, `tailnet:<login>`) into the pane's session as a viewer or an editor (`role`), with a `note`: a card on an invite block beside you that only the session's owner sends (editing the role, note or drive trust) or declines. `pane` defaults to your own (`illogical mcp` in a pane sends `$ILLOGICAL_PANE`); returns the draft's id at once | no |
-| `read_invite` | What became of a draft: `waiting`, `sent` (grant, `delivery`), `declined` (reason), `dropped` (unanswered for a day) or `failed`; who settled it, when | yes |
+| `read_invite` | What became of a draft: `waiting`, `sent` (grant, `delivery`), `declined` (reason), `dropped` (unanswered for a day, or its block closed by the owner, the only one who may) or `failed`; who settled it, when | yes |
 
 Resources: `illogical://history`, and the templates
 `illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and

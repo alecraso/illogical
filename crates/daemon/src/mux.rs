@@ -3169,6 +3169,18 @@ impl Daemon {
                         let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id, message }));
                         return;
                     }
+                    // An agent's invites (#234): the owner's to close, alone
+                    // or with their tab.
+                    let closes = match &intent {
+                        Intent::ClosePane { pane } => vec![*pane],
+                        Intent::CloseTab { tab } => self.mux.tab(*tab).map(|t| t.root.panes()).unwrap_or_default(),
+                        _ => vec![],
+                    };
+                    if closes.iter().any(|p| self.is_invite(*p)) {
+                        let message = crate::invite::CLOSE_OWNER_ONLY.to_owned();
+                        let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id, message }));
+                        return;
+                    }
                 }
                 let done = if who.is_owner() {
                     self.intent(Some(client), intent)
