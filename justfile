@@ -239,6 +239,17 @@ testnet cmd="test" profile="ssh" *claims:
       *) echo "usage: just testnet up|test|break|down [profile] [claim...]" >&2; exit 2 ;;
     esac
 
+# macOS checks in a throwaway tart VM (testnet/macos/README.md):
+# `just macos launchd`, `just macos safari`, or up|down|ssh for the VM.
+macos cmd="launchd" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{cmd}}" in
+      up|down|ssh|ip|push|restart) exec testnet/macos/vm.sh {{cmd}} {{args}} ;;
+    esac
+    {{cargo}} build -p illogicald -p illogical -p illogical-control
+    exec testnet/macos/test.sh {{cmd}} {{args}}
+
 # What CI runs.
 check: test
     {{cargo}} fmt --all --check
