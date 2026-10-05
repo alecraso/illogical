@@ -153,7 +153,7 @@ pub fn is_control_signin(url: &tauri::Url) -> bool {
 pub fn init_script() -> String {
     let control = control().unwrap_or_default();
     format!(
-        "window.__illogicalApp = {{ name: {} }};\n\
+        "window.__illogicalApp = {{ name: {}, platform: {:?} }};\n\
          if ({control:?} && location.origin === new URL({control:?}).origin) {{\n\
            addEventListener('DOMContentLoaded', () => {{\n\
              const s = document.createElement('style');\n\
@@ -162,6 +162,7 @@ pub fn init_script() -> String {
            }});\n\
          }}",
         serde_json::to_string(&device_name()).unwrap(),
+        if cfg!(target_os = "macos") { "macos" } else { "linux" },
     )
 }
 

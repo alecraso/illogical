@@ -15,6 +15,7 @@ import { openPicker } from "./picker";
 import { agentNotifyItems, notificationItems } from "./notify";
 import { openGettingStarted } from "./welcome";
 import { openRules } from "./rules";
+import { desktopApp, openInNewWindow } from "../desktop";
 
 /** Chords, as menus and the palette show them. */
 export const PICKER_KEY = "Ctrl+Shift+G";
@@ -147,6 +148,8 @@ export function tabItems(client: Client, tab: TabView, rename: () => void): Menu
     { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
     ...(client.has("vms") ? [{ label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) } as MenuItem] : []),
     { label: "Go to directory…", shortcut: PICKER_KEY, run: () => openPicker(client, client.active(tab.id)) },
+    // The desktop app (M46): this tab in a window of its own.
+    ...(desktopApp() ? [{ label: "Open in new window", run: () => openInNewWindow(client.active(tab.id)) } as MenuItem] : []),
     // M11: what changed in the active pane's repository, on its machine.
     ...(!client.state?.roles && client.active(tab.id) !== undefined
       ? [{ label: "Changes", run: () => openChanges(client, client.active(tab.id)!) } as MenuItem]

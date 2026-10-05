@@ -19,6 +19,7 @@ import { useEffect, useState } from "preact/hooks";
 import { SwarmView } from "./swarm/view";
 import { fakeSwarm } from "./swarm/fake";
 import { closeSwarm, onSwarmRoute, swarmRoute } from "./swarm/route";
+import { setupDesktop } from "./desktop";
 
 // Served by illogical control (M17), not a daemon: sign in, enroll this
 // browser, and reach daemons through end-to-end channels. A read-only link
@@ -90,6 +91,8 @@ function makeClient(base: string): Client {
 // One client for the host shown (M4a); switching hosts closes it and opens
 // one to the other daemon, so hidden hosts hold no connection.
 let client = makeClient(directory.base());
+// Inside the desktop app: its titlebar and keys (M46).
+setupDesktop(() => client);
 const connect = () => {
   // In control mode there's nothing to connect to until a daemon is known.
   if (!session || client.e2e) client.connect();

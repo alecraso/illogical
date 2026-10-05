@@ -76,83 +76,124 @@ dist:
 # and illogical: run after `just static x86_64` (Linux; the static binaries
 # run anywhere) or `just build` (macOS). Writes dist/illogical-desktop-*,
 # named without the version so the site's download links always find the
-# latest release.
-# On Linux the app builds in an Ubuntu 22.04 container (podman or docker,
-# packaging/desktop/Containerfile) so it runs on glibc 2.35 and newer, and
-# the build fails if anything in the bundles needs more (#170).
+# latest release. Linux: `just desktop-linux x86_64`. macOS: the app, a
+# zip of it, and a .dmg (Apple silicon), signed and notarized when the
+# Developer ID secrets are set (scripts/macos-sign), ad-hoc signed when not.
 desktop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Linux) just desktop-linux x86_64 ;;
+      Darwin) just desktop-macos ;;
+    esac
+
+# The Linux desktop app for ARCH (x86_64 or aarch64): a .deb, an .rpm and
+# an AppImage, after `just static ARCH`. It builds in an Ubuntu 22.04
+# container (podman or docker, packaging/desktop/Containerfile) so it runs
+# on glibc 2.35 and newer, and fails if anything in the bundles needs more
+# (#170). Another architecture than the host's runs under emulation
+# (qemu-user binfmt on the host).
+desktop-linux arch="x86_64" *tauri_args="":
     #!/usr/bin/env bash
     set -euo pipefail
     root={{justfile_directory()}}
     dist=$root/dist
     mkdir -p "$dist"
-    v=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
-    case "$(uname -s)" in
-      Linux)
-        # The oldest glibc the app runs on: Ubuntu 22.04's, the container's.
-        floor=2.35
-        src={{target_dir}}/x86_64-unknown-linux-musl/release
-        host=x86_64-unknown-linux-gnu
-        mkdir -p crates/desktop/binaries
-        for b in illogicald illogical; do install -m 755 "$src/$b" "crates/desktop/binaries/$b-$host"; done
-        engine=$(command -v podman || command -v docker) || { echo "the Linux desktop build needs podman or docker" >&2; exit 1; }
-        toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
-        image=illogical-desktop-build:jammy-$toolchain
-        "$engine" build -q -t "$image" -f packaging/desktop/Containerfile --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
-        # Its own target dir: build scripts built against 22.04's glibc
-        # don't mix with the host's.
-        target={{target_dir}}/desktop-jammy
-        mkdir -p "$target"
-        "$engine" run --rm --security-opt label=disable \
-          -v "$root:/src" -v "$target:/target" -v illogical-desktop-cargo:/opt/cargo/registry -v illogical-desktop-tauri:/root/.cache/tauri \
-          -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
-          "$image" bash -c 'set -euo pipefail
-            cargo tauri build --bundles deb,appimage
-            # linuxdeploy patches an RPATH into every ELF in usr/bin, which
-            # breaks the static-pie sidecars (they segfault at start, so the
-            # app could never install its daemon). Put the originals back
-            # and pack the AppImage again with the same plugin.
-            cd /target/release/bundle/appimage
-            for b in illogicald illogical; do install -m 755 "/src/crates/desktop/binaries/$b-'"$host"'" "illogical.AppDir/usr/bin/$b"; done
-            for b in illogicald illogical; do "illogical.AppDir/usr/bin/$b" --version >/dev/null; done
-            APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 OUTPUT=illogical_'"$v"'_amd64.AppImage /root/.cache/tauri/linuxdeploy-plugin-appimage.AppImage --appdir illogical.AppDir >/dev/null'
-        out=$target/release/bundle
-        # This version's bundles: a kept target dir (CI) holds older ones too.
-        cp "$out/deb/illogical_${v}_amd64.deb" "$dist/illogical-desktop-linux-x86_64.deb"
-        cp "$out/appimage/illogical_${v}_amd64.AppImage" "$dist/illogical-desktop-linux-x86_64.AppImage"
-        # The sidecars as the app will run them: they must start.
-        x=$(mktemp -d)
-        (cd "$x" && "$dist/illogical-desktop-linux-x86_64.AppImage" --appimage-extract >/dev/null \
-          && for b in illogicald illogical; do squashfs-root/usr/bin/$b --version >/dev/null || { echo "the AppImage's $b doesn't run" >&2; exit 1; }; done)
-        rm -rf "$x"
-        scripts/glibc-floor "$floor" "$dist/illogical-desktop-linux-x86_64.deb" "$dist/illogical-desktop-linux-x86_64.AppImage"
-        dpkg-deb -f "$dist/illogical-desktop-linux-x86_64.deb" Depends | grep -q "libc6 (>= $floor)" \
-          || { echo "the .deb should depend on libc6 (>= $floor): crates/desktop/tauri.conf.json" >&2; exit 1; } ;;
-      Darwin)
-        command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "^2" --locked
-        cd crates/desktop
-        host=$(rustc -vV | sed -n 's/^host: //p')
-        mkdir -p binaries
-        for b in illogicald illogical; do install -m 755 "{{target_dir}}/release/$b" "binaries/$b-$host"; done
-        cargo tauri build --bundles app
-        out=${CARGO_TARGET_DIR:-$PWD/target}/release/bundle
-        # A zip of the app: ditto keeps its signature and symlinks.
-        # --norsrc: no ._* AppleDouble files for xattrs like
-        # com.apple.provenance, which a command-line unzip leaves in the
-        # bundle (#177). The signature lives in the bundle, not in xattrs.
-        zip=$dist/illogical-desktop-macos-arm64.zip
-        rm -f "$zip"
-        ditto -c -k --norsrc --keepParent "$out/macos/illogical.app" "$zip"
-        if zipinfo -1 "$zip" | grep -E '(^|/)\._'; then echo "AppleDouble files in $zip" >&2; exit 1; fi ;;
-    esac
-    ls -la "$dist"/illogical-desktop-*
+    # The oldest glibc the app runs on: Ubuntu 22.04's, the container's.
+    floor=2.35
+    arch={{arch}}
+    case "$arch" in x86_64) platform=linux/amd64 ;; aarch64) platform=linux/arm64 ;; *) echo "arch: x86_64 or aarch64" >&2; exit 2 ;; esac
+    src={{target_dir}}/$arch-unknown-linux-musl/release
+    mkdir -p crates/desktop/binaries
+    for b in illogicald illogical; do install -m 755 "$src/$b" "crates/desktop/binaries/$b-$arch-unknown-linux-gnu"; done
+    engine=$(command -v podman || command -v docker) || { echo "the Linux desktop build needs podman or docker" >&2; exit 1; }
+    toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
+    image=illogical-desktop-build:jammy-$toolchain-$arch
+    "$engine" build -q --platform "$platform" -t "$image" -f packaging/desktop/Containerfile --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
+    # Its own target dir: build scripts built against 22.04's glibc
+    # don't mix with the host's.
+    target={{target_dir}}/desktop-jammy-$arch
+    mkdir -p "$target"
+    # Docker Desktop's file sharing (a Mac) refuses linuxdeploy's copies
+    # into a shared directory: build in a volume there.
+    [ "$(uname -s)" = Darwin ] && target=illogical-desktop-target-$arch
+    "$engine" run --rm --platform "$platform" --security-opt label=disable \
+      -v "$root:/src" -v "$target:/target" -v "$dist:/dist" \
+      -v illogical-desktop-cargo-$arch:/opt/cargo/registry -v illogical-desktop-tauri-$arch:/root/.cache/tauri \
+      -e CARGO_TARGET_DIR=/target -e TAURI_SIGNING_PRIVATE_KEY -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
+      "$image" /src/packaging/desktop/build-linux.sh {{tauri_args}}
+    name=$dist/illogical-desktop-linux-$arch
+    if command -v dpkg-deb >/dev/null; then
+      scripts/glibc-floor "$floor" "$name.deb" "$name.AppImage"
+      dpkg-deb -f "$name.deb" Depends | grep -q "libc6 (>= $floor)" \
+        || { echo "the .deb should depend on libc6 (>= $floor): crates/desktop/tauri.conf.json" >&2; exit 1; }
+    else
+      echo "no dpkg-deb here: skipped the glibc floor check" >&2
+    fi
+    ls -la "$name".*
 
-# The Linux desktop app under Xvfb, in a container (#204): builds the app
-# (debug, no bundle) in its build image (packaging/desktop/Containerfile)
-# and runs packaging/desktop/xvfb/test.sh against a static daemon and a
-# stand-in control. Needs podman or docker; the container runs the host's
-# architecture (aarch64 under Docker Desktop on a Mac).
-desktop-xvfb:
+# The Linux packages from `just desktop-linux ARCH` install on a fresh
+# Ubuntu 22.04 (.deb) and Fedora (.rpm) and claim illogical:// links
+# (packaging/desktop/packages.sh).
+desktop-packages arch="x86_64":
+    packaging/desktop/packages.sh {{arch}}
+
+# The macOS app (Apple silicon), after `just build`: the app, a zip of it
+# and a .dmg in dist/. scripts/macos-sign signs, notarizes and staples them
+# when the Developer ID secrets are set (#177) and says which is missing
+# when not; the app is ad-hoc signed either way. With
+# TAURI_SIGNING_PRIVATE_KEY set, also the updater's .app.tar.gz and its
+# signature.
+desktop-macos *tauri_args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root={{justfile_directory()}}
+    dist=$root/dist
+    mkdir -p "$dist"
+    command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "^2" --locked
+    cd crates/desktop
+    host=$(rustc -vV | sed -n 's/^host: //p')
+    mkdir -p binaries
+    for b in illogicald illogical; do install -m 755 "{{target_dir}}/release/$b" "binaries/$b-$host"; done
+    cargo tauri build --bundles app {{tauri_args}}
+    app=${CARGO_TARGET_DIR:-$PWD/target}/release/bundle/macos/illogical.app
+    "$root/scripts/macos-sign" app "$app"
+    # A zip of the app: ditto keeps its signature and symlinks.
+    # --norsrc: no ._* AppleDouble files for xattrs like
+    # com.apple.provenance, which a command-line unzip leaves in the
+    # bundle (#177). The signature lives in the bundle, not in xattrs.
+    zip=$dist/illogical-desktop-macos-arm64.zip
+    rm -f "$zip"
+    ditto -c -k --norsrc --keepParent "$app" "$zip"
+    if zipinfo -1 "$zip" | grep -E '(^|/)\._'; then echo "AppleDouble files in $zip" >&2; exit 1; fi
+    # The .dmg: the app beside a link to /Applications.
+    stage=$(mktemp -d)
+    ditto "$app" "$stage/illogical.app"
+    ln -s /Applications "$stage/Applications"
+    dmg=$dist/illogical-desktop-macos-arm64.dmg
+    rm -f "$dmg"
+    hdiutil create -quiet -volname illogical -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
+    rm -rf "$stage"
+    "$root/scripts/macos-sign" dmg "$dmg"
+    # The updater's archive of the app, signed with the updater key.
+    if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+      tgz=$dist/illogical-desktop-macos-arm64.app.tar.gz
+      tar -C "$(dirname "$app")" -czf "$tgz" illogical.app
+      cargo tauri signer sign "$tgz" >/dev/null
+      echo "signed $tgz for the updater"
+    else
+      echo "no updater archive: TAURI_SIGNING_PRIVATE_KEY isn't set"
+    fi
+    ls -la "$dist"/illogical-desktop-macos-*
+
+# The Linux desktop app under Xvfb, in a container: builds the app (debug,
+# no bundle) in its build image (packaging/desktop/Containerfile) and runs
+# packaging/desktop/xvfb's tests against a static daemon: `join` (#204,
+# test.sh, with a stand-in control) and `m46` (m46.sh: keys, the titlebar,
+# illogical:// links, the global hotkey). Needs podman or docker; the
+# container runs the host's architecture (aarch64 under Docker Desktop on a
+# Mac). `just desktop-xvfb m46 keys` runs one claim.
+desktop-xvfb *tests="join m46":
     #!/usr/bin/env bash
     set -euo pipefail
     root={{justfile_directory()}}
@@ -173,7 +214,8 @@ desktop-xvfb:
       -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
       illogical-desktop-xvfb:jammy-$toolchain bash -c 'set -euo pipefail
         cargo tauri build --debug --no-bundle
-        /src/packaging/desktop/xvfb/test.sh /target/debug/illogical-desktop /src/crates/desktop/binaries/illogicald-'"$host"
+        APP=/target/debug/illogical-desktop BIN=/src/crates/desktop/binaries HOST='"$host"' \
+          /src/packaging/desktop/xvfb/run.sh {{tests}}'
 
 # Lint the desktop app (its own workspace) without building its sidecars.
 desktop-check:

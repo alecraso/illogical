@@ -75,6 +75,31 @@ button {
   -webkit-app-region: no-drag;
 }
 
+/* The desktop app (M46): the bar is the titlebar. macOS draws its window
+   buttons over the bar's left end; on Linux the bar carries its own. */
+html[data-desktop="macos"] .bar {
+  padding-left: 78px;
+}
+
+.window-buttons {
+  display: flex;
+  align-items: stretch;
+}
+
+.window-buttons button {
+  width: 40px;
+  color: var(--dim);
+}
+
+.window-buttons button:hover {
+  background: var(--raised);
+}
+
+.window-buttons button.close:hover {
+  background: var(--danger);
+  color: var(--surface);
+}
+
 .session-button {
   padding: 0 10px;
   font-weight: 600;

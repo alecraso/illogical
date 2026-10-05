@@ -25,6 +25,7 @@ import { GettingStartedLayer, useFirstRun } from "./welcome";
 import { machineState, newTabItems, PALETTE_KEY, paneItems, sessionItems, tabItems } from "./commands";
 import { openPalette, PaletteLayer, usePaletteShortcut } from "./palette";
 import { UpdateChip } from "./update";
+import { WindowButtons } from "./window-buttons";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -153,7 +154,7 @@ function TopBar({
   };
 
   return (
-    <header class="bar">
+    <header class="bar" data-tauri-drag-region>
       <HostButton />
       <button class="swarm-button" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
         Swarm
@@ -199,9 +200,10 @@ function TopBar({
           +
         </button>
       </div>
-      <div class="bar-fill" />
+      <div class="bar-fill" data-tauri-drag-region />
       <UpdateChip client={client} />
       <PeopleBar client={client} />
+      <WindowButtons />
     </header>
   );
 }
