@@ -8,7 +8,7 @@
 #   testnet/macos/vm.sh ssh [NAME] [--as USER] CMD
 #                                        run CMD in it, as admin unless USER
 #   testnet/macos/vm.sh push [NAME] SRC... DEST   copy files in (scp)
-#   testnet/macos/vm.sh restart [NAME]   tart stop, then run again
+#   testnet/macos/vm.sh restart [NAME]   shut the guest down, then run again
 #   testnet/macos/vm.sh down [NAME]      stop and delete the clone
 #   testnet/macos/vm.sh ip [NAME]
 #   testnet/macos/vm.sh sshcmd [NAME]    an ssh command line into it, quoted
@@ -104,7 +104,14 @@ case "$cmd" in
     scp -q "${SSH_OPTS[@]}" "${@:1:$#-1}" "admin@$(ip):$dest"
     ;;
   restart)
-    tart stop "$name" >/dev/null
+    # A clean shutdown, as a person's restart is (launchd stops daemons and
+    # they save), then tart's stop if the guest doesn't go within a minute.
+    vssh 'sudo shutdown -h now' >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+      tart list 2>/dev/null | awk -v n="$name" '$2 == n && $NF == "running" { r = 1 } END { exit r }' && break
+      sleep 2
+    done
+    tart stop "$name" >/dev/null 2>&1 || true
     boot
     wait_ssh
     ;;

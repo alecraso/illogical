@@ -26,7 +26,7 @@
 #   system    `illogicald install --system` (sudo) switches cleanly: a
 #             LaunchDaemon in system/illogicald.illo, no agent plist, no
 #             user/UID service, and the daemon answers
-#   reboot    after `tart stop` and `run`, with nobody logged in as that
+#   reboot    after a clean shutdown and `tart run`, with nobody logged in as that
 #             user, the daemon is running with the pane made under --system
 #   uninstall `illogicald uninstall` removes the LaunchDaemon: no plist, no
 #             service, no illogicald running as the user
@@ -93,10 +93,20 @@ knock_out() {
 # Panes marked so they can be found again: one under the agent, one under
 # the LaunchDaemon.
 MARK=illogical-macos-launchd-mark
-pane() { as_user "/Users/$USER_NAME/.local/bin/illogical run -- sh -c 'echo $MARK; exec sleep $1'" >/dev/null 2>&1; }
+pane() { as_user "/Users/$USER_NAME/.local/bin/illogical run -- sh -c 'echo $MARK-\$(($1 + 1)); exec sleep $1'" >/dev/null 2>&1; }
+# Every pane's output (a restored pane runs a shell again, with the old
+# output above it).
+outputs() {
+  v ssh sh -s 2>/dev/null <<EOF
+c="sudo -u $USER_NAME /Users/$USER_NAME/.local/bin/illogical --socket /Users/$USER_NAME/.local/state/illogical/sock"
+for p in \$(\$c ls | awk '{print \$1}'); do \$c tail --text "\$p"; done
+EOF
+}
 logged_in() { v ssh "who | awk '\$1 == \"$USER_NAME\"' | wc -l | tr -d ' '"; }
 # What launchd and the disk hold for the user's daemon, one word per thing
-# found: agent-plist daemon-plist gui user system process.
+# found: agent-plist daemon-plist gui user system process. Pane shims
+# (`illogicald _shim`) don't count: with no daemon they end their panes a
+# minute later, as after any stop.
 leftovers() {
   # shellcheck disable=SC2016 # expands there
   v ssh "u=\$(id -u $USER_NAME)
@@ -105,7 +115,7 @@ leftovers() {
     ! sudo launchctl print gui/\$u/illogicald >/dev/null 2>&1 || echo gui
     ! sudo launchctl print user/\$u/illogicald >/dev/null 2>&1 || echo user
     ! sudo launchctl print system/illogicald.$USER_NAME >/dev/null 2>&1 || echo system
-    ! pgrep -u $USER_NAME -x illogicald >/dev/null || echo process" | tr '\n' ' '
+    ! ps -U $USER_NAME -o args= | grep -v ' _shim' | grep -q '^[^ ]*illogicald' || echo process" | tr '\n' ' '
 }
 # Nothing left, given a few seconds for the daemon to exit.
 clean() {
@@ -179,14 +189,14 @@ t_launchd() {
     v restart
     knock_out
     local up=""
-    for _ in $(seq 1 30); do answers | grep -q "sleep 200000" && { up=1; break; }; sleep 2; done
+    for _ in $(seq 1 30); do outputs | grep -q "$MARK-200001" && { up=1; break; }; sleep 2; done
     if [ -n "$up" ] && [ "$(logged_in)" = 0 ]; then pass reboot "$(answers | wc -l | tr -d ' ') pane(s) back"
     else fail reboot "no daemon with its pane for $USER_NAME after a restart with nobody logged in as them"; fi
   fi
 
-  as_user "$D uninstall" >/dev/null 2>&1 || true
-  [ -z "$BREAK" ] || as_user "$D install --system" >/dev/null 2>&1 || true
   if want uninstall; then
+    as_user "$D uninstall" >/dev/null 2>&1 || true
+    [ -z "$BREAK" ] || as_user "$D install --system" >/dev/null 2>&1 || true
     if left=$(clean); then pass uninstall
     else fail uninstall "left behind: $left"; fi
   fi

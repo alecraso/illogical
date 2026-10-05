@@ -43,6 +43,26 @@ it. Flags after `--` are passed to the daemon on every start
   upgrade or a crash leaves the programs running, and the new daemon adopts
   them. Stopping it for good (`launchctl bootout`, logging out) ends them a
   minute later, if no daemon has come back.
+- **macOS with no GUI login** (a Mac you reach only over ssh, where that
+  user hasn't logged in to the desktop since it booted): there's no
+  `gui/$UID` domain, so `illogicald install` puts the same plist in the
+  background session (`user/$UID`, `LimitLoadToSessionType` Background).
+  It keeps running after you log out, but after a reboot it doesn't start
+  until you log in to the desktop or run `illogicald install` again (over
+  ssh is fine; `illogical --ssh` does it for you when the daemon isn't
+  running), and the install says so.
+- **macOS, from boot:** `illogicald install --system` installs a
+  LaunchDaemon, `/Library/LaunchDaemons/illogicald.$USER.plist`, that runs
+  the daemon as you from boot with nobody logged in. Run it as yourself,
+  not as root: it runs `sudo` for the two steps that need root and prints
+  them first, so you need to be an admin. It replaces the LaunchAgent (one
+  daemon per user). Later installs keep it; `illogicald uninstall` first
+  to go back to an agent. `sudo launchctl kickstart -k
+  system/illogicald.$USER` restarts it.
+- **Removing it:** `illogicald uninstall` stops and removes whichever is
+  installed (the agent, the background agent, the LaunchDaemon with sudo,
+  or on Linux the systemd user service). The binaries in `~/.local/bin`
+  and the state in `~/.local/state/illogical` stay.
 - **Without systemd on Linux** (a container, a box with another init): pass
   `--keep-panes` for the same behaviour.
 

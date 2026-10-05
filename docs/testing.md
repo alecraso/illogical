@@ -188,6 +188,7 @@ just macos launchd           # launchd with no GUI session (S28, M52)
 just macos safari            # web/safari against real Safari (#94, #137)
 just macos iterm2            # M5 (tmux -CC) and M32 (OSC 52) in iTerm2
 just macos app               # the desktop app in cloud mode (#178)
+just macos base             # make the base VM, once
 just macos up | ssh CMD | down   # the VM by hand
 ```
 
@@ -201,9 +202,11 @@ testnet's claims.
 
 - **tart.** `brew install cirruslabs/cli/tart`, or, while that tap's
   formula fails on current Homebrew, `tart.tar.gz` from its GitHub release
-  (`tart.app` into `~/Applications`, `tart` on `PATH`). Without tart every
-  script prints `SKIP: tart is not installed` and exits 0.
-- **The base image.** `vm.sh up` makes a local VM `illogical-macos-base`
+  (`tart.app` into `~/Applications`, `tart` on `PATH`). Without tart, or
+  without the base VM, every script fails (exit 1) and says how to get
+  it: a check that didn't run isn't a pass. `ILLOGICAL_SKIP_MACOS_VM=1` is
+  the only way to skip, and it prints that no macOS VM test ran.
+- **The base image.** `just macos base` (`vm.sh base`) makes a local VM `illogical-macos-base`
   from `ghcr.io/cirruslabs/macos-tahoe-base:latest` (macOS 26.6, Safari,
   the Command Line Tools, no Xcode; `ILLOGICAL_MACOS_IMAGE` picks another),
   then empties tart's OCI cache (`tart prune --entries=caches`), so the disk
@@ -220,22 +223,29 @@ testnet's claims.
 
 | Test | Checks | How |
 |---|---|---|
-| `launchd` (`install`, `logout`, `reboot`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, installs the daemon and starts a pane; the daemon and pane outlive the ssh session; after `tart stop` and `run`, with nobody logged in as them, the daemon is back with its pane. | `ILLOGICAL_MACOS_INSTALL` picks the install: `product` (`illogicald install`, the default), `background` (the plist bootstrapped into `user/UID` with `LimitLoadToSessionType` Background, no sudo) or `system` (a LaunchDaemon with `UserName`, sudo once). |
+| `launchd` (`install`, `warning`, `logout`, `uninstall-agent`, `ssh`, `system`, `reboot`, `uninstall`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, runs `illogicald install`: it installs, warns that the daemon won't start after a reboot by itself, and the daemon and a pane outlive the ssh session. `illogicald uninstall` leaves nothing behind. `illogical --ssh illo@vm ls` from the host starts the daemon there and passes the warning through. `illogicald install --system` switches to a LaunchDaemon cleanly; after `tart stop` and `run`, with nobody logged in as them, the daemon is back with its pane; `illogicald uninstall` removes the LaunchDaemon too. | One VM, in that order. "Nothing behind" means no plist in `~/Library/LaunchAgents` or `/Library/LaunchDaemons`, no `illogicald` service in `gui/UID`, `user/UID` or `system`, and no `illogicald` process for the user. The user gets passwordless sudo before `system`, as an admin would have. `BREAK=1` boots the service out before install, logout, system and reboot, drops the `note:` line before warning, installs again after each uninstall, and has the daemon already running when the ssh check would start it. |
 | `safari` | `/key-probe.html` puts its verdict in the DOM (`data-verdict` on `#verdict`: `keys`, `wrapped` or `none`, and JSON in `#result`), and it's `keys` or `wrapped`. A signed-out invitee opens a presigned invite, signs in through GitHub and joins in one click; the owner's Chrome sees them in the roster. | `web/safari/safari.spec.ts` with a small WebDriver client (`web/safari/webdriver.ts`). safaridriver runs in the VM (`sudo safaridriver --enable` once); its port comes to the host over ssh, and control and the fake GitHub, run on the host, are forwarded to the same ports on the VM's loopback. `SAFARIDRIVER_URL` alone runs the spec against any safaridriver. |
 | `iterm2` (`attach`, `type`, `output`, `split`, `tab`, `osc52`) | iTerm2 runs `illogical tmux -CC` and opens a native window for the daemon's tab; text written there runs in the pane; the pane's output shows in iTerm2; a split in iTerm2 adds a pane; a daemon tab becomes an iTerm2 tab. `illogical tui` in iTerm2 copies a line in copy mode, and `pbpaste` has it. | iTerm2's latest stable zip, driven by AppleScript over ssh. The VM's TCC database (SIP is off in the image) gets Apple Events for sshd and osascript to iTerm2 before it starts, so nothing asks. |
 | `app` (`signin`, `approve`, `machines`, `reach`) | The release's app (`ILLOGICAL_MACOS_APP_ZIP` for another) signs in to control through the browser hand-over, is approved as a new device, lists every machine on the account (one on the host, and the Mac's own daemon once it joins), and keystrokes in its terminal run in that machine's pane. | `testnet/macos/app-cloud.ts`. Control, the fake GitHub and the host's machine run here; `web/fixtures/device.ts` is the person: it reads the app's `/#app=` page from Safari (AppleScript), allows it, hands the grant to the app's loopback port, and approves the app. The app's window is read through accessibility (JXA and System Events). |
 
 What they found (2026-10-05, macOS 26.6.2 in the VM):
 
-- **launchd:** `illogicald install` over ssh with no GUI session fails:
-  there's no `gui/UID` domain until the user logs in to the GUI
-  (`Bootstrap failed: 125: Domain does not support specified action`). A
-  Background agent in `user/UID` installs without sudo and survives the
-  logout, but not a restart: nothing loads it until that user logs in to
-  the GUI again, and an ssh login doesn't. A LaunchDaemon with `UserName`
-  survives both, with its panes restored. So `launchd` fails today in its
-  default mode, `background` passes `install` and `logout`, and `system`
-  passes all three.
+- **launchd:** before 2026-10-04, `illogicald install` over ssh with no
+  GUI session failed: there's no `gui/UID` domain until the user logs in
+  to the GUI (`Bootstrap failed: 125: Domain does not support specified
+  action`). A Background agent in `user/UID` installs without sudo and
+  survives the logout, but not a restart: nothing loads it until that user
+  logs in to the GUI again, and an ssh login doesn't. A LaunchDaemon with
+  `UserName` survives both, with its panes restored. `illogicald install`
+  now picks the Background agent when there's no GUI domain and says the
+  restart caveat, and `--system` installs the LaunchDaemon (PLAN.md, M52);
+  every `launchd` check passes, and every one fails with `BREAK=1`.
+- **A hard stop loses recent pane output.** `tart stop` on this image is
+  a power cut (the guest doesn't shut down in time), and a pane made a
+  few seconds before it came back with no output; panes saved at an
+  earlier shutdown kept theirs. `vm.sh restart` now shuts the guest down
+  first, as a person's restart does. Losing the last output on a power
+  cut is expected, not checked.
 - **Safari 26.6.2:** Ed25519 keys survive a reload, X25519 keys come back
   from IndexedDB as null, and the wrapped fallback works (verdict
   `wrapped`), as in Playwright's WebKit. The presigned invite passes.

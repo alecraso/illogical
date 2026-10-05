@@ -4125,6 +4125,14 @@ One command: install over ssh, set up the service to outlive the login, run `ill
 - A box that can't reach control: the CLI recognises `illogicald join`'s "can't reach control at" and says so, naming the box and control, with `illogical --ssh box tui` as the way that still works. The `unreachable` claim checks it on box-bare, which has no route out, joining the hosted control.
 - Not covered by the stack: jake-mini with no GUI session (launchd), which needs Track E's macOS harness.
 
+**A Mac with no GUI login (decided 2026-10-04):** Track E's tart VM showed that `illogicald install` over ssh fails for a user who hasn't logged in to the desktop: there's no `gui/UID` domain (`Bootstrap failed: 125`). A Background agent in `user/UID` installs without sudo and survives logging out but not a reboot; a LaunchDaemon with `UserName` survives both and needs sudo once.
+
+- `illogicald install` keeps the GUI-domain LaunchAgent when a GUI session exists. With no `gui/UID` domain it installs the same plist with `LimitLoadToSessionType` Background into `user/UID`, and prints plainly that the daemon won't start again after a reboot until the user logs in or runs `illogicald install --system`.
+- `illogicald install --system` installs `/Library/LaunchDaemons/illogicald.USER.plist` with `UserName`. It's run as the user, not root, says it needs sudo and prints each `sudo` command before running it; it never sudoes silently. It removes the user's LaunchAgent, so a later login doesn't start a second daemon. A later plain `install` keeps the LaunchDaemon (an upgrade shouldn't drop boot start); `illogicald uninstall` first goes back to an agent.
+- `illogicald uninstall` (new) removes whichever is installed: either agent, the LaunchDaemon (with sudo), or the systemd user service on Linux. Binaries and state stay.
+- `illogical --ssh box …` (M51/M52's `prepare`) starts a Mac box's daemon with `illogicald install` and passes its `note:` line through, so `illogical --ssh box join` shows the reboot warning. After a reboot the next `illogical --ssh` to the box starts it again. Upgrading a box over ssh restarts a LaunchAgent; a LaunchDaemon keeps the old binary until it restarts, since that needs sudo.
+- Tested by `just macos launchd` (docs/testing.md): default install over ssh with no GUI, the warning, logout, uninstall, the `--ssh` path, `--system` through a VM restart with its pane, and uninstall of the LaunchDaemon, with a `BREAK=1` form.
+
 #### M53: the desktop app over ssh (#156, gated, after M51)
 
 Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this only covers boxes that never join control. M46 shipped in 0.14.0 (#144), so only M51 is left as a dependency.
