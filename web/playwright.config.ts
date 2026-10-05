@@ -112,6 +112,9 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   // gh (and its bundle goes in the run's own cache: the daemon's command).
   process.env.ILLOGICAL_INFISICAL_BIN = "/bin/false";
   process.env.ILLOGICAL_GH_BIN = "/bin/false";
+  // #145: no `chant audit --agents` of the person's agent config, so every
+  // screen rule set runs whatever is configured on the host.
+  process.env.ILLOGICAL_CHANT = "";
 }
 
 // By default runs against a throwaway debug daemon on 7683 (which serves

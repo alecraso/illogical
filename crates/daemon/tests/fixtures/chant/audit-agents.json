@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "1.0",
+  "tool": {
+    "name": "chant-audit",
+    "version": "0.95.0"
+  },
+  "status": "ok",
+  "snapshot": {
+    "target": "/tmp/fx5-home",
+    "files": [
+      "/tmp/fx5-home/.claude/settings.json",
+      "/tmp/fx5-home/.claude/CLAUDE.md"
+    ],
+    "generatedAt": "2026-10-05T06:18:47.214Z",
+    "toolVersion": "0.95.0"
+  },
+  "summary": {
+    "total": 1,
+    "quickWin": 0,
+    "needsReview": 0,
+    "reportOnly": 1,
+    "errors": 0,
+    "warnings": 0,
+    "infos": 1,
+    "security": 0,
+    "correctness": 0,
+    "bestPractice": 1,
+    "efficiency": 0
+  },
+  "findings": [
+    {
+      "checkId": "AGT006",
+      "severity": "info",
+      "message": "User-scope claude config carries 1 instruction file into every project opened on this machine, including repos you don't own.",
+      "file": "/tmp/fx5-home/.claude/settings.json",
+      "entity": "user-claude",
+      "lexicon": "agents",
+      "tier": "report-only",
+      "fixKind": "guidance",
+      "category": "best-practice",
+      "title": "User-scope config applies to every project",
+      "remediation": "Move project-specific instructions, MCP servers, and skills to that project's own config so they don't follow you into unrelated repos.",
+      "authority": [],
+      "lineage": [],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#agt006"
+    }
+  ],
+  "subject": "agent-configuration",
+  "notes": [
+    "Scope not scanned: project."
+  ],
+  "sites": [
+    {
+      "id": "user-claude",
+      "scope": "user",
+      "runtime": "claude",
+      "root": "/tmp/fx5-home",
+      "sources": [
+        "/tmp/fx5-home/.claude/settings.json",
+        "/tmp/fx5-home/.claude/CLAUDE.md"
+      ],
+      "summary": "1 instruction file \u00b7 model sonnet",
+      "instructions": [
+        {
+          "path": "/tmp/fx5-home/.claude/CLAUDE.md",
+          "bytes": 48
+        }
+      ],
+      "mcpServers": [],
+      "skills": [],
+      "subagents": [],
+      "commands": [],
+      "plugins": [],
+      "env": [],
+      "permissions": {
+        "allow": [
+          "Bash(cargo test:*)"
+        ]
+      },
+      "model": "sonnet"
+    }
+  ],
+  "agentFindings": [
+    {
+      "checkId": "AGT006",
+      "severity": "info",
+      "message": "User-scope claude config carries 1 instruction file into every project opened on this machine, including repos you don't own.",
+      "file": "/tmp/fx5-home/.claude/settings.json",
+      "siteId": "user-claude",
+      "scope": "user",
+      "runtime": "claude"
+    }
+  ],
+  "coverage": {
+    "probed": [
+      "/Library/Application Support/ClaudeCode/managed-settings.json",
+      "/tmp/fx5-home/.claude.json",
+      "/tmp/fx5-home/.claude/CLAUDE.md",
+      "/tmp/fx5-home/.claude/agents",
+      "/tmp/fx5-home/.claude/commands",
+      "/tmp/fx5-home/.claude/mcp.json",
+      "/tmp/fx5-home/.claude/plugins/installed_plugins.json",
+      "/tmp/fx5-home/.claude/plugins/known_marketplaces.json",
+      "/tmp/fx5-home/.claude/settings.json",
+      "/tmp/fx5-home/.claude/settings.local.json",
+      "/tmp/fx5-home/.claude/skills",
+      "/tmp/fx5-home/.codex/AGENTS.md",
+      "/tmp/fx5-home/.codex/config.toml",
+      "/tmp/fx5-home/.codex/prompts",
+      "/tmp/fx5-home/.codex/rules",
+      "/tmp/fx5-home/.codex/skills",
+      "/tmp/fx5-home/.config/opencode/AGENTS.md",
+      "/tmp/fx5-home/.config/opencode/opencode.json",
+      "/tmp/fx5-home/.cursor/mcp.json",
+      "/tmp/fx5-home/.cursor/rules",
+      "/tmp/fx5-home/.cursorrules",
+      "/tmp/fx5-home/.gemini/GEMINI.md",
+      "/tmp/fx5-home/.gemini/settings.json",
+      "/tmp/fx5-home/AGENTS.md",
+      "/tmp/fx5-home/CLAUDE.md",
+      "/tmp/fx5-home/GEMINI.md"
+    ],
+    "unreadable": []
+  }
+}

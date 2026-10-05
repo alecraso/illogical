@@ -132,11 +132,19 @@ enum Command {
     Cd { pane: Pane, dir: String },
     /// A block's type, place and state (any type). With `--detection`, how
     /// the screen of the agent in a terminal pane reads: each rule, the
-    /// text it looked at, and which one fired.
+    /// text it looked at, and which one fired. `describe --agents`: the
+    /// agents configured on this machine (`chant audit --agents`), which
+    /// decide whose screen rules run here.
     Describe {
-        block: Pane,
-        #[arg(long)]
+        #[arg(required_unless_present = "agents")]
+        block: Option<Pane>,
+        #[arg(long, requires = "block")]
         detection: bool,
+        #[arg(long, conflicts_with_all = ["block", "detection"])]
+        agents: bool,
+        /// With `--agents`: ask chant again first.
+        #[arg(long, requires = "agents")]
+        refresh: bool,
     },
     /// Call one of a block's methods, e.g. `call %4 navigate '{"url":"…"}'`.
     Call {
@@ -1105,6 +1113,16 @@ fn detection_text(pane: u32, v: &Value) -> String {
         };
     };
     let mut out = format!("%{pane} runs {} ({agent})", s(&v["name"]));
+    if v["unread"] == true {
+        let found: Vec<&str> = v["configured"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        let found = if found.is_empty() { "nothing".to_owned() } else { found.join(", ") };
+        let _ = writeln!(
+            out,
+            ": its screen isn't read here. chant audit --agents found {found} configured on this machine, not {agent} \
+             (illogical describe --agents --refresh after you set it up)"
+        );
+        return out;
+    }
     match v["fired"].as_str() {
         Some(rule) => {
             let state = v["rules"].as_array().into_iter().flatten().find(|r| r["rule"] == rule);
@@ -1125,6 +1143,48 @@ fn detection_text(pane: u32, v: &Value) -> String {
         for l in text.iter().filter_map(|l| l.as_str()).filter(|l| !l.trim().is_empty()) {
             let _ = writeln!(out, "  | {}", l.trim_end());
         }
+    }
+    out
+}
+
+/// `describe --agents` for people: what chant found, then whose screen
+/// rules run here.
+fn inventory_text(v: &Value) -> String {
+    use std::fmt::Write;
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_owned();
+    let list = |v: &Value| v.as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
+    let mut out = String::new();
+    match v["state"].as_str() {
+        Some("read") => {
+            let _ = writeln!(out, "chant {} (audit --agents) found:", s(&v["version"]));
+            if v["sites"].as_array().is_none_or(|a| a.is_empty()) {
+                out.push_str("  no agent configuration\n");
+            }
+            for site in v["sites"].as_array().into_iter().flatten() {
+                let _ = writeln!(
+                    out,
+                    "  {:<9} {:<7} {}  {}",
+                    s(&site["runtime"]),
+                    s(&site["scope"]),
+                    s(&site["root"]),
+                    s(&site["summary"])
+                );
+            }
+        }
+        Some("reading") => out.push_str("chant audit --agents hasn't answered yet\n"),
+        Some("off") => out.push_str("not asking chant here (ILLOGICAL_CHANT is empty)\n"),
+        _ => {
+            let _ = writeln!(out, "no inventory: {}", v["error"].as_str().unwrap_or("chant didn't say"));
+        }
+    }
+    let off = list(&v["rules"]["off"]);
+    let _ = writeln!(
+        out,
+        "screen rules run for: {}",
+        if off.is_empty() { "every agent with rules".into() } else { list(&v["rules"]["run"]) }
+    );
+    if !off.is_empty() {
+        let _ = writeln!(out, "not configured here, so not read: {off}");
     }
     out
 }
@@ -1710,13 +1770,25 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 );
             }
         }
-        Command::Describe { block, detection: true } => {
+        Command::Describe { agents: true, refresh, .. } => {
+            let v = match refresh {
+                true => request(&sock, "POST", "/api/hosts/self/agents/refresh", None)?.json()?,
+                false => request(&sock, "GET", "/api/hosts/self/agents", None)?.json()?,
+            };
+            if json_out {
+                print_json(&v);
+            } else {
+                print!("{}", inventory_text(&v));
+            }
+        }
+        Command::Describe { block: Some(block), detection: true, .. } => {
             let v = request(&sock, "GET", &format!("/api/panes/{}/detection", block.0), None)?.json()?;
             print!("{}", detection_text(block.0, &v));
         }
-        Command::Describe { block, .. } => {
+        Command::Describe { block: Some(block), .. } => {
             print_json(&request(&sock, "GET", &format!("/api/blocks/{}", block.0), None)?.json()?);
         }
+        Command::Describe { block: None, .. } => unreachable!("clap requires a block"),
         Command::Call { block, method, args } => {
             let args: Value = match args {
                 Some(a) => serde_json::from_str(&a).context("args must be JSON")?,
@@ -2979,6 +3051,37 @@ mod tests {
         assert!(text.contains("\ntitle_idle (idle, 250) title: no match\n  (empty)\n"), "{text}");
         let none = super::detection_text(2, &serde_json::json!({"agent": null, "command": "vim notes"}));
         assert_eq!(none, "%2 runs `vim notes`: no agent with screen rules\n");
+        let unread = super::detection_text(
+            3,
+            &serde_json::json!({"agent": "codex", "name": "Codex", "unread": true, "rules": [], "configured": ["claude"]}),
+        );
+        assert!(
+            unread.starts_with(
+                "%3 runs Codex (codex): its screen isn't read here. chant audit --agents found claude configured"
+            ),
+            "{unread}"
+        );
+    }
+
+    #[test]
+    fn inventory_for_people() {
+        let v = serde_json::json!({
+            "state": "read", "version": "0.95.0", "notes": [],
+            "sites": [{"id": "user-claude", "scope": "user", "runtime": "claude", "root": "/home/ada",
+                       "summary": "1 instruction file · model sonnet"}],
+            "rules": {"run": ["claude"], "off": ["codex"]},
+        });
+        assert_eq!(
+            super::inventory_text(&v),
+            "chant 0.95.0 (audit --agents) found:\n  claude    user    /home/ada  1 instruction file · model sonnet\n\
+             screen rules run for: claude\nnot configured here, so not read: codex\n"
+        );
+        let none = serde_json::json!({"state": "no_chant", "error": "no chant on PATH", "sites": [],
+                                      "rules": {"run": ["claude", "codex"], "off": []}});
+        assert_eq!(
+            super::inventory_text(&none),
+            "no inventory: no chant on PATH\nscreen rules run for: every agent with rules\n"
+        );
     }
 
     #[test]

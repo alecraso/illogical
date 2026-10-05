@@ -25,6 +25,7 @@ mod holder;
 mod hosts;
 mod ide;
 mod install;
+mod inventory;
 mod keys;
 mod localauth;
 mod machine;

@@ -44,6 +44,7 @@ illogical ide --diffs "Visual Studio Code"    # send Claude Code's diffs to that
 illogical shell-env [--refresh]               # the PATH blocks that run your tools get (your shell's; --refresh: read it again)
 illogical describe %4                         # any block: type, place, state
 illogical describe %4 --detection             # how its agent's screen reads: each rule, what it saw, which fired
+illogical describe --agents [--refresh]       # agents configured here (chant audit --agents): whose screen rules run
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
                                               #   --acp CMD, --vm, --machine m3, --model haiku,
