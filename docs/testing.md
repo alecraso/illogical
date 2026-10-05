@@ -79,7 +79,9 @@ output goes nowhere. The rest is the test's to say:
   `--block-listen 127.0.0.1:0`.
 - `.env()`, `.envs()`, `.env_remove()`, and `.path()` for its `PATH`, so a
   test can keep it from finding something installed on this machine (chant,
-  say).
+  say). `ILLOGICAL_CHANT` is empty by default, so no test daemon reads the
+  host's agent config with `chant audit --agents`; a test that wants an
+  inventory sets it to a stand-in.
 - `.wait_secs()`: how long `wait_for` waits (15 s by default).
 - `.start()` runs it as a child of the test; `.service()` as a transient
   systemd user service (FD store and scopes as in production), or `None`,
@@ -207,7 +209,9 @@ writes to the real `CLAUDE_CONFIG_DIR`.
 
 Where they're used: `crates/vt/src/detect/tests.rs` plays each recording
 through the terminal and checks every marker; `agent_screens.rs` runs them
-in a live pane with no hooks; `prompt.rs` and `mcp.rs` prompt the replayed
+in a live pane with no hooks, checks going quiet changes nothing for an
+agent whose screen is read, and has a stand-in chant print a recorded
+`chant audit --agents` document to decide whose rules run; `prompt.rs` and `mcp.rs` prompt the replayed
 Claude Code and wait; `resume.rs` stops and starts the daemon the way a
 reboot does and checks each pane comes back in its own conversation, a
 deleted transcript comes back as a shell that says so, and a session id
@@ -234,6 +238,7 @@ Recorded from real systems and checked in, so tests see real shapes:
 | `crates/daemon/tests/fixtures/conversations/desktop/` | the Claude desktop app's Code tab session records (#81, #83), made up from the fields S20 saw | by hand |
 | `crates/daemon/tests/fixtures/s13-*`, `s18-*` | Claude Code hook payloads | by hand |
 | `crates/daemon/tests/fixtures/fountain/`, `chant/` | Fountain API and chant output | by hand |
+| `crates/daemon/tests/fixtures/chant/audit-agents.json` | `chant audit --agents --scope system,user --format json` (chant 0.95.0), with only Claude Code configured | `chant audit --agents` with `HOME` a scratch dir holding only `.claude/CLAUDE.md` and `.claude/settings.json` |
 
 Scrub anything personal or secret before checking a recording in;
 `gitleaks` runs in CI.

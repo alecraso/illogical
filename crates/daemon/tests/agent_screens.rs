@@ -194,3 +194,166 @@ fn python_dash_c_codex_is_not_codex() {
     assert_eq!(v["agent"], Value::Null, "{v}");
     assert!(v["command"].as_str().unwrap_or_default().ends_with("-c codex"), "{v}");
 }
+
+/// It stays as it is for `secs`, wanting you or not.
+fn holds(d: &Daemon, pane: u64, want: &str, secs: u64) {
+    let until = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < until {
+        assert_eq!(
+            attention(d, pane),
+            want,
+            "it moved while quiet: {}",
+            d.get(&format!("/api/panes/{pane}/detection"))
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// #145/#255: going quiet isn't a stall for an agent with screen rules.
+/// Quiet (no output for two seconds) used to make an agent "need you";
+/// now an agent whose screen is read keeps what its screen says, at every
+/// point of a turn: asking, thinking, and after it.
+#[test]
+fn quiet_changes_nothing_for_an_agent_with_rules() {
+    let d = Daemon::child();
+    let scratch = Scratch::new("replay-quiet");
+    let r = Replay::install(&scratch.join("bin"), "claude", "claude_turn");
+    send(&d, 1, &format!("ILLOGICAL_REPLAY_PAUSE=working=6 {}", r.path()));
+
+    // Asking, and quiet: the question stays, and says what it asks.
+    r.reached("m blocked", 1);
+    until(&d, 1, "needs_input");
+    let asked = card(&d, 1)["reason"]["headline"].clone();
+    holds(&d, 1, "needs_input", 3);
+    assert_eq!(card(&d, 1)["reason"]["headline"], asked);
+    keys(&d, 1, &["Down", "Enter"]);
+    r.reached("m idle", 1);
+    until(&d, 1, "idle");
+
+    // Thinking, and quiet for six seconds: working throughout.
+    send(&d, 1, "Run this shell command: sleep 4 && touch made-by-claude.txt");
+    r.reached("m working", 1);
+    until(&d, 1, "working");
+    holds(&d, 1, "working", 5);
+
+    // Its permission prompt, left a while: the same card.
+    r.reached("m blocked", 2);
+    until(&d, 1, "needs_input");
+    let asked = card(&d, 1)["reason"]["headline"].clone();
+    assert_eq!(asked, "Claude Code asks to run `sleep 4 && touch made-by-claude.txt`");
+    holds(&d, 1, "needs_input", 3);
+    assert_eq!(card(&d, 1)["reason"]["headline"], asked);
+
+    // Done, and quiet after: still done, for the turn it finished.
+    keys(&d, 1, &["Enter"]);
+    r.reached("m idle", 2);
+    until(&d, 1, "done");
+    holds(&d, 1, "done", 3);
+    assert_eq!(card(&d, 1)["reason"]["headline"], "Claude Code finished its turn");
+}
+
+/// A stand-in chant that prints a recorded `chant audit --agents --format
+/// json` document (`fixtures/chant/audit-agents.json`, chant 0.95.0 with
+/// only Claude Code configured) and logs how it was run. `doc` replaces
+/// the document.
+struct Chant {
+    bin: std::path::PathBuf,
+}
+
+impl Chant {
+    fn install(dir: &std::path::Path) -> Self {
+        std::fs::create_dir_all(dir).unwrap();
+        let bin = dir.join("chant");
+        std::fs::write(&bin, "#!/bin/sh\necho \"$*\" >> \"$0.argv\"\ncat \"$0.json\"\n").unwrap();
+        std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let c = Self { bin };
+        c.doc(&Self::recorded());
+        c
+    }
+
+    fn recorded() -> Value {
+        let f = format!("{}/tests/fixtures/chant/audit-agents.json", env!("CARGO_MANIFEST_DIR"));
+        serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap()
+    }
+
+    fn doc(&self, doc: &Value) {
+        std::fs::write(format!("{}.json", self.bin.display()), doc.to_string()).unwrap();
+    }
+
+    fn runs(&self) -> Vec<String> {
+        std::fs::read_to_string(format!("{}.argv", self.bin.display()))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// #145/#255: the machine's agents, as `chant audit --agents` finds them,
+/// decide whose screen rules run here. Only Claude Code is configured:
+/// its screen is read, and Codex's isn't (it gets the activity heuristic,
+/// and `describe --detection` says why) until chant finds it too.
+#[test]
+fn chants_inventory_decides_which_rules_run() {
+    let scratch = Scratch::new("inventory");
+    let chant = Chant::install(&scratch.join("chant"));
+    let d = Daemon::child_env(&[], &[("ILLOGICAL_CHANT", chant.bin.to_str().unwrap())]);
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let inv = loop {
+        let v = d.get("/api/hosts/self/agents");
+        if v["state"] != "reading" {
+            break v;
+        }
+        assert!(Instant::now() < deadline, "chant was never asked: {v}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(inv["state"], "read", "{inv}");
+    assert_eq!(inv["version"], "0.95.0");
+    assert_eq!(inv["sites"][0]["runtime"], "claude");
+    assert_eq!(inv["sites"][0]["scope"], "user");
+    assert_eq!(inv["rules"], json!({"run": ["claude"], "off": ["codex"]}));
+    assert_eq!(chant.runs(), ["audit --agents --scope system,user --format json --fail-on none"]);
+
+    // Claude Code is configured: its screen is read.
+    let claude = Replay::install(&scratch.join("bin"), "claude", "claude_turn");
+    send(&d, 1, &claude.path());
+    claude.reached("m blocked", 1);
+    until(&d, 1, "needs_input");
+    assert_eq!(card(&d, 1)["reason"]["headline"], "Claude Code asks whether to trust this folder");
+
+    // Codex isn't: its trust prompt is only output, then quiet.
+    let codex = Replay::install(&scratch.join("bin"), "codex", "codex_turn");
+    let pane = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+    send(&d, pane, &codex.path());
+    codex.reached("m blocked", 1);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while d.get(&format!("/api/panes/{pane}/detection"))["unread"] != true {
+        assert!(Instant::now() < deadline, "{}", d.get(&format!("/api/panes/{pane}/detection")));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let v = d.get(&format!("/api/panes/{pane}/detection"));
+    assert_eq!((v["agent"].as_str(), v["fired"].as_str()), (Some("codex"), None), "{v}");
+    assert_eq!(v["configured"], json!(["claude"]));
+    until(&d, pane, "idle");
+    holds(&d, pane, "idle", 1);
+    // An agent chant didn't list asks it again (it may have just been
+    // set up), but not within a minute of the last time.
+    assert_eq!(chant.runs().len(), 1, "{:?}", chant.runs());
+
+    // Now chant finds Codex too: its screen is read from then on, the
+    // prompt it's showing included.
+    let mut doc = Chant::recorded();
+    let mut site = doc["sites"][0].clone();
+    site["id"] = json!("user-codex");
+    site["runtime"] = json!("codex");
+    site["summary"] = json!("1 skill");
+    doc["sites"].as_array_mut().unwrap().push(site);
+    chant.doc(&doc);
+    let inv = d.post("/api/hosts/self/agents/refresh", json!({}));
+    assert_eq!(inv["rules"], json!({"run": ["claude", "codex"], "off": []}), "{inv}");
+    until(&d, pane, "needs_input");
+    assert_eq!(card(&d, pane)["reason"]["headline"], "Codex asks whether to trust this folder");
+    let v = d.get(&format!("/api/panes/{pane}/detection"));
+    assert_eq!((v["agent"].as_str(), v["unread"].as_bool()), (Some("codex"), None), "{v}");
+}

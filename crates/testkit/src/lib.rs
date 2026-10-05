@@ -45,7 +45,9 @@ const START: Duration = Duration::from_secs(15);
 /// How a test daemon starts. Every one gets `--listen 127.0.0.1:0`,
 /// `--no-manager-env` and a `--state-dir` of its own, its output goes
 /// nowhere, and `NOTIFY_SOCKET` is taken out of its environment (a test run
-/// from a service would pass its own on). The rest is the test's to say.
+/// from a service would pass its own on). `ILLOGICAL_CHANT` is empty, so
+/// it never reads the host's agent config with chant. The rest is the
+/// test's to say.
 #[derive(Clone, Debug)]
 pub struct Builder {
     bin: PathBuf,
@@ -66,7 +68,10 @@ impl Builder {
             state: None,
             shell: Some(SHELL.to_owned()),
             args: vec![],
-            env: vec![],
+            // No `chant audit --agents` of the host's agent config (#145):
+            // every screen rule set runs. A test that wants an inventory
+            // points this at a stand-in chant.
+            env: vec![("ILLOGICAL_CHANT".into(), Some("".into()))],
             block_listen: false,
             wait: Duration::from_secs(15),
         }

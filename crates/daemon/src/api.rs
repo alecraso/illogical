@@ -76,6 +76,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/rules/{index}", axum::routing::delete(rules_forget))
         .route("/api/hosts/self/shell-env", get(shell_env_get))
         .route("/api/hosts/self/shell-env/refresh", post(shell_env_refresh))
+        .route("/api/hosts/self/agents", get(agents_get))
+        .route("/api/hosts/self/agents/refresh", post(agents_refresh))
         .route("/api/editors", get(editors))
         .route("/api/editors/vsix", get(vsix))
         .route("/api/ide/mention", post(ide_mention))
@@ -351,7 +353,7 @@ pub(crate) async fn prompt(
 /// when no agent's screen is read there.
 async fn screen_state(app: &App, id: PaneId) -> Option<Option<&'static str>> {
     let p = pane(app, id).await.ok()?;
-    tokio::task::spawn_blocking(move || p.detection()).await.ok().flatten().map(|d| d.shown)
+    tokio::task::spawn_blocking(move || p.detection()).await.ok().flatten().filter(|d| !d.unread).map(|d| d.shown)
 }
 
 async fn pane_info(app: &App, id: PaneId) -> Option<illogical_proto::PaneInfo> {
@@ -1387,6 +1389,12 @@ async fn detection(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<ser
         .await
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(match found {
+        // Not read here: what chant found configured instead.
+        Some(d) if d.unread => {
+            let mut v = serde_json::to_value(d).unwrap_or_default();
+            v["configured"] = serde_json::json!(app.mux.inventory.snapshot().runtimes());
+            v
+        }
         Some(d) => serde_json::to_value(d).unwrap_or_default(),
         None => serde_json::json!({ "agent": null, "command": command }),
     }))
@@ -2171,6 +2179,33 @@ async fn shell_env_refresh(
     owner_only(&who)?;
     state.0.mux.shell_env.refresh();
     shell_env_get(state, who).await
+}
+
+/// `GET /api/hosts/self/agents` (#145): the agents configured on this
+/// machine, as `chant audit --agents` last found them, and which screen
+/// rule sets run here because of it.
+async fn agents_get(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    Ok(Json(agents_json(&app.mux.inventory.snapshot())))
+}
+
+/// `POST /api/hosts/self/agents/refresh`: ask chant again, and wait.
+async fn agents_refresh(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    Ok(Json(agents_json(&app.mux.inventory.refresh_now().await)))
+}
+
+fn agents_json(snap: &crate::inventory::Snapshot) -> serde_json::Value {
+    let mut v = serde_json::to_value(snap).unwrap_or_default();
+    let (runs, off): (Vec<_>, Vec<_>) = illogical_vt::detect::AGENTS.iter().map(|a| a.id).partition(|id| snap.runs(id));
+    v["rules"] = serde_json::json!({ "run": runs, "off": off });
+    v
 }
 
 fn owner_only(who: &Option<axum::Extension<crate::acl::Principal>>) -> Res<()> {
