@@ -112,13 +112,15 @@ pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
                             out.write_all(&f.data)?;
                         }
                     }
-                    Ok(Message::Text(t)) => {
-                        if let Ok(ServerMsg::State { state }) = serde_json::from_str(&t)
-                            && !state.panes.iter().any(|p| p.id == pane)
-                        {
-                            return Ok(0);
+                    Ok(Message::Text(t)) => match serde_json::from_str(&t) {
+                        Ok(ServerMsg::State { state }) if !state.panes.iter().any(|p| p.id == pane) => return Ok(0),
+                        // Why typing went nowhere (someone else drives it,
+                        // a viewer's share): say so, on a line of its own.
+                        Ok(ServerMsg::Error { message, .. }) => {
+                            eprint!("\r\n\x1b[2m[illogical: {message}]\x1b[0m\r\n");
                         }
-                    }
+                        _ => {}
+                    },
                     Ok(Message::Close(_)) => return Ok(0),
                     Ok(_) => {}
                     Err(tungstenite::Error::Io(e)) if e.kind() == ErrorKind::WouldBlock => break,

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    body::Body,
+    body::{Body, HttpBody},
     extract::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -228,15 +228,45 @@ fn to_msg(o: ToClient) -> Option<Msg> {
 }
 
 async fn answer(router: Router, out: Arc<Out>, id: u32, head: RequestHead, body: Vec<u8>, who: crate::acl::Principal) {
+    let say = |status, content_type, more, body| Msg::Response {
+        id,
+        head: ResponseHead { status, content_type, more },
+        body,
+    };
+    let stream = head.stream;
     let (status, content_type, body) = match call(router, head, body, who).await {
         Ok(r) => r,
-        Err(e) => (
-            400,
-            Some("application/json".to_owned()),
-            serde_json::to_vec(&serde_json::json!({ "error": e.to_string() })).unwrap(),
-        ),
+        Err(e) => {
+            let body = serde_json::to_vec(&serde_json::json!({ "error": e.to_string() })).unwrap();
+            let _ = out.put(&say(400, Some("application/json".to_owned()), false, body)).await;
+            return;
+        }
     };
-    let _ = out.put(&Msg::Response { id, head: ResponseHead { status, content_type }, body }).await;
+    // A body of no fixed length (a follow) goes in parts when the client
+    // can take them; otherwise whole, as before.
+    if !stream || body.size_hint().exact().is_some() {
+        let body = match axum::body::to_bytes(body, MAX_MSG - 1024).await {
+            Ok(b) => b.to_vec(),
+            Err(e) => {
+                let body = serde_json::to_vec(&serde_json::json!({ "error": e.to_string() })).unwrap();
+                let _ = out.put(&say(400, Some("application/json".to_owned()), false, body)).await;
+                return;
+            }
+        };
+        let _ = out.put(&say(status, content_type, false, body)).await;
+        return;
+    }
+    if out.put(&say(status, content_type.clone(), true, Vec::new())).await.is_err() {
+        return;
+    }
+    let mut parts = body.into_data_stream();
+    while let Some(Ok(b)) = parts.next().await {
+        // The channel went: nobody to tell.
+        if out.put(&say(status, content_type.clone(), true, b.to_vec())).await.is_err() {
+            return;
+        }
+    }
+    let _ = out.put(&say(status, content_type, false, Vec::new())).await;
 }
 
 async fn call(
@@ -244,7 +274,7 @@ async fn call(
     head: RequestHead,
     body: Vec<u8>,
     who: crate::acl::Principal,
-) -> anyhow::Result<(u16, Option<String>, Vec<u8>)> {
+) -> anyhow::Result<(u16, Option<String>, Body)> {
     anyhow::ensure!(head.path.starts_with("/api/"), "only the API is reachable this way");
     let mut req = Request::builder().method(head.method.as_str()).uri(head.path.as_str());
     if let Some(ct) = &head.content_type {
@@ -256,6 +286,5 @@ async fn call(
     let res = router.oneshot(req).await?;
     let status = res.status().as_u16();
     let ct = res.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(str::to_owned);
-    let body = axum::body::to_bytes(res.into_body(), MAX_MSG - 1024).await?;
-    Ok((status, ct, body.to_vec()))
+    Ok((status, ct, res.into_body()))
 }

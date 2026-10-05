@@ -221,7 +221,7 @@ pub fn run(
             });
             if json_out {
                 let c = control.as_ref().map(|(url, list)| {
-                    json!({"url": url, "machines": list.iter().map(|m| json!({"id": m.id, "name": m.name, "urls": m.urls, "online": m.online})).collect::<Vec<_>>()})
+                    json!({"url": url, "machines": list.iter().map(|m| json!({"id": m.id, "name": m.name, "urls": m.urls, "online": m.online, "account": m.account, "owner": m.account.as_ref().map(|_| m.owner()), "team": m.team})).collect::<Vec<_>>()})
                 });
                 println!(
                     "{}",
@@ -239,7 +239,9 @@ pub fn run(
                         (true, true) => "online, relayed".to_owned(),
                         (true, false) => format!("online, direct {} or relayed", m.urls.join(" ")),
                     };
-                    println!("{:<20} {:<44} (control: {url})", m.name, how);
+                    // Another account's (a team's or shared): whose.
+                    let whose = if m.account.is_some() { format!(", {}'s", m.owner()) } else { String::new() };
+                    println!("{:<20} {:<44} (control: {url}{whose})", m.name, how);
                 }
             }
             if local.is_null() {

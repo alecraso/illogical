@@ -87,7 +87,9 @@ vs team machines and sharing a session:
    daemon's own list), and `illogical --host NAME run|ls|capture …`
    reaches any of them, directly when it lists a URL that answers, else
    through the relay, with nothing in `hosts.json`. `ILLOGICAL_VERBOSE=1`
-   says which. `attach` and `tui` don't go through control yet.
+   says which. `attach`, `tui` and `--follow` work the same way, and
+   your teams' machines and those shared with you are listed and reached
+   too ([cli.md](cli.md)).
    `illogical logout` forgets the CLI's key; remove it under *Devices and
    machines…* to revoke it.
 6. **Remove a device or machine** from *Devices and machines…* in the host

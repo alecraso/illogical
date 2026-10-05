@@ -64,8 +64,20 @@
 #           daemon (so no hosts.json), `illogical login` shows a code the
 #           device approves; then `illogical hosts` lists both machines
 #           from control, and `--host box-bare` (direct) and `--host
-#           box-systemd` (relayed) each `run`, `ls` and `capture`. Broken:
+#           box-systemd` (relayed) each `run`, `ls` and `capture`. Then on
+#           the relayed box: `events --follow` and `tail --follow` print
+#           while they run, and `attach` and `tui` (in a pty from `ssh -tt`)
+#           type into a pane, see the answer, and leave with Ctrl-]. Broken:
 #           the CLI isn't logged in, so neither name resolves.
+#   m49team Another person's machine in a team (#254): an owner signs in,
+#           makes a team and joins box-systemd to it; a second person, the
+#           CLI's account, asks to join and is let in. `illogical hosts` on
+#           the bastion lists box-systemd as the owner's, and `--host
+#           box-systemd` captures its pane and attaches to it, typing as a
+#           team editor (relayed). Broken: the
+#           CLI already pinned a different root for the owner's account
+#           (control "changed" it), so the machine is neither listed nor
+#           reached.
 #
 # Needs `testnet/up.sh <profile>` first. Exit codes: 0 every claim held, 1 a
 # claim failed or there's no Docker (ILLOGICAL_SKIP_DOCKER=1 makes that a
@@ -79,7 +91,7 @@ PROFILE="${1:-ssh}"; shift || true
 CFG="$STATE/ssh_config"
 BREAK="${BREAK:-}"
 SSH_CLAIMS="login jump inner bare stdio agent push linger"
-CONTROL_CLAIMS="signin reach m52 unreachable m49"
+CONTROL_CLAIMS="signin reach m52 unreachable m49 m49team"
 
 need_docker
 
@@ -213,8 +225,10 @@ claim_linger() {
 ROOT="$(cd "$HERE/.." && pwd)"
 CLI="${ILLOGICAL_CLI:-${CARGO_TARGET_DIR:-$ROOT/target}/debug/illogical}"
 note() { echo "[testnet $PROFILE] $*" >&2; }
-# The headless approving device (web/fixtures/device-cli.ts), one per run.
-dev() { node --experimental-strip-types --no-warnings "$ROOT/web/fixtures/device-cli.ts" --state "$WORK/device.json" "$@"; }
+# The headless approving device (web/fixtures/device-cli.ts), one per run;
+# `devs FILE ...` is another person's, kept in FILE.
+devs() { local f="$1"; shift; node --experimental-strip-types --no-warnings "$ROOT/web/fixtures/device-cli.ts" --state "$f" "$@"; }
+dev() { devs "$WORK/device.json" "$@"; }
 # shellcheck disable=SC2086 # CONTROL_VIA is several words
 signin() { dev signin --control "$CONTROL_URL" $CONTROL_VIA --login "$1"; }
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
@@ -309,10 +323,13 @@ claim_unreachable() {
 }
 
 # Join a box to the stack's control over ssh, approved by the device
-# (signed in already). Its daemon is up when this returns.
+# (signed in already), or by the device in state file $3 into team $4.
+# Its daemon is up when this returns.
 join_box() {
-  local box="$1" fp="$2" code="" pid
-  cli --ssh "$box" join "$CONTROL_URL" --account "$fp" < /dev/null > "$WORK/join-$box.out" 2>&1 &
+  local box="$1" fp="$2" state="${3:-$WORK/device.json}" team="${4:-}" code="" pid
+  # shellcheck disable=SC2046 # no --team, or --team TEAM
+  cli --ssh "$box" join "$CONTROL_URL" --account "$fp" $([ -z "$team" ] || echo --team "$team") \
+    < /dev/null > "$WORK/join-$box.out" 2>&1 &
   pid=$!
   for _ in $(seq 1 120); do
     code="$(sed -n 's/.*#join=\([A-Z0-9]*-[A-Z0-9]*\).*/\1/p' "$WORK/join-$box.out" | head -1)"
@@ -321,9 +338,89 @@ join_box() {
     sleep 0.5
   done
   if [ -z "$code" ]; then note "join $box: no code"; cat "$WORK/join-$box.out" >&2; kill "$pid" 2>/dev/null; return 1; fi
-  dev approve "$code" > /dev/null || { kill "$pid" 2>/dev/null; return 1; }
+  # shellcheck disable=SC2086 # no team, or one
+  devs "$state" approve "$code" $team > /dev/null || { kill "$pid" 2>/dev/null; return 1; }
   wait "$pid" || { note "join $box failed"; cat "$WORK/join-$box.out" >&2; return 1; }
-  dev online "$box" 60 > /dev/null
+  devs "$state" online "$box" 60 > /dev/null
+}
+
+# The CLI on the bastion, logged in to the stack's control as the device's
+# account (fingerprint $1), unless BREAK=1 and $2 is "skip-on-break".
+bastion_login() {
+  local fp="$1" code pid
+  s bastion 'mkdir -p ~/.local/bin && cat > ~/.local/bin/illogical && chmod 755 ~/.local/bin/illogical' \
+    < "$ILLOGICAL_TESTNET_BINARIES/illogical" || return 1
+  [ -z "$BREAK" ] || [ "${2:-}" != skip-on-break ] || return 0
+  s bastion ".local/bin/illogical login $CONTROL_URL --name bastion --account $fp" < /dev/null > "$WORK/login.out" 2>&1 &
+  pid=$!
+  code=""
+  for _ in $(seq 1 60); do
+    code="$(sed -n 's/.*#join=\([A-Z0-9]*-[A-Z0-9]*\).*/\1/p' "$WORK/login.out" | head -1)"
+    [ -n "$code" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  [ -n "$code" ] || { note "illogical login showed no code"; cat "$WORK/login.out" >&2; return 1; }
+  dev approve "$code" > /dev/null || { kill "$pid" 2>/dev/null; return 1; }
+  if ! wait "$pid" || ! grep -q "Logged in." "$WORK/login.out"; then
+    note "login failed"; cat "$WORK/login.out" >&2; return 1
+  fi
+  dev devices | grep -q '"kind":"cli","name":"bastion"' || { note "the CLI isn't on the device list"; return 1; }
+}
+
+# `illogical --host $1 attach $2` on the bastion, in a pty (ssh -tt), typed
+# into as a person would: Enter (the pane's command may have ended), a
+# command, then Ctrl-] to leave. Holds when the command's answer came back
+# and attach exited 0.
+pty_attach() {
+  local box="$1" pane="$2" mark="ATTACH-$1-$$" rc=0
+  # shellcheck disable=SC2016 # $((...)) is for the pane's shell
+  { sleep 4; printf '\r'; sleep 2; printf 'echo %s-$((6*7))\r' "$mark"; sleep 4; printf '\035'; sleep 2; } |
+    s -tt bastion "stty cols 100 rows 30; .local/bin/illogical --host $box attach $pane" > "$WORK/attach-$box.out" 2>&1 || rc=1
+  grep -q "$mark-42" "$WORK/attach-$box.out" || { note "attach on $box never showed $mark-42 (exit $rc)"; tail -c 600 "$WORK/attach-$box.out" >&2; return 1; }
+  [ "$rc" = 0 ] || { note "attach on $box didn't exit 0 after Ctrl-]"; return 1; }
+}
+
+# `illogical --host $1 tui` on the bastion, in a pty: typed into its focused
+# pane, then Ctrl-] q. Holds when it exited 0 and the marker reached a
+# pane (on the screen it drew, or in a capture afterwards).
+pty_tui() {
+  local box="$1" mark="TUI-$1-$$" rc=0 p
+  # shellcheck disable=SC2016 # $((...)) is for the pane's shell
+  { sleep 5; printf '\r'; sleep 2; printf 'echo %s-$((6*7))\r' "$mark"; sleep 4; printf '\035q'; sleep 2; } |
+    s -tt bastion "stty cols 120 rows 35; TERM=xterm-256color .local/bin/illogical --host $box tui" > "$WORK/tui-$box.out" 2>&1 || rc=1
+  [ "$rc" = 0 ] || { note "tui on $box didn't exit 0 after Ctrl-] q"; tail -c 600 "$WORK/tui-$box.out" >&2; return 1; }
+  grep -q "$mark-42" "$WORK/tui-$box.out" && return 0
+  for p in $(s bastion ".local/bin/illogical --host $box ls" | sed -n 's/^%\([0-9]*\) .*/\1/p'); do
+    s bastion ".local/bin/illogical --host $box capture $p" 2>/dev/null | grep -q "$mark-42" && return 0
+  done
+  note "tui on $box: no pane shows $mark-42"
+  return 1
+}
+
+# `events --follow` and `tail --follow` on the bastion print while they
+# run (a streamed answer through control), before they're stopped.
+follows() {
+  s bastion bash -s -- "$1" > "$WORK/follow-$1.out" 2>&1 <<'SH'
+b="$1" i=.local/bin/illogical
+timeout 30 $i --host "$b" events --follow --type bell > /tmp/ev.out 2>&1 &
+sleep 3
+$i --host "$b" run -- "sleep 1; printf '\a'" > /dev/null
+p="$($i --host "$b" --json run -- 'for n in 1 2 3; do sleep 1; echo FOLLOW-$((40+n)); done; sleep 60' | sed -n 's/.*"pane": *\([0-9]*\).*/\1/p')"
+timeout 30 $i --host "$b" tail --follow "$p" > /tmp/tail.out 2>&1 &
+ok=""
+for _ in $(seq 1 40); do
+  grep -q '"bell"' /tmp/ev.out && grep -q 'FOLLOW-43' /tmp/tail.out && { ok=1; break; }
+  sleep 0.5
+done
+# Still running: the answers have no end, and came anyway.
+jobs -r | grep -c timeout
+kill %1 %2 2>/dev/null
+echo "events: $(tail -c 200 /tmp/ev.out)"
+echo "tail: $(tail -c 200 /tmp/tail.out)"
+rm -f /tmp/ev.out /tmp/tail.out
+[ -n "$ok" ]
+SH
 }
 
 claim_m49() {
@@ -349,25 +446,7 @@ claim_m49() {
   done
   dev online box-bare 2 | grep -q 'box-bare:7681' || { note "m49: box-bare doesn't list its direct URL"; return 1; }
   # The CLI on the bastion, as the boxes got theirs.
-  s bastion 'mkdir -p ~/.local/bin && cat > ~/.local/bin/illogical && chmod 755 ~/.local/bin/illogical' \
-    < "$ILLOGICAL_TESTNET_BINARIES/illogical" || return 1
-  if [ -z "$BREAK" ]; then
-    s bastion ".local/bin/illogical login $CONTROL_URL --name bastion --account $fp" < /dev/null > "$WORK/login.out" 2>&1 &
-    pid=$!
-    code=""
-    for _ in $(seq 1 60); do
-      code="$(sed -n 's/.*#join=\([A-Z0-9]*-[A-Z0-9]*\).*/\1/p' "$WORK/login.out" | head -1)"
-      [ -n "$code" ] && break
-      kill -0 "$pid" 2>/dev/null || break
-      sleep 0.5
-    done
-    [ -n "$code" ] || { note "m49: illogical login showed no code"; cat "$WORK/login.out" >&2; m49_tidy; return 1; }
-    dev approve "$code" > /dev/null || { kill "$pid" 2>/dev/null; m49_tidy; return 1; }
-    if ! wait "$pid" || ! grep -q "Logged in." "$WORK/login.out"; then
-      note "m49: login failed"; cat "$WORK/login.out" >&2; m49_tidy; return 1
-    fi
-    dev devices | grep -q '"kind":"cli","name":"bastion"' || { note "m49: the CLI isn't on the device list"; m49_tidy; return 1; }
-  fi
+  bastion_login "$fp" skip-on-break || { m49_tidy; return 1; }
   ok=1
   s bastion '.local/bin/illogical hosts' > "$WORK/hosts.out" 2>&1 || ok=0
   grep -q '^box-bare .*direct http://box-bare:7681.*(control: ' "$WORK/hosts.out" || ok=0
@@ -386,11 +465,64 @@ claim_m49() {
       if s bastion ".local/bin/illogical --host $b capture $pane" 2>/dev/null | grep -q "M49-$b-42"; then seen=1; break; fi
       sleep 0.5
     done
-    [ "$seen" = 1 ] || { note "m49: capture on $b never showed M49-$b-42"; ok=0; }
+    [ "$seen" = 1 ] || { note "m49: capture on $b never showed M49-$b-42"; ok=0; continue; }
+    # The relayed box: streams, attach and tui (#254).
+    [ "$b" = box-systemd ] || continue
+    follows "$b" || { note "m49: events/tail --follow on $b:"; cat "$WORK/follow-$b.out" >&2; ok=0; }
+    pty_attach "$b" "$pane" || ok=0
+    pty_tui "$b" || ok=0
   done
   m49_tidy
   # Leave box-bare bare for the ssh profile's claims.
   fresh box-bare || true
+  [ "$ok" = 1 ]
+}
+
+claim_m49team() {
+  local fp ofp oacct team code ok=1 out="" pane seen=0
+  # shellcheck disable=SC2329,SC2317 # run below
+  m49_tidy() { s bastion 'rm -rf ~/.local/bin/illogical ~/.config/illogical' >/dev/null 2>&1 || true; }
+  m49_tidy
+  fresh box-systemd || { note "m49team: couldn't recreate box-systemd"; return 1; }
+  # The owner: a team of their own, and box-systemd joined to it.
+  # shellcheck disable=SC2086 # CONTROL_VIA is several words
+  out="$(devs "$WORK/owner.json" signin --control "$CONTROL_URL" $CONTROL_VIA --login "owner$$")"
+  ofp="$(field fingerprint <<< "$out")"; oacct="$(field account <<< "$out")"
+  [ -n "$ofp" ] || { note "m49team: the owner didn't sign in"; return 1; }
+  team="$(devs "$WORK/owner.json" team-create "m49 team" | field team)"
+  [ -n "$team" ] || { note "m49team: no team"; return 1; }
+  join_box box-systemd "$ofp" "$WORK/owner.json" "$team" || return 1
+  # The CLI's person: signed in, the CLI logged in, then let into the team.
+  fp="$(signin "member$$" | field fingerprint)"
+  [ -n "$fp" ] || { note "m49team: no device signed in"; return 1; }
+  bastion_login "$fp" || { m49_tidy; return 1; }
+  code="$(devs "$WORK/owner.json" team-invite "$team" | field code)"
+  dev team-accept "$team" "$code" > /dev/null || { note "m49team: couldn't ask to join"; m49_tidy; return 1; }
+  devs "$WORK/owner.json" team-admit "$team" | grep -q '"admitted":1' || { note "m49team: not let in"; m49_tidy; return 1; }
+  if [ -n "$BREAK" ]; then
+    # Control "changes" the owner's root after the CLI first saw it.
+    s bastion "sed -i 's/^{/{\n  \"pins\": {\"$oacct\": \"0000000000000000\"},/' ~/.config/illogical/cli-control.json"
+  fi
+  s bastion '.local/bin/illogical hosts' > "$WORK/hosts.out" 2>&1 || ok=0
+  grep -q "^box-systemd .*relayed.*(control: .*, owner$$'s)" "$WORK/hosts.out" ||
+    { note "m49team: illogical hosts doesn't list box-systemd as owner$$'s:"; cat "$WORK/hosts.out" >&2; ok=0; }
+  # The machine's first pane (making panes stays the machine owner's). The
+  # owner doesn't type in it: the first to type drives a pane.
+  pane="$(devs "$WORK/owner.json" panes box-systemd | sed -n 's/.*"panes":\[\([0-9]*\).*/\1/p')"
+  [ -n "$pane" ] || { note "m49team: box-systemd has no pane"; m49_tidy; return 1; }
+  # The machine's daemon takes the new member's devices when control
+  # nudges it; give it a moment.
+  for _ in $(seq 1 30); do
+    out="$(s bastion "ILLOGICAL_VERBOSE=1 .local/bin/illogical --host box-systemd capture $pane" 2>&1)" && { seen=1; break; }
+    sleep 1
+  done
+  [ "$seen" = 1 ] || { note "m49team: capture of %$pane: $out"; m49_tidy; return 1; }
+  grep -q "box-systemd: relayed" <<< "$out" || { note "m49team: box-systemd wasn't relayed: $out"; ok=0; }
+  # A team editor types into it, and sees the answer there and in a capture.
+  pty_attach box-systemd "$pane" || ok=0
+  s bastion ".local/bin/illogical --host box-systemd capture $pane" 2>/dev/null | grep -q "ATTACH-box-systemd-$$-42" ||
+    { note "m49team: a capture after attach doesn't show what was typed"; ok=0; }
+  m49_tidy
   [ "$ok" = 1 ]
 }
 

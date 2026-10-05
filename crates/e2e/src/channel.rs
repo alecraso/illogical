@@ -21,6 +21,12 @@
 //!
 //! So one channel carries both what a page does over `/ws` and its API
 //! calls, and the daemon answers the requests with its own router.
+//!
+//! **Streamed answers.** A request whose head says `stream` may be answered
+//! in parts: every `'R'` for it but the last has `more` set, and the body
+//! is the parts joined. The daemon streams only an answer of no fixed
+//! length (`events?follow=1`, `tail?follow=1`); a request without `stream`
+//! always gets one `'R'`, so an older client sees no change.
 
 use std::sync::Mutex;
 
@@ -53,6 +59,9 @@ pub struct RequestHead {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    /// The answer may come in parts (see the module docs).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stream: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +69,9 @@ pub struct ResponseHead {
     pub status: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    /// More parts of this answer follow.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub more: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,13 +275,18 @@ mod tests {
                     method: "POST".into(),
                     path: "/api/run?x=1".into(),
                     content_type: Some("application/json".into()),
+                    stream: true,
                 },
                 body: b"{}".to_vec(),
             },
         ] {
             assert_eq!(deliver(&c, &s, &m), m);
         }
-        let r = Msg::Response { id: 9, head: ResponseHead { status: 200, content_type: None }, body: vec![1; 100_000] };
+        let r = Msg::Response {
+            id: 9,
+            head: ResponseHead { status: 200, content_type: None, more: false },
+            body: vec![1; 100_000],
+        };
         assert_eq!(deliver(&s, &c, &r), r);
     }
 

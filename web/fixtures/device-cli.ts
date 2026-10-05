@@ -7,11 +7,17 @@
 //
 //   signin --control URL [--via FROM=TO]... [--login L] [--name N]
 //                          sign in and enroll: {account, fingerprint, device, approved}
-//   approve CODE           approve a daemon's join code: {device, name}
+//   approve CODE [TEAM]    approve a daemon's join code, into TEAM if given
+//                          (one this account owns): {device, name}
 //   devices                the account's trusted devices: {devices: [{id, kind, name}]}
 //   online NAME [SECS]     wait for a daemon to be online: {id, name, online, urls}
 //   pane NAME MARKER [SECS] round-trip MARKER through its first pane, over
 //                          control's relay: {id, name}
+//   panes NAME             its panes, untouched: {id, name, panes}
+//   team-create NAME       a team, this account its owner: {team}
+//   team-invite TEAM       an ask-first invite code: {code}
+//   team-accept TEAM CODE  this account asks to join with it: {}
+//   team-admit TEAM        admit everyone who asked: {admitted}
 
 import { fingerprint } from "../src/e2e/cert.ts";
 import { Device } from "./device.ts";
@@ -50,7 +56,7 @@ async function main() {
   };
   switch (cmd) {
     case "approve": {
-      const c = await d.approveJoin(rest[0]);
+      const c = await d.approveJoin(rest[0], rest[1]);
       return out({ device: c.device, name: c.name });
     }
     case "devices": {
@@ -64,8 +70,21 @@ async function main() {
       await d.roundTrip(box.id, rest[1], { timeoutMs: secs(rest[2], 15) });
       return out({ id: box.id, name: box.name });
     }
+    case "panes": {
+      const box = await find(rest[0]);
+      return out({ id: box.id, name: box.name, panes: await d.panes(box.id) });
+    }
+    case "team-create":
+      return out({ team: await d.createTeam(rest[0] ?? "team") });
+    case "team-invite":
+      return out({ code: await d.invite(rest[0]) });
+    case "team-accept":
+      await d.acceptInvite(rest[0], rest[1]);
+      return out({});
+    case "team-admit":
+      return out({ admitted: await d.admitAll(rest[0]) });
     default:
-      throw new Error(`unknown command ${cmd ?? "(none)"}: signin, approve, devices, online, pane`);
+      throw new Error(`unknown command ${cmd ?? "(none)"}: signin, approve, devices, online, pane, panes, team-create, team-invite, team-accept, team-admit`);
   }
 }
 

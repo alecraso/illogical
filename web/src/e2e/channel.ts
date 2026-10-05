@@ -20,10 +20,14 @@ export interface RequestHead {
   method: string;
   path: string;
   content_type?: string;
+  /** The answer may come in parts (channel.rs); the page never asks. */
+  stream?: boolean;
 }
 export interface ResponseHead {
   status: number;
   content_type?: string;
+  /** More parts follow: only for a request with `stream`. */
+  more?: boolean;
 }
 
 export type Msg =

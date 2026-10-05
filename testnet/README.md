@@ -16,6 +16,7 @@ ssh -F testnet/.state/ssh_config box-bare   # or bastion, box-systemd
 just testnet up control        # the ssh profile, plus illogical-control and its fakes
 just testnet test control m52  # M52 end to end
 just testnet test control m49  # M49: the CLI logged in, reaching a direct and a relayed box
+just testnet test control m49team  # #254: the CLI reaching a team machine of another account
 just testnet up tailnet        # headscale and two Tailscale nodes
 just testnet measure tailnet   # S28: ssh against the tailnet path
 ```
@@ -139,7 +140,8 @@ The `control` profile's:
 | `reach` | box-systemd, with no route out, reaches control at its inner address | control taken off the inner network |
 | `m52` | on a fresh box-systemd, `illogical --ssh box-systemd join` installs, starts the daemon and shows a code; the device approves it; the box is on the account's device list and online; with the ssh master closed and the bastion paused, a marker round-trips through a pane over the relay; after `docker restart` the box is back on the relay and the pane answers | polkit masked, so no lingering: the daemon doesn't come back after the restart |
 | `unreachable` | box-bare joining the hosted control (no route out) is told it can't reach control, with `illogical --ssh box-bare tui` as the way in, and `--ssh` still works | joining the stack's control, which it can reach |
-| `m49` | box-systemd and box-bare join the stack's control (the device approves both); box-bare's daemon also listens on the inner network and lists `http://box-bare:7681`, box-systemd lists no URL. On the bastion (the CLI copied there, no daemon, so no `hosts.json`), `illogical login` shows a code and the device approves it; `illogical hosts` lists both from control, marked; `--host box-bare` (direct) and `--host box-systemd` (relayed) each `run`, `ls` and `capture` | the CLI isn't logged in: neither name resolves |
+| `m49` | box-systemd and box-bare join the stack's control (the device approves both); box-bare's daemon also listens on the inner network and lists `http://box-bare:7681`, box-systemd lists no URL. On the bastion (the CLI copied there, no daemon, so no `hosts.json`), `illogical login` shows a code and the device approves it; `illogical hosts` lists both from control, marked; `--host box-bare` (direct) and `--host box-systemd` (relayed) each `run`, `ls` and `capture`; then on box-systemd `events --follow` and `tail --follow` print while running, and `attach` and `tui`, in a pty from `ssh -tt`, type a command, see its answer and leave with Ctrl-] | the CLI isn't logged in: neither name resolves |
+| `m49team` | an owner (a second headless device) makes a team and joins box-systemd to it; the CLI's account asks to join and is let in; `illogical hosts` on the bastion lists box-systemd as the owner's, and `--host box-systemd` captures its pane and attaches to it as a team editor, relayed | the CLI pinned a different root for the owner's account first, so control's chain for it is refused |
 
 ## Conventions
 

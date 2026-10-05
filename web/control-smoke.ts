@@ -225,6 +225,43 @@ try {
         await sleep(200);
       }
       check(`--host ${name} capture`, cap.out.includes(`M49-${name}-42`), (cap.err + cap.out).trim().slice(-200));
+      // Streams (#254): an answer with no end comes back as it's written.
+      const follow = (args: string[]) => {
+        const p = spawn(`${target}/illogical`, ["--host", name, ...args], { env, stdio: ["pipe", "pipe", "pipe"] });
+        procs.push(p);
+        const got = { out: "", err: "", code: null as number | null };
+        p.stdout!.on("data", (d) => (got.out += d));
+        p.stderr!.on("data", (d) => (got.err += d));
+        p.on("exit", (c) => (got.code = c ?? 1));
+        return { p, got };
+      };
+      const until = async (ok: () => boolean, ms = 15_000) => {
+        for (let t = 0; t < ms && !ok(); t += 100) await sleep(100);
+        return ok();
+      };
+      const ev = follow(["events", "--follow", "--type", "bell"]);
+      await until(() => ev.got.err.includes(`${name}: `));
+      await sleep(500);
+      await cli(["--host", name, "run", "--", "sleep 1; printf '\\a'"]);
+      check(`--host ${name} events --follow streams`, (await until(() => ev.got.out.includes('"bell"'))) && ev.got.code === null, (ev.got.err + ev.got.out).trim().slice(-200));
+      ev.p.kill();
+      const counting = await cli(["--host", name, "--json", "run", "--", `for i in 1 2 3; do sleep 1; echo TAIL-${name}-$((40+i)); done; sleep 30`]);
+      const tl = follow(["tail", "--follow", `${JSON.parse(counting.out).pane}`]);
+      check(`--host ${name} tail --follow streams`, (await until(() => tl.got.out.includes(`TAIL-${name}-43`))) && tl.got.code === null, (tl.got.err + tl.got.out).trim().slice(-200));
+      tl.p.kill();
+      // attach: the channel's own protocol messages, as /ws.
+      const at = follow(["attach", `${pane}`]);
+      await until(() => at.got.err.includes(`${name}: `));
+      await sleep(1000);
+      // The pane's command ended: Enter gives it a shell.
+      at.p.stdin!.write("\r");
+      await sleep(1500);
+      at.p.stdin!.write(`echo ATTACH-${name}-$((6*7))\r`);
+      const typed = await until(() => at.got.out.includes(`ATTACH-${name}-42`));
+      at.p.stdin!.write("\x1d");
+      const detached = await until(() => at.got.code !== null, 5000);
+      check(`--host ${name} attach: typed and seen, then detached`, typed && detached && at.got.code === 0, (at.got.err + at.got.out).trim().slice(-200));
+      at.p.kill();
     }
   }
 
