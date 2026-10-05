@@ -17,11 +17,18 @@ use illogical_proto::{ClientMsg, ServerMsg, State};
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+/// The CLI, built once: `ls` is polled, and a cargo run per poll is
+/// seconds on a busy machine.
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
-    assert!(status.success(), "building the CLI");
-    bin
+    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+            let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+            assert!(status.success(), "building the CLI");
+            bin
+        })
+        .clone()
 }
 
 fn ls(d: &Daemon) -> Vec<Value> {
@@ -99,10 +106,22 @@ fn ls_shows_kind_project_and_activity_for_real_commands() {
     d.wait_for("a run pane's kind", || pane_in(&d, run)["kind"] == "test");
 
     // Activity: a pane that prints shows bytes a second; once it stops, 0.
-    let busy = typed(&d, &loose, "", "for i in $(seq 1 40); do echo some output line $i; sleep 0.05; done");
+    // It prints until told to stop, not for a fixed time a busy machine
+    // could spend before the first look.
+    let stop = d.sessions.join("stop-printing");
+    let busy = typed(
+        &d,
+        &loose,
+        "",
+        &format!(
+            "i=0; until [ -e '{}' ]; do i=$((i+1)); printf 'some output line %s\\n' $i $i $i $i $i; sleep 0.05; done",
+            stop.display()
+        ),
+    );
     d.wait_for("bytes a second", || pane_in(&d, busy)["activity"]["bps"].as_u64().unwrap_or(0) > 100);
     let last = pane_in(&d, busy)["activity"]["last_ms"].as_u64().unwrap();
     assert!(last > 0);
+    std::fs::write(&stop, "").unwrap();
     d.wait(busy, "command-end");
     d.wait_for("quiet again", || pane_in(&d, busy)["activity"]["bps"] == 0);
     // Idle shells never printed since the daemon started... except their
