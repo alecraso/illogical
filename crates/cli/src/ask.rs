@@ -17,6 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
 use nix::sys::signal::{SigSet, Signal};
 use serde_json::{Value, json};
 
@@ -81,6 +82,7 @@ fn wait_for_answer(sock: &Target, pane: u32, questions: &Value, id: Option<Strin
 
 /// On SIGTERM (Claude Code interrupting the hook), SIGINT or SIGHUP:
 /// withdraw the card, then exit quietly.
+#[cfg(unix)]
 pub fn withdraw_on_signals(sock: Target, pane: u32, id: Option<String>) {
     let mut set = SigSet::empty();
     for s in [Signal::SIGTERM, Signal::SIGINT, Signal::SIGHUP] {
@@ -98,3 +100,8 @@ pub fn withdraw_on_signals(sock: Target, pane: u32, id: Option<String>) {
         }
     });
 }
+
+/// No signals to catch on Windows: Ctrl-C there ends the hook without
+/// withdrawing the card (M57, #220).
+#[cfg(not(unix))]
+pub fn withdraw_on_signals(_: Target, _: u32, _: Option<String>) {}

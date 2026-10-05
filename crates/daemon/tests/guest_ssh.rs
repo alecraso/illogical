@@ -3,6 +3,9 @@
 //! /dev/null` and `BatchMode`, so the runner's own ssh config stays out of
 //! it), on a pseudo-terminal, against a dev daemon.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use illogical_testkit::{listen, strays};
 
 use std::{

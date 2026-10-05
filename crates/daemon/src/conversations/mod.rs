@@ -480,8 +480,7 @@ fn live(dir: &Path, ours: &Ours) -> HashMap<String, Live> {
 /// The process is running, and is the one that wrote the file: it started
 /// when `procStart` says.
 fn alive(pid: u32, proc_start: Option<&str>) -> bool {
-    // EPERM is someone's process all the same; only ESRCH means it's gone.
-    if nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None) == Err(nix::errno::Errno::ESRCH) {
+    if !crate::procinfo::alive(pid) {
         return false;
     }
     let Some(want) = proc_start else { return true };
@@ -615,8 +614,10 @@ mod tests {
         // S20's session and its fork, with their cwd pointed at a real folder.
         for f in ["a683c96a-c2b1-4ed7-bdd4-51b7d759125b", "d1ccc1e4-4b63-4b89-80b7-38128ee9d8cc"] {
             let text = std::fs::read_to_string(fixture(&format!("scratch/{f}.jsonl"))).unwrap();
-            let text =
-                text.replace("/home/user/illogical/spikes/s20-conversations/work/scratch", work.to_str().unwrap());
+            // Escaped as JSON: a Windows path's backslashes would break the line.
+            let quoted = serde_json::to_string(work.to_str().unwrap()).unwrap();
+            let text = text
+                .replace("/home/user/illogical/spikes/s20-conversations/work/scratch", &quoted[1..quoted.len() - 1]);
             std::fs::write(proj.join(format!("{f}.jsonl")), text).unwrap();
         }
         // A subagent's transcript is in a folder of its own: not listed.
@@ -716,6 +717,8 @@ mod tests {
         .unwrap();
     }
 
+    // Unix: starts processes with sh.
+    #[cfg(unix)]
     #[test]
     fn live_sessions_are_checked_against_their_start_time() {
         let root = tmp("live");
@@ -753,6 +756,8 @@ mod tests {
         }
     }
 
+    // Unix: starts processes with sh and reads their ancestry.
+    #[cfg(unix)]
     #[test]
     fn a_holder_is_placed_by_its_ancestors() {
         let root = tmp("ours");
@@ -779,7 +784,7 @@ mod tests {
         // Not under any of ours.
         let l = live(&sessions, &Ours { panes: [(1, 7)].into(), ..Ours::default() });
         assert_eq!(l["in-pane"].pane.filter(|p| *p == 7), None);
-        let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(claude as i32), nix::sys::signal::SIGKILL);
+        crate::procinfo::kill(claude);
         shell.wait().unwrap();
         std::fs::remove_dir_all(&root).unwrap();
     }

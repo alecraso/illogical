@@ -15,6 +15,9 @@
 //! signed delivery, which pokes the block, and `live off` removes it;
 //! GitLab's route takes only its token.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

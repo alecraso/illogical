@@ -16,13 +16,17 @@
 //!   in `agent-exec.json`. Credentials go in on stdin before the server
 //!   starts (see `GUEST_BOOT`), never in the URL, the argv or the VM's disk.
 
+#[cfg(unix)]
 use std::{
-    fs::{File, OpenOptions},
-    io::Write,
+    fs::File,
     os::{
         fd::{AsRawFd, OwnedFd},
-        unix::{fs::OpenOptionsExt, net::UnixStream},
+        unix::net::UnixStream,
     },
+};
+use std::{
+    fs::OpenOptions,
+    io::Write,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -30,6 +34,7 @@ use std::{
 };
 
 use illogical_proto::PaneId;
+#[cfg(unix)]
 use nix::sys::socket::{MsgFlags, recv, setsockopt, sockopt};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -86,6 +91,14 @@ pub fn alive_pid(dir: &Path) -> Option<u32> {
 }
 
 /// Kill a process group: TERM now, KILL in a few seconds if it's still there.
+/// (Windows: the process now; its tree goes with the job in M58, #221.)
+#[cfg(not(unix))]
+pub fn kill_group(pid: u32, _dir: PathBuf) {
+    crate::procinfo::kill(pid);
+}
+
+/// Kill a process group: TERM now, KILL in a few seconds if it's still there.
+#[cfg(unix)]
 pub fn kill_group(pid: u32, dir: PathBuf) {
     use nix::{sys::signal, unistd::Pid};
     let _ = signal::killpg(Pid::from_raw(pid as i32), signal::SIGTERM);
@@ -113,6 +126,7 @@ pub struct LocalSpawn<'a> {
 }
 
 /// A pipe whose ends aren't inherited (`pipe2` doesn't exist on macOS).
+#[cfg(unix)]
 fn pipe_cloexec() -> nix::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
     use nix::fcntl::{FcntlArg, FdFlag, fcntl};
     let (r, w) = nix::unistd::pipe()?;
@@ -122,7 +136,14 @@ fn pipe_cloexec() -> nix::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
     Ok((r, w))
 }
 
+/// Start an agent server on this host. Windows: in M56 (#219).
+#[cfg(not(unix))]
+pub fn spawn_local(_s: LocalSpawn, _sink: Sink) -> std::io::Result<(Link, u32)> {
+    Err(std::io::Error::other("agents don't run on Windows yet (M56, #219)"))
+}
+
 /// Start an agent server on this host.
+#[cfg(unix)]
 pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
     let (in_r, in_w) = pipe_cloexec()?;
     let (ours, theirs) = UnixStream::pair()?;
@@ -131,7 +152,8 @@ pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
     let _ = setsockopt(&ours, sockopt::RcvBuf, &OUT_BUF);
     let record = record_path(s.dir);
     let _ = std::fs::remove_file(&record);
-    let err = OpenOptions::new().create(true).append(true).mode(0o600).open(s.dir.join("agent.err"))?;
+    let err =
+        crate::perm::open_mode(OpenOptions::new().create(true).append(true), 0o600).open(s.dir.join("agent.err"))?;
     let err_from = err.metadata().map_or(0, |m| m.len());
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     let mut cmd = s.launch.command(&format!("illogical-agent-{}-{nanos}", s.id));
@@ -194,15 +216,23 @@ pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
 pub fn adopt_local(
     id: PaneId,
     dir: &Path,
-    kept: &mut std::collections::HashMap<String, OwnedFd>,
+    kept: &mut std::collections::HashMap<String, crate::pane::Kept>,
     fd_store: bool,
     sink: Sink,
 ) -> Option<(Link, u32)> {
     let (a, b) = fd_names(id);
     let (in_w, out) = (kept.remove(&a)?, kept.remove(&b)?);
-    let pid = alive_pid(dir)?;
-    info!(block = id, pid, "adopted agent server");
-    Some((run_local(id, dir.to_owned(), in_w, out, pid, fd_store, sink), pid))
+    #[cfg(not(unix))]
+    {
+        let _ = (dir, out, fd_store, sink);
+        match in_w {}
+    }
+    #[cfg(unix)]
+    {
+        let pid = alive_pid(dir)?;
+        info!(block = id, pid, "adopted agent server");
+        Some((run_local(id, dir.to_owned(), in_w, out, pid, fd_store, sink), pid))
+    }
 }
 
 /// Forget the pipes in the FD store (the block is closing).
@@ -212,6 +242,7 @@ pub fn forget_fds(id: PaneId) {
     crate::sys::remove_fd(&b);
 }
 
+#[cfg(unix)]
 fn run_local(id: PaneId, dir: PathBuf, in_w: OwnedFd, out: OwnedFd, pid: u32, fd_store: bool, sink: Sink) -> Link {
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut writer = File::from(in_w);
@@ -270,6 +301,7 @@ const OUT_BUF: usize = 1 << 20;
 /// buffer fills and the agent's write waits for us. So when a partial line
 /// stops growing, it's taken off and kept here until its end comes (a
 /// restart in the middle of such a line loses it).
+#[cfg(unix)]
 fn read_lines(sock: &OwnedFd, sink: &Sink) -> String {
     let mut buf = vec![0u8; 64 * 1024];
     let mut carry: Vec<u8> = vec![];
@@ -319,6 +351,7 @@ fn read_lines(sock: &OwnedFd, sink: &Sink) -> String {
 }
 
 /// Take `n` bytes off the socket that a peek has already seen.
+#[cfg(unix)]
 fn take(sock: &OwnedFd, n: usize) -> Result<(), String> {
     let mut left = n;
     let mut scratch = vec![0u8; left];
@@ -445,7 +478,8 @@ async fn drive_vm(
         }
         VmBegin::Resume(r) => (Ok(r), None),
     };
-    let mut err = OpenOptions::new().create(true).append(true).mode(0o600).open(dir.join("agent.err")).ok();
+    let mut err =
+        crate::perm::open_mode(OpenOptions::new().create(true).append(true), 0o600).open(dir.join("agent.err")).ok();
     let mut failures = 0u32;
     loop {
         let begin = match &rec {
@@ -582,7 +616,7 @@ fn last_words(dir: &Path) -> Option<String> {
     Some(line.chars().take(240).collect())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::{io::Write, os::unix::net::UnixStream, sync::Mutex};
 

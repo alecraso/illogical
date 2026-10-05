@@ -7,6 +7,9 @@
 //! The same with a real reboot of a box (`docker restart` on the testnet)
 //! is Track A's: it can drive these helpers in a box-systemd container.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 mod replay;
 

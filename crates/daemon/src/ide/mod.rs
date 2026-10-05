@@ -16,6 +16,8 @@
 //! Code's extension, say), to which the daemon passes each `openDiff` on.
 
 pub mod diff;
+// Over Unix sockets, which Claude Code's IDE support uses.
+#[cfg(unix)]
 pub mod relay;
 
 use std::{
@@ -29,11 +31,16 @@ use std::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::UnixStream,
     sync::mpsc,
 };
+/// The relay's socket. Windows: its named pipe comes with the daemon's (M56,
+/// #219); a stream type stands in until then.
+#[cfg(not(unix))]
+type UnixStream = tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use tracing::{info, warn};
 
@@ -265,7 +272,7 @@ impl Ide {
             out.push(Other {
                 name: v["ideName"].as_str().unwrap_or("?").to_owned(),
                 port,
-                alive: pid.is_some_and(|p| nix::sys::signal::kill(nix::unistd::Pid::from_raw(p as i32), None).is_ok()),
+                alive: pid.is_some_and(crate::procinfo::alive),
                 pid,
                 folders: v["workspaceFolders"]
                     .as_array()
@@ -318,8 +325,14 @@ impl Ide {
     }
 }
 
+#[cfg(not(unix))]
+async fn connect(_dir: &Path, _lock_dir: &Path, _launch: &Launcher) -> io::Result<(UnixStream, u16)> {
+    Err(io::Error::other("the IDE relay isn't on Windows yet (M56, #219)"))
+}
+
 /// Connect to the relay (starting it if it isn't there), and read its
 /// hello for the port.
+#[cfg(unix)]
 async fn connect(dir: &Path, lock_dir: &Path, launch: &Launcher) -> io::Result<(UnixStream, u16)> {
     let sock = dir.join("relay.sock");
     let mut started = false;
@@ -363,6 +376,7 @@ fn spawn_relay(dir: &Path, lock_dir: &Path, launch: &Launcher) -> io::Result<()>
     let unit = format!("illogical-ide-relay-{}", std::process::id());
     let mut c = launch.command(&unit);
     c.arg("_ide_relay").arg(dir).arg(lock_dir);
+    #[cfg(unix)]
     if !launch.scopes {
         std::os::unix::process::CommandExt::process_group(&mut c, 0);
     }

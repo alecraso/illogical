@@ -493,7 +493,6 @@ fn focus_or_open(app: &AppHandle) {
 }
 
 /// From a notification: the pane, in a window of ours.
-#[cfg(not(windows))]
 fn open_pane(app: &AppHandle, pane: u32) {
     let url = page_at(&format!("/#pane={pane}"));
     #[cfg(target_os = "macos")]

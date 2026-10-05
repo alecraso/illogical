@@ -12,7 +12,6 @@ illogical-core = { version = "0.18.0", path = "../core" }
 illogical-e2e = { version = "0.18.0", path = "../e2e" }
 illogical-proto = { version = "0.18.0", path = "../proto" }
 illogical-vt = { version = "0.18.0", path = "../vt" }
-nix = { version = "0.31.3", features = ["term", "poll", "signal", "ioctl", "hostname"] }
 ratatui = "0.29.0"
 rustls = "0.23.45"
 rustls-platform-verifier = "0.7.1"
@@ -21,6 +20,9 @@ serde_json = "1.0.151"
 tungstenite = "0.30.0"
 webpki-root-certs = "1.0.9"
 zstd = "0.14.0"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", features = ["term", "poll", "signal", "ioctl", "hostname"] }
 
 [lints]
 workspace = true

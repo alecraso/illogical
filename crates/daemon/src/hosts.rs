@@ -478,11 +478,7 @@ fn validate(mut req: AddHost, this: &str) -> Result<AddHost, String> {
 }
 
 fn random<const N: usize>() -> [u8; N] {
-    let mut b = [0u8; N];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b))
-        .expect("/dev/urandom");
-    b
+    crate::push::random()
 }
 
 pub fn digest(token: &str) -> String {
@@ -735,8 +731,14 @@ mod tests {
         assert_eq!(h.host_for_token(&t.token).as_deref(), Some("sbx"));
         let saved = std::fs::read_to_string(d.join("host-tokens.json")).unwrap();
         assert!(!saved.contains(&t.token) && saved.contains(&digest(&t.token)));
-        let mode = std::fs::metadata(d.join("host-tokens.json")).unwrap().permissions();
-        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777, 0o600);
+        // Modes are Unix's; Windows has the profile's ACL.
+        #[cfg(unix)]
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(
+                &std::fs::metadata(d.join("host-tokens.json")).unwrap().permissions()
+            ) & 0o777,
+            0o600
+        );
         // A new one replaces the old.
         let t2 = h.mint_token("sbx").unwrap();
         assert_eq!(h.host_for_token(&t.token), None);

@@ -1408,6 +1408,8 @@ mod tests {
 
     /// Infisical through agent-specs: the environment's mapping, the
     /// vault's over it, and a variable neither maps tried as itself.
+    // Unix: a fake CLI made executable by its mode.
+    #[cfg(unix)]
     #[tokio::test]
     async fn resolving_through_environment_then_vault() {
         use std::os::unix::fs::PermissionsExt;

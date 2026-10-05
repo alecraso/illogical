@@ -10,6 +10,9 @@
 //! A gate is `needs_input` with a `gate` reason; approving it (#75) passes
 //! `--approver` with the owner's name or an editor's, and a viewer can't.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

@@ -1,6 +1,9 @@
 //! Loopback callers show the local token: programs as a bearer, browsers as
 //! the cookie a sign-in link sets. The Unix socket needs none.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::{Read, Write},
     os::unix::{fs::PermissionsExt, net::UnixStream},

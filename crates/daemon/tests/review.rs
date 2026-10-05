@@ -10,6 +10,9 @@
 //! sees both in their state and can't change them. And a failed command
 //! can be run again from its reason (Rerun).
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

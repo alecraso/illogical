@@ -17,7 +17,6 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, SeekFrom},
-    os::unix::fs::MetadataExt,
     path::Path,
 };
 
@@ -57,12 +56,24 @@ pub struct Follow {
 /// How much of what was read is kept to check the file still starts so.
 const TAIL: usize = 4096;
 
+/// Which file this is, so a replaced one starts over: device and inode;
+/// on Windows, its creation time (std has no stable file index there).
+fn identity(md: &std::fs::Metadata) -> (u64, u64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (md.dev(), md.ino())
+    }
+    #[cfg(windows)]
+    (0, std::os::windows::fs::MetadataExt::creation_time(md))
+}
+
 impl Follow {
     /// Read what's new in `path`. True if the entries may have changed.
     pub fn read(&mut self, path: &Path) -> std::io::Result<bool> {
         let mut f = std::fs::File::open(path)?;
         let md = f.metadata()?;
-        let file = Some((md.dev(), md.ino()));
+        let file = Some(identity(&md));
         let mut changed = false;
         if file != self.file || !self.same(&mut f, md.len())? {
             changed = self.read > 0 || self.open.is_some();

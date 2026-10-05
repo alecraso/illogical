@@ -16,6 +16,9 @@
 //! a new issue from a person going out at once, and an agent's waiting as a
 //! draft that's edited and sent, or dropped.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

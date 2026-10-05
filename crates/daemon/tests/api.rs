@@ -1,6 +1,9 @@
 //! M3 end to end: shell integration, the HTTP API over the Unix socket, and
 //! attention, against the real binary running real bash.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,

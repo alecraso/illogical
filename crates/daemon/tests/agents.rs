@@ -8,6 +8,9 @@
 //! Real adapters (Claude Code, Codex, Fountain) are in `agents_real.rs`,
 //! which costs money and only runs when asked to.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::time::Duration;

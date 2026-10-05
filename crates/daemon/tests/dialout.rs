@@ -6,6 +6,9 @@
 //! answers from after the sandbox is gone. Both daemons are real binaries on
 //! loopback; nothing ever connects to the sandbox's own port.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::Read,
     net::TcpStream,

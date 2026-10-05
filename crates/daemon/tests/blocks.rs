@@ -2,6 +2,9 @@
 //! block on ordinary pages): open, describe, call, capture, restore after a
 //! restart, close.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::{Read, Write},
     net::TcpListener,

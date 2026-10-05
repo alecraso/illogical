@@ -8,6 +8,9 @@
 //! has stopped. Guests can't open one. Playwright runs the real code-server
 //! (`web/e2e/editors.spec.ts`).
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::{BufRead, BufReader, Write},
     net::SocketAddr,

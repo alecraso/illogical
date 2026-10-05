@@ -29,6 +29,7 @@
 //! It must run before any threads exist (it forks), so `main` dispatches to
 //! it before starting the async runtime.
 
+#[cfg(unix)]
 use std::{
     ffi::CString,
     fs::OpenOptions,
@@ -37,6 +38,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
+#[cfg(unix)]
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
     libc,
@@ -47,16 +49,22 @@ use nix::{
     unistd::{ForkResult, execvp, fork, pipe, setsid},
 };
 
+#[cfg(unix)]
 /// What the daemon sends the shim to close the pane.
 pub const CLOSE: Signal = Signal::SIGUSR1;
+#[cfg(unix)]
 /// How long a closed program has to go after its hangup before it's killed.
 const KILL_AFTER: u32 = 3;
 
+#[cfg(unix)]
 /// The program's pid (and process group), for the signal handlers.
 static CHILD: AtomicI32 = AtomicI32::new(0);
+#[cfg(unix)]
 static CLOSING: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
 static KILLED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(unix)]
 extern "C" fn on_close(_: libc::c_int) {
     let child = CHILD.load(Ordering::SeqCst);
     if child > 0 && !CLOSING.swap(true, Ordering::SeqCst) {
@@ -68,6 +76,7 @@ extern "C" fn on_close(_: libc::c_int) {
     }
 }
 
+#[cfg(unix)]
 extern "C" fn on_alarm(_: libc::c_int) {
     let child = CHILD.load(Ordering::SeqCst);
     if child > 0 {
@@ -77,6 +86,7 @@ extern "C" fn on_alarm(_: libc::c_int) {
     KILLED.store(true, Ordering::SeqCst);
 }
 
+#[cfg(unix)]
 pub fn run(args: &[String]) -> ! {
     let (record, hold, argv) = match parse(args) {
         Some(x) => x,
@@ -204,6 +214,7 @@ pub fn run(args: &[String]) -> ! {
 }
 
 /// Where the daemon puts the PTY master for `--hold`.
+#[cfg(unix)]
 pub const HELD_FD: i32 = 3;
 
 fn parse(args: &[String]) -> Option<(String, Option<String>, Vec<String>)> {
@@ -225,6 +236,7 @@ fn parse(args: &[String]) -> Option<(String, Option<String>, Vec<String>)> {
     (!argv.is_empty()).then_some((record, hold, argv))
 }
 
+#[cfg(unix)]
 fn append(path: &str, line: &str) -> bool {
     let Ok(mut f) = OpenOptions::new().create(true).append(true).mode(0o600).open(path) else { return false };
     let written = f.write_all(line.as_bytes()).is_ok();
@@ -282,6 +294,7 @@ pub fn read_record(path: &std::path::Path) -> Record {
 /// to be asked.
 pub fn close(record: &Record) -> bool {
     match record.shim {
+        #[cfg(unix)]
         Some((pid, start)) if record.exit.is_none() && start_time(pid) == Some(start) => {
             nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), CLOSE).is_ok()
         }

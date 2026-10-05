@@ -54,6 +54,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)]
     fn relative_through_links() {
         let root = std::env::temp_dir().join(format!("ilg-paths-{}", std::process::id()));
         std::fs::create_dir_all(root.join("real/src")).unwrap();

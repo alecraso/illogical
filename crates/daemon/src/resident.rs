@@ -91,8 +91,7 @@ fn hex(b: &[u8]) -> String {
 }
 
 fn mint_token() -> String {
-    let mut b = [0u8; 32];
-    let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b));
+    let b = crate::push::random::<32>();
     format!("ilp_{}", hex(&b))
 }
 

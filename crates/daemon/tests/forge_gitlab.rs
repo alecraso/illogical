@@ -17,6 +17,9 @@
 //! person sends; and the anonymous, read-only block refusing writes, with
 //! glab knowing no login for the host and with no glab at all.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 mod agentd;
 
 use std::{

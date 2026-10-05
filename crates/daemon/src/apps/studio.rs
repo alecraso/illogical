@@ -368,6 +368,8 @@ mod tests {
         assert_eq!(with_to(link, None), "https://b.example/__enter?e=1&k=2");
     }
 
+    // Unix: checks the file's mode.
+    #[cfg(unix)]
     #[test]
     fn the_token_is_kept_private_and_never_shown() {
         let dir = std::env::temp_dir().join(format!("ilg-studio-{}", std::process::id()));

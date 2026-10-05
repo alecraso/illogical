@@ -323,6 +323,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn cwd_filter_is_the_directory_or_below_through_links() {
         let root = std::env::temp_dir().join(format!("illogical-cwd-{}-{}", std::process::id(), now_ms()));
         let real = root.join("real");

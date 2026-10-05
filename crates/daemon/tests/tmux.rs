@@ -5,6 +5,9 @@
 //! same success or error, and the same body once ids, checksums and the
 //! known differences are set aside.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},

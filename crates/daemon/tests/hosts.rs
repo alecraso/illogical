@@ -4,6 +4,9 @@
 //! kept out of it (`--tailscale-socket` points nowhere), and a fake tailnet
 //! name stands in for serve.
 
+// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
+#![cfg(unix)]
+
 use std::{
     io::Write,
     path::{Path, PathBuf},

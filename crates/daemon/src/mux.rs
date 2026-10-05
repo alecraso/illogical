@@ -5,7 +5,6 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    os::fd::OwnedFd,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -31,8 +30,8 @@ use crate::{
     block::{Block, BlockCtx},
     osc::Signal,
     pane::{
-        self, CommandRec, ExecRecord, Notice, NoticeSink, PaneHandle, Setup, Spawn, Start, Subscriber, ToClient, Want,
-        What,
+        self, CommandRec, ExecRecord, Kept, Notice, NoticeSink, PaneHandle, Setup, Spawn, Start, Subscriber, ToClient,
+        Want, What,
     },
     provider::Provider,
     push::Push,
@@ -398,7 +397,11 @@ impl Config {
         // use the one at a fixed path beside the socket, which `illogical
         // bridge` points at the owner's forwarded agent while they're
         // connected. An agent this machine has (a desktop's) is kept.
+        #[cfg(unix)]
         let live = |p: &str| std::os::unix::net::UnixStream::connect(p).is_ok();
+        // Windows' ssh agent is a named pipe; panes keep the one they're given.
+        #[cfg(not(unix))]
+        let live = |_: &str| false;
         let has_agent = env
             .iter()
             .find(|(k, _)| k == "SSH_AUTH_SOCK")
@@ -740,7 +743,7 @@ struct ProcSeen {
 }
 
 /// `kept`: pane terminals systemd kept for us across a restart, by FD name.
-pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, push: Option<Push>) -> MuxHandle {
+pub fn start(config: Config, store: StateDir, kept: HashMap<String, Kept>, push: Option<Push>) -> MuxHandle {
     let (tx, rx) = mpsc::unbounded_channel();
     let (notices, notices_rx) = mpsc::unbounded_channel();
     let (events, _) = broadcast::channel(1024);
@@ -965,7 +968,7 @@ fn info_of(rec: CommandRec) -> CommandInfo {
 impl Daemon {
     /// Bring back the saved layout and every pane in it. False if there was
     /// nothing (usable) to restore.
-    fn restore(&mut self, mut kept: HashMap<String, OwnedFd>) -> bool {
+    fn restore(&mut self, mut kept: HashMap<String, Kept>) -> bool {
         let saved = match self.store.load_layout() {
             Ok(Some(saved)) => saved,
             Ok(None) => return false,
@@ -1122,7 +1125,7 @@ impl Daemon {
         kind: BlockType,
         config: serde_json::Value,
         host: Option<MachineId>,
-        restoring: Option<(Policy, HashMap<String, OwnedFd>)>,
+        restoring: Option<(Policy, HashMap<String, Kept>)>,
     ) -> Result<(), String> {
         let sprite = host.and_then(|m| self.machines.get(&m)).map(|m| m.sprite.clone());
         let dir = self.store.pane_dir(id);

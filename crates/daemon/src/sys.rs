@@ -1,12 +1,15 @@
-//! The bits of systemd the daemon uses without linking libsystemd.
+//! The bits of systemd the daemon uses without linking libsystemd. On
+//! Windows there's no systemd: notifying does nothing and nothing is kept.
 
+use std::process::Command;
+#[cfg(unix)]
 use std::{
     collections::HashMap,
     io::IoSlice,
     os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
-    process::Command,
 };
 
+#[cfg(unix)]
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
     sys::socket::{AddressFamily, ControlMessage, MsgFlags, SockFlag, SockType, UnixAddr, sendmsg, socket},
@@ -33,7 +36,10 @@ pub const SERVICE_ENV: &[&str] = &[
 /// Tell systemd about the daemon's state (`READY=1`, `STOPPING=1`) when it
 /// runs as a `Type=notify` service; a no-op otherwise.
 pub fn notify(state: &str) {
+    #[cfg(unix)]
     notify_with_fds(state, &[]);
+    #[cfg(not(unix))]
+    let _ = state;
 }
 
 /// Whether systemd is listening (a `Type=notify` service). Without it there
@@ -42,6 +48,7 @@ pub fn under_systemd() -> bool {
     std::env::var_os("NOTIFY_SOCKET").is_some()
 }
 
+#[cfg(unix)]
 fn notify_with_fds(state: &str, fds: &[RawFd]) -> bool {
     let Some(path) = std::env::var_os("NOTIFY_SOCKET") else { return false };
     let path = path.to_string_lossy().into_owned();
@@ -71,6 +78,7 @@ fn notify_with_fds(state: &str, fds: &[RawFd]) -> bool {
 /// Keep a pane's PTY master in systemd's FD store, so the terminal stays
 /// open (and its programs running) while the daemon restarts. `FDPOLL=0`:
 /// keep it even if it hangs up.
+#[cfg(unix)]
 pub fn store_fd(name: &str, fd: RawFd) -> bool {
     notify_with_fds(&format!("FDSTORE=1\nFDNAME={name}\nFDPOLL=0"), &[fd])
 }
@@ -82,6 +90,7 @@ pub fn remove_fd(name: &str) {
 /// Descriptors systemd handed back from the FD store (or socket
 /// activation), by name. Each call after the first returns nothing: the
 /// environment variables are cleared so children don't inherit them.
+#[cfg(unix)]
 pub fn take_listen_fds() -> HashMap<String, OwnedFd> {
     let mut out = HashMap::new();
     let ours = std::env::var("LISTEN_PID").ok().and_then(|p| p.parse::<u32>().ok()) == Some(std::process::id());
