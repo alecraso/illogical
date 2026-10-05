@@ -381,3 +381,53 @@ fn a_conversation_in_a_panes_scope_goes_to_the_pane_then_to_its_block() {
     let cgroup = std::fs::read_to_string(format!("/proc/{}/cgroup", live["pid"])).unwrap();
     assert!(cgroup.contains(&format!("illogical-agent-{id}-")), "in its scope: {cgroup}");
 }
+
+/// #81, #83: a Code tab session of the desktop app, found where the app
+/// keeps its records on this OS (`~/Library/Application Support/Claude` on
+/// macOS, `~/.config/Claude` elsewhere). The record is a fixture with every
+/// field S20 saw (`fixtures/conversations/desktop/local_session.json`,
+/// values made up), since no Mac here has run a Code tab session yet. It
+/// lists as desktop with the app's title (when the transcript has none),
+/// and archiving it in the app hides it.
+#[test]
+fn a_desktop_session_lists_with_the_apps_title_from_where_the_app_keeps_it() {
+    let c = Claude::new("desktop");
+    // With no title of its own in the transcript (an ai-title would win).
+    let t = c.seed(ID, "heron", "claude-desktop");
+    let lines: Vec<String> = std::fs::read_to_string(&t)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.contains("ai-title"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&t, lines.concat()).unwrap();
+    let home = c.root.join("home");
+    let app = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/Claude")
+    } else {
+        home.join(".config/Claude")
+    };
+    let records = app.join("claude-code-sessions/acct/org");
+    std::fs::create_dir_all(&records).unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/conversations/desktop/local_session.json");
+    let record = std::fs::read_to_string(fixture)
+        .unwrap()
+        .replace("{CLI_SESSION_ID}", ID)
+        .replace("{CWD}", &c.work.display().to_string());
+    let file = records.join("local_6fcca836-5454-466c-934e-bb917fea76f9.json");
+    std::fs::write(&file, &record).unwrap();
+
+    let mut env = c.env();
+    env.push(("HOME", home.display().to_string()));
+    env.push(("XDG_CONFIG_HOME", home.join(".config").display().to_string()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let d = Daemon::child_env(&[], &env);
+    let list = conversations(&d, "");
+    let one = list.iter().find(|v| v["id"] == ID).unwrap_or_else(|| panic!("{list:#?}"));
+    assert_eq!(one["source"], "desktop", "{one}");
+    assert_eq!(one["title"], "Fix the flaky port test", "{one}");
+
+    std::fs::write(&file, record.replace("\"isArchived\": false", "\"isArchived\": true")).unwrap();
+    d.wait_for("the archived session to go", || conversations(&d, "").iter().all(|v| v["id"] != ID));
+}

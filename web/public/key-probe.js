@@ -177,16 +177,28 @@ async function report() {
   }
   $("rows").append(head, ...CHECKS.map((c) => row(c.what, before[c.key] || { ok: false, why: "not run" }, after[c.key])));
   const v = $("verdict");
+  let verdict;
   if (after.ed.ok && after.x.ok && after.both.ok) {
+    verdict = "keys";
     v.className = "yes";
     v.textContent = "Yes: device keys survive a reload here.";
   } else if (after.wrapped.ok) {
+    verdict = "wrapped";
     v.className = "no";
     v.textContent = "No: device keys don't survive a reload here. illogical's fallback (wrapped keys) does, so illogical keeps them wrapped.";
   } else {
+    verdict = "none";
     v.className = "no";
     v.textContent = "No, and the fallback doesn't work either: illogical can't keep a device key in this browser.";
   }
+  done({ verdict, browser: browser(), ua: navigator.userAgent, before, after });
+}
+
+/** For a test driving a real browser (safaridriver): the result, as JSON
+ * in #result and `data-verdict` on #verdict (keys, wrapped, none or error). */
+function done(result) {
+  $("result").textContent = JSON.stringify(result);
+  $("verdict").dataset.verdict = result.verdict;
 }
 
 $("browser").textContent = browser();
@@ -198,4 +210,5 @@ $("again").onclick = () => {
 (location.hash === "#reloaded" ? report() : store()).catch((e) => {
   $("verdict").className = "no";
   $("verdict").textContent = `The probe itself failed: ${(e && e.message) || e}`;
+  done({ verdict: "error", browser: browser(), ua: navigator.userAgent, error: String((e && e.message) || e) });
 });
