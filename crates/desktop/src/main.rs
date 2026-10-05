@@ -34,6 +34,9 @@
 //!   one (`profile.rs`).
 //! - A tray icon with *New window* and *This machine*; one instance (a
 //!   second launch opens a window in the first).
+//! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
+//!   the app is control's client only, so a window opens on sign-in or
+//!   control's page, and nothing local is installed, watched or offered.
 
 mod cloud;
 mod profile;
@@ -61,6 +64,9 @@ static WINDOWS: AtomicUsize = AtomicUsize::new(0);
 /// Why the daemon couldn't be reached, for the page that says so.
 static STATUS: Mutex<String> = Mutex::new(String::new());
 static ADDR: OnceLock<String> = OnceLock::new();
+
+/// No local daemon to reach or install: Windows until M59 (#222).
+pub const DAEMONLESS: bool = cfg!(windows);
 
 fn state_dir() -> Option<PathBuf> {
     std::env::var_os("ILLOGICAL_STATE_DIR")
@@ -225,7 +231,7 @@ fn ensure_daemon() -> Result<(), String> {
 /// - joined, not signed in: the app's sign-in page;
 /// - otherwise (or "just this machine"): the daemon's own page.
 fn target(app: &AppHandle) -> WebviewUrl {
-    if !reachable() || upgrade::pending().is_some() {
+    if !DAEMONLESS && (!reachable() || upgrade::pending().is_some()) {
         return WebviewUrl::App("index.html".into());
     }
     WebviewUrl::External(home(app))
@@ -275,8 +281,15 @@ fn open_outside(url: &tauri::Url) {
         }
         return;
     }
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    if let Err(e) = std::process::Command::new(opener).arg(url.as_str()).spawn() {
+    // Windows: the URL handler directly; `cmd /c start` would split it at `&`.
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32.exe");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    } else {
+        std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
+    };
+    if let Err(e) = cmd.arg(url.as_str()).spawn() {
         eprintln!("illogical: opening {url}: {e}");
     }
 }
@@ -350,6 +363,7 @@ fn focus_or_open(app: &AppHandle) {
 }
 
 /// From a notification: the pane, in a window of ours.
+#[cfg(not(windows))]
 fn open_pane(app: &AppHandle, pane: u32) {
     let url = page_at(&format!("/#pane={pane}"));
     match app.webview_windows().values().next() {
@@ -392,7 +406,12 @@ async fn retry(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), Strin
 // ---- notifications
 
 fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
+    // Windows: a local daemon's notifications come with it (M59).
+    #[cfg(windows)]
+    let _ = (app, pane, title, body);
+    #[cfg(not(windows))]
     let app = app.clone();
+    #[cfg(not(windows))]
     std::thread::spawn(move || {
         #[cfg(target_os = "linux")]
         {
@@ -549,16 +568,20 @@ fn main() {
                 }
             }
             profile::init(app.handle());
-            upgrade::check();
+            if !DAEMONLESS {
+                upgrade::check();
+            }
             open_window(app.handle(), target(app.handle()))?;
             let open = MenuItem::with_id(app, "open", "Open illogical", true, None::<&str>)?;
             let new = MenuItem::with_id(app, "new", "New window", true, None::<&str>)?;
             let this = MenuItem::with_id(app, "this", "This machine", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let items: Vec<&dyn tauri::menu::IsMenuItem<_>> =
+                if DAEMONLESS { vec![&open, &new, &quit] } else { vec![&open, &new, &this, &quit] };
             TrayIconBuilder::with_id("illogical")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("illogical")
-                .menu(&Menu::with_items(app, &[&open, &new, &this, &quit])?)
+                .menu(&Menu::with_items(app, &items)?)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => focus_or_open(app),
                     "new" => {
@@ -572,8 +595,10 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
-            let handle = app.handle().clone();
-            std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
+            if !DAEMONLESS {
+                let handle = app.handle().clone();
+                std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

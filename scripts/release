@@ -2,6 +2,7 @@
 # Release steps for .github/workflows/release.yml, with the gh CLI.
 #
 #   release check-version TAG      the tag matches the workspace version
+#   release check-desktop-version TAG   the tag matches the desktop app's
 #   release upload TAG FILE...     attach files to TAG's release (made if new)
 #   release sums TAG               SHA256SUMS of the release's tarballs
 #   release homebrew TAG           bump the formula in the Homebrew tap
@@ -34,6 +35,11 @@ case "${1:-}" in
     d=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
     [ "$d" = "$v" ] || { echo "crates/desktop is $d, not $v: bump it too" >&2; exit 1; }
     ;;
+  check-desktop-version)
+    # Without cargo or mise (the Windows runner builds only the app).
+    d=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
+    [ "$2" = "v$d" ] || { echo "tag $2 doesn't match crates/desktop's version $d" >&2; exit 1; }
+    ;;
   upload)
     tag=$2; shift 2
     ensure_release "$tag"
@@ -47,7 +53,7 @@ case "${1:-}" in
     n=$(find "$dir" -name "*.tar.gz" | wc -l | tr -d " ")
     [ "$n" = 3 ] || { echo "expected 3 tarballs, found $n" >&2; exit 1; }
     d=$(find "$dir" -name "illogical-desktop-*" | wc -l | tr -d " ")
-    [ "$d" = 3 ] || { echo "expected 3 desktop downloads (deb, AppImage, macOS zip), found $d" >&2; exit 1; }
+    [ "$d" = 4 ] || { echo "expected 4 desktop downloads (deb, AppImage, macOS zip, Windows installer), found $d" >&2; exit 1; }
     (cd "$dir" && sha256sum -- *.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
     ;;

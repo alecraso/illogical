@@ -1,7 +1,7 @@
 # A `v*` tag: build Linux (x86_64, arm64, static) and macOS (arm64)
 # binaries and the desktop app (a .deb and an AppImage for Linux x86_64, a
-# zipped app for macOS), attach them to the tag's release with SHA256SUMS,
-# and bump the Homebrew formula.
+# zipped app for macOS, an installer for Windows), attach them to the tag's
+# release with SHA256SUMS, and bump the Homebrew formula.
 name: release
 on:
   push:
@@ -43,8 +43,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # GitHub's runner: Jake has no Windows machine (M54, #217). The app only,
+  # as a cloud client: the daemon comes to Windows in M59.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/release check-desktop-version "$GITHUB_REF_NAME"
+      - run: cd crates/desktop && npx --yes @tauri-apps/cli@2 build --bundles nsis
+      - run: |
+          mkdir -p dist
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
+          cp "crates/desktop/target/release/bundle/nsis/illogical_${v}_x64-setup.exe" dist/illogical-desktop-windows-x86_64-setup.exe
+      - run: scripts/release upload "$GITHUB_REF_NAME" dist/illogical-desktop-windows-x86_64-setup.exe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   publish:
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     runs-on: [self-hosted, linux-x86_64]
     steps:
       - uses: actions/checkout@v4

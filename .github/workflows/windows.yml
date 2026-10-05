@@ -1,0 +1,32 @@
+# The Windows desktop app (M54, #217): lint it and build its installer on
+# GitHub's own runners. They're not our host runners, so pull requests can
+# run this too. The installer is kept as an artifact for testing in the VM.
+name: windows
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: crates/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/desktop
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: npx --yes @tauri-apps/cli@2 build --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: illogical-desktop-windows-x86_64
+          path: crates/desktop/target/release/bundle/nsis/*-setup.exe

@@ -42,6 +42,10 @@
   const $ = (id) => document.getElementById(id);
   invoke("cloud_status").then((s) => {
     if (s.control) $("who").textContent = `${s.name} · ${s.control}`;
+    if (s.daemonless) {
+      $("lede").textContent = "Sign in, and this window reaches every machine in your account and your teams, end to end encrypted. Panes run on those machines: this computer can't run them yet.";
+      $("local").hidden = true;
+    }
     if (s.auto) $("go").click();
   });
   $("go").onclick = async () => {
