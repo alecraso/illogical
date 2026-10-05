@@ -205,3 +205,26 @@ export const test = base.extend<{ parent: Page }, { stack: Stack }>({
 });
 
 export { expect };
+
+/** Keep a measurement (with the machine's load, which skews timings) in
+ * .run/results.jsonl, and print it. */
+export async function record(what: string, browser: string, data: Record<string, unknown>) {
+  const { appendFileSync, mkdirSync } = await import("node:fs");
+  const os = await import("node:os");
+  const line = { what, browser, at: new Date().toISOString(), load: os.loadavg()[0].toFixed(1), cores: os.cpus().length, ...data };
+  mkdirSync(".run", { recursive: true });
+  appendFileSync(".run/results.jsonl", JSON.stringify(line) + "\n");
+  console.log(JSON.stringify(line));
+}
+
+/** Open today's path for comparison: the daemon's own block site, framed
+ * by control's page, no worker. */
+export async function openDirect(page: Page, stack: Stack, o: { port?: number; ready?: string; path?: string } = {}): Promise<Opened> {
+  const block = `blk${nextBlock++}`;
+  await admin(stack, "/block", { id: block, port: o.port ?? stack.site });
+  await page.evaluate((a) => (window as any).s27.openDirect(a.block, a.port, a.path), { block, port: stack.directPort, path: o.path });
+  const origin = `https://b-${block}.direct.test:${stack.directPort}`;
+  const frame = await frameAt(page, origin);
+  await frame.locator(o.ready ?? "h1").first().waitFor({ timeout: 60_000 });
+  return { origin, frame, block };
+}
