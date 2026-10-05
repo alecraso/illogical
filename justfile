@@ -255,7 +255,7 @@ e2e-sandbox: static
     {{cargo}} build -p illogicald
     cd web && pnpm exec playwright test e2e/sandbox.spec.ts
 
-# The local Docker test stack (testnet/README.md): up|test|break|down [profile] [claim...].
+# The local Docker test stack (testnet/README.md): up|test|break|measure|down [profile] [claim...].
 # The control profile builds what it runs: the static binaries for Docker's
 # architecture (unless ILLOGICAL_TESTNET_BINARIES names others) and the CLI.
 testnet cmd="test" profile="ssh" *claims:
@@ -273,9 +273,57 @@ testnet cmd="test" profile="ssh" *claims:
       up) testnet/up.sh {{profile}} ;;
       test) testnet/test.sh {{profile}} {{claims}} ;;
       break) testnet/test.sh {{profile}} --break ;;
+      measure) testnet/measure-{{profile}}.sh {{claims}} ;;
       down) testnet/down.sh ;;
-      *) echo "usage: just testnet up|test|break|down [profile] [claim...]" >&2; exit 2 ;;
+      *) echo "usage: just testnet up|test|break|measure|down [profile] [claim...]" >&2; exit 2 ;;
     esac
+
+# #17 on two Docker machines, one dropping off the network (testnet/hosts/README.md).
+testnet-hosts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    if ! docker info >/dev/null 2>&1; then testnet/hosts/net.sh check; exit $?; fi
+    a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
+    just static "$a"
+    {{cargo}} build -p illogicald
+    cd web && ILLOGICAL_TESTNET_HOSTS=1 pnpm exec playwright test e2e/testnet-hosts.spec.ts
+
+# M28 for real: VS Code over Remote-SSH into a Docker box (testnet/editors/README.md).
+testnet-editors:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    if ! docker info >/dev/null 2>&1; then testnet/editors/box.sh check; exit $?; fi
+    a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
+    just static "$a"
+    {{cargo}} build -p illogicald
+    cd web
+    # Electron needs a display: a virtual one where there's none (Linux CI).
+    x=(); if [ "$(uname -s)" = Linux ] && [ -z "${DISPLAY:-}" ]; then x=(xvfb-run -a); fi
+    ILLOGICAL_TESTNET_EDITORS=1 ${x[@]+"${x[@]}"} pnpm exec playwright test e2e/editor-remote-ssh.spec.ts
+
+# Real Forgejo and GitLab in Docker (testnet/forges/README.md): up|test|down [forgejo|gitlab|all].
+forges cmd="test" forge="forgejo":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{cmd}}" in
+      up) testnet/forges/up.sh {{forge}} ;;
+      test) testnet/forges/test.sh {{forge}} ;;
+      down) testnet/forges/down.sh {{forge}} ;;
+      *) echo "usage: just forges up|test|down [forgejo|gitlab|all]" >&2; exit 2 ;;
+    esac
+
+# macOS checks in a throwaway tart VM (testnet/macos/README.md):
+# `just macos launchd`, `just macos safari`, or up|down|ssh for the VM.
+macos cmd="launchd" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{cmd}}" in
+      up|down|ssh|ip|push|restart) exec testnet/macos/vm.sh {{cmd}} {{args}} ;;
+    esac
+    {{cargo}} build -p illogicald -p illogical -p illogical-control
+    exec testnet/macos/test.sh {{cmd}} {{args}}
 
 # What CI runs.
 check: test

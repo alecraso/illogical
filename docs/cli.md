@@ -8,6 +8,8 @@ illogical ls                                  # panes, what they're running, who
 illogical run -- make test                    # in a new tab; prints its pane (%N)
 illogical run --wait -- cargo build           # and exits with its exit code
 illogical send %3 'git status' -e             # type a line and press Enter
+illogical send %4 --wait 'fix the test'       # prompt the agent there and wait for its turn (exit 0 done,
+                                              #   2 it asks for you, 3 stalled: nothing started)
 illogical keys %3 C-c Up Enter                # named keys
 illogical wait %3 --command-end               # exit code of what that started
 illogical wait %3 --match 'listening on' --timeout 30
@@ -41,6 +43,7 @@ illogical ide                                 # illogicald as Claude Code's IDE:
 illogical ide --diffs "Visual Studio Code"    # send Claude Code's diffs to that IDE instead (illogical: back)
 illogical shell-env [--refresh]               # the PATH blocks that run your tools get (your shell's; --refresh: read it again)
 illogical describe %4                         # any block: type, place, state
+illogical describe %4 --detection             # how its agent's screen reads: each rule, what it saw, which fired
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
                                               #   --acp CMD, --vm, --machine m3, --model haiku,
@@ -82,6 +85,8 @@ illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused 
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
 illogical call %5 approve                     # …or '{"option":"always"}'; deny '{"reason":"…"}'; cancel
+illogical call %5 approve '{"option":"always","scope":"cwd","prefix":"cargo"}'  # a standing rule (or "everywhere")
+illogical rules                               # standing rules on this machine (--forget N, --forget-all)
 illogical call %5 send '{"text":"and then?"}' # the next message (queued while it works)
 illogical wait %5 --needs-input               # a question: printed as JSON…
 illogical call %5 answer '{"question_0":"Red","question_1":["A","B"]}'  # …answered (decline: skip it)
@@ -105,6 +110,9 @@ illogical hosts token sbx                     # a dial-out host's token (prints 
 illogical hosts revoke sbx                    # …revoked, and its connection dropped
 illogical share %3 --ttl 2h                   # a read-only link to a pane
 illogical shares                              # links that still work; shares revoke ID
+illogical share --guest %3 --name sam          # an ssh command for someone with only OpenSSH (read-only)
+illogical share --guest %3 --rw --addr box.lan  # ...who may type; --reusable for more than one login
+illogical guests                              # ssh invites that still work; guests revoke ID
 illogical search 'panic' --synced sbx         # a host's synced history (all: every host)
 illogical tail %4 --synced sbx --text         # one of its panes, after it's gone
 illogical synced                              # hosts whose history is kept here
@@ -174,6 +182,7 @@ The tools:
 | `open_port` | A browser block on a port of a pane's machine, beside it | no |
 | `open_app` | One of the user's studio apps as an app block, beside a pane; without `app`, their apps | no |
 | `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt; `as_fountain` (Claude Code): wear one of the user's Fountain agents here | no |
+| `prompt_agent` | A prompt to an agent (an agent block, or Claude Code or Codex in a terminal), waited through in one call: `done`, `needs_input` with its question, or `stalled` with its screen's last lines when nothing starts within 5 seconds. An agent waiting on someone isn't typed at (`answering` to answer it) | no |
 | `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
 | `list_conversations` | Claude Code conversations here (a terminal's, the desktop app's): `query`, `cwd`, `live`, `all` | yes |
 | `open_conversation` | One as an agent block beside a pane; `then`: `continue` or `fork` | no |

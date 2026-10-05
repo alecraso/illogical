@@ -14,6 +14,7 @@ import { pickApp } from "./apps";
 import { openPicker } from "./picker";
 import { agentNotifyItems, notificationItems } from "./notify";
 import { openGettingStarted } from "./welcome";
+import { openRules } from "./rules";
 
 /** Chords, as menus and the palette show them. */
 export const PICKER_KEY = "Ctrl+Shift+G";
@@ -106,6 +107,18 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
             },
           } as MenuItem,
         ]),
+    // M54: an ssh command for a guest with only OpenSSH. The owner's.
+    ...(client.base.startsWith("/") || client.state?.roles
+      ? []
+      : [
+          {
+            label: "Invite over ssh…",
+            run: async () => {
+              const cmd = await client.guestInvite(id);
+              if (cmd) await askText("Read-only ssh invite to this pane, one login, for an hour (copied)", cmd);
+            },
+          } as MenuItem,
+        ]),
     ...driveItems(client, id),
     "separator",
     ...restartItems(client, id),
@@ -180,6 +193,8 @@ export function sessionItems(client: Client, session: SessionId, rename: () => v
     "separator",
     ...notificationItems(client),
     ...agentNotifyItems(client, session),
+    // #166: this machine's standing permission rules, the owner's.
+    ...(client.state?.roles ? [] : [{ label: "Permission rules…", run: () => openRules(client) } as MenuItem]),
     { label: "Getting started", run: () => openGettingStarted(undefined, client) },
     "separator",
     { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session }) },
@@ -256,6 +271,11 @@ function restartItems(client: Client, id: PaneId): MenuItem[] {
         const command = await askText("Run when restored", p.kind === "hook" ? p.command : "", "claude --continue");
         if (command?.trim()) set({ kind: "hook", command: command.trim() });
       },
+    },
+    {
+      label: info?.resumes ? `Resume ${short(info.resumes)}` : "Resume the agent's conversation",
+      checked: p.kind === "resume",
+      run: () => set({ kind: "resume" }),
     },
     { label: "Nothing (wait for Enter)", checked: p.kind === "none", run: () => set({ kind: "none" }) },
   ];

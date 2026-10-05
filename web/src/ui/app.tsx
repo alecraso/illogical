@@ -13,6 +13,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople } from "./people";
 import { directory } from "../hosts";
 import { SandboxesLayer } from "./sandboxes";
+import { RulesLayer } from "./rules";
 import { useWorkspaceDir } from "../blocks";
 import { AgentDialogLayer } from "./agent-dialog";
 import { ConversationsLayer } from "./conversations";
@@ -108,6 +109,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <ConversationsLayer />
       <AppsLayer />
       <SandboxesLayer />
+      <RulesLayer />
       <PickerLayer />
       <PaletteLayer />
       <GettingStartedLayer />

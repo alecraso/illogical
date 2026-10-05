@@ -87,16 +87,128 @@ taken before the daemon binds it, #66); `strays`, the cleanup above; and
 on it for agent block tests: a sessions dir for the fake agent, and helpers
 to open blocks and wait on them.
 
+Waiting on something that takes as long as the machine is busy (a flood
+of output, a build): stop it or wait for its end, never sleep a fixed time
+and hope, and make deadlines failure limits that are generous (tens of
+seconds) rather than waits. A reader that has to keep up with a flood
+(the tmux client in `tmux.rs`) does as little per line as it can and lets
+its own timeouts expire while lines keep coming. `falling_behind_pauses_the_pane`
+failed under a load average of 30 because a fixed 40 MB flood was still
+running after `continue`; it now runs `yes` until the pane pauses, sends
+^C and waits for the prompt in a capture.
+
+Standing permission rules (#166) are tested in `agents.rs`
+(`standing_rules_outlive_the_block_that_made_them`: a `cwd` rule answers a
+new block below that directory and not one elsewhere, an `everywhere`
+prefix rule allows its command with arguments but not `cargo testify` or
+`cargo test; rm`, the rules survive a restart in `rules.json`, and
+forgetting one brings the card back), in `rules.rs`'s unit tests (matching,
+prefixes, the file) and in `web/e2e/agents.spec.ts` (*From now on…* on a
+card, a second block that never asks, and *Permission rules…* in the
+session menu forgetting it). The browser test clears the rules first: the
+suite's daemon keeps them between specs.
+
 The fakes:
 
 - `fake_acp.py`: an ACP agent, standing in for Claude Code's adapter and
   for `fountain`.
 - `fake_claude.py`: Claude Code talking to its IDE (M28), as S17 recorded it.
+- `crates/vt/fixtures/agents/replay.py`: Claude Code or Codex in a
+  terminal, played back from a recording ([below](#the-replay-agent)).
 - `fake_mcp.py`: an MCP server whose tools ask the user through elicitation.
 - `fake_code_server.py`: code-server (M27).
 - Fakes inside the test files themselves: Fountain's API (`fountain.rs`),
   control's relay socket and GitHub App token endpoint, GitHub and Forgejo
   with stand-in `gh` and `tea` (`forge_live.rs`), `systemctl` and `sudo`.
+
+### Guest ssh (M54)
+
+`crates/daemon/tests/guest_ssh.rs` runs the system OpenSSH client
+(`/usr/bin/ssh`, 8.5 or later for `KnownHostsCommand`) against a dev
+daemon started with `--guest-ssh 127.0.0.1:0 --guest-ssh-host 127.0.0.1`.
+Each guest is the command the daemon printed, run by `sh` on a
+pseudo-terminal that is its controlling terminal (so a resize reaches ssh as
+SIGWINCH), with `-F /dev/null -o BatchMode=yes` added so the runner's own
+ssh config and agent stay out of it. They check:
+
+- a read-only guest sees the screen and live output, its typing never
+  reaches the pane, and a single-use token can't log in twice;
+- a read-write guest types under its label (`/api/panes/N/drivers`),
+  drives, sizes the pane (`stty size`), and holds off a second guest on the
+  same reusable invite;
+- revoking cuts a live guest off within a second or two, expiry ends a live
+  session and refuses new logins, and closing the pane ends the session and
+  its invite;
+- a wrong token gets `Permission denied` with no prompt; a different host
+  key in the command fails host-key verification before the token is sent
+  (the invite stays unspent); `exec` is refused; the port closes once the
+  last invite is gone;
+- `illogical share --guest` prints a command that works, and `illogical
+  guests` lists and revokes.
+
+Run them with `cargo test -p illogicald --test guest_ssh`. They skip,
+saying so, if there's no `ssh` on PATH. The relay path through control is a
+skipped stub until it's built (PLAN.md, M54). `web/e2e/guest-ssh.spec.ts`
+covers *Invite over ssh…* in the pane menu, on desktop and phone viewports,
+with the same system ssh (`pnpm exec playwright test e2e/guest-ssh.spec.ts`
+in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
+
+## The replay agent
+
+Agents in terminal panes (screen detection #145, `send --wait` #147,
+resuming a conversation #146) are tested against recordings of real
+sessions, played back in a pane with their timing.
+
+Recordings live in `crates/vt/fixtures/agents/*.cast`: asciicast v2, a
+JSON header line and then `[seconds, kind, text]` events, where `o` is
+output, `i` is what was typed, and `m` is a marker naming the state the
+screen shows at that point (`working`, `blocked`, `idle`).
+`record.py claude_turn` makes one from the real `claude` (it needs
+`pip install pyte`): a pty at 80x24, a new scratch git repo under `/tmp`,
+none of your settings or hooks (`--setting-sources project`), an
+`illogical` on `PATH` that does nothing, typing each step once the screen
+shows what it waits for. It replaces `$HOME`, your user name and emails,
+and removes the conversation it left in your Claude Code. Read the result
+before checking it in. Codex isn't installed where these were made, so
+`record.py codex_turn` draws Codex from the captured screens in
+`fixtures/screens/` and says so in its header.
+
+`replay.py` plays one. A test installs it with `Replay::install(dir,
+"claude", "claude_turn")` (`crates/daemon/tests/replay/`), which copies it
+to `dir/claude` with the recording beside it as `dir/claude.cast`, so the
+daemon sees a program named `claude` and reads its screen as Claude
+Code's (`$ILLOGICAL_REPLAY` names another recording). Where the recording
+has input it waits for the same last key (Enter, Ctrl-O, an arrow), so the
+test drives it with `send` and `keys` as a person would. Each marker it
+reaches goes to `dir/claude.log`, and `Replay::reached("m blocked", 2)`
+waits for one rather than sleeping. `$ILLOGICAL_REPLAY_SPEED` plays it
+faster, and `$ILLOGICAL_REPLAY_PAUSE=working=6` stops six silent seconds at
+the first `working` marker (a long think).
+
+It is also the stub `claude` for #146. Every start appends its argv,
+working directory and pane to `dir/claude.argv` (`Replay::starts()`), so a
+test sees `["--resume", "<id>"]` arrive in the right pane. With
+`$ILLOGICAL_REPLAY_CONFIG` set to the test's own `CLAUDE_CONFIG_DIR`, it
+keeps Claude Code's records of a conversation there:
+`sessions/<pid>.json` while it runs, and a transcript under `projects/`.
+The id is `--resume`'s, else `$ILLOGICAL_REPLAY_SESSION`, else a new one,
+and `--resume` with no transcript fails as Claude Code does. It never
+writes to the real `CLAUDE_CONFIG_DIR`.
+
+Where they're used: `crates/vt/src/detect/tests.rs` plays each recording
+through the terminal and checks every marker; `agent_screens.rs` runs them
+in a live pane with no hooks; `prompt.rs` and `mcp.rs` prompt the replayed
+Claude Code and wait; `resume.rs` stops and starts the daemon the way a
+reboot does and checks each pane comes back in its own conversation, a
+deleted transcript comes back as a shell that says so, and a session id
+with shell metacharacters is never run.
+
+The same against the real Claude Code is the `screen` entry of
+`agents_real.rs` (`ILLOGICAL_REAL_AGENTS=screen`): no hooks, the approval
+read off the screen, a prompt waited through, and a restart that resumes
+the conversation. With `ANTHROPIC_API_KEY` set (CI's secret) it uses a
+`CLAUDE_CONFIG_DIR` of its own; without, your login. It skips unless
+asked.
 
 ## Fixtures
 
@@ -105,6 +217,8 @@ Recorded from real systems and checked in, so tests see real shapes:
 | Where | What | Re-recording |
 |---|---|---|
 | `crates/vt/fixtures/` | raw PTY output of scripted sessions (`.bin`) and their sizes and resizes (`.json`) | `just fixtures [names]` (`record.py`) |
+| `crates/vt/fixtures/screens/` | Claude Code and Codex screens, the title on the first line | by hand, from a real terminal or a recording |
+| `crates/vt/fixtures/agents/` | Claude Code and Codex sessions with their timing, for the replay agent | `crates/vt/fixtures/agents/record.py NAME` |
 | `crates/daemon/tests/fixtures/github`, `gitlab`, `forgejo` | API responses for real PRs and issues (from S23) | by hand, as in `spikes/s23-forge/` |
 | `crates/daemon/tests/fixtures/conversations/` | Claude Code transcripts, one per shape (S20) | by hand, as in `spikes/s20-conversations/` |
 | `crates/daemon/tests/fixtures/s13-*`, `s18-*` | Claude Code hook payloads | by hand |
@@ -234,20 +348,192 @@ Run one with `cd web && E2E_PORT=<port> pnpm exec playwright test
 e2e/<spec>`; `editors.spec.ts` needs code-server, which its first test
 downloads.
 
+## A fresh Mac: the tart VM harness
+
+macOS checks that need a whole Mac (a user who never logged in to the GUI,
+real Safari, iTerm2, the desktop app) run in a throwaway macOS VM made with
+[tart](https://tart.run), driven over ssh. No person and no window on the
+host: everything with a GUI happens inside the VM, whose image logs `admin`
+in to its own GUI session at boot. The scripts are in `testnet/macos/`.
+
+```sh
+just macos launchd           # launchd with no GUI session (S28, M52)
+just macos safari            # web/safari against real Safari (#94, #137)
+just macos iterm2            # M5 (tmux -CC) and M32 (OSC 52) in iTerm2
+just macos app               # the desktop app in cloud mode (#178)
+just macos up | ssh CMD | down   # the VM by hand
+```
+
+`just macos <test>` builds the debug binaries first, then runs
+`testnet/macos/test.sh <test>`. Each test clones a fresh VM, runs, and
+deletes the clone (`KEEP=1` leaves it running for a look). `BREAK=1` breaks
+what each check is about, and every check must then fail, as in the
+testnet's claims.
+
+### Setup
+
+- **tart.** `brew install cirruslabs/cli/tart`, or, while that tap's
+  formula fails on current Homebrew, `tart.tar.gz` from its GitHub release
+  (`tart.app` into `~/Applications`, `tart` on `PATH`). Without tart every
+  script prints `SKIP: tart is not installed` and exits 0.
+- **The base image.** `vm.sh up` makes a local VM `illogical-macos-base`
+  from `ghcr.io/cirruslabs/macos-tahoe-base:latest` (macOS 26.6, Safari,
+  the Command Line Tools, no Xcode; `ILLOGICAL_MACOS_IMAGE` picks another),
+  then empties tart's OCI cache (`tart prune --entries=caches`), so the disk
+  holds one copy, about 30 GB, not two. The base is never booted.
+- **Clones.** Every test VM is an APFS clone of the base (`tart clone`,
+  nearly free on disk), booted headless (`tart run --no-graphics`). `up`
+  puts the harness key (`testnet/macos/.state/`, ignored by git) into
+  admin's `authorized_keys` through the tart guest agent; after that it's
+  plain ssh as `admin` (whose password is `admin`, with passwordless sudo).
+  `down` deletes the clone. Keep it to the base plus one running clone:
+  macOS allows two VMs per host, and each clone grows as it's used.
+
+### The tests
+
+| Test | Checks | How |
+|---|---|---|
+| `launchd` (`install`, `logout`, `reboot`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, installs the daemon and starts a pane; the daemon and pane outlive the ssh session; after `tart stop` and `run`, with nobody logged in as them, the daemon is back with its pane. | `ILLOGICAL_MACOS_INSTALL` picks the install: `product` (`illogicald install`, the default), `background` (the plist bootstrapped into `user/UID` with `LimitLoadToSessionType` Background, no sudo) or `system` (a LaunchDaemon with `UserName`, sudo once). |
+| `safari` | `/key-probe.html` puts its verdict in the DOM (`data-verdict` on `#verdict`: `keys`, `wrapped` or `none`, and JSON in `#result`), and it's `keys` or `wrapped`. A signed-out invitee opens a presigned invite, signs in through GitHub and joins in one click; the owner's Chrome sees them in the roster. | `web/safari/safari.spec.ts` with a small WebDriver client (`web/safari/webdriver.ts`). safaridriver runs in the VM (`sudo safaridriver --enable` once); its port comes to the host over ssh, and control and the fake GitHub, run on the host, are forwarded to the same ports on the VM's loopback. `SAFARIDRIVER_URL` alone runs the spec against any safaridriver. |
+| `iterm2` (`attach`, `type`, `output`, `split`, `tab`, `osc52`) | iTerm2 runs `illogical tmux -CC` and opens a native window for the daemon's tab; text written there runs in the pane; the pane's output shows in iTerm2; a split in iTerm2 adds a pane; a daemon tab becomes an iTerm2 tab. `illogical tui` in iTerm2 copies a line in copy mode, and `pbpaste` has it. | iTerm2's latest stable zip, driven by AppleScript over ssh. The VM's TCC database (SIP is off in the image) gets Apple Events for sshd and osascript to iTerm2 before it starts, so nothing asks. |
+| `app` (`signin`, `approve`, `machines`, `reach`) | The release's app (`ILLOGICAL_MACOS_APP_ZIP` for another) signs in to control through the browser hand-over, is approved as a new device, lists every machine on the account (one on the host, and the Mac's own daemon once it joins), and keystrokes in its terminal run in that machine's pane. | `testnet/macos/app-cloud.ts`. Control, the fake GitHub and the host's machine run here; `web/fixtures/device.ts` is the person: it reads the app's `/#app=` page from Safari (AppleScript), allows it, hands the grant to the app's loopback port, and approves the app. The app's window is read through accessibility (JXA and System Events). |
+
+What they found (2026-10-05, macOS 26.6.2 in the VM):
+
+- **launchd:** `illogicald install` over ssh with no GUI session fails:
+  there's no `gui/UID` domain until the user logs in to the GUI
+  (`Bootstrap failed: 125: Domain does not support specified action`). A
+  Background agent in `user/UID` installs without sudo and survives the
+  logout, but not a restart: nothing loads it until that user logs in to
+  the GUI again, and an ssh login doesn't. A LaunchDaemon with `UserName`
+  survives both, with its panes restored. So `launchd` fails today in its
+  default mode, `background` passes `install` and `logout`, and `system`
+  passes all three.
+- **Safari 26.6.2:** Ed25519 keys survive a reload, X25519 keys come back
+  from IndexedDB as null, and the wrapped fallback works (verdict
+  `wrapped`), as in Playwright's WebKit. The presigned invite passes.
+- **iTerm2 3.7.3:** every check passes. In copy mode, `[` `o` (a command's
+  output by its marks) found nothing in the TUI over macOS's bash 3.2; the
+  test copies a line instead.
+- **The app (0.17.0):** every check passes.
+
+### On the macos-arm64 runner
+
+The same scripts run on the self-hosted runner (jake-mini) once tart is
+installed there: Apple silicon runs the VMs without nesting. A job would
+run `just macos launchd`, `safari`, `iterm2` and `app` in turn (never two
+at once), and needs about 35 GB free for the base and one clone. It should
+make the base once and keep it between runs (the prune leaves no cache
+behind), and always end with `vm.sh down`. Not tried there yet: tart
+needs the runner's user to be able to use Virtualization.framework from
+the runner service. The Safari spec could also run on the runner's own
+Safari, without a VM, after a one-time `sudo safaridriver --enable` there
+and with a GUI login on the runner.
+
+### What isn't automated
+
+- **The iOS Simulator** (`safari:useSimulator`): the base image has no
+  Xcode. cirruslabs' Xcode images have it, at roughly twice the disk; the
+  spec would need only that capability. Not run.
+- **A physical iPhone's Safari and keychain.** The Simulator approximates
+  it; nothing drives a real phone.
+- **The Claude desktop app signed in (#81, #83).** It needs a real
+  Anthropic account, so its Code tab session records are a fixture
+  (`crates/daemon/tests/fixtures/conversations/desktop/`, made up from the
+  fields S20 saw) and `conversations.rs` checks the daemon reads them where
+  the app keeps them on each OS. What the app shows after illogical
+  continues or forks one of its sessions needs the signed-in app.
+- **Gatekeeper on a downloaded app.** The test fetches the zip with curl,
+  which sets no quarantine flag, so the first-launch prompt a browser
+  download gets isn't covered (the app is ad hoc signed until #177).
+- **iTerm2 beyond tmux's basics:** dragging dividers, resizing windows,
+  detach and reattach from development.md's script aren't in `iterm2` yet;
+  they can be, with the same AppleScript.
+
 ## Tests that need something extra
 
 These skip, saying why, unless what they need is there:
 
 | Test | Needs |
 |---|---|
-| `agents_real.rs`, `swarm-real.spec.ts` | `ILLOGICAL_REAL_AGENTS=claude,codex,...` (real agents; costs a few cents) |
+| `agents_real.rs`, `swarm-real.spec.ts` | `ILLOGICAL_REAL_AGENTS=claude,codex,screen,...` (real agents; costs a few cents); `screen` uses `ANTHROPIC_API_KEY` when it's set |
 | `resident.rs`, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token and `just static` |
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
-| `just testnet test ssh`, `ssh.rs` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
+| `just testnet test ssh` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
 | `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries |
 | `mcp.spec.ts`, "the real Claude Code runs a build over MCP" | `ANTHROPIC_API_KEY` and `claude` on PATH (costs a few cents) |
 | `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" | `ILLOGICAL_TESTNET_PHONES=1`, Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
+| `just macos launchd`, `safari`, `iterm2`, `app` | tart on an Apple silicon Mac, about 35 GB free, and network for the image, iTerm2 and the app's zip |
+
+## The test stack
+
+[`testnet/`](../testnet/README.md) is a Docker Compose stack, one profile per
+network shape, for what one host's loopback can't show. Its README has the
+profiles, the claims each one checks (and how `BREAK=1` breaks them), and
+how to run two stacks side by side (`COMPOSE_PROJECT_NAME`). Tests built on
+it:
+
+| What | Where | Run |
+|---|---|---|
+| M51: `--ssh` installs illogical on a bare box behind a bastion, runs and captures panes, forwards the agent; a `git push` from a pane reaches the stack's git server with the forwarded agent and is refused without it | `crates/daemon/tests/ssh.rs` | `just testnet up ssh`, `just static <arch>`, then `cargo test -p illogicald --test ssh` |
+| #26: a lingering daemon on box-systemd survives `docker restart` (twice): up with nobody logged in, layout, directories and coloured scrollback back with `── restored`, every pane by its policy, the browser and agent blocks, "saved for shutdown" and "restored" in the journal | `crates/daemon/tests/reboot.rs` | as above, plus `cd web && pnpm install`; `cargo test -p illogicald --test reboot` |
+| A headless web client attached across that restart reconnects by itself, without reloading | `web/reconnect-watch.ts`, driven by `reboot.rs` | (in `reboot.rs`) |
+| S28: the same daemon over `--ssh` and over a tailnet (headscale and two Tailscale nodes), timed | `testnet/measure-tailnet.sh` | `just testnet up tailnet`, `just static <arch>`, `just testnet measure tailnet` |
+
+These require Docker: without it they fail, and they bring the stack's
+profile up themselves when it isn't. They also need `just static <arch>`
+(`reboot.rs` also node and Playwright's Chromium in `web/`), and fail saying
+so without it. `ILLOGICAL_SKIP_DOCKER=1` is the only way to skip them, and
+they print that nothing ran. They recreate the boxes they use, so give each
+worktree its own stack (`COMPOSE_PROJECT_NAME` and
+`ILLOGICAL_TESTNET_SSH_PORT`). The stack isn't in CI yet (#200).
+
+## Docker stacks: real forges, two hosts, VS Code over Remote-SSH
+
+These need Docker. Without it they fail (non-zero exit); only
+`ILLOGICAL_SKIP_DOCKER=1` skips them, and then they print that nothing
+ran. They aren't part of `just check`: each has its own recipe.
+
+| What | Run | Details |
+|---|---|---|
+| Forgejo and GitLab CE with two bot users and webhooks (#93, M36-M40) | `just forges up forgejo && just forges test forgejo`, the same with `gitlab` (3-5 minutes and 4 GB to start), `just forges down` | [testnet/forges/README.md](../testnet/forges/README.md) |
+| #17 on two machines: home's layout holds panes on `mac`, which drops off the network (`docker network disconnect`) and comes back | `just testnet-hosts` | [testnet/hosts/README.md](../testnet/hosts/README.md) |
+| M28 in real VS Code (downloaded by `@vscode/test-electron`) over Microsoft's Remote-SSH into a box running illogicald: a phone follows the cursor, a breakpoint is a card it continues, an edit is accepted from its rail | `just testnet-editors` (downloads VS Code, its server and Remote-SSH; on Linux it runs under `xvfb-run`) | [testnet/editors/README.md](../testnet/editors/README.md) |
+
+The forge tests are `crates/daemon/tests/forges_real.rs`, marked
+`#[ignore]` so `cargo test` doesn't need the containers;
+`testnet/forges/test.sh` runs them with `--ignored` against the stack
+`up.sh` started, and they fail if it isn't there. The other two are
+Playwright specs (`web/e2e/testnet-hosts.spec.ts`,
+`web/e2e/editor-remote-ssh.spec.ts`) that bring their stack up and down
+themselves; `just e2e` lists them as skipped unless their recipe's
+variable (`ILLOGICAL_TESTNET_HOSTS=1`, `ILLOGICAL_TESTNET_EDITORS=1`) is
+set.
+
+### The nightly job against github.com
+
+`.github/workflows/forges-nightly.yml` runs every night and on demand
+(never on pull requests): the Forgejo and GitLab tests above, and
+`crates/daemon/tests/forges_github_real.rs` against github.com, which
+covers #93's GitHub boxes (a review approved from the rail, a red Actions
+check rerun, a box with no `gh` login reading through the App's
+installation token and refusing writes, and the App's webhook poking the
+block). Without its secrets the GitHub job passes with a notice naming
+each one that's missing, and each test prints `SKIP <test>: not set: ...`.
+It needs, in the repository's Actions settings:
+
+| Name | Kind | What |
+|---|---|---|
+| `ILLOGICAL_GH_TEST_REPO` | variable | `org/repo` in a test organization: public, both bots can write, with `.github/workflows/illogical-red.yml` on its default branch (a job that fails on pushes to `red-*`) |
+| `ILLOGICAL_GH_AUTHOR_TOKEN` | secret | the first bot's token: contents, pull requests, issues and actions, read and write, on that repository |
+| `ILLOGICAL_GH_REVIEWER_TOKEN` | secret | the second bot's token, the same |
+| `ILLOGICAL_GH_APP_ID` | variable | a test copy of illogical's GitHub App, installed on the test organization, with pull request and issue comment events |
+| `ILLOGICAL_GH_APP_PRIVATE_KEY` | secret | that App's private key (PEM) |
+
+Control is stood in for in that test, and the App's deliveries are read
+back through GitHub's API (a runner has no public URL), so control
+checking GitHub's signature on a real delivery is not covered there.
 
 ## By hand
 
@@ -255,15 +541,17 @@ These skip, saying why, unless what they need is there:
 - `just fake-fleet`: three throwaway daemons with scripted work on
   7730-7732, for the swarm.
 - `just screenshots`: the images in `site/img/`, from a scripted session.
-- iTerm2's tmux mode: [development.md](development.md#testing-iterm2).
+- iTerm2's tmux mode beyond what `just macos iterm2` checks (dividers,
+  resizing, detach and reattach): [development.md](development.md#testing-iterm2).
 
 ## Planned
 
 Tracked in #200:
 
-- More `testnet/` profiles: `ssh` (boxes behind a bastion) and `control`
-  (control with its relay, reached by boxes that only dial out) exist;
-  Fountain and Forgejo don't yet.
+- More `testnet/` profiles: `ssh` (boxes behind a bastion), `control`
+  (control with its relay, reached by boxes that only dial out) and
+  `tailnet` (headscale and two Tailscale nodes) exist, and Forgejo and
+  GitLab are in `testnet/forges` (above); Fountain doesn't have one yet.
 - Client fixtures: recorded daemon sessions a client can replay against,
   and a daemon check against previous releases' fixtures.
 - The Playwright suite in CI.

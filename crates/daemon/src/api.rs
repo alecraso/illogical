@@ -23,7 +23,10 @@ use axum::{
 use futures_util::stream::{self, StreamExt};
 use illogical_proto::{
     Driver, EventKind, Frame, FrameKind, PaneId, SessionId,
-    api::{AttentionRequest, KeysRequest, MouseRequest, Process, RunRequest, RunResponse, SendRequest, WaitResult},
+    api::{
+        AttentionRequest, KeysRequest, MouseRequest, Process, PromptRequest, PromptResult, RunRequest, RunResponse,
+        SendRequest, WaitResult,
+    },
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -47,6 +50,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes", get(panes))
         .route("/api/run", post(run))
         .route("/api/panes/{id}/send", post(send))
+        .route("/api/panes/{id}/prompt", post(prompt_))
         .route("/api/panes/{id}/keys", post(keys_))
         .route("/api/panes/{id}/mouse", post(mouse))
         .route("/api/panes/{id}/attention", post(attention))
@@ -61,12 +65,15 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/close", post(close))
         .route("/api/panes/{id}/capture", get(capture))
         .route("/api/panes/{id}/process", get(process))
+        .route("/api/panes/{id}/detection", get(detection))
         .route("/api/panes/{id}/tail", get(tail))
         .route("/api/panes/{id}/wait", get(wait))
         .route("/api/panes/{id}/export.cast", get(export))
         .route("/api/panes/{id}/drivers", get(drivers))
         .route("/api/panes/{id}/diff", get(diff_of))
         .route("/api/ide", get(ide_get).put(ide_set))
+        .route("/api/rules", get(rules_get).delete(rules_forget_all))
+        .route("/api/rules/{index}", axum::routing::delete(rules_forget))
         .route("/api/hosts/self/shell-env", get(shell_env_get))
         .route("/api/hosts/self/shell-env/refresh", post(shell_env_refresh))
         .route("/api/editors", get(editors))
@@ -192,6 +199,182 @@ async fn send(
     }
     app.mux.send(Cmd::Input { client: None, pane: id, data });
     Ok(Json(serde_json::json!({})))
+}
+
+/// `illogical send %N --wait`: prompt the agent there and wait for its
+/// turn (#147).
+async fn prompt_(
+    State(app): AppState,
+    Path(id): Path<PaneId>,
+    Json(req): Json<PromptRequest>,
+) -> Res<Json<PromptResult>> {
+    let stall = secs(req.stall, STALL);
+    let limit = secs(req.timeout, Duration::from_secs(100));
+    match tokio::time::timeout(limit, prompt(&app, id, req.text, req.answering, stall, None)).await {
+        Ok(Ok(r)) => Ok(Json(r)),
+        Ok(Err(e)) => Err(bad(e)),
+        Err(_) => Ok(Json(PromptResult::StillRunning)),
+    }
+}
+
+/// How long a prompted agent has to show any sign of work (#147).
+pub(crate) const STALL: Duration = Duration::from_secs(5);
+
+/// Seconds from a request, or a default.
+pub(crate) fn secs(s: Option<f64>, default: Duration) -> Duration {
+    s.filter(|s| s.is_finite() && *s >= 0.0).map(Duration::from_secs_f64).unwrap_or(default)
+}
+
+/// Prompt the agent in a pane (a terminal running one, or an agent block)
+/// and wait for its turn: `Done` when it ends, `NeedsInput` when it asks
+/// for someone, `Stalled` when nothing shows it working within `stall` (no
+/// agent there, the prompt not submitted, the agent gone). The wait starts
+/// before anything is typed, so a quick turn can't slip past it. An agent
+/// already waiting on someone isn't typed at, unless `answering`: typing
+/// into its approval dialog would answer it.
+pub(crate) async fn prompt(
+    app: &App,
+    id: PaneId,
+    text: String,
+    answering: bool,
+    stall: Duration,
+    by: Option<String>,
+) -> Result<PromptResult, String> {
+    use illogical_proto::{Attention, BlockType, WorkKind};
+    let info = pane_info(app, id).await.ok_or_else(|| format!("no pane %{id}"))?;
+    let block = match info.kind {
+        BlockType::Terminal => None,
+        BlockType::Agent => Some(app.mux.api(|r| Api::Block(id, r)).await.flatten().ok_or(format!("no block %{id}"))?),
+        k => return Err(format!("%{id} is a {k:?} block, not an agent")),
+    };
+    if block.is_none() && info.work != Some(WorkKind::Agent) {
+        let why = match &info.command {
+            Some(c) => format!("%{id} runs `{c}`, not an agent; nothing was typed"),
+            None => format!("%{id} is at its shell, with no agent running; nothing was typed"),
+        };
+        return Ok(PromptResult::Stalled { why, screen: screen(app, id).await });
+    }
+    // What it waits on: a terminal's question card, or an agent block's
+    // first question not yet opened (as `wait` finds it).
+    let question = |info: &illogical_proto::PaneInfo| {
+        let ask = info.ask.clone().or_else(|| {
+            let s = block.as_ref()?.state();
+            let a = s["asks"].as_array()?.iter().find(|a| a["accepted"] != true)?.clone();
+            serde_json::from_value::<illogical_proto::ask::Ask>(a).ok()
+        });
+        (info.reason.as_ref().map(|r| r.headline.clone()), ask.map(Box::new))
+    };
+    if info.attention == Attention::NeedsInput && !answering {
+        let (question, ask) = question(&info);
+        return Ok(PromptResult::Blocked { question, ask });
+    }
+    // Listen first, then type.
+    let mut events = app.mux.events();
+    // Typing alone makes a terminal pane "working" (someone's busy in
+    // it), so where its agent's screen can be read, that says when the
+    // agent starts instead.
+    let reads_screen = block.is_none() && screen_state(app, id).await.is_some();
+    let started_now = async |attention: Attention| {
+        if reads_screen {
+            matches!(screen_state(app, id).await.flatten(), Some("working" | "blocked"))
+        } else {
+            attention == Attention::Working
+        }
+    };
+    let mut started = started_now(info.attention).await;
+    match &block {
+        Some(b) => {
+            b.call_by("send", serde_json::json!({ "text": text }), by.as_deref()).await?;
+        }
+        None => {
+            let p = pane(app, id).await.map_err(|e| e.1)?;
+            p.mark_input();
+            let input = |data: Vec<u8>| match &by {
+                Some(by) => Cmd::Api(Api::InputBy(id, data, by.clone())),
+                None => Cmd::Input { client: None, pane: id, data },
+            };
+            app.mux.send(input(text.into_bytes()));
+            // Enter on its own: in the same read as the text, an agent can
+            // take it for part of a paste and not submit.
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            app.mux.send(input(b"\r".to_vec()));
+        }
+    }
+    let stall_at = tokio::time::Instant::now() + stall;
+    let mut attention = info.attention;
+    loop {
+        let next = if started {
+            Some(events.recv().await)
+        } else {
+            if tokio::time::Instant::now() >= stall_at {
+                let why = format!("no sign of work within {}s of the prompt", stall.as_secs_f64());
+                return Ok(PromptResult::Stalled { why, screen: screen(app, id).await });
+            }
+            // Look at its screen again now and then: it can start working
+            // with its attention already "working" from the typing.
+            tokio::time::timeout(Duration::from_millis(100), events.recv()).await.ok()
+        };
+        let state = match next {
+            None => attention,
+            Some(Ok(e)) if e.pane != Some(id) => continue,
+            Some(Ok(e)) => match e.kind {
+                EventKind::Attention { state, .. } => state,
+                EventKind::Closed => return Err(format!("%{id} closed")),
+                EventKind::Exit { .. } if !started => {
+                    let why = "its program exited".to_owned();
+                    return Ok(PromptResult::Stalled { why, screen: screen(app, id).await });
+                }
+                _ => continue,
+            },
+            // Missed some: where it is now.
+            Some(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {
+                pane_info(app, id).await.ok_or_else(|| format!("%{id} closed"))?.attention
+            }
+            Some(Err(_)) => return Err("the daemon is shutting down".into()),
+        };
+        attention = state;
+        if state == Attention::NeedsInput {
+            let info = pane_info(app, id).await.ok_or_else(|| format!("%{id} closed"))?;
+            let (question, ask) = question(&info);
+            return Ok(PromptResult::NeedsInput { question, ask });
+        }
+        if !started {
+            started = started_now(state).await;
+        } else if matches!(state, Attention::Idle | Attention::Done) {
+            return Ok(PromptResult::Done);
+        }
+    }
+}
+
+/// What a terminal pane's agent screen was last read as (`working`,
+/// `blocked`, `idle`; `Some(None)` before its first reading), or `None`
+/// when no agent's screen is read there.
+async fn screen_state(app: &App, id: PaneId) -> Option<Option<&'static str>> {
+    let p = pane(app, id).await.ok()?;
+    tokio::task::spawn_blocking(move || p.detection()).await.ok().flatten().map(|d| d.shown)
+}
+
+async fn pane_info(app: &App, id: PaneId) -> Option<illogical_proto::PaneInfo> {
+    app.mux.api(Api::Panes).await.unwrap_or_default().into_iter().find(|p| p.info.id == id).map(|p| p.info)
+}
+
+/// The last lines of a pane's screen, for a caller to see why.
+async fn screen(app: &App, id: PaneId) -> String {
+    let Ok(p) = pane(app, id).await else {
+        return match app.mux.api(|r| Api::Block(id, r)).await.flatten() {
+            Some(b) => {
+                b.text().lines().rev().take(15).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")
+            }
+            None => String::new(),
+        };
+    };
+    let text = tokio::task::spawn_blocking(move || p.capture(CaptureFormat::Text, CaptureScope::Screen))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    lines[lines.len().saturating_sub(15)..].join("\n")
 }
 
 async fn keys_(
@@ -1195,6 +1378,20 @@ async fn process(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Proce
     }))
 }
 
+/// How the screen of the agent in a pane reads, rule by rule (#145,
+/// `illogical describe %N --detection`): `{agent: null, command}` when no
+/// agent's screen is read there.
+async fn detection(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+    let p = pane(&app, id).await?;
+    let (found, command) = tokio::task::spawn_blocking(move || (p.detection(), p.command()))
+        .await
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(match found {
+        Some(d) => serde_json::to_value(d).unwrap_or_default(),
+        None => serde_json::json!({ "agent": null, "command": command }),
+    }))
+}
+
 #[derive(Deserialize)]
 struct TailQuery {
     /// An offset, or `last-command`. Default: the last 64 KB.
@@ -1899,6 +2096,50 @@ async fn ide_set(
     let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here (--no-claude-ide)"))?;
     ide.set_diffs_to(Some(req.diffs)).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) })))
+}
+
+/// `GET /api/rules` (#166): the standing permission rules agent blocks on
+/// this daemon answer from, in order (`DELETE /api/rules/{index}` forgets
+/// one; `DELETE /api/rules`, all).
+async fn rules_get(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    let list: Vec<serde_json::Value> = app
+        .mux
+        .rules
+        .list()
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let text = r.describe();
+            let mut v = serde_json::to_value(r).unwrap_or_default();
+            v["index"] = i.into();
+            v["text"] = text.into();
+            v
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "rules": list })))
+}
+
+async fn rules_forget(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Path(index): Path<usize>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    app.mux.rules.forget(Some(index)).map_err(|e| ApiError(StatusCode::NOT_FOUND, e))?;
+    Ok(Json(serde_json::json!({})))
+}
+
+async fn rules_forget_all(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    app.mux.rules.forget(None).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(serde_json::json!({})))
 }
 
 /// `GET /api/hosts/self/shell-env` (#74): the user's shell environment

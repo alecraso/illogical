@@ -16,6 +16,10 @@ use std::{
 use illogical_proto::{Project, WorkKind};
 use regex::Regex;
 
+/// Agents run in terminals. Those with screen rules
+/// ([`illogical_vt::detect`]) say whether they're working, blocked on you or
+/// idle (#145); the rest are only known to be agents, and going quiet
+/// doesn't mean they want you.
 const AGENTS: &[&str] = &["claude", "codex", "aider", "gemini", "opencode", "goose", "amp", "cursor-agent"];
 const EDITORS: &[&str] = &["vim", "nvim", "vi", "hx", "helix", "emacs", "nano", "micro", "kak"];
 /// Follow-mode log readers (with `-f`), or always.
@@ -50,11 +54,78 @@ fn base(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
+/// Programs that start another named after them (`npx`, `uv run`, `sudo`,
+/// `nix run`): look past them, their flags and their subcommand.
+const RUNNERS: &[&str] = &[
+    "sudo", "time", "nice", "env", "nohup", "exec", "command", "npx", "bunx", "pnpm", "npm", "yarn", "uv", "uvx",
+    "pipx", "nix",
+];
+const SUBCOMMANDS: &[&str] = &["run", "exec", "x", "dlx", "tool", "shell"];
+/// Interpreters: the script they run is the program (`node …/claude`,
+/// `python -m aider`), but code given inline (`python -c …`) isn't one.
+/// By name without its version or case (`python3.14`, macOS's `Python`).
+const INTERPRETERS: &[&str] = &["node", "python", "bun", "deno", "bash", "sh", "zsh", "ruby", "perl"];
+const INLINE: &[&str] = &["-c", "-e", "--eval", "-p", "--print"];
+
+/// The agent a command line runs (`claude`, `codex`, …), seen through
+/// wrappers: `node …/bin/claude`, `bunx @openai/codex`, `python -m aider`,
+/// `nix run nixpkgs#claude-code`, a Nix wrapper (`.claude-wrapped`), `env
+/// FOO=1 claude`. A word that only mentions one (`python -c codex`, `grep
+/// claude`) doesn't count.
+pub fn agent(command: &str) -> Option<&'static str> {
+    let named = |word: &str| -> Option<&'static str> {
+        let word = word.rsplit('#').next().unwrap_or(word);
+        let name = base(word).trim_start_matches('.');
+        let name = name.strip_suffix("-wrapped").unwrap_or(name);
+        AGENTS.iter().find(|a| name == **a || name.starts_with(&format!("{a}-"))).copied()
+    };
+    let words: Vec<&str> = command.split_whitespace().map(|w| w.trim_matches(['\'', '"'])).collect();
+    let mut i = 0;
+    while let Some(w) = words.get(i) {
+        let b = base(w);
+        if RUNNERS.contains(&b) {
+            i += 1;
+            while words.get(i).is_some_and(|w| w.starts_with('-') || SUBCOMMANDS.contains(w) || is_assignment(w)) {
+                i += 1;
+            }
+        } else if INTERPRETERS.contains(&interpreter(b).as_str()) {
+            i += 1;
+            while let Some(w) = words.get(i).filter(|w| w.starts_with('-') || SUBCOMMANDS.contains(w)) {
+                if INLINE.contains(w) {
+                    return None;
+                }
+                if *w == "-m" {
+                    return words.get(i + 1).and_then(|m| named(m));
+                }
+                i += 1;
+            }
+        } else if is_assignment(w) {
+            i += 1;
+        } else {
+            return named(w);
+        }
+    }
+    None
+}
+
+/// An interpreter's name without its version or case: `python3.14` and
+/// `Python` (Homebrew's, on macOS) are `python`.
+fn interpreter(name: &str) -> String {
+    name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.').to_ascii_lowercase()
+}
+
+/// `FOO=bar` before a command.
+fn is_assignment(word: &str) -> bool {
+    word.split_once('=').is_some_and(|(k, _)| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+}
+
 /// What a command line is: an agent, an editor, logs, a server, tests, a
 /// build, or anything else (`shell`, also for an empty line).
 pub fn kind(command: &str) -> WorkKind {
     let words: Vec<&str> = command.split_whitespace().map(|w| w.trim_matches('\'')).collect();
-    let Some(first) = words.first().map(|w| base(w)) else { return WorkKind::Shell };
+    if words.is_empty() {
+        return WorkKind::Shell;
+    }
     // Look through wrappers (`uv run`, `npx`, `sudo`).
     let mut i = 0;
     while i + 1 < words.len() && WRAPPERS.contains(&base(words[i])) {
@@ -65,8 +136,7 @@ pub fn kind(command: &str) -> WorkKind {
     }
     let head = base(words[i]);
     let two = words[i..].iter().take(2).map(|w| base(w)).collect::<Vec<_>>().join(" ");
-    let is_agent = |w: &str| AGENTS.iter().any(|a| w == *a || w.starts_with(&format!("{a}-")));
-    if is_agent(head) || is_agent(first) {
+    if agent(command).is_some() {
         return WorkKind::Agent;
     }
     if EDITORS.contains(&head) {
@@ -195,6 +265,45 @@ mod tests {
         let wrong: Vec<_> =
             fixture.iter().filter(|(c, want)| kind(c) != *want).map(|(c, want)| (c, want, kind(c))).collect();
         assert!(wrong.is_empty(), "misclassified: {wrong:?}");
+    }
+
+    #[test]
+    fn agents_through_wrappers() {
+        for (command, want) in [
+            ("claude", Some("claude")),
+            ("claude --resume 0f3c", Some("claude")),
+            ("/home/me/.local/bin/claude", Some("claude")),
+            ("node /usr/lib/node_modules/.bin/claude", Some("claude")),
+            ("/usr/bin/python3 /tmp/bin/claude", Some("claude")),
+            (
+                "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /tmp/bin/codex",
+                Some("codex"),
+            ),
+            ("python3.12 -m aider", Some("aider")),
+            ("bunx @openai/codex", Some("codex")),
+            ("npx -y @anthropic-ai/claude-code", Some("claude")),
+            ("pnpm dlx @openai/codex --full-auto", Some("codex")),
+            ("python -m aider --model sonnet", Some("aider")),
+            ("uv tool run aider", Some("aider")),
+            ("nix run nixpkgs#claude-code", Some("claude")),
+            ("/nix/store/abc-claude-code/bin/.claude-wrapped", Some("claude")),
+            ("env FOO=1 codex", Some("codex")),
+            ("ANTHROPIC_MODEL=x claude", Some("claude")),
+            ("sudo -E claude", Some("claude")),
+            ("/bin/bash /home/me/bin/codex perm", Some("codex")),
+            // Mentioned, not run.
+            ("python -c codex", None),
+            ("python3 -c 'import codex'", None),
+            ("node -e claude", None),
+            ("grep claude notes.txt", None),
+            ("vim claude.md", None),
+            ("echo codex", None),
+            ("python3", None),
+            ("bash -l", None),
+            ("", None),
+        ] {
+            assert_eq!(agent(command), want, "{command}");
+        }
     }
 
     /// The typed text hides an alias; the process's argv doesn't.
