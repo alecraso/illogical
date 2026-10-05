@@ -4,7 +4,7 @@
 // The VM parts need wispd and its token on this host; elsewhere they skip.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
@@ -62,7 +62,8 @@ const wisp = (method: string, path: string) =>
   fetch(`${WISP}/v1/sprites${path}`, { method, headers: { Authorization: `Bearer ${token}` } });
 
 test.beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), "ilg-m7-dirs-"));
+  // Resolved, as the shell's pwd is (macOS's temp dir is behind a symlink).
+  root = realpathSync(mkdtempSync(join(tmpdir(), "ilg-m7-dirs-")));
   for (const d of ["alpha/beta", "alpha/delta", "gamma", "with space"]) mkdirSync(join(root, d), { recursive: true });
   homeUrl = await startDaemon("home");
   otherUrl = await startDaemon("other", ["--allow-origin", homeUrl]);

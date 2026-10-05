@@ -3,7 +3,7 @@
 // with each pane doing what its restart policy says.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -104,7 +104,8 @@ test("after a restart: tabs, splits, cwd and scrollback are back; policies apply
   await expect.poll(() => text(page, first)).toContain("scroll-49");
   await expect.poll(() => text(page, first)).toContain("restored");
   await expect.poll(() => text(page, first)).toContain("hook-9");
-  await run(page, first, "echo at-$(pwd)", "at-/tmp");
+  // The daemon keeps the real path: /private/tmp on macOS.
+  await run(page, first, "echo at-$(pwd)", `at-${realpathSync("/tmp")}`);
 
   // The re-run pane asks first; its button runs it.
   await ready(page, second);
