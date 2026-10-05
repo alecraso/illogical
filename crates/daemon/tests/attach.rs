@@ -738,6 +738,18 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     assert!(snap.contains("press Enter to re-run"), "banner: {snap}");
     type_in(&mut ws, 2, "").await;
     read_pane_until(&mut ws, 2, "rerun-ok-2").await;
+    drop(ws);
+
+    // It still knows its command, so the next restart offers it again
+    // (#26: a second reboot).
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    d.stop(nix::sys::signal::Signal::SIGTERM);
+    let mut d = start_in(&state).await;
+    let (mut ws, s) = connect_state(&d).await;
+    let p2 = s.panes.iter().find(|p| p.id == 2).unwrap();
+    assert!(p2.command.as_deref().unwrap_or("").contains("sleep 300"), "after a rerun: {:?}", p2.command);
+    let snap = attach_pane(&mut ws, 2).await;
+    assert_eq!(snap.matches("press Enter to re-run").count(), 2, "banner again: {snap}");
     d.stop(nix::sys::signal::Signal::SIGTERM);
 }
 

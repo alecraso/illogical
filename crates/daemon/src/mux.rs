@@ -437,13 +437,18 @@ impl Config {
         };
         let note = |s: &str| format!("\x1b[2m[{s}]\x1b[0m\r\n");
         match (&meta.policy, &meta.command) {
-            (Policy::None, _) => Start::Wait { banner: note("press Enter for a shell"), enter: shell, escape: None },
+            (Policy::None, _) => {
+                Start::Wait { banner: note("press Enter for a shell"), enter: shell, text: None, escape: None }
+            }
+            // Recorded as the pane's command, so the next restart runs it
+            // again too.
             (Policy::Rerun { confirm: true }, Some(cmd)) => Start::Wait {
                 banner: note(&format!("press Enter to re-run: {cmd}  ·  Esc for a shell")),
                 enter: then(cmd),
+                text: Some(cmd.clone()),
                 escape: Some(shell),
             },
-            (Policy::Rerun { confirm: false }, Some(cmd)) => Start::Now(then(cmd)),
+            (Policy::Rerun { confirm: false }, Some(cmd)) => Start::Rerun { spawn: then(cmd), text: cmd.clone() },
             (Policy::Hook { command }, _) => Start::Now(then(command)),
             (Policy::Shell | Policy::Rerun { .. }, _) => Start::Now(shell),
         }

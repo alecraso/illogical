@@ -511,10 +511,20 @@ pub enum Start {
         spawn: Spawn,
         text: String,
     },
-    /// Show `banner` and wait: Enter runs `enter`, Escape runs `escape`.
+    /// A `rerun` pane's command again after a restart, recorded like `Run`
+    /// so the pane goes on knowing its command (and a second restart runs
+    /// it again). `spawn` ends in a shell, whose first prompt ends the
+    /// record (that prompt reports no exit code).
+    Rerun {
+        spawn: Spawn,
+        text: String,
+    },
+    /// Show `banner` and wait: Enter runs `enter` (recorded as `Rerun` does
+    /// when it has `text`), Escape runs `escape`.
     Wait {
         banner: String,
         enter: Spawn,
+        text: Option<String>,
         escape: Option<Spawn>,
     },
 }
@@ -932,6 +942,8 @@ impl Ring {
 
 struct Waiting {
     enter: Spawn,
+    /// What `enter` runs, to record it as a command.
+    text: Option<String>,
     escape: Option<Spawn>,
 }
 
@@ -947,6 +959,8 @@ struct State {
     /// A resumed session that turns out to be gone starts like this.
     resume_otherwise: Option<Start>,
     waiting: Option<Waiting>,
+    /// The next prompt ends the command `Start::Rerun` recorded.
+    prompt_ends: bool,
     ring: Ring,
     log: Option<PaneLog>,
     subs: HashMap<ClientId, Subscriber>,
@@ -1023,6 +1037,7 @@ pub fn spawn_pane(setup: Setup) -> std::io::Result<PaneHandle> {
             exec_saved: None,
             resume_otherwise: None,
             waiting: None,
+            prompt_ends: false,
             ring: Ring::new(log.end()),
             log: Some(log),
             subs: HashMap::new(),
@@ -1220,6 +1235,7 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
                 st.ended();
                 st.forget_exec();
                 st.waiting = None;
+                st.prompt_ends = false;
                 st.resume_otherwise = None;
                 let end = {
                     let mut s = st.status.lock().unwrap();
@@ -1296,15 +1312,8 @@ impl State {
         let id = self.id;
         match start {
             Start::Now(spawn) => self.start(&spawn),
-            Start::Run { spawn, text } => {
-                if self.host.is_none() {
-                    self.status.lock().unwrap().cwd = Some(spawn.cwd.display().to_string());
-                }
-                let at = self.ring.end();
-                self.signal(at, Signal::CommandLine { text });
-                self.signal(at, Signal::CommandStart);
-                self.start(&spawn);
-            }
+            Start::Run { spawn, text } => self.run(&spawn, text, false),
+            Start::Rerun { spawn, text } => self.run(&spawn, text, true),
             Start::Adopt(master) => match Process::adopt(master, &self.record, id, self.program.clone()) {
                 Ok(p) => {
                     self.pid.store(p.pid, Ordering::Relaxed);
@@ -1324,11 +1333,24 @@ impl State {
                 self.resume_otherwise = Some(*otherwise);
                 self.attach_exec(&host, Begin::Resume { session, received });
             }
-            Start::Wait { banner, enter, escape } => {
+            Start::Wait { banner, enter, text, escape } => {
                 self.output(banner.as_bytes());
-                self.waiting = Some(Waiting { enter, escape });
+                self.waiting = Some(Waiting { enter, text, escape });
             }
         }
+    }
+
+    /// Start `spawn` recorded as the command `text`; with `then_shell`, the
+    /// shell it ends in ends the record at its first prompt.
+    fn run(&mut self, spawn: &Spawn, text: String, then_shell: bool) {
+        if self.host.is_none() {
+            self.status.lock().unwrap().cwd = Some(spawn.cwd.display().to_string());
+        }
+        let at = self.ring.end();
+        self.signal(at, Signal::CommandLine { text });
+        self.signal(at, Signal::CommandStart);
+        self.prompt_ends = then_shell;
+        self.start(spawn);
     }
 
     fn attach_exec(&mut self, host: &Host, begin: Begin) {
@@ -1382,7 +1404,7 @@ impl State {
             "lost the session on the machine · press Enter for a shell"
         };
         self.output(format!("\r\n\x1b[0m\x1b[2m[{note}]\x1b[0m\r\n").as_bytes());
-        self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+        self.waiting = Some(Waiting { enter: self.shell.clone(), text: None, escape: None });
         self.notify(What::Exited { code: None, close: false });
     }
 
@@ -1475,14 +1497,14 @@ impl State {
                 let c = code.unwrap_or(-1);
                 let note = format!("\r\n\x1b[0m\x1b[2m[exited with code {c} · press Enter for a shell]\x1b[0m\r\n");
                 self.output(note.as_bytes());
-                self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+                self.waiting = Some(Waiting { enter: self.shell.clone(), text: None, escape: None });
                 self.notify(What::Exited { code, close: false });
             }
             Some(sig) => {
                 let note =
                     format!("\r\n\x1b[0m\x1b[2m[process ended by signal {sig} · press Enter for a shell]\x1b[0m\r\n");
                 self.output(note.as_bytes());
-                self.waiting = Some(Waiting { enter: self.shell.clone(), escape: None });
+                self.waiting = Some(Waiting { enter: self.shell.clone(), text: None, escape: None });
                 self.notify(What::Exited { code: Some(128 + sig), close: false });
             }
         }
@@ -1518,17 +1540,20 @@ impl State {
             return;
         }
         let Some(w) = &self.waiting else { return };
-        let spawn = if data.iter().any(|b| *b == b'\r' || *b == b'\n') {
-            Some(w.enter.clone())
+        let (spawn, text) = if data.iter().any(|b| *b == b'\r' || *b == b'\n') {
+            (Some(w.enter.clone()), w.text.clone())
         } else if data == [0x1b] {
-            w.escape.clone()
+            (w.escape.clone(), None)
         } else {
-            None
+            (None, None)
         };
         if let Some(spawn) = spawn {
             self.waiting = None;
             self.output(b"\x1b[0m\r\n");
-            self.start(&spawn);
+            match text {
+                Some(text) => self.run(&spawn, text, true),
+                None => self.start(&spawn),
+            }
             self.hold = false;
             self.notify(What::Started);
         }
@@ -1713,6 +1738,9 @@ impl State {
         let ms = now_ms();
         match &signal {
             Signal::Prompt => {
+                if std::mem::take(&mut self.prompt_ends) && self.status.lock().unwrap().current.is_some() {
+                    self.signal(at, Signal::CommandEnd { exit: None });
+                }
                 self.status.lock().unwrap().at_prompt = true;
                 self.index(at, Event::Prompt { at_ms: ms })
             }
