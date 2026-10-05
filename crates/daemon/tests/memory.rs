@@ -7,16 +7,9 @@
 //! what closed panes freed. Linux only: it reads /proc.
 #![cfg(target_os = "linux")]
 
-mod listen;
+use std::time::Duration;
 
-use std::{
-    io::{BufRead, BufReader, Read, Write},
-    os::unix::net::UnixStream,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
-};
-
+use illogical_testkit::{Daemon, illogicald};
 use serde_json::{Value, json};
 
 /// Panes open at the measurement, the default one included.
@@ -28,111 +21,39 @@ const MAX_PER_PANE_KB: u64 = 2600;
 /// panes have closed. Without the malloc fixes it kept about 15 MB.
 const MAX_KEPT_KB: u64 = 8 * 1024;
 
-struct Daemon {
-    child: Child,
-    state: PathBuf,
+fn start() -> Daemon {
+    let d = illogicald!("mem")
+        .env("PS1", "$ ")
+        // No systemd scopes or FD store, as S9 measured.
+        .env_remove("LISTEN_FDS")
+        .wait_secs(60)
+        .start();
+    d.wait_for("the first prompt", || d.panes().iter().all(|p| p["cwd"].is_string()));
+    d
 }
 
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.state);
-    }
+trait Measure {
+    fn request(&self, method: &str, path: &str, body: Option<Value>) -> Value;
+    fn panes(&self) -> Vec<Value>;
+    fn rss(&self) -> u64;
+    fn settled_rss(&self) -> u64;
 }
 
-impl Daemon {
-    fn start() -> Daemon {
-        // Short: Unix socket paths are limited to ~100 bytes.
-        let state = std::env::temp_dir().join(format!("ilg-mem-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&state);
-        let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-            .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
-            .arg("--state-dir")
-            .arg(&state)
-            .env("PS1", "$ ")
-            // No systemd scopes or FD store, as S9 measured.
-            .env_remove("NOTIFY_SOCKET")
-            .env_remove("LISTEN_FDS")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let d = Daemon { child, state };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while UnixStream::connect(d.sock()).is_err() {
-            assert!(Instant::now() < deadline, "daemon did not start");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        d.wait_for(|| d.panes().iter().all(|p| p["cwd"].is_string()));
-        d
-    }
-
-    fn sock(&self) -> PathBuf {
-        match std::fs::read_to_string(self.state.join("sock.path")) {
-            Ok(p) => PathBuf::from(p.trim()),
-            Err(_) => self.state.join("sock"),
-        }
-    }
-
+impl Measure for Daemon {
+    /// A request that must answer 200: its JSON, or null.
     fn request(&self, method: &str, path: &str, body: Option<Value>) -> Value {
-        let mut s = UnixStream::connect(self.sock()).unwrap();
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
-        s.write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        let mut r = BufReader::new(s);
-        let mut line = String::new();
-        r.read_line(&mut line).unwrap();
-        assert!(line.contains(" 200 "), "{method} {path}: {line}");
-        let mut chunked = false;
-        loop {
-            line.clear();
-            r.read_line(&mut line).unwrap();
-            if line.trim().is_empty() {
-                break;
-            }
-            chunked |= line.to_ascii_lowercase().starts_with("transfer-encoding: chunked");
-        }
-        let mut out = Vec::new();
-        if chunked {
-            loop {
-                line.clear();
-                r.read_line(&mut line).unwrap();
-                let n = usize::from_str_radix(line.trim(), 16).unwrap_or(0);
-                if n == 0 {
-                    break;
-                }
-                let mut chunk = vec![0; n + 2];
-                r.read_exact(&mut chunk).unwrap();
-                out.extend_from_slice(&chunk[..n]);
-            }
-        } else {
-            r.read_to_end(&mut out).unwrap();
-        }
-        serde_json::from_slice(&out).unwrap_or(Value::Null)
+        let (status, text) = self.raw(method, path, body);
+        assert_eq!(status, 200, "{method} {path}: {text}");
+        serde_json::from_str(&text).unwrap_or(Value::Null)
     }
 
     fn panes(&self) -> Vec<Value> {
         self.request("GET", "/api/panes", None).as_array().cloned().unwrap_or_default()
     }
 
-    fn wait_for(&self, f: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !f() {
-            assert!(Instant::now() < deadline, "timed out");
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    }
-
     /// The daemon's RSS in KiB.
     fn rss(&self) -> u64 {
-        let rollup = std::fs::read_to_string(format!("/proc/{}/smaps_rollup", self.child.id())).unwrap();
+        let rollup = std::fs::read_to_string(format!("/proc/{}/smaps_rollup", self.pid().unwrap())).unwrap();
         rollup
             .lines()
             .find_map(|l| l.strip_prefix("Rss:"))
@@ -158,13 +79,13 @@ impl Daemon {
 
 #[test]
 fn idle_panes_stay_small_and_closed_ones_give_memory_back() {
-    let d = Daemon::start();
+    let d = start();
     let base = d.settled_rss();
     for _ in 1..PANES {
         d.request("POST", "/api/run", Some(json!({})));
     }
     // Every shell is at its prompt (shell integration has reported in).
-    d.wait_for(|| {
+    d.wait_for("every shell's prompt", || {
         let panes = d.panes();
         panes.len() as u64 == PANES && panes.iter().all(|p| p["cwd"].is_string())
     });
@@ -177,7 +98,7 @@ fn idle_panes_stay_small_and_closed_ones_give_memory_back() {
     for p in &panes[1..] {
         d.request("POST", &format!("/api/panes/{}/close", p["id"]), Some(json!({})));
     }
-    d.wait_for(|| d.panes().len() == 1);
+    d.wait_for("the panes to close", || d.panes().len() == 1);
     let after = d.settled_rss();
     let kept = after.saturating_sub(base);
     eprintln!("daemon rss: {after} KiB after closing {} panes: {kept} KiB kept", PANES - 1);
