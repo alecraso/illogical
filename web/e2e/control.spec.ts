@@ -18,6 +18,8 @@ let base = "";
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
 let gh: Server;
+/** Each machine's state dir, by name. */
+const states: Record<string, string> = {};
 
 test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
@@ -86,6 +88,7 @@ async function signIn(page: Page) {
 /** `illogicald join`, approved from `page`; then the daemon runs. */
 async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
+  states[name] = state;
   const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
@@ -437,7 +440,7 @@ test("Getting started asks to check the account's fingerprint before the machine
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", ANY, "--name", "starter", "--state-dir", state],
+        ...["--listen", ANY, "--name", "starter", "--state-dir", state, "--control", base],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },
@@ -455,14 +458,16 @@ test("Getting started asks to check the account's fingerprint before the machine
     }
     await start.locator('[data-start-seg="cloud"]').click();
   };
-  // Asks this test's control for a code (the button asks the hosted one),
-  // approves it on the laptop from the link the panel shows, and returns
-  // the account the laptop showed.
+  // The daemon's --control (#207): the button asks this test's control
+  // for a code. Approves it on the laptop from the link the panel shows,
+  // and returns the account the laptop showed.
+  expect((await (await page.request.get(`${local}/api/setup?part=control`)).json()).control.url).toBe(base);
   const approve = async () => {
-    const r = await page.request.post(`${local}/api/setup/control`, { data: { url: base } });
-    expect(((await r.json()) as { pending?: { approve: string } }).pending?.approve).toContain(base);
-    await page.reload();
     await cloud();
+    const connect = start.locator("[data-start-connect]");
+    await expect(connect).toHaveText(`Connect to ${new URL(base).host}`);
+    await connect.click();
+    await expect(start.locator("[data-start-approve]")).toBeVisible({ timeout: 20_000 });
     const link = (await start.locator("[data-start-approve]").getAttribute("href"))!;
     expect(link.startsWith(`${base}/#join=`)).toBe(true);
     await laptop.goto(link);
@@ -491,8 +496,12 @@ test("Getting started asks to check the account's fingerprint before the machine
   // The laptop sees it in the account.
   await laptop.goto("/");
   await expect.poll(() => hostNames(laptop), { timeout: 20_000 }).toContain("starter");
-  await panel(laptop, "devices");
-  await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account);
+  // The page may switch machine as the new one arrives, mounting the
+  // overlay afresh: ask for the panel until it's there.
+  await expect(async () => {
+    await panel(laptop, "devices");
+    await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account, { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
   await laptop.getByRole("button", { name: "Done" }).click();
 });
 
@@ -502,7 +511,7 @@ test("sessions: where you're signed in, and signing out everywhere (#173)", asyn
   // This browser, the phone, and the others that signed in above.
   await expect(laptop.locator("[data-session]")).not.toHaveCount(0);
   expect(await laptop.locator("[data-session]").count()).toBeGreaterThanOrEqual(2);
-  await expect(laptop.locator("[data-sessions]")).toContainText("Chrome on Linux");
+  await expect(laptop.locator("[data-sessions]")).toContainText(/Chrome on (Linux|macOS)/);
   await expect(laptop.locator("[data-sessions]")).toContainText("(this one)");
   // Sign one other out: it's gone from the list.
   const n = await laptop.locator("[data-session]").count();
@@ -533,6 +542,13 @@ test("deleting the account: type its login; its machines and team go (#173)", as
   await laptop.locator("[data-delete-confirm]").fill("stranger");
   await go.click();
   await expect(laptop.locator("[data-signin=github]")).toBeVisible();
+  // Its machine, asked to join again, says the account is gone rather than
+  // that it's still in it (#208).
+  const rejoin = spawn("../target/debug/illogicald", ["join", base, "--name", "box", "--state-dir", states.box], { stdio: ["ignore", "ignore", "pipe"] });
+  let said = "";
+  rejoin.stderr!.on("data", (d) => (said += d));
+  expect(await new Promise((r) => rejoin.on("exit", r))).not.toBe(0);
+  expect(said).toContain("control doesn't know it any more (this machine's account was deleted); run `illogicald leave`");
   // The same GitHub account signing in again starts afresh: a new
   // account, a new first device, no machines.
   await signIn(laptop);

@@ -184,10 +184,12 @@ fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError>
     if now_ms().abs_diff(ms) > SKEW_MS {
         return Err(err(StatusCode::UNAUTHORIZED, "clock skew: check this machine's time"));
     }
-    let cert = app
-        .db
-        .daemon_cert(id)?
-        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "not an enrolled daemon (left, or revoked?)"))?;
+    let Some(cert) = app.db.daemon_cert(id)? else {
+        if app.db.daemon_account_deleted(id)? {
+            return Err(err(StatusCode::UNAUTHORIZED, "this machine's account was deleted"));
+        }
+        return Err(err(StatusCode::UNAUTHORIZED, "not an enrolled daemon (left, or revoked?)"));
+    };
     if !illogical_e2e::cert::verify_hex(&cert.sign, msg.as_bytes(), sig) {
         return Err(bad());
     }

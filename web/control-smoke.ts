@@ -342,7 +342,8 @@ try {
   check("signed out: the account is gone", await leaver.api("/api/me").then(() => false, (e: Error) => / 401 /.test(e.message)));
   // Hung up on, and refused when it dials again.
   const since = () => Buffer.concat(daemon2Log).subarray(before).toString().replace(/\x1b\[[0-9;]*m/g, "");
-  const refused2 = /can't reach control's relay.*401.*not an enrolled daemon/;
+  // It's told why (#208).
+  const refused2 = /can't reach control's relay.*401.*this machine's account was deleted/;
   for (let i = 0; i < 100 && !refused2.test(since()); i++) await sleep(100);
   check("its machine is refused from then on", refused2.test(since()), since().split("\n").filter((l) => /relay/.test(l)).slice(-1)[0]);
   const rows = new DatabaseSync(db, { readOnly: true });

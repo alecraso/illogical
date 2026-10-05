@@ -77,4 +77,8 @@ test("make an account with a passkey, sign out, sign back in", async ({ page }) 
   await page.locator("[data-signin=passkey]").click();
   await expect(page.getByRole("heading", { name: "Add a machine" })).toBeVisible();
   expect(await page.evaluate(() => window.__illogical.control!.account)).toBe(first.account);
+  // The account panel names it by the browser that added it, not "Passkey 1" (#208).
+  await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "account" })));
+  await expect(page.locator("[data-passkey-name]")).toHaveText(/^Passkey from Chrome on \w+/);
+  await expect(page.locator("[data-passkeys] li .dim")).toContainText("last used");
 });

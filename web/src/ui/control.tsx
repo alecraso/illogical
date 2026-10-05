@@ -450,7 +450,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   const appLogin = /^#app=([0-9a-f]{16,128})$/.exec(hash)?.[1];
   if (appLogin && !s.pending[0]) return <AppLoginPrompt s={s} id={appLogin} />;
   if (hash === "#app-done" && !s.pending[0]) return <AppLoginDone />;
-  const invite = inviteInHash(hash);
+  const invite = inviteInHash(hash) ?? inviteInHash(usedLink);
   if (invite)
     return invite.presigned ? (
       <PresignedPrompt s={s} team={invite.team} seed={invite.code} />
@@ -496,8 +496,19 @@ function Modal({ children, close }: { children: preact.ComponentChildren; close?
 }
 
 function clearHash() {
+  usedLink = "";
   history.replaceState(null, "", location.pathname + location.search);
   dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
+/** An invite link that was used: out of the address bar, so a reload
+ * doesn't offer it again (#208), but its prompt stays up until closed,
+ * through the overlay mounting afresh. */
+let usedLink = "";
+
+function dropHash() {
+  if (location.hash) usedLink = location.hash;
+  history.replaceState(null, "", location.pathname + location.search);
 }
 
 function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
@@ -1120,7 +1131,15 @@ function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code
             class="primary"
             data-accept-invite
             disabled={!info}
-            onClick={() => s.acceptInvite(team, code).then(() => setDone(true), (e: Error) => setErr(e.message))}
+            onClick={() =>
+              s.acceptInvite(team, code).then(
+                () => {
+                  dropHash();
+                  setDone(true);
+                },
+                (e: Error) => setErr(e.message),
+              )
+            }
           >
             Join
           </button>
@@ -1139,7 +1158,7 @@ function PresignedPrompt({ s, team, seed }: { s: ControlSession; team: string; s
   // prompt as the team's machines arrive).
   const member = s.teams.find((t) => t.team === team && t.role);
   useEffect(() => {
-    if (member) return;
+    if (member) return dropHash();
     s.showPresigned(team, seed).then(
       (p) => setInfo({ name: p.name, role: p.invite.role }),
       (e: Error) => setErr(e.message),
@@ -1148,6 +1167,7 @@ function PresignedPrompt({ s, team, seed }: { s: ControlSession; team: string; s
   const join = () => {
     setBusy(true);
     s.redeem(team, seed)
+      .then(dropHash)
       .catch((e: Error) => setErr(e.message))
       .finally(() => setBusy(false));
   };
@@ -1287,14 +1307,14 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
       <ul class="control-devices">
         {t.roster.members.map((m) => (
           <li key={m.account} data-member={m.account}>
-            <span>
-              {m.name}
+            <span data-member-name>
+              {t.names?.[m.account] ?? m.name}
               {m.account === s.account ? " (you)" : ""}
             </span>
             {owner && m.account !== s.account ? (
               <select
                 value={m.role}
-                aria-label={`${m.name}'s role`}
+                aria-label={`${t.names?.[m.account] ?? m.name}'s role`}
                 onChange={(e) => {
                   const r = (e.target as HTMLSelectElement).value as TeamRole;
                   act(() => s.changeTeam(t.team, (ms) => ms.map((x) => (x.account === m.account ? { ...x, role: r } : x))));
