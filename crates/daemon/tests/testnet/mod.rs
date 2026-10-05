@@ -7,6 +7,7 @@
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    time::{Duration, Instant},
 };
 
 pub fn root() -> PathBuf {
@@ -80,4 +81,104 @@ pub fn recreate(services: &[&str]) {
         .status()
         .unwrap();
     assert!(st.success(), "recreating {services:?}");
+}
+
+pub fn cli_bin() -> PathBuf {
+    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    assert!(status.success(), "building the CLI");
+    bin
+}
+
+/// The box's binaries: ILLOGICAL_SSH_BINARIES, else `just static`'s output
+/// for its architecture.
+pub fn box_binaries(arch: &str) -> Option<PathBuf> {
+    let dir = std::env::var_os("ILLOGICAL_SSH_BINARIES").map(PathBuf::from).unwrap_or_else(|| {
+        let target = Path::new(env!("CARGO_BIN_EXE_illogicald")).parent().unwrap().parent().unwrap().to_path_buf();
+        target.join(format!("{arch}-unknown-linux-musl/release"))
+    });
+    (dir.join("illogical").is_file() && dir.join("illogicald").is_file()).then_some(dir)
+}
+
+/// The CLI as a test runs it: the stack's ssh config, the test's own
+/// master directory, and yes to installing.
+pub struct Env {
+    pub cli: PathBuf,
+    pub binaries: PathBuf,
+    pub runtime: PathBuf,
+    pub agent: Option<String>,
+    pub sock: Option<PathBuf>,
+    /// The box whose master is closed, with `runtime` removed, when done;
+    /// None for a copy that shares another's.
+    pub owner: Option<String>,
+}
+
+impl Env {
+    pub fn cmd(&self, args: &[&str]) -> Command {
+        let mut c = Command::new(&self.cli);
+        c.args(args)
+            .env("ILLOGICAL_SSH", format!("ssh -F {}", ssh_config().display()))
+            .env("ILLOGICAL_SSH_BINARIES", &self.binaries)
+            .env("ILLOGICAL_SSH_INSTALL", "yes")
+            .env("XDG_RUNTIME_DIR", &self.runtime)
+            .env_remove("ILLOGICAL_PANE")
+            .stdin(Stdio::null());
+        match &self.agent {
+            Some(a) => c.env("SSH_AUTH_SOCK", a),
+            None => c.env_remove("SSH_AUTH_SOCK"),
+        };
+        match &self.sock {
+            Some(s) => c.env("ILLOGICAL_SOCK", s),
+            None => c.env_remove("ILLOGICAL_SOCK"),
+        };
+        c
+    }
+
+    pub fn ok(&self, args: &[&str]) -> String {
+        let o = self.cmd(args).output().unwrap();
+        assert!(
+            o.status.success(),
+            "{args:?}: {}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    }
+
+    pub fn output(&self, args: &[&str]) -> Output {
+        self.cmd(args).output().unwrap()
+    }
+
+    /// Close the master, as a dropped connection would.
+    pub fn disconnect(&self, dest: &str) {
+        let _ = Command::new("ssh")
+            .arg("-F")
+            .arg(ssh_config())
+            .arg("-o")
+            .arg(format!("ControlPath=\"{}\"", self.runtime.join("illogical-ssh/%C").display()))
+            .args(["-O", "exit", dest])
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+impl Drop for Env {
+    fn drop(&mut self) {
+        if let Some(dest) = self.owner.take() {
+            self.disconnect(&dest);
+            let _ = std::fs::remove_dir_all(&self.runtime);
+        }
+    }
+}
+
+pub fn wait_for(what: &str, f: impl FnMut() -> bool) {
+    wait_up_to(Duration::from_secs(20), what, f)
+}
+
+pub fn wait_up_to(limit: Duration, what: &str, mut f: impl FnMut() -> bool) {
+    let until = Instant::now() + limit;
+    while !f() {
+        assert!(Instant::now() < until, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(250));
+    }
 }

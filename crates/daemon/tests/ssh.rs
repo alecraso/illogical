@@ -13,108 +13,13 @@
 
 use std::{
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
-    time::{Duration, Instant},
+    process::{Child, Command, Stdio},
+    time::Duration,
 };
 
 mod testnet;
 
-use testnet::ssh_config;
-
-fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
-    assert!(status.success(), "building the CLI");
-    bin
-}
-
-/// The box's binaries: ILLOGICAL_SSH_BINARIES, else `just static`'s output
-/// for its architecture.
-fn box_binaries(arch: &str) -> Option<PathBuf> {
-    let dir = std::env::var_os("ILLOGICAL_SSH_BINARIES").map(PathBuf::from).unwrap_or_else(|| {
-        let target = Path::new(env!("CARGO_BIN_EXE_illogicald")).parent().unwrap().parent().unwrap().to_path_buf();
-        target.join(format!("{arch}-unknown-linux-musl/release"))
-    });
-    (dir.join("illogical").is_file() && dir.join("illogicald").is_file()).then_some(dir)
-}
-
-/// Every CLI run here: the stack's ssh config, this test's own master
-/// directory, and yes to installing.
-struct Env {
-    cli: PathBuf,
-    binaries: PathBuf,
-    runtime: PathBuf,
-    agent: Option<String>,
-    sock: Option<PathBuf>,
-    /// Closes the master and removes `runtime` when done.
-    owner: bool,
-}
-
-impl Env {
-    fn cmd(&self, args: &[&str]) -> Command {
-        let mut c = Command::new(&self.cli);
-        c.args(args)
-            .env("ILLOGICAL_SSH", format!("ssh -F {}", ssh_config().display()))
-            .env("ILLOGICAL_SSH_BINARIES", &self.binaries)
-            .env("ILLOGICAL_SSH_INSTALL", "yes")
-            .env("XDG_RUNTIME_DIR", &self.runtime)
-            .env_remove("ILLOGICAL_PANE")
-            .stdin(Stdio::null());
-        match &self.agent {
-            Some(a) => c.env("SSH_AUTH_SOCK", a),
-            None => c.env_remove("SSH_AUTH_SOCK"),
-        };
-        match &self.sock {
-            Some(s) => c.env("ILLOGICAL_SOCK", s),
-            None => c.env_remove("ILLOGICAL_SOCK"),
-        };
-        c
-    }
-
-    fn ok(&self, args: &[&str]) -> String {
-        let o = self.cmd(args).output().unwrap();
-        assert!(
-            o.status.success(),
-            "{args:?}: {}{}",
-            String::from_utf8_lossy(&o.stdout),
-            String::from_utf8_lossy(&o.stderr)
-        );
-        String::from_utf8_lossy(&o.stdout).into_owned()
-    }
-
-    fn output(&self, args: &[&str]) -> Output {
-        self.cmd(args).output().unwrap()
-    }
-
-    /// Close the master, as a dropped connection would.
-    fn disconnect(&self, dest: &str) {
-        let _ = Command::new("ssh")
-            .arg("-F")
-            .arg(ssh_config())
-            .arg("-o")
-            .arg(format!("ControlPath=\"{}\"", self.runtime.join("illogical-ssh/%C").display()))
-            .args(["-O", "exit", dest])
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
-impl Drop for Env {
-    fn drop(&mut self) {
-        if self.owner {
-            self.disconnect("box-bare");
-            let _ = std::fs::remove_dir_all(&self.runtime);
-        }
-    }
-}
-
-fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
-    let until = Instant::now() + Duration::from_secs(20);
-    while !f() {
-        assert!(Instant::now() < until, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(250));
-    }
-}
+use testnet::{Env, box_binaries, cli_bin, wait_for};
 
 struct Agent(Child, PathBuf);
 
@@ -171,8 +76,14 @@ fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
     let runtime = PathBuf::from(format!("/tmp/ilg-ssh-{}", std::process::id()));
     std::fs::create_dir_all(&runtime).unwrap();
     let agent = agent(&runtime);
-    let env =
-        Env { cli: cli_bin(), binaries, runtime, agent: Some(agent.1.display().to_string()), sock: None, owner: true };
+    let env = Env {
+        cli: cli_bin(),
+        binaries,
+        runtime,
+        agent: Some(agent.1.display().to_string()),
+        sock: None,
+        owner: Some("box-bare".into()),
+    };
 
     // Missing, so installed (yes was given), and the daemon started.
     let first = env.output(&["--ssh", "box-bare", "ls"]);
@@ -254,7 +165,7 @@ fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
         agent: None,
         cli: env.cli.clone(),
         binaries: env.binaries.clone(),
-        owner: false,
+        owner: None,
     };
     saved.ok(&["hosts", "add", "bb", "ssh://box-bare"]);
     assert!(saved.ok(&["hosts"]).contains("ssh ssh://box-bare"));
