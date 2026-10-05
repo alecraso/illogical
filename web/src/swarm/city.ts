@@ -809,6 +809,9 @@ export class City implements SwarmScene {
 
   private pick(e: MouseEvent): Building | null {
     this.aim(e);
+    // An InstancedMesh keeps the bounding sphere of its first raycast, but
+    // buildings move and grow every frame: a stale one misses them all.
+    for (const m of this.meshes.values()) m.mesh.computeBoundingSphere();
     const hits = this.ray.intersectObjects(
       [...this.meshes.values()].map((m) => m.mesh),
       false,
