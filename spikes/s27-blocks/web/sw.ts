@@ -35,6 +35,18 @@ self.addEventListener("message", (e) => {
     for (const w of waiting) w(m.creds);
     waiting = [];
     e.waitUntil(save("creds", m.creds).then(() => port?.postMessage({ ok: true })));
+  } else if (m?.s27 === "probe") {
+    // Can this worker open a WebSocket to `url`? (For the tests.)
+    const w = new WebSocket(m.url);
+    const done = (r: string) => {
+      port?.postMessage(r);
+      try {
+        w.close();
+      } catch {}
+    };
+    w.onopen = () => done("open");
+    w.onerror = () => done("error");
+    setTimeout(() => done("timeout"), 5000);
   } else if (m?.s27 === "stats") {
     port?.postMessage({ ...stats, connected: chan !== null });
   }
