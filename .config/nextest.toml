@@ -7,7 +7,7 @@
 testnet = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = "package(illogicald) & (binary(ssh) | binary(reboot))"
+filter = "package(illogicald) & (binary(ssh) | binary(reboot) | (binary(guest_ssh) & test(jump_host)))"
 test-group = "testnet"
 
 [profile.default]
