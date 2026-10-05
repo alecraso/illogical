@@ -8,6 +8,7 @@
 //! into it (#59).
 
 mod agentd;
+mod replay;
 
 use std::{
     net::TcpListener,
@@ -118,7 +119,7 @@ async fn tools_through_the_stdio_bridge() {
 
     // The tools, with honest annotations.
     let tools = s.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 31);
+    assert_eq!(tools.len(), 32);
     let ro = |n: &str| tools.iter().find(|t| t.name == n).unwrap().annotations.as_ref().unwrap().read_only_hint;
     assert_eq!(
         (ro("read_output"), ro("wait"), ro("run"), ro("close")),
@@ -243,7 +244,7 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     // (and retries it, then gives up: no tools).
     let tools = s.list_tools(None).await.unwrap();
     assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
-    assert_eq!(tools.tools.len(), 31);
+    assert_eq!(tools.tools.len(), 32);
     let t = s.list_resource_templates(None).await.unwrap();
     assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
     let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
@@ -582,4 +583,55 @@ fn an_agent_block_in_a_vm_gets_mcp_through_the_relay() {
         assert!(std::time::Instant::now() < deadline, "its machine should go");
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+/// #147: prompt_agent, one call per turn, no sleeps here: Claude Code
+/// (recorded, replayed) in a terminal pane, and an agent block.
+#[tokio::test(flavor = "multi_thread")]
+async fn prompt_agent_waits_for_the_turn() {
+    let d = Daemon::child();
+    let s = bridge(&d, Client::named("claude-code")).await;
+    let scratch = Scratch::new("mcp-prompt");
+    let r = replay::Replay::install(&scratch.join("bin"), "claude", "claude_turn");
+    d.post("/api/panes/1/send", json!({"text": r.path(), "enter": true}));
+    let wait = |line: &'static str, n: usize| {
+        let r = &r;
+        tokio::task::block_in_place(move || r.reached(line, n))
+    };
+    wait("m blocked", 1);
+    d.post("/api/panes/1/keys", json!({"keys": ["Down", "Enter"]}));
+    wait("m idle", 1);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while d.get("/api/panes/1/detection")["shown"] != "idle" {
+        let why = (d.get("/api/panes/1/detection"), d.get("/api/panes/1/capture"), r.log());
+        assert!(std::time::Instant::now() < deadline, "its screen isn't read as idle: {why:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let v = call(
+        &s,
+        "prompt_agent",
+        json!({ "pane": 1, "text": "Run this shell command: sleep 4 && touch made-by-claude.txt" }),
+    )
+    .await;
+    assert_eq!(v["result"], "needs_input", "{v}");
+    assert_eq!(v["question"], "Claude Code asks to run `sleep 4 && touch made-by-claude.txt`", "{v}");
+    // Waiting on that: nothing typed, the question back.
+    let v = call(&s, "prompt_agent", json!({ "pane": 1, "text": "never mind" })).await;
+    assert_eq!(v["result"], "blocked", "{v}");
+    assert!(v["summary"].as_str().unwrap().contains("nothing was typed"), "{v}");
+    // Answered (Enter), and through to the end of the turn.
+    let v = call(&s, "prompt_agent", json!({ "pane": 1, "text": "", "answering": true })).await;
+    assert_eq!(v["result"], "done", "{v}");
+    let screen = d.get("/api/panes/1/capture").as_str().unwrap_or_default().to_owned();
+    assert!(screen.contains("has been created") && screen.contains("? for shortcuts"), "{screen}");
+
+    // An agent block: its question comes back with the call.
+    let b = d.open("hello");
+    d.wait(b, "idle");
+    let v = call(&s, "prompt_agent", json!({ "pane": b, "text": "ask one" })).await;
+    assert_eq!(v["result"], "needs_input", "{v}");
+    assert_eq!(v["ask"]["questions"][0]["question"], "Which colour do you prefer?", "{v}");
+    let v = call(&s, "prompt_agent", json!({ "pane": b, "text": "recall" })).await;
+    assert_eq!(v["result"], "blocked", "{v}");
 }

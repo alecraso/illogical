@@ -8,6 +8,8 @@ illogical ls                                  # panes, what they're running, who
 illogical run -- make test                    # in a new tab; prints its pane (%N)
 illogical run --wait -- cargo build           # and exits with its exit code
 illogical send %3 'git status' -e             # type a line and press Enter
+illogical send %4 --wait 'fix the test'       # prompt the agent there and wait for its turn (exit 0 done,
+                                              #   2 it asks for you, 3 stalled: nothing started)
 illogical keys %3 C-c Up Enter                # named keys
 illogical wait %3 --command-end               # exit code of what that started
 illogical wait %3 --match 'listening on' --timeout 30
@@ -41,6 +43,7 @@ illogical ide                                 # illogicald as Claude Code's IDE:
 illogical ide --diffs "Visual Studio Code"    # send Claude Code's diffs to that IDE instead (illogical: back)
 illogical shell-env [--refresh]               # the PATH blocks that run your tools get (your shell's; --refresh: read it again)
 illogical describe %4                         # any block: type, place, state
+illogical describe %4 --detection             # how its agent's screen reads: each rule, what it saw, which fired
 illogical call %4 navigate '{"url":"…"}'      # a block's own methods
 illogical agent "fix the failing test"        # Claude Code here; prints %N (--codex, --fountain A,
                                               #   --acp CMD, --vm, --machine m3, --model haiku,
@@ -173,6 +176,7 @@ The tools:
 | `open_port` | A browser block on a port of a pane's machine, beside it | no |
 | `open_app` | One of the user's studio apps as an app block, beside a pane; without `app`, their apps | no |
 | `start_agent` | An agent block (Claude Code, Codex, Fountain, any ACP agent) with a prompt; `as_fountain` (Claude Code): wear one of the user's Fountain agents here | no |
+| `prompt_agent` | A prompt to an agent (an agent block, or Claude Code or Codex in a terminal), waited through in one call: `done`, `needs_input` with its question, or `stalled` with its screen's last lines when nothing starts within 5 seconds. An agent waiting on someone isn't typed at (`answering` to answer it) | no |
 | `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
 | `list_conversations` | Claude Code conversations here (a terminal's, the desktop app's): `query`, `cwd`, `live`, `all` | yes |
 | `open_conversation` | One as an agent block beside a pane; `then`: `continue` or `fork` | no |

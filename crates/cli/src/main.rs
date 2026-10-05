@@ -427,7 +427,12 @@ enum Command {
         /// The first prompt.
         prompt: Vec<String>,
     },
-    /// Type text into a pane (`-` reads stdin).
+    /// Type text into a pane (`-` reads stdin). With `--wait`, it's a
+    /// prompt for the agent there (Claude Code or Codex in the terminal, or
+    /// an agent block): sent with Enter, then waited through. Prints what
+    /// it came to and exits 0 when the turn ended, 2 when it needs someone
+    /// (or already did, so nothing was typed), 3 when it stalled (no sign
+    /// of work), 4 still running at --timeout.
     Send {
         pane: Pane,
         #[arg(required = true)]
@@ -435,6 +440,15 @@ enum Command {
         /// Press Enter afterwards.
         #[arg(short, long)]
         enter: bool,
+        /// Prompt the agent there and wait for its turn.
+        #[arg(long)]
+        wait: bool,
+        /// With --wait: it's waiting on a question and this answers it.
+        #[arg(long, requires = "wait")]
+        answering: bool,
+        /// With --wait: seconds before giving up waiting (default 100).
+        #[arg(long, requires = "wait")]
+        timeout: Option<f64>,
     },
     /// Press named keys: C-c, M-x, Up, Enter, F5, Space, ...
     Keys {
@@ -995,6 +1009,25 @@ fn split_of(split: Option<&str>) -> anyhow::Result<Option<u32>> {
         Some("right") => Some(here(None)?),
         Some(p) => Some(p.parse::<Pane>().map_err(anyhow::Error::msg)?.0),
     })
+}
+
+/// What `send --wait` came to, for people, and its exit code.
+fn prompted(pane: u32, r: &Value) -> (String, i32) {
+    let q = |r: &Value| r["question"].as_str().unwrap_or("a question").to_owned();
+    match r["result"].as_str().unwrap_or_default() {
+        "done" => (format!("%{pane} finished its turn"), 0),
+        "needs_input" => (format!("%{pane} asks: {}", q(r)), 2),
+        "blocked" => (
+            format!("%{pane} was already waiting on someone ({}); nothing was typed (--answering to answer it)", q(r)),
+            2,
+        ),
+        "stalled" => {
+            let screen = r["screen"].as_str().unwrap_or_default();
+            (format!("%{pane} stalled: {}\n{screen}", r["why"].as_str().unwrap_or_default()), 3)
+        }
+        "still_running" => (format!("%{pane} is still working (illogical wait %{pane} --idle)"), 4),
+        other => (format!("%{pane}: {other}"), 1),
+    }
 }
 
 /// `describe %N --detection` for people: what fired, then each rule with
@@ -2383,11 +2416,18 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 return Ok(w["code"].as_i64().unwrap_or(1) as i32);
             }
         }
-        Command::Send { pane, text, enter } => {
+        Command::Send { pane, text, enter, wait, answering, timeout } => {
             let mut text = text.join(" ");
             if text == "-" {
                 text.clear();
                 std::io::stdin().read_to_string(&mut text)?;
+            }
+            if wait {
+                let body = json!({"text": text, "answering": answering, "timeout": timeout});
+                let r = request(&sock, "POST", &format!("/api/panes/{}/prompt", pane.0), Some(&body))?.json()?;
+                let (line, code) = prompted(pane.0, &r);
+                println!("{line}");
+                return Ok(code);
             }
             request(
                 &sock,

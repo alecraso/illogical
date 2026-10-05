@@ -52,7 +52,8 @@ fn policy(method: &Method, path: &str) -> Policy {
             "api",
             "panes",
             id,
-            "send" | "keys" | "mouse" | "attention" | "close" | "ask" | "cd" | "permit" | "hook" | "inbox" | "followup",
+            "send" | "prompt" | "keys" | "mouse" | "attention" | "close" | "ask" | "cd" | "permit" | "hook" | "inbox"
+            | "followup",
         ] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         ["api", "panes", id, "ask", "withdraw"] if !get => {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
