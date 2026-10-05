@@ -2621,6 +2621,7 @@ The launch issues (#19–#27: licence, releases, install, quickstart) come first
   - read-only links: a one-off X25519 key in the fragment, held by the daemon as a "from now" viewer until it expires, with an anonymous relay route only while links are live.
   - `e2e/teams.spec.ts` covers the done-when.
 - **Trust on first use:** each browser pins other accounts' roots, and team founders, the first time it sees them, and a fingerprint is shown to compare. Control could lie at that first sight, the same limit as Tailnet Lock's first sign-in.
+- **Presigned invites and expiry (#136, from #126).** The roster rule checks a redeem's `at` against the invite's `expires`, but the invitee writes `at`, so only control checks expiry with a clock of its own. The gap: an invitee holding the link redeems after expiry with a backdated `at`, no owner has written a roster version since the invite expired, and control lets it through. Decision (2026-10-04, from Jake via the user): accept the gap. A daemon doesn't check invite expiry against its own clock; control's check stands.
 - **Not covered by tests:** sharing a single session with a person outside a team (it's built, but not exercised end to end), and `illogical team lock` from the CLI (the lock is in the Teams panel).
 
 
