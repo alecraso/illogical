@@ -1212,7 +1212,26 @@ fn local_time(ms: u64) -> String {
 }
 
 fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
+    // When the chores last ran. They run on time however busy the
+    // channels are: commands arriving more often than a tick (a client
+    // polling, acks) mustn't keep the agent's screen from being read or the
+    // pane from going quiet.
+    let mut chores = Instant::now();
     loop {
+        let due = chores + st.tick();
+        if Instant::now() >= due {
+            chores = Instant::now();
+            st.look_if_due(true);
+            if st.last_tick.elapsed() >= Duration::from_secs(1) {
+                st.last_tick = Instant::now();
+                if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
+                    st.checkpoint();
+                }
+                st.check_quiet();
+                st.save_exec();
+            }
+            continue;
+        }
         // What clients ask goes first: an attach, an ack or a Ctrl-C must
         // not wait behind a flood of output.
         let cmd = match rx.try_recv() {
@@ -1228,18 +1247,7 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
                     Ok(cmd) => cmd,
                     Err(_) => continue,
                 },
-                default(st.tick()) => {
-                    st.look_if_due(true);
-                    if st.last_tick.elapsed() >= Duration::from_secs(1) {
-                        st.last_tick = Instant::now();
-                        if st.unsaved > 0 && st.last_output.elapsed() >= CHECKPOINT_IDLE {
-                            st.checkpoint();
-                        }
-                        st.check_quiet();
-                        st.save_exec();
-                    }
-                    continue;
-                }
+                default(due.saturating_duration_since(Instant::now())) => continue,
             },
         };
         match cmd {

@@ -290,8 +290,13 @@ fn a_quiet_agent_doesnt_want_you_its_screen_says_when_it_does() {
     // watching, so it's done).
     d.send(1, "work");
     until("working");
-    // (Its screen is read every 100 ms: let it see the turn.)
-    std::thread::sleep(Duration::from_millis(500));
+    // Typing set "working" already; the turn only counts once the screen
+    // has read as working too (a busy machine can take a while to look).
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while d.get("/api/panes/1/detection")["shown"] != "working" {
+        assert!(Instant::now() < deadline, "{}", d.get("/api/panes/1/detection"));
+        std::thread::sleep(Duration::from_millis(50));
+    }
     d.send(1, "idle");
     until("done");
     // A notification (or a hook) still wants you, over an idle screen.
