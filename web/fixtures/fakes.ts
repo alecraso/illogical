@@ -22,8 +22,8 @@ function body(req: IncomingMessage): Promise<Buffer> {
 }
 
 /** GitHub's numeric user id for a login: stable, so the same login is the
- * same account on every sign-in. */
-export const githubId = (login: string) => [...login].reduce((h, c) => h * 31 + c.charCodeAt(0), 7);
+ * same account on every sign-in, and below 2^31 however long the login. */
+export const githubId = (login: string) => [...login].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 2147483647, 7);
 
 /** A fake GitHub for OAuth sign-in. Authorize redirects straight back with
  * a code naming who signed in: the `login` query parameter the client adds
