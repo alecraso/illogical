@@ -4137,7 +4137,7 @@ A desktop app for macOS and Linux: the web UI in a native window, with the app i
 - **macOS and Linux together.** No Windows: it has no daemon.
 - **Unsigned macOS builds for now** (ad-hoc signed). Notarization waits for a Developer ID.
 
-**Order:** S25 (done, go), then M46 (window, installer, supervisor, packaging), then M47 (Finder and Nautilus) and M48 (connections in Rust, the device key in the Keychain or Secret Service).
+**Order:** S25 (done, go), then S26 (#141, done: Tauri stays, native on a trigger), then M46 (window, installer, supervisor, packaging), then M47 (Finder and Nautilus) and M48 (connections in Rust, the device key in the Keychain or Secret Service).
 
 #### S25: desktop shell spike
 
@@ -4149,6 +4149,25 @@ A desktop app for macOS and Linux: the web UI in a native window, with the app i
 - **Clipboard:** Ctrl-Shift-C/V work as in Chrome. The page can't write without a gesture, so OSC 52 writes through Rust.
 - **No `PushManager`** in the webview: notifications come from Rust.
 - Start to the daemon's page: about 280 ms on geek, 215–310 ms on jake-mini. `.deb` 5.8 MB before the daemon.
+
+#### S26: how native can it get (#141)
+
+**Done 2026-10-04** (see [spikes/s26-native](spikes/s26-native/README.md)). The spike recommended the hybrid on performance: a native window, native terminals, native chrome and rail, and web blocks in webviews.
+
+**Decision (Jake, 2026-10-04): M46 stays on Tauri.** The gap is about one frame at 60 Hz, Jake didn't feel WebKitGTK's in use, and every feature in the web client lands once instead of three times. Native terminals wait for a trigger:
+- someone feels terminal lag in the Tauri app;
+- the macOS app has to compete with Ghostty head to head;
+- Tauri hits a wall native wouldn't (keys, WKWebView).
+
+When one fires, start with native terminals on macOS (B2 in AppKit). S26's core is the seed for `crates/client`, which the TUI and M8 can use too.
+
+- **B2 (own renderer over libghostty-vt's render state, both platforms):** one shared Rust core (the daemon connection, a client-side libghostty-vt terminal that never answers queries, keys) under GTK4 (GSK, a render node per row) and AppKit (CoreText, a CALayer per row).
+  - It shows output a frame sooner than any browser: on geek, a 4.1 ms log flood against Chrome's 10.6 and WebKitGTK's 31, at 135 MB/s; on the Air, 15–17 ms against Chrome's and Safari's 29–30.
+  - IME and real typing worked on both.
+  - Missing so far: selection, the mouse, scrollback UI, links, accessibility.
+- **B1 (GhosttyKit surface running `illogical attach`):** works, but macOS only, emulates twice, and uses Ghostty's internal API.
+- **Level A:** libadwaita tabs and NSWindow tabs around webviews work. Each webview is a whole client, so a hybrid needs an **embed mode** in the web client.
+- **Level C:** a native attention rail is 80 lines. Rebuilding every block natively isn't worth it: browser, editor and app blocks are web pages anyway.
 
 #### M46: the app as window, installer and supervisor
 
