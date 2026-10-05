@@ -34,13 +34,15 @@ function say(b: Opened, text: string): Promise<string> {
   );
 }
 
-async function get(b: Opened, path = "/small"): Promise<{ status: number; ms: number }> {
-  return b.frame.evaluate(async (path) => {
+async function get(b: Opened, path = "/small"): Promise<{ status: number; ms: number; why?: string }> {
+  const r = await b.frame.evaluate(async (path) => {
     const t = performance.now();
     const r = await fetch(path, { cache: "no-store" });
-    await r.text();
-    return { status: r.status, ms: Math.round(performance.now() - t) };
+    const body = await r.text();
+    return { status: r.status, ms: Math.round(performance.now() - t), why: r.ok ? undefined : body };
   }, path);
+  if (r.why) console.log(`GET ${path}: ${r.status} ${r.why}`);
+  return r;
 }
 
 async function reopen(page: Page, stack: Stack, key: string, block: string): Promise<Opened> {

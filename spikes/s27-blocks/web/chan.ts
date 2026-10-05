@@ -113,10 +113,13 @@ export class BlockChannel {
         clearTimeout(t);
         rej(new Error(`couldn't connect: ${url}`));
       };
-      ws.onclose = () => {
-        clearTimeout(t);
-        rej(new Error("closed during the handshake"));
-      };
+      // The daemon's answer (a refusal) can still be on its way through
+      // the receive queue when the socket closes: read it first.
+      ws.onclose = () =>
+        void c.recvQ.then(() => {
+          clearTimeout(t);
+          rej(new Error("closed during the handshake"));
+        });
       ws.onmessage = (e) => {
         const wire = new Uint8Array(e.data as ArrayBuffer);
         if (step++ === 0) {
