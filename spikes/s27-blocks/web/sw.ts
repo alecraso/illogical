@@ -156,7 +156,7 @@ async function tunnel(req: Request, navigate: boolean): Promise<Response> {
   }
   const html = (out.get("content-type") ?? "").startsWith("text/html");
   if (navigate && html) {
-    out.append("content-security-policy", `frame-ancestors ${creds?.control ?? "'none'"}`);
+    out.append("content-security-policy", `frame-ancestors 'self' ${creds?.control ?? ""}`);
     const page = await new Response(stream).text();
     const at = page.search(/<head[\s>]/i);
     const end = at < 0 ? 0 : page.indexOf(">", at) + 1;
@@ -165,8 +165,85 @@ async function tunnel(req: Request, navigate: boolean): Promise<Response> {
   return new Response(stream, { status, headers: out });
 }
 
+// ---- an app's own worker ------------------------------------------------
+//
+// A page in the block may register a worker of its own (VS Code's webviews
+// do). That script's fetch never reaches a worker: it goes to control,
+// which doesn't have it. So control answers with this worker and the app's
+// path in S27_APP_SW, and this worker fetches the app's script through the
+// channel and runs it inside, handing it the events: its fetch handlers go
+// first, and what they leave goes through the channel as usual.
+
+const APP = (self as unknown as { S27_APP_SW?: string }).S27_APP_SW;
+type Handler = (e: unknown) => void;
+const appHandlers: Record<string, Handler[]> = {};
+let app: Promise<void> | null = null;
+
+function loadApp(): Promise<void> {
+  app ??= (async () => {
+    const res = await tunnel(new Request(new URL(APP!, self.location.href)), false);
+    if (!res.ok) throw new Error(`the app's worker: ${res.status}`);
+    const code = await res.text();
+    const add = (type: string, fn: Handler) => (appHandlers[type] ??= []).push(fn);
+    const scope = new Proxy(self, {
+      get(t, k) {
+        if (k === "addEventListener") return add;
+        const v = Reflect.get(t, k);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    new Function("self", "addEventListener", code)(scope, add);
+  })();
+  return app;
+}
+
+function dispatchApp(type: string, e: unknown) {
+  for (const h of appHandlers[type] ?? []) h(e);
+}
+
+if (APP) {
+  for (const type of ["install", "activate"] as const) {
+    self.addEventListener(type, (e) => {
+      const waits: Promise<unknown>[] = [];
+      e.waitUntil(loadApp().then(() => dispatchApp(type, { waitUntil: (p: Promise<unknown>) => waits.push(p) })).then(() => Promise.all(waits)));
+    });
+  }
+  self.addEventListener("message", (e) => {
+    if (e.data?.s27) return;
+    e.waitUntil(loadApp().then(() => dispatchApp("message", e)));
+  });
+}
+
+async function viaApp(e: FetchEvent): Promise<Response | undefined> {
+  await loadApp();
+  let answer: Promise<Response> | undefined;
+  dispatchApp("fetch", {
+    request: e.request,
+    clientId: e.clientId,
+    resultingClientId: e.resultingClientId,
+    respondWith: (r: Response | Promise<Response>) => (answer = Promise.resolve(r)),
+    waitUntil: (p: Promise<unknown>) => e.waitUntil(p),
+  });
+  return answer;
+}
+
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
+  if (APP && !url.pathname.startsWith("/.s27/")) {
+    e.respondWith(
+      (async () => {
+        const r = await viaApp(e).catch(() => undefined);
+        if (r) return r;
+        if (url.origin !== self.location.origin) return fetch(e.request);
+        try {
+          return await tunnel(e.request, e.request.mode === "navigate");
+        } catch (err) {
+          return new Response(`s27: ${err}`, { status: 502 });
+        }
+      })(),
+    );
+    return;
+  }
   if (url.origin !== self.location.origin || url.pathname.startsWith("/.s27/")) return;
   const navigate = e.request.mode === "navigate";
   e.respondWith(

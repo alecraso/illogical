@@ -59,6 +59,8 @@ struct Stats {
     /// Requests for a block's content that reached control: the worker
     /// wasn't in the way (a hard reload, an app's own worker script).
     misses: AtomicU64,
+    /// An app's own worker scripts, answered with ours (web/sw.ts).
+    app_workers: AtomicU64,
 }
 
 impl Control {
@@ -160,6 +162,19 @@ async fn by_host(State(c): State<Arc<Control>>, req: Request) -> Response {
         }
         _ => {
             let (mode, dest, site, sw) = (h("sec-fetch-mode"), h("sec-fetch-dest"), h("sec-fetch-site"), h("service-worker"));
+            if sw == "script" {
+                c.stats.app_workers.fetch_add(1, Ordering::Relaxed);
+                // The block's app registering a worker of its own: control
+                // can't serve its code (it doesn't have it), so it serves
+                // its own worker, which fetches the app's through the
+                // channel and runs it inside (see web/sw.ts).
+                let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
+                let body = format!("self.S27_APP_SW={};importScripts(\"/.s27/sw.js\");\n", serde_json::to_string(path).unwrap());
+                let mut r = Response::new(Body::from(body));
+                r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(JS));
+                r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+                return r;
+            }
             let navigating = mode == "navigate";
             c.note(json!({ "host": name, "path": req.uri().to_string(), "mode": mode, "dest": dest, "site": site, "sw": sw }));
             if !navigating {
@@ -205,6 +220,7 @@ fn stats(c: &Control) -> Response {
         "marker_hits": n(&s.marker_hits),
         "boots": n(&s.boots),
         "misses": n(&s.misses),
+        "app_workers": n(&s.app_workers),
         "daemons": c.daemons.lock().unwrap().keys().cloned().collect::<Vec<_>>(),
         "log": *c.log.lock().unwrap(),
     }))

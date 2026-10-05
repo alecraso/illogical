@@ -73,12 +73,14 @@ export async function next(): Promise<Server> {
 
 /** The code-server release editor blocks run (crates/daemon/src/editor/
  * server.rs), if it's been fetched to .run/cache (see README). */
-export const CODE_SERVER = resolve(".run/cache/code-server-4.140.0-macos-arm64/bin/code-server");
+const PLATFORM = `${process.platform === "darwin" ? "macos" : "linux"}-${process.arch === "arm64" ? "arm64" : "amd64"}`;
+export const CODE_SERVER = resolve(`.run/cache/code-server-4.140.0-${PLATFORM}/bin/code-server`);
 
 export async function codeServer(): Promise<Server> {
   const dir = resolve(`.run/cs-${process.pid}-${Date.now()}`);
   mkdirSync(`${dir}/project`, { recursive: true });
   writeFileSync(`${dir}/project/hello.txt`, "hello from the block\n");
+  writeFileSync(`${dir}/project/notes.md`, "# Notes heading\n\nsome text\n");
   const port = await freePort();
   const s = start(
     CODE_SERVER,
