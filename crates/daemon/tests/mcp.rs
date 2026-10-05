@@ -175,6 +175,12 @@ async fn tools_through_the_stdio_bridge() {
     // where to pick up; the agent calls again.
     let r = call(&s, "run", json!({ "command": "sleep 30" })).await;
     let p = r["pane"].as_u64().unwrap();
+    // Running, not only typed: a ^C while bash is still expanding PS0 (its
+    // command-start mark) cancels the line without a command end to wait
+    // for.
+    d.wait_for("sleep 30 to start", || {
+        d.get("/api/panes").as_array().unwrap().iter().any(|x| x["id"] == p && x["current"]["text"] == "sleep 30")
+    });
     let before = progress.load(Ordering::Relaxed);
     let w = call(&s, "wait", json!({ "pane": p, "until": "command_end", "timeout": 1.5 })).await;
     assert_eq!(w["state"], "still running", "{w}");
