@@ -11,7 +11,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { ready, run } from "./helpers";
+import { controlPanel, ready, run } from "./helpers";
 import { ANY, controlPort, listen } from "./ports";
 
 let base = "";
@@ -164,10 +164,7 @@ test("a founder deletes their account: members lose the team's machines at once,
   // Alice deletes her account; Acme goes with it.
   await alice.goto("/");
   await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
-  await expect(async () => {
-    await alice.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "account" })));
-    await expect(alice.locator("[data-delete-account]")).toBeVisible({ timeout: 500 });
-  }).toPass({ timeout: 15_000 });
+  await controlPanel(alice, "account");
   await alice.locator("[data-delete-account]").click();
   await expect(alice.locator("[data-disband]")).toContainText("Acme");
   await alice.locator("[data-delete-confirm]").fill("alice");

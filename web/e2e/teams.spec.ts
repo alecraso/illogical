@@ -13,7 +13,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { ready, run, text } from "./helpers";
+import { controlPanel, ready, run, text } from "./helpers";
 import { ANY, controlPort, listen } from "./ports";
 
 let base = "";
@@ -278,11 +278,8 @@ test("a presigned invite: someone already in a team joins another in one click",
   await alice.goto("/");
   await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
   const section = alice.locator(`[data-team="${team}"]`);
-  // The panel opens once the page's control overlay is listening.
-  await expect(async () => {
-    await alice.evaluate(() => window.dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
-    await expect(section).toBeVisible({ timeout: 500 });
-  }).toPass({ timeout: 15_000 });
+  await controlPanel(alice, "teams");
+  await expect(section).toBeVisible();
   await section.locator(`[data-invite-role="${team}"]`).selectOption("viewer");
   await expect(section.locator("[data-invite-ask-first]")).not.toBeChecked();
   await alice.locator(`[data-invite="${team}"]`).click();
@@ -410,7 +407,7 @@ test("removing a member cuts them off within a second", async () => {
   await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected)).toBe(true);
   // Remove asks first (#101).
   const bobId = await bob.evaluate(() => window.__illogical.control!.account);
-  await alice.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
+  await controlPanel(alice, "teams");
   const remove = alice.locator(`[data-remove-member="${bobId}"]`);
   await remove.click();
   await expect(remove).toHaveText("Really remove?");
@@ -490,7 +487,7 @@ test("Move to… puts a machine in a team and back, signed by the device", async
   await expect
     .poll(() => alice.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.online, minebox), { timeout: 30_000 })
     .toBe(true);
-  await alice.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "devices" })));
+  await controlPanel(alice, "devices");
   const row = alice.locator(`[data-move="${minebox}"]`);
   await row.locator("[data-move-to]").selectOption(team);
   await expect(row.locator("[data-move-explain]")).toContainText("Acme's members reach minebox by their role");

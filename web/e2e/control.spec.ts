@@ -11,7 +11,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { ready, run, text } from "./helpers";
+import { controlPanel, ready, run, text } from "./helpers";
 import { ANY, controlPort, daemonPort, listen } from "./ports";
 
 let base = "";
@@ -375,10 +375,8 @@ test("with every device lost, a recovery code lets a new browser in, once", asyn
   await expect(again.locator("[data-turned-down]")).toBeVisible({ timeout: 10_000 });
 });
 
-const panel = (page: Page, p: string) => page.evaluate((p) => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p })), p);
-
 test("add a phone or browser: the control URL as a QR code and a link", async () => {
-  await panel(laptop, "add-device");
+  await controlPanel(laptop, "add-device");
   await expect(laptop.getByRole("heading", { name: "Add a phone or browser" })).toBeVisible();
   await expect(laptop.locator("svg[data-qr]")).toHaveAttribute("data-qr", base);
   expect((await laptop.locator("svg[data-qr] path").getAttribute("d"))!.length).toBeGreaterThan(100);
@@ -388,7 +386,7 @@ test("add a phone or browser: the control URL as a QR code and a link", async ()
 });
 
 test("devices and machines, grouped; new recovery codes retire the old", async ({ browser }) => {
-  await panel(laptop, "devices");
+  await controlPanel(laptop, "devices");
   await expect(laptop.locator("[data-account]")).toHaveText("stranger");
   const machines = laptop.locator("[data-machines] li");
   await expect(machines).toHaveCount(2);
@@ -499,19 +497,20 @@ test("Getting started asks to check the account's fingerprint before the machine
   // The page may switch machine as the new one arrives, mounting the
   // overlay afresh: ask for the panel until it's there.
   await expect(async () => {
-    await panel(laptop, "devices");
+    await controlPanel(laptop, "devices");
     await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account, { timeout: 1000 });
   }).toPass({ timeout: 15_000 });
   await laptop.getByRole("button", { name: "Done" }).click();
 });
 
 test("sessions: where you're signed in, and signing out everywhere (#173)", async () => {
-  await panel(laptop, "account");
+  await controlPanel(laptop, "account");
   await expect(laptop.getByRole("heading", { name: "Sign-in and account" })).toBeVisible();
   // This browser, the phone, and the others that signed in above.
   await expect(laptop.locator("[data-session]")).not.toHaveCount(0);
   expect(await laptop.locator("[data-session]").count()).toBeGreaterThanOrEqual(2);
-  await expect(laptop.locator("[data-sessions]")).toContainText(/Chrome on (Linux|macOS)/);
+  // The system Chrome's own platform: where the tests run.
+  await expect(laptop.locator("[data-sessions]")).toContainText(`Chrome on ${process.platform === "darwin" ? "macOS" : "Linux"}`);
   await expect(laptop.locator("[data-sessions]")).toContainText("(this one)");
   // Sign one other out: it's gone from the list.
   const n = await laptop.locator("[data-session]").count();
@@ -530,7 +529,7 @@ test("deleting the account: type its login; its machines and team go (#173)", as
   await signIn(laptop);
   await booted(laptop);
   const before = await laptop.evaluate(() => window.__illogical.control!.account);
-  await panel(laptop, "account");
+  await controlPanel(laptop, "account");
   await laptop.locator("[data-delete-account]").click();
   await expect(laptop.getByRole("heading", { name: "Delete your account" })).toBeVisible();
   await expect(laptop.locator("[data-disband]")).toContainText("Solo");

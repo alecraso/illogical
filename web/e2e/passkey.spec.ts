@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { controlPanel } from "./helpers";
 import { ANY, controlPort } from "./ports";
 
 // WebAuthn needs a domain name; localhost counts as secure.
@@ -62,7 +63,7 @@ test("make an account with a passkey, sign out, sign back in", async ({ page }) 
   expect(found).toMatchObject({ account: first.account, name: "Ada Lovelace", root: first.root });
   await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
-  await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "devices" })));
+  await controlPanel(page, "devices");
   await expect(page.locator("[data-account-name]")).toHaveText("Ada Lovelace");
   await page.locator("[data-edit-name]").click();
   await page.locator("[data-name-input]").fill("Ada");

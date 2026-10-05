@@ -146,3 +146,18 @@ export function seedConversation(claude: string, word: string, title: string, mo
   writeFileSync(join(dir, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
   return { id, cwd };
 }
+
+/** Opens one of the control overlay's panels ("devices", "account",
+ * "teams", ...) once the overlay listens for the event: sent before that,
+ * it's lost. Checking and sending in one evaluate means the overlay can't
+ * unmount in between. */
+export const controlPanel = (page: Page, panel: string) =>
+  page.waitForFunction(
+    (p) => {
+      if (!document.documentElement.hasAttribute("data-control-panels")) return false;
+      dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+      return true;
+    },
+    panel,
+    { timeout: 20_000 },
+  );
