@@ -102,8 +102,9 @@ export async function admin(stack: Stack, path: string, body?: unknown): Promise
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (r.status === 204) return null;
-  return r.json();
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
 }
 
 /** Control's counters, read the way a test would (not through a browser). */
@@ -122,6 +123,13 @@ export async function controlStats(stack: Stack): Promise<any> {
 
 let nextBlock = 1;
 
+/** The daemon trusts this control page's device key (as enrollment would). */
+export async function trustParent(page: Page, stack: Stack) {
+  await page.waitForFunction(() => (window as any).s27?.ready);
+  const sign = await page.evaluate(() => (window as any).s27.signPub as string);
+  await admin(stack, "/trust", { sign });
+}
+
 export interface Opened {
   origin: string;
   frame: Frame;
@@ -133,13 +141,13 @@ export interface Opened {
 export async function openBlock(
   page: Page,
   stack: Stack,
-  o: { port?: number; ttlMs?: number; route?: string; path?: string; ready?: string } = {},
+  o: { port?: number; ttlMs?: number; route?: string; path?: string; ready?: string; key?: string; block?: string } = {},
 ): Promise<Opened> {
-  const block = `blk${nextBlock++}`;
+  const block = o.block ?? `blk${nextBlock++}`;
   await admin(stack, "/block", { id: block, port: o.port ?? stack.site });
   const origin = await page.evaluate(
     (a) => (window as any).s27.openBlock(a).origin as string,
-    { daemon: stack.daemon, block, ttlMs: o.ttlMs, route: o.route, path: o.path },
+    { daemon: stack.daemon, block, ttlMs: o.ttlMs, route: o.route, path: o.path, key: o.key },
   );
   const frame = await frameAt(page, origin);
   await frame.locator(o.ready ?? "h1").first().waitFor({ timeout: 60_000 });
@@ -197,9 +205,7 @@ export const test = base.extend<{ parent: Page }, { stack: Stack }>({
   ],
   parent: async ({ page, stack }, use) => {
     await page.goto(stack.origin + "/");
-    await page.waitForFunction(() => (window as any).s27?.ready);
-    const sign = await page.evaluate(() => (window as any).s27.signPub as string);
-    await admin(stack, "/trust", { sign });
+    await trustParent(page, stack);
     await use(page);
   },
 });

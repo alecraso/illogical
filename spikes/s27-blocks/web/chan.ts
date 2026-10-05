@@ -275,13 +275,27 @@ export class BlockChannel {
 
 // ---- where the worker and the pages keep the block's credentials -------
 
+let opened: Promise<IDBDatabase> | null = null;
+
+/** One connection, let go when the database is being deleted (storage
+ * cleared), so the deletion isn't held up by us. */
 function db(): Promise<IDBDatabase> {
-  return new Promise((res, rej) => {
+  opened ??= new Promise((res, rej) => {
     const r = indexedDB.open("s27", 1);
     r.onupgradeneeded = () => r.result.createObjectStore("kv");
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+    r.onsuccess = () => {
+      r.result.onversionchange = () => {
+        r.result.close();
+        opened = null;
+      };
+      res(r.result);
+    };
+    r.onerror = () => {
+      opened = null;
+      rej(r.error);
+    };
   });
+  return opened;
 }
 
 export async function load<T>(key: string): Promise<T | undefined> {

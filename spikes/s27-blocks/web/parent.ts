@@ -23,6 +23,9 @@ interface Open {
   /** "relay", or a direct `wss://…/e2e` URL. */
   route?: string;
   path?: string;
+  /** The block's origin key, if it has one already (a block brought back
+   * after a reload keeps its origin, and so its worker and storage). */
+  key?: string;
 }
 
 const device = (await subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"])) as CryptoKeyPair;
@@ -49,7 +52,7 @@ addEventListener("message", async (e) => {
 });
 
 function openBlock(o: Open): Block {
-  const key = hex(crypto.getRandomValues(new Uint8Array(10)));
+  const key = o.key ?? hex(crypto.getRandomValues(new Uint8Array(10)));
   const origin = `https://b-${key}.blocks.test${location.port ? `:${location.port}` : ""}`;
   const frame = document.createElement("iframe");
   frame.src = origin + (o.path ?? "/");

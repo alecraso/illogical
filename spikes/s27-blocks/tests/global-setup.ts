@@ -9,7 +9,10 @@ import net from "node:net";
 export default async function () {
   const port = Number(process.env.S27_PROXY_PORT ?? 7753);
   const server = http.createServer((_, res) => res.writeHead(405).end());
+  const open = new Set<net.Socket>();
   server.on("connect", (req, client, head) => {
+    open.add(client);
+    client.on("close", () => open.delete(client));
     const [host, p] = (req.url ?? "").split(":");
     if (!host.endsWith(".test")) {
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -29,5 +32,10 @@ export default async function () {
     server.once("error", rej);
     server.listen(port, "127.0.0.1", () => res());
   });
-  return () => new Promise<void>((res) => server.close(() => res()));
+  return () =>
+    new Promise<void>((res) => {
+      for (const s of open) s.destroy();
+      server.closeAllConnections();
+      server.close(() => res());
+    });
 }
