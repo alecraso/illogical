@@ -1,3 +1,4 @@
 target/
+/.cargo/claude-ide/
 spikes/*/work/
 /dist/

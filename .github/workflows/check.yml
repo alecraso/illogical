@@ -30,6 +30,11 @@ jobs:
       # The box's binaries, for the ssh tests in `just check` and the
       # control profile.
       - run: just static
+      # Before `just check`: reboot.rs drives Chromium (its watcher). After
+      # it, a failing check meant the browsers a Playwright upgrade needs
+      # were never installed, and reboot.rs then failed for want of them.
+      - name: Playwright's browsers
+        run: just browsers
       - run: just check
       - name: The testnet's control profile (M52 end to end)
         run: just testnet down && just testnet up control && just testnet test control && just testnet break control
@@ -49,8 +54,6 @@ jobs:
         run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
       - name: No secrets
         run: gitleaks git --no-banner --redact .
-      - name: Playwright's browsers
-        run: just browsers
       # team-swarm-phones' variant across networks runs a box in a container
       # behind tc netem, with just static's illogicald (built above).
       - name: The Playwright specs, in Chromium and WebKit
