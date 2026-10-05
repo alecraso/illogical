@@ -248,6 +248,18 @@ testnet-hosts:
     {{cargo}} build -p illogicald
     cd web && ILLOGICAL_TESTNET_HOSTS=1 pnpm exec playwright test e2e/testnet-hosts.spec.ts
 
+# M28 for real: VS Code over Remote-SSH into a Docker box (testnet/editors/README.md).
+testnet-editors:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
+    just static "$a"
+    {{cargo}} build -p illogicald
+    cd web
+    # Electron needs a display: a virtual one where there's none (Linux CI).
+    x=(); if [ "$(uname -s)" = Linux ] && [ -z "${DISPLAY:-}" ]; then x=(xvfb-run -a); fi
+    ILLOGICAL_TESTNET_EDITORS=1 ${x[@]+"${x[@]}"} pnpm exec playwright test e2e/editor-remote-ssh.spec.ts
+
 # Real Forgejo and GitLab in Docker (testnet/forges/README.md): up|test|down [forgejo|gitlab|all].
 forges cmd="test" forge="forgejo":
     #!/usr/bin/env bash
