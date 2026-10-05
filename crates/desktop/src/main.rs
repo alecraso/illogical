@@ -29,10 +29,14 @@
 //! - **Every machine, through illogical cloud** (M48, #159): once this
 //!   machine is joined, the window is control's own client, signed in
 //!   through the person's browser (`cloud.rs`).
+//! - **Its own profile per older WebKitGTK** (Linux): the .deb and the
+//!   AppImage share one, and a newer WebKitGTK's storage breaks an older
+//!   one (`profile.rs`).
 //! - A tray icon with *New window* and *This machine*; one instance (a
 //!   second launch opens a window in the first).
 
 mod cloud;
+mod profile;
 mod upgrade;
 
 use std::{
@@ -282,7 +286,11 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
     let label = format!("w{n}");
     let handle = app.clone();
     let nav = (app.clone(), label.clone());
-    let w = WebviewWindowBuilder::new(app, label, url)
+    let mut builder = WebviewWindowBuilder::new(app, label, url);
+    if let Some(dir) = profile::dir() {
+        builder = builder.data_directory(dir);
+    }
+    let w = builder
         .title("illogical")
         .inner_size(1280.0, 820.0)
         .initialization_script(cloud::init_script())
@@ -540,6 +548,7 @@ fn main() {
                     s.set_property("gtk-menu-bar-accel", "");
                 }
             }
+            profile::init(app.handle());
             upgrade::check();
             open_window(app.handle(), target(app.handle()))?;
             let open = MenuItem::with_id(app, "open", "Open illogical", true, None::<&str>)?;

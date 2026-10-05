@@ -86,8 +86,10 @@ pub fn local_only() -> bool {
     *LOCAL_ONLY.lock().unwrap()
 }
 
+/// Beside the window's profile when it has one of its own (`profile.rs`):
+/// its sessions are its own.
 fn state_file(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("cloud.json"))
+    crate::profile::dir().or_else(|| app.path().app_config_dir().ok()).map(|d| d.join("cloud.json"))
 }
 
 /// Whether the window holds a session on `control` (as far as the app

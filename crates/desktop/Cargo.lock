@@ -1803,6 +1803,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tungstenite",
  "ureq",
+ "webkit2gtk-sys",
 ]
 
 [[package]]

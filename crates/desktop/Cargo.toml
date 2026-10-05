@@ -26,6 +26,8 @@ sha2 = "0.10"
 # For click handling, which tauri-plugin-notification doesn't expose on desktop.
 notify-rust = "4"
 gtk = "0.18"
+# The running WebKitGTK's version, for the window's profile (profile.rs).
+webkit2gtk-sys = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"
