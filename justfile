@@ -147,6 +147,34 @@ desktop:
     esac
     ls -la "$dist"/illogical-desktop-*
 
+# The Linux desktop app under Xvfb, in a container (#204): builds the app
+# (debug, no bundle) in its build image (packaging/desktop/Containerfile)
+# and runs packaging/desktop/xvfb/test.sh against a static daemon and a
+# stand-in control. Needs podman or docker; the container runs the host's
+# architecture (aarch64 under Docker Desktop on a Mac).
+desktop-xvfb:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root={{justfile_directory()}}
+    engine=$(command -v podman || command -v docker) || { echo "the desktop test needs podman or docker" >&2; exit 1; }
+    arch=$(uname -m); [ "$arch" = arm64 ] && arch=aarch64
+    just static "$arch"
+    host=$arch-unknown-linux-gnu
+    mkdir -p crates/desktop/binaries
+    for b in illogicald illogical; do install -m 755 "{{target_dir}}/$arch-unknown-linux-musl/release/$b" "crates/desktop/binaries/$b-$host"; done
+    toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
+    base=illogical-desktop-build:jammy-$toolchain
+    "$engine" build -q -t "$base" -f packaging/desktop/Containerfile --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
+    "$engine" build -q -t illogical-desktop-xvfb:jammy-$toolchain -f packaging/desktop/xvfb/Containerfile --build-arg BASE="$base" packaging/desktop/xvfb
+    target={{target_dir}}/desktop-xvfb-$arch
+    mkdir -p "$target"
+    "$engine" run --rm --security-opt label=disable \
+      -v "$root:/src" -v "$target:/target" -v illogical-desktop-cargo:/opt/cargo/registry \
+      -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
+      illogical-desktop-xvfb:jammy-$toolchain bash -c 'set -euo pipefail
+        cargo tauri build --debug --no-bundle
+        /src/packaging/desktop/xvfb/test.sh /target/debug/illogical-desktop /src/crates/desktop/binaries/illogicald-'"$host"
+
 # Lint the desktop app (its own workspace) without building its sidecars.
 desktop-check:
     #!/usr/bin/env bash

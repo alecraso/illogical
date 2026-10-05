@@ -21,6 +21,7 @@ just e2e         # the browser tests, in the system Chrome
 | `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and a real daemon; the script signs in, enrolls, approves the daemon's join code and reaches it directly and through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one) | no |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
+| `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): it opens on a static daemon's page, follows a join to the app's sign-in (a stand-in control) and a leave back (#204) | no |
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
 CI (`.github/workflows/check.yml`) runs on pushes, on our own machines: `just
