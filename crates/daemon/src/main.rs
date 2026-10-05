@@ -635,12 +635,33 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
 }
 
+/// `ILLOGICAL_LOG_FILE`: stdout and stderr appended to that file (a
+/// leading `~/` is the home directory). The desktop app's launch agent
+/// sets it (M46): launchd can't put a log in each user's home itself.
+fn log_to_file() {
+    let Some(path) = std::env::var_os("ILLOGICAL_LOG_FILE").filter(|p| !p.is_empty()) else { return };
+    let path = PathBuf::from(path);
+    let path = match path.strip_prefix("~") {
+        Ok(rest) => home().join(rest),
+        Err(_) => path,
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else { return };
+    let _ = nix::unistd::dup2_stdout(&f);
+    let _ = nix::unistd::dup2_stderr(&f);
+    // Panes don't inherit it.
+    unsafe { std::env::remove_var("ILLOGICAL_LOG_FILE") };
+}
+
 fn main() -> anyhow::Result<()> {
     // The pane shim forks, so it runs before any threads exist.
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("_shim") {
         shim::run(&argv[2..]);
     }
+    log_to_file();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogicald=info".into()),
