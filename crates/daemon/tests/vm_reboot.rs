@@ -15,6 +15,9 @@
 //! ~/.local/share/wisp/token), like `machines.rs`. With a token, wispd must
 //! answer at 127.0.0.1:7788.
 
+// VM tabs are Linux's (wisp).
+#![cfg(unix)]
+
 use std::{
     io::Write,
     path::{Path, PathBuf},

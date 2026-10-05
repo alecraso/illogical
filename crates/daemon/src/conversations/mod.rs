@@ -693,6 +693,7 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    #[cfg(unix)]
     /// A process's `procStart`, as Claude Code writes it on this OS.
     fn proc_start(pid: u32) -> String {
         if cfg!(target_os = "macos") {
@@ -709,6 +710,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn write_session(dir: &Path, name: &str, pid: u32, start: &str, sid: &str) {
         std::fs::write(
             dir.join(name),

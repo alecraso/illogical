@@ -30,7 +30,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tokio::{io::AsyncReadExt, sync::OnceCell};
+#[cfg(unix)]
+use tokio::io::AsyncReadExt;
+use tokio::sync::OnceCell;
 
 use crate::provider::Provider;
 
@@ -178,6 +180,7 @@ fn done(host: &str, shell: &str, r: Result<Vec<(String, String)>, String>, t: In
 /// A machine runs `bash -l` in its panes, so that's what's read there.
 const MACHINE_SH: &str = r#"exec bash -l -i -c "$1" </dev/null 2>/dev/null"#;
 
+#[cfg(unix)]
 /// The arguments before the script, for shells that take `-l -i -c`.
 fn flags(shell: &str) -> Option<[&'static str; 3]> {
     let name = Path::new(shell).file_name()?.to_str()?.trim_start_matches('-');
@@ -235,6 +238,20 @@ fn clean(vars: Vec<(String, String)>, given: &[(String, String)]) -> Vec<(String
 }
 
 /// Run `shell` as a login shell, interactive, and read its environment.
+/// Windows: a program's environment is the user's (the registry's), which
+/// the daemon has already; PowerShell has no login environment to add.
+#[cfg(windows)]
+async fn resolve(
+    _shell: &str,
+    _args: &[String],
+    _home: &Path,
+    _env: &[(String, String)],
+    _timeout: Duration,
+) -> Result<Vec<(String, String)>, String> {
+    Ok(vec![])
+}
+
+#[cfg(unix)]
 async fn resolve(
     shell: &str,
     args: &[String],
@@ -326,10 +343,12 @@ mod tests {
 
     use super::*;
 
+    #[cfg(unix)]
     /// A HOME of its own, removed when dropped (after the shell is gone:
     /// `resolve` waits for it or kills it).
     struct Home(PathBuf);
 
+    #[cfg(unix)]
     impl Home {
         fn new(name: &str, bashrc: &str) -> Self {
             let dir = std::env::temp_dir().join(format!("illogical-shellenv-{name}-{}", std::process::id()));
@@ -347,6 +366,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     impl Drop for Home {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);

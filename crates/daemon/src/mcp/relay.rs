@@ -247,7 +247,8 @@ fn on_line(
     }
 }
 
-#[cfg(test)]
+// Unix: the relay runs in Linux guests, on a Unix socket.
+#[cfg(all(test, unix))]
 mod tests {
     use std::{
         io::{BufRead, Write},
@@ -256,6 +257,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(unix)]
     /// A stand-in MCP session: answers every request with its method and
     /// which connection (session) it is.
     fn toy(count: Arc<std::sync::atomic::AtomicU64>) -> impl Fn(DuplexStream) -> bool {
@@ -282,6 +284,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     /// The relay, run on this host as the exec would run it in a guest.
     fn local_relay(sock: &str) -> (Child, Pipe) {
         let mut child = Command::new("python3")
@@ -323,11 +326,13 @@ mod tests {
         (child, Pipe { events, stdin })
     }
 
+    #[cfg(unix)]
     struct Agent {
         child: Child,
         out: std::io::BufReader<std::process::ChildStdout>,
     }
 
+    #[cfg(unix)]
     impl Agent {
         fn send(&mut self, m: Value) {
             writeln!(self.child.stdin.as_mut().unwrap(), "{m}").unwrap();

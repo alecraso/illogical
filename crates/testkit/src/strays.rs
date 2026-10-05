@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
 use nix::{sys::signal, unistd::Pid};
 
 /// Kill what a stopped daemon's panes left running, then delete its state
@@ -40,9 +41,12 @@ pub fn kill_programs(state: &Path) -> Vec<(PathBuf, i32)> {
         for d in dirs.flatten() {
             let record = d.path().join("process");
             let Some((pid, shim)) = running(&record) else { continue };
+            #[cfg(unix)]
             if pid > 1 {
                 let _ = signal::killpg(Pid::from_raw(pid), signal::Signal::SIGKILL);
             }
+            #[cfg(not(unix))]
+            let _ = pid;
             if let Some(s) = shim.filter(|s| *s > 1) {
                 shims.push((record, s));
             }
@@ -74,6 +78,14 @@ fn ended(record: &Path) -> bool {
     running(record).is_none()
 }
 
+/// Windows has no shims: a pane's program is in a job that ends with the
+/// daemon, so there's nothing left to wait for.
 fn alive(pid: i32) -> bool {
-    signal::kill(Pid::from_raw(pid), None).is_ok()
+    #[cfg(unix)]
+    return signal::kill(Pid::from_raw(pid), None).is_ok();
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
 }

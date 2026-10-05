@@ -57,6 +57,7 @@ fn systemctl(args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Windows' install is M59's (#222).
 /// The daemon arguments to install: those given, or with none, the ones an
 /// earlier install wrote (read back by `earlier`), so an upgrade keeps them.
 fn args_to_install(given: &[String], reset: bool, earlier: impl FnOnce() -> Option<Vec<String>>) -> Vec<String> {
@@ -70,6 +71,7 @@ fn args_to_install(given: &[String], reset: bool, earlier: impl FnOnce() -> Opti
     kept
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Windows' install is M59's (#222).
 /// Where the installed daemon listens: its `--listen`, else the default.
 fn listen_of(args: &[String]) -> String {
     let mut it = args.iter();
@@ -86,6 +88,7 @@ fn listen_of(args: &[String]) -> String {
     "127.0.0.1:7681".into()
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Windows' install is M59's (#222).
 /// What to do after it starts (#107): open it, read its logs, reach it
 /// from elsewhere.
 fn next_steps(args: &[String], logs: &str) -> String {
@@ -183,6 +186,7 @@ pub fn install(start: bool, daemon_args: &[String], reset: bool, system: bool) -
     Ok(())
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Windows' install is M59's (#222).
 /// This binary (and the CLI beside it) into `~/.local/bin`; where the
 /// daemon now is.
 pub fn copy_binaries(home: &Path) -> anyhow::Result<PathBuf> {

@@ -371,6 +371,7 @@ async fn connect(dir: &Path, lock_dir: &Path, launch: &Launcher) -> io::Result<(
     Ok((s, port))
 }
 
+#[cfg(unix)]
 /// The relay, in a scope (or process group) of its own so it outlives us.
 fn spawn_relay(dir: &Path, lock_dir: &Path, launch: &Launcher) -> io::Result<()> {
     let unit = format!("illogical-ide-relay-{}", std::process::id());

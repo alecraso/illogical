@@ -10,16 +10,20 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    fs::File,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Stdio,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+#[cfg(unix)]
+use std::{
+    fs::File,
+    process::{Child, Command},
 };
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
@@ -694,6 +698,7 @@ impl Launcher {
         }
     }
 
+    #[cfg(unix)]
     /// A command that runs this executable (the shim) for a pane or an
     /// agent: in its own scope `unit` when there are scopes. Without the
     /// daemon's service environment, which isn't the program's.
@@ -725,12 +730,21 @@ fn fd_name(pane: PaneId) -> String {
 }
 
 /// A running process on its own PTY.
+#[cfg(unix)]
 struct Process {
     pid: u32,
     master: File,
     writer: Sender<Vec<u8>>,
     /// The shim's record of it.
     record: PathBuf,
+}
+
+/// A running process on its own pseudoconsole (Windows, M56).
+#[cfg(windows)]
+struct Process {
+    pid: u32,
+    writer: Sender<Vec<u8>>,
+    pty: Arc<crate::conpty::Pty>,
 }
 
 #[cfg(unix)]
@@ -926,28 +940,92 @@ impl Process {
     }
 }
 
-/// Windows: ConPTY panes come in M56 (#219).
-#[cfg(not(unix))]
+/// Windows (M56): the program on a pseudoconsole, run by the daemon itself.
+/// Panes don't outlive the daemon yet: that's the pane host's, in M58 (#221).
+#[cfg(windows)]
 impl Process {
     fn start(
-        _spawn: &Spawn,
+        spawn: &Spawn,
         _launch: &Launcher,
         _record: &Path,
-        _cols: u16,
-        _rows: u16,
-        _pane: PaneId,
-        _events: Sender<Cmd>,
+        cols: u16,
+        rows: u16,
+        pane: PaneId,
+        events: Sender<Cmd>,
     ) -> std::io::Result<Self> {
-        Err(std::io::Error::other("panes don't run on Windows yet (M56, #219)"))
+        let mut env = spawn.env.clone();
+        env.extend([
+            ("TERM".into(), "xterm-256color".into()),
+            ("COLORTERM".into(), "truecolor".into()),
+            ("ILLOGICAL_PANE".into(), pane.to_string()),
+        ]);
+        let cwd = if spawn.cwd.is_dir() { spawn.cwd.clone() } else { crate::home() };
+        let s = crate::conpty::spawn(&crate::conpty::Command {
+            program: &spawn.program,
+            args: &spawn.args,
+            cwd: &cwd,
+            env: &env,
+            cols,
+            rows,
+        })?;
+        let pid = s.pty.pid;
+        info!(pane, pid, program = %spawn.program, cwd = %cwd.display(), conpty = crate::conpty::which(), "started process");
+        let pty = Arc::new(s.pty);
+
+        let mut reader = s.output;
+        let out = events.clone();
+        let (read_done, drained) = bounded::<()>(0);
+        thread::Builder::new().name(format!("pane{pane}-read")).spawn(move || {
+            let _done = read_done;
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                match reader.read(&mut buf) {
+                    // The console closed (after the program ended).
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if out.send(Cmd::Output(buf[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        })?;
+
+        let (writer, inputs) = unbounded::<Vec<u8>>();
+        let mut w = s.input;
+        thread::Builder::new().name(format!("pane{pane}-write")).spawn(move || {
+            for data in inputs {
+                if w.write_all(&data).is_err() {
+                    break;
+                }
+            }
+        })?;
+
+        let waited = pty.clone();
+        thread::Builder::new().name(format!("pane{pane}-wait")).spawn(move || {
+            let code = waited.wait();
+            // A pseudoconsole's output only ends when it's closed: close it,
+            // so the last of the program's output is read before its exit.
+            waited.close_console();
+            let _ = drained.recv_timeout(DRAIN_AFTER_EXIT);
+            let _ = events.send(Cmd::Exited { key: pid as u64, code: Some(code), signal: None });
+        })?;
+
+        Ok(Self { pid, writer, pty })
     }
 
+    /// Windows keeps panes another way (M58, #221): nothing is ever kept.
     fn adopt(master: Kept, _record: &Path, _pane: PaneId, _events: Sender<Cmd>) -> std::io::Result<Self> {
         match master {}
     }
 
-    fn resize(&self, _cols: u16, _rows: u16) {}
+    fn resize(&self, cols: u16, rows: u16) {
+        self.pty.resize(cols, rows);
+    }
 
-    fn hang_up(&self) {}
+    fn hang_up(&self) {
+        self.pty.hang_up();
+    }
 }
 
 /// What a pane's program runs on: a local PTY, or an exec on its machine.

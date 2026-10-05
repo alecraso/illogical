@@ -8,9 +8,6 @@
 //! assert_eq!(d.get(&format!("/api/panes/{pane}/wait?until=exit&timeout=10"))["code"], 4);
 //! ```
 
-// Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
-#![cfg(unix)]
-
 pub mod listen;
 pub mod strays;
 
@@ -18,13 +15,13 @@ use std::{
     ffi::{OsStr, OsString},
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
-    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::atomic::{AtomicU32, Ordering},
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
 use nix::{sys::signal::Signal, unistd::Pid};
 use serde_json::Value;
 
@@ -40,7 +37,33 @@ macro_rules! illogicald {
 
 /// The shell test daemons run unless told otherwise: no rc files, so
 /// nothing of the user's gets in.
+#[cfg(unix)]
 pub const SHELL: &str = "bash --norc --noprofile";
+/// Windows: PowerShell 7 without its profile or banner.
+#[cfg(windows)]
+pub const SHELL: &str = "pwsh -NoLogo -NoProfile";
+
+/// A connection to the daemon's local socket: its Unix socket, or on
+/// Windows its named pipe (opened as a file: a request and its answer, one
+/// after the other, need nothing more).
+#[cfg(unix)]
+fn connect(sock: &Path) -> std::io::Result<std::os::unix::net::UnixStream> {
+    std::os::unix::net::UnixStream::connect(sock)
+}
+
+#[cfg(windows)]
+fn connect(sock: &Path) -> std::io::Result<std::fs::File> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match std::fs::OpenOptions::new().read(true).write(true).open(sock) {
+            // Every instance busy: the next one is a moment away.
+            Err(e) if e.raw_os_error() == Some(231) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(2))
+            }
+            r => return r,
+        }
+    }
+}
 
 /// How long a daemon has to come up.
 const START: Duration = Duration::from_secs(15);
@@ -339,7 +362,7 @@ impl Daemon {
         let deadline = Instant::now() + START;
         let child = matches!(self.run, Run::Child(_));
         let tcp = |port: u16| port == 0 || TcpStream::connect(("127.0.0.1", port)).is_ok();
-        while UnixStream::connect(self.sock()).is_err()
+        while connect(&self.sock()).is_err()
             || self.raw("GET", "/api/panes", None).0 != 200
             || (child && !(tcp(self.port) && tcp(self.block_port)))
         {
@@ -358,16 +381,29 @@ impl Daemon {
 
     /// Stop it the way systemd or a reboot does (SIGTERM: it saves first,
     /// and what it started goes too), and wait for it to exit.
+    #[cfg(unix)]
     pub fn stop(&mut self) {
         self.signal(Signal::SIGTERM);
     }
 
     /// Kill it (SIGKILL: no chance to save), and wait.
+    #[cfg(unix)]
     pub fn kill(&mut self) {
         self.signal(Signal::SIGKILL);
     }
 
+    /// Windows: TerminateProcess, which gives it no chance to save (a
+    /// console control event can't reach a child with no console).
+    #[cfg(windows)]
+    pub fn kill(&mut self) {
+        let Run::Child(c) = &mut self.run else { panic!("no services on Windows") };
+        let mut c = c.take().expect("it isn't running");
+        c.kill().unwrap();
+        c.wait().unwrap();
+    }
+
     /// Send it a signal it exits on, and wait for it to.
+    #[cfg(unix)]
     pub fn signal(&mut self, signal: Signal) {
         let Run::Child(c) = &mut self.run else { panic!("a service stops with systemctl") };
         let mut c = c.take().expect("it isn't running");
@@ -453,7 +489,7 @@ impl Daemon {
     /// One request over the socket (the owner's, so no credential): status
     /// and body, chunks joined. Status 0 if it doesn't answer.
     pub fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
-        let Ok(mut s) = UnixStream::connect(self.sock()) else { return (0, String::new()) };
+        let Ok(mut s) = connect(&self.sock()) else { return (0, String::new()) };
         let body = body.map(|b| b.to_string()).unwrap_or_default();
         let _ = s.write_all(
             format!(

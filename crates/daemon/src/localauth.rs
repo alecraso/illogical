@@ -20,7 +20,7 @@
 
 use std::{
     io::{self, Read, Write},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     path::{Path, PathBuf},
 };
 
@@ -88,7 +88,8 @@ pub fn load_or_create(path: &Path) -> anyhow::Result<String> {
 
 /// Whether a loopback connection carrying `tailscale serve`'s identity
 /// header can be serve's: its other end is tailscaled's (root) or the
-/// owner's own. Where that can't be told (not Linux), it is.
+/// owner's own. Where that can't be told (macOS), it is.
+#[cfg(unix)]
 pub fn serve_peer_ok(peer: SocketAddr, port: u16) -> bool {
     if !cfg!(target_os = "linux") {
         return true;
@@ -99,6 +100,14 @@ pub fn serve_peer_ok(peer: SocketAddr, port: u16) -> bool {
     }
 }
 
+/// Windows: its TCP table names the client's process, and so its user
+/// (tailscaled runs as SYSTEM).
+#[cfg(windows)]
+pub fn serve_peer_ok(peer: SocketAddr, port: u16) -> bool {
+    crate::pipe::loopback_peer_ok(peer, port)
+}
+
+#[cfg(unix)]
 fn euid() -> Option<u32> {
     #[cfg(unix)]
     return Some(nix::unistd::geteuid().as_raw());
@@ -106,6 +115,7 @@ fn euid() -> Option<u32> {
     None
 }
 
+#[cfg(unix)]
 /// The account that owns the client end of a loopback TCP connection to
 /// our `port` (Linux: `/proc/net/tcp{,6}`, which has both ends).
 pub fn loopback_uid(peer: SocketAddr, port: u16) -> Option<u32> {
@@ -115,6 +125,7 @@ pub fn loopback_uid(peer: SocketAddr, port: u16) -> Option<u32> {
         .find_map(|table| uid_in(&table, peer, port))
 }
 
+#[cfg(any(unix, test))]
 fn uid_in(table: &str, peer: SocketAddr, port: u16) -> Option<u32> {
     let want = (peer.ip().to_canonical(), peer.port());
     table.lines().skip(1).find_map(|line| {
@@ -125,6 +136,7 @@ fn uid_in(table: &str, peer: SocketAddr, port: u16) -> Option<u32> {
     })
 }
 
+#[cfg(any(unix, test))]
 /// `0100007F:1E01` (IPv4) or 32 hex digits and a port (IPv6): each 32-bit
 /// word as the kernel holds it, printed as a native number.
 fn parse_addr(s: &str) -> Option<SocketAddr> {
@@ -132,13 +144,13 @@ fn parse_addr(s: &str) -> Option<SocketAddr> {
     let port = u16::from_str_radix(port, 16).ok()?;
     let word = |h: &str| u32::from_str_radix(h, 16).ok().map(u32::to_ne_bytes);
     let ip = match ip.len() {
-        8 => IpAddr::V4(Ipv4Addr::from(word(ip)?)),
+        8 => std::net::IpAddr::V4(std::net::Ipv4Addr::from(word(ip)?)),
         32 => {
             let mut b = [0u8; 16];
             for i in 0..4 {
                 b[4 * i..4 * i + 4].copy_from_slice(&word(&ip[8 * i..8 * i + 8])?);
             }
-            IpAddr::V6(Ipv6Addr::from(b))
+            std::net::IpAddr::V6(std::net::Ipv6Addr::from(b))
         }
         _ => return None,
     };

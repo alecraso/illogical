@@ -384,6 +384,31 @@ pub struct Config {
     pub ide: Option<Arc<crate::ide::Ide>>,
 }
 
+/// How a shell takes a command to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dialect {
+    /// `-c SCRIPT`, `"$@"`, `exec` (bash, zsh, sh, ksh…).
+    Posix,
+    Fish,
+    /// pwsh and Windows PowerShell: `-Command`, `-NoExit`.
+    PowerShell,
+    /// cmd: `/c`, `/k`.
+    Cmd,
+}
+
+impl Dialect {
+    fn of(shell: &str) -> Self {
+        // The last part of the path either way it's written, less `.exe`.
+        let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell).to_lowercase();
+        match name.strip_suffix(".exe").unwrap_or(&name) {
+            "fish" => Self::Fish,
+            "pwsh" | "powershell" => Self::PowerShell,
+            "cmd" => Self::Cmd,
+            _ => Self::Posix,
+        }
+    }
+}
+
 impl Config {
     fn env(&self, pane: PaneId) -> Vec<(String, String)> {
         let mut env = if self.manager_env { sys::manager_env() } else { vec![] };
@@ -396,8 +421,12 @@ impl Config {
             .or_else(|| std::env::var("PATH").ok())
             .unwrap_or_default();
         if let Some(bin) = self.launch.exe.parent() {
-            let bin = bin.display().to_string();
-            let path = if base.split(':').any(|p| p == bin) { base } else { format!("{bin}:{base}") };
+            // `:` on Unix, `;` on Windows.
+            let mut dirs: Vec<PathBuf> = std::env::split_paths(&base).collect();
+            if !dirs.iter().any(|d| d == bin) {
+                dirs.insert(0, bin.to_owned());
+            }
+            let path = std::env::join_paths(dirs).map(|p| p.to_string_lossy().into_owned()).unwrap_or(base);
             env.retain(|(k, _)| k != "PATH");
             env.push(("PATH".into(), path));
         }
@@ -409,15 +438,16 @@ impl Config {
         // connected. An agent this machine has (a desktop's) is kept.
         #[cfg(unix)]
         let live = |p: &str| std::os::unix::net::UnixStream::connect(p).is_ok();
-        // Windows' ssh agent is a named pipe; panes keep the one they're given.
+        // Windows' ssh agent is a named pipe: panes keep the one they're given.
         #[cfg(not(unix))]
-        let live = |_: &str| false;
-        let has_agent = env
-            .iter()
-            .find(|(k, _)| k == "SSH_AUTH_SOCK")
-            .map(|(_, v)| v.clone())
-            .or_else(|| std::env::var("SSH_AUTH_SOCK").ok())
-            .is_some_and(|p| live(&p));
+        let live = |_: &str| true;
+        let has_agent = !cfg!(unix)
+            || env
+                .iter()
+                .find(|(k, _)| k == "SSH_AUTH_SOCK")
+                .map(|(_, v)| v.clone())
+                .or_else(|| std::env::var("SSH_AUTH_SOCK").ok())
+                .is_some_and(|p| live(&p));
         if !has_agent {
             env.retain(|(k, _)| k != "SSH_AUTH_SOCK");
             env.push(("SSH_AUTH_SOCK".into(), self.socket.with_file_name("agent.sock").display().to_string()));
@@ -442,6 +472,19 @@ impl Config {
     /// Run `command`, then carry on with an interactive shell in the pane.
     fn run_then_shell(&self, pane: PaneId, cwd: PathBuf, command: &str, integrate: bool) -> Spawn {
         let shell = self.shell(pane, cwd, integrate);
+        match Dialect::of(&self.shell) {
+            Dialect::PowerShell => {
+                let mut args = shell.args.clone();
+                args.extend(["-NoExit".into(), "-Command".into(), command.into()]);
+                return Spawn { args, ..shell };
+            }
+            Dialect::Cmd => {
+                let mut args = shell.args.clone();
+                args.extend(["/k".into(), command.into()]);
+                return Spawn { args, ..shell };
+            }
+            Dialect::Posix | Dialect::Fish => {}
+        }
         let then = std::iter::once(shell.program.as_str()).chain(shell.args.iter().map(String::as_str));
         let mut args: Vec<String> = self.shell_args.iter().filter(|a| *a != "--posix").cloned().collect();
         args.extend(["-c".into(), format!("{command}; exec {}", then.collect::<Vec<_>>().join(" "))]);
@@ -453,6 +496,29 @@ impl Config {
     /// (#146). With `note`, print it first and run nothing else.
     fn argv_then_shell(&self, pane: PaneId, cwd: PathBuf, run: Run, integrate: bool) -> Spawn {
         let shell = self.shell(pane, cwd, integrate);
+        match Dialect::of(&self.shell) {
+            Dialect::PowerShell => {
+                // `& 'program' 'arg'…`: each word quoted, nothing in it read.
+                let quoted = |w: &str| format!("'{}'", w.replace('\'', "''"));
+                let script = match &run {
+                    Run::Argv(argv) => format!("& {}", argv.iter().map(|w| quoted(w)).collect::<Vec<_>>().join(" ")),
+                    Run::Note(note) => format!("Write-Host -ForegroundColor DarkGray ('[' + {} + ']')", quoted(note)),
+                };
+                let mut args = shell.args.clone();
+                args.extend(["-NoExit".into(), "-Command".into(), script]);
+                return Spawn { args, ..shell };
+            }
+            Dialect::Cmd => {
+                let script = match &run {
+                    Run::Argv(argv) => crate::conpty_command_line(argv),
+                    Run::Note(note) => format!("echo [{note}]"),
+                };
+                let mut args = shell.args.clone();
+                args.extend(["/k".into(), script]);
+                return Spawn { args, ..shell };
+            }
+            Dialect::Posix | Dialect::Fish => {}
+        }
         let then = std::iter::once(shell.program.as_str()).chain(shell.args.iter().map(String::as_str));
         let then = then.collect::<Vec<_>>().join(" ");
         let fish = std::path::Path::new(&self.shell).file_name().is_some_and(|n| n == "fish");
@@ -476,7 +542,18 @@ impl Config {
     /// ends, so its output and exit code can still be read.
     fn run_only(&self, pane: PaneId, cwd: PathBuf, command: &str) -> Spawn {
         let mut args = self.shell_args.clone();
-        args.extend(["-c".into(), command.into()]);
+        match Dialect::of(&self.shell) {
+            // Its exit code is the program's (`$LASTEXITCODE`), or 1 when a
+            // cmdlet failed, as `sh -c` gives the last command's.
+            Dialect::PowerShell => args.extend([
+                "-Command".into(),
+                format!(
+                    "{command}\n$illogicalOk = $?; if ($LASTEXITCODE) {{ exit $LASTEXITCODE }}; if (-not $illogicalOk) {{ exit 1 }}"
+                ),
+            ]),
+            Dialect::Cmd => args.extend(["/d".into(), "/c".into(), command.into()]),
+            Dialect::Posix | Dialect::Fish => args.extend(["-c".into(), command.into()]),
+        }
         Spawn { program: self.shell.clone(), args, cwd, env: self.env(pane) }
     }
 
@@ -4588,5 +4665,20 @@ impl Daemon {
             presence: Vec::new(),
             threads: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shells_by_dialect() {
+        assert_eq!(Dialect::of("/bin/bash"), Dialect::Posix);
+        assert_eq!(Dialect::of("fish"), Dialect::Fish);
+        assert_eq!(Dialect::of("pwsh"), Dialect::PowerShell);
+        assert_eq!(Dialect::of(r"C:\Program Files\PowerShell\7\pwsh.exe"), Dialect::PowerShell);
+        assert_eq!(Dialect::of("powershell.exe"), Dialect::PowerShell);
+        assert_eq!(Dialect::of(r"C:\WINDOWS\system32\cmd.exe"), Dialect::Cmd);
     }
 }

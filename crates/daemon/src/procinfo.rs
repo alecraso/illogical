@@ -79,6 +79,7 @@ pub fn kill(pid: u32) {
     imp::kill(pid);
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Windows waits on the process handle (conpty).
 /// Block until a process (not necessarily our child) has ended. Returns at
 /// once if it's already gone; `false` if it can't be watched.
 pub fn wait_gone(pid: u32) -> bool {
@@ -417,6 +418,7 @@ mod imp {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn wait_gone(pid: u32) -> bool {
         let Some(p) = open(pid, PROCESS_SYNCHRONIZE) else { return true };
         // SAFETY: a handle we opened, with SYNCHRONIZE.

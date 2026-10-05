@@ -1,9 +1,5 @@
 //! illogicald: owns the terminals; clients attach over WebSocket.
 
-// Windows builds and tests the daemon's code but doesn't serve yet (M56,
-// #219): what only serving uses is unused there until then.
-#![cfg_attr(windows, allow(dead_code, unused_imports))]
-
 mod access;
 mod acl;
 mod agent;
@@ -14,6 +10,9 @@ mod block;
 mod browser;
 mod classify;
 mod control;
+// Windows panes on a pseudoconsole (M56).
+#[cfg(windows)]
+mod conpty;
 mod conversations;
 mod dial;
 mod e2e;
@@ -40,6 +39,9 @@ mod osc;
 mod pane;
 mod paths;
 mod perm;
+// The local socket on Windows: a named pipe (M56).
+#[cfg(windows)]
+mod pipe;
 mod ports;
 mod procinfo;
 mod provider;
@@ -577,6 +579,33 @@ fn daemon_id(store: &store::StateDir) -> String {
 
 /// `$SHELL`, else the login shell from the user database: launchd and some
 /// service managers don't set `$SHELL`, and macOS's `/bin/bash` is 3.2.
+/// Windows: PowerShell 7 if it's installed, else Windows PowerShell, else
+/// `%COMSPEC%` (cmd).
+#[cfg(windows)]
+fn login_shell() -> String {
+    let on_path =
+        |exe: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(exe).is_file()));
+    for exe in ["pwsh.exe", "powershell.exe"] {
+        if on_path(exe) {
+            return exe.trim_end_matches(".exe").into();
+        }
+    }
+    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
+}
+
+/// What the login shell starts with: a login shell on Unix; PowerShell
+/// without its banner.
+fn login_args(shell: &str) -> Vec<String> {
+    if cfg!(windows) {
+        let name = std::path::Path::new(shell).file_stem().map(|s| s.to_string_lossy().to_lowercase());
+        return match name.as_deref() {
+            Some("pwsh" | "powershell") => vec!["-NoLogo".into()],
+            _ => vec![],
+        };
+    }
+    vec!["-l".into()]
+}
+
 #[cfg(unix)]
 fn login_shell() -> String {
     std::env::var("SHELL")
@@ -616,6 +645,25 @@ fn socket_path(state_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
         warn!(error = %e, "can't record the socket's path");
     }
     Ok(socket)
+}
+
+/// Windows: a named pipe, named by a hash of the state directory (so test
+/// daemons with their own state each have one), recorded in `sock.path`
+/// for the CLI.
+#[cfg(windows)]
+fn socket_path(state_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let hash = state_dir
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
+    let user = std::env::var("USERNAME").unwrap_or_default().to_lowercase();
+    let user: String = user.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+    let pipe = PathBuf::from(format!(r"\\.\pipe\illogical-{user}-{hash:016x}"));
+    if let Err(e) = store::write_atomic(&state_dir.join("sock.path"), pipe.as_os_str().as_encoded_bytes()) {
+        warn!(error = %e, "can't record the socket's path");
+    }
+    Ok(pipe)
 }
 
 /// `dir`, made 0700, or there already as a directory (not a link) of ours,
@@ -677,10 +725,19 @@ fn default_state_dir() -> PathBuf {
         .join("illogical")
 }
 
-/// Windows: the daemon's named pipe comes in M56 (#219).
-#[cfg(not(unix))]
-fn daemon_running(_state_dir: &std::path::Path) -> bool {
-    false
+/// A daemon is serving `state_dir`'s named pipe.
+#[cfg(windows)]
+fn daemon_running(state_dir: &std::path::Path) -> bool {
+    std::fs::read_to_string(state_dir.join("sock.path")).is_ok_and(|p| pipe::answering(p.trim()))
+}
+
+/// A command line from words, quoted as Windows programs split them (cmd's
+/// `/k` takes one). On Unix, the words joined (never used there).
+fn conpty_command_line(argv: &[String]) -> String {
+    #[cfg(windows)]
+    return argv.split_first().map(|(p, rest)| conpty::command_line(p, rest)).unwrap_or_default();
+    #[cfg(not(windows))]
+    argv.join(" ")
 }
 
 /// This computer's name, for joining.
@@ -805,8 +862,12 @@ fn main() -> anyhow::Result<()> {
             let listen = std::fs::read_to_string(dir.join("listen")).unwrap_or_else(|_| "127.0.0.1:7681".into());
             tokio::runtime::Runtime::new()?.block_on(control::leave(&dir, listen.trim()))
         }
-        #[cfg(not(unix))]
-        None => anyhow::bail!("illogicald doesn't run panes on Windows yet (M56, #219)"),
+        // Nothing is kept across a restart on Windows yet (M58, #221).
+        #[cfg(windows)]
+        None => {
+            heap::tune();
+            tokio::runtime::Runtime::new()?.block_on(run(args.run, Default::default()))
+        }
         #[cfg(unix)]
         None => {
             heap::tune();
@@ -818,10 +879,9 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-#[cfg(unix)]
 async fn run(
     mut args: RunArgs,
-    mut kept: std::collections::HashMap<String, std::os::fd::OwnedFd>,
+    #[cfg_attr(windows, allow(unused_mut))] mut kept: std::collections::HashMap<String, pane::Kept>,
 ) -> anyhow::Result<()> {
     // Bound first: a port that's taken fails at once, and port 0 is known
     // before anything uses it (#66).
@@ -910,7 +970,11 @@ async fn run(
             let program = words.next().ok_or_else(|| anyhow::anyhow!("--shell is empty"))?;
             (program, words.collect())
         }
-        None => (login_shell(), vec!["-l".into()]),
+        None => {
+            let shell = login_shell();
+            let args = login_args(&shell);
+            (shell, args)
+        }
     };
     let state_dir = args.state_dir.clone().unwrap_or_else(default_state_dir);
     let store = store::StateDir::open(state_dir.clone())?;
@@ -920,6 +984,7 @@ async fn run(
     }
     start_sites(&args.blocks, &access, owner, args.listen, &state_dir)?;
     let launch = pane::Launcher::detect(args.keep_panes);
+    #[cfg(unix)]
     if launch.hold {
         // Terminals the last daemon's pane shims kept, adopted like the FD
         // store's.
@@ -1009,7 +1074,10 @@ async fn run(
             std::net::IpAddr::V6(v6) if v6.is_unspecified() => std::net::Ipv6Addr::LOCALHOST.into(),
             ip => ip,
         };
-        let cli = std::env::current_exe().map(|e| e.with_file_name("illogical")).ok().filter(|c| c.exists());
+        let cli = std::env::current_exe()
+            .map(|e| e.with_file_name(format!("illogical{}", std::env::consts::EXE_SUFFIX)))
+            .ok()
+            .filter(|c| c.exists());
         mcp::Link {
             url: format!("http://{}/mcp", SocketAddr::new(ip, args.listen.port())),
             cli: cli.unwrap_or_else(|| "illogical".into()),
@@ -1125,23 +1193,34 @@ async fn run(
         let _ = tcp.set_nodelay(true);
     });
     info!(addr = %args.listen, "listening");
-    // The CLI's socket: replace a stale one from a previous run.
-    let _ = std::fs::remove_file(&socket);
-    let local = tokio::net::UnixListener::bind(&socket)?;
+    #[cfg(unix)]
     {
-        // Owner only, wherever it is (its directory is private too).
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+        // The CLI's socket: replace a stale one from a previous run.
+        let _ = std::fs::remove_file(&socket);
+        let local = tokio::net::UnixListener::bind(&socket)?;
+        {
+            // Owner only, wherever it is (its directory is private too).
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+        }
+        tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
+        // Editors in dev containers join here (M28): a directory of its own.
+        match editors_socket(&state_dir) {
+            Ok(l) => {
+                tokio::spawn(axum::serve(l, server::editors_router(app.clone())).into_future());
+            }
+            Err(e) => warn!(error = %e, "no socket for editors in containers"),
+        }
+    }
+    // Windows: a named pipe this user alone can open. Another daemon on
+    // the same state directory has it already: say so rather than share.
+    #[cfg(windows)]
+    {
+        let local = pipe::PipeListener::bind(&socket.display().to_string())
+            .map_err(|e| anyhow::anyhow!("can't serve {} (another illogicald here?): {e}", socket.display()))?;
+        tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
     }
     info!(socket = %socket.display(), "listening");
-    tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
-    // Editors in dev containers join here (M28): a directory of its own.
-    match editors_socket(&state_dir) {
-        Ok(l) => {
-            tokio::spawn(axum::serve(l, server::editors_router(app.clone())).into_future());
-        }
-        Err(e) => warn!(error = %e, "no socket for editors in containers"),
-    }
     sys::notify("READY=1");
     tokio::select! {
         r = axum::serve(listener, server::router(app).into_make_service_with_connect_info::<SocketAddr>()) => r?,
@@ -1154,6 +1233,23 @@ async fn run(
     // Returning drops open connections; panes' shells are hung up as their
     // terminals close, after everything is saved.
     Ok(())
+}
+
+/// Windows: Ctrl-C, the console closing, logoff or shutdown.
+#[cfg(windows)]
+async fn signalled() {
+    use tokio::signal::windows;
+    let (mut close, mut shutdown, mut logoff) = (
+        windows::ctrl_close().expect("ctrl_close"),
+        windows::ctrl_shutdown().expect("ctrl_shutdown"),
+        windows::ctrl_logoff().expect("ctrl_logoff"),
+    );
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = close.recv() => {}
+        _ = shutdown.recv() => {}
+        _ = logoff.recv() => {}
+    }
 }
 
 #[cfg(unix)]

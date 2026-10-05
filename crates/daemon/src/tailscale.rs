@@ -130,6 +130,7 @@ impl LocalApi {
         Ok(serde_json::from_slice(&body)?)
     }
 
+    #[cfg(unix)]
     pub async fn status(&self) -> anyhow::Result<Status> {
         parse_status(&self.status_json().await?).context("tailscaled isn't logged in")
     }
@@ -149,6 +150,7 @@ impl LocalApi {
         }
     }
 
+    #[cfg(unix)]
     /// `Running` once logged in and connected; `NeedsLogin`, `Starting`, …
     pub async fn backend_state(&self) -> anyhow::Result<String> {
         Ok(self.status_json().await?.get("BackendState").and_then(Value::as_str).unwrap_or_default().to_owned())

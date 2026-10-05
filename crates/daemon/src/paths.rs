@@ -49,7 +49,8 @@ pub fn relative(dir: &str, file: &str) -> String {
     file.to_owned()
 }
 
-#[cfg(test)]
+// Unix: they make symlinks.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

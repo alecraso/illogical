@@ -168,6 +168,7 @@ pub fn local_router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
+#[cfg(unix)]
 /// Editors only (M28): `<state>/editors/sock`, the one socket a dev
 /// container gets (its directory mounted): joining the swarm as an editor
 /// is all it can do there, not drive the daemon.
