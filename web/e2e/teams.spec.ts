@@ -293,6 +293,19 @@ test("a presigned invite: someone already in a team joins another in one click",
   await alice.locator(`[data-invite="${team}"]`).click();
   await expect(section.locator("[data-invite-why]")).toHaveCount(0);
   await expect(section).toContainText("One person can join with this link, within a day");
+  // It's listed until someone uses it, and she can cancel it (#134): this
+  // one she sent to the wrong person.
+  const lost = (await section.locator("[data-invite-link]").textContent())!;
+  const unused = section.locator("[data-presigned]");
+  await expect(unused).toHaveCount(1);
+  await expect(unused).toContainText("for someone who watches");
+  await expect(unused).toContainText(/expires in 2\d h/);
+  await unused.locator("[data-cancel-presigned]").click();
+  await expect(unused).toHaveCount(0);
+  // The one she means to send.
+  await alice.locator(`[data-invite="${team}"]`).click();
+  await expect(section.locator("[data-invite-link]")).not.toHaveText(lost);
+  await expect(unused).toHaveCount(1);
   const link = (await section.locator("[data-invite-link]").textContent())!;
   expect(link).toMatch(/#pinvite=[0-9a-f]{16}\.[0-9a-f]{64}$/);
   await alice.getByRole("button", { name: "Done" }).click();
@@ -300,6 +313,11 @@ test("a presigned invite: someone already in a team joins another in one click",
   const stranger = await (await browser.newContext()).newPage();
   await stranger.goto(link);
   await expect(stranger.locator("[data-why=invite]")).toContainText("alice invited you to Acme.");
+  // The cancelled link does nothing.
+  const tab = await carol.context().newPage();
+  await tab.goto(lost);
+  await expect(tab.locator(".control-prompt .control-error")).toContainText("expired, was used, or never was");
+  await tab.close();
   // Carol opens it: one button, and she's in, with no visit from Alice.
   await carol.goto(link);
   await expect(carol.locator("[data-invite-team]")).toHaveText("Acme");
@@ -308,6 +326,8 @@ test("a presigned invite: someone already in a team joins another in one click",
   await expect(carol.locator("[data-invite-joined]")).toBeVisible({ timeout: 15_000 });
   const mine = await carol.evaluate(() => window.__illogical.control!.teams.map((t) => `${t.roster.name}:${t.role}`).sort());
   expect(mine).toEqual(["Acme:viewer", "Carols:owner"]);
+  // Used, so no longer listed.
+  expect(await alice.evaluate((t) => window.__illogical.control!.presignedInvites(t), team)).toEqual([]);
   await carol.getByRole("button", { name: "Done" }).click();
   // Alice's browser checks the version Carol wrote, as daemons do.
   await alice.evaluate(() => window.__illogical.control!.refresh());
