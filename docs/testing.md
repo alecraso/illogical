@@ -9,7 +9,7 @@ Nothing in the default run reaches the network or costs money.
 ```sh
 just test        # Rust tests, the web typecheck, e2e-interop, control-smoke
 just check       # just test, plus rustfmt and clippy (what CI runs on Linux)
-just e2e         # the browser tests, in the system Chrome
+just e2e         # the browser tests, in the system Chrome and WebKit
 ```
 
 ## What runs where
@@ -19,12 +19,19 @@ just e2e         # the browser tests, in the system Chrome
 | `cargo test --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/` | Linux and macOS |
 | `just e2e-interop` (in `just test`) | the browser's end-to-end crypto (`web/src/e2e`) against Rust's (`crates/e2e`): certificate vectors made by `crates/e2e/examples/interop.rs`, and a Noise handshake with its `responder` | Linux and macOS |
 | `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and a real daemon; the script signs in, enrolls, approves the daemon's join code and reaches it directly and through the relay | Linux and macOS |
-| `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one) | no |
+| `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one): the `chrome` project, and `webkit` for `*.webkit.spec.ts` | Linux (Playwright's Chromium and WebKit) |
+| `just e2e-webkit` | only the `webkit` project: Safari's engine, for device keys (#94) and the one-click invite (#137) | macOS |
+| `just testnet up ssh`, `test ssh`, `break ssh` | the Docker test stack's claims ([testnet/README.md](../testnet/README.md)), then each claim under `BREAK=1`, where it must fail | Linux, when the runner has Docker |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
 CI (`.github/workflows/check.yml`) runs on pushes, on our own machines: `just
-check` on Linux (geek), `just test` on macOS (jake-mini). See
+check` and `just e2e` on Linux (geek), `just test` and `just e2e-webkit` on
+macOS (jake-mini), and the testnet's ssh profile in a job of its own on Linux.
+That job needs Docker on the runner; without it, it skips with a warning on
+the run. `just browsers` installs Playwright's browsers (with their system
+libraries on Linux, if sudo needs no password; otherwise run `sudo pnpm exec
+playwright install-deps` in `web/` once). See
 [development.md](development.md) for the runners.
 
 ## The daemon's integration tests
@@ -80,6 +87,10 @@ take `--listen 127.0.0.1:0` and fake servers listen on port 0
 can run the suite at once (#67). `web/e2e/helpers.ts` has the page
 helpers (`open`, `ready`, `type`, `run`, `text`, ...).
 
+`E2E_CHROMIUM=1` uses Playwright's Chromium instead of the system Chrome,
+as CI does. With `CARGO_TARGET_DIR` set, `just e2e` links `target` to it,
+since the specs run `../target/debug/*`.
+
 Make temp directories in `beforeAll`, not at the top of a spec: Playwright
 loads each spec in the runner as well as the worker (#62).
 `E2E_DAEMON_LOG=<file>` keeps the test daemon's debug log, and
@@ -108,10 +119,8 @@ These skip, saying why, unless what they need is there:
 
 Tracked in #200:
 
-- `testnet/`, a Compose stack with profiles for network shapes and real
-  services: ssh boxes behind a bastion, control and a box that can only
-  dial out, Fountain, Forgejo. Modelled on terragucci's `stack/`.
+- More `testnet/` profiles: control and a box that can only dial out,
+  Fountain, Forgejo.
 - Client fixtures: recorded daemon sessions a client can replay against,
   and a daemon check against previous releases' fixtures.
 - A shared harness crate in place of the per-file `Daemon` copies.
-- The Playwright suite in CI.
