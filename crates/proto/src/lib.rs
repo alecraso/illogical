@@ -1035,6 +1035,11 @@ pub struct ThreadMsg {
     /// Principal ids it @mentions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentions: Vec<String>,
+    /// The `@` tokens (lowercase) that reached someone: each one naming a
+    /// person in `mentions`, and the agent's when `to_agent`. The page
+    /// marks only these; an `@word` that reached no one stays plain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub landed: Vec<String>,
     /// It @mentioned the pane's agent, and went to it as a follow-up.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub to_agent: bool,

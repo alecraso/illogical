@@ -665,6 +665,12 @@ async fn an_agent_reads_and_posts_in_threads() {
     assert_eq!(r["messages"].as_array().unwrap().len(), 1, "{r}");
     call(&s, "post_thread", json!({ "session": session, "text": "done for today" })).await;
     assert_eq!(d.get(&format!("/api/threads/session-{session}"))["messages"][0]["text"], "done for today");
+    // An @ that goes nowhere comes back to the agent that wrote it.
+    let p = call(&s, "post_thread", json!({ "session": session, "text": "@claude @notreal ping" })).await;
+    assert_eq!(
+        p["unreached"],
+        json!([{ "token": "claude", "why": "agent_needs_pane" }, { "token": "notreal", "why": "nobody" }])
+    );
     // A client with no pane of its own has to say which thread.
     assert!(refused(&s, "post_thread", json!({ "text": "hi" })).await.contains("which thread"));
     s.cancel().await.unwrap();

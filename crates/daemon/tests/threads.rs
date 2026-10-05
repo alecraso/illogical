@@ -229,6 +229,73 @@ fn at_agent_reaches_the_panes_agent_from_someone_who_drives_it() {
     assert_eq!(r["message"]["to_agent"], Value::Null);
 }
 
+/// Which `@` tokens landed, and what is said to the poster about the rest.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_what_landed_is_marked_and_the_rest_is_told_to_the_poster_alone() {
+    let d = daemon("threads-landed");
+    let panes = d.get("/api/panes");
+    let (pane, session) = (panes[0]["id"].as_u64().unwrap(), panes[0]["session"].as_u64().unwrap());
+    share(&d, session, WATCHER, "viewer", true);
+    share(&d, session, DRIVER, "editor", true);
+    let reasons = |r: &Value| -> Vec<(String, String)> {
+        r["unreached"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|u| (u["token"].as_str().unwrap().to_owned(), u["why"].as_str().unwrap().to_owned()))
+            .collect()
+    };
+    let pair = |t: &str, w: &str| (t.to_owned(), w.to_owned());
+    let key = format!("/api/threads/pane-{pane}");
+
+    // Only the resolved token lands; the unknown name is told to the poster.
+    let r = d.post(&key, json!({ "text": "@driver and @notreal, mail a@example.com" }));
+    assert_eq!(r["message"]["landed"], json!(["driver"]), "{r}");
+    assert_eq!(reasons(&r), [pair("notreal", "nobody")]);
+
+    // The owner driving a pane: @claude lands too.
+    let r = d.post(&key, json!({ "text": "@Claude look, @agent" }));
+    assert_eq!(r["message"]["landed"], json!(["claude", "agent"]), "{r}");
+    assert_eq!(r["unreached"], json!([]));
+
+    // Yourself, and nothing at all, say nothing and land nothing.
+    let r = d.post(&key, json!({ "text": "@me hello" }));
+    assert_eq!((r["message"]["landed"].clone(), r["unreached"].clone()), (Value::Null, json!([])), "{r}");
+
+    // In a session thread an @agent has no pane to go to.
+    let r = d.post(&format!("/api/threads/session-{session}"), json!({ "text": "@claude ping @driver" }));
+    assert_eq!(r["message"]["landed"], json!(["driver"]), "{r}");
+    assert_eq!(r["message"]["to_agent"], Value::Null);
+    assert_eq!(reasons(&r), [pair("claude", "agent_needs_pane")]);
+
+    // A guest editor isn't trusted to drive the owner's pane, so their
+    // @agent is refused.
+    let (s, v) = guest(&d, DRIVER, "POST", &key, Some(json!({ "text": "@agent run it, @notreal" })));
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["message"]["to_agent"], Value::Null, "{v}");
+    assert_eq!(v["message"]["landed"], Value::Null, "{v}");
+    assert_eq!(reasons(&v), [pair("agent", "may_not_drive"), pair("notreal", "nobody")]);
+
+    // A name that exists but can't read this thread reads like one that
+    // doesn't: same reason, nothing to tell them apart.
+    let (mut ws, _) = connect_async(d.ws("/ws")).await.unwrap();
+    let op = json!({ "type": "pane", "pane": pane, "op": { "op": "set_private", "on": true } });
+    ws.send(Message::Text(op.to_string().into())).await.unwrap();
+    d.wait_for("the pane to go private", || guest(&d, DRIVER, "GET", &key, None).0 == 404);
+    let r = d.post(&key, json!({ "text": "@driver hi" }));
+    let r2 = d.post(&key, json!({ "text": "@nosuchperson hi" }));
+    assert_eq!(reasons(&r), [pair("driver", "nobody")], "{r}");
+    assert_eq!(reasons(&r2), [pair("nosuchperson", "nobody")], "{r2}");
+    assert_eq!(r["message"]["mentions"], r2["message"]["mentions"]);
+    assert_eq!(r["message"]["landed"], r2["message"]["landed"]);
+
+    // Only the poster's response carries it: nothing is kept in the thread.
+    let got = d.get(&key);
+    assert!(got["messages"].as_array().unwrap().iter().all(|m| m.get("unreached").is_none()), "{got}");
+    let (_, theirs) = guest(&d, WATCHER, "GET", &format!("/api/threads/session-{session}"), None);
+    assert!(!theirs.to_string().contains("unreached"), "{theirs}");
+}
+
 /// A role change (the share dialog's select) keeps what a "from now" share
 /// has read; a share made again after being removed starts again.
 #[test]

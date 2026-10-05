@@ -31,6 +31,7 @@ import {
   type ThreadSummary,
   type ThreadTarget,
   threadKey,
+  type Unreached,
 } from "./proto";
 import { decompress } from "fzstd";
 import { SCROLLBACK, TerminalView } from "./terminal-view";
@@ -422,11 +423,12 @@ export class Client {
     return (await r.json<{ messages: ThreadMsg[] }>()).messages;
   }
 
-  async postThread(t: ThreadTarget, text: string, quote?: { pane: PaneId; text: string }): Promise<void> {
+  async postThread(t: ThreadTarget, text: string, quote?: { pane: PaneId; text: string }): Promise<{ unreached: Unreached[] }> {
     const r = await this.request("POST", `/api/threads/${threadKey(t)}`, { text, quote });
     if (!r.ok) throw new Error((await r.json<{ error?: string }>().catch(() => ({ error: undefined }))).error ?? `HTTP ${r.status}`);
-    const a = (await r.json<{ agent?: { delivered?: boolean; error?: string } | null }>()).agent;
-    if (a?.error) this.showError(`the agent didn't get it: ${a.error}`);
+    const body = await r.json<{ agent?: { delivered?: boolean; error?: string } | null; unreached?: Unreached[] }>();
+    if (body.agent?.error) this.showError(`the agent didn't get it: ${body.agent.error}`);
+    return { unreached: body.unreached ?? [] };
   }
 
   markThreadRead(t: ThreadTarget, upto: number) {

@@ -859,7 +859,8 @@ async fn thread_post(
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let target = thread_target(&key)?;
     let post = crate::mux::ThreadPost { target, who, as_agent: None, text: req.text, quote: req.quote };
-    let (msg, to_agent) = app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
+    let (msg, to_agent, unreached) =
+        app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
     let mut agent = serde_json::Value::Null;
     if to_agent && let illogical_proto::ThreadTarget::Pane(pane) = target {
         agent = match tell_agent(&app, pane, &msg).await {
@@ -867,7 +868,7 @@ async fn thread_post(
             Err(e) => serde_json::json!({ "error": e }),
         };
     }
-    Ok(Json(serde_json::json!({ "message": msg, "agent": agent })))
+    Ok(Json(serde_json::json!({ "message": msg, "agent": agent, "unreached": unreached })))
 }
 
 /// Hand a thread message to the pane's agent, as a follow-up from its

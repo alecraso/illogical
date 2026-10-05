@@ -175,7 +175,7 @@ pub enum Api {
     /// Post in a thread as `who`. `as_agent`: an agent posts through MCP
     /// under that name. Answers with the message, and whether it goes to
     /// the pane's agent as a follow-up.
-    ThreadPost(ThreadPost, oneshot::Sender<Result<(ThreadMsg, bool), ThreadError>>),
+    ThreadPost(ThreadPost, oneshot::Sender<Result<Posted, ThreadError>>),
     /// `who` has read a thread up to a message.
     ThreadRead(ThreadTarget, crate::acl::Principal, u64),
     /// Where each pane of a session's output ends now (a "from now" share
@@ -726,6 +726,19 @@ pub struct ThreadPost {
     pub text: String,
     pub quote: Option<Quote>,
 }
+
+/// An `@` in a post that reached no one, for the poster alone.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Unreached {
+    pub token: String,
+    /// `agent_needs_pane`, `may_not_drive` or `nobody`. `nobody` is the same
+    /// whether the name is unknown or its owner can't read the thread.
+    pub why: &'static str,
+}
+
+/// What a post comes to: the message, whether it went to the pane's agent,
+/// and the `@`s that reached no one.
+pub type Posted = (ThreadMsg, bool, Vec<Unreached>);
 
 /// Why a thread request failed: an HTTP status and what to say.
 #[derive(Debug)]
@@ -4013,7 +4026,7 @@ impl Daemon {
         out
     }
 
-    fn thread_post(&mut self, post: ThreadPost) -> Result<(ThreadMsg, bool), ThreadError> {
+    fn thread_post(&mut self, post: ThreadPost) -> Result<Posted, ThreadError> {
         let ThreadPost { target, who, as_agent, text, quote } = post;
         let (role, _) = self.thread_role(&who, target).ok_or_else(|| ThreadError(404, "no such thread".into()))?;
         if role < Role::Editor {
@@ -4045,6 +4058,25 @@ impl Daemon {
         let to_agent = as_agent.is_none()
             && crate::threads::calls_agent(&tokens)
             && matches!(target, ThreadTarget::Pane(p) if self.may_drive_here(&who, p).is_ok());
+        // Which tokens went anywhere; the rest are the poster's to hear about.
+        let me = self.name_of(&who);
+        let (mut landed, mut unreached) = (Vec::new(), Vec::new());
+        for t in &tokens {
+            let person = self
+                .mentionable()
+                .into_iter()
+                .any(|p| mentions.iter().any(|m| m == p.id()) && crate::threads::names(t, p.id(), &self.name_of(&p)));
+            if person || (to_agent && crate::threads::calls_agent(std::slice::from_ref(t))) {
+                landed.push(t.clone());
+            } else if crate::threads::names(t, who.id(), &me) {
+                // Yourself: nothing to say.
+            } else if crate::threads::calls_agent(std::slice::from_ref(t)) {
+                let why = if matches!(target, ThreadTarget::Pane(_)) { "may_not_drive" } else { "agent_needs_pane" };
+                unreached.push(Unreached { token: t.clone(), why });
+            } else {
+                unreached.push(Unreached { token: t.clone(), why: "nobody" });
+            }
+        }
         let msg = ThreadMsg {
             id: 0,
             at: now_ms(),
@@ -4053,6 +4085,7 @@ impl Daemon {
             text,
             quote,
             mentions,
+            landed,
             to_agent,
             agent: as_agent.is_some(),
         };
@@ -4067,7 +4100,7 @@ impl Daemon {
         }
         self.soon();
         self.notify_mentions(target, &msg);
-        Ok((msg, to_agent))
+        Ok((msg, to_agent, unreached))
     }
 
     /// Tell everyone a message mentions, on their phones too.

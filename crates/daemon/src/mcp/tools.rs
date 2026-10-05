@@ -726,7 +726,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "post_thread",
             title: "Post in a thread",
-            description: "Post a message in a pane's or a session's thread, where the people working on it talk; it shows as from an agent. Use it to answer an @agent message or to tell the people something they should see.",
+            description: "Post a message in a pane's or a session's thread, where the people working on it talk; it shows as from an agent. Use it to answer an @agent message or to tell the people something they should see. The result's `unreached` lists any @name that reached no one, and why.",
             schema: schema_for_type::<PostThreadArgs>,
             read_only: false,
             destructive: false,
@@ -1855,9 +1855,12 @@ impl<'a> Call<'a> {
             text: a.text,
             quote: None,
         };
-        let (msg, _) =
+        let (msg, _, unreached) =
             self.app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or("daemon is shutting down")?.map_err(|e| e.1)?;
-        done(format!("posted #{} in {}", msg.id, target.key()), json!({ "thread": target, "message": msg }))
+        done(
+            format!("posted #{} in {}", msg.id, target.key()),
+            json!({ "thread": target, "message": msg, "unreached": unreached }),
+        )
     }
 
     async fn history(&self, a: HistoryArgs) -> Out {

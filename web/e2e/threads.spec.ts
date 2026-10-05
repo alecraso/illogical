@@ -91,6 +91,8 @@ test("a message reaches everyone on the pane, live", async ({ browser }) => {
   await panel.locator("textarea").fill("the deploy script hangs, @friend can you look?");
   await panel.locator("textarea").press("Enter");
   await expect(panel.locator(".thread-msg")).toContainText("the deploy script hangs");
+  // @friend reached someone, so it's marked.
+  await expect(panel.locator(".thread-text b")).toHaveText("@friend");
 
   // The friend's badge says it's for them; the watcher's just that it's new.
   const badge = (p: Page) => p.locator(`[data-pane="${pane}"] .thread-badge`);
@@ -115,6 +117,25 @@ test("a message reaches everyone on the pane, live", async ({ browser }) => {
   await expect(badge(owner)).not.toHaveClass(/unread/);
 });
 
+test("an @ that reached no one stays plain and tells only its poster", async () => {
+  const panel = owner.locator(".thread-panel");
+  await panel.locator("textarea").fill("@notreal what's up");
+  await panel.locator("textarea").press("Enter");
+  const msg = panel.locator(".thread-msg").filter({ hasText: "what's up" });
+  await expect(msg).toBeVisible();
+  await expect(msg.locator("b")).toHaveCount(0);
+  await expect(panel.locator(".thread-note.unreached")).toHaveText("Nobody here called notreal can read this thread");
+  // Typing again clears the note.
+  await panel.locator("textarea").fill("x");
+  await expect(panel.locator(".thread-note.unreached")).toHaveCount(0);
+  await panel.locator("textarea").fill("");
+
+  // Not the friend's page: nothing is said to them, and it's plain there too.
+  await friend.locator(".thread-panel .thread-msg").filter({ hasText: "what's up" }).waitFor();
+  await expect(friend.locator(".thread-panel .thread-note.unreached")).toHaveCount(0);
+  await expect(friend.locator(".thread-panel .thread-msg").filter({ hasText: "what's up" }).locator("b")).toHaveCount(0);
+});
+
 test("a quote jumps back to the output it came from", async () => {
   await ready(owner, pane);
   await run(owner, pane, "echo QUOTE-$((6*7)); seq 1 5", "QUOTE-42");
@@ -128,7 +149,7 @@ test("a quote jumps back to the output it came from", async () => {
 test("a watcher reads but can't post", async () => {
   await watcher.locator(`[data-pane="${pane}"] .thread-badge`).click();
   const panel = watcher.locator(".thread-panel");
-  await expect(panel.locator(".thread-msg")).toHaveCount(3);
+  await expect(panel.locator(".thread-msg")).toHaveCount(4);
   await expect(panel.locator("textarea")).toHaveCount(0);
   await expect(panel).toContainText("you can read its threads, not post");
   // Nor through the API.
@@ -140,7 +161,7 @@ test("on a phone the thread takes the screen", async () => {
   await phone.locator(`[data-pane="${pane}"] .thread-badge`).tap();
   const panel = phone.locator(".thread-panel.phone");
   await expect(panel).toBeVisible();
-  await expect(panel.locator(".thread-msg")).toHaveCount(3);
+  await expect(panel.locator(".thread-msg")).toHaveCount(4);
   const box = await panel.boundingBox();
   expect(box!.width).toBeGreaterThan(380);
   await panel.locator(".thread-close").tap();
@@ -184,7 +205,7 @@ test("a mention's notification opens its thread", async ({ browser }) => {
   await expect(page.locator(".thread-panel")).toHaveCount(0);
   await tap(context, tag, "");
   await expect(page.locator(".thread-panel")).toContainText(`Thread · %${pane}`);
-  await expect(page.locator(".thread-panel .thread-msg")).toHaveCount(3);
+  await expect(page.locator(".thread-panel .thread-msg")).toHaveCount(4);
   await context.close();
 });
 

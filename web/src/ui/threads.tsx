@@ -5,7 +5,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
-import { threadKey, type PaneId, type ThreadMsg, type ThreadTarget } from "../proto";
+import { threadKey, type PaneId, type ThreadMsg, type ThreadTarget, type Unreached } from "../proto";
 import { colorOf } from "./people";
 import type { MenuItem } from "./menu";
 
@@ -220,12 +220,17 @@ export function ThreadBody({
     if (mayPost && !phone) input.current?.focus();
   }, [mayPost, phone]);
 
+  // What the message just posted said to no one.
+  const [missed, setMissed] = useState<string[]>([]);
+
   const send = async () => {
     if (sending || (!text.trim() && !quote)) return;
     setSending(true);
     setError(null);
+    setMissed([]);
     try {
-      await client.postThread(target, text, quote);
+      const { unreached } = await client.postThread(target, text, quote);
+      setMissed(unreached.map(unreachedNote));
       setText("");
       setQuote(undefined);
     } catch (e) {
@@ -251,6 +256,11 @@ export function ThreadBody({
         ))}
       </div>
       {error && <p class="thread-error">{error}</p>}
+      {missed.map((n) => (
+        <p key={n} class="thread-note unreached">
+          {n}
+        </p>
+      ))}
       {gone ? (
         <p class="thread-note">{"pane" in target ? "This pane is closed." : "This session is closed."} Its thread stays in search.</p>
       ) : mayPost ? (
@@ -274,7 +284,10 @@ export function ThreadBody({
             rows={2}
             value={text}
             placeholder={"pane" in target ? "Message (@agent reaches its agent)" : "Message"}
-            onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+            onInput={(e) => {
+              setMissed([]);
+              setText((e.target as HTMLTextAreaElement).value);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
                 e.preventDefault();
@@ -325,7 +338,7 @@ function Message({
           <time title={new Date(m.at).toLocaleString()}>{when(m.at)}</time>
         </div>
       )}
-      {m.text && <p class="thread-text">{withMentions(m.text)}</p>}
+      {m.text && <p class="thread-text">{withMentions(m.text, m.landed ?? [])}</p>}
       {m.quote && (
         <button class="thread-quote" title="Show it in the pane" onClick={() => reveal(m.quote!)}>
           <span class="thread-quote-from">%{m.quote.pane}</span>
@@ -337,8 +350,26 @@ function Message({
   );
 }
 
-/** Text with each @mention marked. */
-function withMentions(text: string) {
+/** Text with each `@` that reached someone marked; the rest stays plain.
+ *  A message without `landed` (from a daemon before it was kept) marks
+ *  nothing: better plain than a highlight that may promise a notification
+ *  nobody got. */
+function withMentions(text: string, landed: string[]) {
   const parts = text.split(/(^|[^\w])(@[\w.-]+)/g);
-  return parts.map((p, i) => (p.startsWith("@") && p.length > 1 ? <b key={i}>{p}</b> : p));
+  return parts.map((p, i) =>
+    p.startsWith("@") && p.length > 1 && landed.includes(p.slice(1).replace(/\.+$/, "").toLowerCase()) ? <b key={i}>{p}</b> : p,
+  );
+}
+
+/** What to tell the poster about an `@` that went nowhere. Unknown names and
+ *  names without access read the same: it must not say who exists. */
+function unreachedNote(u: Unreached): string {
+  switch (u.why) {
+    case "agent_needs_pane":
+      return `@${u.token} reaches an agent from its pane's thread`;
+    case "may_not_drive":
+      return `@${u.token} reaches the agent only from someone who can drive the pane`;
+    default:
+      return `Nobody here called ${u.token} can read this thread`;
+  }
 }

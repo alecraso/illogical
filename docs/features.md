@@ -1051,7 +1051,12 @@ the daemon stopping, crashing, or the machine rebooting:
   quote that stays readable after the pane scrolls; clicking it jumps back
   to the output. `@agent` (or `@claude`) in a pane's thread goes to that
   pane's agent as a follow-up, from whoever may drive it, and agents read
-  and answer with the MCP tools `read_thread` and `post_thread`.
+  and answer with the MCP tools `read_thread` and `post_thread`. Only an
+  `@` that reached someone is marked in the thread; one that reached no
+  one (a name nobody here who can read the thread has, or an `@agent` in a
+  session's thread or from someone who can't drive the pane) stays plain
+  and the poster, and no one else, is told so under the message (and in
+  `post_thread`'s `unreached`).
 - **Chat: every thread in one place.** *Chat* in the bar (or the phone's
   sheet, or the command palette; `/#chat`) shows every thread on every
   machine you can reach, like a team chat: each machine's sessions are the

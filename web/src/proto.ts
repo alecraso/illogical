@@ -347,6 +347,12 @@ export interface State {
 }
 
 /** M61: what a thread is about. */
+/** An `@` in a post that reached no one: told to the poster alone. */
+export interface Unreached {
+  token: string;
+  why: "agent_needs_pane" | "may_not_drive" | "nobody";
+}
+
 export type ThreadTarget = { pane: PaneId } | { session: SessionId };
 
 /** M61: one message in a pane's or session's thread. */
@@ -360,6 +366,8 @@ export interface ThreadMsg {
   quote?: { pane: PaneId; text: string };
   /** Principal ids it @mentions. */
   mentions?: string[];
+  /** The `@` tokens (lowercase) that reached someone; only these are marked. */
+  landed?: string[];
   /** It went to the pane's agent as a follow-up. */
   to_agent?: boolean;
   /** An agent posted it. */
