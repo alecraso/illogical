@@ -98,7 +98,7 @@ desktop:
         engine=$(command -v podman || command -v docker) || { echo "the Linux desktop build needs podman or docker" >&2; exit 1; }
         toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
         image=illogical-desktop-build:jammy-$toolchain
-        "$engine" build -q -t "$image" --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
+        "$engine" build -q -t "$image" -f packaging/desktop/Containerfile --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
         # Its own target dir: build scripts built against 22.04's glibc
         # don't mix with the host's.
         target={{target_dir}}/desktop-jammy
@@ -125,7 +125,7 @@ desktop:
         (cd "$x" && "$dist/illogical-desktop-linux-x86_64.AppImage" --appimage-extract >/dev/null \
           && for b in illogicald illogical; do squashfs-root/usr/bin/$b --version >/dev/null || { echo "the AppImage's $b doesn't run" >&2; exit 1; }; done)
         rm -rf "$x"
-        scripts/glibc-floor "$floor""$dist/illogical-desktop-linux-x86_64.deb" "$dist/illogical-desktop-linux-x86_64.AppImage"
+        scripts/glibc-floor "$floor" "$dist/illogical-desktop-linux-x86_64.deb" "$dist/illogical-desktop-linux-x86_64.AppImage"
         dpkg-deb -f "$dist/illogical-desktop-linux-x86_64.deb" Depends | grep -q "libc6 (>= $floor)" \
           || { echo "the .deb should depend on libc6 (>= $floor): crates/desktop/tauri.conf.json" >&2; exit 1; } ;;
       Darwin)
