@@ -290,7 +290,11 @@ export function ShareDialog({ client }: { client: Client }) {
               </button>
             </p>
           ))}
-        <p class="dim">People you share with work in throwaway VMs; they can't type on this machine unless you trust them with a pane.</p>
+        <p class="dim" data-share-note>
+          {client.has("vms")
+            ? "People you share with open their own panes on throwaway VMs; they can't type on this machine unless you trust them with a pane."
+            : "People you share with see its panes but can't open their own here, and can't type on this machine unless you trust them with a pane."}
+        </p>
         {found ? (
           <div class="share-confirm" data-found={found.account}>
             <p>
