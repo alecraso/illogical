@@ -494,8 +494,14 @@ function Modal({ children, close }: { children: preact.ComponentChildren; close?
 }
 
 function clearHash() {
-  history.replaceState(null, "", location.pathname + location.search);
+  dropHash();
   dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
+/** Take a used link out of the address bar, leaving its prompt up: a
+ * reload then doesn't offer the invite again (#208). */
+function dropHash() {
+  history.replaceState(null, "", location.pathname + location.search);
 }
 
 function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
@@ -1102,7 +1108,15 @@ function InvitePrompt({ s, team, code }: { s: ControlSession; team: string; code
             class="primary"
             data-accept-invite
             disabled={!info}
-            onClick={() => s.acceptInvite(team, code).then(() => setDone(true), (e: Error) => setErr(e.message))}
+            onClick={() =>
+              s.acceptInvite(team, code).then(
+                () => {
+                  dropHash();
+                  setDone(true);
+                },
+                (e: Error) => setErr(e.message),
+              )
+            }
           >
             Join
           </button>
@@ -1121,7 +1135,7 @@ function PresignedPrompt({ s, team, seed }: { s: ControlSession; team: string; s
   // prompt as the team's machines arrive).
   const member = s.teams.find((t) => t.team === team && t.role);
   useEffect(() => {
-    if (member) return;
+    if (member) return dropHash();
     s.showPresigned(team, seed).then(
       (p) => setInfo({ name: p.name, role: p.invite.role }),
       (e: Error) => setErr(e.message),
@@ -1130,6 +1144,7 @@ function PresignedPrompt({ s, team, seed }: { s: ControlSession; team: string; s
   const join = () => {
     setBusy(true);
     s.redeem(team, seed)
+      .then(dropHash)
       .catch((e: Error) => setErr(e.message))
       .finally(() => setBusy(false));
   };

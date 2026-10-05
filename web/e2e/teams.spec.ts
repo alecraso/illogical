@@ -142,6 +142,8 @@ test("two people at different companies join a team by invite", async ({ browser
   await expect(bob.locator(".control-prompt")).toContainText("as someone who drives");
   await bob.locator("[data-accept-invite]").click();
   await expect(bob.locator("[data-invite-pending]")).toBeVisible();
+  // The used link leaves the address bar, so a reload doesn't offer it again (#208).
+  expect(new URL(bob.url()).hash).toBe("");
   await bob.getByRole("button", { name: "Done" }).click();
   await expect(bob.locator(`[data-asked="${team}"]`)).toHaveText("Waiting for alice to add you to Acme. Their machines appear here when they do.");
   await expect(bob.getByRole("heading", { name: "Add your own machine" })).toBeVisible();
@@ -302,6 +304,9 @@ test("a presigned invite: someone already in a team joins another in one click",
   await expect(carol.locator(".control-prompt")).toContainText("Joining adds you right away");
   await carol.locator("[data-accept-invite]").click();
   await expect(carol.locator("[data-invite-joined]")).toBeVisible({ timeout: 15_000 });
+  // The link is gone from the address bar: a reload shows neither "You're
+  // in" nor "that invite expired" (#208).
+  expect(new URL(carol.url()).hash).toBe("");
   const mine = await carol.evaluate(() => window.__illogical.control!.teams.map((t) => `${t.roster.name}:${t.role}`).sort());
   expect(mine).toEqual(["Acme:viewer", "Carols:owner"]);
   await carol.getByRole("button", { name: "Done" }).click();
