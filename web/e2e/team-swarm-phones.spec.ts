@@ -14,9 +14,11 @@
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
+import { connect, createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { iphone, launchWebkit, pixel7 } from "./phones";
+import { listen } from "./ports";
 import { call, groups, home, keys, live, show, TeamControl } from "./team-fixture";
 
 const control = new TeamControl("tswarm-phones");
@@ -24,6 +26,9 @@ let webkit: Browser;
 let alice: Page;
 let bob: Page;
 let team = "";
+// The netem box and its network, removed in afterAll too: a timeout never
+// reaches the test's finally.
+let netemCleanup = () => {};
 
 test.describe.configure({ mode: "serial" });
 
@@ -34,6 +39,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await webkit?.close().catch((e) => console.log(`webkit close: ${e}`));
+  netemCleanup();
   control.stop();
 });
 
@@ -175,20 +181,33 @@ test("a machine on another network, behind netem, in both phones' swarms", async
   const net = `${project}-netem`;
   const docker = (...args: string[]) => execFileSync("docker", args, { encoding: "utf8" }).trim();
   const quiet = (...args: string[]) => spawnSync("docker", args, { stdio: "ignore" });
-  quiet("rm", "-f", name);
-  quiet("network", "rm", net);
+  netemCleanup = () => {
+    quiet("rm", "-f", name);
+    quiet("network", "rm", net);
+  };
+  netemCleanup();
+  // Control listens on the host's loopback, which the box can't reach: a
+  // forwarder on the box network's gateway address brings it there.
+  const forward = createServer((c) => {
+    const up = connect(Number(new URL(control.base).port), "127.0.0.1");
+    up.on("error", () => c.destroy());
+    c.on("error", () => up.destroy());
+    c.pipe(up).pipe(c);
+  });
   try {
     const dir = control.temp("netem");
     writeFileSync(join(dir, "Dockerfile"), "FROM debian:bookworm-slim\nRUN apt-get update && apt-get install -y --no-install-recommends iproute2 socat && rm -rf /var/lib/apt/lists/*\n");
     docker("build", "-q", "-t", `${project}-netem`, dir);
     docker("network", "create", net);
-    // Control is on the host's loopback: socat brings its port into the
-    // box at the same address, so the URLs control hands out work there.
+    const gateway = docker("network", "inspect", net, "--format", "{{(index .IPAM.Config 0).Gateway}}");
+    const via = await listen(forward, gateway);
+    // In the box, socat brings the forwarder to control's own address, so
+    // the URLs control hands out work there.
     const port = new URL(control.base).port;
     docker(
-      "run", "-d", "--name", name, "--network", net, "--cap-add", "NET_ADMIN", "--add-host", "host.docker.internal:host-gateway",
+      "run", "-d", "--name", name, "--network", net, "--cap-add", "NET_ADMIN",
       "-v", `${bin}:/usr/local/bin/illogicald:ro`, `${project}-netem`,
-      "sh", "-c", `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr TCP:host.docker.internal:${port} & sleep infinity`,
+      "sh", "-c", `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr TCP:${gateway}:${via} & sleep infinity`,
     );
     docker("exec", name, "tc", "qdisc", "add", "dev", "eth0", "root", "netem", "delay", "120ms", "40ms", "loss", "1%");
     expect(docker("exec", name, "tc", "qdisc", "show", "dev", "eth0")).toContain("netem");
@@ -197,15 +216,16 @@ test("a machine on another network, behind netem, in both phones' swarms", async
     const joining = spawn("docker", ["exec", "-i", name, "illogicald", "join", control.base, "--name", "far", "--state-dir", "/root/state", "--team", team], {
       stdio: ["pipe", "pipe", "ignore"],
     });
-    const link = await new Promise<string>((res) => {
+    const exited = new Promise<number | null>((r) => joining.on("exit", r));
+    const link = await new Promise<string>((res, rej) => {
       let out = "";
       joining.stdout!.on("data", (d) => {
         out += d;
         const m = out.match(/(http\S+#join=[A-Z0-9-]+)/);
         if (m) res(m[1]);
       });
+      void exited.then((code) => rej(new Error(`illogicald join in the box exited (${code}) before printing a link`)));
     });
-    const exited = new Promise<number | null>((r) => joining.on("exit", r));
     await alice.goto(link);
     const account = await alice.locator("[data-join-account]").getAttribute("data-join-account");
     await alice.locator("[data-approve-join]").tap();
@@ -222,7 +242,7 @@ test("a machine on another network, behind netem, in both phones' swarms", async
     await expect.poll(async () => (await capture(bob, "far", 1)).includes("FAR-42"), { timeout: 30_000 }).toBe(true);
     console.log(`netem box: typed on Alice's phone, read on Bob's iPhone in ${Date.now() - t0} ms`);
   } finally {
-    quiet("rm", "-f", name);
-    quiet("network", "rm", net);
+    forward.close();
+    netemCleanup();
   }
 });

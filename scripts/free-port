@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# A free TCP port on loopback, for a test daemon beside other runs' on the
+# same host.
+exec python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'

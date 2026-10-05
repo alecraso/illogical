@@ -256,7 +256,9 @@ export abstract class Flat implements SwarmScene {
     const up = (e: PointerEvent) => {
       this.ptrs.delete(e.pointerId);
       cv.classList.remove("panning");
-      if (!this.moved && this.ptrs.size === 0 && e.type === "pointerup") {
+      // A right-click is the menu's, not a tap: opening the pane on it
+      // would also drop the menu item's click (swallowClick).
+      if (!this.moved && this.ptrs.size === 0 && e.type === "pointerup" && e.button === 0) {
         const at = this.local(e);
         const p = this.paneAt(at.x, at.y);
         if (p) this.hooks.open(p.key);

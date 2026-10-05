@@ -2,3 +2,6 @@
 # commit that requires exactly this Zig.
 [tools]
 zig = "0.16.0"
+# Runs the Rust tests (`just test`): every test binary's tests at once,
+# where `cargo test` runs the binaries one after another.
+"github:nextest-rs/nextest" = { version = "cargo-nextest-0.9.146", bin = "cargo-nextest" }

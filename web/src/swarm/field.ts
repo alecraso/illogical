@@ -465,7 +465,9 @@ export class Field implements SwarmScene {
     const up = (e: PointerEvent) => {
       this.ptrs.delete(e.pointerId);
       cv.classList.remove("panning");
-      if (!this.moved && this.ptrs.size === 0 && e.type === "pointerup") this.click(e);
+      // A right-click is the menu's, not a tap: opening the pane on it
+      // would also drop the menu item's click (swallowClick).
+      if (!this.moved && this.ptrs.size === 0 && e.type === "pointerup" && e.button === 0) this.click(e);
     };
     cv.addEventListener("pointerup", up);
     cv.addEventListener("pointercancel", up);

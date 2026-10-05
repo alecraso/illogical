@@ -35,7 +35,7 @@ docker exec "$C" true 2>/dev/null || "$HERE/up.sh" tailnet
 
 arch="$(docker exec "$C" uname -m)"
 BIN="${ILLOGICAL_SSH_BINARIES:-$HERE/../target/$arch-unknown-linux-musl/release}"
-[ -x "$BIN/illogical" ] && [ -x "$BIN/illogicald" ] || { echo "no binaries in $BIN; run 'just static $arch'" >&2; exit 1; }
+{ [ -x "$BIN/illogical" ] && [ -x "$BIN/illogicald" ]; } || { echo "no binaries in $BIN; run 'just static $arch'" >&2; exit 1; }
 docker exec "$C" mkdir -p /opt/illogical
 docker cp -q "$BIN/illogical" "$C:/opt/illogical/illogical"
 docker cp -q "$BIN/illogicald" "$C:/opt/illogical/illogicald"

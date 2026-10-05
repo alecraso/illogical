@@ -99,6 +99,8 @@ const HEARTBEAT_MS = 3000;
 const SILENT_MS = 6000;
 /** A host away this long is offline, not just stale. */
 const OFFLINE_MS = 60_000;
+/** Hidden this long, the page lets go of sandboxes (as the tab view does). */
+const HIDDEN_GRACE_MS = 10_000;
 const CACHE_KEY = "illogical.fleet";
 
 interface Entry {
@@ -122,6 +124,9 @@ export class Fleet {
   private trying = new Map<Client, () => void>();
   private timer: number | undefined;
   private lastBeat = Date.now();
+  private hidden: number | undefined;
+  /** The page is hidden: sandboxes aren't held awake, or woken. */
+  private away = false;
   private merged: FleetPane[] | null = null;
   /** Shown when the cap leaves hosts out. */
   notice: string | null = null;
@@ -208,7 +213,13 @@ export class Fleet {
   start() {
     if (this.timer !== undefined) return;
     this.timer = window.setInterval(() => this.tick(), 1000);
-    document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && this.wake());
+    document.addEventListener("visibilitychange", () => {
+      clearTimeout(this.hidden);
+      if (document.visibilityState === "visible") {
+        this.away = false;
+        this.wake();
+      } else this.hidden = window.setTimeout(() => this.letGo(), HIDDEN_GRACE_MS);
+    });
     window.addEventListener("online", () => this.wake());
   }
 
@@ -230,6 +241,13 @@ export class Fleet {
         this.begin(e);
       }
     }
+  }
+
+  /** A sandbox sleeps when nothing holds it awake, and a summary
+   * connection does: let go of those while the page is hidden. */
+  private letGo() {
+    this.away = true;
+    for (const e of this.hosts.values()) if (e.ref.transport === "provider") e.client?.sleep();
   }
 
   private asleep(e: Entry): boolean {
@@ -268,6 +286,8 @@ export class Fleet {
       const c = this.queue.shift()!;
       // Connected meanwhile, or already trying: nothing to do.
       if (c.linked || this.trying.has(c)) continue;
+      // Hidden: a sandbox's reconnect would wake it.
+      if (this.away && [...this.hosts.values()].some((e) => e.client === c && e.ref.transport === "provider")) continue;
       this.stats.started++;
       let freed = false;
       const free = () => {

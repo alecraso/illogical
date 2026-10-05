@@ -57,7 +57,7 @@ async function goCold() {
   expect(login.status).toBe(204);
   const cookie = login.headers.get("set-cookie")!.split(";")[0];
   const ui = (what: string) =>
-    fetch(`${WISP}/ui/api/sprites/${sprite}/${what}`, { method: "POST", headers: { Cookie: cookie, "X-Wisp-UI": "1" } });
+    fetch(`${WISP}/ui/api/sprites/${sprite}/${what}`, { method: "POST", headers: { Cookie: cookie, "X-Sandpit-UI": "1" } });
   expect((await ui("suspend")).status).toBe(200);
   expect((await ui("cool")).status).toBe(200);
   expect(await status()).toBe("cold");
@@ -194,6 +194,10 @@ test("a resident daemon's layout and scrollback come back after the sandbox goes
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await expect.poll(() => page.evaluate(() => window.__illogical.client.connected), { timeout: 15_000 }).toBe(false);
+  // The swarm's summary connection lets go too: its reconnect would wake it.
+  await expect
+    .poll(() => page.evaluate((s) => window.__illogical.fleet.list.find((h) => h.name === s)?.state, sprite))
+    .not.toBe("connected");
 
   await goCold();
   // The host list says so, from the provider (without waking it).

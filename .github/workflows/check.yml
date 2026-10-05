@@ -1,75 +1,199 @@
-# Every push: the testnet's claims, `just check` and the Playwright specs
-# (Chromium and WebKit) on Linux; build, test and the WebKit specs on macOS.
-# Both need Docker: the testnet (testnet/README.md) and the ssh tests in
-# `just test` fail without it. Only pushes (never pull requests), since these
-# run on our own machines' hosts.
+# Every push, as parallel as it goes (#287):
+# - lint: the quick checks, on GitHub's runners;
+# - on geek's runner pool (label linux-x86_64-ci, docs/development.md):
+#   - build and static: the debug and the box's (static) binaries, once;
+#   - clippy: Linux, both Macs (cross) and the desktop app, and notices;
+#   - test: `just test` (the Rust tests under nextest);
+#   - testnet: the test stack's claims (ssh, then control);
+#   - e2e: the Playwright specs in six shards; stack: those on the test
+#     stack; perf: the specs that time things, once the shards are done;
+# - macos: build, test and the WebKit specs, on jake-mini.
+# Jobs on geek take a build directory and a test stack of their own
+# (scripts/ci-env), so runs and jobs don't wait on each other. geek and
+# jake-mini need Docker: the test stack (testnet/README.md) and the ssh
+# tests in `just test` fail without it. Only pushes (never pull requests),
+# since most of it runs on our own machines.
 name: check
 on:
   push:
     branches: ["**"]
   workflow_dispatch:
 
+# A new push to a branch cancels its run in progress; main's runs all
+# finish.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NEXTEST_PROFILE: ci
+
 jobs:
-  linux:
-    runs-on: [self-hosted, linux-x86_64]
-    # The test stack's container names and bastion port are fixed: one
-    # stack per host at a time.
-    concurrency:
-      group: testnet-linux
-      cancel-in-progress: false
+  lint:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Keep the build between runs
-        run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/check" >> "$GITHUB_ENV"
-      - run: scripts/ci-cap-target 30
-      - run: just bootstrap
-      # The testnet's claims on fresh boxes, then each under BREAK=1, where
-      # it must fail.
-      - name: The testnet's ssh profile
-        run: just testnet down && just testnet up ssh && just testnet test ssh && just testnet break ssh
-      # The box's binaries, for the ssh tests in `just check` and the
-      # control profile.
-      - run: just static
-      # Before `just check`: reboot.rs drives Chromium (its watcher). After
-      # it, a failing check meant the browsers a Playwright upgrade needs
-      # were never installed, and reboot.rs then failed for want of them.
-      - name: Playwright's browsers
-        run: just browsers
-      - run: just check
-      - name: The testnet's control profile (M52 end to end)
-        run: just testnet down && just testnet up control && just testnet test control && just testnet break control
-        env:
-          ILLOGICAL_TESTNET_BINARIES: ${{ env.CARGO_TARGET_DIR }}/x86_64-unknown-linux-musl/release
-      - run: just check-macos
-      - run: just check-macos x86_64
-      - name: The desktop app
-        run: just desktop-check
+        with:
+          # gitleaks reads the history.
+          fetch-depth: 0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: gitleaks
+        # The version geek has (mise).
+        run: |
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Formatting
+        # rust-toolchain.toml's toolchain, rustfmt only.
+        run: rustup component add rustfmt && cargo fmt --all --check
       - name: install.sh and the release's glibc check
         run: shellcheck -s sh scripts/install.sh scripts/glibc-floor && shellcheck -s bash scripts/tests/*.sh
       - name: Release scripts and ratchets
         run: just test-scripts
-      - name: The test stack's scripts
-        run: shellcheck -x testnet/*.sh testnet/forges/*.sh testnet/hosts/*.sh testnet/editors/*.sh && shellcheck -s sh testnet/editors/box/entrypoint.sh testnet/sshd/entrypoint.sh testnet/sshd-systemd/keys.sh testnet/git/entrypoint.sh testnet/tailnet/entrypoint.sh
-      - name: THIRD_PARTY.md is current
-        run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
+      - name: The CI's and the test stack's scripts
+        run: shellcheck -x scripts/ci-* scripts/free-port testnet/*.sh testnet/forges/*.sh testnet/hosts/*.sh testnet/editors/*.sh && shellcheck -s sh testnet/editors/box/entrypoint.sh testnet/sshd/entrypoint.sh testnet/sshd-systemd/keys.sh testnet/git/entrypoint.sh testnet/tailnet/entrypoint.sh
       - name: No secrets
         run: gitleaks git --no-banner --redact .
-      # team-swarm-phones' variant across networks runs a box in a container
-      # behind tc netem, with just static's illogicald (built above).
-      - name: The Playwright specs, in Chromium and WebKit
-        run: just e2e
-        env:
-          E2E_CHROMIUM: "1"
-          E2E_PORT: "7769"
+
+  # The debug binaries, web/dist embedded (debug-embed: the specs run them
+  # from other checkouts), for the specs and the test stack's CLI.
+  build:
+    runs-on: [self-hosted, linux-x86_64-ci]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env target build
+      - run: just bootstrap
+      - run: just web
+      - run: mise exec -- cargo build -p illogicald -p illogical -p illogical-control --features illogicald/debug-embed,illogical-control/debug-embed
+      - run: scripts/ci-env keep debug
+
+  # The box's binaries: for the ssh tests, the test stack and
+  # team-swarm-phones' box behind netem.
+  static:
+    runs-on: [self-hosted, linux-x86_64-ci]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env target static
+      - run: just bootstrap
+      - run: just static x86_64
+      - run: scripts/ci-env keep static
+
+  clippy:
+    runs-on: [self-hosted, linux-x86_64-ci]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env target clippy
+      - run: just bootstrap
+      - run: just web
+      - run: mise exec -- cargo clippy --workspace --all-targets -- -D warnings
+      - run: just check-macos
+      - run: just check-macos x86_64
+      - name: The desktop app
+        run: just desktop-check
+      - name: THIRD_PARTY.md is current
+        run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
+
+  test:
+    needs: static
+    runs-on: [self-hosted, linux-x86_64-ci]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env target test
+      - run: scripts/ci-env testnet
+      - run: just bootstrap
+      # reboot.rs drives Chromium (its watcher).
+      - name: Playwright's Chromium
+        run: just browsers chromium
+      - run: ILLOGICAL_SSH_BINARIES="$CI_RUN/x86_64-unknown-linux-musl/release" just test
       - name: Take the test stack down
         if: always()
         run: just testnet down
 
+  # The test stack's claims on fresh boxes, then each under BREAK=1, where
+  # it must fail.
+  testnet:
+    needs: [build, static]
+    runs-on: [self-hosted, linux-x86_64-ci]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env testnet
+      - run: just bootstrap
+      - name: Its binaries, this run's
+        run: |
+          echo "ILLOGICAL_TESTNET_BINARIES=$CI_RUN/x86_64-unknown-linux-musl/release" >> "$GITHUB_ENV"
+          echo "ILLOGICAL_SSH_BINARIES=$CI_RUN/x86_64-unknown-linux-musl/release" >> "$GITHUB_ENV"
+          echo "ILLOGICAL_CLI=$CI_RUN/debug/illogical" >> "$GITHUB_ENV"
+      - name: The ssh profile
+        run: just testnet down && just testnet up ssh && just testnet test ssh && just testnet break ssh
+      - name: The control profile (M52 end to end)
+        run: just testnet down && just testnet up control && just testnet test control && just testnet break control
+      - name: Take the test stack down
+        if: always()
+        run: just testnet down
+
+  e2e:
+    needs: build
+    runs-on: [self-hosted, linux-x86_64-ci]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env use
+      - run: just bootstrap
+      - name: Playwright's browsers
+        run: just browsers
+      - name: The Playwright specs, shard ${{ matrix.shard }} of 6
+        run: port=$(scripts/free-port) && cd web && E2E_PORT=$port pnpm exec playwright test --shard=${{ matrix.shard }}/6
+        env:
+          E2E_CHROMIUM: "1"
+          E2E_SET: rest
+
+  # The specs on the test stack (team-swarm-phones' box behind netem).
+  stack:
+    needs: [build, static]
+    runs-on: [self-hosted, linux-x86_64-ci]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env use
+      - run: scripts/ci-env testnet
+      - run: just bootstrap
+      - name: Playwright's Chromium
+        run: just browsers chromium
+      - name: The Playwright specs on the test stack
+        run: port=$(scripts/free-port) && cd web && E2E_PORT=$port pnpm exec playwright test
+        env:
+          E2E_CHROMIUM: "1"
+          E2E_SET: stack
+      - name: Take the test stack down
+        if: always()
+        run: just testnet down
+
+  # The specs that time things (E2E_SET=perf: the frame rates, editors'
+  # files in under 3 s) wait for the shards: beside six browsers they
+  # measured geek's load.
+  perf:
+    needs: [build, e2e]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: [self-hosted, linux-x86_64-ci]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci-env use
+      - run: just bootstrap
+      # editors.spec opens a file from an iPhone (WebKit) too.
+      - name: Playwright's browsers
+        run: just browsers
+      - name: The specs that time things
+        run: port=$(scripts/free-port) && cd web && E2E_PORT=$port pnpm exec playwright test
+        env:
+          E2E_CHROMIUM: "1"
+          E2E_SET: perf
+
+  # jake-mini has one runner: its runs take turns.
   macos:
     runs-on: [self-hosted, macos-arm64]
-    concurrency:
-      group: testnet-macos
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - name: Keep the build between runs

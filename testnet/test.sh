@@ -110,7 +110,7 @@ WORK="$(mktemp -d)"
 # 104 bytes on macOS).
 RT="/tmp/ilg-$TESTNET-$$"
 cleanup() {
-  [ -n "${OUR_AGENT:-}" ] && kill "$OUR_AGENT" 2>/dev/null || true
+  [ -z "${OUR_AGENT:-}" ] || kill "$OUR_AGENT" 2>/dev/null || true
   [ -z "${PAUSED:-}" ] || docker unpause "$TESTNET-bastion" >/dev/null 2>&1 || true
   if [ -d "$RT" ]; then
     for b in box-bare box-systemd; do ssh -F "$CFG" -o ControlPath="$RT/illogical-ssh/%C" -O exit "$b" >/dev/null 2>&1 || true; done

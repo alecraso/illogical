@@ -43,3 +43,9 @@ workspace = true
 [dev-dependencies]
 aes-gcm = "0.11.1"
 hkdf = "0.13.0"
+
+[features]
+# Embed web/dist even in a debug build (rust-embed reads it from the source
+# tree at run time otherwise): CI's e2e shards run binaries built in another
+# job's checkout.
+debug-embed = ["rust-embed/debug-embed"]

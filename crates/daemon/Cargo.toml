@@ -68,3 +68,9 @@ rcgen = "0.14.10"
 
 [target.'cfg(unix)'.dev-dependencies]
 rmcp = { version = "=3.5.0", default-features = false, features = ["transport-streamable-http-client-unix-socket"] }
+
+[features]
+# Embed web/dist even in a debug build (rust-embed reads it from the source
+# tree at run time otherwise): CI's e2e shards run binaries built in another
+# job's checkout.
+debug-embed = ["rust-embed/debug-embed"]

@@ -129,9 +129,25 @@ if (!external) process.env.ILLOGICAL_FORGE_HOOK_BASE ??= `http://127.0.0.1:${por
 // E2E_DAEMON_LOG=/path/to/file keeps the test daemon's debug log.
 const log = process.env.E2E_DAEMON_LOG ? ` >>${process.env.E2E_DAEMON_LOG} 2>&1` : "";
 
+// CI splits the specs (#287): E2E_SET=stack runs only those on the Docker
+// test stack, E2E_SET=perf only those that time things (the frame rates,
+// and editors.spec's files in under 3 s), on a host with nothing else of
+// the run on it, E2E_SET=rest everything else, sharded across runners.
+const SETS: Record<string, RegExp> = {
+  stack: /(team-swarm-phones|testnet-hosts|editor-remote-ssh)\.spec\.ts$/,
+  perf: /(swarm-fps|editors)\.spec\.ts$/,
+};
+const set = process.env.E2E_SET;
+const WEBKIT = /\.webkit\.spec\.ts$/;
+const chrome = set && SETS[set] ? { testMatch: SETS[set] } : { testIgnore: set === "rest" ? [WEBKIT, ...Object.values(SETS)] : WEBKIT };
+
 export default defineConfig({
   testDir: "e2e",
   timeout: 30_000,
+  // CI's hosts run other jobs beside the specs (#287): an expectation gets
+  // longer there, and a spec that fails once runs again, reported as flaky.
+  expect: { timeout: process.env.CI ? 10_000 : 5_000 },
+  retries: process.env.CI ? 1 : 0,
   fullyParallel: false,
   workers: 1,
   use: {
@@ -140,8 +156,9 @@ export default defineConfig({
     storageState: { cookies: tokenCookies, origins: [] },
   },
   projects: [
-    { name: "chrome", use: { channel: process.env.E2E_CHROMIUM ? "chromium" : "chrome" }, testIgnore: /\.webkit\.spec\.ts$/ },
-    { name: "webkit", use: { browserName: "webkit" }, testMatch: /\.webkit\.spec\.ts$/ },
+    { name: "chrome", use: { channel: process.env.E2E_CHROMIUM ? "chromium" : "chrome" }, ...chrome },
+    // The stack's and the frame rates' specs are all Chrome's.
+    { name: "webkit", use: { browserName: "webkit" }, testMatch: set && SETS[set] ? /^$/ : WEBKIT },
   ],
   webServer: external
     ? undefined
