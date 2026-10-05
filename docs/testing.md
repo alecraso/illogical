@@ -104,6 +104,19 @@ failed under a load average of 30 because a fixed 40 MB flood was still
 running after `continue`; it now runs `yes` until the pane pauses, sends
 ^C and waits for the prompt in a capture.
 
+The same goes for a step that has to have happened before the next one
+makes sense: wait for the daemon to say it happened. Before a ^C, wait
+until the pane's `current` command is the one you ran (typed isn't
+running: a ^C while bash expands PS0 cancels the line with no command
+end, `mcp.rs`). Before drawing an agent's next screen, wait until
+`/api/panes/N/detection` shows the last one (`api.rs`). Something that
+should be busy for a while runs until the test stops it, not for a fixed
+time (`summaries.rs`). Two requests alike in the same millisecond carry a
+nonce, or control takes the second for a replay (`forge_wire.rs`). The
+first of these turned up a daemon bug: a pane read its agent's screen
+only when no command had come for a whole tick, so polling more often
+than that kept the screen from being read at all.
+
 Standing permission rules (#166) are tested in `agents.rs`
 (`standing_rules_outlive_the_block_that_made_them`: a `cwd` rule answers a
 new block below that directory and not one elsewhere, an `everywhere`
@@ -539,7 +552,7 @@ prints that it did not run. CI never sets it.
 | `just testnet up`, `test`, `break`, `down` | Docker ([testnet/README.md](../testnet/README.md)) |
 | `crates/daemon/tests/ssh.rs`, `reboot.rs` (in `just test`) | Docker, and the box's binaries: `just static aarch64` on Apple silicon, `just static` on x86_64 (or `ILLOGICAL_SSH_BINARIES`). They bring the ssh profile up themselves if it isn't. |
 | `just testnet test control` (M52 and M49 end to end) | Docker and node, and `just testnet up control` first, which needs the static binaries |
-| `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" | `ILLOGICAL_TESTNET_PHONES=1`, Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
+| `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" (in `just e2e`) | Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
 
 ## The test stack
 
