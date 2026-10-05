@@ -95,8 +95,6 @@ These skip, saying why, unless what they need is there:
 | `resident.rs`, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token and `just static` |
 | `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
-| `ssh.rs`, `reboot.rs` | the test stack's `ssh` profile and `just static <arch>` (below) |
-| `reboot.rs` | also node and Playwright's Chromium in `web/` |
 
 ## The test stack
 
@@ -113,10 +111,13 @@ it:
 | A headless web client attached across that restart reconnects by itself, without reloading | `web/reconnect-watch.ts`, driven by `reboot.rs` | (in `reboot.rs`) |
 | S28: the same daemon over `--ssh` and over a tailnet (headscale and two Tailscale nodes), timed | `testnet/measure-tailnet.sh` | `just testnet up tailnet`, `just static <arch>`, `just testnet measure tailnet` |
 
-The Rust tests say SKIP and pass when the stack isn't up. They recreate the
-boxes they use, so run them against your own stack
-(`COMPOSE_PROJECT_NAME`), not someone else's. The stack isn't in CI yet
-(#200).
+These require Docker: without it they fail, and they bring the stack's
+profile up themselves when it isn't. They also need `just static <arch>`
+(`reboot.rs` also node and Playwright's Chromium in `web/`), and fail saying
+so without it. `ILLOGICAL_SKIP_DOCKER=1` is the only way to skip them, and
+they print that nothing ran. They recreate the boxes they use, so give each
+worktree its own stack (`COMPOSE_PROJECT_NAME` and
+`ILLOGICAL_TESTNET_SSH_PORT`). The stack isn't in CI yet (#200).
 
 ## By hand
 

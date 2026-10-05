@@ -20,9 +20,10 @@
 //! test keeps re-opening, as a network path would come back. It's held off
 //! until the no-login check is done.
 //!
-//! Needs `just testnet up ssh`, the box's static binaries (as `ssh.rs`), and
-//! Playwright's Chromium (`cd web && pnpm install && pnpm exec playwright
-//! install chromium`). Without them it says SKIP and passes. It recreates
+//! Needs Docker (it brings the stack's `ssh` profile up if it isn't), the
+//! box's static binaries (as `ssh.rs`), and Playwright's Chromium (`cd web
+//! && pnpm install && pnpm exec playwright install chromium`); without them
+//! it fails. ILLOGICAL_SKIP_DOCKER=1 skips it, loudly. It recreates
 //! box-systemd.
 
 use std::{
@@ -42,7 +43,7 @@ use serde_json::Value;
 
 mod testnet;
 
-use testnet::{Env, box_binaries, cli_bin, wait_for, wait_up_to};
+use testnet::{Env, cli_bin, wait_for, wait_up_to};
 
 const BOX: &str = "box-systemd";
 const ACP: &str = "env FAKE_ACP_DIR=/home/illo/.fake-acp python3 /home/illo/fake_acp.py";
@@ -231,22 +232,18 @@ fn layout(env: &Env) -> Value {
 
 #[test]
 fn a_restarted_box_brings_its_daemon_back_with_no_login_and_every_pane_by_policy() {
-    if !testnet::reachable(BOX) {
-        eprintln!("SKIP: the test stack isn't up (`just testnet up ssh`)");
+    if !testnet::require("ssh", BOX, "reboot.rs (#26)") {
         return;
     }
     let web = testnet::root().join("web");
     let node = Command::new("node").arg("--version").output().is_ok_and(|o| o.status.success());
-    if !node || !web.join("node_modules/@playwright/test").exists() {
-        eprintln!("SKIP: no node or Playwright in web/ (`cd web && pnpm install`)");
-        return;
-    }
+    assert!(
+        node && web.join("node_modules/@playwright/test").exists(),
+        "the headless client needs node and Playwright in web/ (`cd web && pnpm install`)"
+    );
     testnet::recreate(&[BOX]);
     let arch = String::from_utf8(testnet::ssh().args([BOX, "uname", "-m"]).output().unwrap().stdout).unwrap();
-    let Some(binaries) = box_binaries(arch.trim()) else {
-        eprintln!("SKIP: no static binaries for {} (`just static {}`)", arch.trim(), arch.trim());
-        return;
-    };
+    let binaries = testnet::require_binaries(arch.trim());
     let runtime = PathBuf::from(format!("/tmp/ilg-rb-{}", std::process::id()));
     std::fs::create_dir_all(&runtime).unwrap();
     let env = Env { cli: cli_bin(), binaries, runtime, agent: None, sock: None, owner: Some(BOX.into()) };

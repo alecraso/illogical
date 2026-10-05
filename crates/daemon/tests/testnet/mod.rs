@@ -71,6 +71,44 @@ pub fn reachable(host: &str) -> bool {
             .is_ok_and(|s| s.success())
 }
 
+/// The stack's `profile`, up, with `host` answering: brought up with
+/// `testnet/up.sh` if it isn't. Docker tests don't skip: no Docker is a
+/// failure. Only ILLOGICAL_SKIP_DOCKER=1 skips, which returns false and
+/// says loudly that nothing ran.
+pub fn require(profile: &str, host: &str, test: &str) -> bool {
+    if std::env::var("ILLOGICAL_SKIP_DOCKER").is_ok_and(|v| v == "1") {
+        eprintln!(
+            "\n{}\nSKIPPED (ILLOGICAL_SKIP_DOCKER=1): {test} did NOT run; nothing was tested\n{}\n",
+            "!".repeat(72),
+            "!".repeat(72)
+        );
+        return false;
+    }
+    let docker = Command::new("docker").arg("info").stdout(Stdio::null()).stderr(Stdio::null()).status();
+    assert!(
+        docker.is_ok_and(|s| s.success()),
+        "{test} needs Docker, which isn't available (ILLOGICAL_SKIP_DOCKER=1 skips it)"
+    );
+    if !reachable(host) {
+        let st = Command::new(root().join("testnet/up.sh"))
+            .arg(profile)
+            .env("COMPOSE_PROJECT_NAME", name())
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(st.success(), "testnet/up.sh {profile} failed");
+        assert!(reachable(host), "{host} doesn't answer after testnet/up.sh {profile}");
+    }
+    true
+}
+
+/// The box's binaries for `arch`, or a failure saying how to build them.
+pub fn require_binaries(arch: &str) -> PathBuf {
+    box_binaries(arch).unwrap_or_else(|| {
+        panic!("no static binaries for {arch}: run `just static {arch}` (or set ILLOGICAL_SSH_BINARIES)")
+    })
+}
+
 /// Recreate services, so a run starts from boxes with nothing on them.
 pub fn recreate(services: &[&str]) {
     let st = compose()

@@ -6,8 +6,10 @@
 # daemon's own port, which ts-box's userspace tailscaled forwards to
 # loopback). Runs in the tailnet profile:
 #
-#   just testnet up tailnet
-#   testnet/measure-tailnet.sh [samples]
+#   testnet/measure-tailnet.sh [samples]   (brings the profile up if needed)
+#
+# Needs Docker: without it this fails. ILLOGICAL_SKIP_DOCKER=1 skips it and
+# says that nothing ran.
 #
 # Puts this tree's static binaries on ts-client (`just static <arch>`, or
 # ILLOGICAL_SSH_BINARIES), installs illogical on ts-box over ssh, then times
@@ -28,9 +30,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 N="${1:-30}"
 C="$TESTNET-ts-client"
 
-command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-docker exec "$C" true 2>/dev/null || { echo "no $C; run 'just testnet up tailnet' first" >&2; exit 1; }
+if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
+  echo "!!!! SKIPPED (ILLOGICAL_SKIP_DOCKER=1): the tailnet measurement did NOT run; nothing was measured !!!!" >&2
+  exit 0
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "FAIL: Docker is not available (ILLOGICAL_SKIP_DOCKER=1 skips this)" >&2
+  exit 1
+fi
+docker exec "$C" true 2>/dev/null || "$HERE/up.sh" tailnet
 
 arch="$(docker exec "$C" uname -m)"
 BIN="${ILLOGICAL_SSH_BINARIES:-$HERE/../target/$arch-unknown-linux-musl/release}"

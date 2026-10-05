@@ -6,10 +6,11 @@
 //! with it, and only with it), survives the connection going away, and a
 //! saved ssh host works with `--host`.
 //!
-//! Needs `just testnet up ssh` and the box's static binaries from this tree
-//! (`just static aarch64` on Apple silicon, `just static` on x86_64), or
-//! ILLOGICAL_SSH_BINARIES. Without them it says SKIP and passes. It
-//! recreates box-bare, so a run starts from a box with nothing on it.
+//! Needs Docker (it brings the stack's `ssh` profile up if it isn't) and the
+//! box's static binaries from this tree (`just static aarch64` on Apple
+//! silicon, `just static` on x86_64), or ILLOGICAL_SSH_BINARIES; without
+//! them it fails. ILLOGICAL_SKIP_DOCKER=1 skips it, loudly. It recreates
+//! box-bare, so a run starts from a box with nothing on it.
 
 use std::{
     path::{Path, PathBuf},
@@ -19,7 +20,7 @@ use std::{
 
 mod testnet;
 
-use testnet::{Env, box_binaries, cli_bin, wait_for};
+use testnet::{Env, cli_bin, wait_for};
 
 struct Agent(Child, PathBuf);
 
@@ -59,17 +60,13 @@ fn push(branch: &str) -> String {
 
 #[test]
 fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
-    if !testnet::reachable("box-bare") {
-        eprintln!("SKIP: the test stack isn't up (`just testnet up ssh`)");
+    if !testnet::require("ssh", "box-bare", "ssh.rs (M51)") {
         return;
     }
     // A box with nothing on it.
     testnet::recreate(&["box-bare"]);
     let arch = String::from_utf8(testnet::ssh().args(["box-bare", "uname", "-m"]).output().unwrap().stdout).unwrap();
-    let Some(binaries) = box_binaries(arch.trim()) else {
-        eprintln!("SKIP: no static binaries for {} (`just static {}`)", arch.trim(), arch.trim());
-        return;
-    };
+    let binaries = testnet::require_binaries(arch.trim());
 
     // A short directory for the masters (a socket path is at most 104
     // bytes on macOS, and the temp dir there is long).
