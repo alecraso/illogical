@@ -72,7 +72,9 @@ and PR numbers kept.
 
 ## Testing iTerm2
 
-Nothing here has seen a real iTerm2 yet. From the Mac, against geek:
+`just macos iterm2` checks attach, typing, output, a split and a new tab
+in a real iTerm2 inside a tart VM ([testing.md](testing.md#a-fresh-mac-the-tart-vm-harness)).
+The rest of this script is still by hand. From the Mac, against geek:
 
 1. On geek, install the build (`just install`) and check `illogical ls`
    works. Open <https://geek.tail1234.ts.net> in a browser beside iTerm2.

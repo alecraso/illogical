@@ -175,6 +175,108 @@ d pane box MARKER                                         # round-trip through i
 `signin` printed. `just control-smoke` and the testnet's `control` claims
 use both.
 
+## A fresh Mac: the tart VM harness
+
+macOS checks that need a whole Mac (a user who never logged in to the GUI,
+real Safari, iTerm2, the desktop app) run in a throwaway macOS VM made with
+[tart](https://tart.run), driven over ssh. No person and no window on the
+host: everything with a GUI happens inside the VM, whose image logs `admin`
+in to its own GUI session at boot. The scripts are in `testnet/macos/`.
+
+```sh
+just macos launchd           # launchd with no GUI session (S28, M52)
+just macos safari            # web/safari against real Safari (#94, #137)
+just macos iterm2            # M5 (tmux -CC) and M32 (OSC 52) in iTerm2
+just macos app               # the desktop app in cloud mode (#178)
+just macos up | ssh CMD | down   # the VM by hand
+```
+
+`just macos <test>` builds the debug binaries first, then runs
+`testnet/macos/test.sh <test>`. Each test clones a fresh VM, runs, and
+deletes the clone (`KEEP=1` leaves it running for a look). `BREAK=1` breaks
+what each check is about, and every check must then fail, as in the
+testnet's claims.
+
+### Setup
+
+- **tart.** `brew install cirruslabs/cli/tart`, or, while that tap's
+  formula fails on current Homebrew, `tart.tar.gz` from its GitHub release
+  (`tart.app` into `~/Applications`, `tart` on `PATH`). Without tart every
+  script prints `SKIP: tart is not installed` and exits 0.
+- **The base image.** `vm.sh up` makes a local VM `illogical-macos-base`
+  from `ghcr.io/cirruslabs/macos-tahoe-base:latest` (macOS 26.6, Safari,
+  the Command Line Tools, no Xcode; `ILLOGICAL_MACOS_IMAGE` picks another),
+  then empties tart's OCI cache (`tart prune --entries=caches`), so the disk
+  holds one copy, about 30 GB, not two. The base is never booted.
+- **Clones.** Every test VM is an APFS clone of the base (`tart clone`,
+  nearly free on disk), booted headless (`tart run --no-graphics`). `up`
+  puts the harness key (`testnet/macos/.state/`, ignored by git) into
+  admin's `authorized_keys` through the tart guest agent; after that it's
+  plain ssh as `admin` (whose password is `admin`, with passwordless sudo).
+  `down` deletes the clone. Keep it to the base plus one running clone:
+  macOS allows two VMs per host, and each clone grows as it's used.
+
+### The tests
+
+| Test | Checks | How |
+|---|---|---|
+| `launchd` (`install`, `logout`, `reboot`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, installs the daemon and starts a pane; the daemon and pane outlive the ssh session; after `tart stop` and `run`, with nobody logged in as them, the daemon is back with its pane. | `ILLOGICAL_MACOS_INSTALL` picks the install: `product` (`illogicald install`, the default), `background` (the plist bootstrapped into `user/UID` with `LimitLoadToSessionType` Background, no sudo) or `system` (a LaunchDaemon with `UserName`, sudo once). |
+| `safari` | `/key-probe.html` puts its verdict in the DOM (`data-verdict` on `#verdict`: `keys`, `wrapped` or `none`, and JSON in `#result`), and it's `keys` or `wrapped`. A signed-out invitee opens a presigned invite, signs in through GitHub and joins in one click; the owner's Chrome sees them in the roster. | `web/safari/safari.spec.ts` with a small WebDriver client (`web/safari/webdriver.ts`). safaridriver runs in the VM (`sudo safaridriver --enable` once); its port comes to the host over ssh, and control and the fake GitHub, run on the host, are forwarded to the same ports on the VM's loopback. `SAFARIDRIVER_URL` alone runs the spec against any safaridriver. |
+| `iterm2` (`attach`, `type`, `output`, `split`, `tab`, `osc52`) | iTerm2 runs `illogical tmux -CC` and opens a native window for the daemon's tab; text written there runs in the pane; the pane's output shows in iTerm2; a split in iTerm2 adds a pane; a daemon tab becomes an iTerm2 tab. `illogical tui` in iTerm2 copies a line in copy mode, and `pbpaste` has it. | iTerm2's latest stable zip, driven by AppleScript over ssh. The VM's TCC database (SIP is off in the image) gets Apple Events for sshd and osascript to iTerm2 before it starts, so nothing asks. |
+| `app` (`signin`, `approve`, `machines`, `reach`) | The release's app (`ILLOGICAL_MACOS_APP_ZIP` for another) signs in to control through the browser hand-over, is approved as a new device, lists every machine on the account (one on the host, and the Mac's own daemon once it joins), and keystrokes in its terminal run in that machine's pane. | `testnet/macos/app-cloud.ts`. Control, the fake GitHub and the host's machine run here; `web/fixtures/device.ts` is the person: it reads the app's `/#app=` page from Safari (AppleScript), allows it, hands the grant to the app's loopback port, and approves the app. The app's window is read through accessibility (JXA and System Events). |
+
+What they found (2026-10-05, macOS 26.6.2 in the VM):
+
+- **launchd:** `illogicald install` over ssh with no GUI session fails:
+  there's no `gui/UID` domain until the user logs in to the GUI
+  (`Bootstrap failed: 125: Domain does not support specified action`). A
+  Background agent in `user/UID` installs without sudo and survives the
+  logout, but not a restart: nothing loads it until that user logs in to
+  the GUI again, and an ssh login doesn't. A LaunchDaemon with `UserName`
+  survives both, with its panes restored. So `launchd` fails today in its
+  default mode, `background` passes `install` and `logout`, and `system`
+  passes all three.
+- **Safari 26.6.2:** Ed25519 keys survive a reload, X25519 keys come back
+  from IndexedDB as null, and the wrapped fallback works (verdict
+  `wrapped`), as in Playwright's WebKit. The presigned invite passes.
+- **iTerm2 3.7.3:** every check passes. In copy mode, `[` `o` (a command's
+  output by its marks) found nothing in the TUI over macOS's bash 3.2; the
+  test copies a line instead.
+- **The app (0.17.0):** every check passes.
+
+### On the macos-arm64 runner
+
+The same scripts run on the self-hosted runner (jake-mini) once tart is
+installed there: Apple silicon runs the VMs without nesting. A job would
+run `just macos launchd`, `safari`, `iterm2` and `app` in turn (never two
+at once), and needs about 35 GB free for the base and one clone. It should
+make the base once and keep it between runs (the prune leaves no cache
+behind), and always end with `vm.sh down`. Not tried there yet: tart
+needs the runner's user to be able to use Virtualization.framework from
+the runner service. The Safari spec could also run on the runner's own
+Safari, without a VM, after a one-time `sudo safaridriver --enable` there
+and with a GUI login on the runner.
+
+### What isn't automated
+
+- **The iOS Simulator** (`safari:useSimulator`): the base image has no
+  Xcode. cirruslabs' Xcode images have it, at roughly twice the disk; the
+  spec would need only that capability. Not run.
+- **A physical iPhone's Safari and keychain.** The Simulator approximates
+  it; nothing drives a real phone.
+- **The Claude desktop app signed in (#81, #83).** It needs a real
+  Anthropic account, so its Code tab session records are a fixture
+  (`crates/daemon/tests/fixtures/conversations/desktop/`, made up from the
+  fields S20 saw) and `conversations.rs` checks the daemon reads them where
+  the app keeps them on each OS. What the app shows after illogical
+  continues or forks one of its sessions needs the signed-in app.
+- **Gatekeeper on a downloaded app.** The test fetches the zip with curl,
+  which sets no quarantine flag, so the first-launch prompt a browser
+  download gets isn't covered (the app is ad hoc signed until #177).
+- **iTerm2 beyond tmux's basics:** dragging dividers, resizing windows,
+  detach and reattach from development.md's script aren't in `iterm2` yet;
+  they can be, with the same AppleScript.
+
 ## Tests that need something extra
 
 These skip, saying why, unless what they need is there:
@@ -187,6 +289,7 @@ These skip, saying why, unless what they need is there:
 | `workspace.spec.ts` | network on its first run, to install the pinned chant |
 | `just testnet test ssh`, `ssh.rs` | Docker, and `just testnet up ssh` first ([testnet/README.md](../testnet/README.md)) |
 | `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which builds the static binaries |
+| `just macos launchd`, `safari`, `iterm2`, `app` | tart on an Apple silicon Mac, about 35 GB free, and network for the image, iTerm2 and the app's zip |
 
 ## By hand
 
@@ -194,7 +297,8 @@ These skip, saying why, unless what they need is there:
 - `just fake-fleet`: three throwaway daemons with scripted work on
   7730-7732, for the swarm.
 - `just screenshots`: the images in `site/img/`, from a scripted session.
-- iTerm2's tmux mode: [development.md](development.md#testing-iterm2).
+- iTerm2's tmux mode beyond what `just macos iterm2` checks (dividers,
+  resizing, detach and reattach): [development.md](development.md#testing-iterm2).
 
 ## Planned
 
