@@ -73,7 +73,8 @@
 #           makes a team and joins box-systemd to it; a second person, the
 #           CLI's account, asks to join and is let in. `illogical hosts` on
 #           the bastion lists box-systemd as the owner's, and `--host
-#           box-systemd` runs, captures and attaches (relayed). Broken: the
+#           box-systemd` captures its pane and attaches to it, typing as a
+#           team editor (relayed). Broken: the
 #           CLI already pinned a different root for the owner's account
 #           (control "changed" it), so the machine is neither listed nor
 #           reached.
@@ -478,7 +479,7 @@ claim_m49() {
 }
 
 claim_m49team() {
-  local fp ofp oacct team code ok=1 out pane seen=0
+  local fp ofp oacct team code ok=1 out="" pane seen=0
   # shellcheck disable=SC2329,SC2317 # run below
   m49_tidy() { s bastion 'rm -rf ~/.local/bin/illogical ~/.config/illogical' >/dev/null 2>&1 || true; }
   m49_tidy
@@ -505,23 +506,22 @@ claim_m49team() {
   s bastion '.local/bin/illogical hosts' > "$WORK/hosts.out" 2>&1 || ok=0
   grep -q "^box-systemd .*relayed.*(control: .*, owner$$'s)" "$WORK/hosts.out" ||
     { note "m49team: illogical hosts doesn't list box-systemd as owner$$'s:"; cat "$WORK/hosts.out" >&2; ok=0; }
+  # The machine's first pane (making panes stays the machine owner's). The
+  # owner doesn't type in it: the first to type drives a pane.
+  pane="$(devs "$WORK/owner.json" panes box-systemd | sed -n 's/.*"panes":\[\([0-9]*\).*/\1/p')"
+  [ -n "$pane" ] || { note "m49team: box-systemd has no pane"; m49_tidy; return 1; }
   # The machine's daemon takes the new member's devices when control
   # nudges it; give it a moment.
-  for _ in $(seq 1 20); do
-    # shellcheck disable=SC2016 # $((...)) is for the pane's shell
-    out="$(s bastion "ILLOGICAL_VERBOSE=1 .local/bin/illogical --host box-systemd --json run -- 'echo TEAM-\$((6*7))'" 2>&1)" && break
+  for _ in $(seq 1 30); do
+    out="$(s bastion "ILLOGICAL_VERBOSE=1 .local/bin/illogical --host box-systemd capture $pane" 2>&1)" && { seen=1; break; }
     sleep 1
   done
-  pane="$(sed -n 's/.*"pane": *\([0-9]*\).*/\1/p' <<< "$out" | head -1)"
-  if [ -z "$pane" ] || ! grep -q "box-systemd: relayed" <<< "$out"; then
-    note "m49team: run on box-systemd: $out"; m49_tidy; return 1
-  fi
-  for _ in $(seq 1 30); do
-    if s bastion ".local/bin/illogical --host box-systemd capture $pane" 2>/dev/null | grep -q "TEAM-42"; then seen=1; break; fi
-    sleep 0.5
-  done
-  [ "$seen" = 1 ] || { note "m49team: capture never showed TEAM-42"; ok=0; }
+  [ "$seen" = 1 ] || { note "m49team: capture of %$pane: $out"; m49_tidy; return 1; }
+  grep -q "box-systemd: relayed" <<< "$out" || { note "m49team: box-systemd wasn't relayed: $out"; ok=0; }
+  # A team editor types into it, and sees the answer there and in a capture.
   pty_attach box-systemd "$pane" || ok=0
+  s bastion ".local/bin/illogical --host box-systemd capture $pane" 2>/dev/null | grep -q "ATTACH-box-systemd-$$-42" ||
+    { note "m49team: a capture after attach doesn't show what was typed"; ok=0; }
   m49_tidy
   [ "$ok" = 1 ]
 }

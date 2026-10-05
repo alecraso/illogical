@@ -280,6 +280,27 @@ export class Device {
     }
   }
 
+  /** The daemon's panes, from its hello over the relay, without touching
+   * them (typing would make this device their driver). */
+  async panes(daemonId: string, timeoutMs = 15_000): Promise<number[]> {
+    const sock = await this.connect(daemonId);
+    try {
+      let hello: { state?: { panes?: { id: number }[] } } | undefined;
+      sock.onText = (t) => {
+        if (!hello && t.includes('"hello"')) hello = JSON.parse(t);
+      };
+      sock.start();
+      const until = Date.now() + timeoutMs;
+      while (!hello) {
+        if (Date.now() > until) throw new Error("no hello from the daemon");
+        await sleep(100);
+      }
+      return (hello.state?.panes ?? []).map((p) => p.id);
+    } finally {
+      sock.close();
+    }
+  }
+
   /** Type `echo <marker>-$((6*7))` into the daemon's first pane and wait
    * for `<marker>-42` to come back: a pane reached and working, both ways.
    * Returns what the pane printed. Through the relay unless `direct`. */

@@ -13,6 +13,7 @@
 //   online NAME [SECS]     wait for a daemon to be online: {id, name, online, urls}
 //   pane NAME MARKER [SECS] round-trip MARKER through its first pane, over
 //                          control's relay: {id, name}
+//   panes NAME             its panes, untouched: {id, name, panes}
 //   team-create NAME       a team, this account its owner: {team}
 //   team-invite TEAM       an ask-first invite code: {code}
 //   team-accept TEAM CODE  this account asks to join with it: {}
@@ -69,6 +70,10 @@ async function main() {
       await d.roundTrip(box.id, rest[1], { timeoutMs: secs(rest[2], 15) });
       return out({ id: box.id, name: box.name });
     }
+    case "panes": {
+      const box = await find(rest[0]);
+      return out({ id: box.id, name: box.name, panes: await d.panes(box.id) });
+    }
     case "team-create":
       return out({ team: await d.createTeam(rest[0] ?? "team") });
     case "team-invite":
@@ -79,7 +84,7 @@ async function main() {
     case "team-admit":
       return out({ admitted: await d.admitAll(rest[0]) });
     default:
-      throw new Error(`unknown command ${cmd ?? "(none)"}: signin, approve, devices, online, pane, team-create, team-invite, team-accept, team-admit`);
+      throw new Error(`unknown command ${cmd ?? "(none)"}: signin, approve, devices, online, pane, panes, team-create, team-invite, team-accept, team-admit`);
   }
 }
 
