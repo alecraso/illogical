@@ -1,7 +1,8 @@
 //! Rules over screens captured from Claude Code 2.1 and Codex 0.155
 //! (`fixtures/screens/*.txt`: the title on the first line, then the screen;
-//! paths and prompts replaced). Each is drawn in a real terminal first, so
-//! the rules see what the daemon's engine would.
+//! paths and prompts replaced), and over whole sessions recorded with their
+//! timing for the replay agent (`fixtures/agents/*.cast`). Each is drawn in
+//! a real terminal first, so the rules see what the daemon's engine would.
 
 use std::time::{Duration, Instant};
 
@@ -39,6 +40,10 @@ fn claude_code_screens() {
         ("claude_permission", Blocked),
         ("claude_trust", Blocked),
         ("claude_old_question_in_history", Idle),
+        // The transcript view (Ctrl-O) hides the prompt box: only the
+        // title says.
+        ("claude_transcript", Idle),
+        ("claude_transcript_working", Working),
     ] {
         let got = state("claude", &draw(name));
         assert_eq!(got.as_ref().map(|g| g.0), Some(want), "{name}: {got:?}");
@@ -100,13 +105,13 @@ fn debounce_waits_out_startup_and_spinner_gaps() {
     let mut d = Debounce::new(t0);
     // Its banner, drawn in pieces: nothing yet.
     assert_eq!(d.see(at(100), Some(Idle)), None);
-    assert!(d.pending(at(100)));
+    assert!(d.pending());
     // Working shows at once.
     assert_eq!(d.see(at(1100), Some(Working)), Some(Working));
-    assert!(!d.pending(at(1100)));
+    assert!(!d.pending());
     // A gap between spinner frames isn't idle...
     assert_eq!(d.see(at(1200), Some(Idle)), None);
-    assert!(d.pending(at(1200)));
+    assert!(d.pending());
     assert_eq!(d.see(at(1250), Some(Working)), None);
     // ...idle held over three looks 100 ms apart is.
     assert_eq!(d.see(at(2000), Some(Idle)), None);
@@ -120,4 +125,88 @@ fn debounce_waits_out_startup_and_spinner_gaps() {
     // Looked at rarely, idle held past the cap settles it.
     assert_eq!(d.see(at(4000), Some(Idle)), None);
     assert_eq!(d.see(at(4800), Some(Idle)), Some(Idle));
+}
+
+#[test]
+fn what_it_drew_during_the_grace_period_is_still_read() {
+    // A dialog drawn at once, then nothing more printed: it wants a look
+    // after the grace period, whenever that comes.
+    let t0 = Instant::now();
+    let mut d = Debounce::new(t0);
+    assert_eq!(d.see(t0 + Duration::from_millis(300), Some(AgentState::Blocked)), None);
+    assert!(d.pending());
+    assert_eq!(d.see(t0 + Duration::from_secs(5), Some(AgentState::Blocked)), Some(AgentState::Blocked));
+    assert!(!d.pending());
+}
+
+/// A recording for the replay agent (`fixtures/agents/*.cast`): its size,
+/// and its events (seconds, kind, text).
+fn cast(name: &str) -> (u16, u16, Vec<(f64, String, String)>) {
+    let path = format!("{}/fixtures/agents/{name}.cast", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let mut lines = text.lines();
+    let header: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    let events = lines.filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).unwrap()).collect();
+    (header["width"].as_u64().unwrap() as u16, header["height"].as_u64().unwrap() as u16, events)
+}
+
+/// Plays a recording through a terminal and reads the screen at each of
+/// its markers, which say what the screen showed when it was recorded.
+fn markers(agent_id: &str, name: &str) -> Vec<(f64, AgentState, Option<AgentState>)> {
+    let (cols, rows, events) = cast(name);
+    let mut e = GhosttyEngine::new(cols, rows);
+    let mut out = vec![];
+    for (t, kind, text) in events {
+        match kind.as_str() {
+            "o" => e.feed(text.as_bytes()),
+            "m" => {
+                let want = match text.as_str() {
+                    "working" => AgentState::Working,
+                    "blocked" => AgentState::Blocked,
+                    "idle" => AgentState::Idle,
+                    other => panic!("{name}: marker {other}"),
+                };
+                let got = agent(agent_id).unwrap().detect(&e.title(), &e.screen_lines()).map(|d| d.state);
+                out.push((t, want, got));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn a_recorded_claude_code_session() {
+    // Real Claude Code 2.1.289 (`record.py claude_turn`): the trust
+    // dialog, a prompt, an approval, the turn, the transcript view while
+    // idle and while working.
+    let seen = markers("claude", "claude_turn");
+    assert!(seen.len() >= 12, "{seen:?}");
+    for (t, want, got) in &seen {
+        assert_eq!(Some(*want), *got, "at {t}s: {seen:?}");
+    }
+}
+
+#[test]
+fn a_recorded_codex_session() {
+    let seen = markers("codex", "codex_turn");
+    assert!(seen.len() >= 6, "{seen:?}");
+    for (t, want, got) in &seen {
+        assert_eq!(Some(*want), *got, "at {t}s: {seen:?}");
+    }
+}
+
+#[test]
+fn explain_says_which_rule_saw_what() {
+    let e = draw("claude_permission");
+    let looks = agent("claude").unwrap().explain(&e.title(), &e.screen_lines());
+    // Highest priority first; the first that matched is the one detect
+    // answers with.
+    assert!(looks.windows(2).all(|w| w[0].priority >= w[1].priority));
+    let fired = looks.iter().find(|l| l.matched).unwrap();
+    assert_eq!((fired.rule, fired.state), ("permission_prompt", AgentState::Blocked));
+    assert_eq!(fired.region, "after the last rule");
+    assert!(fired.text.iter().any(|l| l.contains("Do you want to proceed?")), "{fired:?}");
+    let title = looks.iter().find(|l| l.rule == "title_idle").unwrap();
+    assert_eq!(title.text, vec!["✳ Create a file".to_owned()]);
 }

@@ -1653,9 +1653,8 @@ impl State {
     /// How long the pane's thread waits for something to do before its
     /// chores: less while an agent's screen wants another look.
     fn tick(&self) -> Duration {
-        let now = Instant::now();
         match &self.watch {
-            Some(w) if w.dirty || w.debounce.pending(now) => LOOK_EVERY,
+            Some(w) if w.dirty || w.debounce.pending() => LOOK_EVERY,
             _ => Duration::from_secs(1),
         }
     }
@@ -1673,7 +1672,7 @@ impl State {
     fn look_if_due(&mut self, idle: bool) {
         let now = Instant::now();
         let Some(w) = &mut self.watch else { return };
-        if !(w.dirty || w.debounce.pending(now)) || (!idle && now.duration_since(w.looked) < LOOK_EVERY) {
+        if !(w.dirty || w.debounce.pending()) || (!idle && now.duration_since(w.looked) < LOOK_EVERY) {
             return;
         }
         w.looked = now;
