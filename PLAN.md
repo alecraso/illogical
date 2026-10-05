@@ -4116,6 +4116,16 @@ One command: install over ssh, set up the service to outlive the login, run `ill
 
 **Done when:** from geek, a fresh throwaway box becomes a machine on control's page in one step plus the approval, and its pane opens from the phone. The same for jake-mini with no GUI session. The box survives a reboot.
 
+#### SSH track: the person-free checks (2026-10-04)
+
+Engineering calls made while turning the SSH track's in-person checks into tests (#214):
+
+- **`git push` (M51).** The test stack's `ssh` profile has a `git` server (bare repositories over ssh, `git-shell`, the stack's key). `crates/daemon/tests/ssh.rs` pushes from a pane on box-bare while a client is attached over `--ssh`, and the same push with `ILLOGICAL_SSH_AGENT=no` must be refused, so the push can only have used the forwarded agent. This stands in for "from jake-air".
+- **#26 in a container.** `crates/daemon/tests/reboot.rs` uses `docker restart` of box-systemd as the reboot: systemd stops the user service (the daemon logs "saved for shutdown") and boots again with lingering. The container keeps the host's boot id, so the journal is checked by counting lines, not with `-b`. The "phone reconnects" check is the web app in headless Chromium (`web/reconnect-watch.ts`) through an ssh forward the test re-opens after the boot; the daemon's Host check wants `localhost:7681`, so Chromium maps that name to the forward instead of the test changing the daemon. VM tabs across a real kernel reboot stay a separate check (wisp, #214 section 4).
+- **A rerun pane forgets its command after one restart.** Found by the reboot test: a restored rerun ran `bash -c 'CMD; exec $SHELL'`, which nothing recorded, so the second restart gave a shell. Fixed with `Start::Rerun` (recorded as `run`'s command is); the clean-stop test restarts twice now.
+- **Stacks per worktree.** `COMPOSE_PROJECT_NAME` names a stack's containers, images, networks and state directory, so parallel worktrees don't share boxes or rebuild each other's images.
+- **The tailnet comparison (S28)** is done in containers (`tailnet` profile: headscale, a userspace box, a client with `tailscale0`) rather than on geek; numbers in `spikes/s28-ssh/README.md`. Over a real network both paths add the same round trips, so the container numbers are the overhead difference. Tailscale SSH's check mode needs an identity provider's login and stays untested (a limit in #214).
+
 #### M53: the desktop app over ssh (#156, gated, after M51)
 
 Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this only covers boxes that never join control. M46 shipped in 0.14.0 (#144), so only M51 is left as a dependency.
