@@ -77,6 +77,12 @@ and your teams. The macOS app
 isn't notarized yet: the first time, open it, then choose *Open Anyway* in
 System Settings › Privacy & Security.
 
+**On Windows** (x86_64), `illogical-desktop-windows-x86_64-setup.exe` is
+a client for illogical cloud: sign in and it shows the machines in your
+account. Panes don't run on Windows itself yet (the Windows track, #224).
+It isn't signed yet: when SmartScreen stops it, choose *More info*, then
+*Run anyway*.
+
 **Servers and machines without a screen:**
 
 ```

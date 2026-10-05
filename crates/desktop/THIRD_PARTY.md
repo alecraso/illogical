@@ -6678,9 +6678,9 @@ Apache License
 ## Apache License 2.0
 
 Used by:
-- [illogical-core 0.17.0](https://github.com/arugula-salad/illogical)
-- [illogical-desktop 0.17.0](https://crates.io/crates/illogical-desktop)
-- [illogical-proto 0.17.0](https://github.com/arugula-salad/illogical)
+- [illogical-core 0.18.0](https://github.com/arugula-salad/illogical)
+- [illogical-desktop 0.18.0](https://crates.io/crates/illogical-desktop)
+- [illogical-proto 0.18.0](https://github.com/arugula-salad/illogical)
 - [anyhow 1.0.104](https://github.com/dtolnay/anyhow)
 - [async-trait 0.1.92](https://github.com/dtolnay/async-trait)
 - [dirs-sys 0.5.0](https://github.com/dirs-dev/dirs-sys-rs)
