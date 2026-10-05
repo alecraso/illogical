@@ -18,6 +18,11 @@ const PROJECTS = ["api", "web", "mobile", "infra", "docs"];
 /** Panes per machine, about 360 in all. */
 const PER_MACHINE = 60;
 
+// The fleet's daemons inherit this: no "a newer release is out" chip.
+process.env.ILLOGICAL_NO_UPDATE_CHECK = "true";
+// Nor this machine's Fountain runner, if it is one.
+process.env.ILLOGICAL_FOUNTAIN_UNIT_FILE = "/nonexistent/fountain-runner.service";
+
 let fake: FakeFleet;
 let base = "";
 

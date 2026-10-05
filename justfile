@@ -204,9 +204,11 @@ vsix:
 
 # The images in site/img/, from a throwaway daemon with a demo HOME and a
 # scripted agent (web/screenshots/). Needs nvim for the editor pane.
+# The web client first: the daemon build picks up web/dist.
 screenshots:
+    cd web && pnpm run build
     {{cargo}} build -p illogicald -p illogical
-    cd web && pnpm run build && pnpm exec playwright test -c screenshots.config.ts
+    cd web && pnpm exec playwright test -c screenshots.config.ts
     scripts/webp
 
 # The project page (site/) with install.sh beside it, in target/site.

@@ -285,7 +285,7 @@
         <div class="peek" id="peek"><div class="ph"><b></b><span></span></div><pre></pre></div>
         <div class="opened" id="opened">
           <figure class="pane">
-            <figcaption class="ph"><b>%62</b> agent · jake-mini <span class="path">· ~/src/auth</span><span class="st">claude code · open</span></figcaption>
+            <figcaption class="ph"><b>%62</b> agent · workstation <span class="path">· ~/src/auth</span><span class="st">claude code · open</span></figcaption>
             <picture>
               <source srcset="img/agent.webp" type="image/webp">
               <img src="img/agent.png" width="2880" height="1800" alt="An agent working through a failing test beside a shell, with its commands and results visible">
@@ -318,7 +318,7 @@
           <p>Questions and approval requests lift out to one rail. Whoever answers first is named on the card.</p>
           <div class="card" aria-hidden="true">
             <div class="ch"><b>Claude Code asks</b></div>
-            <div class="cm">%62 · jake-mini · api</div>
+            <div class="cm">%62 · workstation · api</div>
             <div class="cq">Bash wants to run <code>cargo test -p auth</code></div>
             <div class="ca"><button type="button" class="pri" tabindex="-1">Allow</button><button type="button" tabindex="-1">Deny</button></div>
           </div>
@@ -358,12 +358,12 @@
 
     <section class="feature">
       <div class="text">
-        <p class="meta"><i style="background:var(--k-shell)"></i>jake-mini · restored · scrollback kept</p>
+        <p class="meta"><i style="background:var(--k-shell)"></i>workstation · restored · scrollback kept</p>
         <h2 class="cl">Close the browser. Keep sessions running.</h2>
         <p>Your sessions run on the host machine, independently of your browser. Reopen the workspace to see your terminals and their output.</p>
       </div>
       <figure class="pane opens" style="--c: var(--k-shell)">
-        <figcaption class="ph"><b>%41</b> shell · jake-mini <span class="path">· ~/src/auth</span><span class="st">restored</span></figcaption>
+        <figcaption class="ph"><b>%41</b> shell · workstation <span class="path">· ~/src/auth</span><span class="st">restored</span></figcaption>
         <picture>
           <source srcset="img/restored.webp" type="image/webp">
           <img src="img/restored.png" width="2880" height="1800" loading="lazy" alt="A restored workspace with earlier terminal output preserved above fresh prompts">
@@ -398,7 +398,7 @@
             <figcaption class="ph"><b>changes</b> · ~/src/auth <span class="st">read-only</span></figcaption>
             <picture>
               <source srcset="img/changes.webp" type="image/webp">
-              <img src="img/changes.png" width="2880" height="1800" loading="lazy" alt="A failing test run beside a diff block listing the changed files with their hunks, and a file block open at the new sweep function">
+              <img src="img/changes.png" width="2880" height="1800" loading="lazy" alt="A passing test run beside a diff block listing the changed files with their hunks, and a file block open at the new sweep function">
             </picture>
           </figure>
           <h3>What changed</h3>
@@ -417,7 +417,7 @@
         </div>
         <div class="kind">
           <figure class="pane opens" style="--c: var(--k-editor)">
-            <figcaption class="ph"><b>vs code</b> · session.rs:212 <span class="st">on jake-mini</span></figcaption>
+            <figcaption class="ph"><b>vs code</b> · session.rs:212 <span class="st">on workstation</span></figcaption>
             <picture>
               <source srcset="img/editor.webp" type="image/webp">
               <img src="img/editor.png" width="2880" height="1800" loading="lazy" alt="A passing test run beside VS Code, open on the same repository at the changed function">
@@ -594,8 +594,8 @@ just bootstrap && just install</pre>
     const weighted = (pairs) => { let r = rnd() * pairs.reduce((s, p) => s + p[1], 0); for (const [v, w] of pairs) if ((r -= w) <= 0) return v; return pairs[0][0]; };
 
     const PROJ = [["api", 40], ["infra", 34], ["docs", 44], ["web", 30], ["mobile", 32], ["~/scratch", 26], ["/tmp", 22]];
-    const MACH = [["jake-mini", 3], ["build-01", 2], ["build-02", 2], ["team-box", 3], ["geek", 2], ["sam-laptop", 2]];
-    const WHO = [["jake", 4], ["sam", 3], ["priya", 3], ["ana", 2], ["devon", 2]];
+    const MACH = [["workstation", 3], ["build-01", 2], ["build-02", 2], ["team-box", 3], ["build-03", 2], ["sam-laptop", 2]];
+    const WHO = [["kim", 4], ["sam", 3], ["priya", 3], ["ana", 2], ["devon", 2]];
     const KINDW = [["shell", 22], ["build", 18], ["test", 20], ["agent", 16], ["server", 10], ["logs", 7], ["editor", 7]];
     const LINES = {
       shell: ["$ git status", "On branch main", "nothing to commit, clean", "$ ls", "Cargo.toml  src  web", "$ "],
@@ -613,7 +613,7 @@ just bootstrap && just install</pre>
       tiles.push({ id: id++, proj: p, mach: weighted(MACH), who: weighted(WHO), kind: weighted(KINDW), busy: rnd() < 0.76,
         x: 0, y: 0, tx: 0, ty: 0, jx: (rnd() - 0.5) * 1.6, jy: (rnd() - 0.5) * 1.2, ph: rnd() * 6.28, need: null, sh: (rnd() * 3) | 0 });
     const hero = tiles.find((t) => t.id === 62);
-    Object.assign(hero, { kind: "agent", mach: "jake-mini", who: "jake", busy: true, sh: 0 });
+    Object.assign(hero, { kind: "agent", mach: "workstation", who: "kim", busy: true, sh: 0 });
     document.getElementById("n-panes").textContent = tiles.length;
 
     const offs = [];
