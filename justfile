@@ -278,6 +278,42 @@ testnet cmd="test" profile="ssh" *claims:
       *) echo "usage: just testnet up|test|break|measure|down [profile] [claim...]" >&2; exit 2 ;;
     esac
 
+# #17 on two Docker machines, one dropping off the network (testnet/hosts/README.md).
+testnet-hosts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    if ! docker info >/dev/null 2>&1; then testnet/hosts/net.sh check; exit $?; fi
+    a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
+    just static "$a"
+    {{cargo}} build -p illogicald
+    cd web && ILLOGICAL_TESTNET_HOSTS=1 pnpm exec playwright test e2e/testnet-hosts.spec.ts
+
+# M28 for real: VS Code over Remote-SSH into a Docker box (testnet/editors/README.md).
+testnet-editors:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    if ! docker info >/dev/null 2>&1; then testnet/editors/box.sh check; exit $?; fi
+    a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
+    just static "$a"
+    {{cargo}} build -p illogicald
+    cd web
+    # Electron needs a display: a virtual one where there's none (Linux CI).
+    x=(); if [ "$(uname -s)" = Linux ] && [ -z "${DISPLAY:-}" ]; then x=(xvfb-run -a); fi
+    ILLOGICAL_TESTNET_EDITORS=1 ${x[@]+"${x[@]}"} pnpm exec playwright test e2e/editor-remote-ssh.spec.ts
+
+# Real Forgejo and GitLab in Docker (testnet/forges/README.md): up|test|down [forgejo|gitlab|all].
+forges cmd="test" forge="forgejo":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{cmd}}" in
+      up) testnet/forges/up.sh {{forge}} ;;
+      test) testnet/forges/test.sh {{forge}} ;;
+      down) testnet/forges/down.sh {{forge}} ;;
+      *) echo "usage: just forges up|test|down [forgejo|gitlab|all]" >&2; exit 2 ;;
+    esac
+
 # What CI runs.
 check: test
     {{cargo}} fmt --all --check

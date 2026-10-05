@@ -340,6 +340,14 @@ impl Daemon {
         }
     }
 
+    /// Set a variable for the next [`Daemon::start`] (one that needs the
+    /// port the first start took, say).
+    pub fn set_env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) {
+        let key = key.as_ref().to_owned();
+        self.b.env.retain(|(k, _)| *k != key);
+        self.b.env.push((key, Some(value.as_ref().to_owned())));
+    }
+
     /// Stop it the way systemd or a reboot does (SIGTERM: it saves first,
     /// and what it started goes too), and wait for it to exit.
     pub fn stop(&mut self) {
