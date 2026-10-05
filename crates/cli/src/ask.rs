@@ -101,7 +101,23 @@ pub fn withdraw_on_signals(sock: Target, pane: u32, id: Option<String>) {
     });
 }
 
-/// No signals to catch on Windows: Ctrl-C there ends the hook without
-/// withdrawing the card (M57, #220).
-#[cfg(not(unix))]
-pub fn withdraw_on_signals(_: Target, _: u32, _: Option<String>) {}
+/// Windows: on Ctrl-C, Ctrl-Break or the console closing, withdraw the
+/// card, then exit quietly. (A hook ended with TerminateProcess gets no say:
+/// the card stays until the question times out.)
+#[cfg(windows)]
+pub fn withdraw_on_signals(sock: Target, pane: u32, id: Option<String>) {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+    static CARD: OnceLock<(Target, u32, Option<String>)> = OnceLock::new();
+    if CARD.set((sock, pane, id)).is_err() {
+        return;
+    }
+    unsafe extern "system" fn on_ctrl(_event: u32) -> windows_sys::core::BOOL {
+        if let Some((sock, pane, id)) = CARD.get() {
+            let _ = request(sock, "POST", &format!("/api/panes/{pane}/ask/withdraw"), Some(&json!({ "id": id })));
+        }
+        std::process::exit(0);
+    }
+    // SAFETY: a handler that only makes a request and exits.
+    unsafe { SetConsoleCtrlHandler(Some(on_ctrl), 1) };
+}

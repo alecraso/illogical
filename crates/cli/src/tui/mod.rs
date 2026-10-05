@@ -20,7 +20,6 @@ use std::{
 };
 
 use illogical_vt::{Cursor, CursorShape};
-use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use ratatui::{
     Terminal,
     crossterm::{
@@ -123,15 +122,7 @@ pub fn run(target: &Target, session: Option<String>) -> anyhow::Result<i32> {
     let mut last_draw = Instant::now() - FRAME;
     while !app.quit {
         let wait = if app.dirty { FRAME.saturating_sub(last_draw.elapsed()) } else { Duration::from_millis(500) };
-        let (sock, woke) = {
-            let mut fds = [PollFd::new(app.conn.fd(), PollFlags::POLLIN), PollFd::new(wake.fd(), PollFlags::POLLIN)];
-            match poll(&mut fds, PollTimeout::try_from(wait.as_millis() as u64).unwrap_or(PollTimeout::MAX)) {
-                Ok(_) | Err(nix::errno::Errno::EINTR) => {}
-                Err(e) => return Err(e.into()),
-            }
-            let r = |i: usize| fds[i].revents().is_some_and(|e| !e.is_empty());
-            (r(0), r(1))
-        };
+        let (sock, woke) = wake.wait(Some(app.conn.stream()), wait)?;
         if sock {
             let mut got = Vec::new();
             app.conn.read(|m| got.push(m))?;

@@ -4,31 +4,21 @@
 
 use std::{
     io::{ErrorKind, Read, Write},
-    os::fd::AsFd,
+    sync::mpsc,
+    time::Duration,
 };
 
 use anyhow::Context;
 use illogical_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg};
-use nix::{
-    libc,
-    poll::{PollFd, PollFlags, PollTimeout, poll},
-    sys::termios::{self, SetArg},
-};
 use tungstenite::{Message, WebSocket};
 
-use crate::http::{Stream, Target};
+use crate::{
+    http::{Stream, Target},
+    term::size as term_size,
+    wake::Wake,
+};
 
 const DETACH: u8 = 0x1d; // Ctrl-]
-
-fn term_size() -> (u16, u16) {
-    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    // SAFETY: TIOCGWINSZ fills one winsize.
-    if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } == 0 && ws.ws_col > 0 {
-        (ws.ws_col, ws.ws_row)
-    } else {
-        (80, 24)
-    }
-}
 
 fn send(ws: &mut WebSocket<Box<dyn Stream>>, msg: &ClientMsg) -> anyhow::Result<()> {
     ws.send(Message::Text(serde_json::to_string(msg)?.into()))?;
@@ -66,39 +56,41 @@ pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
     )?;
 
     // Raw mode for the duration; restored however we leave.
-    let stdin = std::io::stdin();
-    let saved = termios::tcgetattr(stdin.as_fd()).ok();
-    if let Some(t) = &saved {
-        let mut raw = t.clone();
-        termios::cfmakeraw(&mut raw);
-        termios::tcsetattr(stdin.as_fd(), SetArg::TCSANOW, &raw)?;
-    }
-    struct Restore(Option<termios::Termios>);
+    struct Restore(#[allow(dead_code)] crate::term::Raw);
     impl Drop for Restore {
         fn drop(&mut self) {
-            if let Some(t) = &self.0 {
-                let _ = termios::tcsetattr(std::io::stdin().as_fd(), SetArg::TCSANOW, t);
-            }
             // Leave whatever screen and modes the pane had us in.
             let _ = std::io::stdout()
                 .write_all(b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[0m\x1b[?25h\r\n");
             let _ = std::io::stdout().flush();
         }
     }
-    let _restore = Restore(saved);
+    let _restore = Restore(crate::term::Raw::enter()?);
     eprint!("\x1b[2m[attached to %{pane} · Ctrl-] detaches]\x1b[0m\r\n");
+
+    // Keys, read on their own thread; an empty read is the end of input.
+    let (mut wake, waker) = Wake::pair()?;
+    let (keys_tx, keys) = mpsc::channel::<Vec<u8>>();
+    std::thread::Builder::new().name("attach-input".into()).spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = std::io::stdin().read(&mut buf).unwrap_or(0);
+            let end = n == 0;
+            if keys_tx.send(buf[..n].to_vec()).is_err() || end {
+                break;
+            }
+            waker.wake();
+        }
+        waker.wake();
+    })?;
 
     ws.get_mut().set_nonblocking(true)?;
     let mut out = std::io::stdout();
-    let mut buf = [0u8; 4096];
     loop {
-        let (sock_ready, stdin_ready) = {
-            let mut fds =
-                [PollFd::new(ws.get_ref().fd(), PollFlags::POLLIN), PollFd::new(stdin.as_fd(), PollFlags::POLLIN)];
-            poll(&mut fds, PollTimeout::from(200u16))?;
-            let r = |i: usize| fds[i].revents().is_some_and(|e| !e.is_empty());
-            (r(0), r(1))
-        };
+        let (sock_ready, woken) = wake.wait(Some(ws.get_ref().as_ref()), Duration::from_millis(200))?;
+        if woken {
+            wake.drain();
+        }
         if sock_ready {
             loop {
                 match ws.read() {
@@ -129,12 +121,11 @@ pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
             }
             out.flush()?;
         }
-        if stdin_ready {
-            let n = std::io::stdin().read(&mut buf)?;
-            if n == 0 {
+        while let Ok(data) = keys.try_recv() {
+            if data.is_empty() {
                 return Ok(0);
             }
-            let data = &buf[..n];
+            let data = &data[..];
             let (data, detach) = match data.iter().position(|b| *b == DETACH) {
                 Some(i) => (&data[..i], true),
                 None => (data, false),

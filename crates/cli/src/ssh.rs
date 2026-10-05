@@ -8,7 +8,7 @@
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-/// Windows: ssh connections from Windows come with M57 (#220); a stream
+/// Windows: `--ssh` from Windows isn't there yet (#284); a stream
 /// type stands in until then.
 #[cfg(not(unix))]
 type UnixStream = std::net::TcpStream;
@@ -147,7 +147,7 @@ impl Remote {
     /// it has a real fd to poll like any other connection.
     #[cfg(not(unix))]
     pub fn channel(&self) -> anyhow::Result<UnixStream> {
-        bail!("reaching {} over ssh from Windows comes in M57 (#220)", self.dest)
+        bail!("--ssh from Windows isn't supported yet (#284): reach {} with --host or through control", self.dest)
     }
 
     #[cfg(unix)]
@@ -386,6 +386,7 @@ fn forward_agent() -> bool {
     !std::env::var("ILLOGICAL_SSH_AGENT").is_ok_and(|v| v == "no")
 }
 
+#[cfg(unix)]
 /// Wait for a finished ssh in the background, so it doesn't linger as a
 /// zombie.
 fn reap(mut child: std::process::Child) {

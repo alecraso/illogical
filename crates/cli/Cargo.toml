@@ -21,6 +21,9 @@ tungstenite = "0.30.0"
 webpki-root-certs = "1.0.9"
 zstd = "0.14.0"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Pipes"] }
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.3", features = ["term", "poll", "signal", "ioctl", "hostname"] }
 

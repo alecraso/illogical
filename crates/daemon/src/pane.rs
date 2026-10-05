@@ -1699,6 +1699,16 @@ impl State {
             return self.attach_exec(&host, Begin::New { spawn: spawn.clone(), image, create: !host.borrowed });
         }
         let (cols, rows) = self.engine.size();
+        // Windows: a pseudoconsole starts from what it takes for a blank
+        // screen and draws only what changes from there, so whatever the pane
+        // shows already (restored output, a finished command) goes up into
+        // scrollback first, and the two agree on the screen.
+        #[cfg(windows)]
+        if self.engine.content_rows() > 0 {
+            let leave_alt = if self.engine.alt_screen() { "\x1b[?1049l" } else { "" };
+            let up = format!("{leave_alt}\x1b[{rows};1H{}\x1b[H", "\r\n".repeat(rows as usize));
+            self.output(up.as_bytes());
+        }
         match Process::start(spawn, &self.launch, &self.record, cols, rows, self.id, self.program.clone()) {
             Ok(p) => {
                 self.pid.store(p.pid, Ordering::Relaxed);

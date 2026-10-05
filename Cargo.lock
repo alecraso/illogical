@@ -1749,6 +1749,7 @@ dependencies = [
  "serde_json",
  "tungstenite 0.30.0",
  "webpki-root-certs",
+ "windows-sys 0.60.2",
  "zstd",
 ]
 

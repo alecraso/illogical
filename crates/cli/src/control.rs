@@ -26,8 +26,8 @@
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-/// Windows: the link's own sockets come with M57 (#220); a stream type
-/// stands in until then.
+/// Windows: the HTTP client's end of a carried connection is a loopback
+/// TCP pair ([`pair`]).
 #[cfg(not(unix))]
 type UnixStream = std::net::TcpStream;
 use std::{
@@ -494,7 +494,7 @@ enum Out {
     Send(Msg, Option<Reply>),
     /// Where the daemon's protocol messages go from now on (the `/ws` of
     /// this command), and how to wake whoever reads them.
-    Sink(mpsc::Sender<Msg>, UnixStream),
+    Sink(mpsc::Sender<Msg>, crate::wake::Waker),
 }
 
 /// What the daemon sends before a `/ws` is there to take it (its hello,
@@ -506,7 +506,7 @@ const EARLY_MAX: usize = 64 << 20;
 /// each response to the request waiting for it.
 pub struct Link {
     out: Mutex<mpsc::Sender<Out>>,
-    wake: Mutex<UnixStream>,
+    waker: crate::wake::Waker,
     next: AtomicU32,
     /// How it got there, in words.
     pub route: String,
@@ -519,20 +519,6 @@ impl std::fmt::Debug for Link {
 }
 
 impl Link {
-    #[cfg(not(unix))]
-    fn connect(
-        _at: &Url,
-        _ws_url: &str,
-        _headers: &[(&str, &str)],
-        _cert: &Cert,
-        _keys: &DeviceKeys,
-        _connect_timeout: Option<Duration>,
-        _route: String,
-    ) -> anyhow::Result<Self> {
-        bail!("reaching machines through control from Windows comes in M57 (#220)")
-    }
-
-    #[cfg(unix)]
     fn connect(
         at: &Url,
         ws_url: &str,
@@ -581,15 +567,14 @@ impl Link {
         ws.get_ref().set_timeout(None)?;
         ws.get_mut().set_nonblocking(true)?;
         let (tx, rx) = mpsc::channel();
-        let (wake, woken) = UnixStream::pair()?;
-        woken.set_nonblocking(true)?;
-        std::thread::spawn(move || io(ws, ch, rx, woken));
-        Ok(Self { out: Mutex::new(tx), wake: Mutex::new(wake), next: AtomicU32::new(1), route })
+        let (wake, waker) = crate::wake::Wake::pair()?;
+        std::thread::spawn(move || io(ws, ch, rx, wake));
+        Ok(Self { out: Mutex::new(tx), waker, next: AtomicU32::new(1), route })
     }
 
     fn put(&self, o: Out) -> anyhow::Result<()> {
         self.out.lock().unwrap().send(o).map_err(|_| anyhow::anyhow!("the channel closed"))?;
-        let _ = self.wake.lock().unwrap().write_all(b"x");
+        self.waker.wake();
         Ok(())
     }
 
@@ -613,14 +598,8 @@ impl Link {
     /// A connection the HTTP client can use as if it were a socket to the
     /// daemon: each request on it is carried over the channel, and a
     /// WebSocket to `/ws` is the channel's protocol messages.
-    #[cfg(not(unix))]
     pub fn stream(self: &Arc<Self>) -> anyhow::Result<UnixStream> {
-        bail!("reaching machines through control from Windows comes in M57 (#220)")
-    }
-
-    #[cfg(unix)]
-    pub fn stream(self: &Arc<Self>) -> anyhow::Result<UnixStream> {
-        let (ours, theirs) = UnixStream::pair()?;
+        let (ours, theirs) = pair()?;
         let link = self.clone();
         std::thread::spawn(move || {
             let _ = serve_one(&link, theirs);
@@ -629,8 +608,29 @@ impl Link {
     }
 }
 
-/// Read one HTTP/1.1 request from `s`, carry it, write its answer.
+/// Two connected ends, for a request carried in this process.
 #[cfg(unix)]
+fn pair() -> std::io::Result<(UnixStream, UnixStream)> {
+    UnixStream::pair()
+}
+
+/// Windows: a loopback TCP pair. Whoever connects first to the listener is
+/// checked to be us (by its address) before it's used.
+#[cfg(not(unix))]
+fn pair() -> std::io::Result<(UnixStream, UnixStream)> {
+    let l = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let ours = std::net::TcpStream::connect(l.local_addr()?)?;
+    loop {
+        let (theirs, from) = l.accept()?;
+        if from == ours.local_addr()? {
+            ours.set_nodelay(true)?;
+            theirs.set_nodelay(true)?;
+            return Ok((ours, theirs));
+        }
+    }
+}
+
+/// Read one HTTP/1.1 request from `s`, carry it, write its answer.
 fn serve_one(link: &Link, s: UnixStream) -> anyhow::Result<()> {
     let mut r = BufReader::new(s.try_clone()?);
     let mut line = String::new();
@@ -728,8 +728,6 @@ fn write_head(w: &mut UnixStream, status: u16, ct: Option<&str>, len: Option<usi
 /// `/ws` over the channel: the WebSocket's messages are the channel's
 /// `T`/`B` messages, both ways, until either end closes.
 fn serve_ws(link: &Link, mut s: UnixStream, early: Vec<u8>, key: &str) -> anyhow::Result<()> {
-    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
-    use std::os::fd::AsFd;
     use tungstenite::protocol::Role;
     let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
     write!(
@@ -737,20 +735,13 @@ fn serve_ws(link: &Link, mut s: UnixStream, early: Vec<u8>, key: &str) -> anyhow
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
     )?;
     let (tx, rx) = mpsc::channel();
-    let (wake, mut woken) = UnixStream::pair()?;
-    wake.set_nonblocking(true)?;
-    woken.set_nonblocking(true)?;
-    link.put(Out::Sink(tx, wake))?;
+    let (mut wake, waker) = crate::wake::Wake::pair()?;
+    link.put(Out::Sink(tx, waker))?;
     s.set_nonblocking(true)?;
     let mut ws = WebSocket::from_partially_read(s, early, Role::Server, None);
-    let mut buf = [0u8; 256];
     loop {
-        {
-            let mut fds =
-                [PollFd::new(ws.get_ref().as_fd(), PollFlags::POLLIN), PollFd::new(woken.as_fd(), PollFlags::POLLIN)];
-            let _ = poll(&mut fds, PollTimeout::from(50u16));
-        }
-        while woken.read(&mut buf).is_ok_and(|n| n > 0) {}
+        let _ = wake.wait(Some(ws.get_ref()), Duration::from_millis(50));
+        wake.drain();
         loop {
             let m = match rx.try_recv() {
                 Ok(Msg::Text(t)) => Message::Text(t.into()),
@@ -792,7 +783,7 @@ fn serve_ws(link: &Link, mut s: UnixStream, early: Vec<u8>, key: &str) -> anyhow
 enum Sink {
     /// No `/ws` yet: kept for it (`None` once there was too much).
     Early(Option<Vec<Msg>>, usize),
-    To(mpsc::Sender<Msg>, UnixStream),
+    To(mpsc::Sender<Msg>, crate::wake::Waker),
     /// Its `/ws` closed; the channel is one client, so there's no other.
     Gone,
 }
@@ -814,7 +805,7 @@ impl Sink {
             Sink::Early(None, _) | Sink::Gone => {}
             Sink::To(tx, wake) => {
                 if tx.send(m).is_ok() {
-                    let _ = wake.write(b"x");
+                    wake.wake();
                 } else {
                     *self = Sink::Gone;
                 }
@@ -824,32 +815,24 @@ impl Sink {
 
     /// The `/ws` arrived: what was kept goes first. A second `/ws`, or one
     /// after too much went unread, gets nothing and closes.
-    fn attach(&mut self, tx: mpsc::Sender<Msg>, mut wake: UnixStream) {
+    fn attach(&mut self, tx: mpsc::Sender<Msg>, wake: crate::wake::Waker) {
         let Sink::Early(Some(kept), _) = std::mem::replace(self, Sink::Gone) else { return };
         for m in kept {
             let _ = tx.send(m);
         }
-        let _ = wake.write(b"x");
+        wake.wake();
         *self = Sink::To(tx, wake);
     }
 }
 
 /// The socket's thread: until every `Link` handle is gone or the socket
 /// closes.
-#[cfg(unix)]
-fn io(mut ws: WebSocket<Box<dyn Stream>>, ch: Channel, rx: mpsc::Receiver<Out>, mut woken: UnixStream) {
-    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
-    use std::os::fd::AsFd;
+fn io(mut ws: WebSocket<Box<dyn Stream>>, ch: Channel, rx: mpsc::Receiver<Out>, mut wake: crate::wake::Wake) {
     let mut waiting: HashMap<u32, Reply> = HashMap::new();
     let mut sink = Sink::Early(Some(Vec::new()), 0);
-    let mut buf = [0u8; 256];
     'outer: loop {
-        {
-            let mut fds =
-                [PollFd::new(ws.get_ref().fd(), PollFlags::POLLIN), PollFd::new(woken.as_fd(), PollFlags::POLLIN)];
-            let _ = poll(&mut fds, PollTimeout::from(100u16));
-        }
-        while woken.read(&mut buf).is_ok_and(|n| n > 0) {}
+        let _ = wake.wait(Some(ws.get_ref().as_ref()), Duration::from_millis(100));
+        wake.drain();
         loop {
             match rx.try_recv() {
                 Ok(Out::Sink(tx, wake)) => sink.attach(tx, wake),

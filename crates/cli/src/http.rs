@@ -122,7 +122,6 @@ impl Target {
 
     /// A WebSocket handshake request for this target. (Only the terminal
     /// front ends use WebSockets, and they're Unix only for now.)
-    #[cfg(unix)]
     pub fn ws_request(&self) -> anyhow::Result<tungstenite::handshake::client::Request> {
         use tungstenite::client::IntoClientRequest;
         let mut req = self.ws_url().into_client_request()?;
@@ -132,7 +131,6 @@ impl Target {
         Ok(req)
     }
 
-    #[cfg(unix)]
     pub fn ws_url(&self) -> String {
         match self {
             Target::Url(u) if u.tls => format!("wss://{}/ws", u.authority),
@@ -147,12 +145,12 @@ impl Target {
                 UnixStream::connect(path)
                     .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
             )),
-            // The local daemon is a named pipe on Windows (M56, #219), with
-            // its client in M57 (#220).
-            #[cfg(not(unix))]
-            Target::Socket(path) | Target::Via(path, _) => {
-                bail!("can't reach illogicald at {}: not on Windows yet (M57, #220); use --host", path.display())
-            }
+            // Windows: the daemon's named pipe (M56).
+            #[cfg(windows)]
+            Target::Socket(path) | Target::Via(path, _) => Ok(Box::new(
+                crate::pipe::PipeStream::connect(path)
+                    .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
+            )),
             Target::Ssh(r) => Ok(Box::new(r.channel()?)),
             Target::Control(l) => Ok(Box::new(l.stream()?)),
             Target::Url(u) => u.connect(None),
@@ -217,7 +215,11 @@ pub trait Stream: Read + Write + Send {
     /// For polling (the terminal front ends, Unix only for now).
     #[cfg(unix)]
     fn fd(&self) -> BorrowedFd<'_>;
-    #[cfg_attr(not(unix), allow(dead_code))]
+    /// Windows: whether a read now would return something (data, or the
+    /// end), for loops that can't poll (`crate::wake`). Asked while the
+    /// stream is non-blocking.
+    #[cfg(windows)]
+    fn readable(&self) -> bool;
     fn set_nonblocking(&self, on: bool) -> std::io::Result<()>;
     fn set_timeout(&self, t: Option<std::time::Duration>) -> std::io::Result<()>;
 }
@@ -236,10 +238,20 @@ impl Stream for UnixStream {
     }
 }
 
+/// A non-blocking socket's `peek`: something, or the end, is there.
+#[cfg(windows)]
+fn peekable(s: &TcpStream) -> bool {
+    !matches!(s.peek(&mut [0u8; 1]), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock)
+}
+
 impl Stream for TcpStream {
     #[cfg(unix)]
     fn fd(&self) -> BorrowedFd<'_> {
         self.as_fd()
+    }
+    #[cfg(windows)]
+    fn readable(&self) -> bool {
+        peekable(self)
     }
     fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
         TcpStream::set_nonblocking(self, on)
@@ -271,6 +283,12 @@ impl Stream for Tls {
     #[cfg(unix)]
     fn fd(&self) -> BorrowedFd<'_> {
         self.0.sock.as_fd()
+    }
+    #[cfg(windows)]
+    fn readable(&self) -> bool {
+        // What TLS already decrypted is read before WouldBlock comes back,
+        // so only the socket's bytes are left to wait for.
+        peekable(&self.0.sock)
     }
     fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
         self.0.sock.set_nonblocking(on)
@@ -476,6 +494,21 @@ pub fn enc(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(windows)]
+impl Stream for crate::pipe::PipeStream {
+    fn readable(&self) -> bool {
+        crate::pipe::PipeStream::readable(self)
+    }
+    fn set_nonblocking(&self, on: bool) -> std::io::Result<()> {
+        crate::pipe::PipeStream::set_nonblocking(self, on);
+        Ok(())
+    }
+    fn set_timeout(&self, t: Option<std::time::Duration>) -> std::io::Result<()> {
+        crate::pipe::PipeStream::set_timeout(self, t);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

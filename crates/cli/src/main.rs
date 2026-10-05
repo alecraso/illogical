@@ -3,13 +3,7 @@
 //! URL, with `--host`); `--json` prints the API's answers as they are, for
 //! programs.
 
-// Windows builds the CLI, but its terminal front ends and its links to
-// machines (a local socket, control, ssh) come in M57 (#220): what only
-// they use is unused there until then.
-#![cfg_attr(windows, allow(dead_code, unused_imports))]
-
 mod ask;
-#[cfg(unix)]
 mod attach;
 mod control;
 mod fountain_runner;
@@ -19,30 +13,21 @@ mod hooks;
 mod hosts;
 mod http;
 mod mcp;
+// The daemon's named pipe as a stream (Windows).
+#[cfg(windows)]
+mod pipe;
 mod ssh;
+mod term;
 #[cfg(unix)]
 mod tmux;
-#[cfg(unix)]
 mod tui;
+mod wake;
 
-// The terminal front ends read the terminal raw and poll it with the
-// daemon's socket: Unix only until M57 (#220) brings them to Windows.
-#[cfg(not(unix))]
-mod attach {
-    pub fn run(_: &crate::http::Target, _: u32) -> anyhow::Result<i32> {
-        anyhow::bail!("`illogical attach` isn't on Windows yet (M57, #220)")
-    }
-}
+// tmux's control mode (`-CC`) front is for iTerm2 over ssh to a Unix box.
 #[cfg(not(unix))]
 mod tmux {
     pub fn run(_: crate::http::Target, _: &[String]) -> anyhow::Result<i32> {
-        anyhow::bail!("tmux control mode isn't on Windows yet (M57, #220)")
-    }
-}
-#[cfg(not(unix))]
-mod tui {
-    pub fn run(_: &crate::http::Target, _: Option<String>) -> anyhow::Result<i32> {
-        anyhow::bail!("`illogical tui` isn't on Windows yet (M57, #220)")
+        anyhow::bail!("tmux control mode is for Unix boxes (iTerm2 over ssh)")
     }
 }
 
@@ -1039,6 +1024,15 @@ fn default_socket() -> PathBuf {
     if let Some(s) = std::env::var_os("ILLOGICAL_SOCK") {
         return PathBuf::from(s);
     }
+    // Windows: the daemon's named pipe, which it records beside its state.
+    #[cfg(windows)]
+    if let Some(d) = std::env::var_os("LOCALAPPDATA") {
+        let state = PathBuf::from(d).join("illogical").join("state");
+        return match std::fs::read_to_string(state.join("sock.path")) {
+            Ok(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
+            _ => state.join("sock"),
+        };
+    }
     let state = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"))
@@ -1069,11 +1063,19 @@ fn web(sock: &http::Target, print: bool) -> anyhow::Result<i32> {
         println!("It holds {}'s local token: don't share it.", r.dest);
         return Ok(0);
     }
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    let opened = (cfg!(target_os = "macos")
+    // Windows: the URL handler itself (`cmd /c start` would split at `&`).
+    let (opener, pre): (&str, &[&str]) = if cfg!(windows) {
+        ("rundll32.exe", &["url.dll,FileProtocolHandler"])
+    } else if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else {
+        ("xdg-open", &[])
+    };
+    let opened = (cfg!(any(target_os = "macos", windows))
         || std::env::var_os("DISPLAY").is_some()
         || std::env::var_os("WAYLAND_DISPLAY").is_some())
         && std::process::Command::new(opener)
+            .args(pre)
             .arg(url)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -3107,30 +3109,16 @@ fn secret_input(prompt: &str) -> anyhow::Result<String> {
     use std::io::IsTerminal;
     let stdin = std::io::stdin();
     let tty = stdin.is_terminal();
-    // Echo off is termios: piped only on Windows until M57 (#220).
-    if cfg!(not(unix)) && tty {
-        bail!("{} can't be typed in on Windows yet (M57, #220): pipe it in", prompt.trim_end_matches(": "));
-    }
-    #[cfg(unix)]
-    let saved = if tty {
+    let mut line = String::new();
+    if tty {
         eprint!("{prompt}");
         let _ = std::io::stderr().flush();
-        nix::sys::termios::tcgetattr(&stdin).ok().inspect(|t| {
-            let mut quiet = t.clone();
-            quiet.local_flags.remove(nix::sys::termios::LocalFlags::ECHO);
-            let _ = nix::sys::termios::tcsetattr(&stdin, nix::sys::termios::SetArg::TCSANOW, &quiet);
-        })
-    } else {
-        None
-    };
-    let mut line = String::new();
-    let read = stdin.read_line(&mut line);
-    #[cfg(unix)]
-    if let Some(t) = saved {
-        let _ = nix::sys::termios::tcsetattr(&stdin, nix::sys::termios::SetArg::TCSANOW, &t);
+        let read = term::read_hidden(&mut line);
         eprintln!();
+        read?;
+    } else {
+        stdin.read_line(&mut line)?;
     }
-    read?;
     let v = line.trim().to_owned();
     if v.is_empty() {
         bail!("nothing given on stdin");

@@ -2,12 +2,7 @@
 //! read without blocking from the main loop, and HTTP API calls made on
 //! their own threads so a slow answer never stalls drawing.
 
-use std::{
-    io::{ErrorKind, Read, Write},
-    os::{fd::AsFd, unix::net::UnixStream},
-    sync::{Arc, mpsc},
-    thread,
-};
+use std::{io::ErrorKind, sync::mpsc, thread};
 
 use anyhow::Context;
 use illogical_proto::{ClientMsg, Frame, FrameKind, PaneId, ServerMsg};
@@ -16,37 +11,7 @@ use tungstenite::{Message, WebSocket};
 
 use crate::http::{Stream, Target, request};
 
-/// Wakes the main loop from another thread (input, API answers).
-#[derive(Clone)]
-pub struct Waker(Arc<UnixStream>);
-
-impl Waker {
-    pub fn wake(&self) {
-        // Full means a wake-up is pending already.
-        let _ = (&*self.0).write(&[1]);
-    }
-}
-
-/// The main loop's end of a [`Waker`].
-pub struct Wake(UnixStream);
-
-impl Wake {
-    pub fn pair() -> anyhow::Result<(Wake, Waker)> {
-        let (r, w) = UnixStream::pair()?;
-        r.set_nonblocking(true)?;
-        w.set_nonblocking(true)?;
-        Ok((Wake(r), Waker(Arc::new(w))))
-    }
-
-    pub fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        self.0.as_fd()
-    }
-
-    pub fn drain(&mut self) {
-        let mut buf = [0u8; 64];
-        while matches!(self.0.read(&mut buf), Ok(n) if n > 0) {}
-    }
-}
+pub use crate::wake::{Wake, Waker};
 
 /// What came in from the daemon.
 pub enum In {
@@ -67,7 +32,7 @@ impl Conn {
     /// Connect and wait for the hello.
     pub fn open(target: &Target, errors: mpsc::Sender<String>, waker: Waker) -> anyhow::Result<(Self, ServerMsg)> {
         let stream = target.connect()?;
-        let (mut ws, _) = tungstenite::client(target.ws_url(), stream).map_err(|e| match e {
+        let (mut ws, _) = tungstenite::client(target.ws_request()?, stream).map_err(|e| match e {
             tungstenite::HandshakeError::Failure(e) => anyhow::Error::from(e).context("websocket handshake"),
             tungstenite::HandshakeError::Interrupted(_) => anyhow::anyhow!("websocket handshake interrupted"),
         })?;
@@ -86,8 +51,9 @@ impl Conn {
         Ok((Self { ws, target: target.clone(), errors, waker }, hello))
     }
 
-    pub fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        self.ws.get_ref().fd()
+    /// The connection, for [`Wake::wait`].
+    pub fn stream(&self) -> &dyn Stream {
+        self.ws.get_ref().as_ref()
     }
 
     pub fn send(&mut self, msg: &ClientMsg) {
