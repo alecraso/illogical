@@ -47,6 +47,14 @@ export function PhoneHeader({ client }: { client: Client }) {
 function Sheet({ client, close }: { client: Client; close: () => void }) {
   const state = client.state!;
   const active = client.active();
+  // Other sessions fold to a line each, so the one in use (and what's
+  // below it) isn't pushed off the screen; a tap opens one.
+  const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set(client.session === null ? [] : [client.session]));
+  const fold = (id: number) => {
+    const next = new Set(unfolded);
+    if (!next.delete(id)) next.add(id);
+    setUnfolded(next);
+  };
   // Gates first (M34): a release waiting for a person is the most likely
   // reason to have opened this on a phone.
   const wanting = state.panes
@@ -56,15 +64,15 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
     fn();
     close();
   };
+  const session = client.session;
+  const owner = !state.roles;
+  const closeTab =
+    client.tab !== null && (client.tabMachine(client.tab) || paneIds(client.tabView(client.tab)!).length > 1);
   return (
     <div class="sheet-backdrop" onClick={close}>
       <nav class="sheet" onClick={(e) => e.stopPropagation()}>
-        <button class="sheet-item" data-open-swarm onClick={act(openSwarm)}>
-          Swarm: every pane at once
-        </button>
-        <HostSection close={close} />
         {wanting.length > 0 && (
-          <section class="needs-you">
+          <section class="sheet-card needs-you">
             <h2>Needs you</h2>
             {wanting.map((p) => {
               const may = client.role(client.sessionOfTab(client.tabOfPane(p.id)?.id ?? -1) ?? null) !== "viewer";
@@ -91,107 +99,134 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
             })}
           </section>
         )}
-        {state.sessions.map((s) => (
-          <section key={s.id}>
-            <h2>{s.name}</h2>
-            {s.tabs.map((tid) => {
-              const t = client.tabView(tid);
-              if (!t) return null;
-              const panes = paneIds(t);
-              return (
-                <div key={tid} class="sheet-tab">
-                  <button class={tid === client.tab ? "sheet-item current" : "sheet-item"} onClick={act(() => client.selectTab(tid))}>
-                    {(client.tabMachine(tid) || panes.some((p) => client.machine(p))) && <span class="host-tag">VM</span>}
-                    {tabLabel(client, t)}
-                  </button>
-                  {panes.length > 1 &&
-                    panes.map((p, i) => (
-                      <button
-                        key={p}
-                        class={p === active ? "sheet-item sheet-pane current" : "sheet-item sheet-pane"}
-                        onClick={act(() => client.setActive(p))}
-                      >
-                        {/* Shells often title every pane alike; the number tells them apart. */}
-                        <span class="pane-number">{i + 1}</span>
-                        {client.title(p) || client.cwd(p) || `pane %${p}`}
-                      </button>
-                    ))}
-                </div>
-              );
-            })}
-          </section>
-        ))}
-        <NotifySection client={client} session={client.session} />
-        <div class="sheet-actions">
-          <button onClick={act(() => client.session !== null && client.intent({ op: "new_tab", session: client.session, from_pane: active ?? null }))}>
-            New tab
-          </button>
-          {client.has("vms") && (
-            <button onClick={act(() => client.session !== null && void client.newVm({ session: client.session, tab: true }))}>New VM tab</button>
-          )}
-          <button onClick={act(() => client.session !== null && startAgent(client, { session: client.session, from: active }))}>New agent</button>
-          {!state.roles && (
+        {/* What a phone is opened for most: right at the top. */}
+        <div class="sheet-actions sheet-quick">
+          <button onClick={act(() => session !== null && client.intent({ op: "new_tab", session, from_pane: active ?? null }))}>New tab</button>
+          <button onClick={act(() => session !== null && startAgent(client, { session, from: active }))}>New agent</button>
+          {owner && (
             <button
               data-conversations
-              onClick={act(() => client.session !== null && pickConversation(client, { session: client.session, cwd: (active !== undefined && client.cwd(active)) || undefined }, true))}
+              onClick={act(() => session !== null && pickConversation(client, { session, cwd: (active !== undefined && client.cwd(active)) || undefined }, true))}
             >
               Conversations
             </button>
           )}
-          {!state.roles && client.has("studio") && (
-            <button data-studio-apps onClick={act(() => client.session !== null && pickApp(client, { session: client.session }, true))}>
-              Studio apps
-            </button>
-          )}
-          {!state.roles && (
-            <button data-open-pr onClick={act(() => client.session !== null && void openPr(client, { session: client.session }))}>
-              Pull request
-            </button>
-          )}
-          {!state.roles && (
-            <button data-open-issue onClick={act(() => client.session !== null && void openIssue(client, { session: client.session }))}>
-              Issue
-            </button>
-          )}
-          {!state.roles && client.has("fountain") && (
-            <button data-open-fountain onClick={act(() => client.session !== null && void openFountain(client, { session: client.session }))}>
-              Fountain agents
-            </button>
-          )}
           {active !== undefined && <button onClick={act(() => openPicker(client, active, true))}>Go to directory</button>}
-          {active !== undefined && !state.roles && (
-            <button data-changes onClick={act(() => openChanges(client, active))}>
-              Changes
-            </button>
-          )}
           {active !== undefined && (
             <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right" }))}>Split pane</button>
           )}
-          {active !== undefined && client.tab !== null && client.tabMachine(client.tab) && (
-            <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right", local: true }))}>Split (local)</button>
-          )}
-          {active !== undefined && (
-            // Where the active pane runs: its machine, or this host.
-            <button onClick={act(() => void openPort(client, { split: active, host: client.machine(active)?.id, local: !client.machine(active) }))}>
-              Open port
-            </button>
-          )}
-          <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
-          {client.has("vms") && <button onClick={act(() => openSandboxes())}>Sandboxes</button>}
-          <button data-getting-started-open onClick={act(() => openGettingStarted(undefined, client))}>
-            Getting started
+          <button data-open-swarm onClick={act(openSwarm)}>
+            Swarm
           </button>
-          {active !== undefined && (
-            <button class="danger" onClick={act(() => client.intent({ op: "close_pane", pane: active }))}>
-              Close pane
-            </button>
-          )}
-          {client.tab !== null && (client.tabMachine(client.tab) || paneIds(client.tabView(client.tab)!).length > 1) && (
-            <button class="danger" onClick={act(() => client.tab !== null && client.intent({ op: "close_tab", tab: client.tab }))}>
-              {client.tabMachine(client.tab) ? "Close tab and machine" : "Close tab"}
-            </button>
-          )}
         </div>
+        <HostSection close={close} />
+        <section class="sheet-sessions">
+          <h2>Sessions</h2>
+          {state.sessions.map((s) => {
+            const open = unfolded.has(s.id);
+            const here = s.id === session;
+            return (
+              <div key={s.id} class={here ? "sheet-card sheet-session here" : "sheet-card sheet-session"}>
+                <button class="sheet-session-head" aria-expanded={open} data-session={s.id} onClick={() => fold(s.id)}>
+                  <span class="fold">{open ? "▾" : "▸"}</span>
+                  <span class="name">{s.name}</span>
+                  <span class="count">
+                    {s.tabs.length} tab{s.tabs.length === 1 ? "" : "s"}
+                  </span>
+                </button>
+                {open &&
+                  s.tabs.map((tid) => {
+                    const t = client.tabView(tid);
+                    if (!t) return null;
+                    const panes = paneIds(t);
+                    return (
+                      <div key={tid} class="sheet-tab">
+                        <button class={tid === client.tab ? "sheet-item current" : "sheet-item"} onClick={act(() => client.selectTab(tid))}>
+                          {(client.tabMachine(tid) || panes.some((p) => client.machine(p))) && <span class="host-tag">VM</span>}
+                          <span class="label">{tabLabel(client, t)}</span>
+                          {panes.length > 1 && <span class="count">{panes.length}</span>}
+                        </button>
+                        {panes.length > 1 &&
+                          panes.map((p, i) => (
+                            <button
+                              key={p}
+                              class={p === active ? "sheet-item sheet-pane current" : "sheet-item sheet-pane"}
+                              onClick={act(() => client.setActive(p))}
+                            >
+                              {/* Shells often title every pane alike; the number tells them apart. */}
+                              <span class="pane-number">{i + 1}</span>
+                              <span class="label">{client.title(p) || client.cwd(p) || `pane %${p}`}</span>
+                            </button>
+                          ))}
+                      </div>
+                    );
+                  })}
+              </div>
+            );
+          })}
+        </section>
+        <section>
+          <h2>Open</h2>
+          <div class="sheet-actions">
+            {owner && client.has("studio") && (
+              <button data-studio-apps onClick={act(() => session !== null && pickApp(client, { session }, true))}>
+                Studio apps
+              </button>
+            )}
+            {owner && (
+              <button data-open-pr onClick={act(() => session !== null && void openPr(client, { session }))}>
+                Pull request
+              </button>
+            )}
+            {owner && (
+              <button data-open-issue onClick={act(() => session !== null && void openIssue(client, { session }))}>
+                Issue
+              </button>
+            )}
+            {owner && client.has("fountain") && (
+              <button data-open-fountain onClick={act(() => session !== null && void openFountain(client, { session }))}>
+                Fountain agents
+              </button>
+            )}
+            {active !== undefined && owner && (
+              <button data-changes onClick={act(() => openChanges(client, active))}>
+                Changes
+              </button>
+            )}
+            {active !== undefined && (
+              // Where the active pane runs: its machine, or this host.
+              <button onClick={act(() => void openPort(client, { split: active, host: client.machine(active)?.id, local: !client.machine(active) }))}>
+                Open port
+              </button>
+            )}
+            {active !== undefined && client.tab !== null && client.tabMachine(client.tab) && (
+              <button onClick={act(() => client.intent({ op: "split", pane: active, edge: "right", local: true }))}>Split (local)</button>
+            )}
+            {client.has("vms") && (
+              <button onClick={act(() => session !== null && void client.newVm({ session, tab: true }))}>New VM tab</button>
+            )}
+            {client.has("vms") && <button onClick={act(() => openSandboxes())}>Sandboxes</button>}
+            <button onClick={act(() => client.intent({ op: "new_session", name: null, from_pane: active ?? null }))}>New session</button>
+            <button data-getting-started-open onClick={act(() => openGettingStarted(undefined, client))}>
+              Getting started
+            </button>
+          </div>
+        </section>
+        <NotifySection client={client} session={session} />
+        {(active !== undefined || closeTab) && (
+          <div class="sheet-actions sheet-danger">
+            {active !== undefined && (
+              <button class="danger" onClick={act(() => client.intent({ op: "close_pane", pane: active }))}>
+                Close pane
+              </button>
+            )}
+            {closeTab && (
+              <button class="danger" onClick={act(() => client.tab !== null && client.intent({ op: "close_tab", tab: client.tab }))}>
+                {client.tabMachine(client.tab!) ? "Close tab and machine" : "Close tab"}
+              </button>
+            )}
+          </div>
+        )}
       </nav>
     </div>
   );
