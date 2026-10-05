@@ -191,9 +191,11 @@ e2e-interop:
     cd web && INTEROP_BIN="{{target_dir}}/debug/examples/interop" node --experimental-strip-types --no-warnings e2e-interop.ts
 
 # Browser tests in system Chrome; pass a URL to test a running daemon.
-e2e url="":
+# The web client is built first: a debug daemon built before web/dist
+# existed never serves it (rust-embed fixes the folder's path at compile time).
+e2e url="": web
     {{cargo}} build -p illogicald -p illogical -p illogical-control
-    cd web && pnpm run build && E2E_BASE_URL="{{url}}" pnpm exec playwright test
+    cd web && E2E_BASE_URL="{{url}}" pnpm exec playwright test
 
 # illogical's VS Code extension as a VSIX in target/ (M28), for Open VSX
 # (`npx ovsx publish FILE`) and the Marketplace (`npx @vscode/vsce publish
