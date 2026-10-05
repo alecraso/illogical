@@ -1626,20 +1626,27 @@ impl<'a> Call<'a> {
                 self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
             return page_text(pane, &b.text(), a.offset, max);
         }
-        let dir = match info {
-            Some(_) => self.app.mux.store.pane_dir(pane),
-            None => self
-                .app
+        let closed = || {
+            self.app
                 .mux
                 .store
                 .pane_dirs()
                 .into_iter()
                 .find(|(p, _, _)| *p == pane)
                 .map(|(_, _, d)| d)
-                .ok_or_else(|| format!("no pane %{pane}, open or closed"))?,
+                .ok_or_else(|| format!("no pane %{pane}, open or closed"))
         };
         let status = self.app.mux.api(|r| Api::Pane(pane, r)).await.flatten().map(|p| p.status());
-        let log = PaneLog::open(dir).map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
+        // A pane closing as this runs has its directory moved to closed/
+        // between the lookup and the open: read it from there.
+        let log = match info {
+            Some(_) => match PaneLog::open(self.app.mux.store.pane_dir(pane)) {
+                Ok(log) => Ok(log),
+                Err(_) => PaneLog::open(closed()?),
+            },
+            None => PaneLog::open(closed()?),
+        }
+        .map_err(|e| format!("can't read %{pane}'s output: {e}"))?;
         let mut command = None;
         let (from, until) = if a.last_command {
             let st =
