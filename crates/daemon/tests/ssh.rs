@@ -4,7 +4,7 @@
 //! starts its daemon, runs and captures a pane, gives the box's panes this
 //! client's agent (a `git push` from a pane to the stack's git server works
 //! with it, and only with it), survives the connection going away, and a
-//! saved ssh host works with `--host`.
+//! saved ssh host works with `--host`. `web --print` prints the box's link.
 //!
 //! Needs Docker (it brings the stack's `ssh` profile up if it isn't) and the
 //! box's static binaries from this tree (`just static aarch64` on Apple
@@ -91,6 +91,12 @@ fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
     // A pane there.
     let pane = env.ok(&["--ssh", "box-bare", "run", "--", "sh", "-c", "echo over-ssh-$((40+2))"]).trim().to_owned();
     wait_for("the pane's output", || env.ok(&["--ssh", "box-bare", "capture", &pane]).contains("over-ssh-42"));
+
+    // The box daemon's sign-in link, not this machine's (#252).
+    let link = env.ok(&["--ssh", "box-bare", "web", "--print"]).trim().to_owned();
+    assert!(link.starts_with("http://") && link.contains("/auth?"), "web --print over ssh: {link:?}");
+    let told = env.ok(&["--ssh", "box-bare", "web"]);
+    assert!(told.contains(&link) && told.contains("ssh -N -L") && told.contains("box-bare"), "{told}");
 
     // The client's agent, in a pane, while a client stays connected (an
     // events stream stands in for someone in the TUI).
