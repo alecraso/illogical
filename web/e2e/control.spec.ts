@@ -491,8 +491,12 @@ test("Getting started asks to check the account's fingerprint before the machine
   // The laptop sees it in the account.
   await laptop.goto("/");
   await expect.poll(() => hostNames(laptop), { timeout: 20_000 }).toContain("starter");
-  await panel(laptop, "devices");
-  await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account);
+  // The page switches to starter once it connects, which mounts the
+  // overlay afresh and drops a panel opened before: open it until it stays.
+  await expect(async () => {
+    await panel(laptop, "devices");
+    await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account, { timeout: 1000 });
+  }).toPass({ timeout: 20_000 });
   await laptop.getByRole("button", { name: "Done" }).click();
 });
 
