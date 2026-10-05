@@ -1,0 +1,39 @@
+# The local test stack (#200). One profile per scenario; `just testnet up
+# <profile>` brings one up. Everything is named illogical-testnet-*, so
+# `just testnet down` removes it and nothing else. See testnet/README.md.
+name: illogical-testnet
+
+networks:
+  # The outer network. The bastion is the only thing on it so far.
+  outer:
+    name: illogical-testnet
+  # Only ssh gets through: no route out, and nothing published to the host.
+  # The bastion is on both networks.
+  inner:
+    name: illogical-testnet-inner
+    internal: true
+
+x-sshd: &sshd
+  build: ./sshd
+  image: illogical-testnet-sshd
+  volumes:
+    - ./.state:/keys:ro
+
+services:
+  bastion:
+    <<: *sshd
+    profiles: [ssh]
+    container_name: illogical-testnet-bastion
+    hostname: bastion
+    environment: { TESTNET_NAME: bastion }
+    ports:
+      - "127.0.0.1:${ILLOGICAL_TESTNET_SSH_PORT:-22922}:22"
+    networks: [outer, inner]
+
+  box-bare:
+    <<: *sshd
+    profiles: [ssh]
+    container_name: illogical-testnet-box-bare
+    hostname: box-bare
+    environment: { TESTNET_NAME: box-bare }
+    networks: [inner]
