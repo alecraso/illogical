@@ -4116,6 +4116,15 @@ One command: install over ssh, set up the service to outlive the login, run `ill
 
 **Done when:** from geek, a fresh throwaway box becomes a machine on control's page in one step plus the approval, and its pane opens from the phone. The same for jake-mini with no GUI session. The box survives a reboot.
 
+**Testing it without a person (2026-10-04):**
+
+- The e2e is a claim of the test stack's new `control` profile, `just testnet test control m52`, not a Rust test beside M51's in `ssh.rs`. It drives Docker, ssh, the CLI and an approving device the way a person would, and a shell claim does that with less code; like the `ssh` claims it has a `BREAK=1` form (polkit masked, so no lingering, so the box doesn't come back after `docker restart`).
+- The approval comes from a headless device, `web/fixtures/device.ts`: the web client's own e2e code without a page, lifted out of `control-smoke.ts`, which now uses it too. It's TypeScript, not Rust in `crates/e2e`, so it stays the browser's behaviour rather than a second implementation; `device-cli.ts` makes it usable from shell and Rust tests. "Its pane opens from the phone" is checked as the phone's browser does it: a device on the account reaches the pane end to end through control's relay. A real phone's browser is Track B's (phone device contexts).
+- In the stack, control has a fixed address on the inner network and that address is its public URL. A daemon accepts plain http only to loopback or a private IP (`private_http` in the daemon's control.rs), so a hostname like `http://control:8080` would be refused; allowing single-label hostnames was considered and not done, since it's a change to what the daemon trusts made only for a test.
+- `illogical join` passes `--account` through to `illogicald join`, so the join runs with no terminal to confirm the fingerprint in.
+- A box that can't reach control: the CLI recognises `illogicald join`'s "can't reach control at" and says so, naming the box and control, with `illogical --ssh box tui` as the way that still works. The `unreachable` claim checks it on box-bare, which has no route out, joining the hosted control.
+- Not covered by the stack: jake-mini with no GUI session (launchd), which needs Track E's macOS harness.
+
 #### M53: the desktop app over ssh (#156, gated, after M51)
 
 Gated (2026-10-04). M48 (#159) made the desktop app control's client, so this only covers boxes that never join control. M46 shipped in 0.14.0 (#144), so only M51 is left as a dependency.
