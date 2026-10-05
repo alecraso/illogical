@@ -805,7 +805,7 @@ the daemon stopping, crashing, or the machine rebooting:
   %3` prints an `ssh` command to send someone: the username is a one-time
   token and the daemon's host key is pinned in the command, so nothing is
   saved on their side. The daemon's own ssh server (`--guest-ssh`, port
-  7683) listens only while an invite exists, and a session can only watch
+  7684) listens only while an invite exists, and a session can only watch
   that pane: no shell, no account, no commands, no forwarding. Read-only
   unless `--rw`, which types under the one-driver rule with the guest's
   `--name` on their input. Invites are single use unless `--reusable`,

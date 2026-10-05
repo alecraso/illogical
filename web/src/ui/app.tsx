@@ -627,6 +627,18 @@ function PaneSlot({
               },
             } as MenuItem,
           ]),
+      // M54: an ssh command for a guest with only OpenSSH. The owner's.
+      ...(client.base.startsWith("/") || client.state?.roles
+        ? []
+        : [
+            {
+              label: "Invite over ssh…",
+              run: async () => {
+                const cmd = await client.guestInvite(id);
+                if (cmd) await askText("Read-only ssh invite to this pane, one login, for an hour (copied)", cmd);
+              },
+            } as MenuItem,
+          ]),
       ...driveItems(client, id),
       "separator",
       ...restartItems(client, id),

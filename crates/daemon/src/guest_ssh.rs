@@ -2,7 +2,7 @@
 //! %N` makes an invite, and the guest pastes the `ssh` command it prints.
 //!
 //! The daemon runs its own ssh server (russh) on `--guest-ssh` (default
-//! `0.0.0.0:7683`), only while at least one invite exists. It isn't the
+//! `0.0.0.0:7684`), only while at least one invite exists. It isn't the
 //! box's `sshd`: there are no accounts and no shell. The username is the
 //! invite's token, accepted with ssh's `none` method, and the session's
 //! shell request attaches to the invite's pane, nothing else. `exec`,
@@ -59,7 +59,7 @@ use crate::{
 };
 
 /// Where it listens unless `--guest-ssh` says otherwise.
-pub const DEFAULT_LISTEN: &str = "0.0.0.0:7683";
+pub const DEFAULT_LISTEN: &str = "0.0.0.0:7684";
 const DEFAULT_TTL_SECS: u64 = 3600;
 /// A read-only invite lasts at most a day...
 const MAX_TTL_SECS: u64 = 24 * 3600;
@@ -888,12 +888,12 @@ mod tests {
         assert!(plain_host("box.example.ts.net") && plain_host("10.0.0.2") && plain_host("::1"));
         assert!(!plain_host("box;rm -rf ~") && !plain_host("a b") && !plain_host("$(x)") && !plain_host(""));
         assert_eq!(known_name("box", 22), "box");
-        assert_eq!(known_name("box", 7683), "[box]:7683");
-        let c = command("gabc", "box", 7683, "[box]:7683 ssh-ed25519 AAAA");
+        assert_eq!(known_name("box", 7684), "[box]:7684");
+        let c = command("gabc", "box", 7684, "[box]:7684 ssh-ed25519 AAAA");
         assert_eq!(
             c,
-            "ssh -p 7683 -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes \
-             -o 'KnownHostsCommand=/bin/echo [box]:7683 ssh-ed25519 AAAA' gabc@box"
+            "ssh -p 7684 -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes \
+             -o 'KnownHostsCommand=/bin/echo [box]:7684 ssh-ed25519 AAAA' gabc@box"
         );
     }
 }
