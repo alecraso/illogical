@@ -4198,6 +4198,15 @@ See #130.
 
 See #130.
 
+### Command palette (#139, built 2026-10-04)
+
+- **Chord:** Ctrl+Shift+P, and Cmd+Shift+P on a Mac (the desktop app's Edit-only menu leaves Cmd chords to the page). Caught on `window` in the capture phase like the picker's Ctrl+Shift+G, so a focused terminal never sees it. Firefox keeps Ctrl+Shift+P for a private window; the session menu's *Command palette…* opens it there. Blocks in a cross-origin iframe (web pages, editors, studio apps) keep their keys until focus is back on the page.
+- **One registry:** `web/src/ui/commands.tsx` builds the pane, tab, `+` and session menus, and the palette reads the same lists, so a menu item is a palette command without more work. A `MenuItem` can carry a `shortcut`, shown in both.
+- **Also in it:** jumps to sessions, tabs, panes (in split tabs) and workspace blocks by name; the swarm, and the next pane that needs you (in the tabs or in the swarm).
+- **Recent picks** come first, kept in `localStorage` (per browser; nothing synced).
+- **Phone:** a full-height sheet like the picker's, from the sheet's *Commands* button; the keyboard stays down until the filter is tapped.
+- **Not in it:** pane contents and history (`search`). Names and actions only.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
