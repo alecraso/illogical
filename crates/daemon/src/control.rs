@@ -844,6 +844,24 @@ async fn control_said(res: reqwest::Response) -> String {
     }
 }
 
+/// Why control refuses this machine's signature, if it does: what it said
+/// ("this machine's account was deleted", or that it left or was
+/// revoked). `None` when control still knows it, or can't be asked.
+async fn forgotten(s: &Saved, keys: &DeviceKeys) -> Option<String> {
+    let http = crate::roots::http().timeout(Duration::from_secs(10)).build().ok()?;
+    let v2 = takes_v2(&http, &s.url).await;
+    let path = "/api/daemon/trust";
+    let res =
+        http.get(format!("{}{path}", s.url)).header(AUTH, auth_header(keys, "GET", path, b"", v2)).send().await.ok()?;
+    if res.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return None;
+    }
+    let said = control_said(res).await;
+    let said = said.strip_prefix("control says: ").map(str::to_owned).unwrap_or(said);
+    // Not a clock that's off or a replayed signature: control has no such machine.
+    (said.contains("account was deleted") || said.contains("not an enrolled daemon")).then_some(said)
+}
+
 /// Who a saved enrollment belongs to, in words.
 fn whose(s: &Saved) -> String {
     match (&s.roster, &s.team) {
@@ -960,14 +978,23 @@ pub async fn join_start(
     if !url.starts_with("https://") && !private_http(&url) {
         bail!("control's URL must be https:// (or http on loopback or a private network, for testing)");
     }
+    let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
     if let Some(s) = read_saved(state_dir)? {
+        // Control may have forgotten it (its account deleted, or it was
+        // removed): say so, rather than that it's still in (#208).
+        if let Some(why) = forgotten(&s, &keys).await {
+            bail!(
+                "this machine was in {} on {}, but control doesn't know it any more ({why}); run `illogicald leave` to forget that here, then join again",
+                whose(&s),
+                s.url
+            );
+        }
         bail!(
             "this machine is already in {} on {}; to move it, run `illogicald leave`, then join again",
             whose(&s),
             s.url
         );
     }
-    let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
     let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
     // That this is the key's holder asking, not someone with its certificate.
     let ms = now_ms();

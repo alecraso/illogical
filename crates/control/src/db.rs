@@ -189,6 +189,12 @@ CREATE TABLE IF NOT EXISTS retained_for (
     team TEXT NOT NULL,
     PRIMARY KEY (account, team)
 );
+-- Machines whose account was deleted, by a hash of the device id (so
+-- nothing of the account is kept): one asking again is told why (#208).
+CREATE TABLE IF NOT EXISTS gone_daemons (
+    hash TEXT PRIMARY KEY,
+    at INTEGER NOT NULL
+);
 ";
 
 /// Columns added after a table first shipped.
@@ -1664,6 +1670,10 @@ impl Db {
         // Certificates kept for teams that are gone now.
         tx.execute("DELETE FROM retained_certs WHERE account NOT IN (SELECT account FROM retained_for)", [])?;
         for d in &daemons {
+            tx.execute(
+                "INSERT OR REPLACE INTO gone_daemons (hash, at) VALUES (?1, ?2)",
+                params![gone_hash(d), illogical_e2e::now_ms()],
+            )?;
             for sql in [
                 "DELETE FROM daemon_access WHERE daemon = ?1",
                 "DELETE FROM daemon_links WHERE daemon = ?1",
@@ -1700,6 +1710,15 @@ impl Db {
         }
         tx.commit()?;
         Ok(daemons)
+    }
+
+    /// Whether `device` was a machine of an account that's been deleted.
+    pub fn daemon_account_deleted(&self, device: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .c()
+            .query_row("SELECT 1 FROM gone_daemons WHERE hash = ?1", params![gone_hash(device)], |_| Ok(()))
+            .optional()?
+            .is_some())
     }
 
     /// Every row in every table that mentions `needle`, as `table.column`
@@ -1763,6 +1782,11 @@ impl Db {
 
 /// How long a join code stays good.
 pub const JOIN_TTL_MS: u64 = 15 * 60 * 1000;
+
+fn gone_hash(device: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(format!("illogical gone daemon\n{device}")))
+}
 
 #[cfg(test)]
 mod tests {

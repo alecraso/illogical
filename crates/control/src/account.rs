@@ -476,6 +476,9 @@ mod tests {
         assert!(app.db.mentions("t1").is_empty(), "{:?}", app.db.mentions("t1"));
         // Its machine is refused; Bob's is his own again, untouched.
         assert!(app.db.daemon_cert(&box1).unwrap().is_none());
+        // It's told why if it asks again (#208); Bob's isn't on that list.
+        assert!(app.db.daemon_account_deleted(&box1).unwrap());
+        assert!(!app.db.daemon_account_deleted(&bobs).unwrap());
         assert!(app.db.daemon_cert(&bobs).unwrap().is_some());
         assert_eq!(app.db.daemon_team(&bobs).unwrap(), None);
         assert!(app.db.team("t2").unwrap().is_some());

@@ -18,6 +18,8 @@ let base = "";
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
 let gh: Server;
+/** Each machine's state dir, by name. */
+const states: Record<string, string> = {};
 
 test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
@@ -86,6 +88,7 @@ async function signIn(page: Page) {
 /** `illogicald join`, approved from `page`; then the daemon runs. */
 async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
+  states[name] = state;
   const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
@@ -533,6 +536,13 @@ test("deleting the account: type its login; its machines and team go (#173)", as
   await laptop.locator("[data-delete-confirm]").fill("stranger");
   await go.click();
   await expect(laptop.locator("[data-signin=github]")).toBeVisible();
+  // Its machine, asked to join again, says the account is gone rather than
+  // that it's still in it (#208).
+  const rejoin = spawn("../target/debug/illogicald", ["join", base, "--name", "box", "--state-dir", states.box], { stdio: ["ignore", "ignore", "pipe"] });
+  let said = "";
+  rejoin.stderr!.on("data", (d) => (said += d));
+  expect(await new Promise((r) => rejoin.on("exit", r))).not.toBe(0);
+  expect(said).toContain("control doesn't know it any more (this machine's account was deleted); run `illogicald leave`");
   // The same GitHub account signing in again starts afresh: a new
   // account, a new first device, no machines.
   await signIn(laptop);
