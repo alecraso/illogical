@@ -19,6 +19,8 @@ use anyhow::{Context, bail};
 use serde_json::{Value, json};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The hosted control, where `join` goes by default.
+pub const CONTROL: &str = "https://control.illogical.widgets.wtf";
 const RELEASES: &str = "https://github.com/arugula-salad/illogical/releases/download";
 
 /// The CLI the install put on the box. `ssh box cmd` doesn't have
@@ -192,6 +194,20 @@ impl Remote {
         Ok(())
     }
 
+    /// M52: set the box up (`prepare`), then run its `illogicald join` here,
+    /// in this terminal: its code and the account's fingerprint show here
+    /// and its question is answered here, while you approve it from a
+    /// signed-in device. Afterwards control reaches it, and ssh isn't needed.
+    pub fn join(&self, args: &[String]) -> anyhow::Result<i32> {
+        self.prepare()?;
+        let quoted: Vec<String> = args.iter().map(|a| sh_quote(a)).collect();
+        let status = self
+            .channel_cmd(&[], &format!("~/.local/bin/illogicald {}", quoted.join(" ")))
+            .status()
+            .with_context(|| format!("running ssh to {}", self.dest))?;
+        Ok(status.code().unwrap_or(1))
+    }
+
     fn probe(&self) -> anyhow::Result<Probe> {
         // `sh -c` so it reads the same whatever the login shell is.
         let out = self.run(
@@ -302,6 +318,11 @@ else
   nohup $s "$d" --keep-panes </dev/null >"$HOME/.local/state/illogicald.log" 2>&1 &
   echo detached
 fi'"#;
+
+/// One word for the box's shell, whatever it holds.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
 
 fn forward_agent() -> bool {
     !std::env::var("ILLOGICAL_SSH_AGENT").is_ok_and(|v| v == "no")
@@ -600,6 +621,12 @@ mod tests {
         assert!(!compatible("1.0.0", "0.16.0"));
         assert!(!compatible("2.0.0", "1.4.0"));
         assert!(!compatible("garbage", "0.16.0"));
+    }
+
+    #[test]
+    fn quoting() {
+        assert_eq!(sh_quote("https://c.example"), "'https://c.example'");
+        assert_eq!(sh_quote("it's"), "'it'\\''s'");
     }
 
     #[test]

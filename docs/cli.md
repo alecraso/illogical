@@ -114,6 +114,7 @@ illogical sandboxes promote s1 --as s1        # a resident daemon there, a host 
 illogical --host s1 ls                        # through the tunnel (wakes it)
 illogical --ssh me@box tui                    # a box you can ssh into; installs illogical there first if asked
 illogical hosts add box ssh://me@box          # saved: `illogical --host box …` runs your ssh to it
+illogical --ssh me@box join                   # set the box up over ssh and add it to control (approve the code from your phone)
 illogical fs ls -l ~/src                      # files on this host (read-only)
 illogical fs cat %4:~/app/log.txt             # on the host %4 runs on (its VM); mN:PATH for machine N
 illogical fs watch ~/src                      # changes, as NDJSON (also stat, recent)
