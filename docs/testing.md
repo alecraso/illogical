@@ -18,7 +18,7 @@ just e2e         # the browser tests, in the system Chrome and WebKit
 |---|---|---|
 | `cargo test --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/` | Linux and macOS |
 | `just e2e-interop` (in `just test`) | the browser's end-to-end crypto (`web/src/e2e`) against Rust's (`crates/e2e`): certificate vectors made by `crates/e2e/examples/interop.rs`, and a Noise handshake with its `responder` | Linux and macOS |
-| `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and a real daemon; headless devices sign in, enroll, approve the daemon's join code and reach it directly and through the relay | Linux and macOS |
+| `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and real daemons; headless devices sign in, enroll, approve the daemons' join codes and reach them directly and through the relay; the CLI (M49) logs in with a code the device approves and, with no daemon of its own, runs, lists and captures on one machine directly and one through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one): the `chrome` project, and `webkit` for `*.webkit.spec.ts` | Linux (Playwright's Chromium and WebKit) |
 | `just e2e-webkit` | only the `webkit` project: Safari's engine, for device keys (#94) and the one-click invite (#137) | macOS |
 | `just testnet up`, `test`, `break` (`ssh`, then `control`) | the Docker test stack's claims ([testnet/README.md](../testnet/README.md)), then each claim under `BREAK=1`, where it must fail | Linux |
@@ -316,9 +316,43 @@ d pane box MARKER                                         # round-trip through i
 ```
 
 `illogicald join --account <fingerprint>` (and `illogical join
---account`) takes the account without asking; the fingerprint is what
-`signin` printed. `just control-smoke` and the testnet's `control` claims
-use both.
+--account`, and `illogical login --account`) takes the account without
+asking; the fingerprint is what `signin` printed. `just control-smoke` and
+the testnet's `control` claims use both. `approve` takes a CLI's code from
+`illogical login` as well as a daemon's.
+
+### M49: the CLI through control
+
+Three tests cover M49, from fastest to most faithful:
+
+- `just control-smoke` (in `just test`, so in CI): `illogical login` on
+  loopback, approved by the headless device, then `--host box` (direct, it
+  has `--direct-url`) and `--host box2` (no URL, so relayed) each `run`,
+  `ls` and `capture`, with the CLI's `ILLOGICAL_SOCK` pointing at no
+  daemon. `illogical-control`'s own `routing_wire` test checks the join
+  and the signed requests (`cargo test -p illogical-control the_cli_joins`).
+- `web/e2e/host-menu-control.spec.ts` (`just e2e`): a daemon joined by
+  code (approved by the device) has *All your machines…* in its host menu,
+  opening control's page; one that isn't joined doesn't.
+- The testnet's `m49` claim, which needs Docker:
+
+  ```sh
+  just testnet up control
+  just testnet test control m49        # PASS
+  BREAK=1 just testnet test control m49  # must FAIL: the CLI isn't logged in
+  ```
+
+  box-systemd and box-bare join the stack's control over ssh; box-bare's
+  daemon is restarted listening on the inner network with
+  `ILLOGICAL_DIRECT_URL=http://box-bare:7681`, and box-systemd lists no
+  URL, so it's only reachable through the relay. The CLI runs on the
+  bastion (on the inner network, no daemon, no `hosts.json`): `illogical
+  login` there prints a code that `device-cli.ts approve` approves, then
+  `--host box-bare` must report "direct" and `--host box-systemd`
+  "relayed" (`ILLOGICAL_VERBOSE=1`), and both `run`, `ls` and `capture`.
+  Beside another worktree's stack: `COMPOSE_PROJECT_NAME=illo-j
+  ILLOGICAL_TESTNET_INNER_NET=10.229.85 ILLOGICAL_TESTNET_SSH_PORT=22955
+  ILLOGICAL_TESTNET_CONTROL_PORT=22985 ILLOGICAL_TESTNET_FAKES_PORT=22986`.
 
 ## Phones
 
@@ -471,7 +505,7 @@ prints that it did not run. CI never sets it.
 |---|---|
 | `just testnet up`, `test`, `break`, `down` | Docker ([testnet/README.md](../testnet/README.md)) |
 | `crates/daemon/tests/ssh.rs`, `reboot.rs` (in `just test`) | Docker, and the box's binaries: `just static aarch64` on Apple silicon, `just static` on x86_64 (or `ILLOGICAL_SSH_BINARIES`). They bring the ssh profile up themselves if it isn't. |
-| `just testnet test control` (M52 end to end) | Docker and node, and `just testnet up control` first, which needs the static binaries |
+| `just testnet test control` (M52 and M49 end to end) | Docker and node, and `just testnet up control` first, which needs the static binaries |
 | `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" | `ILLOGICAL_TESTNET_PHONES=1`, Docker and `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after |
 
 ## The test stack

@@ -5,6 +5,7 @@
 
 mod ask;
 mod attach;
+mod control;
 mod fountain_runner;
 mod fs;
 mod hook;
@@ -32,8 +33,9 @@ struct Cli {
     /// $XDG_STATE_HOME/illogical/sock].
     #[arg(long, global = true, env = "ILLOGICAL_SOCK")]
     socket: Option<PathBuf>,
-    /// Talk to another daemon: a name from the local daemon's host list
-    /// (`illogical hosts`), or a URL.
+    /// Talk to another daemon: a name from the local daemon's host list or
+    /// from control's directory once this CLI is logged in (`illogical
+    /// hosts` lists both), or a URL.
     #[arg(long, global = true, conflicts_with = "ssh")]
     host: Option<String>,
     /// Talk to the daemon on a box you can ssh into (`user@box`, or a Host
@@ -718,6 +720,25 @@ enum Command {
         #[arg(long, value_name = "FINGERPRINT")]
         account: Option<String>,
     },
+    /// Make this CLI one of your devices on illogical control (M49), so
+    /// `--host NAME` reaches every machine on your account, directly or
+    /// through control's relay. Shows a code to approve on a signed-in
+    /// device.
+    Login {
+        /// The control [default: the one this machine's daemon joined, else
+        /// https://control.illogical.widgets.wtf].
+        url: Option<String>,
+        /// What the account calls this terminal [default: illogical CLI on
+        /// <hostname>].
+        #[arg(long)]
+        name: Option<String>,
+        /// The account's fingerprint, as the approving device shows it:
+        /// checked instead of asking.
+        #[arg(long, value_name = "FINGERPRINT")]
+        account: Option<String>,
+    },
+    /// Forget this CLI's key for control (`illogical login` makes a new one).
+    Logout,
     /// On a box a client reaches over ssh (`--ssh`): join stdin and stdout
     /// to this daemon's socket. Clients run it; people don't.
     #[command(hide = true)]
@@ -1340,6 +1361,26 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         let err = std::process::Command::new(&daemon).args(&args).exec();
         bail!("running {}: {err}", daemon.display());
     }
+    if let Command::Login { url, name, account } = &cli.cmd {
+        let url = match url {
+            Some(u) => u.clone(),
+            None => http::request(&http::Target::Socket(socket(&cli)), "GET", "/api/host", None)
+                .and_then(|r| r.json())
+                .ok()
+                .and_then(|v| v["control"].as_str().map(String::from))
+                .unwrap_or_else(|| ssh::CONTROL.to_owned()),
+        };
+        let name = name.clone().unwrap_or_else(|| {
+            let h = nix::unistd::gethostname().ok().and_then(|h| h.into_string().ok()).unwrap_or_default();
+            if h.is_empty() { "illogical CLI".into() } else { format!("illogical CLI on {h}") }
+        });
+        control::login(&url, &name, account.as_deref())?;
+        return Ok(0);
+    }
+    if let Command::Logout = cli.cmd {
+        control::logout()?;
+        return Ok(0);
+    }
     if let Command::Bridge { probe } = cli.cmd {
         // On a box, for a client that ssh'd in: this daemon's socket on
         // stdin and stdout.
@@ -1628,7 +1669,12 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
-        Command::Install { .. } | Command::Web { .. } | Command::Bridge { .. } | Command::Join { .. } => {
+        Command::Install { .. }
+        | Command::Web { .. }
+        | Command::Bridge { .. }
+        | Command::Join { .. }
+        | Command::Login { .. }
+        | Command::Logout => {
             unreachable!("handled before connecting")
         }
         Command::Tmux { args } => return tmux::run(sock, &args),

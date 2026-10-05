@@ -4094,6 +4094,15 @@ The shape to try:
 
 **Done when:** from a pane on jake-mini, `illogical --host geek run …`, `list` and `capture` work with nothing in jake-mini's `hosts.json`, relayed when Tailscale is down on jake-mini; and the same from geek to jake-air.
 
+#### M49: as built (2026-10-04)
+
+- **Enrollment is a join.** `illogical login [URL]` asks `/api/join` with a `cli` certificate and a proof signed with its new key (as `illogicald join` does), prints `URL/#join=CODE`, polls, and pins the account root from the approval after checking the fingerprint (`--account FP`, or asking). The approve page says *Add a terminal?* and offers no team. Approving adds a device, not a machine, and nudges the account's daemons so they take its key. The URL defaults to the local daemon's control, else the hosted one. Key and pin: `~/.config/illogical/cli-key` and `cli-control.json`.
+- **No session cookie.** The CLI signs every request to control with its key, in the daemons' `x-illogical-auth` v2 format (`illogical_e2e::cert::request_auth`, now shared). Control treats a signature from an approved, unrevoked `cli` device as a session for its account; `DaemonAuth` takes daemon keys only. Nothing expires after 30 days.
+- **`--host NAME`:** the local daemon's list first, then control's directory (the account's own machines; team and shared machines need another account's root, which the CLI doesn't pin, so they're left out for now). The machine's certificate is checked against the pinned root; the CLI tries each URL the machine lists (`/e2e`, 3 s), then control's relay. One Noise channel per command carries each HTTP request as a `Q`/`R` message, so `run`, `ls`, `capture` and the rest work unchanged; `attach`, `tui` and streamed answers (`events --follow`) don't go through control yet. `ILLOGICAL_VERBOSE=1` prints which way it went. No local daemon is needed.
+- **`illogical hosts`** prints control's machines (online, direct URLs or relayed, and which control) above the local list; `--json` has both.
+- **Host menu:** a joined daemon's page shows the host button even alone, with *All your machines…* opening control's page.
+- **Tests, in place of jake-mini/geek/jake-air:** control-smoke (CI) logs the CLI in and drives a direct and a relayed machine with no daemon of its own; `web/e2e/host-menu-control.spec.ts`; and the testnet `control` profile's `m49` claim: box-systemd (no URL, relayed) and box-bare (listing `http://box-bare:7681`, direct) joined, the CLI on the bastion logged in by the headless device, `run`/`ls`/`capture` on both, `BREAK=1` without the login. The "relayed when Tailscale is down" case is the relayed box: a machine whose URLs don't answer is the same path.
+
 #### M50: blocks through control (#150, after S27)
 
 Built from S27's findings: block sites on control for every enrolled daemon, with the daemon-served schemes (tailnet, dev) kept for people without control. A port or editor block opened on any joined machine shows in control's page wherever that page is open. The host menu says "direct" or "relayed" for blocks too.

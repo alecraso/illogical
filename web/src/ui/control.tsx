@@ -535,6 +535,8 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
     if (j) void s.rejectJoin(j.code).catch(() => {});
     clearHash();
   };
+  // M49: the illogical CLI on a machine, asking to be one of your devices.
+  if (j?.cert.kind === "cli") return <CliJoin s={s} j={j} cancel={cancel} />;
   return (
     <Modal close={clearHash}>
       <h2>Add a machine?</h2>
@@ -600,6 +602,57 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
             setBusy(true);
             try {
               await s.approveJoin(j.code, j.cert, team?.team ?? null);
+              clearHash();
+            } catch (e) {
+              setErr((e as Error).message);
+              setBusy(false);
+            }
+          }}
+        >
+          Approve
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** M49: the illogical CLI on some machine asks to be one of this account's
+ * devices (`illogical login`). Approved, it reaches the account's machines
+ * and can approve devices and machines, as this browser can. */
+function CliJoin({ s, j, cancel }: { s: ControlSession; j: JoinRequest; cancel: () => void }) {
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal close={clearHash}>
+      <h2>Add a terminal?</h2>
+      {err ? <p class="control-error">{err}</p> : null}
+      <p data-join-cli={j.cert.name}>
+        The illogical command line on <b>{j.cert.name}</b> asks to be one of your devices, with code <b data-join-code={j.code}>{j.code}</b>. Check it's the code
+        it shows where you ran <code>illogical login</code>.
+      </p>
+      <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
+      {s.enrollment ? (
+        <p>
+          Your account:{" "}
+          <b class="fingerprint" data-join-account={s.enrollment.root}>
+            {fingerprint(s.enrollment.root)}
+          </b>
+          . Once you approve, it shows its account's fingerprint: check it's this one there.
+        </p>
+      ) : null}
+      <p class="dim">It reaches your machines (directly or through control's relay, end to end encrypted) and can approve devices, as this one can.</p>
+      <div class="prompt-buttons">
+        <button data-cancel-join onClick={cancel}>
+          Cancel
+        </button>
+        <button
+          class="primary"
+          data-approve-join
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await s.approveJoin(j.code, j.cert);
               clearHash();
             } catch (e) {
               setErr((e as Error).message);

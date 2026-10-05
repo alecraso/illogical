@@ -382,6 +382,8 @@ async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>)
         // How daemons sign their requests here (auth.rs): 2 takes body
         // hashes and nonces.
         "daemon_auth": 2,
+        // The CLI joins with a code and signs its requests (M49).
+        "cli_join": 1,
     }))
 }
 
