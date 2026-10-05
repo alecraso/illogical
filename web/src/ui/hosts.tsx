@@ -79,7 +79,15 @@ function useHosts(): boolean {
   useSubscribe((fn) => directory.subscribe(fn));
   useSubscribe((fn) => fleet?.subscribe(fn) ?? (() => {}));
   useSubscribe((fn) => subscribeRunners(fn));
-  return directory.control || directory.names.length > 1 || directory.shown !== null;
+  return directory.control || directory.names.length > 1 || directory.shown !== null || !!directory.joined;
+}
+
+/** M49: on a joined daemon's own page, the way to the account's other
+ * machines is control's page, not a list here. */
+function allMachines(): MenuItem[] {
+  const url = directory.joined;
+  if (directory.control || !url) return [];
+  return [{ label: "All your machines…", run: () => void window.open(url, "_blank", "noopener") }];
 }
 
 /** M30: hosts grouped by whose they are (yours, each teammate's, each
@@ -109,12 +117,21 @@ export function HostButton() {
       groups.length > 1
         ? groups.flatMap((g) => [{ header: g.label } as MenuItem, ...g.names.map(item)])
         : directory.names.map(item);
+    // M51: boxes reached over ssh, which only a terminal can open.
+    if (directory.sshOnly.length) {
+      items.push("separator", { header: "From a terminal (ssh)" } as MenuItem);
+      for (const h of directory.sshOnly) {
+        items.push({ label: `    ${h.name}  · illogical --host ${h.name} tui`, disabled: true, run: () => {} });
+      }
+    }
     items.push("separator", { label: "Swarm: every pane at once", run: openSwarm });
     if (fleet?.notice) items.push("separator", { label: fleet.notice, disabled: true, run: () => {} });
     if (directory.stale) {
       const what = directory.control ? "Control unreachable: saved list" : "Home daemon unreachable: saved list";
       items.push("separator", { label: what, disabled: true, run: () => {} });
     }
+    const all = allMachines();
+    if (all.length) items.push("separator", ...all);
     items.push(...extras());
     openMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, items);
   };
@@ -198,7 +215,7 @@ export function HostSection({ close }: { close: () => void }) {
         </Fragment>
       ))}
       <div class="sheet-chips">
-        {extras().flatMap((item) =>
+        {[...allMachines(), ...extras()].flatMap((item) =>
           typeof item === "object" && "run" in item
             ? [
                 <button

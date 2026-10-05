@@ -164,6 +164,10 @@ enum Kind {
 fn kind(exe: &Path, home: &Path, exists: impl Fn(&Path) -> Option<PathBuf>) -> Kind {
     let local = home.join(".local/bin/illogicald");
     let deb = Path::new("/usr/bin/illogicald");
+    // The macOS app's own launch agent runs the copy in its bundle (M46).
+    if exe.ends_with("Contents/MacOS/illogicald") {
+        return Kind::App;
+    }
     if exe != local && exe != deb {
         return Kind::Source;
     }
@@ -276,6 +280,7 @@ mod tests {
         assert_eq!(kind(Path::new("/usr/bin/illogicald"), home, deb), Kind::App);
         let mac = |p: &Path| (p == Path::new("/Applications/illogical.app")).then(|| p.to_path_buf());
         assert_eq!(kind(&local, home, mac), Kind::App);
+        assert_eq!(kind(Path::new("/Applications/illogical.app/Contents/MacOS/illogicald"), home, none), Kind::App);
     }
 
     #[test]

@@ -39,7 +39,7 @@ fn policy(method: &Method, path: &str) -> Policy {
     let get = method == Method::GET;
     match parts.as_slice() {
         ["api", "host"] if get => Policy::Anyone,
-        ["api", "panes", id, "capture" | "process" | "tail" | "wait" | "export.cast"] if get => {
+        ["api", "panes", id, "capture" | "process" | "detection" | "tail" | "wait" | "export.cast"] if get => {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Viewer))
         }
         ["api", "blocks", id] if get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Viewer)),
@@ -52,7 +52,8 @@ fn policy(method: &Method, path: &str) -> Policy {
             "api",
             "panes",
             id,
-            "send" | "keys" | "mouse" | "attention" | "close" | "ask" | "cd" | "permit" | "hook" | "inbox" | "followup",
+            "send" | "prompt" | "keys" | "mouse" | "attention" | "close" | "ask" | "cd" | "permit" | "hook" | "inbox"
+            | "followup",
         ] if !get => pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor)),
         ["api", "panes", id, "ask", "withdraw"] if !get => {
             pane(id).map_or(Policy::Owner, |p| Policy::On(p, Role::Editor))
@@ -174,6 +175,8 @@ mod tests {
         assert_eq!(policy(&g, "/api/panes/3/diff"), Policy::On(3, Role::Viewer));
         assert_eq!(policy(&g, "/api/ide"), Policy::Owner);
         assert_eq!(policy(&Method::PUT, "/api/ide"), Policy::Owner);
+        assert_eq!(policy(&g, "/api/rules"), Policy::Owner);
+        assert_eq!(policy(&Method::DELETE, "/api/rules/0"), Policy::Owner);
         assert_eq!(policy(&g, "/api/editors/vsix"), Policy::Owner);
         assert_eq!(policy(&g, "/api/hosts/self/shell-env"), Policy::Owner);
         assert_eq!(policy(&p, "/api/hosts/self/shell-env/refresh"), Policy::Owner);

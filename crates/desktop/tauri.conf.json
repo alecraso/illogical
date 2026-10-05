@@ -16,6 +16,7 @@
     "active": true,
     "targets": [
       "deb",
+      "rpm",
       "appimage",
       "app",
       "dmg"
@@ -35,7 +36,10 @@
     ],
     "macOS": {
       "signingIdentity": "-",
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "13.0",
+      "files": {
+        "Library/LaunchAgents/wtf.widgets.illogical.daemon.plist": "macos/wtf.widgets.illogical.daemon.plist"
+      }
     },
     "linux": {
       "deb": {
@@ -53,5 +57,16 @@
       "../../LICENSE-APACHE": "LICENSE-APACHE"
     },
     "copyright": "MIT OR Apache-2.0"
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["illogical"]
+      }
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/arugula-salad/illogical/releases/latest/download/latest.json"]
+    }
   }
 }

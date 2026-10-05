@@ -5,15 +5,13 @@
 //! without a wisp token or the static build (`just static`). Going cold is
 //! in `web/e2e/resident.spec.ts`.
 
-mod listen;
-mod strays;
-
 use std::{
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
-    time::{Duration, Instant},
+    process::{Command, Output},
+    time::Duration,
 };
 
+use illogical_testkit::illogicald;
 use serde_json::{Value, json};
 
 const WISP: &str = "http://127.0.0.1:7788";
@@ -41,27 +39,16 @@ fn wisp(method: &str, path: &str, body: Option<Value>) -> Value {
     serde_json::from_slice(&out.stdout).unwrap_or_default()
 }
 
+/// The home daemon, which deletes the sandbox when it goes.
 struct Home {
-    child: Child,
-    state: PathBuf,
+    d: illogical_testkit::Daemon,
     sprite: String,
 }
 
 impl Drop for Home {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.d.halt();
         wisp("DELETE", &format!("/{}", self.sprite), None);
-        strays::remove(&self.state);
-    }
-}
-
-impl Home {
-    fn sock(&self) -> PathBuf {
-        match std::fs::read_to_string(self.state.join("sock.path")) {
-            Ok(p) => PathBuf::from(p.trim()),
-            Err(_) => self.state.join("sock"),
-        }
     }
 }
 
@@ -73,7 +60,7 @@ fn cli_bin() -> PathBuf {
 }
 
 fn cli(home: &Home, args: &[&str]) -> Output {
-    Command::new(cli_bin()).arg("--socket").arg(home.sock()).args(args).env_remove("ILLOGICAL_PANE").output().unwrap()
+    Command::new(cli_bin()).arg("--socket").arg(home.d.sock()).args(args).env_remove("ILLOGICAL_PANE").output().unwrap()
 }
 
 fn stdout(o: &Output) -> String {
@@ -81,36 +68,26 @@ fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
-fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !f() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(200));
-    }
+fn wait_for(what: &str, f: impl FnMut() -> bool) {
+    illogical_testkit::wait_for(what, Duration::from_secs(30), f);
 }
 
 #[test]
 fn a_shell_then_a_resident_daemon_through_the_tunnel() {
     if token().is_none() || !static_dir().join("illogicald").exists() {
-        eprintln!("skipping: needs wispd's token and `just static`");
+        eprintln!(
+            "SKIP: needs wispd's token (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token) and `just static`"
+        );
         return;
     }
     let sprite = format!("illogical-m4b-test-{}", std::process::id());
-    let state = std::env::temp_dir().join(format!("ilg-resident-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&state);
-    let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
-        .args(["--name", "home", "--wisp-url", WISP, "--tailscale-socket", "/nonexistent/tailscaled.sock"])
+    let d = illogicald!("resident")
+        .args(["--name", "home", "--wisp-url", WISP])
+        .no_tailscale()
         .arg("--static-dir")
         .arg(static_dir())
-        .arg("--state-dir")
-        .arg(&state)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let home = Home { child, state, sprite: sprite.clone() };
-    wait_for("the home daemon", || std::os::unix::net::UnixStream::connect(home.sock()).is_ok());
+        .start();
+    let home = Home { d, sprite: sprite.clone() };
     assert_eq!(wisp("POST", "", Some(json!({ "name": sprite })))["name"], sprite.as_str());
 
     // Listed, with what the provider can do.

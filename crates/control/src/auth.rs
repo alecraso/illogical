@@ -3,6 +3,10 @@
 //! - **People** sign in with GitHub (OAuth, as a GitHub App) and get a
 //!   session cookie for control's own API: the directory, approvals, joins.
 //!   A session never reaches a daemon. Daemons trust devices, by key.
+//! - **The CLI** (M49) is a `cli` device: it joins with a code, as a
+//!   daemon does, and then signs each request as a daemon does (below).
+//!   A signed request from an approved CLI device is a session for its
+//!   account, with no cookie to ride on, so it needs no origin.
 //! - **Daemons** sign each request with their enrolled Ed25519 key:
 //!   `x-illogical-auth: v2 <device id> <ms> <nonce> <sig>` over
 //!   `illogical daemon auth v2\n<METHOD>\n<path and query>\n<ms>\n<nonce>\n<sha256 of the body, hex>\n`,
@@ -24,7 +28,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header, request::Parts},
     response::{IntoResponse, Redirect, Response},
 };
-use illogical_e2e::{Cert, now_ms};
+use illogical_e2e::{Cert, Kind, now_ms};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
@@ -71,6 +75,13 @@ impl FromRequestParts<Arc<App>> for Session {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, app: &Arc<App>) -> Result<Self, ApiError> {
+        // A CLI device's signature (M49): no cookie, so no origin to check.
+        match parts.extensions.get::<Signed>() {
+            Some(Signed(Ok(cert))) if cert.kind == Kind::Cli => return Ok(Session { account: cert.account.clone() }),
+            Some(Signed(Ok(_))) => return Err(err(StatusCode::UNAUTHORIZED, "sign in first")),
+            Some(Signed(Err((status, msg)))) => return Err(crate::ApiError(*status, msg.clone())),
+            None => {}
+        }
         let upgrade = parts.headers.contains_key(header::UPGRADE);
         if parts.method != Method::GET || upgrade {
             let origin = parts.headers.get(header::ORIGIN).and_then(|o| o.to_str().ok());
@@ -184,10 +195,16 @@ fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError>
     if now_ms().abs_diff(ms) > SKEW_MS {
         return Err(err(StatusCode::UNAUTHORIZED, "clock skew: check this machine's time"));
     }
-    let cert = app
-        .db
-        .daemon_cert(id)?
-        .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "not an enrolled daemon (left, or revoked?)"))?;
+    let cert = match app.db.daemon_cert(id)? {
+        Some(c) => c,
+        None => match cli_cert(app, id)? {
+            Some(c) => c,
+            None if app.db.daemon_account_deleted(id)? => {
+                return Err(err(StatusCode::UNAUTHORIZED, "this machine's account was deleted"));
+            }
+            None => return Err(err(StatusCode::UNAUTHORIZED, "not an enrolled daemon (left, or revoked?)")),
+        },
+    };
     if !illogical_e2e::cert::verify_hex(&cert.sign, msg.as_bytes(), sig) {
         return Err(bad());
     }
@@ -198,12 +215,24 @@ fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError>
     Ok(cert)
 }
 
+/// An approved CLI device (M49) that its account still trusts: one that
+/// was revoked, or whose approver was, signs nothing here.
+fn cli_cert(app: &App, id: &str) -> Result<Option<Cert>, ApiError> {
+    let Some(cert) = app.db.approved_cert(id, Kind::Cli)? else { return Ok(None) };
+    let Some(root) = app.db.account(&cert.account)?.and_then(|a| a.root) else { return Ok(None) };
+    let (certs, _) = app.db.devices(&cert.account)?;
+    let revs = app.db.revocations(&cert.account)?;
+    let trust = illogical_e2e::Trust { account: cert.account.clone(), root };
+    Ok(trust.evaluate(&certs, &revs).get(id).filter(|c| **c == cert).cloned())
+}
+
 impl FromRequestParts<Arc<App>> for DaemonAuth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _app: &Arc<App>) -> Result<Self, ApiError> {
         match parts.extensions.get::<Signed>() {
-            Some(Signed(Ok(cert))) => Ok(DaemonAuth { cert: cert.clone() }),
+            Some(Signed(Ok(cert))) if cert.kind == Kind::Daemon => Ok(DaemonAuth { cert: cert.clone() }),
+            Some(Signed(Ok(_))) => Err(err(StatusCode::UNAUTHORIZED, "not an enrolled daemon")),
             Some(Signed(Err((status, msg)))) => Err(crate::ApiError(*status, msg.clone())),
             None => Err(err(StatusCode::UNAUTHORIZED, "bad daemon signature")),
         }

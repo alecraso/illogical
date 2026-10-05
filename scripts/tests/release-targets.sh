@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A ratchet on what a release ships. The targets `just dist` packs and the
-# downloads `just desktop` makes are named in several other places: how
+# downloads the desktop recipes make are named in several other places: how
 # release.yml builds them, how many scripts/release expects, the Homebrew
 # formula, install.sh and the download links. Adding (or dropping) one in
 # some of those places and not the others fails here, not at release time.
@@ -12,24 +12,47 @@ cd "$(dirname "$0")/../.."
 fail=0
 bad() { printf 'FAIL  %s\n' "$*"; fail=1; }
 
-# The source of truth: `just dist`'s targets and `just desktop`'s outputs,
-# plus the Windows installer, which release.yml builds itself on GitHub's
-# runner (no just there).
+# The sources of truth: `just dist`'s targets, and the desktop downloads
+# scripts/release requires before it writes SHA256SUMS. Each download must
+# be one the build makes (`just desktop-linux ARCH` through
+# packaging/desktop/build-linux.sh, `just desktop-macos ARCH`, and the
+# Windows installer, which release.yml builds itself on GitHub's runner),
+# and each one the build makes must be required.
 wf=.github/workflows/release.yml
 read -ra targets <<<"$(sed -n '/^dist:/,/^[^ ]/p' justfile | sed -n 's/^ *for t in \(.*\); do$/\1/p')"
 [ "${#targets[@]}" -gt 0 ] || { echo "FAIL  can't find just dist's targets in the justfile"; exit 1; }
-desktop=$(sed -n '/^desktop /,/^[^ ]/p' justfile)
+list=$(sed -n '/^  sums)/,/;;/p' scripts/release | sed -n 's/^ *for f in \(illogical-desktop-.*\); do$/\1/p')
+[ -n "$list" ] || { echo "FAIL  can't find scripts/release's desktop downloads"; exit 1; }
 downloads=()
-while read -r d; do downloads+=("$d"); done < <(
+# Brace expansion of scripts/release's own list; it names files only.
+while read -r d; do downloads+=("$d"); done < <(eval "printf '%s\n' $list" | sort -u)
+echo "targets:   ${targets[*]}"
+echo "downloads: ${downloads[*]}"
+
+linux=$(sed -n '/^desktop-linux /,/^[^ ]/p' justfile)
+macos=$(sed -n '/^desktop-macos /,/^[^ ]/p' justfile)
+# shellcheck disable=SC2016 # literal $arch, $name and $dist in the recipes
+made=$(
   {
-    grep -o 'illogical-desktop-linux-[A-Za-z0-9_]*\.[A-Za-z]*' <<<"$desktop"
-    sed -n 's/.*) name=\(macos-[a-z0-9_]*\) ;;.*/illogical-desktop-\1.zip/p' <<<"$desktop"
+    read -ra arches <<<"$(sed -n 's/^ *case "\$arch" in \(.*\) esac$/\1/p' <<<"$linux" | grep -o '[a-z0-9_]*) platform' | sed 's/) platform//' | tr '\n' ' ')"
+    exts=$(grep -o '"/dist/\$name\.[A-Za-z]*"' packaging/desktop/build-linux.sh | sed 's/.*\.\([A-Za-z]*\)"$/\1/' | sort -u)
+    for a in "${arches[@]}"; do for e in $exts; do echo "illogical-desktop-linux-$a.$e"; done; done
+    names=$(sed -n 's/.*) name=\(macos-[a-z0-9_]*\) ;;.*/\1/p' <<<"$macos")
+    exts=$(grep -o '\$dist/illogical-desktop-\$name\.[a-z]*$' <<<"$macos" | sed 's/.*\.//' | sort -u)
+    for n in $names; do for e in $exts; do echo "illogical-desktop-$n.$e"; done; done
     grep -o 'dist/illogical-desktop-windows-[A-Za-z0-9_.-]*\.exe' "$wf" | sed 's:^dist/::'
   } | sort -u
 )
-[ "${#downloads[@]}" -gt 0 ] || { echo "FAIL  can't find just desktop's outputs in the justfile"; exit 1; }
-echo "targets:   ${targets[*]}"
-echo "downloads: ${downloads[*]}"
+[ -n "$made" ] || { echo "FAIL  can't find what the desktop recipes make in the justfile"; exit 1; }
+for m in $made; do
+  printf '%s\n' "${downloads[@]}" | grep -qx "$m" || bad "the build makes $m but scripts/release doesn't require it"
+done
+for d in "${downloads[@]}"; do
+  grep -qx "$d" <<<"$made" || bad "scripts/release requires $d but no recipe makes it"
+done
+
+# A release.yml step runs it, alone or in an `a && b` chain.
+runs() { grep -Eq "^ *- run: (.* && )?$1( && .*)?$" "$wf"; }
 
 # release.yml builds every target and every download.
 for t in "${targets[@]}"; do
@@ -39,25 +62,23 @@ for t in "${targets[@]}"; do
     x86_64-apple-darwin) step="just build-macos-x86_64" ;;
     *) bad "$t: no rule for how release.yml builds it; add one here"; continue ;;
   esac
-  grep -qx " *- run: $step" "$wf" || bad "$wf doesn't build $t (expected: run: $step)"
+  runs "$step" || bad "$wf doesn't build $t (expected: run: $step)"
 done
 for d in "${downloads[@]}"; do
   case "$d" in
-    illogical-desktop-linux-*) step="just desktop" ;;
-    illogical-desktop-macos-arm64.zip) step="just desktop" ;; # native
-    illogical-desktop-macos-*.zip) a=${d#illogical-desktop-macos-}; step="just desktop ${a%.zip}" ;;
-    illogical-desktop-windows-*) step="scripts/release upload \"\$GITHUB_REF_NAME\" dist/$d" ;;
+    illogical-desktop-linux-*) a=${d#illogical-desktop-linux-}; step="just desktop-linux ${a%%.*}" ;;
+    illogical-desktop-macos-arm64.*) step="just desktop-macos aarch64" ;;
+    illogical-desktop-macos-*) a=${d#illogical-desktop-macos-}; step="just desktop-macos ${a%%.*}" ;;
+    illogical-desktop-windows-*) step="scripts/release upload \"\\\$GITHUB_REF_NAME\" dist/$d" ;;
     *) bad "$d: no rule for how release.yml makes it; add one here"; continue ;;
   esac
-  grep -qx " *- run: $step" "$wf" || bad "$wf doesn't make $d (expected: run: $step)"
+  runs "$step" || bad "$wf doesn't make $d (expected: run: $step)"
 done
 
-# scripts/release counts exactly these before it writes SHA256SUMS.
-# shellcheck disable=SC2016 # literal \$n and \$d in scripts/release
+# scripts/release counts exactly these tarballs before it writes SHA256SUMS.
+# shellcheck disable=SC2016 # literal \$n in scripts/release
 n=$(sed -n 's/.*\[ "\$n" = \([0-9]*\) \].*/\1/p' scripts/release)
-d=$(sed -n 's/.*\[ "\$d" = \([0-9]*\) \].*/\1/p' scripts/release)
 [ "$n" = "${#targets[@]}" ] || bad "scripts/release expects ${n:-?} tarballs; just dist makes ${#targets[@]}"
-[ "$d" = "${#downloads[@]}" ] || bad "scripts/release expects ${d:-?} desktop downloads; just desktop makes ${#downloads[@]}"
 
 # The Homebrew formula has a URL for each target, and scripts/release fills
 # in every checksum placeholder the formula has (and no others).
@@ -86,7 +107,11 @@ for t in "${targets[@]}"; do
 done
 
 # The site offers every download, and no page links to one that isn't made.
+# Not yet on the site: the .rpm and .dmg and the Linux arm64 bundles (M46,
+# #130); they're in each release. Linking one there drops it from here.
+not_on_site='\.rpm$|\.dmg$|^illogical-desktop-linux-aarch64\.'
 for dl in "${downloads[@]}"; do
+  grep -Eq "$not_on_site" <<<"$dl" && ! grep -q "releases/latest/download/$dl\"" site/index.html && continue
   grep -q "releases/latest/download/$dl\"" site/index.html || bad "site/index.html doesn't link $dl"
 done
 while IFS=: read -r f name; do

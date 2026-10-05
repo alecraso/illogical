@@ -15,6 +15,7 @@ import { devices, expect, test, type Page } from "@playwright/test";
 import { open, text } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { ANY, daemonPort } from "./ports";
+import { deliver, FakePush, tap } from "./phones";
 
 let PORT = 0;
 let VM_PORT = 0;
@@ -222,6 +223,44 @@ test.describe("on this host", () => {
     await expect.poll(async () => (await panesOf(page)).find((p) => p.id === term)?.reason?.kind ?? null, { timeout: 15_000 }).toBe("failed");
     await page.evaluate((t) => window.__illogical.client.setActive(t), term);
     await expect.poll(async () => (await text(page, term)).match(/BUILD-FAILED-42/g)?.length ?? 0).toBe(2);
+  });
+
+  // #214: the push itself. The phone turns on *Notify this device*; the
+  // daemon's push (encrypted, VAPID-signed) reaches a fake push service,
+  // which decrypts it and hands it to the phone's service worker; Rerun on
+  // the notification types the build again.
+  test("a failure's push reaches the phone, and Rerun on the notification runs it again", async ({ page, context }) => {
+    const push = await FakePush.start();
+    try {
+      await push.stub(page, "pixel");
+      await context.grantPermissions(["notifications"]);
+      await open(page);
+      await page.locator(".sheet-button").click();
+      await page.getByRole("button", { name: "Notify this device" }).click();
+      await expect(page.getByRole("button", { name: "Notify this device" })).toHaveAttribute("aria-pressed", "true");
+      expect((await push.next("pixel", (p) => p.pane === 0)).body).toBe("Notifications work.");
+      await page.keyboard.press("Escape");
+
+      const runs = join(dir, "push-runs");
+      await post(PORT, `/api/panes/${term}/send`, { text: `build() { echo x >> ${runs}; sleep 3.2; echo PUSHED-BUILD-$((40+2)); return 2; }`, enter: true });
+      // The phone shows the diff, so nobody looks at the terminal.
+      await page.evaluate((d) => window.__illogical.client.setActive(d), diff);
+      await post(PORT, `/api/panes/${term}/send`, { text: "build --push", enter: true });
+      const payload = await push.next("pixel", (p) => p.pane === term && p.reason?.kind === "failed", 20_000);
+      expect(payload.title).toBe("Failed");
+      expect(payload.body).toMatch(/^build --push failed \(exit 2\)/);
+      expect(payload.reason!.actions).toEqual(["rerun", "dismiss"]);
+
+      // On the phone: a notification with Rerun and Dismiss; Rerun.
+      expect(await deliver(context, page, payload)).toEqual(["rerun", "dismiss"]);
+      await tap(context, payload.tag, "rerun");
+      await expect.poll(() => readFileSync(runs, "utf8").split("\n").filter(Boolean).length, { timeout: 10_000 }).toBe(2);
+      await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+      await expect.poll(async () => (await text(page, term)).match(/PUSHED-BUILD-42/g)?.length ?? 0, { timeout: 15_000 }).toBe(2);
+      expect(push.refused).toEqual([]);
+    } finally {
+      push.close();
+    }
   });
 });
 

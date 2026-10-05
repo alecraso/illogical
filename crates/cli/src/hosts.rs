@@ -22,7 +22,9 @@ pub enum HostsCmd {
     /// Add a daemon (or replace the one with this name).
     Add {
         name: String,
-        /// Its URL(s), best first: `https://box.tailnet.ts.net`.
+        /// Its URL(s), best first: `https://box.tailnet.ts.net`. Or one
+        /// `ssh://[user@]box[:port]` (M51): reached over ssh from each client,
+        /// with your own ssh and its ~/.ssh/config; only that is kept.
         #[arg(required = true)]
         urls: Vec<String>,
     },
@@ -120,21 +122,40 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
     if host.contains("://") {
         return Ok(Target::Url(Url::parse(host)?));
     }
-    let list = request(&local, "GET", "/api/hosts", None)
-        .and_then(|r| r.json())
-        .context("looking up --host in the local daemon's host list")?;
-    if list["this"].as_str() == Some(host) {
+    // The local daemon's list first; then control's directory (M49), which
+    // needs no local daemon at all.
+    let list = request(&local, "GET", "/api/hosts", None).and_then(|r| r.json());
+    if let Ok(l) = &list
+        && l["this"].as_str() == Some(host)
+    {
         return Ok(local);
     }
-    let entry = list["hosts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|h| h["name"].as_str() == Some(host))
-        .with_context(|| format!("no host {host} (see `illogical hosts`)"))?;
+    let entry = list
+        .as_ref()
+        .ok()
+        .and_then(|l| l["hosts"].as_array().into_iter().flatten().find(|h| h["name"].as_str() == Some(host)).cloned());
+    let Some(entry) = entry else {
+        if let Some(t) = crate::control::target(host)? {
+            return Ok(t);
+        }
+        let hint = if crate::control::logged_in() {
+            ""
+        } else {
+            "; `illogical login` reaches the machines on your illogical control account"
+        };
+        return match list {
+            Err(e) => Err(e.context(format!("looking up --host {host} in the local daemon's host list{hint}"))),
+            Ok(_) => bail!("no host {host} (see `illogical hosts`){hint}"),
+        };
+    };
     // A host reached through the home daemon: one that dials out to it
     // (M4c), or a resident daemon in a sandbox, through the provider tunnel
     // (M4b; that also wakes it).
+    // Over ssh, from this client (M51).
+    if entry["transport"].as_str() == Some("ssh") {
+        let dest = entry["ssh"].as_str().with_context(|| format!("host {host} has no ssh destination"))?;
+        return Ok(Target::Ssh(crate::ssh::Remote::parse(dest)?));
+    }
     let via = match entry["transport"].as_str() {
         Some("dial_out") => Some("h"),
         Some("provider") => Some("tunnel"),
@@ -162,7 +183,7 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
 fn socket_of(t: &Target) -> PathBuf {
     match t {
         Target::Socket(p) | Target::Via(p, _) => p.clone(),
-        Target::Url(_) => unreachable!("the local daemon is a socket"),
+        Target::Url(_) | Target::Ssh(_) | Target::Control(_) => unreachable!("the local daemon is a socket"),
     }
 }
 
@@ -185,7 +206,46 @@ pub fn run(
 ) -> anyhow::Result<()> {
     let v = match cmd {
         None => {
-            let v = request(target, "GET", "/api/hosts", None)?.json()?;
+            // This daemon's list (if one runs here), and control's
+            // directory (if this CLI is logged in), marked apart.
+            let local = request(target, "GET", "/api/hosts", None).and_then(|r| r.json());
+            let control = crate::control::listing();
+            let local = match (local, &control) {
+                (Ok(v), _) => v,
+                (Err(_), Ok(Some(_))) => Value::Null,
+                (Err(e), _) => return Err(e),
+            };
+            let control = control.unwrap_or_else(|e| {
+                eprintln!("illogical: control's directory: {e:#}");
+                None
+            });
+            if json_out {
+                let c = control.as_ref().map(|(url, list)| {
+                    json!({"url": url, "machines": list.iter().map(|m| json!({"id": m.id, "name": m.name, "urls": m.urls, "online": m.online})).collect::<Vec<_>>()})
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &json!({"this": local["this"], "hosts": local["hosts"], "control": c})
+                    )
+                    .unwrap_or_default()
+                );
+                return Ok(());
+            }
+            if let Some((url, list)) = &control {
+                for m in list {
+                    let how = match (m.online, m.urls.is_empty()) {
+                        (false, _) => "offline".to_owned(),
+                        (true, true) => "online, relayed".to_owned(),
+                        (true, false) => format!("online, direct {} or relayed", m.urls.join(" ")),
+                    };
+                    println!("{:<20} {:<44} (control: {url})", m.name, how);
+                }
+            }
+            if local.is_null() {
+                return Ok(());
+            }
+            let v = local;
             if !json_out {
                 println!("{:<20} {:<44} (this daemon)", v["this"].as_str().unwrap_or("?"), "");
                 for h in v["hosts"].as_array().into_iter().flatten() {
@@ -193,6 +253,11 @@ pub fn run(
                         h["urls"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                     if h["transport"].as_str() == Some("dial_out") {
                         urls.push("(dials out, reached through here)");
+                    }
+                    let ssh;
+                    if h["transport"].as_str() == Some("ssh") {
+                        ssh = format!("ssh {}", h["ssh"].as_str().unwrap_or("?"));
+                        urls.push(&ssh);
                     }
                     let seen =
                         h["last_seen_ms"].as_u64().map(|t| format!("seen {}", ago(t))).unwrap_or("never seen".into());
@@ -214,6 +279,12 @@ pub fn run(
                 return Ok(());
             }
             v
+        }
+        Some(HostsCmd::Add { name, urls }) if urls.iter().any(|u| u.starts_with("ssh://")) => {
+            let [dest] = urls.as_slice() else { bail!("an ssh host has one ssh:// destination and no other URL") };
+            let dest = crate::ssh::Remote::parse(dest)?.dest;
+            let body = json!({"name": name, "urls": [], "transport": "ssh", "ssh": dest});
+            request(target, "POST", "/api/hosts", Some(&body))?.json()?
         }
         Some(HostsCmd::Add { name, urls }) => {
             request(target, "POST", "/api/hosts", Some(&json!({"name": name, "urls": urls, "transport": "tailnet"})))?

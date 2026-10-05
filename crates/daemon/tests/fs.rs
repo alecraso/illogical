@@ -4,17 +4,9 @@
 //! generated names. Sprites this makes are named `illogical-m7-…` and
 //! deleted afterwards, whatever happens.
 
-mod listen;
-mod strays;
+use std::{path::PathBuf, process::Command, time::Duration};
 
-use std::{
-    io::{BufRead, BufReader, Read, Write},
-    os::unix::net::UnixStream,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
-};
-
+use illogical_testkit::illogicald;
 use serde_json::{Value, json};
 
 const WISP: &str = "http://127.0.0.1:7788";
@@ -35,15 +27,19 @@ fn curl(token: &str, method: &str, url: &str, body: Option<&str>) -> String {
     String::from_utf8_lossy(&c.arg(url).output().unwrap().stdout).into_owned()
 }
 
-struct Daemon {
-    child: Child,
-    state: PathBuf,
+/// A testkit daemon that deletes the machines it left behind.
+struct Daemon(illogical_testkit::Daemon);
+
+impl std::ops::Deref for Daemon {
+    type Target = illogical_testkit::Daemon;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.0.halt();
         // Machines a failed test left behind: this daemon's only.
         if let (Some(token), Ok(id)) = (token(), std::fs::read_to_string(self.state.join("daemon-id"))) {
             let list = curl(&token, "GET", &format!("{WISP}/v1/sprites?prefix=illogical-eph-{}-", id.trim()), None);
@@ -52,80 +48,21 @@ impl Drop for Daemon {
                 curl(&token, "DELETE", &format!("{WISP}/v1/sprites/{n}"), None);
             }
         }
-        strays::remove(&self.state);
     }
 }
 
 impl Daemon {
     fn new(tag: &str, wisp: bool) -> Self {
-        let state = std::env::temp_dir().join(format!("ilg-m7-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&state);
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_illogicald"));
-        cmd.args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
-            .arg("--state-dir")
-            .arg(&state);
-        if wisp {
-            cmd.args(["--wisp-url", WISP]);
-        } else {
-            cmd.args(["--wisp-token-file", "/nonexistent"]);
-        }
-        let child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
-        let d = Self { child, state };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while UnixStream::connect(d.state.join("sock")).is_err() {
-            assert!(Instant::now() < deadline, "daemon did not start");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        d
-    }
-
-    fn raw(&self, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
-        let mut s = UnixStream::connect(self.state.join("sock")).unwrap();
-        let body = body.map(|b| b.to_string()).unwrap_or_default();
-        s.write_all(
-            format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        let mut r = BufReader::new(s);
-        let mut line = String::new();
-        r.read_line(&mut line).unwrap();
-        let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-        while {
-            line.clear();
-            r.read_line(&mut line).unwrap();
-            !line.trim().is_empty()
-        } {}
-        let mut out = String::new();
-        r.read_to_string(&mut out).unwrap();
-        (status, out)
-    }
-
-    fn get(&self, path: &str) -> Value {
-        let (status, body) = self.raw("GET", path, None);
-        assert_eq!(status, 200, "{path}: {body}");
-        serde_json::from_str(&body).unwrap_or(Value::String(body))
-    }
-
-    fn post(&self, path: &str, body: Value) -> Value {
-        let (status, text) = self.raw("POST", path, Some(body));
-        assert_eq!(status, 200, "{path}: {text}");
-        serde_json::from_str(&text).unwrap()
+        let b = illogicald!(&format!("m7-{tag}"));
+        Self(if wisp { b.args(["--wisp-url", WISP]) } else { b.no_wisp() }.start())
     }
 
     fn pane(&self, id: u64) -> Value {
         self.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == id).cloned().unwrap_or(Value::Null)
     }
 
-    fn wait_for(&self, what: &str, secs: u64, f: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(secs);
-        while !f() {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            std::thread::sleep(Duration::from_millis(100));
-        }
+    fn wait_for(&self, what: &str, secs: u64, f: impl FnMut() -> bool) {
+        illogical_testkit::wait_for(what, Duration::from_secs(secs), f);
     }
 }
 
@@ -215,7 +152,7 @@ impl Drop for Sprite {
 #[test]
 fn a_sandbox_through_the_provider() {
     let Some(token) = token() else {
-        eprintln!("skipping: no wisp token on this host");
+        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     };
     let sprite = Sprite { token: token.clone(), name: format!("illogical-m7-{}", std::process::id()) };

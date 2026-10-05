@@ -6,6 +6,8 @@
 #   release upload TAG FILE...     attach files to TAG's release (made if new)
 #   release sums TAG               SHA256SUMS of the release's tarballs
 #   release homebrew TAG           bump the formula in the Homebrew tap
+#   release updater TAG            latest.json for the desktop app's updater,
+#                                  from the release's .sig files
 #
 # GH_TOKEN (upload, sums) writes releases (in CI, the job token with
 # contents: write; by hand, your gh login); HOMEBREW_TAP_KEY (homebrew) is
@@ -50,11 +52,14 @@ case "${1:-}" in
     ensure_release "$2"
     dir=$(mktemp -d)
     gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-desktop-*' -D "$dir"
-    n=$(find "$dir" -name "*.tar.gz" | wc -l | tr -d " ")
+    n=$(find "$dir" -name "illogical-[0-9]*.tar.gz" | wc -l | tr -d " ")
     [ "$n" = 4 ] || { echo "expected 4 tarballs, found $n" >&2; exit 1; }
-    d=$(find "$dir" -name "illogical-desktop-*" | wc -l | tr -d " ")
-    [ "$d" = 5 ] || { echo "expected 5 desktop downloads (deb, AppImage, macOS arm64 and x86_64 zips, Windows installer), found $d" >&2; exit 1; }
-    (cd "$dir" && sha256sum -- *.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
+    # Every desktop download a release has (the updater's .app.tar.gz and
+    # .sig files come too when TAURI_SIGNING_PRIVATE_KEY is set).
+    for f in illogical-desktop-linux-{x86_64,aarch64}.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe; do
+      [ -f "$dir/$f" ] || { echo "the release has no $f" >&2; exit 1; }
+    done
+    (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
     ;;
   homebrew)
@@ -83,8 +88,40 @@ case "${1:-}" in
     git push -q origin HEAD
     echo "formula bumped to $v"
     ;;
+  updater)
+    # The Tauri updater's manifest (M46): each platform's download and its
+    # signature from the updater key. Without signatures (no
+    # TAURI_SIGNING_PRIVATE_KEY in the build jobs) there's nothing to offer.
+    tag=$2; v=${tag#v}
+    dir=$(mktemp -d)
+    gh release download "$tag" -R "$repo" -p '*.sig' -D "$dir" 2>/dev/null || true
+    if [ -z "$(ls "$dir")" ]; then
+      echo "no latest.json: the release has no updater signatures (the TAURI_SIGNING_PRIVATE_KEY secret isn't set)"
+      exit 0
+    fi
+    base=https://github.com/$repo/releases/download/$tag
+    python3 - "$v" "$base" "$dir" >"$dir/latest.json" <<'PY'
+import json, os, sys, datetime
+v, base, d = sys.argv[1:]
+files = {
+    "darwin-aarch64": "illogical-desktop-macos-arm64.app.tar.gz",
+    "darwin-x86_64": "illogical-desktop-macos-x86_64.app.tar.gz",
+    "linux-x86_64": "illogical-desktop-linux-x86_64.AppImage",
+    "linux-aarch64": "illogical-desktop-linux-aarch64.AppImage",
+}
+platforms = {}
+for p, f in files.items():
+    sig = os.path.join(d, f + ".sig")
+    if os.path.exists(sig):
+        platforms[p] = {"signature": open(sig).read().strip(), "url": f"{base}/{f}"}
+json.dump({"version": v, "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+           "platforms": platforms}, sys.stdout, indent=2)
+PY
+    cat "$dir/latest.json"
+    gh release upload "$tag" -R "$repo" --clobber "$dir/latest.json"
+    ;;
   *)
-    sed -n '2,12p' "$0" >&2
+    sed -n '2,14p' "$0" >&2
     exit 2
     ;;
 esac

@@ -2,8 +2,6 @@
 //! picked by binding and letting go of it could be taken again before the
 //! daemon binds it, and the daemon would exit (#66).
 
-#![allow(dead_code)]
-
 use std::{
     path::Path,
     time::{Duration, Instant},

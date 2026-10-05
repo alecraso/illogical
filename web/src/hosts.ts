@@ -26,9 +26,12 @@ export interface Host {
    * it dials the home daemon and is reached through it at `/h/<name>/…`;
    * `provider` (M4b), a resident daemon in a sandbox, through the home
    * daemon's provider tunnel at `/tunnel/<name>/…` (both on this page's
-   * own origin). */
-  transport: "tailnet" | "dial_out" | "provider" | "control";
+   * own origin); `ssh` (M51), reached by a terminal's own ssh, never from
+   * a page. */
+  transport: "tailnet" | "dial_out" | "provider" | "control" | "ssh";
   provider?: ProviderRef;
+  /** An ssh host's destination (`user@box`). */
+  ssh?: string;
   added_ms: number;
   last_seen_ms: number | null;
   /** A provider host's sandbox state, from the provider (never by
@@ -74,6 +77,10 @@ export class HostDirectory {
   /** The page is illogical control's (M17): the list comes from control,
    * and there's no home daemon. */
   control = false;
+  /** The control this page's daemon joined (`/api/host`'s `control`), if
+   * any: the host menu links to its page for the account's other machines
+   * (M49), rather than listing them here. */
+  joined: string | null = null;
   /** Control mode: how the shown host is reached, for the host chip. */
   path: "direct" | "relayed" | null = null;
 
@@ -104,9 +111,18 @@ export class HostDirectory {
   }
 
   /** Every host, the home daemon first. */
+  /** The hosts this page can switch to. ssh hosts aren't among them: only
+   * a terminal reaches those (`sshOnly`). */
   get names(): string[] {
-    if (this.control) return this.list?.hosts.map((h) => h.name) ?? [];
-    return this.list ? [this.list.this, ...this.list.hosts.map((h) => h.name)] : [];
+    const reachable = (this.list?.hosts ?? []).filter((h) => h.transport !== "ssh").map((h) => h.name);
+    if (this.control) return reachable;
+    return this.list ? [this.list.this, ...reachable] : [];
+  }
+
+  /** ssh hosts (M51): listed so they aren't a surprise, reached from a
+   * terminal with `illogical --host NAME …`. */
+  get sshOnly(): Host[] {
+    return (this.list?.hosts ?? []).filter((h) => h.transport === "ssh");
   }
 
   /** Control mode: the daemons this browser checked, from control. */
@@ -194,6 +210,12 @@ export class HostDirectory {
       }
     } catch {
       this.stale = true;
+    }
+    try {
+      const res = await fetch("/api/host");
+      if (res.ok) this.joined = ((await res.json()) as { control?: string }).control ?? null;
+    } catch {
+      // Keep what we knew.
     }
     this.emit();
   }

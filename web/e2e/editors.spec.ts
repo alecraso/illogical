@@ -2,7 +2,8 @@
 // pins, downloaded into ~/.cache/illogical/code-server on first use). VS Code
 // opens from a pane's menu on that pane's directory, on the block's own
 // origin, in illogical's theme; `illogical edit FILE:LINE` opens a file in
-// under 3 s once the server is warm, on the desktop and a phone-sized page;
+// under 3 s once the server is warm, on the desktop, a Pixel 7 and an
+// iPhone (WebKit);
 // the extension reports the file and the cursor; the swarm shows the block
 // as an editor and opens one from a tile; the block survives a daemon
 // restart (and a "reboot", server and all) with the file still open; and a
@@ -11,15 +12,16 @@
 // third-party cookies, and so the block's storage (#69).
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { chromium, devices, expect, test, type FrameLocator, type Page } from "@playwright/test";
+import { chromium, expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { menu, paneEl, panes, ready, reset, run } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { tokenCookies } from "./local-token";
 import { ANY, blockPort, daemonPort } from "./ports";
+import { iphone, launchWebkit, pixel7 } from "./phones";
 
 let PORT = 0;
 let BLOCKS = 0;
@@ -34,6 +36,11 @@ let dir = "";
 let state = "";
 let proj = "";
 const AUTH = "crates/control/src/auth.rs";
+/** Lines of AUTH (a copy of the repo's, so they move as it changes): one
+ * that says Redirect, and STATE_COOKIE's. */
+const lineOf = (re: RegExp) => readFileSync(`../${AUTH}`, "utf8").split("\n").findIndex((l) => re.test(l)) + 1;
+const AT = lineOf(/\bRedirect\b/);
+const LATER = lineOf(/^const STATE_COOKIE/);
 const sh = promisify(execFile);
 let daemon: ChildProcess | undefined;
 
@@ -81,7 +88,9 @@ function stopServer() {
 }
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "ilg-e2e-editors-"));
+  // Resolved: macOS's temp dir is behind a symlink, and VS Code reports
+  // the real path.
+  dir = realpathSync(mkdtempSync(join(tmpdir(), "ilg-e2e-editors-")));
   state = join(dir, "state");
   proj = join(dir, "illogical");
   mkdirSync(join(proj, ".git"), { recursive: true });
@@ -143,7 +152,7 @@ test("illogical edit FILE:LINE: the file at its line in under 3 s once warm, rep
   await page.goto("/");
   await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
   const t0 = Date.now();
-  const block = JSON.parse((await cli("edit", `${AUTH}:20`)).stdout).block as PaneId;
+  const block = JSON.parse((await cli("edit", `${AUTH}:${AT}`)).stdout).block as PaneId;
   await expect.poll(() => page.evaluate((b) => !!window.__illogical.client.info(b), block)).toBe(true);
   await page.evaluate((b) => window.__illogical.client.setActive(b), block);
   const f = frame(page, block);
@@ -157,42 +166,68 @@ test("illogical edit FILE:LINE: the file at its line in under 3 s once warm, rep
   await expect.poll(async () => ((await blockState(page, block))?.lines as string[]).some((l) => l.includes("Redirect"))).toBe(true);
   const s = (await blockState(page, block))!;
   expect(s.file).toBe(AUTH);
-  expect(s.line).toBe(20);
+  expect(s.line).toBe(AT);
   expect(await page.evaluate((b) => window.__illogical.client.info(b)?.file, block)).toBe(AUTH);
   // It follows the cursor.
   await f.locator(".monaco-editor .view-lines").first().click();
   await page.keyboard.press("Control+g");
-  await page.keyboard.type("30");
+  await page.keyboard.type(`${LATER}`);
   await page.keyboard.press("Enter");
-  await expect.poll(async () => (await blockState(page, block))?.line).toBe(30);
+  await expect.poll(async () => (await blockState(page, block))?.line).toBe(LATER);
   expect(((await blockState(page, block))!.lines as string[]).some((l) => l.includes("STATE_COOKIE"))).toBe(true);
   // ...which is what a capture (the swarm's preview) shows.
   const text = await (await fetch(`${APP}/api/panes/${block}/capture`)).text();
-  expect(text.split("\n")[0]).toBe(`${AUTH}:30`);
+  expect(text.split("\n")[0]).toBe(`${AUTH}:${LATER}`);
   expect(text).toContain("STATE_COOKIE");
 });
 
-test("from a phone-sized page, a file opens in under 3 s once warm", async ({ browser }) => {
-  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: APP });
-  const page = await ctx.newPage();
+/** From a phone's page: open a file at a line (one that says Redirect) as
+ * an editor block, show it, and time it to the line drawn in VS Code. */
+async function openFromPhone(page: Page, line: number): Promise<number> {
   await page.goto("/");
   await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__illogical.client.state !== null)).toBe(true);
   const t0 = Date.now();
   const block = await page.evaluate(
-    async ([path, from]) => {
-      const res = await window.__illogical.client.request("POST", "/api/blocks", { type: "editor", config: { path, line: 20 }, from_pane: from });
+    async ([path, from, line]) => {
+      const res = await window.__illogical.client.request("POST", "/api/blocks", { type: "editor", config: { path, line }, from_pane: from });
       return (await res.json<{ block: number }>()).block;
     },
-    [join(proj, AUTH), term] as const,
+    [join(proj, AUTH), term, line] as const,
   );
   await expect.poll(() => page.evaluate((b) => !!window.__illogical.client.info(b), block)).toBe(true);
   await page.evaluate((b) => window.__illogical.client.setActive(b), block);
+  // The phone draws one pane at a time: this one, filling the screen.
+  await expect(page.locator(".pane")).toHaveCount(1);
+  await expect(page.locator(`[data-pane="${block}"]`)).toBeVisible();
   await expect(shown(frame(page, block), "Redirect")).toBeVisible({ timeout: 10_000 });
   const ms = Date.now() - t0;
-  console.log(`phone-sized: ${AUTH} shown ${ms} ms after opening`);
+  await expect.poll(async () => (await blockState(page, block))?.line).toBe(line);
+  return ms;
+}
+
+// #214 section 6: from a phone context (touch, mobile, its own size), on a
+// warm server. Chrome as a Pixel 7.
+test("from a Pixel 7, a file opens in under 3 s once warm", async ({ browser }) => {
+  const ctx = await browser.newContext({ ...pixel7, baseURL: APP, storageState: { cookies: tokenCookies, origins: [] } });
+  const ms = await openFromPhone(await ctx.newPage(), AT);
+  console.log(`Pixel 7: ${AUTH} shown ${ms} ms after opening`);
   expect(ms).toBeLessThan(3000);
   await ctx.close();
+});
+
+// And Safari's engine as an iPhone (Playwright's WebKit: the app on
+// 127.0.0.1 and the block on *.localhost are other sites there too).
+test("from an iPhone (WebKit), a file opens in under 3 s once warm", async () => {
+  const browser = await launchWebkit();
+  try {
+    const ctx = await browser.newContext({ ...iphone, baseURL: APP, storageState: { cookies: tokenCookies, origins: [] } });
+    const ms = await openFromPhone(await ctx.newPage(), AT);
+    console.log(`iPhone: ${AUTH} shown ${ms} ms after opening`);
+    expect(ms).toBeLessThan(3000);
+  } finally {
+    await browser.close();
+  }
 });
 
 test("from another site, in a browser that blocks third-party cookies: the file at its line (#69)", async () => {
@@ -210,7 +245,7 @@ test("from another site, in a browser that blocks third-party cookies: the file 
     await page.goto("/");
     await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
     const nav = page.waitForRequest((r) => r.isNavigationRequest() && r.frame() !== page.mainFrame() && r.url().includes("workspace="));
-    const block = JSON.parse((await cli("edit", `${AUTH}:20`)).stdout).block as PaneId;
+    const block = JSON.parse((await cli("edit", `${AUTH}:${AT}`)).stdout).block as PaneId;
     await expect.poll(() => page.evaluate((b) => !!window.__illogical.client.info(b), block)).toBe(true);
     await page.evaluate((b) => window.__illogical.client.setActive(b), block);
     // A cross-site frame, refused its storage.
@@ -220,7 +255,7 @@ test("from another site, in a browser that blocks third-party cookies: the file 
     const f = frame(page, block);
     await expect(shown(f, "Redirect")).toBeVisible({ timeout: 30_000 });
     await expect(f.locator(".tab.active", { hasText: "auth.rs" })).toBeVisible();
-    await expect.poll(async () => (await blockState(page, block))?.line).toBe(20);
+    await expect.poll(async () => (await blockState(page, block))?.line).toBe(AT);
   } finally {
     await ctx.close();
   }
@@ -258,11 +293,11 @@ test("the block survives a daemon restart, and a reboot, with the file still ope
   test.setTimeout(120_000);
   await page.goto("/");
   await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
-  const block = JSON.parse((await cli("edit", `${AUTH}:30`)).stdout).block as PaneId;
+  const block = JSON.parse((await cli("edit", `${AUTH}:${LATER}`)).stdout).block as PaneId;
   await expect.poll(() => page.evaluate((b) => !!window.__illogical.client.info(b), block)).toBe(true);
   await page.evaluate((b) => window.__illogical.client.setActive(b), block);
   await expect(shown(frame(page, block), "STATE_COOKIE")).toBeVisible({ timeout: 10_000 });
-  await expect.poll(async () => (await blockState(page, block))?.line).toBe(30);
+  await expect.poll(async () => (await blockState(page, block))?.line).toBe(LATER);
 
   // A restart: the page reconnects, the same VS Code session carries on.
   await stop();

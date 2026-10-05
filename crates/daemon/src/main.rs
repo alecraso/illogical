@@ -18,6 +18,7 @@ mod forge;
 mod fountain;
 mod fs;
 mod gate;
+mod guest_ssh;
 mod heap;
 mod history;
 mod holder;
@@ -39,8 +40,10 @@ mod provider_tunnel;
 mod push;
 mod remote;
 mod resident;
+mod resume;
 mod review;
 mod roots;
+mod rules;
 mod sandbox;
 mod seal;
 mod server;
@@ -78,7 +81,10 @@ struct Args {
 enum Command {
     /// Install as a service that starts at boot (a systemd user service) or
     /// at login (a launchd agent on macOS): copies this binary to
-    /// ~/.local/bin, writes the unit or plist, enables and (re)starts it.
+    /// ~/.local/bin, writes the unit or plist, enables and (re)starts it. On
+    /// a Mac with no GUI login (reached over ssh) the agent runs in the
+    /// background session: it outlives the ssh login but not a reboot;
+    /// --system starts it at boot instead.
     /// With --tailnet (sandboxes, no systemd): joins the tailnet with a
     /// userspace tailscaled and runs the daemon there, both kept running by
     /// `illogicald sandbox`.
@@ -86,6 +92,12 @@ enum Command {
         /// Write and enable the unit without starting it now.
         #[arg(long)]
         no_start: bool,
+        /// macOS: a LaunchDaemon that runs it as you from boot, with nobody
+        /// logged in (/Library/LaunchDaemons/illogicald.USER.plist). Runs
+        /// sudo, which may ask for your password. `illogicald uninstall`
+        /// removes it.
+        #[arg(long, conflicts_with = "tailnet")]
+        system: bool,
         /// A Tailscale auth key (ephemeral, tagged), as `file:PATH`, `-` for
         /// stdin, or the key itself (kept off command lines it starts).
         #[arg(long, value_name = "AUTHKEY")]
@@ -119,6 +131,10 @@ enum Command {
         #[arg(last = true)]
         daemon_args: Vec<String>,
     },
+    /// Stop the service `install` set up and remove it (the LaunchAgent, the
+    /// background agent or the --system LaunchDaemon, which needs sudo; on
+    /// Linux the systemd user service). The binaries and panes' state stay.
+    Uninstall,
     /// Keep tailscaled and the daemon running, as `install --tailnet` set
     /// them up (for machines without systemd); stops on SIGTERM.
     Sandbox,
@@ -198,6 +214,11 @@ struct RunArgs {
     #[arg(long = "direct-url", env = "ILLOGICAL_DIRECT_URL", value_delimiter = ',')]
     direct_urls: Vec<String>,
 
+    /// The control Getting started's *Connect* button joins (#207): your
+    /// own, say. `illogicald join URL` takes any control regardless.
+    #[arg(long = "control", env = "ILLOGICAL_CONTROL", value_name = "URL", default_value = setup::CONTROL)]
+    control_url: String,
+
     /// Extra origins whose pages may use this daemon (WebSocket and API),
     /// exactly as the browser sends them: the Vite dev server, or the home
     /// daemon whose host list this daemon is on (`https://geek.….ts.net`).
@@ -218,6 +239,16 @@ struct RunArgs {
     /// at once; their panes run on VMs, never this machine.
     #[arg(long, default_value_t = 3, env = "ILLOGICAL_GUEST_MACHINES")]
     guest_machines: usize,
+
+    /// Where the ssh server for invited guests listens (M65: `illogical
+    /// share --guest`), only while an invite exists; `off` turns the feature
+    /// off. Port 0 picks a free one.
+    #[arg(long, env = "ILLOGICAL_GUEST_SSH", default_value = guest_ssh::DEFAULT_LISTEN)]
+    guest_ssh: String,
+
+    /// The address guests are told to ssh to [default: the hostname].
+    #[arg(long, env = "ILLOGICAL_GUEST_SSH_HOST")]
+    guest_ssh_host: Option<String>,
 
     /// Command line for panes, split on whitespace [default: $SHELL -l].
     #[arg(long)]
@@ -630,12 +661,33 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
 }
 
+/// `ILLOGICAL_LOG_FILE`: stdout and stderr appended to that file (a
+/// leading `~/` is the home directory). The desktop app's launch agent
+/// sets it (M46): launchd can't put a log in each user's home itself.
+fn log_to_file() {
+    let Some(path) = std::env::var_os("ILLOGICAL_LOG_FILE").filter(|p| !p.is_empty()) else { return };
+    let path = PathBuf::from(path);
+    let path = match path.strip_prefix("~") {
+        Ok(rest) => home().join(rest),
+        Err(_) => path,
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else { return };
+    let _ = nix::unistd::dup2_stdout(&f);
+    let _ = nix::unistd::dup2_stderr(&f);
+    // Panes don't inherit it.
+    unsafe { std::env::remove_var("ILLOGICAL_LOG_FILE") };
+}
+
 fn main() -> anyhow::Result<()> {
     // The pane shim forks, so it runs before any threads exist.
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("_shim") {
         shim::run(&argv[2..]);
     }
+    log_to_file();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogicald=info".into()),
@@ -668,9 +720,10 @@ fn main() -> anyhow::Result<()> {
         }) => {
             sandbox::install(sandbox::TailnetOpts { authkey, hostname, home, join, owner, port, no_serve, daemon_args })
         }
-        Some(Command::Install { no_start, reset_args, daemon_args, .. }) => {
-            install::install(!no_start, &daemon_args, reset_args)
+        Some(Command::Install { no_start, reset_args, system, daemon_args, .. }) => {
+            install::install(!no_start, &daemon_args, reset_args, system)
         }
+        Some(Command::Uninstall) => install::uninstall(),
         Some(Command::Sandbox) => sandbox::supervise(),
         Some(Command::Join { url, name, team, account, ticket, state_dir }) => {
             let name = name.unwrap_or_else(|| {
@@ -910,7 +963,13 @@ async fn run(
         }
     });
     let mcp_serve = mcp_link.as_ref().map(|l| l.serve.clone());
-    let control = control::Control::new(&state_dir, direct_urls.clone(), acl.clone(), args.no_relay);
+    let control = control::Control::new(
+        &state_dir,
+        direct_urls.clone(),
+        args.control_url.trim_end_matches('/').to_owned(),
+        acl.clone(),
+        args.no_relay,
+    );
     // M40: forge blocks' live updates (control's GitHub App, hooks here).
     forge::live::init(state_dir.clone(), Some(&control), direct_urls.clone());
     // Claude Code's IDE (M28): its relay keeps the connections.
@@ -955,6 +1014,11 @@ async fn run(
     let hosts = hosts::Hosts::open(&state_dir, name.clone(), provider);
     hosts.spawn_probe();
     let shares = share::Shares::open(&state_dir);
+    let guest_listen = match args.guest_ssh.as_str() {
+        "off" => None,
+        a => Some(a.parse::<SocketAddr>().map_err(|e| anyhow::anyhow!("--guest-ssh {a}: {e}"))?),
+    };
+    let guests = guest_ssh::Guests::open(&state_dir, guest_listen, args.guest_ssh_host.clone());
     let synced = sync::Synced::new(&state_dir, args.reach.sync_key_file.clone());
     synced.prune(sync::RETAIN_MS);
     let static_dir = args.static_dir.clone().unwrap_or_else(|| {
@@ -976,7 +1040,9 @@ async fn run(
         control.clone(),
         acl.clone(),
         mcp_tokens,
+        guests,
     );
+    app.guests.run(&app);
     control.start(app.clone());
     if let Some(serve) = mcp_serve {
         let _ = serve.set(mcp::pipe_server(&app));

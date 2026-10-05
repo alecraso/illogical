@@ -17,6 +17,7 @@ import { openSandboxes } from "./sandboxes";
 import { openPicker } from "./picker";
 import { NotifySection } from "./notify";
 import { openGettingStarted } from "./welcome";
+import { openPalette } from "./palette";
 
 export function PhoneHeader({ client }: { client: Client }) {
   const [open, setOpen] = useState(false);
@@ -117,6 +118,9 @@ function Sheet({ client, close }: { client: Client; close: () => void }) {
           )}
           <button data-open-swarm onClick={act(openSwarm)}>
             Swarm
+          </button>
+          <button data-open-palette onClick={act(() => openPalette(client, true))}>
+            Commands
           </button>
         </div>
         <HostSection close={close} />

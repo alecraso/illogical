@@ -79,7 +79,18 @@ vs team machines and sharing a session:
 
    It then shows every machine in your account and your teams, like any
    other device. The sign-in link is good for ten minutes and works once.
-5. **Remove a device or machine** from *Devices and machines…* in the host
+5. **Use the command line.** `illogical login` makes the CLI one of your
+   devices: it shows a link with a code, you approve it on a signed-in
+   device (*Add a terminal?*), and it shows your account's fingerprint to
+   check, as a machine does (`--account FINGERPRINT` answers ahead). Then
+   `illogical hosts` lists your machines from control (next to the local
+   daemon's own list), and `illogical --host NAME run|ls|capture …`
+   reaches any of them, directly when it lists a URL that answers, else
+   through the relay, with nothing in `hosts.json`. `ILLOGICAL_VERBOSE=1`
+   says which. `attach` and `tui` don't go through control yet.
+   `illogical logout` forgets the CLI's key; remove it under *Devices and
+   machines…* to revoke it.
+6. **Remove a device or machine** from *Devices and machines…* in the host
    menu. It loses access at once. A removed machine keeps running
    illogical, reachable only locally; `illogicald join` adds it back.
 
@@ -92,6 +103,10 @@ vs team machines and sharing a session:
 - Chrome asks once for permission to reach your local network when a
   machine has a tailnet or LAN address. Without that permission, it uses
   the relay.
+
+A joined machine's own page doesn't list your other machines (that would
+make it a hub): its host menu has *All your machines…*, which opens
+control's page.
 
 **Leaving.** `illogicald leave` takes a machine off your account (or its
 team). illogical keeps running there, at `http://127.0.0.1:7681`.
@@ -217,7 +232,9 @@ illogical-control --public-url https://control.example.com --listen 127.0.0.1:76
   continuously with Litestream (below).
 
 Daemons join a self-hosted control the same way:
-`illogicald join https://control.example.com`.
+`illogicald join https://control.example.com`. To have Getting started's
+*Connect* button join it too, start the daemon with
+`--control https://control.example.com` (or `ILLOGICAL_CONTROL`).
 
 ## Operating the hosted one
 

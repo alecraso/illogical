@@ -1,7 +1,7 @@
 // Control end to end without a browser UI: a fake GitHub, illogical-control,
-// a daemon that joins it, and a "browser" (this script, with the web
-// client's own e2e code) that signs in, enrolls, approves the daemon's
-// code, and reaches the daemon both directly and through the relay.
+// a daemon that joins it, and "browsers" (fixtures/device.ts, the web
+// client's own e2e code without a page) that sign in, enroll, approve the
+// daemon's code, and reach the daemon both directly and through the relay.
 //   just control-smoke
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -10,10 +10,12 @@ import { createServer as createTcp, connect } from "node:net";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { certBody, evaluate, joinCode, type Cert } from "./src/e2e/cert.ts";
-import { generateKeys, signText, type DeviceKeys } from "./src/e2e/keys.ts";
+import { joinCode } from "./src/e2e/cert.ts";
+import { generateKeys, signText } from "./src/e2e/keys.ts";
 import { E2ESocket } from "./src/e2e/channel.ts";
 import { signRoster } from "./src/e2e/team.ts";
+import { Device } from "./fixtures/device.ts";
+import { fakeGithub, fakePush, fakeStripe } from "./fixtures/fakes.ts";
 import { createHmac } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
@@ -28,8 +30,6 @@ async function freePort(): Promise<number> {
 }
 const [CONTROL, GITHUB, DAEMON, SPY, PUSH, STRIPE, SPRITES, DAEMON2] = await Promise.all(Array.from({ length: 8 }, freePort));
 const WHSEC = "whsec_smoke";
-// Who the fake GitHub signs in next.
-let asUser = "stranger";
 const base = `http://127.0.0.1:${CONTROL}`;
 const target = process.env.TARGET_DIR ?? "../target/debug";
 const procs: ChildProcess[] = [];
@@ -46,21 +46,9 @@ const temp = (w: string) => {
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// A fake GitHub: authorize redirects straight back; one user.
-const gh = createServer((req, res) => {
-  const u = new URL(req.url!, `http://127.0.0.1:${GITHUB}`);
-  if (u.pathname === "/login/oauth/authorize") {
-    const back = new URL(u.searchParams.get("redirect_uri")!);
-    back.searchParams.set("code", "c0de");
-    back.searchParams.set("state", u.searchParams.get("state")!);
-    res.writeHead(302, { location: back.href }).end();
-  } else if (u.pathname === "/login/oauth/access_token") {
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ access_token: "gho_test" }));
-  } else if (u.pathname === "/user") {
-    const id = [...asUser].reduce((h, c) => h * 31 + c.charCodeAt(0), 7);
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id, login: asUser }));
-  } else res.writeHead(404).end();
-}).listen(GITHUB, "127.0.0.1");
+// A fake GitHub: authorize redirects straight back, signing in whoever
+// the device asks for.
+const gh = fakeGithub(GITHUB);
 
 async function up(url: string) {
   for (let i = 0; i < 100; i++) {
@@ -72,42 +60,6 @@ async function up(url: string) {
     await sleep(100);
   }
   throw new Error(`${url} didn't come up`);
-}
-
-let cookie = "";
-async function api<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(base + path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { cookie, origin: base, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const j = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`${path}: ${res.status} ${JSON.stringify(j)}`);
-  return j as T;
-}
-
-async function signIn() {
-  // Follow the redirects by hand, keeping cookies.
-  let url = `${base}/auth/github?next=/`;
-  let jar: Record<string, string> = {};
-  for (let i = 0; i < 5; i++) {
-    const res = await fetch(url, { redirect: "manual", headers: { cookie: Object.entries(jar).map(([k, v]) => `${k}=${v}`).join("; ") } });
-    for (const c of res.headers.getSetCookie()) {
-      const [kv] = c.split(";");
-      const [k, v] = kv.split("=");
-      jar = { ...jar, [k]: v };
-    }
-    const loc = res.headers.get("location");
-    if (!loc) break;
-    url = new URL(loc, url).href;
-  }
-  cookie = `ilg_session=${jar.ilg_session}`;
-}
-
-async function cert(k: DeviceKeys, by: DeviceKeys, account: string, kind: Cert["kind"], name: string): Promise<Cert> {
-  const c: Cert = { v: 1, account, device: k.id, kind, name, noise: k.noisePub, sign: k.signPub, created: Date.now(), approver: by.id, sig: "" };
-  c.sig = await signText(by, certBody(c));
-  return c;
 }
 
 try {
@@ -144,29 +96,26 @@ try {
   }).listen(SPY, "127.0.0.1");
 
   // 1. Sign in; the first device is self-signed.
-  await signIn();
-  const me = await api<{ account: string; login: string }>("/api/me");
+  const me = await Device.signIn({ control: base, login: "stranger", name: "laptop" });
   check("signed in with (fake) GitHub", me.login === "stranger", me.account);
-  const laptop = await generateKeys();
-  const root = await cert(laptop, laptop, me.account, "browser", "laptop");
-  const first = await api<{ approved: boolean }>("/api/devices", { cert: root });
-  check("first device trusted on enrollment", first.approved);
+  check("first device trusted on enrollment", me.approved);
+  const laptop = me.keys;
 
-  // 2. A phone asks; only an approval from the laptop lets it in.
-  const phone = await generateKeys();
-  const ask: Cert = { v: 1, account: me.account, device: phone.id, kind: "browser", name: "phone", noise: phone.noisePub, sign: phone.signPub, created: Date.now(), approver: "", sig: "" };
-  const pending = await api<{ approved: boolean }>("/api/devices", { cert: ask });
-  check("second device waits for approval", !pending.approved);
-  const forged = await cert(phone, phone, me.account, "browser", "phone");
-  const refused = await api(`/api/devices/${phone.id}/approve`, { cert: forged }).then(() => false, () => true);
+  // 2. A phone asks; only an approval from the laptop lets it in. It talks
+  // to control through the spy, so the relay leg below is on the wire.
+  const phoneDev = await Device.signIn({ control: base, via: { [base]: `http://127.0.0.1:${SPY}` }, login: "stranger", name: "phone" });
+  const phone = phoneDev.keys;
+  check("second device waits for approval", !phoneDev.approved);
+  const forged = await phoneDev.sign(phone, "browser", "phone");
+  const refused = await me.api(`/api/devices/${phone.id}/approve`, { cert: forged }).then(() => false, () => true);
   check("a self-approval is refused", refused);
-  await api(`/api/devices/${phone.id}/approve`, { cert: await cert(phone, laptop, me.account, "browser", "phone") });
-  const devs = await api<{ trust: { account: string; root: string }; certs: Cert[] }>("/api/devices");
-  check("phone approved by the laptop", (await evaluate(devs.trust, devs.certs)).has(phone.id));
+  await me.approveDevice(phoneDev);
+  check("phone approved by the laptop", (await me.trusted()).has(phone.id));
 
   // 3. A daemon joins with a code. It takes the account only if its
   // fingerprint is the one the person expects (`--account`, else it asks).
-  const joinAs = async (name: string, state: string, account: string) => {
+  // The phone approves it.
+  const joinAs = async (name: string, state: string, account: string, by: Device = phoneDev) => {
     const joining = spawn(`${target}/illogicald`, ["join", base, "--name", name, "--state-dir", state, "--account", account], { stdio: ["ignore", "pipe", "inherit"] });
     procs.push(joining);
     const code = await new Promise<string>((res) => {
@@ -177,11 +126,8 @@ try {
         if (m) res(m[1]);
       });
     });
-    const shown = await api<{ cert: Cert }>(`/api/joins/${code}`);
-    check("join code matches the daemon's key", (await joinCode(shown.cert)) === code, code);
-    const dk = { ...shown.cert, account: me.account, approver: phone.id, sig: "" };
-    dk.sig = await signText(phone, certBody(dk));
-    await api(`/api/joins/${code}/approve`, { cert: dk });
+    const approved = await by.approveJoin(code);
+    check("join code matches the daemon's key", (await joinCode(approved)) === code, code);
     return new Promise<number>((r) => joining.on("exit", r));
   };
   const state = temp("daemon");
@@ -195,66 +141,96 @@ try {
       ...["--direct-url", `http://127.0.0.1:${DAEMON}`, "--no-claude-ide"],
     ], { stdio: process.env.DAEMON_LOG ? ["ignore", "inherit", "inherit"] : "ignore" }),
   );
-  let dir: { daemons: { id: string; name: string; online: boolean; urls: string[] }[] } = { daemons: [] };
-  for (let i = 0; i < 50 && !dir.daemons[0]?.online; i++) {
-    await sleep(200);
-    dir = await api("/api/directory");
-  }
-  check("directory lists the daemon, online", dir.daemons[0]?.online === true, JSON.stringify(dir.daemons[0]));
-  const d = dir.daemons[0];
-  const all = await api<{ trust: { account: string; root: string }; certs: Cert[] }>("/api/devices");
-  const dcert = (await evaluate(all.trust, all.certs)).get(d.id);
+  const d = await me.waitOnline("box", 10_000).catch(() => undefined);
+  check("directory lists the daemon, online", d?.online === true, JSON.stringify(d));
+  const dcert = (await me.trusted()).get(d!.id);
   check("the daemon's certificate chains to our root", dcert?.kind === "daemon");
 
   // 5. Reach it through the relay (with the session cookie), then directly.
-  const relayUrl = `ws://127.0.0.1:${SPY}/api/relay/c/${d.id}`;
-  for (const [how, url, headers] of [
-    ["relayed", relayUrl, { cookie, origin: base }],
-    ["direct", `ws://127.0.0.1:${DAEMON}/e2e`, {}],
+  for (const [how, direct] of [
+    ["relayed", undefined],
+    ["direct", `ws://127.0.0.1:${DAEMON}/e2e`],
   ] as const) {
-    const orig = globalThis.WebSocket;
-    // Node's WebSocket (undici) takes headers as a second argument.
-    globalThis.WebSocket = class extends orig {
-      constructor(u: string | URL) {
-        super(u, { headers } as unknown as string[]);
-      }
-    } as typeof WebSocket;
-    try {
-      const sock = await E2ESocket.connect([{ url, timeoutMs: 3000 }], { id: d.id, noise: dcert!.noise }, phone);
-      const host = await sock.request("GET", "/api/host");
-      check(`${how}: API through the channel`, host.ok, host.text().slice(0, 60));
-      const texts: string[] = [];
-      sock.onText = (t) => texts.push(t);
-      sock.start();
-      for (let i = 0; i < 30 && !texts.some((t) => t.includes('"hello"')); i++) await sleep(100);
-      check(`${how}: the protocol's hello`, texts.some((t) => t.includes('"hello"')));
-      if (how === "relayed") {
-        // Type into a pane through the relay and read the output.
-        const hello = JSON.parse(texts.find((t) => t.includes('"hello"'))!);
-        const pane: number = hello.state.panes[0].id;
+    const sock = await phoneDev.connect(d!.id, direct, 3000);
+    const host = await sock.request("GET", "/api/host");
+    check(`${how}: API through the channel`, host.ok, host.text().slice(0, 60));
+    const texts: string[] = [];
+    sock.onText = (t) => texts.push(t);
+    sock.start();
+    for (let i = 0; i < 30 && !texts.some((t) => t.includes('"hello"')); i++) await sleep(100);
+    check(`${how}: the protocol's hello`, texts.some((t) => t.includes('"hello"')));
+    sock.close();
+  }
+  // Type into a pane through the relay and read the output.
+  const echoed = await phoneDev.roundTrip(d!.id, "SECRET-MARKER", { timeoutMs: 5000 }).catch((e: Error) => e.message);
+  check("relayed: a command's output comes back", echoed.includes("SECRET-MARKER-42"));
+
+  // 5b. The CLI (M49): `illogical login` shows a code, the laptop approves
+  // it, and with no daemon of its own (so nothing in any hosts.json) it
+  // reaches the account's machines by name: "box" straight at its URL, and
+  // "box2", which lists none, through the relay.
+  {
+    const home = temp("cli");
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_STATE_HOME: join(home, ".state"), ILLOGICAL_SOCK: join(home, "no-daemon.sock"), ILLOGICAL_VERBOSE: "1" };
+    const cli = (args: string[]) =>
+      new Promise<{ code: number; out: string; err: string }>((res) => {
+        const p = spawn(`${target}/illogical`, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+        procs.push(p);
         let out = "";
-        sock.onBinary = (b) => {
-          if (b[0] === 1 || b[0] === 2) out += new TextDecoder().decode(b.subarray(13));
-        };
-        sock.sendText(JSON.stringify({ type: "attach", panes: [{ pane, offset: null }] }));
-        const input = new TextEncoder().encode("echo SECRET-MARKER-$((6*7))\n");
-        const frame = new Uint8Array(13 + input.length);
-        frame[0] = 3;
-        new DataView(frame.buffer).setUint32(1, pane);
-        frame.set(input, 13);
-        sock.sendBinary(frame);
-        for (let i = 0; i < 50 && !out.includes("SECRET-MARKER-42"); i++) await sleep(100);
-        check("relayed: a command's output comes back", out.includes("SECRET-MARKER-42"));
+        let err = "";
+        p.stdout!.on("data", (d) => (out += d));
+        p.stderr!.on("data", (d) => (err += d));
+        p.on("exit", (code) => res({ code: code ?? 1, out, err }));
+      });
+    const state2b = temp("daemon-box2");
+    check("illogicald join finished (box2)", (await joinAs("box2", state2b, laptop.id)) === 0);
+    procs.push(
+      spawn(`${target}/illogicald`, [
+        ...["--listen", "127.0.0.1:0", "--name", "box2", "--state-dir", state2b],
+        ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent", "--no-claude-ide"],
+      ], { stdio: "ignore" }),
+    );
+    await me.waitOnline("box2", 10_000).catch(() => undefined);
+    const before = await cli(["--host", "box", "ls"]);
+    check("before logging in, the CLI can't find box and says how to", before.code !== 0 && before.err.includes("illogical login"), before.err.trim());
+    const login = spawn(`${target}/illogical`, ["login", base, "--name", "smoke cli", "--account", laptop.id], { env, stdio: ["ignore", "pipe", "inherit"] });
+    procs.push(login);
+    let said = "";
+    const cliCode = await new Promise<string>((res) => {
+      login.stdout!.on("data", (d) => {
+        said += d;
+        const m = said.match(/#join=([A-Z0-9]{5}-[A-Z0-9]{5})/);
+        if (m) res(m[1]);
+      });
+    });
+    const approvedCli = await me.approveJoin(cliCode);
+    check("the CLI's code is its key's, and it's a cli device", approvedCli.kind === "cli" && (await joinCode(approvedCli)) === cliCode, cliCode);
+    const loginExit = await new Promise<number>((r) => login.on("exit", (c) => r(c ?? 1)));
+    check("illogical login finished", loginExit === 0 && said.includes("Logged in."), said.split("\n").slice(-3).join(" "));
+    check("the CLI is one of the account's devices", (await me.trusted()).get(approvedCli.device)?.kind === "cli");
+    const hosts = await cli(["hosts"]);
+    check("illogical hosts lists control's machines, marked", /box\s.*direct.*\(control: /.test(hosts.out) && /box2\s.*relayed.*\(control: /.test(hosts.out), hosts.out.trim());
+    for (const [name, how] of [
+      ["box", "direct"],
+      ["box2", "relayed"],
+    ] as const) {
+      const run = await cli(["--host", name, "--json", "run", "--", `echo M49-${name}-$((6*7))`]);
+      const pane = run.code === 0 ? (JSON.parse(run.out) as { pane: number }).pane : undefined;
+      check(`--host ${name} run: ${how}`, pane !== undefined && run.err.includes(`${name}: ${how}`), (run.err + run.out).trim().slice(0, 200));
+      const ls = await cli(["--host", name, "ls"]);
+      check(`--host ${name} ls`, ls.code === 0 && ls.out.includes(`%${pane}`), (ls.err + ls.out).trim().slice(0, 200));
+      let cap = { code: 1, out: "", err: "" };
+      for (let i = 0; i < 30 && !cap.out.includes(`M49-${name}-42`); i++) {
+        cap = await cli(["--host", name, "capture", `${pane}`]);
+        await sleep(200);
       }
-      sock.close();
-    } finally {
-      globalThis.WebSocket = orig;
+      check(`--host ${name} capture`, cap.out.includes(`M49-${name}-42`), (cap.err + cap.out).trim().slice(-200));
     }
   }
 
   // 6. A device the account doesn't trust gets nowhere.
   const stranger = await generateKeys();
-  const nope = await E2ESocket.connect([{ url: `ws://127.0.0.1:${DAEMON}/e2e`, timeoutMs: 3000 }], { id: d.id, noise: dcert!.noise }, stranger).then(
+  const nope = await E2ESocket.connect([{ url: `ws://127.0.0.1:${DAEMON}/e2e`, timeoutMs: 3000 }], { id: d!.id, noise: dcert!.noise }, stranger).then(
     () => false,
     () => true,
   );
@@ -262,41 +238,23 @@ try {
   // 6b. Push through control (M21): the phone subscribes once (signed by
   // its device key); a pane that needs you reaches it, encrypted for it
   // alone by the daemon.
-  const pushed: { headers: Record<string, string | string[] | undefined>; body: Buffer }[] = [];
-  const fakePush = createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => {
-      pushed.push({ headers: req.headers, body: Buffer.concat(chunks) });
-      res.writeHead(201).end();
-    });
-  }).listen(PUSH, "127.0.0.1");
+  const { server: pushServer, pushed } = fakePush(PUSH);
   const subKeys = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
   const uaPublic = new Uint8Array(await crypto.subtle.exportKey("raw", subKeys.publicKey));
   const authSecret = crypto.getRandomValues(new Uint8Array(16));
   const b64u = (b: Uint8Array) => Buffer.from(b).toString("base64url");
   const sub = { v: 1, account: me.account, device: phone.id, endpoint: `http://127.0.0.1:${PUSH}/push/phone`, p256dh: b64u(uaPublic), auth: b64u(authSecret), at: Date.now(), sig: "" };
   sub.sig = await signText(phone, `illogical push v1\naccount ${sub.account}\ndevice ${sub.device}\nendpoint ${sub.endpoint}\np256dh ${sub.p256dh}\nauth ${sub.auth}\nat ${sub.at}\n`);
-  await api("/api/push/subscribe", { sub });
+  await phoneDev.api("/api/push/subscribe", { sub });
   const swapped = { ...sub, p256dh: b64u(crypto.getRandomValues(new Uint8Array(65))) };
-  check("a subscription with swapped keys is refused", await api("/api/push/subscribe", { sub: swapped }).then(() => false, () => true));
+  check("a subscription with swapped keys is refused", await phoneDev.api("/api/push/subscribe", { sub: swapped }).then(() => false, () => true));
   await sleep(1500); // the daemon fetches it (control nudges it)
   {
-    const orig = globalThis.WebSocket;
-    globalThis.WebSocket = class extends orig {
-      constructor(u: string | URL) {
-        super(u, { headers: { cookie, origin: base } } as unknown as string[]);
-      }
-    } as typeof WebSocket;
-    try {
-      const sock = await E2ESocket.connect([{ url: relayUrl, timeoutMs: 3000 }], { id: d.id, noise: dcert!.noise }, laptop);
-      const panes = (await (await sock.request("GET", "/api/panes")).json<{ id: number }[]>());
-      const r = await sock.request("POST", `/api/panes/${panes[0].id}/attention`, { state: "needs_input" });
-      check("set a pane to need you", r.ok);
-      sock.close();
-    } finally {
-      globalThis.WebSocket = orig;
-    }
+    const sock = await me.connect(d!.id, undefined, 3000);
+    const panes = (await (await sock.request("GET", "/api/panes")).json<{ id: number }[]>());
+    const r = await sock.request("POST", `/api/panes/${panes[0].id}/attention`, { state: "needs_input" });
+    check("set a pane to need you", r.ok);
+    sock.close();
   }
   for (let i = 0; i < 50 && !pushed.length; i++) await sleep(100);
   check("the push service got one notification", pushed.length === 1, `${pushed.length}`);
@@ -322,9 +280,9 @@ try {
     const aes = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["decrypt"]);
     const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, aes, ct));
     const msg = JSON.parse(new TextDecoder().decode(plain.subarray(0, plain.lastIndexOf(2))));
-    check("the phone reads it: Needs you, which pane, which daemon", msg.title === "Needs you" && msg.daemon === d.id, JSON.stringify(msg));
+    check("the phone reads it: Needs you, which pane, which daemon", msg.title === "Needs you" && msg.daemon === d!.id, JSON.stringify(msg));
   }
-  fakePush.close();
+  pushServer.close();
 
   // 7. Control never saw it: not on the wire, not in its database, not in
   // its logs.
@@ -347,24 +305,10 @@ try {
 
   // 8. Billing (M22). The free account used the relay past its allowance
   // (none, here): it's told.
-  const bill = await api<{ relay: { warning: boolean; slowed: boolean; bytes: number } }>("/api/billing");
+  const bill = await me.api<{ relay: { warning: boolean; slowed: boolean; bytes: number } }>("/api/billing");
   check("a free account over its relay allowance sees the warning", bill.relay.warning && bill.relay.bytes > 0, JSON.stringify(bill.relay));
   // A fake Stripe: records what control asks for.
-  const stripeCalls: { path: string; form: URLSearchParams }[] = [];
-  const fakeStripe = createServer((req, res) => {
-    let body = "";
-    req.on("data", (d) => (body += d));
-    req.on("end", () => {
-      const path = req.url!.split("?")[0];
-      stripeCalls.push({ path, form: new URLSearchParams(body) });
-      const reply = (v: unknown) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(v));
-      if (path === "/v1/customers") reply({ id: "cus_1" });
-      else if (path === "/v1/checkout/sessions") reply({ id: "cs_1", url: "https://checkout.stripe.test/cs_1" });
-      else if (path === "/v1/subscriptions/sub_1")
-        reply({ id: "sub_1", items: { data: [{ id: "si_seat", price: { id: "price_seat" } }, { id: "si_min", price: { id: "price_min" } }] } });
-      else reply({});
-    });
-  }).listen(STRIPE, "127.0.0.1");
+  const { server: stripeServer, calls: stripeCalls } = fakeStripe(STRIPE);
   // A fake Sprites API that can't make anything (a sandbox still counts
   // from when it's asked for until it's deleted).
   const fakeSprites = createServer((req, res) => res.writeHead(req.method === "DELETE" ? 204 : 500).end()).listen(SPRITES, "127.0.0.1");
@@ -374,10 +318,10 @@ try {
     { v: 1, team, name: "Acme", version: 1, at: Date.now(), members: [{ account: me.account, root: laptop.id, role: "owner", name: "stranger" }] },
     laptop,
   );
-  await api("/api/teams", { roster: v1 });
+  await me.api("/api/teams", { roster: v1 });
   // Hosted VMs need a paid plan once billing is on.
-  check("hosted VMs need a paid plan", await api("/api/sandboxes", { device: laptop.id }).then(() => false, (e: Error) => /paid plan/.test(e.message)));
-  const co = await api<{ url: string }>("/api/billing/checkout", { team });
+  check("hosted VMs need a paid plan", await me.api("/api/sandboxes", { device: laptop.id }).then(() => false, (e: Error) => /paid plan/.test(e.message)));
+  const co = await me.api<{ url: string }>("/api/billing/checkout", { team });
   const cs = stripeCalls.find((c) => c.path === "/v1/checkout/sessions")!.form;
   check("checkout for the team: 1 seat, and metered minutes", co.url.includes("checkout") && cs.get("line_items[0][quantity]") === "1" && cs.get("line_items[1][price]") === "price_min");
   // Stripe says it's done (a signed webhook).
@@ -390,53 +334,44 @@ try {
   const unsigned = await fetch(`${base}/api/stripe/webhook`, { method: "POST", headers: { "stripe-signature": "t=1,v1=00" }, body: "{}" });
   check("an unsigned webhook is refused", unsigned.status === 400);
   const done = await hook({ type: "checkout.session.completed", data: { object: { customer: "cus_1", subscription: "sub_1", metadata: { owner: `team:${team}` } } } });
-  check("the team upgraded", done.ok && (await api<{ teams: { plan: string }[] }>("/api/billing")).teams[0].plan === "team");
+  check("the team upgraded", done.ok && (await me.api<{ teams: { plan: string }[] }>("/api/billing")).teams[0].plan === "team");
   // A second person joins (by an invite they accept): the seats follow
   // the roster.
-  const invite = await api<{ code: string }>(`/api/teams/${team}/invites`, { role: "editor" });
-  const laptopCookie = cookie;
-  asUser = "colleague";
-  await signIn();
-  const them = await api<{ account: string }>("/api/me");
-  const theirs = await generateKeys();
-  await api("/api/devices", { cert: await cert(theirs, theirs, them.account, "browser", "their laptop") });
-  await api(`/api/invites/${team}/${invite.code}/accept`, {});
-  cookie = laptopCookie;
+  const invite = await me.api<{ code: string }>(`/api/teams/${team}/invites`, { role: "editor" });
+  const them = await Device.signIn({ control: base, login: "colleague", name: "their laptop" });
+  const theirs = them.keys;
+  await them.api(`/api/invites/${team}/${invite.code}/accept`, {});
   const v2 = await signRoster(
     { ...v1, version: 2, at: Date.now(), members: [...v1.members, { account: them.account, root: theirs.id, role: "editor", name: "colleague" }] },
     laptop,
   );
-  await api(`/api/teams/${team}/roster`, { roster: v2 });
+  await me.api(`/api/teams/${team}/roster`, { roster: v2 });
   const seats = stripeCalls.filter((c) => c.path === "/v1/subscription_items/si_seat").at(-1)?.form.get("quantity");
   check("adding a member adds a seat", seats === "2", `${seats}`);
   // Sandbox minutes, now on the team's plan: one asked for and deleted.
-  const sbx = await api<{ id: string }>("/api/sandboxes", { device: laptop.id });
+  const sbx = await me.api<{ id: string }>("/api/sandboxes", { device: laptop.id });
   await sleep(500);
-  await fetch(`${base}/api/sandboxes/${sbx.id}`, { method: "DELETE", headers: { cookie, origin: base } });
-  await api("/api/billing/report", {});
+  await me.api(`/api/sandboxes/${sbx.id}`, undefined, "DELETE").catch(() => {});
+  await me.api("/api/billing/report", {});
   const meter = stripeCalls.filter((c) => c.path === "/v1/billing/meter_events");
   const minutes = meter.reduce((n, c) => n + Number(c.form.get("payload[value]")), 0);
   check("sandbox minutes reported to Stripe", minutes === 1 && meter[0]?.form.get("payload[stripe_customer_id]") === "cus_1", `${minutes}`);
   // What Stripe would invoice at $8 a seat and 1¢ a minute.
   const invoice = Number(seats) * 800 + minutes * 1;
   check("the invoice adds up: 2 seats and 1 minute", invoice === 1601, `${invoice}¢`);
-  fakeStripe.close();
+  stripeServer.close();
   fakeSprites.close();
 
   // 9. A machine expecting another account (as if control swapped in one
   // of its own) doesn't take the approval, and pins nothing.
-  cookie = laptopCookie;
   const elsewhere = temp("elsewhere");
   check("a join into an account other than the one expected is refused", (await joinAs("elsewhere", elsewhere, "0123-4567-89ab-cdef")) !== 0);
   check("... and pins nothing", !readdirSync(elsewhere).includes("control.json"));
 
   // 10. Deleting an account (#173): someone with a machine leaves. The
   // machine is refused from then on, and nothing of theirs is left.
-  asUser = "leaver";
-  await signIn();
-  const leaver = await api<{ account: string }>("/api/me");
-  const lk = await generateKeys();
-  await api("/api/devices", { cert: await cert(lk, lk, leaver.account, "browser", "laptop") });
+  const leaver = await Device.signIn({ control: base, login: "leaver", name: "laptop" });
+  const lk = leaver.keys;
   const state2 = temp("daemon2");
   const joining2 = spawn(`${target}/illogicald`, ["join", base, "--name", "leaving-box", "--state-dir", state2, "--account", lk.id], { stdio: ["ignore", "pipe", "inherit"] });
   procs.push(joining2);
@@ -448,10 +383,7 @@ try {
       if (m) res(m[1]);
     });
   });
-  const shown2 = await api<{ cert: Cert }>(`/api/joins/${code2}`);
-  const dk2 = { ...shown2.cert, account: leaver.account, approver: lk.id, sig: "" };
-  dk2.sig = await signText(lk, certBody(dk2));
-  await api(`/api/joins/${code2}/approve`, { cert: dk2 });
+  await leaver.approveJoin(code2);
   await new Promise((r) => joining2.on("exit", r));
   const daemon2Log: Buffer[] = [];
   const daemon2 = spawn(`${target}/illogicald`, [
@@ -461,23 +393,20 @@ try {
   procs.push(daemon2);
   daemon2.stdout!.on("data", (d: Buffer) => daemon2Log.push(d));
   daemon2.stderr!.on("data", (d: Buffer) => daemon2Log.push(d));
-  let dir2: typeof dir = { daemons: [] };
-  for (let i = 0; i < 50 && !dir2.daemons[0]?.online; i++) {
-    await sleep(200);
-    dir2 = await api("/api/directory");
-  }
-  check("the leaver's machine is online", dir2.daemons[0]?.online === true);
-  const sessions = await api<{ sessions: { id: string; current: boolean; agent: string }[] }>("/api/me/sessions");
+  const d2 = await leaver.waitOnline("leaving-box", 10_000).catch(() => undefined);
+  check("the leaver's machine is online", d2?.online === true);
+  const sessions = await leaver.api<{ sessions: { id: string; current: boolean; agent: string }[] }>("/api/me/sessions");
   check("their sessions list this one, with what signed in", sessions.sessions.some((x) => x.current && x.agent.length > 0), JSON.stringify(sessions));
-  const preview = await api<{ confirm: string; blockers: string[]; machines: number }>("/api/me/delete");
+  const preview = await leaver.api<{ confirm: string; blockers: string[]; machines: number }>("/api/me/delete");
   check("deleting asks for the login, and nothing stands in the way", preview.confirm === "leaver" && preview.blockers.length === 0 && preview.machines === 1, JSON.stringify(preview));
-  check("the wrong word is refused", await api("/api/me/delete", { confirm: "stranger" }).then(() => false, () => true));
+  check("the wrong word is refused", await leaver.api("/api/me/delete", { confirm: "stranger" }).then(() => false, () => true));
   const before = Buffer.concat(daemon2Log).length;
-  await api("/api/me/delete", { confirm: "leaver" });
-  check("signed out: the account is gone", await api("/api/me").then(() => false, (e: Error) => / 401 /.test(e.message)));
+  await leaver.api("/api/me/delete", { confirm: "leaver" });
+  check("signed out: the account is gone", await leaver.api("/api/me").then(() => false, (e: Error) => / 401 /.test(e.message)));
   // Hung up on, and refused when it dials again.
   const since = () => Buffer.concat(daemon2Log).subarray(before).toString().replace(/\x1b\[[0-9;]*m/g, "");
-  const refused2 = /can't reach control's relay.*401.*not an enrolled daemon/;
+  // It's told why (#208).
+  const refused2 = /can't reach control's relay.*401.*this machine's account was deleted/;
   for (let i = 0; i < 100 && !refused2.test(since()); i++) await sleep(100);
   check("its machine is refused from then on", refused2.test(since()), since().split("\n").filter((l) => /relay/.test(l)).slice(-1)[0]);
   const rows = new DatabaseSync(db, { readOnly: true });

@@ -1,117 +1,19 @@
 //! End to end against the real binary: attach, input, detach, resume.
 
-mod listen;
-mod strays;
-
-use std::{
-    path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::atomic::{AtomicU32, Ordering},
-    time::Duration,
-};
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use illogical_proto::{AttachPane, ClientMsg, Edge, Frame, FrameKind, Intent, ServerMsg, State};
+use illogical_testkit::{Daemon, illogicald};
 use tokio::{net::TcpStream, time::timeout};
-use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
-    tungstenite::{Message, client::IntoClientRequest},
-};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-struct Daemon {
-    child: Child,
-    port: u16,
-    /// The local token loopback callers show.
-    token: String,
-    /// Its own state dir, when it has one to itself.
-    state: Option<TempState>,
-}
-
-impl Daemon {
-    /// A WebSocket request to `path` with the local token.
-    fn ws(&self, path: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
-        let mut req = format!("ws://127.0.0.1:{}{path}", self.port).into_client_request().unwrap();
-        req.headers_mut().insert("authorization", format!("Bearer {}", self.token).parse().unwrap());
-        req
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
+/// A daemon on a port of its choosing, with a fresh state dir. It's up
+/// when its own Unix socket answers.
 async fn start() -> Daemon {
-    let state = temp_state();
-    let mut d = start_in(&state).await;
-    d.state = Some(state);
-    d
-}
-
-/// A fresh state directory, so tests never touch the real one. Dropping it
-/// kills what its panes left running and deletes it.
-struct TempState(PathBuf);
-
-impl std::ops::Deref for TempState {
-    type Target = Path;
-    fn deref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempState {
-    fn drop(&mut self) {
-        strays::remove(&self.0);
-    }
-}
-
-fn temp_state() -> TempState {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "illogical-test-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    TempState(dir)
-}
-
-/// Start a daemon on a port of its choosing. It's up when its own Unix
-/// socket answers.
-async fn start_in(state: &Path) -> Daemon {
-    let _ = std::fs::remove_file(state.join("listen"));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
-        .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
-        .arg("--state-dir")
-        .arg(state)
-        .env("PS1", "$ ")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let sock = || match std::fs::read_to_string(state.join("sock.path")) {
-        Ok(p) => PathBuf::from(p.trim()),
-        Err(_) => state.join("sock"),
-    };
-    for _ in 0..300 {
-        if let Some(status) = child.try_wait().unwrap() {
-            panic!("daemon exited: {status}");
-        }
-        if let Some(port) = listen::port(state)
-            && std::os::unix::net::UnixStream::connect(sock()).is_ok()
-        {
-            let token = std::fs::read_to_string(state.join("local-token")).unwrap().trim().to_owned();
-            return Daemon { child, port, token, state: None };
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("daemon did not start");
+    illogicald!("attach").env("PS1", "$ ").start()
 }
 
 #[derive(Debug)]
@@ -527,7 +429,8 @@ async fn pages_refuse_to_be_framed() {
     let mut s = TcpStream::connect(("127.0.0.1", d.port)).await.unwrap();
     let req = format!(
         "GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
-        d.port, d.token
+        d.port,
+        d.token()
     );
     s.write_all(req.as_bytes()).await.unwrap();
     let mut res = Vec::new();
@@ -649,14 +552,6 @@ async fn bad_intents_report_errors_and_others_see_changes() {
 
 // ---------------------------------------------------------------- M2: restore
 
-impl Daemon {
-    /// Stop the daemon with a signal and wait for it to exit.
-    fn stop(&mut self, signal: nix::sys::signal::Signal) {
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(self.child.id() as i32), signal).unwrap();
-        let _ = self.child.wait();
-    }
-}
-
 use illogical_proto::{PaneOp, Policy};
 
 async fn attach_pane(ws: &mut Ws, pane: u32) -> String {
@@ -691,8 +586,7 @@ async fn read_pane_until(ws: &mut Ws, pane: u32, needle: &str) -> String {
 
 #[tokio::test]
 async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
-    let state = temp_state();
-    let mut d = start_in(&state).await;
+    let mut d = start().await;
     let (mut ws, s) = connect_state(&d).await;
     let tab = s.tabs[0].id;
     send(
@@ -713,8 +607,8 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     read_pane_until(&mut ws, 2, "rerun-ok-2").await;
     drop(ws);
 
-    d.stop(nix::sys::signal::Signal::SIGTERM);
-    let mut d = start_in(&state).await;
+    d.signal(nix::sys::signal::Signal::SIGTERM);
+    d.start();
     let (mut ws, s) = connect_state(&d).await;
     assert_eq!(s.tabs.len(), 1);
     assert_eq!(s.tabs[0].name.as_deref(), Some("kept"));
@@ -738,13 +632,24 @@ async fn a_clean_stop_brings_back_layout_scrollback_cwd_and_rerun() {
     assert!(snap.contains("press Enter to re-run"), "banner: {snap}");
     type_in(&mut ws, 2, "").await;
     read_pane_until(&mut ws, 2, "rerun-ok-2").await;
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    drop(ws);
+
+    // It still knows its command, so the next restart offers it again
+    // (#26: a second reboot).
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    d.signal(nix::sys::signal::Signal::SIGTERM);
+    d.start();
+    let (mut ws, s) = connect_state(&d).await;
+    let p2 = s.panes.iter().find(|p| p.id == 2).unwrap();
+    assert!(p2.command.as_deref().unwrap_or("").contains("sleep 300"), "after a rerun: {:?}", p2.command);
+    let snap = attach_pane(&mut ws, 2).await;
+    assert_eq!(snap.matches("press Enter to re-run").count(), 2, "banner again: {snap}");
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 }
 
 #[tokio::test]
 async fn a_crash_loses_nothing_that_was_printed() {
-    let state = temp_state();
-    let mut d = start_in(&state).await;
+    let mut d = start().await;
     let (mut ws, _) = connect_state(&d).await;
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "echo crash-$((5+5))").await;
@@ -752,19 +657,19 @@ async fn a_crash_loses_nothing_that_was_printed() {
     // Long enough for the first layout save, not for a checkpoint: the log
     // alone carries the output.
     tokio::time::sleep(Duration::from_millis(600)).await;
-    d.stop(nix::sys::signal::Signal::SIGKILL);
+    d.signal(nix::sys::signal::Signal::SIGKILL);
 
-    let mut d = start_in(&state).await;
+    d.start();
     let (mut ws, s) = connect_state(&d).await;
     assert_eq!(s.panes.iter().map(|p| p.id).collect::<Vec<_>>(), vec![1]);
     assert!(attach_pane(&mut ws, 1).await.contains("crash-10"));
-    d.stop(nix::sys::signal::Signal::SIGKILL);
+    d.signal(nix::sys::signal::Signal::SIGKILL);
 }
 
 #[tokio::test]
 async fn idle_panes_are_checkpointed() {
-    let state = temp_state();
-    let mut d = start_in(&state).await;
+    let mut d = start().await;
+    let state = d.state.clone();
     let (mut ws, _) = connect_state(&d).await;
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "echo idle-$((2+2))").await;
@@ -779,7 +684,7 @@ async fn idle_panes_are_checkpointed() {
     assert!(ckpt.exists(), "checkpoint after ~5s idle");
     let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&ckpt).unwrap().permissions());
     assert_eq!(mode & 0o777, 0o600);
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 }
 
 #[tokio::test]
@@ -811,8 +716,8 @@ async fn a_killed_shell_keeps_its_pane_and_offers_a_new_one() {
 
 #[tokio::test]
 async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
-    let state = temp_state();
-    let mut d = start_in(&state).await;
+    let mut d = start().await;
+    let state = d.state.clone();
     let (mut ws, _) = connect_state(&d).await;
     attach_pane(&mut ws, 1).await;
     type_in(&mut ws, 1, "echo secret-$((9*9))").await;
@@ -828,9 +733,9 @@ async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
         .collect();
     assert!(!String::from_utf8_lossy(&logs).contains("secret-81"), "purged from disk");
     drop(ws);
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 
-    let mut d = start_in(&state).await;
+    d.start();
     let (mut ws, s) = connect_state(&d).await;
     assert!(!s.panes[0].running, "policy none: nothing runs");
     let snap = attach_pane(&mut ws, 1).await;
@@ -860,13 +765,12 @@ async fn policy_none_waits_purge_forgets_and_closing_retires_history() {
         .flatten()
         .any(|e| e.file_name().to_string_lossy().starts_with("2-"));
     assert!(retired, "its history is kept a while under closed/");
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 }
 
 #[tokio::test]
 async fn a_restored_pane_drops_the_dead_programs_input_modes() {
-    let state = temp_state();
-    let mut d = start_in(&state).await;
+    let mut d = start().await;
     let (mut ws, _) = connect_state(&d).await;
     attach_pane(&mut ws, 1).await;
     // A "program" that turns on mouse and focus reporting, then is killed
@@ -875,9 +779,9 @@ async fn a_restored_pane_drops_the_dead_programs_input_modes() {
     read_pane_until(&mut ws, 1, "modes-on").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     drop(ws);
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 
-    let mut d = start_in(&state).await;
+    d.start();
     let (mut ws, _) = connect_state(&d).await;
     let snap = attach_pane(&mut ws, 1).await;
     // A snapshot is drawn from the terminal's state (not the old bytes), so
@@ -886,13 +790,12 @@ async fn a_restored_pane_drops_the_dead_programs_input_modes() {
     for m in ["\x1b[?1000h", "\x1b[?1006h", "\x1b[?1004h", "\x1b[?1h"] {
         assert!(!snap.contains(m), "mode {m:?} survived the restore");
     }
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 }
 
 #[tokio::test]
 async fn the_restore_marker_goes_below_what_a_program_drew_in_place() {
-    let state = temp_state();
-    let mut d = start_in(&state).await;
+    let mut d = start().await;
     let (mut ws, _) = connect_state(&d).await;
     attach_pane(&mut ws, 1).await;
     // Like Claude Code's TUI: draws on the main screen, then leaves the
@@ -901,13 +804,13 @@ async fn the_restore_marker_goes_below_what_a_program_drew_in_place() {
     read_pane_until(&mut ws, 1, "last-row").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     drop(ws);
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 
-    let mut d = start_in(&state).await;
+    d.start();
     let (mut ws, _) = connect_state(&d).await;
     let snap = attach_pane(&mut ws, 1).await;
     let (drawn, last, marker) = (snap.find("drawn-below"), snap.find("last-row"), snap.find("restored"));
     assert!(drawn.is_some() && last.is_some(), "what it drew is still there: {snap:?}");
     assert!(marker > last, "the marker is below it: {snap:?}");
-    d.stop(nix::sys::signal::Signal::SIGTERM);
+    d.signal(nix::sys::signal::Signal::SIGTERM);
 }

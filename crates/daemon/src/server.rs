@@ -60,6 +60,8 @@ pub struct App {
     pub acl: Arc<crate::acl::Acl>,
     /// MCP's tokens (M16).
     pub mcp: Arc<crate::mcp::Tokens>,
+    /// Invites for guests with only OpenSSH (M65).
+    pub guests: Arc<crate::guest_ssh::Guests>,
     next_client: AtomicU64,
     /// The owner has reached us over the tailnet (#110: the phone step).
     pub tailnet_seen: std::sync::atomic::AtomicBool,
@@ -79,6 +81,7 @@ impl App {
         control: Arc<crate::control::Control>,
         acl: Arc<crate::acl::Acl>,
         mcp: Arc<crate::mcp::Tokens>,
+        guests: Arc<crate::guest_ssh::Guests>,
     ) -> Arc<Self> {
         Arc::new(Self {
             access,
@@ -93,6 +96,7 @@ impl App {
             control,
             acl,
             mcp,
+            guests,
             next_client: AtomicU64::new(1),
             tailnet_seen: Default::default(),
         })
@@ -110,6 +114,7 @@ fn own_routes(app: &Arc<App>) -> Router<Arc<App>> {
         .merge(crate::fs::routes())
         .merge(crate::hosts::routes())
         .merge(crate::share::api_routes())
+        .merge(crate::guest_ssh::routes())
         .merge(crate::acl::api::routes())
         .merge(crate::setup::routes())
         .merge(crate::update::routes())

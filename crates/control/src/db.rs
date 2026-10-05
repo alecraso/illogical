@@ -6,9 +6,12 @@
 use std::{path::Path, sync::Mutex};
 
 use anyhow::Context;
-use illogical_e2e::{Cert, Revocation};
+use illogical_e2e::{Cert, Kind, Revocation};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
+
+/// How long an unseen notice waits.
+const NOTICE_TTL_MS: u64 = 30 * 24 * 3600 * 1000;
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -189,6 +192,20 @@ CREATE TABLE IF NOT EXISTS retained_for (
     team TEXT NOT NULL,
     PRIMARY KEY (account, team)
 );
+CREATE TABLE IF NOT EXISTS notices (
+    id INTEGER PRIMARY KEY,
+    account TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notices_account ON notices (account);
+-- Machines whose account was deleted, by a hash of the device id (so
+-- nothing of the account is kept): one asking again is told why (#208).
+CREATE TABLE IF NOT EXISTS gone_daemons (
+    hash TEXT PRIMARY KEY,
+    at INTEGER NOT NULL
+);
 ";
 
 /// Columns added after a table first shipped.
@@ -230,6 +247,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     if !has("joins", "proven")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN proven INTEGER NOT NULL DEFAULT 0")?;
+    }
+    // #208: what a passkey is (its maker, from its AAGUID), the browser
+    // that added it, and when it last signed in, to tell them apart.
+    if !has("passkeys", "agent")? {
+        conn.execute_batch("ALTER TABLE passkeys ADD COLUMN agent TEXT")?;
+    }
+    if !has("passkeys", "provider")? {
+        conn.execute_batch("ALTER TABLE passkeys ADD COLUMN provider TEXT")?;
+    }
+    if !has("passkeys", "used")? {
+        conn.execute_batch("ALTER TABLE passkeys ADD COLUMN used INTEGER")?;
     }
     Ok(())
 }
@@ -322,6 +350,19 @@ pub struct DaemonRow {
     pub name: String,
     pub urls: Vec<String>,
     pub last_seen: Option<u64>,
+}
+
+/// A passkey as the account panel lists it.
+#[derive(Debug, Serialize)]
+pub struct PasskeyRow {
+    pub id: String,
+    pub created: u64,
+    /// The User-Agent of the browser that added it ("" before #208).
+    pub agent: String,
+    /// What keeps it (iCloud Keychain, Windows Hello...), when known.
+    pub provider: Option<String>,
+    /// Its last sign-in, if any since #208.
+    pub used: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -550,6 +591,8 @@ impl Db {
         c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
         c.execute("DELETE FROM invites WHERE expires <= ?1", params![now])?;
         c.execute("DELETE FROM presigned_invites WHERE expires <= ?1", params![now])?;
+        // A notice nobody came back for in a month isn't news any more.
+        c.execute("DELETE FROM notices WHERE created < ?1", params![now.saturating_sub(NOTICE_TTL_MS)])?;
         Ok(n)
     }
 
@@ -572,8 +615,16 @@ impl Db {
             .optional()?)
     }
 
-    pub fn passkey_used(&self, id: &str, count: u32) -> anyhow::Result<()> {
-        self.c().execute("UPDATE passkeys SET sign_count = ?2 WHERE id = ?1", params![id, count])?;
+    /// Where a new passkey came from: the browser that added it and,
+    /// when its AAGUID is a known one, what keeps it.
+    pub fn note_passkey(&self, id: &str, agent: &str, provider: Option<&str>) -> anyhow::Result<()> {
+        self.c()
+            .execute("UPDATE passkeys SET agent = ?2, provider = ?3 WHERE id = ?1", params![id, agent, provider])?;
+        Ok(())
+    }
+
+    pub fn passkey_used(&self, id: &str, count: u32, now: u64) -> anyhow::Result<()> {
+        self.c().execute("UPDATE passkeys SET sign_count = ?2, used = ?3 WHERE id = ?1", params![id, count, now])?;
         Ok(())
     }
 
@@ -581,11 +632,20 @@ impl Db {
         Ok(self.c().query_row("SELECT COUNT(*) FROM passkeys WHERE account = ?1", params![account], |r| r.get(0))?)
     }
 
-    /// An account's passkeys: (credential id, created).
-    pub fn passkeys(&self, account: &str) -> anyhow::Result<Vec<(String, u64)>> {
+    /// An account's passkeys, oldest first.
+    pub fn passkeys(&self, account: &str) -> anyhow::Result<Vec<PasskeyRow>> {
         let c = self.c();
-        let mut q = c.prepare("SELECT id, created FROM passkeys WHERE account = ?1 ORDER BY created")?;
-        let rows = q.query_map(params![account], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let mut q =
+            c.prepare("SELECT id, created, agent, provider, used FROM passkeys WHERE account = ?1 ORDER BY created")?;
+        let rows = q.query_map(params![account], |r| {
+            Ok(PasskeyRow {
+                id: r.get(0)?,
+                created: r.get(1)?,
+                agent: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                provider: r.get(3)?,
+                used: r.get(4)?,
+            })
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -664,11 +724,16 @@ impl Db {
     /// An approved daemon's certificate, by its id (accounts don't share
     /// daemon keys).
     pub fn daemon_cert(&self, id: &str) -> anyhow::Result<Option<Cert>> {
+        self.approved_cert(id, Kind::Daemon)
+    }
+
+    /// An approved device of this kind, by its id.
+    pub fn approved_cert(&self, id: &str, kind: Kind) -> anyhow::Result<Option<Cert>> {
         Ok(self
             .c()
             .query_row(
-                "SELECT cert FROM devices WHERE id = ?1 AND kind = 'daemon' AND approved = 1",
-                params![id],
+                "SELECT cert FROM devices WHERE id = ?1 AND kind = ?2 AND approved = 1",
+                params![id, kind.as_str()],
                 |r| cert_of(r.get(0)?),
             )
             .optional()?)
@@ -1114,6 +1179,18 @@ impl Db {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?)
+    }
+
+    /// A team's live presigned invites, soonest to expire first: (key,
+    /// invite JSON, expires, who made it).
+    pub fn presigned_of(&self, team: &str, now: u64) -> anyhow::Result<Vec<(String, String, u64, String)>> {
+        let c = self.c();
+        let mut st = c.prepare(
+            "SELECT key, body, expires, by_account FROM presigned_invites WHERE team = ?1 AND expires > ?2
+             ORDER BY expires, key",
+        )?;
+        let rows = st.query_map(params![team, now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn drop_presigned(&self, key: &str) -> anyhow::Result<()> {
@@ -1623,6 +1700,10 @@ impl Db {
         // Certificates kept for teams that are gone now.
         tx.execute("DELETE FROM retained_certs WHERE account NOT IN (SELECT account FROM retained_for)", [])?;
         for d in &daemons {
+            tx.execute(
+                "INSERT OR REPLACE INTO gone_daemons (hash, at) VALUES (?1, ?2)",
+                params![gone_hash(d), illogical_e2e::now_ms()],
+            )?;
             for sql in [
                 "DELETE FROM daemon_access WHERE daemon = ?1",
                 "DELETE FROM daemon_links WHERE daemon = ?1",
@@ -1646,6 +1727,7 @@ impl Db {
             "DELETE FROM daemon_offers WHERE account = ?1",
             "DELETE FROM share_answers WHERE account = ?1",
             "DELETE FROM push_subs WHERE account = ?1",
+            "DELETE FROM notices WHERE account = ?1",
             "DELETE FROM sandboxes WHERE account = ?1",
             "DELETE FROM billing WHERE owner = 'account:' || ?1",
             "DELETE FROM reported WHERE account = ?1",
@@ -1659,6 +1741,15 @@ impl Db {
         }
         tx.commit()?;
         Ok(daemons)
+    }
+
+    /// Whether `device` was a machine of an account that's been deleted.
+    pub fn daemon_account_deleted(&self, device: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .c()
+            .query_row("SELECT 1 FROM gone_daemons WHERE hash = ?1", params![gone_hash(device)], |_| Ok(()))
+            .optional()?
+            .is_some())
     }
 
     /// Every row in every table that mentions `needle`, as `table.column`
@@ -1698,6 +1789,31 @@ impl Db {
         out
     }
 
+    // ---- notices
+
+    /// Something to show the account in the app once (#206: a team it was
+    /// in was deleted), beside the push notification it may not get.
+    pub fn add_notice(&self, account: &str, title: &str, body: &str, now: u64) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO notices (account, title, body, created) VALUES (?1, ?2, ?3, ?4)",
+            params![account, title, body, now],
+        )?;
+        Ok(())
+    }
+
+    /// (id, title, body), oldest first.
+    pub fn notices(&self, account: &str) -> anyhow::Result<Vec<(i64, String, String)>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT id, title, body FROM notices WHERE account = ?1 ORDER BY id")?;
+        let rows = q.query_map(params![account], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Seen: whether it was this account's.
+    pub fn drop_notice(&self, account: &str, id: i64) -> anyhow::Result<bool> {
+        Ok(self.c().execute("DELETE FROM notices WHERE id = ?1 AND account = ?2", params![id, account])? > 0)
+    }
+
     // ---- metering
 
     pub fn add_relay_bytes(&self, account: &str, day: &str, bytes: u64) -> anyhow::Result<()> {
@@ -1722,6 +1838,11 @@ impl Db {
 
 /// How long a join code stays good.
 pub const JOIN_TTL_MS: u64 = 15 * 60 * 1000;
+
+fn gone_hash(device: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(format!("illogical gone daemon\n{device}")))
+}
 
 #[cfg(test)]
 mod tests {

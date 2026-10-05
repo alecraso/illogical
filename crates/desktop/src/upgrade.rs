@@ -48,6 +48,16 @@ pub fn pending() -> Option<String> {
 pub fn run() -> Result<(), String> {
     let Some((running, ours)) = STALE.lock().unwrap().clone() else { return Ok(()) };
     let bin = crate::bundled("illogicald").ok_or("this app's illogicald is gone")?;
+    // The app's own launch agent (macOS): it already runs the bundle's
+    // copy, so a restart picks up the new one.
+    #[cfg(target_os = "macos")]
+    let out = if agent_running() {
+        crate::service::restart()?;
+        std::process::Output { status: Default::default(), stdout: Vec::new(), stderr: Vec::new() }
+    } else {
+        Command::new(&bin).arg("install").output().map_err(|e| format!("{}: {e}", bin.display()))?
+    };
+    #[cfg(not(target_os = "macos"))]
     let out = Command::new(&bin).arg("install").output().map_err(|e| format!("{}: {e}", bin.display()))?;
     if let Some(home) = std::env::var_os("HOME") {
         crate::unquarantine(&PathBuf::from(home).join(".local/bin/illogicald"));
@@ -94,8 +104,29 @@ fn version_of(bin: &Path) -> Option<String> {
     text.split_whitespace().nth(1).map(str::to_owned)
 }
 
-/// The service `illogicald install` set up is what's running.
+/// macOS: the app's launch agent (`service.rs`) is running.
+#[cfg(target_os = "macos")]
+fn agent_running() -> bool {
+    launchd_running(crate::service::LABEL)
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_running(label: &str) -> bool {
+    let uid = Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+    let Ok(uid) = uid else { return false };
+    Command::new("launchctl")
+        .args(["print", &format!("gui/{uid}/{label}")])
+        .output()
+        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("state = running"))
+}
+
+/// The service `illogicald install` set up, or the app's own launch agent,
+/// is what's running.
 fn service_running() -> bool {
+    #[cfg(target_os = "macos")]
+    if agent_running() {
+        return true;
+    }
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return false };
     if cfg!(target_os = "macos") {
         if !home.join("Library/LaunchAgents/illogicald.plist").is_file() {

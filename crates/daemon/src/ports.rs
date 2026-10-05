@@ -94,7 +94,7 @@ impl Target {
                 // on "localhost" may be on either one only.
                 let both =
                     [SocketAddr::from((Ipv4Addr::LOCALHOST, *port)), SocketAddr::from((Ipv6Addr::LOCALHOST, *port))];
-                let s = tokio::net::TcpStream::connect(&both[..]).await?;
+                let s = first(&both, tokio::net::TcpStream::connect).await?;
                 s.set_nodelay(true)?;
                 Ok(Box::new(s))
             }
@@ -102,6 +102,27 @@ impl Target {
             Self::Service(s) => s.dial().await,
         }
     }
+}
+
+/// The first of `addrs` that `connect` reaches; if none, the first one's
+/// error. Not the last's, as `TcpStream::connect(&[..])` gives: on macOS
+/// `[::1]` for a free port sometimes fails with EINVAL where `127.0.0.1`
+/// says refused (#133).
+async fn first<T, F, Fut>(addrs: &[SocketAddr], connect: F) -> io::Result<T>
+where
+    F: Fn(SocketAddr) -> Fut,
+    Fut: Future<Output = io::Result<T>>,
+{
+    let mut err = None;
+    for a in addrs {
+        match connect(*a).await {
+            Ok(s) => return Ok(s),
+            Err(e) => {
+                err.get_or_insert(e);
+            }
+        }
+    }
+    Err(err.unwrap_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no addresses to dial")))
 }
 
 #[cfg(test)]
@@ -135,5 +156,29 @@ mod tests {
         let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let e = Target::Local(free).dial().await.err().unwrap();
         assert_eq!(e.kind(), io::ErrorKind::ConnectionRefused);
+    }
+
+    /// Both fail: the v4 error, whatever v6 said (#133's EINVAL from `::1`).
+    #[tokio::test]
+    async fn when_both_fail_the_first_error_is_the_one() {
+        let both = [SocketAddr::from((Ipv4Addr::LOCALHOST, 1)), SocketAddr::from((Ipv6Addr::LOCALHOST, 1))];
+        let e = first(&both, |a| async move {
+            Err::<(), _>(io::Error::from(if a.is_ipv4() {
+                io::ErrorKind::ConnectionRefused
+            } else {
+                io::ErrorKind::InvalidInput
+            }))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::ConnectionRefused);
+
+        // The second answering is enough.
+        let got = first(&both, |a| async move {
+            if a.is_ipv4() { Err(io::Error::from(io::ErrorKind::ConnectionRefused)) } else { Ok(6) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(got, 6);
     }
 }

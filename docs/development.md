@@ -23,10 +23,12 @@ release tarballs in `dist/`.
 
 `just dev` runs a separate daemon on 7682 (state in
 `~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
-alone. `just test-scripts` tests install.sh and checks that what a release
+alone. [testing.md](testing.md) covers the tests, fakes and fixtures.
+`just test-scripts` tests install.sh and checks that what a release
 ships (targets, desktop downloads) is named the same in release.yml,
 scripts/release, the Homebrew formula, install.sh and the site: add a
-target or download and it says what else needs it. `just check` is what CI runs; `just e2e` drives the system Chrome
+target or download and it says what else needs it. `just check` is what
+CI runs; `just e2e` drives the system Chrome
 against throwaway daemons, or `just e2e https://home.<tailnet>.ts.net`
 against the running one. `workspace.spec.ts` runs the real chant: its first run
 installs the pinned version into `web/e2e/fixtures/chant-workspace` with
@@ -35,6 +37,10 @@ tests use a stand-in chant). `just screenshots` regenerates the images in
 `site/img/` from a throwaway daemon with a scripted demo session
 (`SHOTS_PORT` and `SHOTS_DEV_PORT` move its ports); the README's
 `dive.gif` is the page's own tour, made by `web/screenshots/dive.mjs`.
+
+`just testnet up ssh` starts a local stack in Docker (`testnet/`, #200): a
+bastion and a box with no illogical that only ssh reaches. `just testnet
+test` runs its claims; `testnet/README.md` lists them.
 
 ## Releasing
 
@@ -80,7 +86,9 @@ and PR numbers kept.
 
 ## Testing iTerm2
 
-Nothing here has seen a real iTerm2 yet. From the Mac, against geek:
+`just macos iterm2` checks attach, typing, output, a split and a new tab
+in a real iTerm2 inside a tart VM ([testing.md](testing.md#a-fresh-mac-the-tart-vm-harness)).
+The rest of this script is still by hand. From the Mac, against geek:
 
 1. On geek, install the build (`just install`) and check `illogical ls`
    works. Open <https://geek.tail1234.ts.net> in a browser beside iTerm2.

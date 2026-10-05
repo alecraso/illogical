@@ -278,6 +278,11 @@ the daemon stopping, crashing, or the machine rebooting:
     it; it never picks the agent's own "always", which would write
     `.claude/settings.local.json` into your repo. Claude Code runs with no
     settings sources, so your own hooks don't fire inside it.
+  - *From now on…* on a card keeps a standing rule on this machine
+    (#166): the tool, or commands starting with a prefix, in the block's
+    directory and below or in every agent block. New blocks never ask for
+    what a rule allows. *Permission rules…* in the session menu (or
+    `illogical rules`) lists them, and forgets them.
   - A block can start with rules and a mode (#163): `illogical agent
     --allow Bash --permission-mode auto`, or `allow` and `permission_mode`
     on MCP `start_agent`, so a lead pre-authorizes its subagents (an agent
@@ -801,6 +806,17 @@ the daemon stopping, crashing, or the machine rebooting:
   with, say), never a tagged node, Funnel or the internet. Links expire (a
   week at most), are listed (`illogical shares`) and revocable (`shares
   revoke ID`), which cuts off anyone watching.
+- **A pane for a guest with only OpenSSH** (M65). `illogical share --guest
+  %3` prints an `ssh` command to send someone: the username is a one-time
+  token and the daemon's host key is pinned in the command, so nothing is
+  saved on their side. The daemon's own ssh server (`--guest-ssh`, port
+  7684) listens only while an invite exists, and a session can only watch
+  that pane: no shell, no account, no commands, no forwarding. Read-only
+  unless `--rw`, which types under the one-driver rule with the guest's
+  `--name` on their input. Invites are single use unless `--reusable`,
+  expire (an hour by default; a day at most, two hours with `--rw`), end
+  with the pane, and `illogical guests revoke ID` cuts the guest off at
+  once.
 - **History that outlives a sandbox** (M4c). With `--sync` (closed panes)
   or `--sync-live` (open ones too), a host pushes its panes' log segments
   and indexes to the home daemon with its token, resuming from what is

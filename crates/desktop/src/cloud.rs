@@ -132,6 +132,28 @@ pub fn app_url(page: &str) -> tauri::Url {
     format!("{base}{page}").parse().unwrap()
 }
 
+/// Whether a window showing `url` moves to the new home when the daemon's
+/// control goes from `was` to `now` (#204). Joined: the daemon's own page
+/// (`daemon_page`) gives way to the app's sign-in, or control's page once
+/// signed in. Left, or joined elsewhere: the old control's pages and the
+/// sign-in give way. Anything else (the setup page, another window's
+/// choice) stays.
+pub fn moves(was: Option<&str>, now: Option<&str>, url: &tauri::Url, daemon_page: bool) -> bool {
+    if was == now {
+        return false;
+    }
+    match was {
+        None => daemon_page,
+        Some(old) => {
+            let on_old = old.parse::<tauri::Url>().is_ok_and(|c| c.origin() == url.origin());
+            let signin = matches!(url.host_str(), Some("localhost" | "tauri.localhost"))
+                && matches!(url.scheme(), "tauri" | "http")
+                && url.path() == format!("/{SIGNIN}");
+            on_old || signin
+        }
+    }
+}
+
 /// Whether `url` is control's own sign-in, which can't finish in the
 /// window (GitHub's pages, passkeys): the app's sign-in takes over.
 pub fn is_control_signin(url: &tauri::Url) -> bool {
@@ -144,7 +166,7 @@ pub fn is_control_signin(url: &tauri::Url) -> bool {
 pub fn init_script() -> String {
     let control = control().unwrap_or_default();
     format!(
-        "window.__illogicalApp = {{ name: {} }};\n\
+        "window.__illogicalApp = {{ name: {}, platform: {:?} }};\n\
          if ({control:?} && location.origin === new URL({control:?}).origin) {{\n\
            addEventListener('DOMContentLoaded', () => {{\n\
              const s = document.createElement('style');\n\
@@ -153,6 +175,7 @@ pub fn init_script() -> String {
            }});\n\
          }}",
         serde_json::to_string(&device_name()).unwrap(),
+        if cfg!(target_os = "macos") { "macos" } else { "linux" },
     )
 }
 
@@ -291,4 +314,34 @@ pub fn cloud_local(window: tauri::WebviewWindow) -> Result<(), String> {
     }
     set_local_only(true);
     window.navigate(crate::page_at("/")).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(s: &str) -> tauri::Url {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn a_join_moves_the_daemons_page_and_a_leave_moves_controls() {
+        let c = Some("https://control.test");
+        let daemon = url("http://127.0.0.1:7681/");
+        // Joined while the window showed the daemon's page: it moves.
+        assert!(moves(None, c, &daemon, true));
+        // Nothing changed: nothing moves.
+        assert!(!moves(c, c, &url("https://control.test/"), false));
+        assert!(!moves(None, None, &daemon, true));
+        // The setup page and other sites stay put.
+        assert!(!moves(None, c, &url("tauri://localhost/index.html"), false));
+        assert!(!moves(None, c, &url("https://example.com/"), false));
+        // Left: control's page and the app's sign-in go back home.
+        assert!(moves(c, None, &url("https://control.test/#x"), false));
+        assert!(moves(c, None, &app_url(SIGNIN), false));
+        assert!(moves(c, None, &url("http://tauri.localhost/signin.html"), false));
+        assert!(!moves(c, None, &daemon, true), "already home");
+        // Joined elsewhere: off the old control.
+        assert!(moves(c, Some("https://other.test"), &url("https://control.test/"), false));
+    }
 }

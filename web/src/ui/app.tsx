@@ -1,27 +1,31 @@
 import { Fragment } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { paneIds, tabLabel, type Client } from "../client";
-import type { Edge, Intent, Machine, PaneId, Policy, Rect, SplitRect, TabId, TabView } from "../proto";
+import type { Edge, Intent, PaneId, Rect, SplitRect, TabId, TabView } from "../proto";
 import type { Cell } from "./cells";
 import { drag, startDrag, type Dragged, type Target } from "./drag";
 import { useSubscribe, usePhone } from "./hooks";
-import { askText, closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./menu";
+import { closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./menu";
 import { KeyBar, PhoneHeader } from "./phone";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
 import { openSwarm } from "../swarm/route";
-import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
+import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople } from "./people";
 import { directory } from "../hosts";
-import { openSandboxes, SandboxesLayer } from "./sandboxes";
-import { newRemote, openChanges, openEditor, openFountain, openIssue, openPort, openPr, openWorkspace, remoteHosts, useWorkspaceDir } from "../blocks";
-import { AgentDialogLayer, startAgent } from "./agent-dialog";
-import { ConversationsLayer, pickConversation } from "./conversations";
-import { AppsLayer, pickApp } from "./apps";
-import { openPicker, PickerLayer, usePickerShortcut } from "./picker";
+import { SandboxesLayer } from "./sandboxes";
+import { RulesLayer } from "./rules";
+import { useWorkspaceDir } from "../blocks";
+import { AgentDialogLayer } from "./agent-dialog";
+import { ConversationsLayer } from "./conversations";
+import { AppsLayer } from "./apps";
+import { PickerLayer, usePickerShortcut } from "./picker";
 import { TermAnswered, TermAsk, TermDiff } from "./term-ask";
-import { agentNotifyItems, InstallHint, notificationItems } from "./notify";
-import { GettingStartedLayer, openGettingStarted, useFirstRun } from "./welcome";
+import { InstallHint } from "./notify";
+import { GettingStartedLayer, useFirstRun } from "./welcome";
+import { machineState, newTabItems, PALETTE_KEY, paneItems, sessionItems, tabItems } from "./commands";
+import { openPalette, PaletteLayer, usePaletteShortcut } from "./palette";
 import { UpdateChip } from "./update";
+import { WindowButtons } from "./window-buttons";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
 const parking = document.createElement("div");
@@ -73,6 +77,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
   useHoverToSwitchTabs(client);
   useReportFocus(client, phone);
   usePickerShortcut(client, phone);
+  usePaletteShortcut(client, phone);
   useFirstRun(client);
 
   const state = client.state;
@@ -105,7 +110,9 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <ConversationsLayer />
       <AppsLayer />
       <SandboxesLayer />
+      <RulesLayer />
       <PickerLayer />
+      <PaletteLayer />
       <GettingStartedLayer />
       {phone && state && <InstallHint />}
       <DragGhost />
@@ -141,28 +148,13 @@ function TopBar({
         run: () => client.selectSession(s.id),
       })),
       "separator",
-      { label: "New session", run: () => client.intent({ op: "new_session", name: null, from_pane: client.active() ?? null }) },
-      // VMs and sandboxes need wisp (#180).
-      ...(client.has("vms")
-        ? [
-            { label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) } as MenuItem,
-            { label: "Sandboxes…", run: () => openSandboxes() } as MenuItem,
-          ]
-        : []),
-      { label: "Rename session", run: () => setRenaming({ kind: "session", id: session.id }) },
-      // Sharing is the daemon's owner's (M13).
-      ...(state.roles ? [] : [{ label: "Share session…", run: () => shareSession(session.id) } as MenuItem]),
-      "separator",
-      ...notificationItems(client),
-      ...agentNotifyItems(client, session.id),
-      { label: "Getting started", run: () => openGettingStarted(undefined, client) },
-      "separator",
-      { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session: session.id }) },
+      ...sessionItems(client, session.id, () => setRenaming({ kind: "session", id: session.id })),
+      { label: "Command palette…", shortcut: PALETTE_KEY, run: () => openPalette(client) },
     ]);
   };
 
   return (
-    <header class="bar">
+    <header class="bar" data-tauri-drag-region>
       <HostButton />
       <button class="swarm-button" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
         Swarm
@@ -203,32 +195,15 @@ function TopBar({
           class="new-tab"
           title={client.has("vms") ? "New tab (right-click for a VM tab)" : "New tab (right-click for more)"}
           onClick={() => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null })}
-          onContextMenu={(e) =>
-            openFresh(client, e, () => [
-              { label: "New tab", run: () => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null }) },
-              ...(client.has("vms") ? [{ label: "New VM tab", run: () => void client.newVm({ session: session.id, tab: true }) } as MenuItem] : []),
-              { label: "In a directory…", disabled: client.active() === undefined, run: () => openPicker(client, client.active()) },
-              // M35: a studio app's box, in a tab of its own. The owner's.
-              ...(!client.state?.roles && client.has("studio")
-                ? [{ label: "Open a studio app…", run: () => pickApp(client, { session: session.id }) } as MenuItem]
-                : []),
-              // M36: a pull request, in a tab of its own.
-              ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { session: session.id }) } as MenuItem] : []),
-              // M37: an issue, in a tab of its own.
-              ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { session: session.id }) } as MenuItem] : []),
-              // M43: the Fountain agent catalog, in a tab of its own.
-              ...(!client.state?.roles ? fountainItems(client, { session: session.id }) : []),
-              // #17: a tab here whose shell runs on another host.
-              ...remoteHosts().map((h): MenuItem => ({ label: `New tab on ${h}`, run: () => void newRemote(client, h, { session: session.id }) })),
-            ])
-          }
+          onContextMenu={(e) => openFresh(client, e, () => newTabItems(client, session.id))}
         >
           +
         </button>
       </div>
-      <div class="bar-fill" />
+      <div class="bar-fill" data-tauri-drag-region />
       <UpdateChip client={client} />
       <PeopleBar client={client} />
+      <WindowButtons />
     </header>
   );
 }
@@ -280,21 +255,7 @@ function TabItem({
       }
       onDblClick={() => setRenaming({ kind: "tab", id: tab.id })}
       onAuxClick={(e) => e.button === 1 && close()}
-      onContextMenu={(e) =>
-        openFresh(client, e, () => [
-          { label: "Rename tab", run: () => setRenaming({ kind: "tab", id: tab.id }) },
-          { label: "New tab", run: () => client.intent({ op: "new_tab", session: client.session!, from_pane: client.active(tab.id) ?? null }) },
-          ...(client.has("vms") ? [{ label: "New VM tab", run: () => void client.newVm({ session: client.session!, tab: true }) } as MenuItem] : []),
-          { label: "Go to directory…", run: () => openPicker(client, client.active(tab.id)) },
-          // M11: what changed in the active pane's repository, on its machine.
-          ...(!client.state?.roles && client.active(tab.id) !== undefined
-            ? [{ label: "Changes", run: () => openChanges(client, client.active(tab.id)!) } as MenuItem]
-            : []),
-          ...machineItems(client, tab),
-          "separator",
-          { label: machine ? "Close tab and machine" : "Close tab", danger: true, run: close },
-        ])
-      }
+      onContextMenu={(e) => openFresh(client, e, () => tabItems(client, tab, () => setRenaming({ kind: "tab", id: tab.id })))}
     >
       {machine ? (
         <span
@@ -540,111 +501,13 @@ function PaneSlot({
     });
   }, [entry, client, id]);
 
-  // #17: a shell on another host, beside this pane.
-  const elsewhere = (): MenuItem[] =>
-    remoteHosts().map((h) => ({ label: `Split right on ${h}`, run: () => void newRemote(client, h, { split: id }) }));
-
   const menu = (e: MouseEvent) => {
     // A program that tracks the mouse gets right-clicks; Shift reaches us.
     if (entry?.view.mouseTracking && !e.shiftKey) return;
-    if (info?.type === "remote") {
-      // Its terminal is its host's: here, only where it is.
-      const at = client.blocks.get(id)?.state as { host: string; pane: PaneId } | null;
-      openMenu(e, [
-        ...(at ? [{ header: `%${at.pane} on ${at.host}` } as MenuItem] : []),
-        { label: "Split right", run: () => client.intent({ op: "split", pane: id, edge: "right" }) },
-        { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
-        ...elsewhere(),
-        "separator",
-        {
-          label: "Move to new tab",
-          disabled: (client.tabOfPane(id) && paneIds(client.tabOfPane(id)!).length < 2) ?? true,
-          run: () => client.intent({ op: "break_pane", pane: id, session: client.session!, index: null }),
-        },
-        { label: "Close pane", danger: true, run: () => client.intent({ op: "close_pane", pane: id }) },
-      ]);
-      return;
-    }
-    const cwd = client.cwd(id);
-    const tabId = client.tabOfPane(id)?.id;
-    const tabMachine = tabId === undefined ? undefined : client.tabMachine(tabId);
-    const mine = client.machine(id);
-    const own = mine !== undefined && "pane" in mine.owner && mine.owner.pane === id;
-    openFresh(client, e, () => [
-      { label: "Split right", run: () => client.intent({ op: "split", pane: id, edge: "right" }) },
-      { label: "Split down", run: () => client.intent({ op: "split", pane: id, edge: "bottom" }) },
-      ...(tabMachine ? [{ label: "Split (local)", run: () => client.intent({ op: "split", pane: id, edge: "right", local: true }) } as MenuItem] : []),
-      ...(client.has("vms") ? [{ label: "New VM pane on the right", run: () => void client.newVm({ split: id }) } as MenuItem] : []),
-      ...elsewhere(),
-      {
-        label: "Open a web page…",
-        run: async () => {
-          const url = await askText("Open a web page", "", "https://… or example.com");
-          if (url) void client.api("/api/blocks", { type: "browser", config: { url }, split: id }, "couldn't open that page");
-        },
-      },
-      // A port where this pane runs: its machine, or this host.
-      { label: mine ? "Open a port on this machine…" : "Open a port…", run: () => void openPort(client, { split: id, host: mine?.id, local: !mine }) },
-      { label: "Start an agent…", run: () => startAgent(client, { split: id, from: id }) },
-      // M33: Claude Code conversations from terminals and the desktop app.
-      ...(!client.state?.roles
-        ? [{ label: "Claude Code conversations…", run: () => pickConversation(client, { split: id, cwd: cwd ?? undefined }) } as MenuItem]
-        : []),
-      // M35: a studio app's box beside this pane.
-      ...(!client.state?.roles && client.has("studio") ? [{ label: "Open a studio app…", run: () => pickApp(client, { split: id }) } as MenuItem] : []),
-      // M36: a pull request beside it (N: in its repository).
-      ...(!client.state?.roles ? [{ label: "Open pull request…", run: () => void openPr(client, { split: id, dir: cwd }) } as MenuItem] : []),
-      // M37: an issue beside it (N: in its repository).
-      ...(!client.state?.roles ? [{ label: "Open issue…", run: () => void openIssue(client, { split: id, dir: cwd }) } as MenuItem] : []),
-      // M43: the Fountain agent catalog beside it.
-      ...(!client.state?.roles ? fountainItems(client, { split: id }) : []),
-      // M27: VS Code where this pane runs, in its directory. The owner's,
-      // like ports.
-      ...(entry && !client.state?.roles ? [{ label: "Open in editor", run: () => openEditor(client, id) } as MenuItem] : []),
-      // M11: what changed in its repository, where it runs.
-      ...(!client.state?.roles ? [{ label: "Changes", run: () => openChanges(client, id) } as MenuItem] : []),
-      ...(isWorkspace && workspaceDir ? [{ label: "Open as workspace", run: () => openWorkspace(client, workspaceDir, id) } as MenuItem] : []),
-      ...(own && !tabMachine
-        ? [{ label: "Share machine with tab", run: () => void client.api(`/api/panes/${id}/share-machine`) } as MenuItem]
-        : []),
-      "separator",
-      {
-        label: "Move to new tab",
-        disabled: (client.tabOfPane(id) && paneIds(client.tabOfPane(id)!).length < 2) ?? true,
-        run: () => client.intent({ op: "break_pane", pane: id, session: client.session!, index: null }),
-      },
-      { label: "Go to directory…", run: () => openPicker(client, id, phone) },
-      { label: "Copy working directory", disabled: !cwd, run: () => cwd && void navigator.clipboard?.writeText(cwd) },
-      // A dial-out host's links would be on a daemon nobody can reach.
-      ...(client.base.startsWith("/")
-        ? []
-        : [
-            {
-              label: "Share read-only link…",
-              run: async () => {
-                const url = await client.share(id);
-                if (url) await askText("Read-only link to this pane, for an hour (copied)", url);
-              },
-            } as MenuItem,
-          ]),
-      ...driveItems(client, id),
-      "separator",
-      ...restartItems(client, id),
-      "separator",
-      ...(info && (info.attention === "needs_input" || info.attention === "done")
-        ? [{ label: "Dismiss", run: () => void client.act({ action: "dismiss", pane: id }) } as MenuItem]
-        : []),
-      {
-        label: "Shell integration (new shells)",
-        checked: info?.integration ?? true,
-        run: () => client.paneOp(id, { op: "set_integration", on: !(info?.integration ?? true) }),
-      },
-      {
-        label: "Forget history",
-        run: () => client.paneOp(id, { op: "purge" }),
-      },
-      { label: "Close pane", danger: true, run: () => client.intent({ op: "close_pane", pane: id }) },
-    ]);
+    const items = () => paneItems(client, id, phone, isWorkspace ? workspaceDir : null);
+    // A remote pane's menu doesn't depend on this daemon's features.
+    if (info?.type === "remote") openMenu(e, items());
+    else openFresh(client, e, items);
   };
 
   const waiting = client.info(id)?.running === false;
@@ -743,11 +606,6 @@ function HostBadge({ client, id }: { client: Client; id: PaneId }) {
   );
 }
 
-/** "idle" when nothing in the tab runs on its machine any more. */
-function machineState(client: Client, m: Machine): string {
-  return m.state === "running" && client.panesOn(m.id).length === 0 ? "idle" : m.state;
-}
-
 /** A menu whose items depend on what the daemon is set up for: read that
  * again first (briefly), so a studio linked a moment ago shows (#180). */
 function openFresh(client: Client, e: { clientX: number; clientY: number; preventDefault(): void }, build: () => MenuItem[]) {
@@ -755,76 +613,6 @@ function openFresh(client: Client, e: { clientX: number; clientY: number; preven
   const at = { clientX: e.clientX, clientY: e.clientY, preventDefault() {} };
   const wait = new Promise((r) => setTimeout(r, 300));
   void Promise.race([client.loadFeatures(), wait]).then(() => openMenu(at, build()));
-}
-
-/** The Fountain catalog with a login here; the runner view where the
- * runner's unit is (#180). */
-function fountainItems(client: Client, where: { session?: number; split?: PaneId }): MenuItem[] {
-  return [
-    ...(client.has("fountain") ? [{ label: "Fountain agents…", run: () => void openFountain(client, where) } as MenuItem] : []),
-    ...(client.features === null || client.fountainRunner
-      ? [{ label: "Fountain runner…", run: () => void openFountain(client, where, "runner") } as MenuItem]
-      : []),
-  ];
-}
-
-/** The tab's machine: how it is, a new pane on it, reset. */
-function machineItems(client: Client, tab: TabView): MenuItem[] {
-  const m = client.tabMachine(tab.id);
-  if (!m) return [];
-  const on = client.panesOn(m.id);
-  const anchor = client.active(tab.id) ?? paneIds(tab)[0];
-  return [
-    "separator",
-    { header: `Machine ${m.name ?? m.sprite} · ${machineState(client, m)}` },
-    {
-      label: "New pane on machine",
-      disabled: anchor === undefined,
-      run: () => anchor !== undefined && client.intent({ op: "split", pane: anchor, edge: "right", local: false }),
-    },
-    {
-      label: "Open a port on machine…",
-      disabled: anchor === undefined,
-      run: () => anchor !== undefined && void openPort(client, { split: anchor, host: m.id }),
-    },
-    {
-      label: "Reset machine",
-      disabled: on.length === 0,
-      run: () => void client.api(`/api/machines/${m.id}/reset`, {}, "couldn't reset the machine"),
-    },
-  ];
-}
-
-/** What the pane does when the daemon starts again, e.g. after a reboot. */
-function restartItems(client: Client, id: PaneId): MenuItem[] {
-  const info = client.info(id);
-  const p = info?.policy ?? { kind: "shell" };
-  const cmd = info?.command;
-  const set = (policy: Policy) => client.paneOp(id, { op: "set_policy", policy });
-  const short = (s: string) => (s.length > 32 ? `${s.slice(0, 31)}…` : s);
-  return [
-    { header: "After a restart" },
-    { label: "Start a shell here", checked: p.kind === "shell", run: () => set({ kind: "shell" }) },
-    {
-      label: cmd ? `Re-run ${short(cmd)}, asking first` : "Re-run the command, asking first",
-      checked: p.kind === "rerun" && p.confirm,
-      run: () => set({ kind: "rerun", confirm: true }),
-    },
-    {
-      label: cmd ? `Re-run ${short(cmd)}` : "Re-run the command",
-      checked: p.kind === "rerun" && !p.confirm,
-      run: () => set({ kind: "rerun", confirm: false }),
-    },
-    {
-      label: p.kind === "hook" ? `Run ${short(p.command)}` : "Run a command…",
-      checked: p.kind === "hook",
-      run: async () => {
-        const command = await askText("Run when restored", p.kind === "hook" ? p.command : "", "claude --continue");
-        if (command?.trim()) set({ kind: "hook", command: command.trim() });
-      },
-    },
-    { label: "Nothing (wait for Enter)", checked: p.kind === "none", run: () => set({ kind: "none" }) },
-  ];
 }
 
 function Divider({

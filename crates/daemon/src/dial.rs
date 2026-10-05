@@ -321,6 +321,7 @@ pub async fn token(opts: &PeerOpts) -> anyhow::Result<String> {
             name: opts.name.clone(),
             urls: vec![],
             transport: illogical_proto::hosts::Transport::DialOut,
+            ssh: None,
         },
     };
     let res = crate::roots::client()

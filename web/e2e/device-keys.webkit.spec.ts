@@ -110,6 +110,9 @@ test("the key probe: keys survive a reload here, or the fallback does", async ({
   const rows = await page.locator("#rows tr").allTextContents();
   test.info().annotations.push({ type: "probe", description: [await verdict.textContent(), ...rows].join("\n") });
   await expect(verdict).not.toContainText("doesn't work either");
+  // And for a test driving real Safari (web/safari): the same, as data.
+  await expect(verdict).toHaveAttribute("data-verdict", /^(keys|wrapped)$/);
+  expect(JSON.parse((await page.locator("#result").textContent())!).verdict).toBe(await verdict.getAttribute("data-verdict"));
   // The fallback, after the reload.
   await expect(page.locator("#rows tr").last().locator("td").last()).toHaveText("works");
   await expect(page.locator("#browser")).toContainText("Safari");

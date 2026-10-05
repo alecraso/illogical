@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The daemon as the app's launch agent (M46): registered by the app
+     through SMAppService, running the illogicald inside the bundle. The
+     same settings as `illogicald install`'s plist (install.rs).
+     Program, not BundleProgram: with an ad-hoc signature launchd can't
+     find the bundle for a BundleProgram ("The specified path is not a
+     bundle"), so the app registers this only when it is at this path, and
+     otherwise installs the daemon with `illogicald install`. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>wtf.widgets.illogical.daemon</string>
+  <key>Program</key>
+  <string>/Applications/illogical.app/Contents/MacOS/illogicald</string>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>wtf.widgets.illogical</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ILLOGICAL_KEEP_PANES</key>
+    <string>true</string>
+    <!-- launchd doesn't expand ~ in StandardOutPath; the daemon does here. -->
+    <key>ILLOGICAL_LOG_FILE</key>
+    <string>~/Library/Logs/illogicald.log</string>
+  </dict>
+  <key>ExitTimeOut</key>
+  <integer>15</integer>
+</dict>
+</plist>

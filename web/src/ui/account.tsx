@@ -14,7 +14,7 @@ interface SessionRow {
 }
 
 interface Passkeys {
-  passkeys: { id: string; created: number }[];
+  passkeys: { id: string; created: number; agent: string; provider: string | null; used: number | null }[];
   github: string | null;
   ways: number;
 }
@@ -58,6 +58,15 @@ export function describeAgent(ua: string): string {
             ? "Linux"
             : "";
   return os ? `${browser} on ${os}` : browser;
+}
+
+/** What keeps a passkey (iCloud Keychain, Windows Hello...) when control
+ * knows its maker, else the browser that added it (#208). Ones added
+ * before either was kept are numbered. */
+export function passkeyName(k: Passkeys["passkeys"][number], i: number): string {
+  if (k.provider) return k.provider;
+  if (k.agent) return `Passkey from ${describeAgent(k.agent)}`;
+  return `Passkey ${i + 1}`;
 }
 
 export function AccountPanel({ s, close }: { s: ControlSession; close: () => void }) {
@@ -132,8 +141,11 @@ export function AccountPanel({ s, close }: { s: ControlSession; close: () => voi
           <ul class="control-devices" data-passkeys>
             {(keys?.passkeys ?? []).map((k, i) => (
               <li key={k.id} data-passkey={k.id}>
-                <span>Passkey {i + 1}</span>
-                <span class="dim">added {day(k.created)}</span>
+                <span data-passkey-name>{passkeyName(k, i)}</span>
+                <span class="dim">
+                  added {day(k.created)}
+                  {k.used ? `, last used ${day(k.used)}` : ""}
+                </span>
                 <button
                   class={confirming === k.id ? "control-revoke danger" : "control-revoke"}
                   data-remove-passkey={k.id}

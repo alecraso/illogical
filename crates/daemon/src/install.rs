@@ -1,6 +1,7 @@
 //! `illogicald install`: run as a systemd user service, at boot (with
 //! lingering) and after crashes; on macOS, a launchd agent that starts at
-//! login and after crashes.
+//! login and after crashes (or, with `--system`, a LaunchDaemon that starts
+//! at boot). `illogicald uninstall` removes it.
 
 use std::{
     fs,
@@ -103,12 +104,43 @@ fn unit_args(unit: &str) -> Option<Vec<String>> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn install(start: bool, daemon_args: &[String], reset: bool) -> anyhow::Result<()> {
-    launchd::install(start, daemon_args, reset)
+pub fn install(start: bool, daemon_args: &[String], reset: bool, system: bool) -> anyhow::Result<()> {
+    launchd::install(start, daemon_args, reset, system)
+}
+
+#[cfg(target_os = "macos")]
+pub fn uninstall() -> anyhow::Result<()> {
+    launchd::uninstall()
+}
+
+/// Stop and remove the systemd user service; the binaries and state stay.
+#[cfg(not(target_os = "macos"))]
+pub fn uninstall() -> anyhow::Result<()> {
+    let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
+    let unit = home.join(".config/systemd/user").join(UNIT);
+    if !unit.is_file() {
+        println!("illogicald isn't installed as a service here");
+        return Ok(());
+    }
+    systemctl(&["disable", "--now", UNIT])?;
+    fs::remove_file(&unit)?;
+    println!("removed {}", unit.display());
+    systemctl(&["daemon-reload"])?;
+    println!(
+        "illogicald is no longer a service here; {} and the panes' state (~/.local/state/illogical) are kept",
+        home.join(".local/bin").display()
+    );
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn install(start: bool, daemon_args: &[String], reset: bool) -> anyhow::Result<()> {
+pub fn install(start: bool, daemon_args: &[String], reset: bool, system: bool) -> anyhow::Result<()> {
+    if system {
+        bail!(
+            "--system is for macOS (a LaunchDaemon). On Linux the user service starts at boot once lingering is on: \
+             `loginctl enable-linger $USER`"
+        );
+    }
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
     copy_binaries(&home)?;
 
@@ -171,15 +203,50 @@ pub fn copy_binaries(home: &Path) -> anyhow::Result<PathBuf> {
     Ok(dest)
 }
 
-/// macOS: a LaunchAgent in the user's GUI domain. There's no FD store, so
-/// restarting the daemon ends its panes' programs (as before M2b on Linux).
+/// macOS: a LaunchAgent in the user's GUI domain when they have a GUI
+/// login; a background agent in `user/UID` when they don't (reached only
+/// over ssh), which survives logging out but not a reboot; or, with
+/// `--system`, a LaunchDaemon that runs as them and starts at boot (sudo
+/// once). There's no FD store, so pane shims keep the terminals while the
+/// daemon restarts.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod launchd {
-    use std::{fs, path::PathBuf, process::Command};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::{Command, Stdio},
+    };
 
     use anyhow::{Context, bail};
 
     pub const LABEL: &str = "illogicald";
+
+    /// How launchd runs it.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Mode {
+        /// A LaunchAgent in `gui/UID`: starts at the user's GUI login.
+        Gui,
+        /// The same plist with `LimitLoadToSessionType` Background, in
+        /// `user/UID`: what works with no GUI login. Loaded again at the
+        /// next login (GUI), or by installing again.
+        Background,
+        /// A LaunchDaemon in `system` with `UserName`: starts at boot.
+        System { user: String, home: String },
+    }
+
+    impl Mode {
+        pub fn label(&self) -> String {
+            match self {
+                Mode::System { user, .. } => format!("{LABEL}.{user}"),
+                _ => LABEL.into(),
+            }
+        }
+    }
+
+    /// The LaunchDaemon `--system` installs for `user`.
+    pub fn system_plist(user: &str) -> PathBuf {
+        PathBuf::from(format!("/Library/LaunchDaemons/{LABEL}.{user}.plist"))
+    }
 
     fn xml(s: &str) -> String {
         s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
@@ -195,18 +262,35 @@ mod launchd {
         Some(strings.skip(1).map(unxml).collect())
     }
 
-    pub fn plist_text(exe: &str, args: &[String], log: &str) -> String {
+    pub fn plist_text(exe: &str, args: &[String], log: &str, mode: &Mode) -> String {
         let args: String = std::iter::once(exe)
             .chain(args.iter().map(String::as_str))
             .map(|a| format!("\n    <string>{}</string>", xml(a)))
             .collect();
+        let (session, user, env) = match mode {
+            Mode::Gui => (String::new(), String::new(), String::new()),
+            Mode::Background => (
+                "\n  <!-- No GUI login here: the user's background session. -->\n  <key>LimitLoadToSessionType</key>\n  <string>Background</string>".into(),
+                String::new(),
+                String::new(),
+            ),
+            Mode::System { user, home } => (
+                String::new(),
+                format!("\n  <!-- Started at boot, as this user. -->\n  <key>UserName</key>\n  <string>{}</string>", xml(user)),
+                format!(
+                    "\n    <key>HOME</key>\n    <string>{}</string>\n    <key>USER</key>\n    <string>{u}</string>\n    <key>LOGNAME</key>\n    <string>{u}</string>",
+                    xml(home),
+                    u = xml(user)
+                ),
+            ),
+        };
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>{LABEL}</string>
+  <string>{label}</string>{user}{session}
   <key>ProgramArguments</key>
   <array>{args}
   </array>
@@ -225,7 +309,7 @@ mod launchd {
   <key>EnvironmentVariables</key>
   <dict>
     <key>ILLOGICAL_KEEP_PANES</key>
-    <string>true</string>
+    <string>true</string>{env}
   </dict>
   <!-- Stop the daemon first, so it saves every pane. -->
   <key>ExitTimeOut</key>
@@ -237,64 +321,236 @@ mod launchd {
 </dict>
 </plist>
 "#,
+            label = xml(&mode.label()),
             log = xml(log)
         )
     }
 
-    fn launchctl(args: &[&str]) -> anyhow::Result<bool> {
-        let status = Command::new("launchctl").args(args).status().context("running launchctl")?;
-        Ok(status.success())
+    /// The one-line warning a background install prints. `illogical
+    /// --ssh` passes `note:` lines through.
+    pub fn background_note(user: &str) -> String {
+        format!(
+            "note: {user} has no GUI login on this Mac (only ssh), so illogicald runs as a background agent: it keeps \
+             running after you log out, but after a reboot it won't start until {user} logs in to the desktop or runs \
+             `illogicald install` again. `illogicald install --system` starts it at boot instead (a LaunchDaemon; \
+             needs sudo)."
+        )
     }
 
-    pub fn install(start: bool, daemon_args: &[String], reset: bool) -> anyhow::Result<()> {
+    /// Whether launchd has `target` (a domain or a service), asked quietly.
+    fn has(target: &str) -> bool {
+        Command::new("launchctl")
+            .args(["print", target])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// `launchctl` (or `sudo launchctl`) bootout, ignoring "not loaded".
+    fn bootout(sudo: bool, service: &str) {
+        let mut c = if sudo { Command::new("sudo") } else { Command::new("launchctl") };
+        if sudo {
+            println!("+ sudo launchctl bootout {service}");
+            c.arg("launchctl");
+        }
+        let _ = c.args(["bootout", service]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+
+    /// Bootstrap `plist` into `domain`, retrying while an old one that was
+    /// just booted out is still going (bootout returns before it's gone).
+    fn bootstrap(sudo: bool, domain: &str, plist: &Path) -> anyhow::Result<bool> {
+        for attempt in 0..20 {
+            let mut c = if sudo { Command::new("sudo") } else { Command::new("launchctl") };
+            if sudo {
+                c.arg("launchctl");
+            }
+            c.args(["bootstrap", domain]).arg(plist);
+            // Quietly until the last try: the early ones fail while the
+            // old one is still going, and launchctl says so on stderr.
+            if attempt < 19 {
+                c.stderr(Stdio::null());
+            }
+            if c.status().context("running launchctl")?.success() {
+                return Ok(true);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        Ok(false)
+    }
+
+    /// Run `sudo ARGS`, saying what it does; sudo asks for a password in
+    /// this terminal if it needs one.
+    fn sudo(args: &[&str]) -> anyhow::Result<()> {
+        println!("+ sudo {}", args.join(" "));
+        let status = Command::new("sudo").args(args).status().context("running sudo")?;
+        if !status.success() {
+            bail!("`sudo {}` failed", args.join(" "));
+        }
+        Ok(())
+    }
+
+    struct Me {
+        uid: nix::unistd::Uid,
+        name: String,
+        home: PathBuf,
+    }
+
+    fn me() -> anyhow::Result<Me> {
+        let uid = nix::unistd::getuid();
+        if uid.is_root() {
+            bail!(
+                "run this as the user the daemon is for, not as root (with --system it runs sudo for the parts that \
+                 need it)"
+            );
+        }
         let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
-        let exe = super::copy_binaries(&home)?;
-        let agents = home.join("Library/LaunchAgents");
+        let name = nix::unistd::User::from_uid(uid)?
+            .map(|u| u.name)
+            .or_else(|| std::env::var("USER").ok())
+            .context("who is this? (no user name for this uid)")?;
+        Ok(Me { uid, name, home })
+    }
+
+    pub fn install(start: bool, daemon_args: &[String], reset: bool, system: bool) -> anyhow::Result<()> {
+        let me = me()?;
+        let exe = super::copy_binaries(&me.home)?;
+        let agents = me.home.join("Library/LaunchAgents");
         fs::create_dir_all(&agents)?;
-        let logs = home.join("Library/Logs");
+        let logs = me.home.join("Library/Logs");
         fs::create_dir_all(&logs)?;
         let log = logs.join("illogicald.log");
-        let plist = agents.join(format!("{LABEL}.plist"));
-        let args = super::args_to_install(daemon_args, reset, || plist_args(&fs::read_to_string(&plist).ok()?));
-        fs::write(&plist, plist_text(&exe.display().to_string(), &args, &log.display().to_string()))?;
-        println!("wrote {}", plist.display());
-
-        let domain = format!("gui/{}", nix::unistd::getuid());
-        let service = format!("{domain}/{LABEL}");
-        if start {
-            // In case it was disabled (`launchctl disable`) before.
-            let _ = launchctl(&["enable", &service]);
-            // Unload the old one (if any) so the new binary and plist are
-            // used; its panes end with it.
-            let _ = Command::new("launchctl").args(["bootout", &service]).stderr(std::process::Stdio::null()).status();
-            let plist = plist.display().to_string();
-            // bootout returns before the old one is gone; retry briefly.
-            let mut ok = false;
-            // Quietly until the last try: the early ones fail while the old
-            // one is still going, and launchctl says so on stderr.
-            for attempt in 0..20 {
-                let mut c = Command::new("launchctl");
-                c.args(["bootstrap", &domain, &plist]);
-                if attempt < 19 {
-                    c.stderr(std::process::Stdio::null());
-                }
-                if c.status().context("running launchctl")?.success() {
-                    ok = true;
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(250));
+        let agent = agents.join(format!("{LABEL}.plist"));
+        let daemon = system_plist(&me.name);
+        // A LaunchDaemon from an earlier `--system` stays one: going back
+        // to an agent is `illogicald uninstall` first (both need sudo).
+        let system = system || {
+            let had = daemon.is_file();
+            if had {
+                println!(
+                    "keeping the LaunchDaemon from the last install (--system); `illogicald uninstall` removes it"
+                );
             }
-            if !ok {
+            had
+        };
+        let args = super::args_to_install(daemon_args, reset, || {
+            plist_args(&fs::read_to_string(&daemon).or_else(|_| fs::read_to_string(&agent)).ok()?)
+        });
+        let gui = format!("gui/{}", me.uid);
+        let user = format!("user/{}", me.uid);
+        let mode = if system {
+            Mode::System { user: me.name.clone(), home: me.home.display().to_string() }
+        } else if has(&gui) {
+            Mode::Gui
+        } else {
+            Mode::Background
+        };
+        let text = plist_text(&exe.display().to_string(), &args, &log.display().to_string(), &mode);
+        let logs = log.display().to_string();
+
+        if let Mode::System { .. } = mode {
+            println!(
+                "--system: a LaunchDaemon, {}, runs illogicald as {} from boot, with nobody logged in. Writing and \
+                 loading it needs root, so this runs sudo (it may ask for your password):",
+                daemon.display(),
+                me.name
+            );
+            let tmp = agents.join(format!(".{LABEL}.{}.plist", std::process::id()));
+            fs::write(&tmp, &text)?;
+            let tmp_s = tmp.display().to_string();
+            let daemon_s = daemon.display().to_string();
+            let wrote = sudo(&["install", "-m", "644", "-o", "root", "-g", "wheel", &tmp_s, &daemon_s]);
+            let _ = fs::remove_file(&tmp);
+            wrote?;
+            // One daemon per user: the agent would start a second one at the
+            // next login.
+            for d in [&gui, &user] {
+                bootout(false, &format!("{d}/{LABEL}"));
+            }
+            if agent.is_file() {
+                fs::remove_file(&agent)?;
+                println!("removed {} (the LaunchDaemon replaces it)", agent.display());
+            }
+            let service = format!("system/{}", mode.label());
+            if start {
+                bootout(true, &service);
+                sudo(&["launchctl", "enable", &service])?;
+                if !bootstrap(true, "system", &daemon)? {
+                    bail!("`sudo launchctl bootstrap system {daemon_s}` failed; see {logs}");
+                }
+                println!("started {service}");
+                print!("{}", super::next_steps(&args, &logs));
+            } else {
+                println!("it starts at the next boot (or: sudo launchctl bootstrap system {daemon_s})");
+            }
+            return Ok(());
+        }
+
+        fs::write(&agent, &text)?;
+        println!("wrote {}", agent.display());
+        let domain = if mode == Mode::Gui { &gui } else { &user };
+        if start {
+            let service = format!("{domain}/{LABEL}");
+            // In case it was disabled (`launchctl disable`) before.
+            let _ = Command::new("launchctl").args(["enable", &service]).status();
+            // Unload the old one, in either domain (so a switch between
+            // them leaves one), so the new binary and plist are used; its
+            // panes' shims keep them for the new one.
+            for d in [&gui, &user] {
+                bootout(false, &format!("{d}/{LABEL}"));
+            }
+            if !bootstrap(false, domain, &agent)? {
                 bail!(
-                    "launchctl bootstrap {domain} {plist} failed; see {}, or run `{}` in a terminal to see why it stops",
-                    log.display(),
+                    "launchctl bootstrap {domain} {} failed; see {logs}, or run `{}` in a terminal to see why it stops",
+                    agent.display(),
                     exe.display()
                 );
             }
-            println!("started {LABEL}");
-            print!("{}", super::next_steps(&args, &log.display().to_string()));
+            println!("started {service}");
+            print!("{}", super::next_steps(&args, &logs));
+        } else if mode == Mode::Gui {
+            println!("it starts at your next login (or: launchctl bootstrap {domain} {})", agent.display());
         } else {
-            println!("it starts at your next login (or: launchctl bootstrap {domain} {})", plist.display());
+            println!("start it with: launchctl bootstrap {domain} {}", agent.display());
+        }
+        if mode == Mode::Background {
+            println!("{}", background_note(&me.name));
+        }
+        Ok(())
+    }
+
+    /// Stop and remove whichever of the three is installed.
+    pub fn uninstall() -> anyhow::Result<()> {
+        let me = me()?;
+        let mut found = false;
+        for d in [format!("gui/{}", me.uid), format!("user/{}", me.uid)] {
+            let service = format!("{d}/{LABEL}");
+            if has(&service) {
+                bootout(false, &service);
+                println!("stopped {service}");
+                found = true;
+            }
+        }
+        let agent = me.home.join(format!("Library/LaunchAgents/{LABEL}.plist"));
+        if agent.is_file() {
+            fs::remove_file(&agent)?;
+            println!("removed {}", agent.display());
+            found = true;
+        }
+        let daemon = system_plist(&me.name);
+        if daemon.is_file() {
+            println!("removing the LaunchDaemon {}: that needs root, so this runs sudo:", daemon.display());
+            bootout(true, &format!("system/{LABEL}.{}", me.name));
+            sudo(&["rm", "-f", &daemon.display().to_string()])?;
+            found = true;
+        }
+        if found {
+            println!(
+                "illogicald is no longer a service here; {} and the panes' state (~/.local/state/illogical) are kept",
+                me.home.join(".local/bin").display()
+            );
+        } else {
+            println!("illogicald isn't installed as a service here");
         }
         Ok(())
     }
@@ -308,6 +564,7 @@ mod tests {
             "/Users/me/.local/bin/illogicald",
             &["--listen".into(), "127.0.0.1:9000".into(), "a<b".into()],
             "/Users/me/Library/Logs/illogicald.log",
+            &super::launchd::Mode::Gui,
         );
         assert!(t.contains(
             "<string>/Users/me/.local/bin/illogicald</string>\n    <string>--listen</string>\n    <string>127.0.0.1:9000</string>\n    <string>a&lt;b</string>\n  </array>"
@@ -315,8 +572,39 @@ mod tests {
         assert!(t.contains("<key>RunAtLoad</key>"));
         assert!(t.contains("<key>ILLOGICAL_KEEP_PANES</key>\n    <string>true</string>"));
         assert_eq!(super::launchd::plist_args(&t).unwrap(), ["--listen", "127.0.0.1:9000", "a<b"]);
-        let bare = super::launchd::plist_text("/x/illogicald", &[], "/x/log");
+        assert!(!t.contains("LimitLoadToSessionType") && !t.contains("UserName"));
+        let bare = super::launchd::plist_text("/x/illogicald", &[], "/x/log", &super::launchd::Mode::Gui);
         assert_eq!(super::launchd::plist_args(&bare).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn plist_modes() {
+        use super::launchd::{Mode, plist_args, plist_text};
+        let args = ["--listen".to_string(), "127.0.0.1:9000".to_string()];
+        let bg = plist_text("/x/illogicald", &args, "/x/log", &Mode::Background);
+        assert!(bg.contains("<key>Label</key>\n  <string>illogicald</string>"));
+        assert!(bg.contains("<key>LimitLoadToSessionType</key>\n  <string>Background</string>"));
+        assert!(!bg.contains("UserName"));
+        assert_eq!(plist_args(&bg).unwrap(), args);
+
+        let sys = Mode::System { user: "illo".into(), home: "/Users/illo".into() };
+        assert_eq!(super::launchd::system_plist("illo").to_str(), Some("/Library/LaunchDaemons/illogicald.illo.plist"));
+        let t = plist_text("/x/illogicald", &args, "/x/log", &sys);
+        assert!(t.contains("<key>Label</key>\n  <string>illogicald.illo</string>"));
+        assert!(t.contains("<key>UserName</key>\n  <string>illo</string>"));
+        assert!(t.contains("<key>HOME</key>\n    <string>/Users/illo</string>"));
+        assert!(t.contains("<key>ILLOGICAL_KEEP_PANES</key>\n    <string>true</string>"));
+        assert!(!t.contains("LimitLoadToSessionType"));
+        assert_eq!(plist_args(&t).unwrap(), args);
+    }
+
+    #[test]
+    fn background_note_says_reboot_and_system() {
+        let n = super::launchd::background_note("illo");
+        assert!(n.starts_with("note: illo has no GUI login"));
+        assert!(n.contains("after a reboot it won't start until illo logs in"));
+        assert!(n.contains("`illogicald install --system`") && n.contains("sudo"));
+        assert!(!n.contains('\n'), "one line, so `illogical --ssh` can pass it through");
     }
 
     #[test]

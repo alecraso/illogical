@@ -26,15 +26,25 @@ use serde_json::{Value, json};
 const OWNER: &str = "owner@example.com";
 const FRIEND: &str = "friend@example.com";
 
+const ARGS: &[&str] =
+    &["--wisp-token-file", "/nonexistent", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"];
+
 fn daemon() -> Daemon {
-    Daemon::child_with(&[
-        "--wisp-token-file",
-        "/nonexistent",
-        "--owner",
-        OWNER,
-        "--tailscale-socket",
-        "/nonexistent/sock",
-    ])
+    Daemon::child_with(ARGS)
+}
+
+/// One whose PATH has no chant on it, whatever the host's has: the host's
+/// PATH without the directories that hold a `chant`, and a directory of
+/// its own with `node` in it (nvm puts the two side by side). `$CHANT` is
+/// emptied too.
+fn daemon_without_chant(scratch: &Scratch) -> Daemon {
+    let host = std::env::var_os("PATH").unwrap_or_default();
+    let dirs: Vec<PathBuf> = std::env::split_paths(&host).collect();
+    let node = dirs.iter().map(|d| d.join("node")).find(|p| p.is_file()).expect("node on PATH");
+    std::os::unix::fs::symlink(&node, scratch.join("node")).unwrap();
+    let kept = dirs.into_iter().filter(|d| !d.join("chant").exists());
+    let path = std::env::join_paths(std::iter::once(scratch.to_path_buf()).chain(kept)).unwrap();
+    Daemon::child_env(ARGS, &[("PATH", path.to_str().unwrap()), ("CHANT", "")])
 }
 
 /// A workspace (a git repository with a `chant.workspace.json`) with the
@@ -241,7 +251,8 @@ fn an_editor_approves_as_themselves_and_a_viewer_cannot() {
 
 #[test]
 fn without_chant_or_a_declaration_it_says_so() {
-    let d = daemon();
+    let bin = Scratch::new("workspace-bin");
+    let d = daemon_without_chant(&bin);
     // A workspace whose chant isn't installed (and none on PATH).
     let bare = d.sessions.join("bare");
     std::fs::create_dir_all(&bare).unwrap();

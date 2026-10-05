@@ -10,12 +10,13 @@ Thanks for wanting to help.
 
 ## Changes
 
-[docs/development.md](docs/development.md) covers building, testing and the
-code's layout. In short:
+[docs/development.md](docs/development.md) covers building and the code's
+layout, and [docs/testing.md](docs/testing.md) the tests. In short:
 
 ```sh
 just bootstrap   # once: toolchains and the web client's packages
-just check       # what CI runs: format, lints, the Rust tests and the web e2e
+just check       # what CI runs: format, lints, the Rust tests, interop and control
+just e2e         # the browser tests (not in CI yet; run them if you touched web/)
 ```
 
 - Open an issue first for anything bigger than a small fix, so we can agree

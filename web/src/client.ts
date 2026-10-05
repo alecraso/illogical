@@ -520,6 +520,25 @@ export class Client {
     }
   }
 
+  /** An ssh invite to a terminal pane for someone with only OpenSSH (M65):
+   * read-only, one login, an hour. The command to send them, copied to the
+   * clipboard when the browser lets us. */
+  async guestInvite(pane: PaneId): Promise<string | null> {
+    try {
+      const res = await this.request("POST", "/api/guests", { pane });
+      const body = await res.json<{ command?: string; error?: string }>().catch(() => null);
+      if (!res.ok || !body?.command) {
+        this.toast(body?.error ?? `couldn't make an invite (${res.status})`);
+        return null;
+      }
+      await navigator.clipboard?.writeText(body.command).catch(() => {});
+      return body.command;
+    } catch {
+      this.toast("couldn't make an invite");
+      return null;
+    }
+  }
+
   /**
    * A shell on a new throwaway VM: a tab in `session` whose panes share it
    * (`tab`), a pane-owned one in a tab of its own, or a split of `split`.

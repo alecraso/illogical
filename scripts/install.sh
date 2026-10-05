@@ -86,7 +86,10 @@ fi
 # or the default.
 listen=127.0.0.1:7681
 if [ "$os" = Darwin ]; then
-  args=$(sed -n 's:.*<string>\(.*\)</string>.*:\1:p' "$HOME/Library/LaunchAgents/illogicald.plist" 2>/dev/null || true)
+  plist="$HOME/Library/LaunchAgents/illogicald.plist"
+  # Or the LaunchDaemon `illogicald install --system` wrote.
+  [ -f "$plist" ] || plist="/Library/LaunchDaemons/illogicald.$(id -un).plist"
+  args=$(sed -n 's:.*<string>\(.*\)</string>.*:\1:p' "$plist" 2>/dev/null || true)
 else
   args=$(sed -n 's/^ExecStart=[^ ]*//p' "$HOME/.config/systemd/user/illogicald.service" 2>/dev/null || true)
 fi

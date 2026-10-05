@@ -18,6 +18,7 @@ import { notifyBlocker, pushNow, serveCommand, subscribePush } from "./notify";
 import { startAgent } from "./agent-dialog";
 
 const DOCS = "https://github.com/arugula-salad/illogical/blob/main/docs";
+/** illogical cloud, unless the daemon was started with `--control` (#207). */
 const CONTROL = "https://control.illogical.widgets.wtf";
 const SEEN_KEY = "illogical.getting-started";
 
@@ -186,8 +187,15 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
       setManual(true);
     }
   };
+  // The cloud step's part comes back first (the rest asks Tailscale and
+  // Claude Code): which control the button joins, at once (#207).
+  const [early, setEarly] = useState<Setup["control"] | null>(null);
   useEffect(() => {
     void refresh();
+    fetch("/api/setup?part=control")
+      .then((r) => (r.ok ? (r.json() as Promise<Pick<Setup, "control">>) : null))
+      .then((r) => r && setEarly(r.control))
+      .catch(() => {});
     fetch("/api/host")
       .then((r) => (r.ok ? (r.json() as Promise<HostInfo>) : null))
       .then(setHost)
@@ -264,7 +272,9 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
           </div>
           {id === "welcome" && <Welcome name={name} client={client} />}
           {id === "phone" && <Phone name={name} setup={setup} host={host} manual={manual} refresh={refresh} />}
-          {id === "cloud" && <Cloud setup={setup} host={host} manual={manual} refresh={refresh} setSetup={setSetup} onConfirmed={() => setConfirmed(true)} />}
+          {id === "cloud" && (
+            <Cloud setup={setup} early={early} host={host} manual={manual} refresh={refresh} setSetup={setSetup} onConfirmed={() => setConfirmed(true)} />
+          )}
           {id === "agents" && <Agents client={client} setup={setup} manual={manual} refresh={refresh} close={close} />}
           {id === "ready" && <Ready done={done} go={go} />}
         </div>
@@ -446,8 +456,17 @@ function Phone({ name, setup, host, manual, refresh }: { name: string; setup: Se
   );
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 function Cloud({
   setup,
+  early,
   host,
   manual,
   refresh,
@@ -455,6 +474,7 @@ function Cloud({
   onConfirmed,
 }: {
   setup: Setup | null;
+  early: Setup["control"] | null;
   host: HostInfo | null;
   manual: boolean;
   refresh: () => Promise<void>;
@@ -466,10 +486,13 @@ function Cloud({
   const c = setup?.control;
   const joined = c?.joined ?? host?.control;
   const team = c?.team ?? host?.team;
+  // The control this daemon joins by default: its own, if it has one.
+  const control = c?.url || early?.url || CONTROL;
+  const ours = control === CONTROL;
   const connect = async () => {
     setBusy(true);
     setError(null);
-    const r = await post("/api/setup/control");
+    const r = await post("/api/setup/control", { url: control });
     if (r.error) setError(r.error);
     else if (r.pending) setSetup((s) => (s ? { ...s, control: { ...s.control, pending: r.pending as NonNullable<Setup["control"]["pending"]> } } : s));
     await refresh();
@@ -494,7 +517,7 @@ function Cloud({
       {manual ? (
         <>
           <p>On this machine:</p>
-          <CopyText text={`illogicald join ${CONTROL}`} data-join-command />
+          <CopyText text={`illogicald join ${control}`} data-join-command />
         </>
       ) : joined ? (
         <ul class="start-checks">
@@ -540,7 +563,7 @@ function Cloud({
       ) : (
         <>
           <button class="start-btn primary big" disabled={busy || !setup} onClick={connect} data-start-connect>
-            {busy ? "Asking the cloud…" : "Connect to illogical cloud"}
+            {busy ? "Asking the cloud…" : ours ? "Connect to illogical cloud" : `Connect to ${hostOf(control)}`}
           </button>
           {(error ?? c?.error) && (
             <div class="start-said" data-start-error>

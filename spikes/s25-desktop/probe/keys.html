@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>S25 probe</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  body { font: 13px system-ui, sans-serif; margin: 12px; background: #16181d; color: #ddd; }
+  h2 { font-size: 14px; margin: 16px 0 6px; color: #9cf; }
+  .grid { display: flex; flex-wrap: wrap; gap: 4px; }
+  .k { padding: 2px 6px; border-radius: 3px; background: #333; font: 12px ui-monospace, monospace; }
+  .k.ok { background: #1d5e2e; }
+  button { margin: 2px; }
+  pre { background: #0b0c0f; padding: 6px; max-height: 160px; overflow: auto; margin: 4px 0; }
+  #term { height: 160px; }
+  td { padding: 1px 8px 1px 0; vertical-align: top; }
+</style>
+</head>
+<body>
+<p>Focus the terminal below and press each chord. Every keydown is prevented, as the client does.</p>
+
+<h2>Chords reaching the page</h2>
+<div class="grid" id="chords"></div>
+<p>Also seen: <span id="extra"></span></p>
+
+<h2>Terminal (IME: type Japanese and Korean here)</h2>
+<div id="term"></div>
+<pre id="ime"></pre>
+
+<h2>Clipboard</h2>
+<button id="cw">write (click)</button>
+<button id="cr">read (click)</button>
+<button id="cn">write 1 s later, no gesture (OSC 52)</button>
+<button id="rw">Rust: write</button>
+<button id="rr">Rust: read</button>
+<pre id="clip"></pre>
+
+<h2>Notifications</h2>
+<button id="wn">web Notification</button>
+<button id="nn">native, click me</button>
+<button id="nd">native in 5 s (switch away)</button>
+<pre id="note"></pre>
+
+<h2>Windows and badge</h2>
+<button id="nw">new window (daemon page)</button>
+<input id="badge" type="number" value="3" style="width:4em"> <button id="sb">set needs-you count</button>
+
+<h2>Environment</h2>
+<table id="env"></table>
+<button id="report">send report</button>
+
+<script src="vendor/xterm.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const invoke = (c, a) => window.__TAURI__ ? window.__TAURI__.core.invoke(c, a) : Promise.reject("not in Tauri");
+const results = { chords: {}, extra: [], ime: [], clip: [], note: [], env: {} };
+const log = (where, msg) => { results[where].push(msg); $(where).textContent += msg + "\n"; };
+
+// ---- chords
+const mac = /Mac/.test(navigator.platform);
+const mod = mac ? "Meta" : "Ctrl";
+const want = [
+  ...["KeyW", "KeyT", "KeyN", "KeyQ", "KeyH", "KeyM", "KeyL", "KeyR", "KeyF", "KeyP", "Comma", "Digit1", "Digit9"].map((k) => `${mod}-${k}`),
+  "Ctrl-Tab", "Ctrl-Shift-Tab", "Ctrl-PageUp", "Ctrl-PageDown",
+  ...["KeyT", "KeyW", "KeyN", "KeyC", "KeyV", "KeyP", "KeyI"].map((k) => `Ctrl-Shift-${k}`),
+  ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`),
+  "Alt-KeyB", "Alt-KeyF", "Alt-KeyX", "Alt-Period", "Alt-Backspace", "Alt-ArrowLeft",
+  "Ctrl-KeyC", "Ctrl-KeyD", "Ctrl-KeyZ", "Ctrl-Backslash", "Ctrl-BracketLeft", "Ctrl-Space", "Escape",
+  ...(mac ? ["Meta-Shift-BracketLeft", "Meta-Shift-BracketRight", "Meta-ArrowLeft", "Meta-Backspace"] : []),
+];
+const chordOf = (e) => [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta", e.code].filter(Boolean).join("-");
+for (const c of want) {
+  const s = document.createElement("span");
+  s.className = "k"; s.id = "k-" + c; s.textContent = c;
+  $("chords").appendChild(s);
+  results.chords[c] = false;
+}
+addEventListener("keydown", (e) => {
+  if (/^(Control|Shift|Alt|Meta)(Left|Right)$/.test(e.code)) return;
+  const c = chordOf(e);
+  const el = $("k-" + c);
+  if (el) { el.classList.add("ok"); results.chords[c] = true; }
+  else if (!results.extra.includes(c)) { results.extra.push(c); $("extra").textContent = results.extra.join(" "); }
+  // Like the client: chords are taken, plain typing (and IME) goes to xterm.
+  if (e.isComposing || e.keyCode === 229) return;
+  // Paste chords stay with the engine, as the client leaves them (xterm reads the paste event).
+  if (e.ctrlKey && (e.code === "KeyV" || (e.shiftKey && e.code === "KeyV"))) return;
+  if (e.ctrlKey || e.altKey || e.metaKey || /^(F\d+|Tab)$/.test(e.code)) e.preventDefault();
+}, true);
+
+// ---- terminal with local echo, to see IME go through xterm's textarea
+const term = new Terminal({ rows: 8, cols: 100, fontSize: 13 });
+term.open($("term"));
+term.onData((d) => {
+  term.write(d.replace(/\r/g, "\r\n"));
+  if (/[^\x00-\x7f]/.test(d)) log("ime", `onData ${JSON.stringify(d)}`);
+});
+const ta = document.querySelector(".xterm-helper-textarea");
+for (const ev of ["compositionstart", "compositionupdate", "compositionend"]) {
+  ta.addEventListener(ev, (e) => log("ime", `${ev} ${JSON.stringify(e.data)}`));
+}
+
+// ---- clipboard
+const stamp = () => "s25-" + new Date().toISOString().slice(11, 19);
+const tryIt = async (name, f) => { try { log("clip", `${name}: ok ${JSON.stringify(await f())}`); } catch (e) { log("clip", `${name}: FAIL ${e}`); } };
+$("cw").onclick = () => tryIt("navigator write (gesture)", async () => { const s = stamp(); await navigator.clipboard.writeText(s); return s; });
+$("cr").onclick = () => tryIt("navigator read (gesture)", () => navigator.clipboard.readText());
+$("cn").onclick = () => setTimeout(() => tryIt("navigator write (no gesture)", async () => { const s = stamp(); await navigator.clipboard.writeText(s); return s; }), 1000);
+$("rw").onclick = () => tryIt("Rust write", async () => { const s = stamp(); await invoke("plugin:clipboard-manager|write_text", { text: s }); return s; });
+$("rr").onclick = () => tryIt("Rust read", () => invoke("plugin:clipboard-manager|read_text"));
+addEventListener("paste", (e) => log("clip", `paste event: ${JSON.stringify(e.clipboardData.getData("text/plain"))}`));
+
+// ---- notifications
+log("note", `Notification in window: ${"Notification" in window}, permission ${window.Notification?.permission}`);
+log("note", `serviceWorker: ${"serviceWorker" in navigator}, PushManager: ${"PushManager" in window}, secure: ${isSecureContext}`);
+$("wn").onclick = async () => {
+  try {
+    const p = await Notification.requestPermission();
+    log("note", `requestPermission: ${p}`);
+    if (p === "granted") { const n = new Notification("S25 web", { body: "from the page" }); n.onclick = () => log("note", "web notification clicked"); }
+  } catch (e) { log("note", `web: FAIL ${e}`); }
+};
+const native = (tag) => invoke("s25_notify", { title: "illogical", body: `pane %${tag} needs you`, tag }).then(() => log("note", `native ${tag}: shown`), (e) => log("note", `native ${tag}: FAIL ${e}`));
+$("nn").onclick = () => native("3");
+$("nd").onclick = () => setTimeout(() => native("7"), 5000);
+window.__TAURI__?.event.listen("s25-notification-click", (e) => log("note", `clicked: pane %${e.payload} (focused: ${document.hasFocus()})`));
+
+// ---- windows
+$("nw").onclick = () => invoke("s25_new_window").catch((e) => console.log("new window:", e));
+$("sb").onclick = () => invoke("s25_badge", { count: +$("badge").value });
+
+// ---- environment
+const gl = document.createElement("canvas").getContext("webgl2");
+const dbg = gl?.getExtension("WEBGL_debug_renderer_info");
+Object.assign(results.env, {
+  userAgent: navigator.userAgent,
+  webgl2: !!gl,
+  renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl?.getParameter(gl.RENDERER),
+  dpr: devicePixelRatio,
+  secure: isSecureContext,
+  keyboardLock: "keyboard" in navigator && "lock" in navigator.keyboard,
+  windowControlsOverlay: "windowControlsOverlay" in navigator,
+  tauri: !!window.__TAURI__,
+});
+for (const [k, v] of Object.entries(results.env)) $("env").insertAdjacentHTML("beforeend", `<tr><td>${k}</td><td>${v}</td></tr>`);
+$("report").onclick = () => invoke("s25_report", { json: JSON.stringify(results) }).catch(() => console.log(JSON.stringify(results)));
+window.__s25probe = results;
+
+// ---- S25_AUTO: everything that needs no hands, and a log of every key for
+// drive.py, which presses real keys through uinput.
+if (window.__S25_FLAGS?.auto) {
+  const L = (o) => invoke("s25_log", { line: JSON.stringify({ t: Math.round(performance.now()), ...o }) });
+  const within = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`no answer in ${ms} ms`)), ms))]);
+  const rustRead = () => invoke("plugin:clipboard-manager|read_text");
+  const rustWrite = (text) => invoke("plugin:clipboard-manager|write_text", { text });
+  let saved = null;
+  const restore = () => (saved !== null ? rustWrite(saved).catch((err) => L({ clip: "restore", error: String(err) })) : null);
+  addEventListener("keydown", (e) => {
+    if (/^(Control|Shift|Alt|Meta)(Left|Right)$/.test(e.code)) return;
+    L({ key: chordOf(e), composing: e.isComposing, focus: document.hasFocus() });
+    if (e.code === "KeyG" && e.ctrlKey && e.altKey) {
+      // A keydown is a user gesture: the clipboard as a click would use it.
+      (async () => {
+        try { await within(navigator.clipboard.writeText("s25-gesture"), 3000); L({ clip: "navigator write (gesture)", ok: (await rustRead()) === "s25-gesture" }); }
+        catch (err) { L({ clip: "navigator write (gesture)", error: String(err) }); }
+        try { await rustWrite("s25-from-rust"); L({ clip: "navigator read (gesture)", ok: (await within(navigator.clipboard.readText(), 3000)) === "s25-from-rust" }); }
+        catch (err) { L({ clip: "navigator read (gesture)", error: String(err) }); }
+        await restore();
+        L({ clip: "restored" });
+      })();
+    }
+    if (e.code === "KeyP" && e.ctrlKey && e.altKey) rustWrite("s25-paste").then(() => L({ paste: "armed" }), (err) => L({ paste: String(err) }));
+    if (e.code === "KeyO" && e.ctrlKey && e.altKey) invoke("s25_new_window").then(() => L({ window: "opened" }), (err) => L({ window: String(err) }));
+  }, true);
+  for (const ev of ["compositionstart", "compositionupdate", "compositionend"]) ta.addEventListener(ev, (e) => L({ ime: ev, data: e.data }));
+  addEventListener("paste", (e) => L({ paste: e.clipboardData.getData("text/plain") }), true);
+  term.onData((d) => { if (/[^\x00-\x7f]/.test(d)) L({ onData: d }); });
+  window.__TAURI__.event.listen("s25-notification-click", (e) => L({ note: "clicked", tag: e.payload, focus: document.hasFocus() }));
+  (async () => {
+    try { saved = await rustRead(); } catch { saved = ""; }
+    term.focus();
+    await new Promise((r) => setTimeout(r, 300));
+    L({ ready: true, focus: document.hasFocus(), env: results.env, note: results.note });
+    try { await within(navigator.clipboard.writeText("s25-no-gesture"), 3000); L({ clip: "navigator write (no gesture)", ok: (await rustRead()) === "s25-no-gesture" }); }
+    catch (err) { L({ clip: "navigator write (no gesture)", error: String(err) }); }
+    try { await rustWrite("s25-rust"); L({ clip: "Rust write + read", ok: (await rustRead()) === "s25-rust" }); }
+    catch (err) { L({ clip: "Rust write + read", error: String(err) }); }
+    try { L({ clip: "navigator read (no gesture)", ok: (await within(navigator.clipboard.readText(), 3000)) === "s25-rust" }); }
+    catch (err) { L({ clip: "navigator read (no gesture)", error: String(err) }); }
+    await restore();
+    try { L({ note: "web requestPermission", result: await within(Notification.requestPermission(), 5000) }); }
+    catch (err) { L({ note: "web requestPermission", error: String(err) }); }
+    try { L({ note: "native shown", id: await invoke("s25_notify", { title: "illogical", body: "S25 probe: pane %3 needs you", tag: "3" }) }); }
+    catch (err) { L({ note: "native", error: String(err) }); }
+    try { await invoke("s25_badge", { count: 3 }); L({ badge: "set" }); } catch (err) { L({ badge: String(err) }); }
+    L({ autodone: true });
+  })();
+}
+</script>
+</body>
+</html>

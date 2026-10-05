@@ -200,6 +200,8 @@ impl Ctx<'_> {
                 crate::http::Target::Socket(p) => p.display().to_string(),
                 crate::http::Target::Url(u) => u.authority.clone(),
                 crate::http::Target::Via(p, prefix) => format!("{}{prefix}", p.display()),
+                crate::http::Target::Ssh(r) => format!("ssh:{}", r.dest),
+                crate::http::Target::Control(l) => format!("control:{}", l.route),
             },
             "client_name" | "client_tty" => client_name(),
             "client_control_mode" => "1".into(),

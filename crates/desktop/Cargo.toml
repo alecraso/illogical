@@ -15,6 +15,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
+# illogical:// links (M46): the URL scheme on macOS; Linux gets its links
+# as arguments, through single-instance.
+tauri-plugin-deep-link = "2"
+# The global hotkey (M46, off by default).
+tauri-plugin-global-shortcut = "2"
+# App updates (M46): a signed manifest on the release page.
+tauri-plugin-updater = "2"
 tungstenite = "0.30"
 # Control's ticket for signing in (M48), and the local daemon's /api/host.
 ureq = { version = "3", features = ["json"] }
@@ -31,6 +38,11 @@ webkit2gtk-sys = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"
+# SMAppService for the daemon's launch agent, and NSWindow tabs (M46).
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSResponder"] }
+objc2-service-management = { version = "0.3", features = ["SMAppService"] }
 
 # Its own workspace, out of the main build: Tauri needs WebKitGTK headers
 # that CI's runners don't have (M46).

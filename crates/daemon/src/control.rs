@@ -75,6 +75,10 @@ pub struct Saved {
     pub roster: Option<Roster>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub team_certs: AccountCerts,
+    /// The team's members' names as they set them (#208); the roster has
+    /// one word each ("Sam-Stranger").
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub team_names: BTreeMap<String, String>,
     /// The team is locked: only its owners get in.
     #[serde(default)]
     pub locked: bool,
@@ -100,6 +104,9 @@ pub struct SharedTeam {
     pub roster: Roster,
     #[serde(default)]
     pub certs: AccountCerts,
+    /// Members' names as they set them (#208).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub names: BTreeMap<String, String>,
     #[serde(default)]
     pub locked: bool,
 }
@@ -122,6 +129,7 @@ fn take_move(saved: &mut Saved, m: Move) {
         saved.team = m.team;
         saved.roster = None;
         saved.team_certs = Default::default();
+        saved.team_names = Default::default();
         saved.locked = false;
     }
     saved.moved_at = m.at;
@@ -174,7 +182,8 @@ impl Enrolled {
                     TeamRole::Editor | TeamRole::Viewer => {
                         let role = if m.role == TeamRole::Editor { Role::Editor } else { Role::Viewer };
                         team_roles.insert(format!("account:{}", m.account), role);
-                        Principal::User { id: format!("account:{}", m.account), name: m.name.clone(), pic: None }
+                        let name = saved.team_names.get(&m.account).unwrap_or(&m.name).clone();
+                        Principal::User { id: format!("account:{}", m.account), name, pic: None }
                     }
                 };
                 for c in r.devices(&m.account, &saved.team_certs).devices.into_values() {
@@ -208,7 +217,7 @@ impl Enrolled {
                 }
                 let id = format!("account:{}", m.account);
                 roles.insert(id.clone(), if m.role == TeamRole::Viewer { Role::Viewer } else { Role::Editor });
-                let who = Principal::User { id, name: m.name.clone(), pic: None };
+                let who = Principal::User { id, name: t.names.get(&m.account).unwrap_or(&m.name).clone(), pic: None };
                 for c in t.roster.devices(&m.account, &t.certs).devices.into_values().filter(|c| c.kind.connects()) {
                     others.push((c, who.clone()));
                 }
@@ -242,6 +251,8 @@ pub struct Control {
     pub changed: watch::Sender<u64>,
     /// Direct URLs to give the directory.
     pub direct_urls: Vec<String>,
+    /// The control to join when nobody names one (`--control`, #207).
+    pub default_url: String,
     /// Control said the account's devices changed: refresh now.
     nudge: tokio::sync::Notify,
     http: reqwest::Client,
@@ -271,17 +282,13 @@ fn write_saved(dir: &Path, s: &Saved) -> anyhow::Result<()> {
 /// method, path and query, the time, a fresh nonce and the body's hash
 /// (`v2`), or for a control from before 0.17 the method, path and time.
 pub fn auth_header(keys: &DeviceKeys, method: &str, path_and_query: &str, body: &[u8], v2: bool) -> String {
-    use sha2::{Digest, Sha256};
-    let ms = now_ms();
     if !v2 {
+        let ms = now_ms();
         let path = path_and_query.split('?').next().unwrap_or(path_and_query);
         let msg = format!("illogical daemon auth\n{method}\n{path}\n{ms}\n");
         return format!("{} {ms} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())));
     }
-    let nonce = hex::encode(illogical_e2e::random::<16>());
-    let digest = hex::encode(Sha256::digest(body));
-    let msg = format!("illogical daemon auth v2\n{method}\n{path_and_query}\n{ms}\n{nonce}\n{digest}\n");
-    format!("v2 {} {ms} {nonce} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())))
+    illogical_e2e::cert::request_auth(keys, method, path_and_query, body)
 }
 
 /// Whether the control at `url` takes signatures over the body and a
@@ -295,13 +302,20 @@ async fn takes_v2(http: &reqwest::Client, url: &str) -> bool {
 const AUTH: &str = "x-illogical-auth";
 
 impl Control {
-    pub fn new(state_dir: &Path, direct_urls: Vec<String>, acl: Arc<Acl>, no_relay: bool) -> Arc<Self> {
+    pub fn new(
+        state_dir: &Path,
+        direct_urls: Vec<String>,
+        default_url: String,
+        acl: Arc<Acl>,
+        no_relay: bool,
+    ) -> Arc<Self> {
         let me = Arc::new(Self {
             state_dir: state_dir.to_owned(),
             acl,
             now: RwLock::new(None),
             changed: watch::channel(0).0,
             direct_urls,
+            default_url,
             nudge: tokio::sync::Notify::new(),
             http: crate::roots::http().timeout(Duration::from_secs(20)).build().expect("http client"),
             published: Default::default(),
@@ -333,7 +347,8 @@ impl Control {
         if account == e.saved.cert.account {
             return Some(e.saved.login.clone()).filter(|l| !l.is_empty());
         }
-        e.saved.roster.as_ref()?.member(account).map(|m| m.name.clone())
+        let m = e.saved.roster.as_ref()?.member(account)?;
+        Some(e.saved.team_names.get(account).unwrap_or(&m.name).clone())
     }
 
     /// Who a Noise key belongs to, if this daemon lets them in: a device of
@@ -469,6 +484,8 @@ impl Control {
                 locked: bool,
                 rosters: Vec<Roster>,
                 certs: AccountCerts,
+                #[serde(default)]
+                names: BTreeMap<String, String>,
             }
             let since = saved.roster.as_ref().map_or(0, |r| r.version);
             let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}&features={}", features())).await?;
@@ -487,8 +504,11 @@ impl Control {
             if let Some(r) = &cur {
                 certs.retain(|a, _| r.member(a).is_some());
             }
+            let mut names = t.names;
+            names.retain(|a, _| cur.as_ref().is_some_and(|r| r.member(a).is_some()));
             saved.roster = cur;
             saved.team_certs = certs;
+            saved.team_names = names;
             saved.locked = t.locked;
         }
 
@@ -527,6 +547,8 @@ impl Control {
                 locked: bool,
                 rosters: Vec<Roster>,
                 certs: AccountCerts,
+                #[serde(default)]
+                names: BTreeMap<String, String>,
             }
             let ids: Vec<&str> = pins.keys().map(String::as_str).collect();
             let got: BTreeMap<String, Got> =
@@ -545,7 +567,9 @@ impl Control {
                 if let Some(roster) = cur {
                     let mut certs = g.certs;
                     certs.retain(|a, _| roster.member(a).is_some());
-                    saved.shared_teams.insert(team, SharedTeam { roster, certs, locked: g.locked });
+                    let mut names = g.names;
+                    names.retain(|a, _| roster.member(a).is_some());
+                    saved.shared_teams.insert(team, SharedTeam { roster, certs, names, locked: g.locked });
                 }
             }
         }
@@ -566,7 +590,8 @@ impl Control {
                 e.saved.locked,
                 e.saved.peers.clone(),
             )
-            || saved.team_certs != e.saved.team_certs;
+            || saved.team_certs != e.saved.team_certs
+            || saved.team_names != e.saved.team_names;
         if changed {
             write_saved(&self.state_dir, &saved)?;
         }
@@ -844,6 +869,24 @@ async fn control_said(res: reqwest::Response) -> String {
     }
 }
 
+/// Why control refuses this machine's signature, if it does: what it said
+/// ("this machine's account was deleted", or that it left or was
+/// revoked). `None` when control still knows it, or can't be asked.
+async fn forgotten(s: &Saved, keys: &DeviceKeys) -> Option<String> {
+    let http = crate::roots::http().timeout(Duration::from_secs(10)).build().ok()?;
+    let v2 = takes_v2(&http, &s.url).await;
+    let path = "/api/daemon/trust";
+    let res =
+        http.get(format!("{}{path}", s.url)).header(AUTH, auth_header(keys, "GET", path, b"", v2)).send().await.ok()?;
+    if res.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return None;
+    }
+    let said = control_said(res).await;
+    let said = said.strip_prefix("control says: ").map(str::to_owned).unwrap_or(said);
+    // Not a clock that's off or a replayed signature: control has no such machine.
+    (said.contains("account was deleted") || said.contains("not an enrolled daemon")).then_some(said)
+}
+
 /// Who a saved enrollment belongs to, in words.
 fn whose(s: &Saved) -> String {
     match (&s.roster, &s.team) {
@@ -960,14 +1003,23 @@ pub async fn join_start(
     if !url.starts_with("https://") && !private_http(&url) {
         bail!("control's URL must be https:// (or http on loopback or a private network, for testing)");
     }
+    let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
     if let Some(s) = read_saved(state_dir)? {
+        // Control may have forgotten it (its account deleted, or it was
+        // removed): say so, rather than that it's still in (#208).
+        if let Some(why) = forgotten(&s, &keys).await {
+            bail!(
+                "this machine was in {} on {}, but control doesn't know it any more ({why}); run `illogicald leave` to forget that here, then join again",
+                whose(&s),
+                s.url
+            );
+        }
         bail!(
             "this machine is already in {} on {}; to move it, run `illogicald leave`, then join again",
             whose(&s),
             s.url
         );
     }
-    let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
     let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
     // That this is the key's holder asking, not someone with its certificate.
     let ms = now_ms();
@@ -1070,6 +1122,7 @@ pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
         team: pin.clone(),
         roster: None,
         team_certs: Default::default(),
+        team_names: Default::default(),
         locked: false,
         peers: Default::default(),
         shared_teams: Default::default(),
@@ -1329,6 +1382,7 @@ mod tests {
             team: None,
             roster: None,
             team_certs: Default::default(),
+            team_names: Default::default(),
             locked: false,
             peers: Default::default(),
             shared_teams: Default::default(),
@@ -1351,5 +1405,59 @@ mod tests {
         // Control replays the move into the team: too old.
         take_move(&mut saved, into);
         assert_eq!(saved.team, None);
+    }
+
+    /// #208: a team member is called what they set ("Sam Stranger"), not
+    /// the roster's one-word form, once control says it.
+    #[test]
+    fn team_members_go_by_the_names_they_set() {
+        let (keys, root) = device("a", Kind::Browser);
+        let (_, daemon) = device("a", Kind::Daemon);
+        let (_, sam) = device("s", Kind::Browser);
+        let roster = Roster {
+            v: 1,
+            team: "t1".into(),
+            name: "Acme".into(),
+            version: 1,
+            at: 1,
+            members: vec![illogical_e2e::team::Member {
+                account: "s".into(),
+                root: sam.device.clone(),
+                role: TeamRole::Editor,
+                name: "Sam-Stranger".into(),
+            }],
+            spent: vec![],
+            redeem: None,
+            by: String::new(),
+            sig: String::new(),
+        };
+        let mut saved = Saved {
+            url: String::new(),
+            trust: Trust { account: "a".into(), root: root.device.clone() },
+            cert: daemon,
+            certs: vec![root],
+            revocations: vec![],
+            team: None,
+            roster: Some(roster),
+            team_certs: [("s".to_owned(), (vec![sam], vec![]))].into_iter().collect(),
+            team_names: Default::default(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: String::new(),
+            moved_at: 0,
+        };
+        let dir = std::env::temp_dir().join(format!("illogical-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let acl = Acl::open(&dir);
+        let keys = Arc::new(keys);
+        let name = |saved: &Saved| match &Enrolled::build(saved.clone(), keys.clone(), &acl).others[0].1 {
+            Principal::User { name, .. } => name.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(name(&saved), "Sam-Stranger");
+        saved.team_names.insert("s".into(), "Sam Stranger".into());
+        assert_eq!(name(&saved), "Sam Stranger");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

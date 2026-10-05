@@ -1,0 +1,10 @@
+# The Linux desktop app under Xvfb (#204, M46): the app's build image
+# (../Containerfile) plus a virtual display, a window manager (Openbox, for
+# minimize, maximize and moves), input (xdotool) and what the tests need.
+ARG BASE
+FROM ${BASE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      xvfb xauth dbus dbus-x11 at-spi2-core python3 procps \
+      openbox xdotool x11-utils xdg-utils desktop-file-utils \
+    && rm -rf /var/lib/apt/lists/*

@@ -6,6 +6,7 @@
 //! | GET | `/api/panes` | | `[PaneSummary]` |
 //! | POST | `/api/run` | `RunRequest` | `{"pane": N}` |
 //! | POST | `/api/panes/N/send` | `SendRequest` | `{}` |
+//! | POST | `/api/panes/N/prompt` | `PromptRequest` | `PromptResult`: the agent's turn, waited through (#147) |
 //! | POST | `/api/panes/N/keys` | `KeysRequest` | `{}` |
 //! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
@@ -30,6 +31,7 @@
 //! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |
 //! | GET | `/api/panes/N/capture` | `format=text\|ansi\|html`, `scope=screen\|scrollback\|last-command` | text |
 //! | GET | `/api/panes/N/process` | | `Process` |
+//! | GET | `/api/panes/N/detection` | | how its agent's screen reads, rule by rule (#145) |
 //! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `until=OFFSET`, `follow=1`, `text=1` | bytes (streamed with follow); other blocks: their text |
 //! | GET | `/api/panes/N/wait` | `until=command-end\|exit\|match\|idle\|needs-input`, `re=`, `timeout=` secs | `WaitResult` |
 //! | GET | `/api/panes/N/export.cast` | | asciicast v3 |
@@ -243,6 +245,53 @@ pub struct SendRequest {
     pub enter: bool,
 }
 
+/// Prompt the agent in a pane (a terminal running one, or an agent block)
+/// and wait for its turn, in one call (#147): the wait starts before the
+/// prompt is typed, so it can't miss the agent starting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromptRequest {
+    pub text: String,
+    /// It's waiting on an approval or a question, and this answers it.
+    /// Without it, an agent that's waiting on someone isn't typed at.
+    #[serde(default)]
+    pub answering: bool,
+    /// Seconds to wait for any sign of work before `stalled` (default 5).
+    #[serde(default)]
+    pub stall: Option<f64>,
+    /// Seconds to wait in all before `still_running` (default 100).
+    #[serde(default)]
+    pub timeout: Option<f64>,
+}
+
+/// What prompting an agent came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum PromptResult {
+    /// Its turn ended.
+    Done,
+    /// It asks for someone: an approval or a question.
+    NeedsInput {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask: Option<Box<crate::ask::Ask>>,
+    },
+    /// It was already waiting on someone, so nothing was typed (typing
+    /// would answer it); `answering` says it's meant to.
+    Blocked {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        question: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask: Option<Box<crate::ask::Ask>>,
+    },
+    /// No sign of work within the stall window: no agent there, the
+    /// prompt wasn't submitted, or the agent died. With the screen's last
+    /// lines, to see which.
+    Stalled { why: String, screen: String },
+    /// Still working at the timeout: wait until idle.
+    StillRunning,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeysRequest {
     /// tmux-style names: `C-c`, `M-x`, `Up`, `Enter`, `F5`, `Space`, or a
@@ -398,6 +447,65 @@ pub struct Share {
     /// The whole link, on this daemon's tailnet name when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+}
+
+/// `POST /api/guests` (M65): an invite to one terminal pane for someone
+/// with only OpenSSH.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestInviteRequest {
+    pub pane: PaneId,
+    /// They may type (one driver per pane still applies).
+    #[serde(default)]
+    pub rw: bool,
+    /// Good for any number of logins until it ends; else the first spends it.
+    #[serde(default)]
+    pub reusable: bool,
+    /// Seconds until it expires [default: an hour; at most a day, or two
+    /// hours with `rw`].
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+    /// What to call them, on their input [default: `guest`].
+    #[serde(default)]
+    pub label: Option<String>,
+    /// The address to put in the command [default: the daemon's
+    /// `--guest-ssh-host`, else its hostname].
+    #[serde(default)]
+    pub host: Option<String>,
+}
+
+/// An ssh invite to a pane (M65). `token`, `command` and the pinning lines
+/// are only in the answer that made it; the daemon keeps a hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestInvite {
+    pub id: u32,
+    pub pane: PaneId,
+    pub rw: bool,
+    pub reusable: bool,
+    pub label: String,
+    pub created_ms: u64,
+    pub expires_ms: u64,
+    /// A single-use invite someone has logged in with.
+    #[serde(default)]
+    pub used: bool,
+    /// Guests connected with it now.
+    #[serde(default)]
+    pub sessions: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// What the guest pastes: `ssh` with the host key pinned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The pinned key as a known-hosts line, for an OpenSSH older than 8.5
+    /// (no `KnownHostsCommand`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_hosts: Option<String>,
+    /// The host key's SHA256 fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
 }
 
 /// `GET /api/sync/state`: what the home daemon holds of the calling host's
