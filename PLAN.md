@@ -4126,6 +4126,50 @@ The host menu lists ssh hosts and has *Connect over ssh…*. The app runs the sy
 
 **Done when:** on jake-air and geek, the desktop app opens a pane on a box reached only over ssh (Tailscale off, not joined to control), including through a ProxyJump bastion.
 
+### Desktop track (S25, M46–M48, added 2026-10-04)
+
+A desktop app for macOS and Linux: the web UI in a native window, with the app installing, supervising and upgrading `illogicald`. Control stays the SaaS layer, and the browser and phone clients stay as they are. The full plan is #130.
+
+**Decisions (2026-10-03, Jake):**
+
+- **The daemon stays a separate service.** The app bundles `illogicald` and `illogical`, registers the service and upgrades it in place. Sessions outlive the window; if the app owned the PTYs, quitting it would end every pane.
+- **Tauri 2, decided by S25.** Electron is the fallback if WebKitGTK isn't usable on geek.
+- **macOS and Linux together.** No Windows: it has no daemon.
+- **Unsigned macOS builds for now** (ad-hoc signed). Notarization waits for a Developer ID.
+
+**Order:** S25 (done, go), then M46 (window, installer, supervisor, packaging), then M47 (Finder and Nautilus) and M48 (connections in Rust, the device key in the Keychain or Secret Service).
+
+#### S25: desktop shell spike
+
+**Done 2026-10-04: go** (see [spikes/s25-desktop](spikes/s25-desktop/README.md)), on geek's run. Jake called it before the macOS half; those checks are in M46's done-when.
+
+- **WebGL xterm works in WebKitGTK 2.52.** Idle write-to-paint matches Chrome (7 ms). Under full-screen redraws WebKitGTK paints at about 60 fps where Chrome follows geek's 240 Hz display (33 ms against 8 ms); Jake didn't notice it in use.
+- **48 of 49 chords reach the page**, Ctrl-W/T/N/Q/Tab included. F10 is GTK's menu-bar key.
+- **IME:** Mozc and Hangul commit through xterm.
+- **Clipboard:** Ctrl-Shift-C/V work as in Chrome. The page can't write without a gesture, so OSC 52 writes through Rust.
+- **No `PushManager`** in the webview: notifications come from Rust.
+- Start to the daemon's page: about 280 ms on geek, 215–310 ms on jake-mini. `.deb` 5.8 MB before the daemon.
+
+#### M46: the app as window, installer and supervisor
+
+See #130. From S25:
+
+- The window loads the UI from the local daemon (`http://127.0.0.1:7681`, already an accepted origin).
+- Notifications from Rust, off the attention events the window already gets; the click opens the pane.
+- An OSC 52 handler in the client, writing through Rust in the app.
+- Clear GTK's F10 binding. On Linux, window buttons in the client's bar when the titlebar is the client's (`data-tauri-drag-region`), in place of the PWA's `env(titlebar-area-*)`.
+- macOS: an Edit-only menu (copy, paste, select all), so Cmd-W, T, N and Q reach the page.
+
+**Also done when (S25's macOS half):** on jake-mini, the bench against Chrome; Cmd-W, T, N, Q, H and M reach the page; Japanese and Korean IME; a notification click opens the pane; the dock badge shows the needs-you count. And on geek, a notification click opens the pane.
+
+#### M47: OS integration
+
+See #130.
+
+#### M48: native transport
+
+See #130.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
