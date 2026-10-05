@@ -10,6 +10,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { controlPanel } from "./helpers";
 import { ANY, controlPort, listen } from "./ports";
 
 let base = "";
@@ -95,10 +96,8 @@ test("a presigned invite survives GitHub sign-in in WebKit, and joins in one cli
   await alice.reload();
   await expect.poll(() => phase(alice), { timeout: 20_000 }).toBe("ready");
   const section = alice.locator(`[data-team="${team}"]`);
-  await expect(async () => {
-    await alice.evaluate(() => window.dispatchEvent(new CustomEvent("illogical:control-panel", { detail: "teams" })));
-    await expect(section).toBeVisible({ timeout: 500 });
-  }).toPass({ timeout: 15_000 });
+  await controlPanel(alice, "teams");
+  await expect(section).toBeVisible();
   await section.locator(`[data-invite-role="${team}"]`).selectOption("viewer");
   await expect(section.locator("[data-invite-ask-first]")).not.toBeChecked();
   await alice.locator(`[data-invite="${team}"]`).click();
