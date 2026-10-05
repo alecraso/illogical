@@ -3,7 +3,7 @@
 # macOS checks that need a whole Mac, each in a fresh tart VM clone
 # (testnet/macos/vm.sh), with no person and no GUI on the host.
 #
-#   testnet/macos/test.sh launchd [claim...]   claims: install logout reboot
+#   testnet/macos/test.sh launchd [claim...]   claims below
 #   BREAK=1 testnet/macos/test.sh launchd      every claim must fail
 #   testnet/macos/test.sh safari               web/safari against real Safari
 #   testnet/macos/test.sh iterm2 [claim...]    M5 and M32 in iTerm2 (iterm2.sh)
@@ -12,21 +12,29 @@
 #   KEEP=1 ...                                 leave the clone running
 #
 # launchd (S28 #153, M52 #155): a user made with sysadminctl who has never
-# logged in to the GUI, reached only over ssh, installs the daemon the way
-# the product does (`illogicald install`, or ILLOGICAL_MACOS_INSTALL below)
-# and starts a pane.
-#   install  the install exits 0 and the daemon answers on its socket
-#   logout   after that ssh session ends, the daemon and its pane are still
-#            there
-#   reboot   after `tart stop` and `run`, with nobody logged in as that
-#            user, the daemon is running and has the pane back
-# BREAK=1 disables the daemon's launchd service and boots it out before
-# each check.
-# ILLOGICAL_MACOS_INSTALL picks how it's installed: `product` (default,
-# `illogicald install` over ssh), `background` (that plist bootstrapped into
-# user/UID with LimitLoadToSessionType Background, no sudo) or `system` (a
-# LaunchDaemon with UserName, which needs sudo once). The last two are
-# references for M52's install step: what works where.
+# logged in to the GUI, reached only over ssh, installs the daemon with
+# `illogicald install` and starts a pane, then switches to --system and
+# uninstalls. In order, all in one VM:
+#   install   `illogicald install` over ssh exits 0 and the daemon answers
+#   warning   it said the daemon won't start after a reboot by itself and
+#             named `illogicald install --system`
+#   logout    after that ssh session ends, the daemon and its pane are there
+#   uninstall-agent  `illogicald uninstall` leaves no plist, no service in
+#             gui/UID or user/UID, and no illogicald running as the user
+#   ssh       `illogical --ssh illo@vm ls` from the host (M52's path) starts
+#             the daemon there and passes the warning through
+#   system    `illogicald install --system` (sudo) switches cleanly: a
+#             LaunchDaemon in system/illogicald.illo, no agent plist, no
+#             user/UID service, and the daemon answers
+#   reboot    after `tart stop` and `run`, with nobody logged in as that
+#             user, the daemon is running with the pane made under --system
+#   uninstall `illogicald uninstall` removes the LaunchDaemon: no plist, no
+#             service, no illogicald running as the user
+# BREAK=1: the daemon's launchd service is disabled and booted out before
+# install, logout, system and reboot are checked; the install's `note:`
+# line is dropped before warning; each uninstall is followed by an install
+# (something left behind); and the daemon is already running when the ssh
+# check starts it, so nothing is said.
 #
 # Binaries come from $ILLOGICAL_MACOS_BIN (default target/debug, as `cargo
 # build -p illogicald -p illogical` leaves them). Exit codes: 0 every claim
@@ -39,10 +47,11 @@ V="$HERE/vm.sh"
 VM="${ILLOGICAL_MACOS_VM:-illogical-macos}"
 BIN="${ILLOGICAL_MACOS_BIN:-$ROOT/target/debug}"
 BREAK="${BREAK:-}"
-MODE="${ILLOGICAL_MACOS_INSTALL:-product}"
 USER_NAME=illo
+D=/Users/$USER_NAME/.local/bin/illogicald
 
-command -v tart >/dev/null 2>&1 || { echo "SKIP: tart is not installed (brew install cirruslabs/cli/tart)"; exit 0; }
+# shellcheck source=testnet/macos/need-tart.sh
+. "$HERE/need-tart.sh"
 
 test="${1:-}"; shift || true
 
@@ -81,65 +90,106 @@ knock_out() {
   v ssh "u=\$(id -u $USER_NAME); for s in gui/\$u/illogicald user/\$u/illogicald system/illogicald.$USER_NAME; do sudo launchctl disable \$s 2>/dev/null; sudo launchctl bootout \$s 2>/dev/null; done; sleep 1; ! pgrep -u $USER_NAME illogicald >/dev/null || sudo pkill -9 -u $USER_NAME illogicald; true"
 }
 
-install_daemon() {
-  case "$MODE" in
-    product) as_user '/tmp/illogical/illogicald install' ;;
-    background)
-      # shellcheck disable=SC2016 # expands there
-      as_user '/tmp/illogical/illogicald install --no-start >/dev/null
-        p=~/Library/LaunchAgents/illogicald.plist
-        plutil -replace LimitLoadToSessionType -string Background "$p"
-        launchctl bootstrap user/$(id -u) "$p"'
-      ;;
-    system)
-      as_user '/tmp/illogical/illogicald install --no-start >/dev/null'
-      v ssh "set -e; p=/Library/LaunchDaemons/illogicald.$USER_NAME.plist
-        sudo cp /Users/$USER_NAME/Library/LaunchAgents/illogicald.plist \$p
-        sudo plutil -replace Label -string illogicald.$USER_NAME \$p
-        sudo plutil -insert UserName -string $USER_NAME \$p
-        sudo plutil -insert EnvironmentVariables.HOME -string /Users/$USER_NAME \$p
-        sudo chown root:wheel \$p
-        sudo launchctl bootstrap system \$p"
-      ;;
-    *) echo "ILLOGICAL_MACOS_INSTALL is product, background or system" >&2; exit 2 ;;
-  esac
-}
-
-# A pane marked so it can be found again.
+# Panes marked so they can be found again: one under the agent, one under
+# the LaunchDaemon.
 MARK=illogical-macos-launchd-mark
+pane() { as_user "/Users/$USER_NAME/.local/bin/illogical run -- sh -c 'echo $MARK; exec sleep $1'" >/dev/null 2>&1; }
+logged_in() { v ssh "who | awk '\$1 == \"$USER_NAME\"' | wc -l | tr -d ' '"; }
+# What launchd and the disk hold for the user's daemon, one word per thing
+# found: agent-plist daemon-plist gui user system process.
+leftovers() {
+  # shellcheck disable=SC2016 # expands there
+  v ssh "u=\$(id -u $USER_NAME)
+    [ ! -e /Users/$USER_NAME/Library/LaunchAgents/illogicald.plist ] || echo agent-plist
+    [ ! -e /Library/LaunchDaemons/illogicald.$USER_NAME.plist ] || echo daemon-plist
+    ! sudo launchctl print gui/\$u/illogicald >/dev/null 2>&1 || echo gui
+    ! sudo launchctl print user/\$u/illogicald >/dev/null 2>&1 || echo user
+    ! sudo launchctl print system/illogicald.$USER_NAME >/dev/null 2>&1 || echo system
+    ! pgrep -u $USER_NAME -x illogicald >/dev/null || echo process" | tr '\n' ' '
+}
+# Nothing left, given a few seconds for the daemon to exit.
+clean() {
+  local left
+  for _ in $(seq 1 10); do left=$(leftovers); [ -z "$left" ] && return 0; sleep 1; done
+  echo "$left"; return 1
+}
+want() { case " $claims " in *" $1 "*) return 0 ;; esac; return 1; }
 
 t_launchd() {
-  local claims="${*:-install logout reboot}" out
-  for c in $claims; do case $c in install | logout | reboot) ;; *) echo "unknown claim $c (install logout reboot)" >&2; exit 2 ;; esac; done
+  claims="${*:-install warning logout uninstall-agent ssh system reboot uninstall}"
+  local out left c
+  for c in $claims; do case $c in install | warning | logout | uninstall-agent | ssh | system | reboot | uninstall) ;;
+    *) echo "unknown claim $c (install warning logout uninstall-agent ssh system reboot uninstall)" >&2; exit 2 ;; esac; done
   fresh
   make_user
-  # Never a GUI session for this user, only the one ssh login below.
-  [ "$(v ssh "who | awk '\$1 == \"$USER_NAME\"' | wc -l | tr -d ' '")" = 0 ]
+  # Never a GUI session for this user, only ssh logins.
+  [ "$(logged_in)" = 0 ]
 
-  # The install, and a pane, in one ssh login that then ends.
-  if out=$(install_daemon 2>&1) && sleep 2 && as_user "/Users/$USER_NAME/.local/bin/illogical run -- sh -c 'echo $MARK; exec sleep 100000'" >/dev/null 2>&1; then
-    installed=1
-  else
-    installed=
-  fi
+  # The default install, and a pane, in one ssh login that then ends.
+  local ok=
+  if out=$(as_user '/tmp/illogical/illogicald install' 2>&1) && sleep 2 && pane 100000; then ok=1; fi
+  [ -z "$BREAK" ] || out=$(echo "$out" | grep -v '^note:')
   knock_out
-  case " $claims " in *" install "*)
-    if [ -n "$installed" ] && answers >/dev/null; then pass install "$MODE"
-    else fail install "$MODE: $(echo "$out" | tail -2 | tr '\n' ' ')"; fi ;;
-  esac
-  case " $claims " in *" logout "*)
+  if want install; then
+    if [ -n "$ok" ] && answers >/dev/null; then pass install "no GUI login, background agent"
+    else fail install "$(echo "$out" | tail -2 | tr '\n' ' ')"; fi
+  fi
+  if want warning; then
+    if echo "$out" | grep "^note:" | grep "after a reboot it won't start" | grep -q "illogicald install --system"; then pass warning
+    else fail warning "no reboot warning in: $(echo "$out" | tail -3 | tr '\n' ' ')"; fi
+  fi
+  if want logout; then
     sleep 5
-    if [ "$(v ssh "who | awk '\$1 == \"$USER_NAME\"' | wc -l | tr -d ' '")" = 0 ] && answers | grep -q "sleep 100000"; then pass logout
-    else fail logout "no daemon or no pane once $USER_NAME's ssh session ended"; fi ;;
-  esac
-  case " $claims " in *" reboot "*)
+    if [ "$(logged_in)" = 0 ] && answers | grep -q "sleep 100000"; then pass logout
+    else fail logout "no daemon or no pane once $USER_NAME's ssh session ended"; fi
+  fi
+
+  as_user "$D uninstall" >/dev/null 2>&1 || true
+  [ -z "$BREAK" ] || as_user "$D install" >/dev/null 2>&1 || true
+  if want uninstall-agent; then
+    if left=$(clean); then pass uninstall-agent
+    else fail uninstall-agent "left behind: $left"; fi
+  fi
+
+  # M52's path: the host's CLI over ssh, which starts the daemon there.
+  local h=/tmp/illogical-macos-ssh
+  rm -rf /tmp/illogical-macos-ssh; mkdir -p "$h"
+  out=$(HOME=$h XDG_RUNTIME_DIR=$h XDG_CONFIG_HOME=$h/config XDG_CACHE_HOME=$h/cache ILLOGICAL_SSH_INSTALL=yes \
+    ILLOGICAL_SSH="ssh -i $HERE/.state/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" \
+    "$BIN/illogical" --ssh "$USER_NAME@$(v ip)" ls </dev/null 2>&1) || true
+  for sock in "$h"/illogical-ssh/*; do [ -S "$sock" ] && ssh -o ControlPath="$sock" -O exit x >/dev/null 2>&1; done
+  rm -rf /tmp/illogical-macos-ssh
+  if want ssh; then
+    if echo "$out" | grep -q "^illogical: $USER_NAME@.*: $USER_NAME has no GUI login.*illogicald install --system" && answers >/dev/null; then pass ssh
+    else fail ssh "no daemon, or the warning didn't come through: $(echo "$out" | tail -3 | tr '\n' ' ')"; fi
+  fi
+
+  # --system, by the user, who may sudo (as an admin would).
+  v ssh "echo '$USER_NAME ALL=(ALL) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/$USER_NAME >/dev/null"
+  ok=
+  if out=$(as_user "$D install --system" 2>&1) && sleep 2 && pane 200000; then ok=1; fi
+  knock_out
+  if want system; then
+    left=$(leftovers)
+    if [ -n "$ok" ] && answers >/dev/null && [ "$left" = "daemon-plist system process " ] && echo "$out" | grep -q "runs sudo"; then pass system
+    else fail system "launchd and disk hold: $left; said: $(echo "$out" | tail -2 | tr '\n' ' ')"; fi
+  fi
+
+  if want reboot; then
     v restart
     knock_out
     local up=""
-    for _ in $(seq 1 30); do answers >/dev/null && { up=1; break; }; sleep 2; done
-    if [ -n "$up" ] && [ "$(v ssh "who | awk '\$1 == \"$USER_NAME\"' | wc -l | tr -d ' '")" = 0 ]; then pass reboot "$(answers | wc -l | tr -d ' ') pane(s) back"
-    else fail reboot "no daemon for $USER_NAME after a restart with nobody logged in as them"; fi ;;
-  esac
+    for _ in $(seq 1 30); do answers | grep -q "sleep 200000" && { up=1; break; }; sleep 2; done
+    if [ -n "$up" ] && [ "$(logged_in)" = 0 ]; then pass reboot "$(answers | wc -l | tr -d ' ') pane(s) back"
+    else fail reboot "no daemon with its pane for $USER_NAME after a restart with nobody logged in as them"; fi
+  fi
+
+  as_user "$D uninstall" >/dev/null 2>&1 || true
+  [ -z "$BREAK" ] || as_user "$D install --system" >/dev/null 2>&1 || true
+  if want uninstall; then
+    if left=$(clean); then pass uninstall
+    else fail uninstall "left behind: $left"; fi
+  fi
 }
 
 failed=
@@ -148,6 +198,6 @@ case "$test" in
   safari) exec "$HERE/safari.sh" "$@" ;;
   iterm2) exec "$HERE/iterm2.sh" "$@" ;;
   app) cd "$ROOT" && exec node --experimental-strip-types --no-warnings testnet/macos/app-cloud.ts "$@" ;;
-  *) sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  *) sed -n '3,40p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
 [ -z "$failed" ]

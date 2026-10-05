@@ -17,7 +17,8 @@ V="$HERE/vm.sh"
 VM="${ILLOGICAL_MACOS_VM:-illogical-macos}"
 PORT="${SAFARI_DRIVER_PORT:-7744}"
 
-command -v tart >/dev/null 2>&1 || { echo "SKIP: tart is not installed (brew install cirruslabs/cli/tart)"; exit 0; }
+# shellcheck source=testnet/macos/need-tart.sh
+. "$HERE/need-tart.sh"
 
 "$V" down "$VM" >/dev/null
 "$V" up "$VM" >/dev/null
