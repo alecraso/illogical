@@ -173,7 +173,8 @@ fn hour() -> u32 {
 /// push service's status. A subscription that's gone is forgotten.
 async fn post(app: &App, endpoint: &str, body: Vec<u8>, ttl: u32, urgency: Option<&str>) -> Result<u16, ApiError> {
     let url = url::Url::parse(endpoint).map_err(|_| err(StatusCode::BAD_REQUEST, "endpoint"))?;
-    let audience = format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default());
+    // RFC 8292: the push resource's origin, with its port if it has one.
+    let audience = url.origin().ascii_serialization();
     let urgency = match urgency {
         Some(u @ ("very-low" | "low" | "normal" | "high")) => u.to_owned(),
         _ => "high".to_owned(),

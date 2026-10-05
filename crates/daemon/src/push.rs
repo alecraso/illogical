@@ -157,7 +157,7 @@ impl Push {
         let auth = B64.decode(&sub.keys.auth)?;
         let body = encrypt(payload, &ua_public, &auth, &new_secret(), &random::<16>())?;
         let url = reqwest::Url::parse(&sub.endpoint)?;
-        let audience = format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default());
+        let audience = audience(&url);
         let jwt = vapid_jwt(&self.key, &audience, &self.subject, now_ms() / 1000 + 12 * 3600);
         let res = self
             .http
@@ -177,6 +177,12 @@ impl Push {
 /// RFC 8291, shared with control (which encrypts its own notices).
 pub use illogical_e2e::push::encrypt;
 
+/// RFC 8292's `aud`: the push resource's origin, with its port if it has
+/// one (a push service on loopback in the tests has one).
+fn audience(endpoint: &reqwest::Url) -> String {
+    endpoint.origin().ascii_serialization()
+}
+
 /// RFC 8292: a short-lived ES256 token naming the push service and us.
 fn vapid_jwt(key: &SecretKey, audience: &str, subject: &str, exp: u64) -> String {
     let header = B64.encode(br#"{"typ":"JWT","alg":"ES256"}"#);
@@ -189,6 +195,14 @@ fn vapid_jwt(key: &SecretKey, audience: &str, subject: &str, exp: u64) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_audience_is_the_endpoints_origin() {
+        let a = |u: &str| audience(&reqwest::Url::parse(u).unwrap());
+        assert_eq!(a("https://fcm.googleapis.com/fcm/send/abc"), "https://fcm.googleapis.com");
+        assert_eq!(a("https://web.push.apple.com:443/x"), "https://web.push.apple.com");
+        assert_eq!(a("http://127.0.0.1:4567/push/phone"), "http://127.0.0.1:4567");
+    }
 
     /// RFC 8291 Appendix A, byte for byte.
     #[test]
