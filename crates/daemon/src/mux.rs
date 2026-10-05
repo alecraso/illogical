@@ -51,11 +51,6 @@ const DONE_AFTER_MS: u64 = 5_000;
 /// A command that ran at least this long and failed is "failed" (M24);
 /// quicker ones you were typing at anyway.
 const FAILED_AFTER_MS: u64 = 3_000;
-/// Agents run in terminals. Those with screen rules
-/// ([`illogical_vt::detect`]) say whether they're working, blocked on you or
-/// idle (#145); the rest are only known to be agents, and going quiet
-/// doesn't mean they want you.
-const AGENTS: &[&str] = &["claude", "codex", "aider", "gemini", "opencode", "goose", "amp"];
 /// Changes a card depends on (attention, a question, who drives) reach
 /// clients within this (M23); several in a row go together.
 const URGENT: Duration = Duration::from_millis(40);
@@ -512,12 +507,9 @@ fn seed() -> u64 {
     std::collections::hash_map::RandomState::new().hash_one(now_ms())
 }
 
-/// The agent a command line runs, by its first few words.
+/// The agent a command line runs, seen through wrappers (#145).
 fn agent_in(text: &str) -> Option<String> {
-    text.split_whitespace().take(3).find_map(|w| {
-        let name = w.rsplit('/').next().unwrap_or(w);
-        AGENTS.iter().find(|a| name == **a || name.starts_with(&format!("{a}-"))).map(|a| (*a).to_owned())
-    })
+    crate::classify::agent(text).map(str::to_owned)
 }
 
 /// Tags a pane's execs on machines (`ILLOGICAL_EXEC`).
@@ -1564,10 +1556,7 @@ impl Daemon {
     fn looks_like_agent(&self, pane: PaneId) -> bool {
         let Some(h) = self.panes.get(&pane) else { return false };
         let text = h.status().current.and_then(|c| c.text).or_else(|| h.command()).unwrap_or_default();
-        text.split_whitespace().take(3).any(|w| {
-            let name = w.rsplit('/').next().unwrap_or(w);
-            AGENTS.iter().any(|a| name == *a || name.starts_with(&format!("{a}-")))
-        })
+        agent_in(&text).is_some()
     }
 
     fn notice(&mut self, n: Notice) {
