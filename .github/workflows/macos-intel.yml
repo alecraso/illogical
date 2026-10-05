@@ -1,0 +1,65 @@
+# Intel Macs (#227): test, build and package natively on GitHub's Intel
+# macOS runner, as `just test` and the release steps run on jake-mini for
+# Apple silicon. Cold, it takes about an hour, so it runs weekly on main and
+# by hand (`gh workflow run macos-intel.yml --ref BRANCH`) for changes that
+# touch macOS; every push still lints the Intel build on geek (`just
+# check-macos x86_64`). The tarball and the app are kept as artifacts for
+# trying on an Intel Mac; the release itself cross-compiles them on
+# jake-mini (release.yml).
+name: macos-intel
+on:
+  schedule:
+    - cron: "17 9 * * 1" # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer run on the same branch replaces the one in progress.
+concurrency:
+  group: macos-intel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos-intel:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash 4.4+ (macOS ships 3.2; the shell integration tests need PS0)
+        run: brew install bash
+      - name: Rust (rust-toolchain.toml's)
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal -c rustfmt,clippy
+      - name: mise (it brings the Zig libghostty needs, from .mise.toml)
+        run: |
+          curl -fsSL https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/desktop -> target
+      - run: just bootstrap
+      - run: just test
+      - run: just build
+      - run: just dist
+      - name: The desktop app
+        run: just desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: illogical-macos-x86_64
+          path: |
+            dist/illogical-*-x86_64-apple-darwin.tar.gz
+            dist/illogical-desktop-macos-x86_64.zip
+          if-no-files-found: error

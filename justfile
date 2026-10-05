@@ -53,17 +53,26 @@ control-deploy: static
     cp {{target_dir}}/x86_64-unknown-linux-musl/release/illogical-control {{target_dir}}/x86_64-unknown-linux-musl/release/illogicald packaging/control/Dockerfile packaging/control/fly.toml "$ctx"/
     cd "$ctx" && fly deploy --local-only --ha=false
 
+# The macOS daemon and CLI for Intel Macs, cross-compiled on Apple silicon
+# (or built natively on an Intel Mac): target/x86_64-apple-darwin/release/.
+# Then `just dist` and `just desktop x86_64`.
+build-macos-x86_64: web
+    rustup target add x86_64-apple-darwin >/dev/null
+    {{cargo}} build --release --target x86_64-apple-darwin -p illogicald -p illogical
+
 # Release tarballs in dist/: illogical-VERSION-TARGET.tar.gz with both
 # binaries and the licenses, for the targets already built (`just static`,
-# `just static aarch64`, `just build` on a Mac).
+# `just static aarch64`, `just build` and `just build-macos-x86_64` on a Mac).
 dist:
     #!/usr/bin/env bash
     set -euo pipefail
     v=$({{cargo}} pkgid -p illogicald | sed 's/.*[#@]//')
+    host=$(rustc -vV | sed -n 's/^host: //p')
     mkdir -p dist
-    for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin; do
+    for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
       d={{target_dir}}/$t/release
-      if [ "$t" = aarch64-apple-darwin ] && [ "$(uname -s)" = Darwin ]; then d={{target_dir}}/release; fi
+      # The Mac's own architecture builds without --target (`just build`).
+      if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/illogicald ]; then d={{target_dir}}/release; fi
       [ -x "$d/illogicald" ] || continue
       n=illogical-$v-$t; s=$(mktemp -d)/$n; mkdir -p "$s"
       cp "$d/illogicald" "$d/illogical" LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md README.md "$s/"
@@ -76,15 +85,16 @@ dist:
 # and illogical: run after `just static x86_64` (Linux; the static binaries
 # run anywhere) or `just build` (macOS). Writes dist/illogical-desktop-*,
 # named without the version so the site's download links always find the
-# latest release. Linux: `just desktop-linux x86_64`. macOS: the app, a
-# zip of it, and a .dmg (Apple silicon), signed and notarized when the
-# Developer ID secrets are set (scripts/macos-sign), ad-hoc signed when not.
-desktop:
+# latest release. Linux: `just desktop-linux ARCH` (x86_64 by default).
+# macOS: `just desktop-macos ARCH`, this Mac's own arch by default;
+# `just desktop x86_64` after `just build-macos-x86_64` makes the Intel app.
+desktop arch="":
     #!/usr/bin/env bash
     set -euo pipefail
+    a="{{arch}}"
     case "$(uname -s)" in
-      Linux) just desktop-linux x86_64 ;;
-      Darwin) just desktop-macos ;;
+      Linux) just desktop-linux "${a:-x86_64}" ;;
+      Darwin) just desktop-macos "$a" ;;
     esac
 
 # The Linux desktop app for ARCH (x86_64 or aarch64): a .deb, an .rpm and
@@ -138,13 +148,15 @@ desktop-linux arch="x86_64" *tauri_args="":
 desktop-packages arch="x86_64":
     packaging/desktop/packages.sh {{arch}}
 
-# The macOS app (Apple silicon), after `just build`: the app, a zip of it
-# and a .dmg in dist/. scripts/macos-sign signs, notarizes and staples them
-# when the Developer ID secrets are set (#177) and says which is missing
-# when not; the app is ad-hoc signed either way. With
-# TAURI_SIGNING_PRIVATE_KEY set, also the updater's .app.tar.gz and its
-# signature.
-desktop-macos *tauri_args="":
+# The macOS app for ARCH (aarch64 or x86_64; this Mac's own by default),
+# after `just build` (or `just build-macos-x86_64` for the Intel app,
+# cross-compiled on Apple silicon): the app, a zip of it and a .dmg in
+# dist/, named macos-arm64 or macos-x86_64. scripts/macos-sign signs,
+# notarizes and staples them when the Developer ID secrets are set (#177)
+# and says which is missing when not; the app is ad-hoc signed either way.
+# With TAURI_SIGNING_PRIVATE_KEY set, also the updater's .app.tar.gz and
+# its signature.
+desktop-macos arch="" *tauri_args="":
     #!/usr/bin/env bash
     set -euo pipefail
     root={{justfile_directory()}}
@@ -153,16 +165,32 @@ desktop-macos *tauri_args="":
     command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "^2" --locked
     cd crates/desktop
     host=$(rustc -vV | sed -n 's/^host: //p')
+    a="{{arch}}"; t=${a:-${host%%-*}}-apple-darwin
+    case "$t" in
+      aarch64-apple-darwin) name=macos-arm64 ;;
+      x86_64-apple-darwin) name=macos-x86_64 ;;
+      *) echo "no macOS app for $t (arch: aarch64 or x86_64)" >&2; exit 2 ;;
+    esac
+    # The Mac's own arch builds without --target (`just build`).
+    src={{target_dir}}/$t/release
+    if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/illogicald ]; then src={{target_dir}}/release; fi
+    out=${CARGO_TARGET_DIR:-$PWD/target}
+    flags=()
+    if [ "$t" = "$host" ]; then out=$out/release; else
+      rustup target add "$t" >/dev/null
+      flags=(--target "$t"); out=$out/$t/release
+    fi
     mkdir -p binaries
-    for b in illogicald illogical; do install -m 755 "{{target_dir}}/release/$b" "binaries/$b-$host"; done
-    cargo tauri build --bundles app {{tauri_args}}
-    app=${CARGO_TARGET_DIR:-$PWD/target}/release/bundle/macos/illogical.app
+    for b in illogicald illogical; do install -m 755 "$src/$b" "binaries/$b-$t"; done
+    # ${flags[@]+…}: macOS bash 3.2 calls an empty array unbound.
+    cargo tauri build --bundles app ${flags[@]+"${flags[@]}"} {{tauri_args}}
+    app=$out/bundle/macos/illogical.app
     "$root/scripts/macos-sign" app "$app"
     # A zip of the app: ditto keeps its signature and symlinks.
     # --norsrc: no ._* AppleDouble files for xattrs like
     # com.apple.provenance, which a command-line unzip leaves in the
     # bundle (#177). The signature lives in the bundle, not in xattrs.
-    zip=$dist/illogical-desktop-macos-arm64.zip
+    zip=$dist/illogical-desktop-$name.zip
     rm -f "$zip"
     ditto -c -k --norsrc --keepParent "$app" "$zip"
     if zipinfo -1 "$zip" | grep -E '(^|/)\._'; then echo "AppleDouble files in $zip" >&2; exit 1; fi
@@ -170,21 +198,21 @@ desktop-macos *tauri_args="":
     stage=$(mktemp -d)
     ditto "$app" "$stage/illogical.app"
     ln -s /Applications "$stage/Applications"
-    dmg=$dist/illogical-desktop-macos-arm64.dmg
+    dmg=$dist/illogical-desktop-$name.dmg
     rm -f "$dmg"
     hdiutil create -quiet -volname illogical -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
     rm -rf "$stage"
     "$root/scripts/macos-sign" dmg "$dmg"
     # The updater's archive of the app, signed with the updater key.
     if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-      tgz=$dist/illogical-desktop-macos-arm64.app.tar.gz
+      tgz=$dist/illogical-desktop-$name.app.tar.gz
       tar -C "$(dirname "$app")" -czf "$tgz" illogical.app
       cargo tauri signer sign "$tgz" >/dev/null
       echo "signed $tgz for the updater"
     else
       echo "no updater archive: TAURI_SIGNING_PRIVATE_KEY isn't set"
     fi
-    ls -la "$dist"/illogical-desktop-macos-*
+    ls -la "$dist"/illogical-desktop-"$name".*
 
 # The Linux desktop app under Xvfb, in a container: builds the app (debug,
 # no bundle) in its build image (packaging/desktop/Containerfile) and runs
@@ -399,17 +427,25 @@ macos cmd="launchd" *args:
     {{cargo}} build -p illogicald -p illogical -p illogical-control
     exec testnet/macos/test.sh {{cmd}} {{args}}
 
+# Tests for the shell side of releases: install.sh picks the right release
+# per machine, and the ratchet that what a release ships is named the same
+# everywhere (release.yml, scripts/release, Homebrew, install.sh, the site).
+test-scripts:
+    scripts/tests/install.sh
+    scripts/tests/release-targets.sh
+
 # What CI runs.
 check: test
     {{cargo}} fmt --all --check
     {{cargo}} clippy --workspace --all-targets -- -D warnings
 
-# Type-check and lint the macOS (Apple silicon) build from Linux. Zig is the
-# C compiler; this compiles but doesn't link, so build and test on a Mac too.
-check-macos:
-    rustup target add aarch64-apple-darwin >/dev/null
-    CC_aarch64_apple_darwin="$PWD/scripts/zig-cc-macos" AR_aarch64_apple_darwin="$PWD/scripts/zig-ar" \
-      {{cargo}} clippy --target aarch64-apple-darwin --workspace --all-targets -- -D warnings
+# Type-check and lint the macOS build from Linux: ARCH is aarch64 (Apple
+# silicon) or x86_64 (Intel). Zig is the C compiler; this compiles but
+# doesn't link, so build and test on a Mac too.
+check-macos arch="aarch64":
+    rustup target add {{arch}}-apple-darwin >/dev/null
+    ZIG_MACOS_ARCH={{arch}} CC_{{arch}}_apple_darwin="$PWD/scripts/zig-cc-macos" AR_{{arch}}_apple_darwin="$PWD/scripts/zig-ar" \
+      {{cargo}} clippy --target {{arch}}-apple-darwin --workspace --all-targets -- -D warnings
 
 # Run the daemon the way it runs for real (port 7681, behind `tailscale serve`).
 run *args: build

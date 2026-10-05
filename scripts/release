@@ -52,12 +52,14 @@ case "${1:-}" in
     ensure_release "$2"
     dir=$(mktemp -d)
     gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-desktop-*' -D "$dir"
-    n=$(find "$dir" -name "*.tar.gz" | wc -l | tr -d " ")
-    [ "$n" = 3 ] || { echo "expected 3 tarballs, found $n" >&2; exit 1; }
-    for f in illogical-desktop-linux-{x86_64,aarch64}.{deb,rpm,AppImage} illogical-desktop-macos-arm64.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe; do
+    n=$(find "$dir" -name "illogical-[0-9]*.tar.gz" | wc -l | tr -d " ")
+    [ "$n" = 4 ] || { echo "expected 4 tarballs, found $n" >&2; exit 1; }
+    # Every desktop download a release has (the updater's .app.tar.gz and
+    # .sig files come too when TAURI_SIGNING_PRIVATE_KEY is set).
+    for f in illogical-desktop-linux-{x86_64,aarch64}.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe; do
       [ -f "$dir/$f" ] || { echo "the release has no $f" >&2; exit 1; }
     done
-    (cd "$dir" && sha256sum -- *.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
+    (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
     ;;
   homebrew)
@@ -75,6 +77,7 @@ case "${1:-}" in
     mkdir -p "$dir/Formula"
     sed -e "s/@VERSION@/$v/g" \
       -e "s/@SHA_MAC@/$(sha aarch64-apple-darwin)/" \
+      -e "s/@SHA_MAC_INTEL@/$(sha x86_64-apple-darwin)/" \
       -e "s/@SHA_LINUX_X86@/$(sha x86_64-unknown-linux-musl)/" \
       -e "s/@SHA_LINUX_ARM@/$(sha aarch64-unknown-linux-musl)/" \
       packaging/homebrew/illogical.rb.in > "$dir/Formula/illogical.rb"
@@ -102,6 +105,7 @@ import json, os, sys, datetime
 v, base, d = sys.argv[1:]
 files = {
     "darwin-aarch64": "illogical-desktop-macos-arm64.app.tar.gz",
+    "darwin-x86_64": "illogical-desktop-macos-x86_64.app.tar.gz",
     "linux-x86_64": "illogical-desktop-linux-x86_64.AppImage",
     "linux-aarch64": "illogical-desktop-linux-aarch64.AppImage",
 }

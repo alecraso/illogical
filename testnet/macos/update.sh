@@ -8,7 +8,7 @@
 #   KEEP=1 ...                       leave the clone running
 #
 # It makes a throwaway updater key and builds the app twice with it
-# (`just desktop-macos --config ...`): 0.17.1, archived and signed as a
+# (`just desktop-macos aarch64 --config ...`): 0.17.1, archived and signed as a
 # release would be, then 0.17.0, which the VM installs. The host serves the
 # manifest and the archive on the tart network (port 7757).
 #   update  the app replaces itself with 0.17.1 and starts again
@@ -60,11 +60,11 @@ config() {
 cd "$ROOT"
 # The release: 0.17.1, archived and signed.
 TAURI_SIGNING_PRIVATE_KEY=$(cat "$work/key") TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
-  just desktop-macos --config "'$(config 0.17.1)'" >"$work/build-new.log" 2>&1 || { tail -20 "$work/build-new.log"; exit 1; }
+  just desktop-macos aarch64 --config "'$(config 0.17.1)'" >"$work/build-new.log" 2>&1 || { tail -20 "$work/build-new.log"; exit 1; }
 mkdir -p "$work/srv"
 cp dist/illogical-desktop-macos-arm64.app.tar.gz dist/illogical-desktop-macos-arm64.app.tar.gz.sig "$work/srv/"
 # What the VM installs: 0.17.0.
-just desktop-macos --config "'$(config 0.17.0)'" >"$work/build-old.log" 2>&1 || { tail -20 "$work/build-old.log"; exit 1; }
+just desktop-macos aarch64 --config "'$(config 0.17.0)'" >"$work/build-old.log" 2>&1 || { tail -20 "$work/build-old.log"; exit 1; }
 rm -f dist/illogical-desktop-macos-arm64.app.tar.gz dist/illogical-desktop-macos-arm64.app.tar.gz.sig
 
 manifest() {

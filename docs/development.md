@@ -24,7 +24,11 @@ release tarballs in `dist/`.
 `just dev` runs a separate daemon on 7682 (state in
 `~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
 alone. [testing.md](testing.md) covers the tests, fakes and fixtures.
-`just check` is what CI runs; `just e2e` drives the system Chrome
+`just test-scripts` tests install.sh and checks that what a release
+ships (targets, desktop downloads) is named the same in release.yml,
+scripts/release, the Homebrew formula, install.sh and the site: add a
+target or download and it says what else needs it. `just check` is what
+CI runs; `just e2e` drives the system Chrome
 against throwaway daemons, or `just e2e https://home.<tailnet>.ts.net`
 against the running one. `workspace.spec.ts` runs the real chant: its first run
 installs the pinned version into `web/e2e/fixtures/chant-workspace` with
@@ -44,7 +48,9 @@ test` runs its claims; `testnet/README.md` lists them.
    notices` if dependencies changed; CI fails if THIRD_PARTY.md is stale).
 2. `git tag -a vX.Y.Z -m "illogical X.Y.Z" && git push origin vX.Y.Z`.
    `.github/workflows/release.yml` builds the Linux tarballs on geek and
-   the macOS one on jake-mini, attaches them and `SHA256SUMS` to the
+   the macOS ones on jake-mini (Apple silicon natively, Intel
+   cross-compiled with `just build-macos-x86_64` and `just desktop
+   x86_64`), attaches them and `SHA256SUMS` to the
    GitHub release, and bumps the formula in `arugula-salad/homebrew-tap`
    (`scripts/release`; the tap's deploy key is the `HOMEBREW_TAP_KEY`
    secret).
@@ -65,7 +71,13 @@ passes 30 GB (`scripts/ci-cap-target`): cargo never prunes it, and on
 cluster down. Workflows run on pushes and tags only, never on pull
 requests, since they run on those hosts; and the repo asks for approval
 before any outside contributor's workflow runs, so a fork's PR can't add
-a trigger of its own and reach them. A job's log: `gh run view --log
+a trigger of its own and reach them. Intel Macs are the exception:
+`.github/workflows/macos-intel.yml` runs `just test` and builds the
+tarball and the app on GitHub's `macos-15-intel` runner, which isn't
+ours. It takes about an hour cold, so it runs weekly on main and by hand
+(`gh workflow run macos-intel.yml --ref BRANCH`), and keeps both as
+artifacts; every push lints the Intel build on geek (`just check-macos
+x86_64`). A job's log: `gh run view --log
 <run id>` (or `--log-failed`).
 
 The repo moved from Forgejo (`git.inevitable.fyi/jhgaylor/illogical`,

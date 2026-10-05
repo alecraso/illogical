@@ -36,10 +36,13 @@ jobs:
         env:
           ILLOGICAL_TESTNET_BINARIES: ${{ env.CARGO_TARGET_DIR }}/x86_64-unknown-linux-musl/release
       - run: just check-macos
+      - run: just check-macos x86_64
       - name: The desktop app
         run: just desktop-check
       - name: install.sh and the release's glibc check
-        run: shellcheck -s sh scripts/install.sh scripts/glibc-floor
+        run: shellcheck -s sh scripts/install.sh scripts/glibc-floor && shellcheck -s bash scripts/tests/*.sh
+      - name: Release scripts and ratchets
+        run: just test-scripts
       - name: The test stack's scripts
         run: shellcheck -x testnet/*.sh testnet/forges/*.sh testnet/hosts/*.sh testnet/editors/*.sh && shellcheck -s sh testnet/editors/box/entrypoint.sh testnet/sshd/entrypoint.sh testnet/sshd-systemd/keys.sh testnet/git/entrypoint.sh testnet/tailnet/entrypoint.sh
       - name: THIRD_PARTY.md is current

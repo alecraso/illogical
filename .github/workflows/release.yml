@@ -1,8 +1,9 @@
-# A `v*` tag: build Linux (x86_64, arm64, static) and macOS (arm64)
-# binaries and the desktop app (a .deb, an .rpm and an AppImage for Linux
-# x86_64 and arm64; a .dmg and a zipped app for macOS; an installer for
-# Windows), attach them to the tag's release with SHA256SUMS and the
-# updater's latest.json, and bump the Homebrew formula.
+# A `v*` tag: build Linux (x86_64, arm64, static) and macOS (arm64, and
+# x86_64 cross-compiled for Intel Macs) binaries and the desktop app (a
+# .deb, an .rpm and an AppImage for Linux x86_64 and arm64; a .dmg and a
+# zipped app for each macOS arch; an installer for Windows), attach them to
+# the tag's release with SHA256SUMS and the updater's latest.json, and bump
+# the Homebrew formula.
 #
 # Secrets the desktop app uses when they're set, and skips (saying which)
 # when not: TAURI_SIGNING_PRIVATE_KEY and _PASSWORD (updater signatures),
@@ -47,10 +48,12 @@ jobs:
       - run: scripts/ci-cap-target 30
       - run: just bootstrap
       - run: just build
+      - run: just build-macos-x86_64
       - run: just dist
       # Signed, notarized and stapled with the Developer ID when its secrets
-      # are set; ad-hoc signed (and saying so) when not.
-      - run: just desktop-macos
+      # are set; ad-hoc signed (and saying so) when not. The Intel app is
+      # cross-compiled.
+      - run: just desktop-macos aarch64 && just desktop-macos x86_64
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
