@@ -106,6 +106,11 @@ desktop arch="":
 desktop-linux arch="x86_64" *tauri_args="":
     #!/usr/bin/env bash
     set -euo pipefail
+    # An unset GitHub secret arrives as "": treat it as unset, or Tauri
+    # takes APPLE_CERTIFICATE="" for a certificate to import.
+    for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+      [ -n "${!v:-}" ] || unset "$v"
+    done
     root={{justfile_directory()}}
     dist=$root/dist
     mkdir -p "$dist"
@@ -159,6 +164,11 @@ desktop-packages arch="x86_64":
 desktop-macos arch="" *tauri_args="":
     #!/usr/bin/env bash
     set -euo pipefail
+    # An unset GitHub secret arrives as "": treat it as unset, or Tauri
+    # takes APPLE_CERTIFICATE="" for a certificate to import.
+    for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+      [ -n "${!v:-}" ] || unset "$v"
+    done
     root={{justfile_directory()}}
     dist=$root/dist
     mkdir -p "$dist"

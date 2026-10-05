@@ -33,10 +33,8 @@ jobs:
       # In an Ubuntu 22.04 container (podman); fails if the bundles need a
       # newer glibc than 2.35 (#170). x86_64 only: geek has no arm64
       # emulation for podman, so the arm64 app moves to GitHub's arm runner
-      # (#287). Empty secrets are unset: GitHub passes an unset secret as "".
-      - run: |
-          for v in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do [ -n "${!v}" ] || unset "$v"; done
-          just desktop-linux x86_64
+      # (#287).
+      - run: just desktop-linux x86_64
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -57,14 +55,7 @@ jobs:
       # Signed, notarized and stapled with the Developer ID when its secrets
       # are set; ad-hoc signed (and saying so) when not. The Intel app is
       # cross-compiled.
-      # GitHub passes an unset secret as "", which Tauri takes for a
-      # certificate to import: unset the empty ones, so it ad-hoc signs.
-      - run: |
-          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
-            [ -n "${!v}" ] || unset "$v"
-          done
-          just desktop-macos aarch64 && just desktop-macos x86_64
-        shell: bash
+      - run: just desktop-macos aarch64 && just desktop-macos x86_64
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -106,6 +97,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/release updater "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: scripts/release publish "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: scripts/release homebrew "$GITHUB_REF_NAME"
