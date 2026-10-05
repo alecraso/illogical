@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 #
 # Remove everything the test stack started, every profile: containers, the
-# illogical-testnet networks, and testnet/.state. Touches nothing outside the
-# illogical-testnet compose project.
+# stack's networks, and its state directory. Touches nothing outside the
+# compose project (COMPOSE_PROJECT_NAME, default illogical-testnet).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=env.sh
+. "$HERE/env.sh"
 
 command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 
 docker compose -f "$HERE/compose.yaml" --profile ssh down -v --remove-orphans
-rm -rf "$HERE/.state"
-echo "illogical testnet removed"
+rm -rf "$STATE"
+echo "$TESTNET removed"

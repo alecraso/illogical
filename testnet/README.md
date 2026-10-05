@@ -22,7 +22,7 @@ Docker. The claims expect fresh boxes: after installing anything on one,
 
 | Profile | Services | Status | For |
 |---|---|---|---|
-| `ssh` | `bastion`, `box-bare`, `box-systemd` | validated | S28, M51, M52's install step |
+| `ssh` | `bastion`, `box-bare`, `box-systemd`, `git` | validated | S28, M51, M52's install step, #26 |
 
 The other profiles in #200 (`control`, `relay`, `fountain`, `forgejo`) are
 added when a milestone needs them.
@@ -38,8 +38,13 @@ added when a milestone needs them.
 - `box-systemd`: box-bare with systemd as PID 1, logind and polkit, also on
   the internal network. It runs privileged with its own cgroup namespace
   (Docker Desktop on macOS runs it too), for lingering and user services.
+  Its journal is on disk, so `docker restart` keeps it (#26's reboot test).
+- `git`: a git server on the internal network, bare repositories over ssh
+  like a forge's: `git@git:/srv/git/repo.git`. The user `git` has
+  `git-shell` and the stack's key. The boxes trust its host key, so a
+  `git push` from a box needs only the client's agent forwarded (M51).
 
-Both have one user, `illo`, who logs in with the stack's key only. Agent and
+The boxes have one user, `illo`, who logs in with the stack's key only. Agent and
 TCP forwarding are on. `up.sh` writes `testnet/.state/`: the client key,
 a host key per box, `known_hosts`, and an `ssh_config` that reaches each box
 by name with strict host key checking and `BatchMode`.
@@ -58,12 +63,18 @@ every claim does, which shows each one can catch what it's about.
 | `bare` | no illogical on box-bare's login PATH, no state or config dir | a stub `/usr/local/bin/illogical` |
 | `stdio` | 1 MiB of random bytes through `cat` on box-bare come back identical | a forced tty (`-tt`) |
 | `agent` | a key in the client's agent shows on box-bare when forwarded | `ForwardAgent=no` |
+| `push` | `git push` from box-bare to `git` with the key only in the forwarded agent | `ForwardAgent=no` |
 | `linger` | on box-systemd, `loginctl enable-linger` works from an ssh login with no sudo | polkit masked |
 
 ## Conventions
 
-- Containers, networks and the image are named `illogical-testnet*`; `down`
+- Containers, networks and the images are named `illogical-testnet*`; `down`
   removes those and `testnet/.state`, nothing else.
+- `COMPOSE_PROJECT_NAME` renames a stack, so two can run side by side (one
+  per worktree): `COMPOSE_PROJECT_NAME=illo-a2` gives containers
+  `illo-a2-*`, networks `illo-a2` and `illo-a2-inner`, and state in
+  `testnet/.state-illo-a2`. Give it its own `ILLOGICAL_TESTNET_SSH_PORT`
+  too. The tests read the same variables.
 - Host ports are off the defaults and each can be overridden with an
   `ILLOGICAL_TESTNET_*_PORT` variable.
 - The scripts run on Linux and macOS (bash 3.2) and pass `shellcheck`.

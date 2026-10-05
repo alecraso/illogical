@@ -26,6 +26,9 @@
 #   agent  A key in the client's agent is usable on box-bare when the agent
 #          is forwarded through the bastion (M51's `git push`). Broken:
 #          ForwardAgent=no.
+#   push   `git push` from box-bare to the git server (a bare repository
+#          over ssh) with the client's key only in the forwarded agent
+#          (M51). Broken: ForwardAgent=no.
 #   linger On box-systemd, a user turns on lingering for themselves from an
 #          ssh login with no sudo (S28's lifetime question). Broken: polkit
 #          masked (and unmasked afterwards).
@@ -36,10 +39,11 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${1:-ssh}"; shift || true
-STATE="$HERE/.state"
+# shellcheck source=env.sh
+. "$HERE/env.sh"
 CFG="$STATE/ssh_config"
 BREAK="${BREAK:-}"
-SSH_CLAIMS="login jump inner bare stdio agent linger"
+SSH_CLAIMS="login jump inner bare stdio agent push linger"
 
 command -v docker >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
@@ -59,7 +63,7 @@ fi
 claims="${*:-$SSH_CLAIMS}"
 WORK="$(mktemp -d)"
 cleanup() {
-  [ -n "${SSH_AGENT_PID:-}" ] && kill "$SSH_AGENT_PID" 2>/dev/null || true
+  [ -n "${OUR_AGENT:-}" ] && kill "$OUR_AGENT" 2>/dev/null || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -81,12 +85,12 @@ claim_login() {
 
 claim_jump() {
   if [ -n "$BREAK" ]; then
-    docker exec illogical-testnet-bastion sed -i 's/^AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
-    docker exec illogical-testnet-bastion kill -HUP 1
+    docker exec "$TESTNET-bastion" sed -i 's/^AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
+    docker exec "$TESTNET-bastion" kill -HUP 1
     sleep 1
     local ok=0; [ "$(s box-bare hostname 2>/dev/null)" = box-bare ] && ok=1
-    docker exec illogical-testnet-bastion sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
-    docker exec illogical-testnet-bastion kill -HUP 1
+    docker exec "$TESTNET-bastion" sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+    docker exec "$TESTNET-bastion" kill -HUP 1
     sleep 1
     [ "$ok" = 1 ]
   else
@@ -102,11 +106,11 @@ claim_inner() {
 
 claim_bare() {
   if [ -n "$BREAK" ]; then
-    docker exec illogical-testnet-box-bare sh -c 'printf "#!/bin/sh\n" > /usr/local/bin/illogical && chmod +x /usr/local/bin/illogical'
+    docker exec "$TESTNET-box-bare" sh -c 'printf "#!/bin/sh\n" > /usr/local/bin/illogical && chmod +x /usr/local/bin/illogical'
   fi
   local rc=0
   s box-bare 'bash -lc "! command -v illogical && ! command -v illogicald && [ ! -e ~/.local/state/illogical ] && [ ! -e ~/.config/illogical ]"' >/dev/null || rc=1
-  [ -z "$BREAK" ] || docker exec illogical-testnet-box-bare rm -f /usr/local/bin/illogical
+  [ -z "$BREAK" ] || docker exec "$TESTNET-box-bare" rm -f /usr/local/bin/illogical
   return "$rc"
 }
 
@@ -117,9 +121,16 @@ claim_stdio() {
   [ "$(sha < "$WORK/sent")" = "$(sha < "$WORK/back")" ]
 }
 
-claim_agent() {
+# An agent of our own holding the stack's key, started once.
+use_agent() {
+  [ -n "${OUR_AGENT:-}" ] && return 0
   eval "$(ssh-agent -s)" >/dev/null
+  OUR_AGENT="$SSH_AGENT_PID"
   ssh-add -q "$STATE/id_ed25519"
+}
+
+claim_agent() {
+  use_agent
   local want fwd="-o ForwardAgent=yes"
   want="$(ssh-keygen -lf "$STATE/id_ed25519.pub" | cut -d' ' -f2)"
   [ -n "$BREAK" ] && fwd="-o ForwardAgent=no"
@@ -127,8 +138,17 @@ claim_agent() {
   s $fwd box-bare ssh-add -l 2>/dev/null | grep -qF "$want"
 }
 
+claim_push() {
+  use_agent
+  local fwd="-o ForwardAgent=yes" branch="claim-$$-$RANDOM"
+  [ -n "$BREAK" ] && fwd="-o ForwardAgent=no"
+  # shellcheck disable=SC2086,SC2016 # options split on purpose; $(...) runs on the box
+  s $fwd box-bare 'cd "$(mktemp -d)" && git init -q && git -c user.name=illo -c user.email=illo@box-bare commit -q --allow-empty -m claim && git push -q git@git:/srv/git/repo.git HEAD:refs/heads/'"$branch" 2>/dev/null || return 1
+  docker exec "$TESTNET-git" git --git-dir=/srv/git/repo.git rev-parse -q --verify "refs/heads/$branch" >/dev/null
+}
+
 claim_linger() {
-  local b=illogical-testnet-box-systemd rc=0
+  local b="$TESTNET-box-systemd" rc=0
   docker exec "$b" loginctl disable-linger illo
   if [ -n "$BREAK" ]; then docker exec "$b" systemctl mask --now polkit.service >/dev/null 2>&1; fi
   # shellcheck disable=SC2016 # expanded on the box
