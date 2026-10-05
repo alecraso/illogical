@@ -10,7 +10,7 @@ import { directory } from "../hosts";
 import { CopyButton, CopyText, download } from "./copy";
 import { ROLE_HELP, roleAs, roleLabel } from "./roles";
 import type { MenuItem } from "./menu";
-import type { ShareOffer, Team } from "../control";
+import type { PresignedInvite, ShareOffer, Team } from "../control";
 import type { TeamRole } from "../e2e/team.ts";
 import { qr, qrPath } from "./qr";
 import { AccountPanel } from "./account";
@@ -1253,6 +1253,20 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
   // Which button waits for a second click: "lock", or a member to remove.
   const [confirming, setConfirming] = useState<string | null>(null);
   const owner = t.role === "owner";
+  // One-click links not used yet (#134), each with Cancel.
+  const [unused, setUnused] = useState<PresignedInvite[]>([]);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (!owner) return setUnused([]);
+    let live = true;
+    s.presignedInvites(t.team).then(
+      (l) => live && setUnused(l),
+      () => live && setUnused([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [s, t.team, owner, t.locked, t.roster.version, link, reload]);
   return (
     <section class="team" data-team={t.team}>
       <h3>
@@ -1355,6 +1369,35 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
               <CopyText text={link} share data-invite-link />
             </p>
           ) : null}
+          {unused.length ? (
+            <>
+              <p class="dim">One-click links nobody has used yet:</p>
+              <ul class="control-devices" data-presigned-list>
+                {unused.map((i) => (
+                  <li key={i.key} data-presigned={i.key}>
+                    <span>
+                      {roleAs(i.role).replace(/^as /, "for ")}
+                      {i.by === s.account ? "" : `, from ${i.by_name}`}
+                    </span>
+                    <span class="dim">{expiresIn(i.expires)}</span>
+                    <button
+                      class="control-revoke"
+                      data-cancel-presigned={i.key}
+                      title="Nobody can join with this link any more"
+                      onClick={() =>
+                        act(async () => {
+                          await s.cancelPresigned(t.team, i.key);
+                          setReload((n) => n + 1);
+                        })
+                      }
+                    >
+                      Cancel
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
           {confirming === "lock" ? (
             <p class="control-error" data-lock-warning>
               Lock: only owners reach the team's machines; open invites and requests are dropped.
@@ -1379,6 +1422,12 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
       ) : null}
     </section>
   );
+}
+
+/** How long a link has left, roughly. */
+function expiresIn(at: number): string {
+  const min = Math.max(1, Math.round((at - Date.now()) / 60_000));
+  return min < 90 ? `expires in ${min} min` : `expires in ${Math.round(min / 60)} h`;
 }
 
 function RoleOptions() {

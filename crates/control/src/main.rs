@@ -335,6 +335,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/teams", get(teams::list).post(teams::create))
         .route("/api/teams/{id}/roster", post(teams::set_roster))
         .route("/api/teams/{id}/invites", post(teams::invite))
+        .route("/api/teams/{id}/presigned", get(teams::list_presigned))
+        .route("/api/teams/{id}/presigned/{key}", axum::routing::delete(teams::cancel_presigned))
         .route("/api/teams/{id}/requests/{account}/reject", post(teams::reject))
         .route("/api/teams/{id}/lock", post(teams::lock))
         .route("/api/invites/{team}/{code}", get(teams::show_invite))

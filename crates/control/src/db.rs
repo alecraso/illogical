@@ -1129,6 +1129,18 @@ impl Db {
             .optional()?)
     }
 
+    /// A team's live presigned invites, soonest to expire first: (key,
+    /// invite JSON, expires, who made it).
+    pub fn presigned_of(&self, team: &str, now: u64) -> anyhow::Result<Vec<(String, String, u64, String)>> {
+        let c = self.c();
+        let mut st = c.prepare(
+            "SELECT key, body, expires, by_account FROM presigned_invites WHERE team = ?1 AND expires > ?2
+             ORDER BY expires, key",
+        )?;
+        let rows = st.query_map(params![team, now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn drop_presigned(&self, key: &str) -> anyhow::Result<()> {
         self.c().execute("DELETE FROM presigned_invites WHERE key = ?1", params![key])?;
         Ok(())

@@ -80,6 +80,15 @@ export interface Team {
   verified: boolean;
 }
 
+/** A one-click invite link control still holds (#134). */
+export interface PresignedInvite {
+  key: string;
+  role: TeamRole;
+  expires: number;
+  by: string;
+  by_name: string;
+}
+
 const PINS_KEY = "illogical.control.pins";
 
 /** First sight of another account's root (trust on first use): pinned
@@ -876,6 +885,20 @@ export class ControlSession {
   async rejectRequest(team: string, account: string) {
     await api(`/api/teams/${team}/requests/${account}/reject`, {});
     await this.refresh();
+  }
+
+  /** A team's one-click links nobody has used yet (owners only, #134). */
+  async presignedInvites(team: string) {
+    return (await api<{ invites: PresignedInvite[] }>(`/api/teams/${team}/presigned`)).invites;
+  }
+
+  /** Cancel one of them: control refuses it from now on. */
+  async cancelPresigned(team: string, key: string) {
+    const res = await fetch(`/api/teams/${team}/presigned/${key}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new HttpError(res.status, j.error ?? `HTTP ${res.status}`, j);
+    }
   }
 
   async lockTeam(team: string, locked: boolean) {
