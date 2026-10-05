@@ -1,0 +1,10 @@
+[Unit]
+Description=Install the test stack's ssh keys
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/testnet-keys
+
+[Install]
+WantedBy=multi-user.target

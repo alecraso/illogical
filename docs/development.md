@@ -32,6 +32,10 @@ installs the pinned version into `web/e2e/fixtures/chant-workspace` with
 tests use a stand-in chant). `just screenshots` regenerates the images in
 `site/img/` from a throwaway daemon with a scripted demo session.
 
+`just testnet up ssh` starts a local stack in Docker (`testnet/`, #200): a
+bastion and a box with no illogical that only ssh reaches. `just testnet
+test` runs its claims; `testnet/README.md` lists them.
+
 ## Releasing
 
 1. Set the version in the workspace `Cargo.toml` and commit (`just
