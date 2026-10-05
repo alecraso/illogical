@@ -3,8 +3,7 @@
 //! /dev/null` and `BatchMode`, so the runner's own ssh config stays out of
 //! it), on a pseudo-terminal, against a dev daemon.
 
-mod listen;
-mod strays;
+use illogical_testkit::{listen, strays};
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
