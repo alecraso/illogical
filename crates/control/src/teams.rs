@@ -248,7 +248,22 @@ pub async fn list(State(app): State<Arc<App>>, s: Session) -> R {
             r.members.iter().filter(|m| m.role == TeamRole::Owner).map(|m| m.name.as_str()).collect();
         asked.push(json!({ "team": team, "name": r.name, "owners": owners }));
     }
-    Ok(Json(json!({ "teams": out, "asked": asked })))
+    // Teams that went while I wasn't looking (#206), to show once.
+    let notices: Vec<Value> = app
+        .db
+        .notices(&s.account)?
+        .into_iter()
+        .map(|(id, title, body)| json!({ "id": id, "title": title, "body": body }))
+        .collect();
+    Ok(Json(json!({ "teams": out, "asked": asked, "notices": notices })))
+}
+
+/// `POST /api/me/notices/{id}/seen`: shown; don't show it again.
+pub async fn notice_seen(State(app): State<Arc<App>>, s: Session, Path(id): Path<i64>) -> R {
+    if !app.db.drop_notice(&s.account, id)? {
+        return Err(err(StatusCode::NOT_FOUND, "no such notice"));
+    }
+    Ok(Json(json!({})))
 }
 
 #[derive(Deserialize)]

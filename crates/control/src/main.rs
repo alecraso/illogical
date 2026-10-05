@@ -314,6 +314,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/me/passkeys", get(account::passkeys))
         .route("/api/me/passkeys/{id}/remove", post(account::remove_passkey))
         .route("/api/me/delete", get(account::preview).post(account::delete))
+        .route("/api/me/notices/{id}/seen", post(teams::notice_seen))
         .route("/api/devices", get(api::devices).post(api::enroll))
         .route("/api/devices/{id}", get(api::device))
         .route("/api/devices/{id}/approve", post(api::approve))

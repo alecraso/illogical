@@ -465,6 +465,8 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   const offer = s.offers[0];
   if (offer) return <ShareOfferPrompt s={s} o={offer} />;
   if (s.joined) return <Joined s={s} />;
+  const notice = s.notices[0];
+  if (notice) return <Notice s={s} n={notice} />;
   if (panel === "devices") return <Devices s={s} close={() => setPanel(null)} />;
   if (panel === "teams") return <Teams s={s} close={() => setPanel(null)} />;
   if (panel === "plan") return <Plan s={s} close={() => setPanel(null)} />;
@@ -1071,6 +1073,22 @@ function Joined({ s }: { s: ControlSession }) {
       <p>{has ? "Its machines are in your host list now." : "Its machines appear here when an owner adds one."}</p>
       <div class="prompt-buttons">
         <button class="primary" onClick={() => s.sawJoined()}>
+          OK
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Something control kept to tell this account (#206: a team it was in
+ * was deleted while this page wasn't open, or was). */
+function Notice({ s, n }: { s: ControlSession; n: ControlSession["notices"][number] }) {
+  return (
+    <Modal close={() => void s.sawNotice(n.id)}>
+      <h2 data-notice={n.id}>{n.title}</h2>
+      <p>{n.body}</p>
+      <div class="prompt-buttons">
+        <button class="primary" onClick={() => void s.sawNotice(n.id)}>
           OK
         </button>
       </div>
