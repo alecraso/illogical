@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# THIRD_PARTY.md and crates/desktop/THIRD_PARTY.md, from cargo-about and
+# scripts/web-notices. Each file is written to a temporary file next to it
+# and moved into place only when every step succeeded, so a missing
+# cargo-about (or pnpm) leaves the old notices alone.
+#
+#   scripts/notices
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+version=0.9.2
+
+if ! cargo about --version >/dev/null 2>&1; then
+  echo "notices: cargo-about is not installed; install it with:" >&2
+  echo "  cargo install cargo-about --version $version --locked" >&2
+  exit 1
+fi
+
+tmp=THIRD_PARTY.md.tmp
+dtmp=crates/desktop/THIRD_PARTY.md.tmp
+trap 'rm -f "$tmp" "$dtmp"' EXIT
+
+cargo about generate about.hbs >"$tmp"
+scripts/web-notices >>"$tmp"
+(cd crates/desktop && cargo about generate -c about.toml ../../about.hbs) >"$dtmp"
+
+mv "$tmp" THIRD_PARTY.md
+mv "$dtmp" crates/desktop/THIRD_PARTY.md

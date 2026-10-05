@@ -102,11 +102,57 @@ pub fn require(profile: &str, host: &str, test: &str) -> bool {
     true
 }
 
-/// The box's binaries for `arch`, or a failure saying how to build them.
+/// The box's binaries for `arch`, or a failure saying how to build them:
+/// missing, another version than this build, or older than this tree's
+/// sources (a client and box built apart fail in confusing ways, #259).
 pub fn require_binaries(arch: &str) -> PathBuf {
-    box_binaries(arch).unwrap_or_else(|| {
+    let dir = box_binaries(arch).unwrap_or_else(|| {
         panic!("no static binaries for {arch}: run `just static {arch}` (or set ILLOGICAL_SSH_BINARIES)")
-    })
+    });
+    if let Err(why) = binaries_current(&dir, env!("CARGO_PKG_VERSION"), Path::new(env!("CARGO_MANIFEST_DIR"))) {
+        panic!("the static binaries in {} are stale ({why}): run `just static {arch}`", dir.display());
+    }
+    dir
+}
+
+/// Whether the binaries in `dir` are this build: each one's version mark
+/// is `version`, and, when cargo's dep-info is beside them, every file they
+/// were built from is in this tree (`workspace` is a crate under it) and
+/// no newer than they are.
+pub fn binaries_current(dir: &Path, version: &str, workspace: &Path) -> Result<(), String> {
+    let root = workspace.ancestors().find(|p| p.join("Cargo.lock").is_file()).unwrap_or(workspace);
+    for bin in ["illogical", "illogicald"] {
+        let path = dir.join(bin);
+        let bytes = std::fs::read(&path).map_err(|e| format!("reading {bin}: {e}"))?;
+        let found = version_mark(&bytes).ok_or_else(|| format!("{bin} has no version mark"))?;
+        if found != version {
+            return Err(format!("{bin} is {found}, this build is {version}"));
+        }
+        let Ok(deps) = std::fs::read_to_string(dir.join(format!("{bin}.d"))) else { continue };
+        let built = std::fs::metadata(&path).and_then(|m| m.modified()).map_err(|e| e.to_string())?;
+        let (_, sources) = deps.split_once(": ").ok_or_else(|| format!("{bin}.d has no sources"))?;
+        // `dir` is <target>/<triple>/release; build scripts' output is
+        // under <target>, wherever that is.
+        let target = dir.parent().and_then(Path::parent).unwrap_or(dir);
+        for src in sources.split_whitespace().map(Path::new) {
+            if !src.starts_with(root) && !src.starts_with(target) {
+                return Err(format!("{bin} was built from another tree ({})", src.display()));
+            }
+            match std::fs::metadata(src).and_then(|m| m.modified()) {
+                Ok(t) if t <= built => {}
+                Ok(_) => return Err(format!("{} changed after {bin} was built", src.display())),
+                Err(_) => return Err(format!("{} is gone since {bin} was built", src.display())),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn version_mark(bytes: &[u8]) -> Option<&str> {
+    let tag = b"\0illogical-version=";
+    let at = bytes.windows(tag.len()).position(|w| w == tag)? + tag.len();
+    let len = bytes[at..].iter().position(|&b| b == 0)?;
+    std::str::from_utf8(&bytes[at..at + len]).ok()
 }
 
 /// Recreate services, so a run starts from boxes with nothing on them.

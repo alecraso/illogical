@@ -260,10 +260,9 @@ desktop-check:
 # THIRD_PARTY.md: notices for the Rust crates (cargo-about) and the npm
 # packages bundled into the web client; crates/desktop/THIRD_PARTY.md for
 # the desktop app's own crates (its about.toml also accepts MPL-2.0).
+# Needs cargo-about 0.9.2; leaves both files alone when anything fails.
 notices:
-    cargo about generate about.hbs > THIRD_PARTY.md
-    scripts/web-notices >> THIRD_PARTY.md
-    cd crates/desktop && cargo about generate -c about.toml ../../about.hbs > THIRD_PARTY.md
+    scripts/notices
 
 # All tests.
 test: web
@@ -429,10 +428,12 @@ macos cmd="launchd" *args:
 
 # Tests for the shell side of releases: install.sh picks the right release
 # per machine, and the ratchet that what a release ships is named the same
-# everywhere (release.yml, scripts/release, Homebrew, install.sh, the site).
+# everywhere (release.yml, scripts/release, Homebrew, install.sh, the site);
+# and `just notices` keeping THIRD_PARTY.md when cargo-about fails.
 test-scripts:
     scripts/tests/install.sh
     scripts/tests/release-targets.sh
+    scripts/tests/notices.sh
 
 # What CI runs.
 check: test

@@ -1001,12 +1001,22 @@ fn default_socket() -> PathBuf {
 }
 
 /// `illogical web`: the sign-in link, opened in a browser (or printed).
+/// With `--ssh`, the box daemon's link: printed, since its page is on the
+/// box, with how to forward its port from here.
 fn web(sock: &http::Target, print: bool) -> anyhow::Result<i32> {
     let v = request(sock, "GET", "/api/signin-link", None)?.json()?;
     let Some(url) = v["url"].as_str() else { bail!("the daemon has no sign-in link: {v}") };
     let page = url.split("/auth?").next().unwrap_or(url);
     if print {
         println!("{url}");
+        return Ok(0);
+    }
+    if let http::Target::Ssh(r) = sock {
+        println!("The page is on {}. Open this in a browser here once its port is forwarded:\n\n  {url}\n", r.dest);
+        if let Some(hint) = ssh_forward(page, &r.dest) {
+            println!("{hint}\n");
+        }
+        println!("It holds {}'s local token: don't share it.", r.dest);
         return Ok(0);
     }
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
@@ -1037,11 +1047,23 @@ fn ssh_hint(page: &str, over_ssh: bool) -> Option<String> {
     if !over_ssh {
         return None;
     }
-    let addr = page.strip_prefix("http://")?.trim_end_matches('/');
-    let port = addr.rsplit_once(':')?.1;
+    let (port, addr) = page_port(page)?;
     Some(format!(
         "Over ssh? On the computer you're at, forward the port first, then open the link there:\n\n  ssh -L {port}:{addr} <this machine>"
     ))
+}
+
+/// `--ssh dest web`: the forward that makes dest's page reachable here.
+fn ssh_forward(page: &str, dest: &str) -> Option<String> {
+    let (port, addr) = page_port(page)?;
+    Some(format!("Forward it with:\n\n  ssh -N -L {port}:{addr} {dest}"))
+}
+
+/// A page's port and address (`http://127.0.0.1:7681/` is 7681 and
+/// 127.0.0.1:7681).
+fn page_port(page: &str) -> Option<(&str, &str)> {
+    let addr = page.strip_prefix("http://")?.trim_end_matches('/');
+    Some((addr.rsplit_once(':')?.1, addr))
 }
 
 /// The pane given, or the one we're running in.
@@ -1318,6 +1340,11 @@ fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
 }
 
+/// The version, findable in the binary's bytes: the testnet tests read it
+/// from a box's static build they can't run here (#259).
+#[used]
+static VERSION_MARK: &str = concat!("\0illogical-version=", env!("CARGO_PKG_VERSION"), "\0");
+
 fn main() {
     // Run as `tmux` (a link, or a copy on an ssh host's PATH): be tmux's
     // control mode, with tmux's own arguments.
@@ -1401,8 +1428,11 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
     if let Command::Hook = cli.cmd {
         return Ok(hook::run(http::Target::Socket(socket(&cli))));
     }
-    if let Command::Web { print } = cli.cmd {
-        // The local daemon's own link, over its socket (only ours).
+    if let Command::Web { print } = cli.cmd
+        && cli.ssh.is_none()
+    {
+        // The local daemon's own link, over its socket (only ours); with
+        // --ssh, the box's, below.
         return web(&http::Target::Socket(socket(&cli)), print);
     }
     if let Command::Inbox = cli.cmd {
@@ -1669,6 +1699,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Hosts { cmd } => hosts::run(&sock, cmd, json_out, duration)?,
         Command::Sandboxes { cmd } => hosts::sandboxes(&sock, cmd, json_out)?,
+        // Only with --ssh: the box daemon's link, over the bridge to its
+        // socket.
+        Command::Web { print } if matches!(sock, http::Target::Ssh(_)) => return web(&sock, print),
         Command::Install { .. }
         | Command::Web { .. }
         | Command::Bridge { .. }
@@ -2986,6 +3019,13 @@ mod tests {
         assert_eq!(super::ssh_hint("http://127.0.0.1:7681", false), None);
         let hint = super::ssh_hint("http://127.0.0.1:7681", true).unwrap();
         assert!(hint.ends_with("ssh -L 7681:127.0.0.1:7681 <this machine>"), "{hint}");
+    }
+
+    #[test]
+    fn web_forward_for_an_ssh_box() {
+        let hint = super::ssh_forward("http://127.0.0.1:7681/", "box").unwrap();
+        assert!(hint.ends_with("ssh -N -L 7681:127.0.0.1:7681 box"), "{hint}");
+        assert_eq!(super::ssh_forward("https://x", "box"), None);
     }
 
     #[test]
