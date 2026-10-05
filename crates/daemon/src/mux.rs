@@ -290,6 +290,8 @@ pub struct MuxHandle {
     pub ide: Option<Arc<crate::ide::Ide>>,
     /// The user's shell environment, here and on machines (#74).
     pub shell_env: Arc<crate::shellenv::ShellEnv>,
+    /// Standing permission rules for agent blocks (#166).
+    pub rules: Arc<crate::rules::Rules>,
 }
 
 impl MuxHandle {
@@ -554,6 +556,7 @@ struct Daemon {
     /// This host's files, as `/api/fs` serves them.
     fs: Arc<crate::fs::Scope>,
     shell_env: Arc<crate::shellenv::ShellEnv>,
+    rules: Arc<crate::rules::Rules>,
     /// Who drives each pane (M13), and panes in pair mode.
     drivers: HashMap<PaneId, Driver>,
     pair: std::collections::HashSet<PaneId>,
@@ -688,6 +691,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         crate::shellenv::TIMEOUT,
     );
     shell_env.start();
+    let rules = crate::rules::Rules::open(store.root().join("rules.json"));
     let mut d = Daemon {
         mux: Mux::new(),
         panes: HashMap::new(),
@@ -705,6 +709,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
         drawn: Default::default(),
         fs: fs.clone(),
         shell_env: shell_env.clone(),
+        rules: rules.clone(),
         drivers: HashMap::new(),
         pair: Default::default(),
         drove: HashMap::new(),
@@ -758,7 +763,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, OwnedFd>, pu
     d.sweep_machines();
     let (provider, daemon_id, ide) = (d.config.provider.clone(), d.config.daemon_id.clone(), d.config.ide.clone());
     tokio::spawn(d.run(rx, notices_rx));
-    MuxHandle { tx, events, store, provider, daemon_id, fs, ide, shell_env }
+    MuxHandle { tx, events, store, provider, daemon_id, fs, ide, shell_env, rules }
 }
 
 /// A reason with nothing but its headline.
@@ -1066,6 +1071,7 @@ impl Daemon {
             shell_env: self.shell_env.clone(),
             cmds: Some(self.tx.clone()),
             ids: self.ids.clone(),
+            rules: self.rules.clone(),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();

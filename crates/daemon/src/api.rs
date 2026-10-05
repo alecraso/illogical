@@ -67,6 +67,8 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/drivers", get(drivers))
         .route("/api/panes/{id}/diff", get(diff_of))
         .route("/api/ide", get(ide_get).put(ide_set))
+        .route("/api/rules", get(rules_get).delete(rules_forget_all))
+        .route("/api/rules/{index}", axum::routing::delete(rules_forget))
         .route("/api/hosts/self/shell-env", get(shell_env_get))
         .route("/api/hosts/self/shell-env/refresh", post(shell_env_refresh))
         .route("/api/editors", get(editors))
@@ -1899,6 +1901,50 @@ async fn ide_set(
     let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here (--no-claude-ide)"))?;
     ide.set_diffs_to(Some(req.diffs)).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) })))
+}
+
+/// `GET /api/rules` (#166): the standing permission rules agent blocks on
+/// this daemon answer from, in order (`DELETE /api/rules/{index}` forgets
+/// one; `DELETE /api/rules`, all).
+async fn rules_get(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    let list: Vec<serde_json::Value> = app
+        .mux
+        .rules
+        .list()
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let text = r.describe();
+            let mut v = serde_json::to_value(r).unwrap_or_default();
+            v["index"] = i.into();
+            v["text"] = text.into();
+            v
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "rules": list })))
+}
+
+async fn rules_forget(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+    Path(index): Path<usize>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    app.mux.rules.forget(Some(index)).map_err(|e| ApiError(StatusCode::NOT_FOUND, e))?;
+    Ok(Json(serde_json::json!({})))
+}
+
+async fn rules_forget_all(
+    State(app): AppState,
+    who: Option<axum::Extension<crate::acl::Principal>>,
+) -> Res<Json<serde_json::Value>> {
+    owner_only(&who)?;
+    app.mux.rules.forget(None).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(serde_json::json!({})))
 }
 
 /// `GET /api/hosts/self/shell-env` (#74): the user's shell environment

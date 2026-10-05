@@ -174,6 +174,8 @@ mod tests {
         assert_eq!(policy(&g, "/api/panes/3/diff"), Policy::On(3, Role::Viewer));
         assert_eq!(policy(&g, "/api/ide"), Policy::Owner);
         assert_eq!(policy(&Method::PUT, "/api/ide"), Policy::Owner);
+        assert_eq!(policy(&g, "/api/rules"), Policy::Owner);
+        assert_eq!(policy(&Method::DELETE, "/api/rules/0"), Policy::Owner);
         assert_eq!(policy(&g, "/api/editors/vsix"), Policy::Owner);
         assert_eq!(policy(&g, "/api/hosts/self/shell-env"), Policy::Owner);
         assert_eq!(policy(&p, "/api/hosts/self/shell-env/refresh"), Policy::Owner);

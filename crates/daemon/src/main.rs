@@ -41,6 +41,7 @@ mod remote;
 mod resident;
 mod review;
 mod roots;
+mod rules;
 mod sandbox;
 mod seal;
 mod server;

@@ -13,6 +13,7 @@ import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople, driveItems, shareSession } from "./people";
 import { directory } from "../hosts";
 import { openSandboxes, SandboxesLayer } from "./sandboxes";
+import { openRules, RulesLayer } from "./rules";
 import { newRemote, openChanges, openEditor, openFountain, openIssue, openPort, openPr, openWorkspace, remoteHosts, useWorkspaceDir } from "../blocks";
 import { AgentDialogLayer, startAgent } from "./agent-dialog";
 import { ConversationsLayer, pickConversation } from "./conversations";
@@ -105,6 +106,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <ConversationsLayer />
       <AppsLayer />
       <SandboxesLayer />
+      <RulesLayer />
       <PickerLayer />
       <GettingStartedLayer />
       {phone && state && <InstallHint />}
@@ -155,6 +157,8 @@ function TopBar({
       "separator",
       ...notificationItems(client),
       ...agentNotifyItems(client, session.id),
+      // #166: this machine's standing permission rules, the owner's.
+      ...(state.roles ? [] : [{ label: "Permission rules…", run: () => openRules(client) } as MenuItem]),
       { label: "Getting started", run: () => openGettingStarted(undefined, client) },
       "separator",
       { label: "Close session", danger: true, run: () => client.intent({ op: "close_session", session: session.id }) },

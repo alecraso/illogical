@@ -73,6 +73,53 @@ test.describe("desktop", () => {
   });
 });
 
+// #166: "From now on…" on a card makes a standing rule the daemon keeps:
+// the next agent block started there never asks, the session menu lists
+// the rule, and forgetting it there brings the card back.
+test("a standing rule outlives its block and is forgotten from the session menu", async ({ page }) => {
+  await reset(page);
+  await page.evaluate(() => window.__illogical.client.request("DELETE", "/api/rules"));
+  const [term] = await panes(page);
+  const agents = () => page.evaluate(() => window.__illogical.client.state!.panes.filter((p) => p.type === "agent").map((p) => p.id));
+
+  await menu(page, paneEl(page, term), "Start an agent…");
+  await startFake(page, "run make -j4");
+  await expect.poll(agents).toHaveLength(1);
+  const first = paneEl(page, (await agents())[0]);
+  const card = first.getByRole("alertdialog", { name: "Allow make -j4?" });
+  await card.getByRole("button", { name: "From now on…" }).click();
+  const form = card.getByRole("form", { name: "A standing rule" });
+  // Bash's first word by default; this directory by default.
+  await expect(form.locator("input[name=prefix]")).toHaveValue("make");
+  await expect(form.locator("select[name=scope]")).toHaveValue("cwd");
+  await form.getByRole("button", { name: "Allow from now on" }).click();
+  await expect(card).toBeHidden();
+  await expect(first.locator(".agent-note").filter({ hasText: /Allowed make -j4, and from now on: Bash make… in / })).toBeVisible();
+
+  // Another block in the same place: no card.
+  await menu(page, paneEl(page, term), "Start an agent…");
+  await startFake(page, "run make test");
+  await expect.poll(agents).toHaveLength(2);
+  const second = paneEl(page, (await agents())[1]);
+  await expect(second.locator(".agent-msg")).toContainText("Ran it.");
+  await expect(second.locator(".agent-note").filter({ hasText: /Allowed make test \(standing rule: Bash make… in / })).toBeVisible();
+
+  // The session menu lists it; Forget, and the next request asks again.
+  await page.locator(".session-button").click();
+  await page.getByRole("menuitem", { name: "Permission rules…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Permission rules" });
+  await expect(dialog.locator("[data-rule]")).toHaveCount(1);
+  await expect(dialog.locator("[data-rule=\"0\"] .rule-text")).toContainText("Bash make… in ");
+  await dialog.locator("[data-rule=\"0\"]").getByRole("button", { name: "Forget" }).click();
+  await expect(dialog.locator("[data-rule]")).toHaveCount(0);
+  await expect(dialog).toContainText("None yet");
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await second.locator(".agent-composer textarea").fill("run make install");
+  await second.getByRole("button", { name: "Send" }).click();
+  await expect(second.getByRole("alertdialog", { name: "Allow make install?" })).toBeVisible();
+  await second.getByRole("button", { name: "Deny", exact: true }).click();
+});
+
 // #111: Codex's adapter isn't in the run's agents directory (Claude Code's
 // is the fake), and Install runs a stand-in npm (playwright.config.ts).
 test("an adapter that isn't installed: its command to copy, and Install in a pane", async ({ page }) => {

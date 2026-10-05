@@ -24,6 +24,8 @@
 //! **Permissions.** "Always allow" is a rule in the block's config, answered
 //! by the block itself: it never picks the agent's `allow_always`, which
 //! `claude-agent-acp` writes into your repo's `.claude/settings.local.json`.
+//! A standing rule (#166, [`crate::rules`]) is "always" kept by the daemon
+//! for a directory or every block; blocks check those after their own.
 //! Cancelling a turn answers open requests `cancelled`; a card goes when its
 //! tool call ends (Fountain refuses an unanswered request after 5 minutes
 //! without telling the client).
@@ -565,7 +567,11 @@ impl Inner {
                 let how = e["how"].as_str().unwrap_or("once");
                 let text = match how {
                     "rule" => format!("Allowed {title} (always allowed)"),
+                    "standing" => format!("Allowed {title} (standing rule: {})", e["rule"].as_str().unwrap_or("?")),
                     "always" => format!("Allowed {title}, and always from now on"),
+                    "standing-new" => {
+                        format!("Allowed {title}, and from now on: {}", e["rule"].as_str().unwrap_or("?"))
+                    }
                     _ => format!("Allowed {title}"),
                 };
                 self.t.note(format!("{text}{}", by_of(e)), at);
@@ -1819,8 +1825,22 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             let Some(p) = g.pending.iter().find(|p| p.id == key).cloned() else { return };
             let allowed =
                 g.cfg.allow.iter().any(|r| r.tool == p.tool && r.title.as_ref().is_none_or(|t| *t == p.title));
-            if allowed && let Some(opt) = p.options.iter().find(|o| o.kind == "allow_once") {
-                g.note(json!({ "e": "approve", "title": p.title, "how": "rule" }));
+            // #166: then the daemon's standing rules, as they are now.
+            let standing = (!allowed)
+                .then(|| {
+                    let what = p.command.as_deref().unwrap_or(&p.title);
+                    ctx.rules.allowing(&p.tool, what, g.cfg.cwd.as_deref(), ctx.sprite.as_deref())
+                })
+                .flatten();
+            if (allowed || standing.is_some())
+                && let Some(opt) = p.options.iter().find(|o| o.kind == "allow_once")
+            {
+                match standing {
+                    Some(r) => {
+                        g.note(json!({ "e": "approve", "title": p.title, "how": "standing", "rule": r.describe() }))
+                    }
+                    None => g.note(json!({ "e": "approve", "title": p.title, "how": "rule" })),
+                }
                 let opt = opt.id.clone();
                 g.out(json!({ "jsonrpc": "2.0", "id": p.rpc, "result": { "outcome": { "outcome": "selected", "optionId": opt } } }));
             }
@@ -1985,14 +2005,53 @@ impl Agent {
             // the block instead.
             return Err("use option \"always\": the block remembers it, not the agent".into());
         }
-        if option.starts_with("always") {
+        // #166: "always" for this block (its config), or a standing rule
+        // the daemon keeps for this directory or every block. Those are the
+        // owner's to make, and they allow the whole tool unless given a
+        // prefix.
+        let scope = args["scope"].as_str().unwrap_or("block");
+        let standing = match scope {
+            "block" => None,
+            "cwd" | "everywhere" if !option.starts_with("always") => {
+                return Err(format!("scope {scope} goes with option \"always\""));
+            }
+            "cwd" | "everywhere" if by.is_some() => {
+                return Err("only the owner makes standing rules".into());
+            }
+            "cwd" | "everywhere" => {
+                let cwd = match scope {
+                    "cwd" => Some(g.cfg.cwd.clone().ok_or("this block has no directory: use scope everywhere")?),
+                    _ => None,
+                };
+                let prefix = args["prefix"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+                Some(crate::rules::Standing {
+                    tool: p.tool.clone(),
+                    prefix,
+                    sprite: cwd.as_ref().and(self.ctx.sprite.clone()),
+                    cwd,
+                    at_ms: 0,
+                    from: Some(p.title.clone()),
+                })
+            }
+            s => return Err(format!("scope {s}: block, cwd or everywhere")),
+        };
+        if let Some(r) = &standing {
+            self.ctx.rules.add(r.clone()).map_err(|e| format!("couldn't keep the rule: {e}"))?;
+        } else if option.starts_with("always") {
             let rule = Rule { tool: p.tool.clone(), title: (option == "always").then(|| p.title.clone()) };
             if !g.cfg.allow.contains(&rule) {
                 g.cfg.allow.push(rule);
             }
         }
-        let how = if option.starts_with("always") { "always" } else { "once" };
-        g.note(json!({ "e": "approve", "title": p.title, "how": how, "by": by }));
+        match &standing {
+            Some(r) => g.note(
+                json!({ "e": "approve", "title": p.title, "how": "standing-new", "rule": r.describe(), "by": by }),
+            ),
+            None => {
+                let how = if option.starts_with("always") { "always" } else { "once" };
+                g.note(json!({ "e": "approve", "title": p.title, "how": how, "by": by }));
+            }
+        }
         g.out(json!({ "jsonrpc": "2.0", "id": p.rpc, "result": { "outcome": { "outcome": "selected", "optionId": chosen.id } } }));
         drop(g);
         self.changed();

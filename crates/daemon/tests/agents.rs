@@ -142,6 +142,93 @@ fn a_block_starts_with_the_rules_and_mode_it_was_given() {
 }
 
 #[test]
+fn standing_rules_outlive_the_block_that_made_them() {
+    // #166: "Always" for a directory or everywhere is the daemon's, not the
+    // block's: the next block checks it, it survives a restart, and
+    // forgetting it takes effect at once.
+    let mut d = Daemon::child();
+    let here = d.sessions.join("repo");
+    let below = here.join("crates");
+    let elsewhere = d.sessions.with_extension("elsewhere");
+    for dir in [&below, &elsewhere] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let open_in = |d: &Daemon, cwd: &std::path::Path, prompt: &str| {
+        let config = json!({ "agent": "acp", "command": ["python3", fake()], "cwd": cwd, "prompt": prompt });
+        d.open_with(json!({ "type": "agent", "config": config }))
+    };
+    let asked = |d: &Daemon, id: u64, text: &str| -> bool {
+        d.call(id, "send", json!({ "text": text }));
+        let asked = d.wait(id, "idle") == "needs_input";
+        if asked {
+            d.call(id, "deny", json!({}));
+            d.wait(id, "idle");
+        }
+        asked
+    };
+
+    let a = open_in(&d, &here, "run make");
+    d.wait(a, "needs-input");
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{a}/call/approve"), Some(json!({ "option": "once", "scope": "cwd" })));
+    assert_eq!(status, 400, "a scope goes with always: {body}");
+    d.call(a, "approve", json!({ "option": "always", "scope": "cwd" }));
+    d.wait(a, "idle");
+    let here_s = here.display().to_string();
+    assert!(
+        entries(&d.state(a))
+            .iter()
+            .any(|e| e["text"] == format!("Allowed make, and from now on: Bash (any) in {here_s}"))
+    );
+    assert_eq!(d.state(a)["allow"], json!([]), "not the block's own rule");
+    let rules = d.get("/api/rules");
+    assert_eq!(rules["rules"][0]["cwd"], json!(here_s), "{rules}");
+    assert_eq!(rules["rules"][0]["text"], json!(format!("Bash (any) in {here_s}")));
+
+    // A new block under that directory never asks; one elsewhere does.
+    let b = open_in(&d, &below, "run cargo build");
+    assert_eq!(d.wait(b, "idle"), "done", "never asked");
+    assert!(
+        entries(&d.state(b))
+            .iter()
+            .any(|e| e["text"] == format!("Allowed cargo build (standing rule: Bash (any) in {here_s})")),
+        "{}",
+        d.state(b)
+    );
+    let c = open_in(&d, &elsewhere, "hello");
+    d.wait(c, "idle");
+    assert!(asked(&d, c, "run make"));
+
+    // Everywhere, for a prefix: that command and its arguments, nothing else.
+    d.call(c, "send", json!({ "text": "run cargo test" }));
+    d.wait(c, "needs-input");
+    d.call(c, "approve", json!({ "option": "always", "scope": "everywhere", "prefix": "cargo test" }));
+    d.wait(c, "idle");
+    assert!(!asked(&d, c, "run cargo test --workspace"));
+    assert!(asked(&d, c, "run cargo testify"));
+    assert!(asked(&d, c, "run cargo test; rm -rf x"));
+    assert_eq!(d.get("/api/rules")["rules"][1]["text"], "Bash cargo test… everywhere");
+
+    // In the daemon's state, not a block's: they survive a restart.
+    assert!(std::fs::read_to_string(d.state.join("rules.json")).unwrap().contains("cargo test"));
+    d.stop();
+    d.start();
+    let e = open_in(&d, &elsewhere, "run cargo test -p x");
+    assert_eq!(d.wait(e, "idle"), "done", "never asked after a restart");
+
+    // Forgetting one: the next request asks again.
+    d.raw("DELETE", "/api/rules/1", None);
+    assert_eq!(d.get("/api/rules")["rules"].as_array().unwrap().len(), 1);
+    assert!(asked(&d, e, "run cargo test -p y"));
+    assert_eq!(d.raw("DELETE", "/api/rules/7", None).0, 404);
+    d.raw("DELETE", "/api/rules", None);
+    let f = open_in(&d, &below, "hello");
+    d.wait(f, "idle");
+    assert!(asked(&d, f, "run make"));
+    let _ = std::fs::remove_dir_all(&elsewhere);
+}
+
+#[test]
 fn after_a_reboot_the_transcript_is_back_and_the_session_resumes() {
     let mut d = Daemon::child();
     let id = d.open("remember kestrel");

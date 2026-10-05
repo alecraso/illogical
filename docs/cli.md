@@ -82,6 +82,8 @@ illogical agent --resume 3fa9c1 "and now?"    # continue it in a block (refused 
 illogical agent --fork 3fa9c1                 # a new session with its history, in a block
 illogical wait %5 --needs-input               # it asks to run something…
 illogical call %5 approve                     # …or '{"option":"always"}'; deny '{"reason":"…"}'; cancel
+illogical call %5 approve '{"option":"always","scope":"cwd","prefix":"cargo"}'  # a standing rule (or "everywhere")
+illogical rules                               # standing rules on this machine (--forget N, --forget-all)
 illogical call %5 send '{"text":"and then?"}' # the next message (queued while it works)
 illogical wait %5 --needs-input               # a question: printed as JSON…
 illogical call %5 answer '{"question_0":"Red","question_1":["A","B"]}'  # …answered (decline: skip it)

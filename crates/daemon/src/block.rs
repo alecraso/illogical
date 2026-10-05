@@ -158,6 +158,8 @@ pub struct BlockEnv {
     pub cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
     /// The daemon's panes and blocks.
     pub ids: PaneIds,
+    /// Standing permission rules (#166).
+    pub rules: Arc<crate::rules::Rules>,
 }
 
 /// The ids of the daemon's panes and blocks, as the multiplexer keeps them.
@@ -191,6 +193,8 @@ pub struct BlockCtx {
     pub shell_env: Arc<crate::shellenv::ShellEnv>,
     cmds: Option<tokio::sync::mpsc::UnboundedSender<crate::mux::Cmd>>,
     ids: PaneIds,
+    /// Standing permission rules (#166).
+    pub rules: Arc<crate::rules::Rules>,
 }
 
 impl BlockCtx {
@@ -222,6 +226,7 @@ impl BlockCtx {
             shell_env: base.shell_env,
             cmds: base.cmds,
             ids: base.ids,
+            rules: base.rules,
         }
     }
 

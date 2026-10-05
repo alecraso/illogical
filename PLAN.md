@@ -1049,6 +1049,28 @@ permissions.
     `claude-agent-acp` writes that rule into `.claude/settings.local.json` at
     the git root of the agent's cwd (your repo), even with
     `settingSources: []`.
+  - **Standing rules (#166, decided 2026-10-04 for Jake: the daemon
+    store).** "Always" can also be kept by the daemon, for the block's
+    directory (and below) or for every agent block, in `rules.json` in the
+    daemon's state dir. They're this machine's: not synced between machines,
+    and not written into Claude Code's settings (`--user-settings` still
+    reads those; illogical never writes them).
+    - *As built:* `approve {option: "always", scope: "cwd"|"everywhere",
+      prefix?}`. Without a prefix the rule allows the whole tool; with one,
+      titles that start with it word for word, and never one with a shell
+      separator, substitution or redirect in it. A rule for a VM agent's
+      directory names the VM.
+    - Every agent block checks the daemon's rules as they are now, after its
+      own, so a new block inherits them and forgetting one takes effect at
+      once. The transcript says which rule answered.
+    - Only the owner makes them (a guest or an MCP caller can't: the MCP
+      `agent_respond` has no scope). `GET /api/rules`, `DELETE
+      /api/rules/{index}` and `DELETE /api/rules`, owner only;
+      `illogical rules [--forget N | --forget-all]`; the session menu's
+      *Permission rules…* lists them with Forget. The card's *From now on…*
+      offers the prefix (Bash's first word by default) and the scope.
+    - Limit: an agent with a shell on this host can edit `rules.json` (as it
+      can `layout.json`); the daemon reads it at start only.
   - **When the block cancels a turn,** it answers every open request with
     `cancelled`.
   - **A card clears when its tool call goes `completed` or `failed`.**
