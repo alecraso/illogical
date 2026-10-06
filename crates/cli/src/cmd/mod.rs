@@ -39,6 +39,7 @@ pub mod search;
 pub mod send;
 pub mod share;
 pub mod shell_env;
+pub mod status;
 pub mod studio;
 pub mod synced;
 pub mod tail;

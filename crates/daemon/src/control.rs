@@ -19,6 +19,21 @@
 //!
 //! When control is down, the last certificates it sent keep working.
 //! `illogicald leave` tells control and removes the file.
+//!
+//! While running, the daemon keeps its standing with control ([`State`],
+//! `/api/host`'s `control_state`, #325): not joined, joined (connected or
+//! not, and the last thing that went wrong), or dropped. Dropped is control
+//! saying it has no such machine: a 401 that [`forgotten`] confirms (it
+//! left, or its account was deleted), or a 410 for a key removed from a
+//! browser (#330). The daemon says so in its log once and keeps what control
+//! said, and when, in `<state>/control-dropped.json` until a new join or
+//! control knowing it again. After a 401 it keeps `control.json`, stops
+//! redialling the relay and asks again only every [`DROPPED_RETRY`]; after
+//! a 410 it sets the key aside and asks to join again with a new one by
+//! itself ([`Control::start`]). When `control.json` goes away the log says
+//! whether `illogicald leave`, a join again or setting a removed key aside
+//! took it, from the note each leaves in `<state>/control-left.json`, or
+//! something else did.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -60,6 +75,13 @@ fn features() -> String {
     std::env::var("ILLOGICAL_FEATURES").unwrap_or_else(|_| "presigned-invites,owner-moves".into())
 }
 const WATCH: Duration = Duration::from_secs(3);
+/// Dropped by control: what it said, and when (#325).
+pub const DROPPED_FILE: &str = "control-dropped.json";
+/// Who removed `control.json` on purpose, for the running daemon's log.
+pub const LEFT_FILE: &str = "control-left.json";
+/// How often a dropped daemon asks control again (control may have been
+/// wrong, or restored).
+const DROPPED_RETRY: Duration = Duration::from_secs(600);
 
 /// `<state>/control.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +336,105 @@ pub struct Control {
     invites: std::sync::Mutex<Vec<Waiting>>,
     /// Held while they're tried: one try at a time, beside the refreshes.
     retrying: tokio::sync::Mutex<()>,
+    /// How talking to control is going (#325).
+    link: std::sync::Mutex<Link>,
+}
+
+/// How talking to control is going, for [`State`].
+#[derive(Debug, Default, Clone)]
+struct Link {
+    /// The relay socket is up.
+    relay: bool,
+    /// When control last answered (a refresh, or the relay coming up).
+    seen_ms: Option<u64>,
+    /// The last refresh's failure, until one works.
+    refresh_error: Option<String>,
+    /// The last relay dial's failure, until one works.
+    relay_error: Option<String>,
+    dropped: Option<Dropped>,
+}
+
+/// Control said it has no such machine (#325): `<state>/control-dropped.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dropped {
+    pub url: String,
+    /// `account` or `team`.
+    pub kind: String,
+    /// The team's name, or the account's login ("" when not known).
+    pub name: String,
+    /// What control said.
+    pub said: String,
+    /// When this daemon first heard it (ms since the epoch).
+    pub at_ms: u64,
+    /// The enrollment's certificate signature: a new join's differs.
+    pub cert: String,
+}
+
+/// This machine's standing with control (#325): `/api/host`'s
+/// `control_state`.
+pub use illogical_proto::hosts::ControlState as State;
+
+/// Who a saved enrollment belongs to: `account` or `team`, and its name.
+fn kind_name(s: &Saved) -> (&'static str, String) {
+    match (&s.roster, &s.team) {
+        (Some(r), _) => ("team", r.name.clone()),
+        (None, Some(t)) => ("team", t.team.clone()),
+        _ => ("account", s.login.clone()),
+    }
+}
+
+/// The state from what's saved and how the link is going.
+fn state_of(saved: Option<&Saved>, link: &Link, no_relay: bool) -> State {
+    let dropped = link.dropped.as_ref().filter(|d| saved.is_none_or(|s| s.cert.sig == d.cert));
+    if let Some(d) = dropped {
+        return State {
+            state: "dropped".into(),
+            url: Some(d.url.clone()),
+            kind: Some(d.kind.clone()),
+            name: Some(d.name.clone()),
+            seen_ms: link.seen_ms,
+            said: Some(d.said.clone()),
+            dropped_ms: Some(d.at_ms),
+            ..Default::default()
+        };
+    }
+    let Some(s) = saved else { return State { state: "not_joined".into(), ..Default::default() } };
+    let (kind, name) = kind_name(s);
+    let connected = if no_relay { link.seen_ms.is_some() && link.refresh_error.is_none() } else { link.relay };
+    State {
+        state: "joined".into(),
+        url: Some(s.url.clone()),
+        kind: Some(kind.into()),
+        name: Some(name),
+        connected,
+        seen_ms: link.seen_ms,
+        error: link.refresh_error.clone().or_else(|| link.relay_error.clone().filter(|_| !link.relay)),
+        ..Default::default()
+    }
+}
+
+/// Control refused this daemon's signature (a 401), and what it said.
+#[derive(Debug)]
+struct Refused(String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "control doesn't know this daemon any more ({}); run `illogicald join` again", self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+fn read_dropped(dir: &Path) -> Option<Dropped> {
+    serde_json::from_slice(&std::fs::read(dir.join(DROPPED_FILE)).ok()?).ok()
+}
+
+/// Note who's removing `control.json` on purpose, for the running daemon's log.
+fn note_left(dir: &Path, by: &str) {
+    let note = serde_json::json!({ "by": by, "at_ms": now_ms() });
+    if let Err(e) = crate::store::write_atomic(&dir.join(LEFT_FILE), note.to_string().as_bytes()) {
+        warn!(error = %e, "can't note why control.json goes");
+    }
 }
 
 /// An invite pushed to nobody yet (#233): its person hasn't accepted the
@@ -419,9 +540,132 @@ impl Control {
                     .unwrap_or_default(),
             ),
             retrying: Default::default(),
+            link: std::sync::Mutex::new(Link { dropped: read_dropped(state_dir), ..Default::default() }),
         });
         me.reload();
         me
+    }
+
+    /// This machine's standing with control now (#325).
+    pub fn state(&self) -> State {
+        let e = self.enrolled();
+        state_of(e.as_ref().map(|e| &e.saved), &self.link.lock().unwrap(), self.no_relay)
+    }
+
+    /// Control dropped this machine and its enrollment is still saved here.
+    fn dropped_now(&self) -> bool {
+        self.enrolled().is_some() && self.state().is_dropped()
+    }
+
+    /// Set aside an enrollment control dropped, so the page can join again
+    /// (#325): `control.json` moves to `control.json.dropped`. What control
+    /// said stays until the new join is saved.
+    pub fn forget_dropped(&self) -> anyhow::Result<()> {
+        if !self.dropped_now() {
+            return Ok(());
+        }
+        note_left(&self.state_dir, "joining again from the page, after control dropped it");
+        std::fs::rename(self.state_dir.join(FILE), self.state_dir.join(format!("{FILE}.dropped")))?;
+        info!(
+            "joining again from the page: control dropped this machine, so its enrollment is set aside as control.json.dropped"
+        );
+        // Read again here; the watcher logs the note only if it got there first.
+        self.reload();
+        let _ = std::fs::remove_file(self.state_dir.join(LEFT_FILE));
+        Ok(())
+    }
+
+    fn set_link(&self, f: impl FnOnce(&mut Link)) {
+        f(&mut self.link.lock().unwrap());
+    }
+
+    /// Control answered 401: ask whether it has forgotten this machine
+    /// ([`forgotten`]). If so, it's dropped (see [`Control::dropped`]) and
+    /// true; if not (a clock that's off, say), the refresh failed.
+    async fn check_dropped(&self, e: &Enrolled, said: &str) -> bool {
+        match forgotten(&e.saved, &e.keys).await {
+            Some(Forgot::Said(why)) => {
+                self.dropped(e, why);
+                true
+            }
+            Some(Forgot::Removed) => {
+                self.dropped(e, "this machine's key was removed from its account".into());
+                true
+            }
+            None => {
+                self.set_link(|l| {
+                    l.refresh_error = Some(format!(
+                        "control refused this machine's signature ({said}); is this machine's clock right?"
+                    ))
+                });
+                false
+            }
+        }
+    }
+
+    /// Control has no such machine (#325): say so once, and keep what it
+    /// said and when (in [`DROPPED_FILE`], so a restart keeps the time).
+    fn dropped(&self, e: &Enrolled, said: String) {
+        let (kind, name) = kind_name(&e.saved);
+        let d = Dropped {
+            url: e.saved.url.clone(),
+            kind: kind.into(),
+            name,
+            said,
+            at_ms: now_ms(),
+            cert: e.saved.cert.sig.clone(),
+        };
+        let mut l = self.link.lock().unwrap();
+        if l.dropped.as_ref().is_some_and(|o| o.cert == d.cert) {
+            return;
+        }
+        warn!(
+            control = d.url,
+            whose = whose(&e.saved),
+            said = d.said,
+            "control dropped this machine: it's no longer in {} on {}. Join again from the page (Getting started), or `illogicald leave` and `illogicald join`",
+            whose(&e.saved),
+            d.url
+        );
+        match serde_json::to_vec_pretty(&d) {
+            Ok(b) => {
+                if let Err(err) = crate::store::write_atomic(&self.state_dir.join(DROPPED_FILE), &b) {
+                    warn!(error = %err, "can't save that control dropped this machine");
+                }
+            }
+            Err(err) => warn!(error = %err, "can't save that control dropped this machine"),
+        }
+        l.relay = false;
+        l.dropped = Some(d);
+    }
+
+    /// Control knows this machine (again): not dropped.
+    fn not_dropped(&self) {
+        let mut l = self.link.lock().unwrap();
+        if let Some(d) = l.dropped.take() {
+            info!(control = d.url, "control knows this machine again; it's no longer dropped");
+            let _ = std::fs::remove_file(self.state_dir.join(DROPPED_FILE));
+        }
+    }
+
+    /// `control.json` went away while running: say who removed it, if it
+    /// was on purpose (#325).
+    fn noticed_gone(&self, was: &Saved) {
+        let left = self.state_dir.join(LEFT_FILE);
+        let note: Option<serde_json::Value> = std::fs::read(&left).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let _ = std::fs::remove_file(&left);
+        // `illogicald leave` takes "dropped" with it: it left.
+        if !self.state_dir.join(DROPPED_FILE).exists() {
+            self.link.lock().unwrap().dropped = None;
+        }
+        match note.as_ref().and_then(|n| n["by"].as_str()) {
+            Some(by) => info!(control = was.url, whose = whose(was), by, "left control"),
+            None => warn!(
+                control = was.url,
+                whose = whose(was),
+                "control.json was removed, not by `illogicald leave`: this machine is no longer joined to control"
+            ),
+        }
     }
 
     /// Where `control.json` and the device key live.
@@ -686,6 +930,13 @@ impl Control {
             }
         };
         if let Some(e) = &next {
+            let mut l = self.link.lock().unwrap();
+            if l.dropped.as_ref().is_some_and(|d| d.cert != e.saved.cert.sig) {
+                // A new join: what control said of the last one is past.
+                l.dropped = None;
+                let _ = std::fs::remove_file(self.state_dir.join(DROPPED_FILE));
+            }
+            drop(l);
             info!(
                 control = e.saved.url,
                 account = e.saved.trust.account,
@@ -731,10 +982,7 @@ impl Control {
             return Err(removed_answer(res).await.into());
         }
         if res.status() == reqwest::StatusCode::UNAUTHORIZED {
-            bail!(
-                "control doesn't know this daemon any more ({}); run `illogicald join` again",
-                control_said(res).await
-            );
+            return Err(Refused(control_said(res).await).into());
         }
         if !res.status().is_success() {
             bail!("{}", control_said(res).await);
@@ -1119,46 +1367,79 @@ impl Control {
         let me = self.clone();
         tokio::spawn(async move {
             let mut stamp = file_stamp(&me.state_dir);
-            let mut last_refresh = std::time::Instant::now() - REFRESH;
+            // When certificates were last fetched; `None`: fetch now.
+            let mut last_refresh: Option<std::time::Instant> = None;
             let mut relay: Option<tokio::task::JoinHandle<()>> = None;
             loop {
                 let now = file_stamp(&me.state_dir);
                 if now != stamp {
                     stamp = now;
+                    let was = me.enrolled();
                     me.reload();
+                    if let (Some(was), None) = (was, me.enrolled()) {
+                        me.noticed_gone(&was.saved);
+                    }
                     acl_changed();
                     if let Some(r) = relay.take() {
                         r.abort();
                     }
-                    last_refresh = std::time::Instant::now() - REFRESH;
+                    me.set_link(|l| *l = Link { dropped: l.dropped.take(), ..Default::default() });
+                    last_refresh = None;
                 }
-                if me.enrolled().is_some() {
-                    let every = if me.no_relay { Duration::from_secs(10) } else { REFRESH };
-                    if last_refresh.elapsed() >= every {
-                        last_refresh = std::time::Instant::now();
+                if let Some(en) = me.enrolled() {
+                    let every = if me.dropped_now() {
+                        DROPPED_RETRY
+                    } else if me.no_relay {
+                        Duration::from_secs(10)
+                    } else {
+                        REFRESH
+                    };
+                    if last_refresh.is_none_or(|t| t.elapsed() >= every) {
+                        last_refresh = Some(std::time::Instant::now());
                         match me.refresh().await {
                             // Roles may have changed: re-filter everyone.
                             // Someone an invite waits for may be reachable.
                             // Beside the loop: a slow control doesn't hold up
                             // the next refresh.
                             Ok(_) => {
+                                me.not_dropped();
+                                me.set_link(|l| {
+                                    l.seen_ms = Some(now_ms());
+                                    l.refresh_error = None;
+                                });
                                 acl_changed();
                                 let m = me.clone();
                                 tokio::spawn(async move { m.retry_invites().await });
                             }
-                            // Removed from a browser (#330): a new key
-                            // asks to join the same control again.
+                            // Removed from a browser (#330): dropped (#325),
+                            // and a new key asks to join the same control
+                            // again.
                             Err(e) if e.is::<Removed>() => {
                                 warn!(error = %e, "this machine was removed from its account; joining again with a new key");
-                                if let Some(en) = me.enrolled() {
-                                    rejoin(en.saved.url.clone());
+                                let said = e.downcast_ref::<Removed>().map(|r| r.said.clone()).unwrap_or_default();
+                                me.dropped(&en, said);
+                                rejoin(en.saved.url.clone());
+                            }
+                            // Refused: control may have dropped it (#325).
+                            Err(e) if e.is::<Refused>() => {
+                                let said = e.downcast_ref::<Refused>().map(|r| r.0.clone()).unwrap_or_default();
+                                if !me.check_dropped(&en, &said).await {
+                                    warn!(error = %e, "can't refresh certificates from control");
                                 }
                             }
-                            Err(e) => warn!(error = %e, "can't refresh certificates from control"),
+                            Err(e) => {
+                                warn!(error = %e, "can't refresh certificates from control");
+                                me.set_link(|l| l.refresh_error = Some(e.to_string()));
+                            }
                         }
                         stamp = file_stamp(&me.state_dir);
                     }
-                    if !me.no_relay && relay.as_ref().is_none_or(|r| r.is_finished()) {
+                    if me.dropped_now() {
+                        // Nothing to dial: control would refuse it.
+                        if let Some(r) = relay.take() {
+                            r.abort();
+                        }
+                    } else if !me.no_relay && relay.as_ref().is_none_or(|r| r.is_finished()) {
                         relay = Some(relay_with(me.clone()));
                     }
                 } else if let Some(r) = relay.take() {
@@ -1166,7 +1447,7 @@ impl Control {
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(WATCH) => {}
-                    _ = me.nudge.notified() => last_refresh = std::time::Instant::now() - REFRESH,
+                    _ = me.nudge.notified() => last_refresh = None,
                 }
             }
         });
@@ -1202,10 +1483,13 @@ async fn keep_relay(control: Arc<Control>, app: Arc<App>) {
         let Some(e) = control.enrolled() else { return };
         let started = std::time::Instant::now();
         let mut wait = None;
-        match relay_once(&control, &app, &e, &accept, &raw).await {
+        let r = relay_once(&control, &app, &e, &accept, &raw).await;
+        control.set_link(|l| l.relay = false);
+        match r {
             Ok(()) => info!("relay socket closed"),
             Err(err) => {
                 warn!(error = %err, "can't reach control's relay");
+                control.set_link(|l| l.relay_error = Some(format!("can't reach control's relay: {err}")));
                 wait = err.downcast_ref::<crate::dial::Busy>().map(|b| b.wait);
             }
         }
@@ -1250,6 +1534,11 @@ async fn relay_once(
     let signed = format!("{}?{}", url.path(), url.query().unwrap_or_default());
     let ws = crate::dial::open_ws(&url, &[(AUTH, &control.sign(e, "GET", &signed, b""))]).await?;
     info!(control = e.saved.url, "connected to control's relay");
+    control.set_link(|l| {
+        l.relay = true;
+        l.relay_error = None;
+        l.seen_ms = Some(now_ms());
+    });
     // M40: forge subscriptions out, pokes and heartbeats in. M65: guest
     // routes out, control's answers in.
     let guests = app.guests.clone();
@@ -1373,6 +1662,8 @@ fn retire(state_dir: &Path, r: &mut Removed) -> anyhow::Result<()> {
     let kept = state_dir.join(format!("{KEY_FILE}.removed-{ms}"));
     std::fs::rename(&key, &kept).with_context(|| format!("setting {} aside", key.display()))?;
     if state_dir.join(FILE).exists() {
+        // The running daemon's log says why it went (#325).
+        note_left(state_dir, "setting aside a key control said was removed (#330)");
         std::fs::rename(state_dir.join(FILE), state_dir.join(format!("{FILE}.removed-{ms}")))?;
     }
     r.kept = kept.display().to_string();
@@ -1936,6 +2227,10 @@ pub async fn leave(state_dir: &Path, listen: &str) -> anyhow::Result<()> {
         Ok(r) => println!("{} (leaving anyway)", control_said(r).await),
         Err(e) => println!("can't reach control ({e}); leaving anyway"),
     }
+    // The running daemon's log says it was this (#325), and it's no
+    // longer "dropped": it left.
+    note_left(state_dir, "illogicald leave");
+    let _ = std::fs::remove_file(state_dir.join(DROPPED_FILE));
     std::fs::remove_file(state_dir.join(FILE))?;
     println!("illogical keeps running here; reach it at http://{listen}.");
     println!("Rejoin with `illogicald join {}` (the approver picks their account or a team).", s.url);
@@ -2801,5 +3096,115 @@ mod tests {
         saved.team_names.insert("s".into(), "Sam Stranger".into());
         assert_eq!(name(&saved), "Sam Stranger");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn saved_for(url: &str, login: &str) -> Saved {
+        let (_, root) = device("a", Kind::Browser);
+        let (_, daemon) = device("a", Kind::Daemon);
+        Saved {
+            url: url.into(),
+            trust: Trust { account: "a".into(), root: root.device.clone() },
+            cert: daemon,
+            certs: vec![root],
+            revocations: vec![],
+            team: None,
+            roster: None,
+            team_certs: Default::default(),
+            team_names: Default::default(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: login.into(),
+            moved_at: 0,
+        }
+    }
+
+    /// #325: joined (connected or not, and why), dropped (what control said,
+    /// and when) for this enrollment only, and not joined.
+    #[test]
+    fn the_state_says_joined_connected_or_dropped() {
+        let saved = saved_for("https://control.example", "lex00");
+        let none = state_of(None, &Link::default(), false);
+        assert_eq!(none.state, "not_joined");
+        assert_eq!(none.line(), "Not joined to illogical control");
+
+        let mut link = Link::default();
+        let s = state_of(Some(&saved), &link, false);
+        assert_eq!((s.state.as_str(), s.kind.as_deref(), s.connected), ("joined", Some("account"), false));
+        assert_eq!(s.line(), "In lex00's account on control.example: connecting");
+
+        link.relay_error = Some("can't reach control's relay: refused".into());
+        assert_eq!(state_of(Some(&saved), &link, false).error.as_deref(), Some("can't reach control's relay: refused"));
+        link.relay = true;
+        link.relay_error = None;
+        link.seen_ms = Some(5);
+        let s = state_of(Some(&saved), &link, false);
+        assert!(s.connected && s.error.is_none());
+        assert_eq!(s.line(), "In lex00's account on control.example: connected");
+        // Behind a provider's proxy there's no relay: a refresh that worked.
+        assert!(state_of(Some(&saved), &Link { seen_ms: Some(5), ..Default::default() }, true).connected);
+
+        let mut team = saved.clone();
+        team.team = Some(TeamPin { team: "t1".into(), founder: "f".into(), founder_root: "r".into() });
+        assert_eq!(state_of(Some(&team), &link, false).place(), "the team t1 on control.example");
+
+        link.dropped = Some(Dropped {
+            url: saved.url.clone(),
+            kind: "team".into(),
+            name: "arugula".into(),
+            said: "not an enrolled daemon (left, or revoked?)".into(),
+            at_ms: 42,
+            cert: saved.cert.sig.clone(),
+        });
+        let s = state_of(Some(&saved), &link, false);
+        assert_eq!((s.state.as_str(), s.dropped_ms, s.connected), ("dropped", Some(42), false));
+        assert_eq!(
+            s.line(),
+            "Dropped by control: no longer in the team arugula on control.example (control says: not an enrolled daemon (left, or revoked?))"
+        );
+        // control.json set aside too (a removed key, #330): still dropped,
+        // so the page offers to join again.
+        assert!(state_of(None, &link, false).is_dropped());
+        // A new join (another certificate) isn't what control dropped.
+        let rejoined = saved_for("https://control.example", "lex00");
+        assert!(state_of(Some(&rejoined), &link, false).is_joined());
+    }
+
+    /// #325: a 401 that's control having no such machine is dropped; one
+    /// that's a signature it won't take (a clock off) isn't; a 410 is a
+    /// removed key (#330).
+    #[tokio::test]
+    async fn forgotten_tells_a_dropped_machine_from_a_refused_signature() {
+        use axum::{Json, Router, http::StatusCode, routing::get};
+        let said =
+            Arc::new(std::sync::Mutex::new((StatusCode::UNAUTHORIZED, "not an enrolled daemon (left, or revoked?)")));
+        let s2 = said.clone();
+        let app = Router::new()
+            .route("/control.json", get(|| async { Json(serde_json::json!({ "daemon_auth": 2 })) }))
+            .route(
+                "/api/daemon/trust",
+                get(move || {
+                    let (status, said) = *s2.lock().unwrap();
+                    async move { (status, Json(serde_json::json!({ "error": said }))) }
+                }),
+            );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await });
+        let saved = saved_for(&url, "");
+        let keys = DeviceKeys::generate();
+        let said_of = |f: Option<Forgot>| match f {
+            Some(Forgot::Said(s)) => Some(s),
+            Some(Forgot::Removed) => Some("removed".into()),
+            None => None,
+        };
+        assert_eq!(
+            said_of(forgotten(&saved, &keys).await).as_deref(),
+            Some("not an enrolled daemon (left, or revoked?)")
+        );
+        *said.lock().unwrap() = (StatusCode::UNAUTHORIZED, "signature too old");
+        assert_eq!(said_of(forgotten(&saved, &keys).await), None);
+        *said.lock().unwrap() = (StatusCode::GONE, "this machine was removed from its account");
+        assert_eq!(said_of(forgotten(&saved, &keys).await).as_deref(), Some("removed"));
     }
 }

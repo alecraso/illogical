@@ -27,6 +27,7 @@ import { GettingStartedLayer, useFirstRun } from "./welcome";
 import { machineState, newTabItems, PALETTE_KEY, paneItems, sessionItems, tabItems } from "./commands";
 import { openPalette, PaletteLayer, usePaletteShortcut } from "./palette";
 import { UpdateChip } from "./update";
+import { ControlBanner } from "./control-state";
 import { WindowButtons } from "./window-buttons";
 
 /** Where hidden panes' terminals live: off the page but still alive. */
@@ -93,6 +94,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       ) : (
         <TopBar client={client} renaming={renaming} setRenaming={setRenaming} inert={chatOpen} />
       ))}
+      {state && <ControlBanner client={client} />}
       <main class="main" inert={chatOpen}>
         {!state ? (
           <HostPicker />

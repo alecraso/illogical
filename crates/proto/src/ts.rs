@@ -7,7 +7,11 @@ use std::{any::TypeId, collections::HashSet, path::PathBuf};
 
 use ts_rs::{Config, TS, TypeVisitor};
 
-use crate::{ClientMsg, RemoteRef, ServerMsg, api::ActRequest, hosts::HostFeatures};
+use crate::{
+    ClientMsg, RemoteRef, ServerMsg,
+    api::ActRequest,
+    hosts::{ControlState, HostFeatures},
+};
 
 /// Rust's aliases, which ts-rs sees through: the web client names them.
 const ALIASES: &[&str] = &["PaneId", "TabId", "SessionId", "NodeId", "ClientId", "MachineId"];
@@ -41,6 +45,7 @@ fn generate() -> String {
     c.visit::<ClientMsg>();
     c.visit::<ActRequest>();
     c.visit::<HostFeatures>();
+    c.visit::<ControlState>();
     c.visit::<RemoteRef>();
     c.decls.sort();
     let mut out = String::from(

@@ -180,6 +180,57 @@ start: number, end: number | null,
 by?: string, };
 
 /**
+ * A machine's standing with illogical control (#325): whether and where
+ * it's joined, whether control is reachable, or that control dropped it.
+ * The page, the tray and `illogical status` all show this.
+ */
+export type ControlState = { 
+/**
+ * `not_joined`, `joined` or `dropped`.
+ */
+state: "not_joined" | "joined" | "dropped", 
+/**
+ * The control it's (or was) joined to.
+ */
+url?: string, 
+/**
+ * `account` or `team`.
+ */
+kind?: "account" | "team", 
+/**
+ * The team's name, or the account's login (empty until control says).
+ */
+name?: string, 
+/**
+ * Joined: reachable through control now (its relay socket is up; for a
+ * sandbox behind a provider's proxy, the last refresh worked).
+ */
+connected: boolean, 
+/**
+ * When control last answered (ms since the epoch).
+ */
+seen_ms?: number, 
+/**
+ * Joined: what last went wrong talking to control, until it works again.
+ */
+error?: string, 
+/**
+ * Dropped: what control said ("not an enrolled daemon (left, or
+ * revoked?)", or that its key was removed, #330).
+ */
+said?: string, 
+/**
+ * Dropped: when this machine first heard it (ms since the epoch).
+ */
+dropped_ms?: number, 
+/**
+ * Dropped: a join waiting for approval, its code (a machine whose key
+ * was removed asks to join again with a new key by itself, #330; or
+ * someone started one), and where a signed-in device approves it.
+ */
+code?: string, approve?: string, };
+
+/**
  * An editor's debug session.
  */
 export type DebugState = { 

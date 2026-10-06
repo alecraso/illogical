@@ -128,7 +128,39 @@ make it a hub): its host menu has *All your machines…*, which opens
 control's page.
 
 **Leaving.** `illogicald leave` takes a machine off your account (or its
-team). illogical keeps running there, at `http://127.0.0.1:7681`.
+team). illogical keeps running there, at `http://127.0.0.1:7681`. The
+daemon's log says it left, so a leave reads differently from a removal.
+
+**Dropped by control.** If control stops knowing a machine (it left, it
+was removed from a browser, its account was deleted), the daemon notices
+within a minute or two: control refuses its certificate refresh, or its
+relay, and asking again says it has no such machine. Then:
+
+- the machine's page shows a banner, *This machine is no longer in …*,
+  with *Join again* (Getting started's join, to the same control), and
+  the host menu says *Dropped by control*;
+- the desktop app posts a notification, once per drop; a click opens
+  Getting started at the join;
+- `illogical status` says so and exits 1;
+- the daemon logs what control said, and keeps it (and when) in
+  `<state>/control-dropped.json`.
+
+A machine removed from a browser has a key that never counts again, so
+it sets the key aside and asks to join again with a new one by itself
+(above): the banner, Getting started and `illogical status` show that
+join's code. Otherwise its `control.json` stays (control could be
+wrong): the daemon stops redialling the relay and asks again every 10
+minutes, until you join again (the old enrollment is set aside as
+`control.json.dropped`) or run `illogicald leave`. If `control.json`
+disappears while the daemon runs and nothing of illogical's removed it,
+the log says that too.
+
+`GET /api/host`'s `control_state` (for the machine's owner only) has all
+of this: `state` (`not_joined`, `joined` or `dropped`), `url`, `kind`
+(`account` or `team`), `name`, `connected`, `seen_ms`, `error`, and for a
+drop `said`, `dropped_ms`, and the `code` and `approve` link of a join
+waiting for approval. `GET /api/setup?part=control` has it as
+`control.state`.
 
 **Your sign-ins, and deleting your account:** *Sign-in and account…* in
 the host menu.

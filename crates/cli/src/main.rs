@@ -365,6 +365,12 @@ enum Command {
     Login(cmd::login::Args),
     /// Forget this CLI's key for control (`illogical login` makes a new one).
     Logout,
+    /// How illogical is doing on this machine.
+    ///
+    /// The daemon, and whether and where it's joined to illogical control
+    /// (connected, or dropped by control). Exits 1 when the daemon doesn't
+    /// answer or control dropped it.
+    Status,
     /// Join stdin and stdout to this daemon's socket.
     ///
     /// On a box a client reaches over ssh (`--ssh`). Clients run it; people
@@ -627,6 +633,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         }
         Command::Tmux { args } => tmux::run(ctx.sock, &args),
         Command::Ls => cmd::ls::run(ctx),
+        Command::Status => cmd::status::run(ctx),
         Command::Describe(args) => cmd::describe::run(args, ctx),
         Command::Call(args) => cmd::call::run(args, ctx),
         Command::Open(args) => cmd::open::run(args, ctx),

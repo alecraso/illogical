@@ -47,6 +47,8 @@
 //!   *Open in illogical* (`linux/nautilus/illogical.py`) on Linux.
 //! - A tray icon with *New window* and *This machine*; one instance (a
 //!   second launch opens a window in the first).
+//! - **When control drops this machine** (#325, `daemon.rs`): a native
+//!   notification, once per drop, whose click opens Getting started's join.
 //! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
 //!   the app is control's client only, so a window opens on sign-in or
 //!   control's page, and nothing local is installed, watched or offered.
@@ -67,16 +69,17 @@
 //!   app only reads it.
 //! - **`GET /api/host`**: `version` and `protocol`
 //!   (`compat.rs`; absent means the baseline, and below 0.19.0 too old,
-//!   #317), `name` and `control`
-//!   (`cloud.rs`).
+//!   #317), `name` and `control` (`cloud.rs`), `control_state`
+//!   (`daemon.rs`; absent from older daemons, which then never notify of
+//!   a drop).
 //! - **`GET /api/update`** (`apply`, `command`) and **`POST
 //!   /api/update/apply`** (#391): the daemon's own update, which the setup
 //!   page offers when the daemon is too old for this app (`compat.rs`).
 //! - **`POST /api/run`** `{cwd, command}`, answering `{pane}`: a new tab
 //!   for `illogical://open`, a folder or a `.command` file (`links.rs`).
-//! - **The page**: `/` and `/#pane=N`, the sign-in link
-//!   `/auth?token=…&next=…`, and the `illogical:open-pane` event the app
-//!   sends a page already open. The other way, the page reads
+//! - **The page**: `/`, `/#pane=N` and `/#getting-started=SECTION`, the
+//!   sign-in link `/auth?token=…&next=…`, and the `illogical:open-pane` and
+//!   `illogical:getting-started` events the app sends a page already open. The other way, the page reads
 //!   `window.__illogicalApp` and calls the app's huddle commands
 //!   (`call_native_*`) and window permissions (capabilities/default.json).
 //! - **The local files**: the state directory's `listen` (the address) and
@@ -93,6 +96,7 @@
 mod calls;
 mod cloud;
 mod compat;
+mod daemon;
 #[cfg(target_os = "macos")]
 mod finder;
 mod links;
@@ -668,7 +672,26 @@ async fn retry(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), Strin
 
 // ---- notifications
 
-fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
+/// What a notification's click opens.
+#[derive(Clone, Copy)]
+enum Click {
+    Pane(u32),
+    /// Getting started's cloud step, to join control again (#325).
+    JoinAgain,
+}
+
+impl Click {
+    /// Linux and macOS. A Windows toast opens a link instead.
+    #[cfg(not(windows))]
+    fn open(self, app: &AppHandle) {
+        match self {
+            Click::Pane(pane) => open_pane(app, pane),
+            Click::JoinAgain => daemon::getting_started(app, "cloud"),
+        }
+    }
+}
+
+fn notify(app: &AppHandle, click: Click, title: String, body: String) {
     let app = app.clone();
     std::thread::spawn(move || {
         // Windows: a toast under the app's own id (its Start menu shortcut,
@@ -676,7 +699,9 @@ fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
         // `illogical://pane/N`, which comes back to this app (one instance)
         // as a link, from the popup or the Action Center alike.
         #[cfg(windows)]
-        if let Err(e) = toast(&app.config().identifier, &title, &body, pane) {
+        if let Click::Pane(pane) = click
+            && let Err(e) = toast(&app.config().identifier, &title, &body, pane)
+        {
             eprintln!("illogical: a notification: {e}");
         }
         #[cfg(target_os = "linux")]
@@ -694,7 +719,7 @@ fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
             handle.wait_for_action(|action| {
                 if action == "default" {
                     let a = app.clone();
-                    let _ = app.run_on_main_thread(move || open_pane(&a, pane));
+                    let _ = app.run_on_main_thread(move || click.open(&a));
                 }
             });
         }
@@ -706,7 +731,7 @@ fn notify(app: &AppHandle, pane: u32, title: String, body: String) {
                 send_notification(&title, None, &body, Some(Notification::new().wait_for_click(true)))
             {
                 let a = app.clone();
-                let _ = app.run_on_main_thread(move || open_pane(&a, pane));
+                let _ = app.run_on_main_thread(move || click.open(&a));
             }
         }
     });
@@ -800,7 +825,7 @@ fn watch_once(app: &AppHandle) -> anyhow::Result<()> {
                         .map(|r| r.headline.clone())
                         .or_else(|| p.command.clone())
                         .unwrap_or_else(|| "needs you".into());
-                    notify(app, id, format!("%{id} needs you"), what);
+                    notify(app, Click::Pane(id), format!("%{id} needs you"), what);
                 }
             }
         }
@@ -1024,6 +1049,8 @@ fn main() {
             std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
             let handle = app.handle().clone();
             std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
+            let handle = app.handle().clone();
+            std::thread::Builder::new().name("daemon".into()).spawn(move || daemon::follow(handle))?;
             Ok(())
         })
         .build(context)

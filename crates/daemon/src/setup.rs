@@ -9,7 +9,8 @@
 //!   approved, the page shows the account's fingerprint to check against
 //!   the approving device, and
 //!   `POST /api/setup/control/confirm` (`{"same": true}`) saves the join;
-//!   `false` drops it.
+//!   `false` drops it. On a machine control dropped (#325), the same
+//!   button joins again: the old enrollment is set aside first.
 //! - `POST /api/setup/claude`: `claude mcp add illogical -- illogical mcp`.
 //!
 //! When control says this machine's key was removed from its account
@@ -140,8 +141,12 @@ struct ControlStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     elsewhere: Option<crate::control::JoinLockInfo>,
     /// The control the button joins: `--control`, else illogical cloud
-    /// (#207). The page sends it back with the join.
+    /// (#207), or the one that dropped this machine (#325). The page sends
+    /// it back with the join.
     url: String,
+    /// How this machine stands with control now (#325): as `/api/host`'s
+    /// `control_state`.
+    state: crate::control::State,
 }
 
 #[derive(Serialize, Clone)]
@@ -341,7 +346,9 @@ struct JoinReq {
 }
 
 fn control_status(app: &App) -> ControlStatus {
-    let joined = app.control.enrolled();
+    let state = control_state(app);
+    // Dropped by control (#325): not joined, as far as joining again goes.
+    let joined = app.control.enrolled().filter(|_| !state.is_dropped());
     let saved = joined.as_ref().map(|e| &e.saved);
     let (pending, error) = JOIN.lock().unwrap().clone();
     ControlStatus {
@@ -357,13 +364,36 @@ fn control_status(app: &App) -> ControlStatus {
         error: error.filter(|_| saved.is_none()),
         removed: REMOVED.lock().unwrap().clone().filter(|_| saved.is_none()),
         elsewhere: crate::control::JoinLock::held(app.control.state_dir()).filter(|h| !h.mine() && saved.is_none()),
-        url: app.control.default_url.clone(),
+        // Joining again after a drop goes back to the same control.
+        url: state.url.clone().filter(|_| state.is_dropped()).unwrap_or_else(|| app.control.default_url.clone()),
+        state,
     }
+}
+
+/// This machine's standing with control (#325), with the join waiting for
+/// approval when it was dropped: the one the daemon asked for by itself
+/// after its key was removed (#330), Getting started's, or `illogicald
+/// join`'s (#329). `/api/host`'s `control_state`.
+pub fn control_state(app: &App) -> crate::control::State {
+    let mut s = app.control.state();
+    if s.is_dropped() {
+        let own = JOIN.lock().unwrap().0.clone().filter(|p| p.expires_ms > now_ms()).map(|p| (p.code, p.approve));
+        let cli = || {
+            let h = crate::control::JoinLock::held(app.control.state_dir()).filter(|h| !h.mine())?;
+            Some((h.code?, h.approve?))
+        };
+        if let Some((code, approve)) = own.or_else(cli) {
+            s.code = Some(code);
+            s.approve = Some(approve);
+        }
+    }
+    s
 }
 
 async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json<Value> {
     let req = body.map(|Json(b)| b).unwrap_or_default();
-    if app.control.enrolled().is_some() || APPROVED.lock().unwrap().is_some() {
+    let dropped = app.control.state().is_dropped();
+    if (app.control.enrolled().is_some() && !dropped) || APPROVED.lock().unwrap().is_some() {
         return Json(serde_json::to_value(control_status(&app)).unwrap());
     }
     // One at a time: asking again while a code is open returns that code.
@@ -371,6 +401,13 @@ async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json
         && p.expires_ms > now_ms()
     {
         return Json(serde_json::json!({ "pending": p }));
+    }
+    // Control dropped this machine (#325): set what it had aside, so the
+    // join starts fresh.
+    if dropped && let Err(e) = app.control.forget_dropped() {
+        let e = format!("can't set the dropped enrollment aside: {e}");
+        JOIN.lock().unwrap().1 = Some(e.clone());
+        return Json(serde_json::json!({ "error": e }));
     }
     let url = req.url.filter(|u| !u.trim().is_empty()).unwrap_or_else(|| app.control.default_url.clone());
     Json(start_join(&app, &url, req.team.as_deref()).await)

@@ -511,10 +511,22 @@ fn error(status: StatusCode, msg: impl Into<String>) -> Response {
     (status, Json(serde_json::json!({ "error": msg.into() }))).into_response()
 }
 
-async fn host(State(app): AppState) -> Json<HostInfo> {
+/// `GET /api/host`: [`HostInfo`], and for the owner this machine's
+/// standing with control (#325), beside it.
+#[derive(Serialize)]
+struct HostAnswer {
+    #[serde(flatten)]
+    info: HostInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control_state: Option<illogical_proto::hosts::ControlState>,
+}
+
+async fn host(State(app): AppState, who: Option<axum::Extension<crate::acl::Principal>>) -> Json<HostAnswer> {
+    // Only the owner hears how this machine stands with control (#325).
+    let owner = who.is_none_or(|axum::Extension(p)| p.is_owner());
     let joined = app.control.enrolled();
     let saved = joined.as_ref().map(|e| &e.saved);
-    Json(HostInfo {
+    let info = HostInfo {
         name: app.hosts.name().to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         protocol: Some(illogical_proto::PROTOCOL),
@@ -527,7 +539,8 @@ async fn host(State(app): AppState) -> Json<HostInfo> {
         // M45b: only where the runner's unit is; from what was last read.
         fountain_runner: crate::fountain::runner::host_info(&app.mux.shell_env),
         features: Some(features(&app)),
-    })
+    };
+    Json(HostAnswer { info, control_state: owner.then(|| crate::setup::control_state(&app)) })
 }
 
 /// What this machine is set up for, so the menus offer only that (#180)

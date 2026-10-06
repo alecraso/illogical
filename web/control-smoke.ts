@@ -520,10 +520,10 @@ try {
   check("signed out: the account is gone", await leaver.api("/api/me").then(() => false, (e: Error) => / 401 /.test(e.message)));
   // Hung up on, and refused when it dials again.
   const since = () => Buffer.concat(daemon2Log).subarray(before).toString().replace(/\x1b\[[0-9;]*m/g, "");
-  // It's told why (#208).
-  const refused2 = /can't reach control's relay.*401.*this machine's account was deleted/;
+  // It's told why (#208): control dropped it (#325), with what control said.
+  const refused2 = /control dropped this machine.*this machine's account was deleted/;
   for (let i = 0; i < 100 && !refused2.test(since()); i++) await sleep(100);
-  check("its machine is refused from then on", refused2.test(since()), since().split("\n").filter((l) => /relay/.test(l)).slice(-1)[0]);
+  check("its machine is refused from then on", refused2.test(since()), since().split("\n").filter((l) => /relay|control/.test(l)).slice(-3).join("\n"));
   const rows = new DatabaseSync(db, { readOnly: true });
   const left: string[] = [];
   for (const { name } of rows.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]) {

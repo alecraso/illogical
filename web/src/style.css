@@ -6361,3 +6361,35 @@ html.chat-open .huddle-bar {
   border-radius: 6px;
   padding: 6px;
 }
+
+/* ---- #325: control dropped this machine */
+
+.control-dropped {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--danger);
+  background: var(--surface);
+  line-height: 1.45;
+}
+
+.control-dropped p {
+  flex: 1;
+  margin: 0;
+}
+
+.control-dropped-said {
+  color: var(--dim);
+}
+
+.control-dropped-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app.phone .control-dropped {
+  flex-direction: column;
+  align-items: stretch;
+}

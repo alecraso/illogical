@@ -23,6 +23,7 @@ import { fakeSwarm } from "./swarm/fake";
 import { closeSwarm, onSwarmRoute, swarmRoute } from "./swarm/route";
 import { setupDesktop } from "./desktop";
 import { openThread } from "./ui/threads";
+import { openGettingStarted, type Section } from "./ui/welcome";
 
 // Served by illogical control (M17), not a daemon: sign in, enroll this
 // browser, and reach daemons through end-to-end channels. A read-only link
@@ -301,6 +302,17 @@ if (fromHash) {
   history.replaceState(null, "", "/");
 }
 if (!linkTarget) void registerWorker(openPane);
+
+// The desktop app's notification when control drops this machine, and its
+// Daemon menu (#325): Join… and Join again… open Getting started at the
+// cloud step, on an open page (the event) or a new one
+// (`#getting-started=cloud`).
+window.addEventListener("illogical:getting-started", (e) => openGettingStarted((e as CustomEvent<Section>).detail, client));
+const startAt = /^#getting-started=(\w+)$/.exec(location.hash);
+if (startAt) {
+  openGettingStarted(startAt[1] as Section, client);
+  history.replaceState(null, "", "/");
+}
 
 // For end-to-end tests.
 Object.assign(window, {

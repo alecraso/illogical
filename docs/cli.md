@@ -4,6 +4,8 @@
 
 ```
 illogical web                                 # this machine's page in your browser, signed in (--print: the link)
+illogical status                              # the daemon, and whether and where it's joined to control
+                                              #   (connected, or dropped by control: exit 1)
 illogical ls                                  # panes, what they're running, who needs you
 illogical run -- make test                    # in a new tab; prints its pane (%N)
 illogical run --wait -- cargo build           # and exits with its exit code

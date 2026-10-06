@@ -18,6 +18,7 @@ mod attach;
 mod attention;
 mod blocks;
 mod calls;
+mod control_state;
 mod conversations;
 mod dialout;
 mod editor_swarm;

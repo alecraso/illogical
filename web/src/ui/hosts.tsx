@@ -9,6 +9,7 @@ import { useSubscribe } from "./hooks";
 import { openMenu, type MenuItem } from "./menu";
 import { openSwarm } from "../swarm/route";
 import { runnerLabel, runnerOf, subscribeRunners, watchRunners } from "../runners";
+import { controlMenuItems, controlState, subscribeControlState } from "./control-state";
 
 function seen(name: string): string {
   const h = directory.find(name);
@@ -79,7 +80,10 @@ function useHosts(): boolean {
   useSubscribe((fn) => directory.subscribe(fn));
   useSubscribe((fn) => fleet?.subscribe(fn) ?? (() => {}));
   useSubscribe((fn) => subscribeRunners(fn));
-  return directory.control || directory.names.length > 1 || directory.shown !== null || !!directory.joined;
+  useSubscribe(subscribeControlState);
+  // #325: a machine control dropped has the menu, to say so and join again.
+  const dropped = controlState()?.state === "dropped";
+  return directory.control || directory.names.length > 1 || directory.shown !== null || !!directory.joined || dropped;
 }
 
 /** M49: on a joined daemon's own page, the way to the account's other
@@ -132,6 +136,8 @@ export function HostButton() {
     }
     const all = allMachines();
     if (all.length) items.push("separator", ...all);
+    // #325: whether and where this machine is joined to control.
+    if (directory.shown === null && !directory.control) items.push(...controlMenuItems());
     items.push(...extras());
     openMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, items);
   };

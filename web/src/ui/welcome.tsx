@@ -16,6 +16,8 @@ import type { Client } from "../client";
 import { CopyText } from "./copy";
 import { notifyBlocker, pushNow, serveCommand, subscribePush } from "./notify";
 import { startAgent } from "./agent-dialog";
+import type { ControlState } from "../proto";
+import { placeOf, refreshControlState } from "./control-state";
 
 const DOCS = "https://github.com/arugula-salad/illogical/blob/main/docs";
 /** illogical cloud, unless the daemon was started with `--control` (#207). */
@@ -29,6 +31,8 @@ interface HostInfo {
   tailnet_seen?: boolean;
   control?: string;
   team?: string;
+  /** #325: joined, not joined, or dropped by control. */
+  control_state?: ControlState;
 }
 
 /** `GET /api/setup`. */
@@ -48,7 +52,14 @@ interface Setup {
     /** Approved: the account's fingerprint, to check before it's saved. */
     confirm?: { account: string; approver: string; place: string };
     error?: string;
+    /** #330: control said this machine's old key was removed, so the join
+     * waiting has a new key. */
+    removed?: { said: string; at?: number; by?: string; old_key: string; kept: string; new_key: string };
+    /** #329: a join `illogicald join` started here, which this one waits for. */
+    elsewhere?: { by: string; code?: string; approve?: string; expires_ms: number };
     url: string;
+    /** #325: as `/api/host`'s `control_state` (absent: an older daemon). */
+    state?: ControlState;
   };
   claude: { installed: boolean; tools: boolean };
 }
@@ -71,7 +82,7 @@ const STEPS = [
 type StepId = (typeof STEPS)[number]["id"];
 
 /** Older names for steps, from callers that open it at one. */
-type Section = StepId | "control";
+export type Section = StepId | "control";
 
 let shown: { client: Client | null; section?: Section } | null = null;
 const listeners = new Set<() => void>();
@@ -219,7 +230,7 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
   const done: Record<StepId, boolean> = {
     welcome: true,
     phone: !!(setup?.tailscale.serving || host?.tailnet_seen),
-    cloud: !!(setup?.control.joined || host?.control),
+    cloud: !!(setup?.control.joined || (host?.control && host.control_state?.state !== "dropped")),
     agents: !!setup?.claude.tools,
     ready: false,
   };
@@ -483,8 +494,13 @@ function Cloud({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const c = setup?.control;
-  const joined = c?.joined ?? host?.control;
+  // The control part comes back first (the rest waits on Tailscale): a
+  // code waiting for approval shows at once.
+  const c = setup?.control ?? early ?? undefined;
+  // #325: control dropped this machine; what's saved here doesn't count.
+  const was = c?.state ?? host?.control_state;
+  const dropped = was?.state === "dropped" ? was : null;
+  const joined = dropped ? undefined : (c?.joined ?? host?.control);
   const team = c?.team ?? host?.team;
   // The control this daemon joins by default: its own, if it has one.
   const control = c?.url || early?.url || CONTROL;
@@ -504,9 +520,27 @@ function Cloud({
     const r = await post("/api/setup/control/confirm", { same });
     const got = (r as { control?: Setup["control"] }).control;
     if (got) setSetup((s) => (s ? { ...s, control: got } : s));
-    if (same) onConfirmed();
+    if (same) {
+      onConfirmed();
+      // The banner and the host menu's line (#325) catch up.
+      refreshControlState();
+    }
     setBusy(false);
   };
+  // Why this machine is out, and what happened since (#325, #330), above
+  // whatever comes next: the code to approve, or the button.
+  const removed = c?.removed;
+  const droppedNote = dropped && (
+    <div class="start-said" data-start-dropped>
+      <p>
+        This machine is no longer in {placeOf(dropped)}: control dropped it (it left, or was removed).
+        {dropped.said ? ` Control says: ${dropped.said}.` : ""}{" "}
+        {removed
+          ? `Its key can't come back, so it made a new one (${removed.new_key}) and asks to join again; the old one is kept at ${removed.kept}.`
+          : "Join again to put it back; the approver picks the account or team."}
+      </p>
+    </div>
+  );
   return (
     <section class="start-step">
       <h2>Use it from anywhere</h2>
@@ -549,6 +583,7 @@ function Cloud({
         </div>
       ) : c?.pending ? (
         <div class="start-code" data-start-pending>
+          {droppedNote}
           <div class="start-kicker">Approve this code on a signed-in device</div>
           <div class="start-code-big" data-start-code>
             {c.pending.code}
@@ -560,10 +595,27 @@ function Cloud({
             <span class="start-pulse" /> Waiting for the approval. New here? It signs you up first (a passkey or GitHub), then asks: your account, or a team you own.
           </p>
         </div>
+      ) : c?.elsewhere ? (
+        <div class="start-code" data-start-elsewhere>
+          {droppedNote}
+          <div class="start-kicker">{c.elsewhere.by} is joining this machine</div>
+          {c.elsewhere.code && (
+            <div class="start-code-big" data-start-code>
+              {c.elsewhere.code}
+            </div>
+          )}
+          {c.elsewhere.approve && (
+            <a class="start-btn primary big" href={c.elsewhere.approve} target="_blank" rel="noreferrer" data-start-approve>
+              Approve in illogical cloud ↗
+            </a>
+          )}
+          <p class="start-dim">One join at a time: approve this one, or stop it where it runs and try again here.</p>
+        </div>
       ) : (
         <>
+          {droppedNote}
           <button class="start-btn primary big" disabled={busy || !setup} onClick={connect} data-start-connect>
-            {busy ? "Asking the cloud…" : ours ? "Connect to illogical cloud" : `Connect to ${hostOf(control)}`}
+            {busy ? "Asking the cloud…" : dropped ? `Join ${hostOf(control)} again` : ours ? "Connect to illogical cloud" : `Connect to ${hostOf(control)}`}
           </button>
           {(error ?? c?.error) && (
             <div class="start-said" data-start-error>
