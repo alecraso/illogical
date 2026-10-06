@@ -200,7 +200,9 @@ pub async fn ask(
     Ok(Json(json!({
         "ticket": id,
         "code": code(&id),
-        "url": format!("{}/#app={id}", app.cfg.public_url),
+        // The site the app asked on (#507): the browser that approves
+        // signs in there.
+        "url": format!("{}/#app={id}", app.cfg.site(&headers).url),
         "expires_in_secs": TTL_MS / 1000,
     })))
 }
@@ -253,7 +255,7 @@ pub async fn redeem(
 ) -> Result<Response, ApiError> {
     // Only control's own page (the app's webview on it) redeems.
     let origin = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok());
-    if origin != Some(app.cfg.origin.as_str()) {
+    if origin != Some(app.cfg.site(&headers).origin.as_str()) {
         return Err(err(StatusCode::FORBIDDEN, "cross-origin request refused"));
     }
     let account = app.app_logins.redeem(&id, &b.grant, &b.verifier, now_ms()).ok_or_else(|| {

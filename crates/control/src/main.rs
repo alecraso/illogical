@@ -31,6 +31,8 @@ mod sandboxes;
 mod sprites;
 mod teams;
 mod turn;
+#[cfg(test)]
+mod two_sites;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
@@ -38,7 +40,7 @@ use anyhow::Context as _;
 use axum::{
     Json, Router,
     body::Body,
-    http::{HeaderValue, StatusCode, Uri, header},
+    http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::{get, post},
     serve::ListenerExt,
@@ -61,6 +63,18 @@ struct Args {
     /// (`https://control.example.com`). Port 0 is the port --listen got.
     #[arg(long, default_value = "http://127.0.0.1:7690", env = "ILLOGICAL_CONTROL_URL")]
     public_url: String,
+
+    /// More URLs this answers at, comma-separated (#507: the old one while
+    /// control moves). A browser is served as whichever it came in on, with
+    /// its own origin, passkeys and cookies; daemons may use any of them.
+    #[arg(long, value_delimiter = ',', env = "ILLOGICAL_CONTROL_ALSO_URLS")]
+    also_url: Vec<String>,
+
+    /// Send browsers that come in on an --also-url to the same page at
+    /// --public-url, once everyone has moved (#507). Daemons, the API and
+    /// sign-ins already under way are still answered there.
+    #[arg(long, env = "ILLOGICAL_CONTROL_ALSO_REDIRECT")]
+    also_redirect: bool,
 
     /// The SQLite database.
     #[arg(long, default_value = "control.db", env = "ILLOGICAL_CONTROL_DB")]
@@ -221,10 +235,52 @@ pub struct Config {
     pub public_url: String,
     /// `public_url`'s origin, as browsers send it.
     pub origin: String,
+    /// Every URL this answers at, `public_url`'s first (#507).
+    pub sites: Vec<Site>,
+    /// Browsers on any but the first go to it (`--also-redirect`).
+    pub also_redirect: bool,
     pub github: Option<Github>,
     pub static_dir: Option<PathBuf>,
     /// Take requests signed as daemons before 0.17 sign them.
     pub old_daemon_signatures: bool,
+}
+
+/// One URL control answers at (#507).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Site {
+    /// Without a trailing slash: `https://control.example.com`.
+    pub url: String,
+    /// As browsers send it.
+    pub origin: String,
+    /// `host[:port]`, as the Host header says it.
+    pub authority: String,
+}
+
+impl Site {
+    pub fn new(url: &str) -> anyhow::Result<Self> {
+        let url = url.trim_end_matches('/').to_owned();
+        let u = url::Url::parse(&url)?;
+        let host = u.host_str().context("a URL with a host")?;
+        let authority = match u.port() {
+            Some(p) => format!("{host}:{p}"),
+            None => host.to_owned(),
+        };
+        Ok(Site { origin: u.origin().ascii_serialization(), authority: authority.to_ascii_lowercase(), url })
+    }
+
+    /// Its host name, which passkeys are made for (WebAuthn's RP ID).
+    pub fn host(&self) -> &str {
+        self.authority.rsplit_once(':').filter(|(_, p)| p.parse::<u16>().is_ok()).map_or(&self.authority, |(h, _)| h)
+    }
+}
+
+impl Config {
+    /// The site a request came in on, by its Host header; the first when
+    /// it's none of them.
+    pub fn site(&self, headers: &HeaderMap) -> &Site {
+        let host = headers.get(axum::http::header::HOST).and_then(|h| h.to_str().ok()).map(str::to_ascii_lowercase);
+        host.and_then(|h| self.sites.iter().find(|s| s.authority == h)).unwrap_or(&self.sites[0])
+    }
 }
 
 pub struct App {
@@ -264,6 +320,8 @@ impl App {
                 relay_free_bytes: 0,
                 public_url: public_url.into(),
                 origin: origin_of(public_url).unwrap(),
+                sites: vec![Site::new(public_url).unwrap()],
+                also_redirect: false,
                 github: None,
                 static_dir: None,
                 old_daemon_signatures: true,
@@ -415,9 +473,32 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/relay/m", get(relay::many))
         .fallback(asset)
         .layer(axum::middleware::from_fn_with_state(app.clone(), account::note_agent))
+        .layer(axum::middleware::from_fn_with_state(app.clone(), moved))
         .layer(axum::middleware::from_fn_with_state(app.clone(), auth::verify_daemon))
         .layer(axum::middleware::map_response(headers))
         .with_state(app)
+}
+
+/// With `--also-redirect` (#507): a browser's page on an old site goes to
+/// the same page on the first. What daemons, CLIs and pages already open
+/// call (`/api/…`, `/control.json`), sign-ins under way (`/auth/…`) and
+/// GitHub's webhook are still answered where they are.
+async fn moved(
+    axum::extract::State(app): axum::extract::State<Arc<App>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = req.uri().path();
+    let page = matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD)
+        && !["/api/", "/auth/", "/github/", "/.well-known/"].iter().any(|p| path.starts_with(p))
+        && path != "/control.json"
+        && !req.headers().contains_key(axum::http::header::UPGRADE);
+    if app.cfg.also_redirect && page && app.cfg.site(req.headers()) != &app.cfg.sites[0] {
+        let pq = req.uri().path_and_query().map_or("/", |p| p.as_str());
+        return axum::response::Redirect::permanent(&format!("{}{pq}", app.cfg.public_url)).into_response();
+    }
+    next.run(req).await
 }
 
 /// A typed answer, as JSON.
@@ -427,12 +508,20 @@ pub fn reply<T: serde::Serialize>(answer: &T) -> Result<Json<serde_json::Value>,
 
 async fn control_json(
     axum::extract::State(app): axum::extract::State<Arc<App>>,
+    headers: HeaderMap,
 ) -> Json<illogical_control_wire::ControlInfo> {
+    let site = app.cfg.site(&headers);
     // Passkeys need a domain name: WebAuthn refuses IP addresses.
-    let passkeys = url::Url::parse(&app.cfg.public_url).is_ok_and(|u| matches!(u.host(), Some(url::Host::Domain(_))));
+    let passkeys = url::Url::parse(&site.url).is_ok_and(|u| matches!(u.host(), Some(url::Host::Domain(_))));
     Json(illogical_control_wire::ControlInfo {
         control: true,
-        url: app.cfg.public_url.clone(),
+        // The one asked: a page's links and relay are on its own site.
+        url: site.url.clone(),
+        // Where control is now, and everywhere it answers (#507): a daemon
+        // that can move to `primary` does, and lets every site frame its
+        // blocks.
+        primary: app.cfg.public_url.clone(),
+        urls: app.cfg.sites.iter().map(|s| s.url.clone()).collect(),
         github: app.cfg.github.is_some(),
         passkeys,
         vapid: app.vapid.public(),
@@ -584,12 +673,16 @@ async fn run() -> anyhow::Result<()> {
             .and_then(|_| std::fs::rename(&tmp, &at))
             .with_context(|| format!("recording the listen address in {}", at.display()))?;
     }
-    if let Ok(mut u) = url::Url::parse(&public_url)
-        && u.port() == Some(0)
-    {
-        let _ = u.set_port(Some(listen.port()));
-        public_url = u.as_str().trim_end_matches('/').to_owned();
-    }
+    // Port 0 in a URL is the port --listen got, in --also-url's too.
+    let port_of = |url: &str| match url::Url::parse(url) {
+        Ok(mut u) if u.port() == Some(0) => {
+            let _ = u.set_port(Some(listen.port()));
+            u.as_str().trim_end_matches('/').to_owned()
+        }
+        _ => url.trim_end_matches('/').to_owned(),
+    };
+    public_url = port_of(&public_url);
+    let also_urls: Vec<String> = a.also_url.iter().filter(|u| !u.is_empty()).map(|u| port_of(u)).collect();
     let set = |v: Option<String>| v.filter(|s| !s.is_empty());
     let github_app = github_app(&a)?;
     // Sign-in: an OAuth app's (or another App's) credentials, else the
@@ -670,6 +763,11 @@ async fn run() -> anyhow::Result<()> {
             push_hosts: a.push_hosts,
             relay_free_bytes: a.relay_free_mb * 1_000_000,
             origin: origin_of(&public_url)?,
+            sites: std::iter::once(public_url.as_str())
+                .chain(also_urls.iter().map(String::as_str))
+                .map(Site::new)
+                .collect::<anyhow::Result<_>>()?,
+            also_redirect: a.also_redirect,
             public_url,
             github,
             static_dir: a.static_dir,

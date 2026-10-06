@@ -158,7 +158,7 @@ pub struct Checkout {
 }
 
 /// `POST /api/billing/checkout`: a Stripe Checkout page to upgrade.
-pub async fn checkout(State(app): State<Arc<App>>, s: Session, Json(b): Json<Checkout>) -> R {
+pub async fn checkout(State(app): State<Arc<App>>, headers: HeaderMap, s: Session, Json(b): Json<Checkout>) -> R {
     let st = stripe(&app)?;
     app.limits.check_account(crate::limit::CHECKOUTS, &s.account)?;
     let (owner, seats) = match &b.team {
@@ -185,8 +185,9 @@ pub async fn checkout(State(app): State<Arc<App>>, s: Session, Json(b): Json<Che
     let mut form: Vec<(String, String)> = vec![
         ("mode".into(), "subscription".into()),
         ("customer".into(), customer),
-        ("success_url".into(), format!("{}/#billing=done", app.cfg.public_url)),
-        ("cancel_url".into(), format!("{}/#billing=cancelled", app.cfg.public_url)),
+        // Back to the site it was started on (#507).
+        ("success_url".into(), format!("{}/#billing=done", app.cfg.site(&headers).url)),
+        ("cancel_url".into(), format!("{}/#billing=cancelled", app.cfg.site(&headers).url)),
         ("metadata[owner]".into(), owner.clone()),
         ("subscription_data[metadata][owner]".into(), owner.clone()),
     ];

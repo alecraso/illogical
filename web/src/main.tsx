@@ -11,7 +11,7 @@ import { App } from "./ui/app";
 import { remotes } from "./blocks";
 import { measureCell } from "./ui/cells";
 import { enableControlPush, registerWorker, setPushBackend } from "./push";
-import { ControlSession, detectControl, restoreInvite } from "./control";
+import { ControlSession, detectControl, restoreInvite, showMoving } from "./control";
 import { ControlGate, ControlOverlay, controlMenuItems, NoMachines, useControl } from "./ui/control";
 import { setFleet, setHostMenuExtras } from "./ui/hosts";
 import { setControlSession } from "./ui/people";
@@ -32,6 +32,7 @@ import { openGettingStarted, type Section } from "./ui/welcome";
 const info = await detectControl();
 // Back from signing in with a presigned invite's link (kept off control).
 if (info) restoreInvite();
+if (info) showMoving(info);
 const linkMatch = /^#link=([0-9a-f]+)\.([0-9a-f]{64})\.([0-9a-f]{64})\.([0-9a-f]{64})$/.exec(location.hash);
 const session = info && !linkMatch ? new ControlSession(info) : null;
 setControlSession(session);

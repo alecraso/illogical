@@ -9,8 +9,28 @@
 // directory and the keys, but it can't slip in a daemon of its own (and a
 // daemon can't be reached by a device it hasn't approved).
 
-import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
-import { forget, loadEnrollment, loadKeys, saveEnrollment, saveWorkerDirectory, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
+import {
+  certBody,
+  deviceId,
+  evaluate,
+  hex,
+  joinCode,
+  normalizeCode,
+  type Cert,
+  type Revocation,
+  revocationBody,
+  unhex,
+} from "./e2e/cert.ts";
+import {
+  forget,
+  loadEnrollment,
+  loadKeys,
+  saveEnrollment,
+  saveWorkerDirectory,
+  signText,
+  type DeviceKeys,
+  type Enrollment,
+} from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
 import { desktopApp } from "./desktop";
 import {
@@ -38,6 +58,35 @@ export interface ControlInfo {
   passkeys: boolean;
   /** Control's VAPID public key (M21). */
   vapid: string;
+  /** Where control is now, when it answers at more than one URL (#507). */
+  primary?: string;
+}
+
+/** On a URL control is moving away from (#507): a line at the top saying
+ * where it is now, with the same page there. This site keeps working for
+ * now: its passkeys and approved browsers are its own, so the new one is
+ * signed in and approved from here. */
+export function showMoving(info: ControlInfo): void {
+  if (!info.primary || info.primary === info.url) return;
+  const to = new URL(
+    location.pathname + location.search + location.hash,
+    info.primary,
+  );
+  const bar = document.createElement("div");
+  bar.className = "control-dropped";
+  bar.setAttribute("role", "status");
+  bar.dataset.controlMoving = "";
+  const p = document.createElement("p");
+  const a = document.createElement("a");
+  a.href = to.href;
+  a.textContent = to.host;
+  p.append(
+    "Control is moving to ",
+    a,
+    ". Sign in there, then approve that browser from this one; this address stops working once everyone has moved.",
+  );
+  bar.append(p);
+  document.body.prepend(bar);
 }
 
 export interface DirDaemon {
@@ -59,7 +108,11 @@ export interface DirDaemon {
 /** Another account's machine as the directory lists it, with that account's
  * certificates to check it by. */
 interface ForeignEntry extends Omit<DirDaemon, "cert"> {
-  chain?: { trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[] };
+  chain?: {
+    trust: { account: string; root: string } | null;
+    certs: Cert[];
+    revocations: Revocation[];
+  };
 }
 
 export interface JoinRequest {
@@ -75,7 +128,13 @@ export interface Team {
   locked: boolean;
   roster: Roster;
   role: TeamRole | null;
-  requests: { account: string; root: string; name: string; role: TeamRole; created: number }[];
+  requests: {
+    account: string;
+    root: string;
+    name: string;
+    role: TeamRole;
+    created: number;
+  }[];
   certs: AccountCerts;
   /** Members' names as they set them, by account (#208): the roster's
    * one-word form ("Sam-Stranger") is only what's signed. */
@@ -134,7 +193,11 @@ export async function detectControl(): Promise<ControlInfo | null> {
 class HttpError extends Error {
   status: number;
   body: Record<string, unknown>;
-  constructor(status: number, message: string, body: Record<string, unknown> = {}) {
+  constructor(
+    status: number,
+    message: string,
+    body: Record<string, unknown> = {},
+  ) {
     super(message);
     this.status = status;
     this.body = body;
@@ -165,24 +228,46 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const j = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new HttpError(res.status, j.error ?? `HTTP ${res.status}`, j as Record<string, unknown>);
+  if (!res.ok)
+    throw new HttpError(
+      res.status,
+      j.error ?? `HTTP ${res.status}`,
+      j as Record<string, unknown>,
+    );
   return j;
 }
 
 const DIR_KEY = "illogical.control.directory";
 
 const b64u = (b: ArrayBuffer | Uint8Array) =>
-  btoa(String.fromCharCode(...new Uint8Array(b instanceof Uint8Array ? b : new Uint8Array(b))))
+  btoa(
+    String.fromCharCode(
+      ...new Uint8Array(b instanceof Uint8Array ? b : new Uint8Array(b)),
+    ),
+  )
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
-const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+const unb64u = (s: string) =>
+  Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
+    c.charCodeAt(0),
+  );
 
 /** Sign in with a passkey (any registered on this control). */
 export async function passkeySignIn(): Promise<void> {
-  const o = await api<{ challenge: string; rpId: string; userVerification: UserVerificationRequirement; timeout: number }>("/auth/passkey/login", {});
+  const o = await api<{
+    challenge: string;
+    rpId: string;
+    userVerification: UserVerificationRequirement;
+    timeout: number;
+  }>("/auth/passkey/login", {});
   const cred = (await navigator.credentials.get({
-    publicKey: { challenge: unb64u(o.challenge), rpId: o.rpId, userVerification: o.userVerification, timeout: o.timeout },
+    publicKey: {
+      challenge: unb64u(o.challenge),
+      rpId: o.rpId,
+      userVerification: o.userVerification,
+      timeout: o.timeout,
+    },
   })) as PublicKeyCredential | null;
   if (!cred) throw new Error("no passkey chosen");
   const r = cred.response as AuthenticatorAssertionResponse;
@@ -206,9 +291,16 @@ export async function passkeyRegister(name?: string): Promise<void> {
     attestation: AttestationConveyancePreference;
     timeout: number;
   };
-  const o = await api<Options>("/auth/passkey/register", name === undefined ? {} : { name });
+  const o = await api<Options>(
+    "/auth/passkey/register",
+    name === undefined ? {} : { name },
+  );
   const cred = (await navigator.credentials.create({
-    publicKey: { ...o, challenge: unb64u(o.challenge), user: { ...o.user, id: unb64u(o.user.id) } },
+    publicKey: {
+      ...o,
+      challenge: unb64u(o.challenge),
+      user: { ...o.user, id: unb64u(o.user.id) },
+    },
   })) as PublicKeyCredential | null;
   if (!cred) throw new Error("no passkey made");
   const r = cred.response as AuthenticatorAttestationResponse;
@@ -221,19 +313,34 @@ export async function passkeyRegister(name?: string): Promise<void> {
 
 /** What a signed-out page may know about an invite (#103): the team's
  * name and who made it. */
-export async function previewInvite(team: string, code: string, presigned: boolean): Promise<{ name: string; by: string } | null> {
+export async function previewInvite(
+  team: string,
+  code: string,
+  presigned: boolean,
+): Promise<{ name: string; by: string } | null> {
   if (presigned) {
-    const key = await inviteKey(code).then((k) => k.key, () => null);
-    return key ? api<{ name: string; by: string }>(`/api/presigned/${team}/${key}/preview`).catch(() => null) : null;
+    const key = await inviteKey(code).then(
+      (k) => k.key,
+      () => null,
+    );
+    return key
+      ? api<{ name: string; by: string }>(
+          `/api/presigned/${team}/${key}/preview`,
+        ).catch(() => null)
+      : null;
   }
-  return api<{ name: string; by: string }>(`/api/invites/${team}/${code}/preview`).catch(() => null);
+  return api<{ name: string; by: string }>(
+    `/api/invites/${team}/${code}/preview`,
+  ).catch(() => null);
 }
 
 /** A team invite in a link's fragment: `#invite=<team>.<code>` asks an
  * owner first; `#pinvite=<team>.<seed>` is presigned and carries its
  * one-time key's seed. A page from before presigned invites doesn't know
  * the second, so it never sends the seed to control as a code. */
-export function inviteInHash(hash: string): { team: string; code: string; presigned: boolean } | null {
+export function inviteInHash(
+  hash: string,
+): { team: string; code: string; presigned: boolean } | null {
   const m = /^#(p?)invite=([0-9a-f]+)\.([0-9a-f]+)$/.exec(hash);
   return m ? { team: m[2], code: m[3], presigned: m[1] === "p" } : null;
 }
@@ -244,7 +351,8 @@ const PENDING_INVITE = "illogical:presigned-invite";
  * presigned invite's seed, which control mustn't see. That waits in this
  * tab's sessionStorage for `restoreInvite`. */
 export function signInNext(): string {
-  if (!inviteInHash(location.hash)?.presigned) return location.pathname + location.hash;
+  if (!inviteInHash(location.hash)?.presigned)
+    return location.pathname + location.hash;
   try {
     sessionStorage.setItem(PENDING_INVITE, location.hash);
   } catch {
@@ -258,7 +366,12 @@ export function restoreInvite() {
   try {
     const hash = sessionStorage.getItem(PENDING_INVITE);
     sessionStorage.removeItem(PENDING_INVITE);
-    if (hash && !location.hash && inviteInHash(hash)?.presigned) history.replaceState(null, "", location.pathname + location.search + hash);
+    if (hash && !location.hash && inviteInHash(hash)?.presigned)
+      history.replaceState(
+        null,
+        "",
+        location.pathname + location.search + hash,
+      );
   } catch {
     // Nothing kept.
   }
@@ -267,7 +380,15 @@ export function restoreInvite() {
 /** How long a presigned invite lasts unless the owner says otherwise. */
 const PRESIGNED_TTL_MS = 24 * 3600_000;
 
-export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "lost-key" | "untrusted" | "ready" | "error";
+export type Phase =
+  | "loading"
+  | "signed-out"
+  | "waiting"
+  | "turned-down"
+  | "lost-key"
+  | "untrusted"
+  | "ready"
+  | "error";
 
 /** What the person reads when control refuses an approval (#327), by its
  * reason code: which check failed, and what to do next. `revoked` isn't
@@ -276,11 +397,16 @@ export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "lost
 const REFUSED: Record<string, string> = {
   approver_untrusted:
     "This browser isn't one your account trusts any more, so its approvals are refused. Forget it and enroll it again (another of your devices or a recovery code approves it), then try again.",
-  bad_signature: "This browser's key isn't the one your account approved. Forget it and enroll it again, then try again.",
-  cant_approve: "A machine can't approve devices. Approve from a browser, phone or the illogical CLI.",
-  recovery_for_machine: "A recovery code approves browsers and phones, not machines. Approve the machine from one of your devices.",
-  no_chain: "Control's records for your account don't add up from here (the approval doesn't chain to your first device). Reload and try again; if it keeps happening, approve from another device.",
-  no_devices: "This account has no devices yet. Reload: this browser becomes its first.",
+  bad_signature:
+    "This browser's key isn't the one your account approved. Forget it and enroll it again, then try again.",
+  cant_approve:
+    "A machine can't approve devices. Approve from a browser, phone or the illogical CLI.",
+  recovery_for_machine:
+    "A recovery code approves browsers and phones, not machines. Approve the machine from one of your devices.",
+  no_chain:
+    "Control's records for your account don't add up from here (the approval doesn't chain to your first device). Reload and try again; if it keeps happening, approve from another device.",
+  no_devices:
+    "This account has no devices yet. Reload: this browser becomes its first.",
 };
 
 /** Refusals that mean this browser itself isn't trusted. */
@@ -357,8 +483,28 @@ export function deviceName(): string {
   const app0 = desktopApp()?.name;
   if (app0) return app0;
   const ua = navigator.userAgent;
-  const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "browser";
-  const app = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
+  const os = /iPhone/.test(ua)
+    ? "iPhone"
+    : /iPad/.test(ua)
+      ? "iPad"
+      : /Android/.test(ua)
+        ? "Android"
+        : /Mac/.test(ua)
+          ? "Mac"
+          : /Windows/.test(ua)
+            ? "Windows"
+            : /Linux/.test(ua)
+              ? "Linux"
+              : "browser";
+  const app = /Edg\//.test(ua)
+    ? "Edge"
+    : /Firefox\//.test(ua)
+      ? "Firefox"
+      : /Chrome\//.test(ua)
+        ? "Chrome"
+        : /Safari\//.test(ua)
+          ? "Safari"
+          : "";
   return `${app ? `${app} on ` : ""}${os}`;
 }
 
@@ -379,11 +525,15 @@ export function inApp(): boolean {
  * posted here for the session cookie. Only in the app's own window (a link
  * to this in a browser would sign it in as someone else). */
 async function redeemAppLogin() {
-  const m = /^#app-redeem=([0-9a-f]+)\.([0-9a-f]+)\.([0-9a-f]+)$/.exec(location.hash);
+  const m = /^#app-redeem=([0-9a-f]+)\.([0-9a-f]+)\.([0-9a-f]+)$/.exec(
+    location.hash,
+  );
   if (!m) return;
   history.replaceState(null, "", location.pathname + location.search);
   if (!inApp()) return;
-  await api(`/auth/app/${m[1]}/redeem`, { grant: m[2], verifier: m[3] }).catch(() => {});
+  await api(`/auth/app/${m[1]}/redeem`, { grant: m[2], verifier: m[3] }).catch(
+    () => {},
+  );
 }
 
 /** Someone offering to share a session on their machine with this
@@ -471,7 +621,13 @@ export class ControlSession {
         // approvals nobody trusts. Say so, not fail later.
         return this.set("lost-key");
       }
-      const me = await api<{ account: string; login: string; name?: string; root: string | null; passkeys: number }>("/api/me").catch((e) => {
+      const me = await api<{
+        account: string;
+        login: string;
+        name?: string;
+        root: string | null;
+        passkeys: number;
+      }>("/api/me").catch((e) => {
         if (e instanceof HttpError && e.status === 401) return null;
         throw e;
       });
@@ -529,14 +685,17 @@ export class ControlSession {
     // one of the account's devices: the device that approves it is shown
     // the machine alongside, and approves both at once.
     const join = joinInHash();
-    const ask = () => api<{ approved: boolean; cert?: Cert }>("/api/devices", { cert, join });
+    const ask = () =>
+      api<{ approved: boolean; cert?: Cert }>("/api/devices", { cert, join });
     let r = await ask();
     if (!r.approved) this.brought = join;
     while (!r.approved) {
       this.set("waiting");
       await new Promise((res) => setTimeout(res, 2000));
       try {
-        r = await api<{ approved: boolean; cert: Cert }>(`/api/devices/${k.id}`);
+        r = await api<{ approved: boolean; cert: Cert }>(
+          `/api/devices/${k.id}`,
+        );
       } catch (e) {
         if (!(e instanceof HttpError && e.status === 404)) continue;
         // Turned down (#105): say so, until this browser asks again.
@@ -550,11 +709,23 @@ export class ControlSession {
     if (root === null) await this.makeRecoveryCodes();
     // Pin the root as control reports it now, and check that our own
     // certificate chains back to it.
-    const all = await api<{ trust: { account: string; root: string }; certs: Cert[]; revocations: Revocation[] }>("/api/devices");
+    const all = await api<{
+      trust: { account: string; root: string };
+      certs: Cert[];
+      revocations: Revocation[];
+    }>("/api/devices");
     const trusted = await evaluate(all.trust, all.certs, all.revocations);
     const mine = trusted.get(k.id);
-    if (!mine) throw new Error("control approved this device, but the approval doesn't check out");
-    this.enrollment = { control: location.origin, account: this.account, root: all.trust.root, cert: mine };
+    if (!mine)
+      throw new Error(
+        "control approved this device, but the approval doesn't check out",
+      );
+    this.enrollment = {
+      control: location.origin,
+      account: this.account,
+      root: all.trust.root,
+      cert: mine,
+    };
     await saveEnrollment(this.enrollment);
   }
 
@@ -564,8 +735,13 @@ export class ControlSession {
     const codes: string[] = [];
     const certs: Cert[] = [];
     for (let i = 1; i <= 2; i++) {
-      const kp = (await subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
-      const seed = new Uint8Array(await subtle.exportKey("pkcs8", kp.privateKey)).slice(16);
+      const kp = (await subtle.generateKey({ name: "Ed25519" }, true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const seed = new Uint8Array(
+        await subtle.exportKey("pkcs8", kp.privateKey),
+      ).slice(16);
       const sign = new Uint8Array(await subtle.exportKey("raw", kp.publicKey));
       const c: Cert = {
         v: 1,
@@ -601,7 +777,8 @@ export class ControlSession {
 
   /** Recovery codes still good. */
   get recoveryLeft(): number {
-    return [...this.trusted.values()].filter((c) => c.kind === "recovery").length;
+    return [...this.trusted.values()].filter((c) => c.kind === "recovery")
+      .length;
   }
 
   /** New recovery codes, signed by this device; the old ones are revoked
@@ -610,7 +787,14 @@ export class ControlSession {
     const old = [...this.trusted.values()].filter((c) => c.kind === "recovery");
     const revocations: Revocation[] = [];
     for (const c of old) {
-      const r: Revocation = { v: 1, account: this.account, device: c.device, at: Date.now(), by: this.keys.id, sig: "" };
+      const r: Revocation = {
+        v: 1,
+        account: this.account,
+        device: c.device,
+        at: Date.now(),
+        by: this.keys.id,
+        sig: "",
+      };
       r.sig = await signText(this.keys, revocationBody(r));
       revocations.push(r);
     }
@@ -641,19 +825,35 @@ export class ControlSession {
     const seed = fromCode(code);
     if (!seed) throw new Error("a recovery code is 52 letters and digits");
     const key = await recoveryKey(seed);
-    const devs = await api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[] }>("/api/devices");
+    const devs = await api<{
+      trust: { account: string; root: string } | null;
+      certs: Cert[];
+      revocations: Revocation[];
+    }>("/api/devices");
     // Only codes still good (a used one was revoked).
-    const live = devs.trust ? [...(await evaluate(devs.trust, devs.certs, devs.revocations)).values()] : [];
+    const live = devs.trust
+      ? [...(await evaluate(devs.trust, devs.certs, devs.revocations)).values()]
+      : [];
     const probe = new TextEncoder().encode("illogical recovery probe");
     const sig = new Uint8Array(await subtle.sign("Ed25519", key, probe));
     let mine: Cert | undefined;
     for (const c of live.filter((c) => c.kind === "recovery")) {
-      const pub = await subtle.importKey("raw", unhex(c.sign), { name: "Ed25519" }, false, ["verify"]);
+      const pub = await subtle.importKey(
+        "raw",
+        unhex(c.sign),
+        { name: "Ed25519" },
+        false,
+        ["verify"],
+      );
       if (await subtle.verify("Ed25519", pub, sig, probe)) mine = c;
     }
-    if (!mine) throw new Error("that isn't one of this account's recovery codes (or it was used)");
+    if (!mine)
+      throw new Error(
+        "that isn't one of this account's recovery codes (or it was used)",
+      );
     // Turned down: ask again first, so there's a request to approve.
-    if (this.phase === "turned-down" && this.request) await api("/api/devices", { cert: this.request });
+    if (this.phase === "turned-down" && this.request)
+      await api("/api/devices", { cert: this.request });
     const k = this.keys;
     const cert: Cert = {
       v: 1,
@@ -667,7 +867,15 @@ export class ControlSession {
       approver: mine.device,
       sig: "",
     };
-    cert.sig = hex(new Uint8Array(await subtle.sign("Ed25519", key, new TextEncoder().encode(certBody(cert)))));
+    cert.sig = hex(
+      new Uint8Array(
+        await subtle.sign(
+          "Ed25519",
+          key,
+          new TextEncoder().encode(certBody(cert)),
+        ),
+      ),
+    );
     await api(`/api/devices/${k.id}/approve`, { cert });
     this.usedRecovery = mine.device;
     this.tryAgain();
@@ -682,18 +890,36 @@ export class ControlSession {
     if (!e) return;
     try {
       const [devs, dir] = await Promise.all([
-        api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[]; pending: Cert[]; joins?: Record<string, string> }>("/api/devices"),
-        api<{ daemons: ForeignEntry[]; offers?: ShareOffer[] }>("/api/directory"),
+        api<{
+          trust: { account: string; root: string } | null;
+          certs: Cert[];
+          revocations: Revocation[];
+          pending: Cert[];
+          joins?: Record<string, string>;
+        }>("/api/devices"),
+        api<{ daemons: ForeignEntry[]; offers?: ShareOffer[] }>(
+          "/api/directory",
+        ),
       ]);
       this.rootMismatch = !!devs.trust && devs.trust.root !== e.root;
-      this.trusted = await evaluate({ account: e.account, root: e.root }, devs.certs, devs.revocations);
+      this.trusted = await evaluate(
+        { account: e.account, root: e.root },
+        devs.certs,
+        devs.revocations,
+      );
       this.revocations = devs.revocations;
       // #327: this browser's own place, checked like any other device's.
       // (A different root is said elsewhere, and isn't fixed by enrolling
       // again under control's.)
       const mine = this.trusted.has(this.keys.id) || this.rootMismatch;
-      if (!mine) this.untrustedWhy = devs.revocations.some((r) => r.device === this.keys.id) ? "removed" : "missing";
-      if (!mine && (this.phase === "ready" || this.phase === "loading")) this.phase = "untrusted";
+      if (!mine)
+        this.untrustedWhy = devs.revocations.some(
+          (r) => r.device === this.keys.id,
+        )
+          ? "removed"
+          : "missing";
+      if (!mine && (this.phase === "ready" || this.phase === "loading"))
+        this.phase = "untrusted";
       else if (mine && this.phase === "untrusted") this.phase = "ready";
       this.pending = devs.pending;
       this.pendingJoins = new Map(Object.entries(devs.joins ?? {}));
@@ -703,8 +929,15 @@ export class ControlSession {
         let cert = this.trusted.get(d.id);
         // Someone else's machine: by their account's certificates, from
         // the root this browser pinned for them on first sight.
-        if (!cert && d.account && chain?.trust && pin(d.account, chain.trust.root)) {
-          cert = (await evaluate(chain.trust, chain.certs, chain.revocations)).get(d.id);
+        if (
+          !cert &&
+          d.account &&
+          chain?.trust &&
+          pin(d.account, chain.trust.root)
+        ) {
+          cert = (
+            await evaluate(chain.trust, chain.certs, chain.revocations)
+          ).get(d.id);
         }
         if (cert?.kind === "daemon") daemons.push({ ...entry, cert });
       }
@@ -723,7 +956,12 @@ export class ControlSession {
       // (M29), from what this page checked.
       const ws = this.info.url.replace(/^http/, "ws");
       void saveWorkerDirectory(
-        this.daemons.map((d) => ({ id: d.id, noise: d.cert.noise, direct: d.urls, relay: `${ws}/api/relay/c/${d.id}` })),
+        this.daemons.map((d) => ({
+          id: d.id,
+          noise: d.cert.noise,
+          direct: d.urls,
+          relay: `${ws}/api/relay/c/${d.id}`,
+        })),
       ).catch(() => {});
     } catch (err) {
       if (err instanceof HttpError && err.status === 401) {
@@ -733,7 +971,9 @@ export class ControlSession {
       this.stale = true;
       try {
         // Daemons this browser already checked stay reachable directly.
-        this.daemons = (JSON.parse(localStorage.getItem(DIR_KEY) ?? "[]") as DirDaemon[]).map((d) => ({ ...d, online: false }));
+        this.daemons = (
+          JSON.parse(localStorage.getItem(DIR_KEY) ?? "[]") as DirDaemon[]
+        ).map((d) => ({ ...d, online: false }));
       } catch {
         // nothing saved
       }
@@ -746,13 +986,27 @@ export class ControlSession {
   billing: {
     billing: boolean;
     plan: string;
-    relay: { bytes: number; allowance: number; warning: boolean; slowed: boolean };
+    relay: {
+      bytes: number;
+      allowance: number;
+      warning: boolean;
+      slowed: boolean;
+    };
     sandbox_minutes: number;
-    teams: { team: string; name: string; owner: boolean; seats: number; plan: string; sandbox_minutes: number }[];
+    teams: {
+      team: string;
+      name: string;
+      owner: boolean;
+      seats: number;
+      plan: string;
+      sandbox_minutes: number;
+    }[];
   } | null = null;
 
   async loadBilling() {
-    this.billing = await api<NonNullable<ControlSession["billing"]>>("/api/billing").catch(() => null);
+    this.billing = await api<NonNullable<ControlSession["billing"]>>(
+      "/api/billing",
+    ).catch(() => null);
   }
 
   /** Off to Stripe Checkout to upgrade (a team, or this account). */
@@ -763,14 +1017,22 @@ export class ControlSession {
 
   // ---- hosted sandboxes (M20)
 
-  sandboxes: { id: string; state: string; device: string; join: { code: string; cert: Cert } | null }[] = [];
+  sandboxes: {
+    id: string;
+    state: string;
+    device: string;
+    join: { code: string; cert: Cert } | null;
+  }[] = [];
   /** Hosted sandboxes are open to this account. */
   sandboxesOpen = false;
   /** One this browser asked for, to show when it's up. */
   starting: string | null = null;
 
   async loadSandboxes() {
-    const r = await api<{ sandboxes: ControlSession["sandboxes"]; open: boolean }>("/api/sandboxes").catch(() => null);
+    const r = await api<{
+      sandboxes: ControlSession["sandboxes"];
+      open: boolean;
+    }>("/api/sandboxes").catch(() => null);
     if (!r) return;
     this.sandboxes = r.sandboxes;
     this.sandboxesOpen = r.open;
@@ -779,15 +1041,24 @@ export class ControlSession {
     for (const s of r.sandboxes) {
       if (!s.join || s.device !== this.keys.id) continue;
       if ((await joinCode(s.join.cert)) !== s.join.code) continue;
-      const signed: Cert = { ...s.join.cert, account: this.account, approver: this.keys.id, sig: "" };
+      const signed: Cert = {
+        ...s.join.cert,
+        account: this.account,
+        approver: this.keys.id,
+        sig: "",
+      };
       signed.sig = await signText(this.keys, certBody(signed));
-      await api(`/api/joins/${s.join.code}/approve`, { cert: signed }).catch(() => {});
+      await api(`/api/joins/${s.join.code}/approve`, { cert: signed }).catch(
+        () => {},
+      );
     }
   }
 
   /** A hosted VM (M20); resolves with its id once asked for. */
   async startSandbox(): Promise<string> {
-    const r = await api<{ id: string }>("/api/sandboxes", { device: this.keys.id });
+    const r = await api<{ id: string }>("/api/sandboxes", {
+      device: this.keys.id,
+    });
     this.starting = r.id;
     this.emit();
     // Poll quickly while it starts: approve its join, then wait for its
@@ -827,11 +1098,17 @@ export class ControlSession {
 
   async loadTeams() {
     let loaded = true;
-    const r = await api<{ teams: Omit<Team, "verified">[]; asked?: ControlSession["asked"]; notices?: ControlSession["notices"] }>(
-      "/api/teams",
-    ).catch(() => {
+    const r = await api<{
+      teams: Omit<Team, "verified">[];
+      asked?: ControlSession["asked"];
+      notices?: ControlSession["notices"];
+    }>("/api/teams").catch(() => {
       loaded = false;
-      return { teams: [] as Omit<Team, "verified">[], asked: this.asked, notices: this.notices };
+      return {
+        teams: [] as Omit<Team, "verified">[],
+        asked: this.asked,
+        notices: this.notices,
+      };
     });
     this.teamsLoaded = loaded;
     this.notices = r.notices ?? [];
@@ -839,11 +1116,18 @@ export class ControlSession {
     for (const t of r.teams) {
       // The founder pinned on first sight. The team's daemons check each
       // roster version against it; this browser checks the ones it signs.
-      const ok = pin(`team:${t.team}`, `${t.pin.founder}.${t.pin.founder_root}`);
+      const ok = pin(
+        `team:${t.team}`,
+        `${t.pin.founder}.${t.pin.founder_root}`,
+      );
       out.push({ ...t, verified: ok });
     }
     const now = r.asked ?? [];
-    const yes = this.asked.find((a) => !now.some((x) => x.team === a.team) && out.some((t) => t.team === a.team));
+    const yes = this.asked.find(
+      (a) =>
+        !now.some((x) => x.team === a.team) &&
+        out.some((t) => t.team === a.team),
+    );
     if (yes) this.joined = { team: yes.team, name: yes.name };
     this.asked = now;
     this.teams = out;
@@ -854,7 +1138,9 @@ export class ControlSession {
    * root>` by team. */
   teamPins(): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const t of this.teams) if (t.verified && t.role !== null) out[t.team] = `${t.pin.founder}.${t.pin.founder_root}`;
+    for (const t of this.teams)
+      if (t.verified && t.role !== null)
+        out[t.team] = `${t.pin.founder}.${t.pin.founder_root}`;
     return out;
   }
 
@@ -878,7 +1164,11 @@ export class ControlSession {
 
   private myMember(): { account: string; root: string; name: string } {
     // Never "you": teammates see this.
-    return { account: this.account, root: this.enrollment!.root, name: word(this.name || `account-${this.account.slice(0, 6)}`) };
+    return {
+      account: this.account,
+      root: this.enrollment!.root,
+      name: word(this.name || `account-${this.account.slice(0, 6)}`),
+    };
   }
 
   /** Change what other people see (#102). */
@@ -890,9 +1180,18 @@ export class ControlSession {
   }
 
   async createTeam(name: string) {
-    const team = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+    const team = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
     const roster = await signRoster(
-      { v: 1, team, name: name.trim().slice(0, 80) || "team", version: 1, at: Date.now(), members: [{ ...this.myMember(), role: "owner" }] },
+      {
+        v: 1,
+        team,
+        name: name.trim().slice(0, 80) || "team",
+        version: 1,
+        at: Date.now(),
+        members: [{ ...this.myMember(), role: "owner" }],
+      },
       this.keys,
     );
     await api("/api/teams", { roster });
@@ -900,7 +1199,11 @@ export class ControlSession {
   }
 
   /** Sign and send the team's next roster, as `change` makes it. */
-  async changeTeam(team: string, change: (members: Roster["members"]) => Roster["members"], name?: string) {
+  async changeTeam(
+    team: string,
+    change: (members: Roster["members"]) => Roster["members"],
+    name?: string,
+  ) {
     const t = this.teams.find((x) => x.team === team);
     if (!t) throw new Error("no such team");
     const prev = t.roster;
@@ -920,33 +1223,55 @@ export class ControlSession {
       },
       this.keys,
     );
-    if (!(await follows(next, prev, t.pin, t.certs))) throw new Error("that change doesn't check out (are you an owner here?)");
+    if (!(await follows(next, prev, t.pin, t.certs)))
+      throw new Error("that change doesn't check out (are you an owner here?)");
     await api(`/api/teams/${team}/roster`, { roster: next });
     await this.refresh();
   }
 
   async admit(team: string, req: Team["requests"][number]) {
-    await this.changeTeam(team, (ms) => [...ms.filter((m) => m.account !== req.account), { account: req.account, root: req.root, role: req.role, name: word(req.name) }]);
+    await this.changeTeam(team, (ms) => [
+      ...ms.filter((m) => m.account !== req.account),
+      {
+        account: req.account,
+        root: req.root,
+        role: req.role,
+        name: word(req.name),
+      },
+    ]);
   }
 
   /** An invite link. Presigned unless `askFirst` (or for an owner): this
    * device signs it now, and whoever opens it is in as soon as they accept.
    * The one-time key's seed goes only into the link's fragment. */
-  async invite(team: string, role: TeamRole, askFirst = false): Promise<string> {
+  async invite(
+    team: string,
+    role: TeamRole,
+    askFirst = false,
+  ): Promise<string> {
     return (await this.makeInvite(team, role, askFirst)).link;
   }
 
   /** As `invite`, saying whether the link asks an owner first, and why
    * when it does though it wasn't asked to: control makes a presigned one
    * only once every machine checking the team's rosters understands it. */
-  async makeInvite(team: string, role: TeamRole, askFirst = false): Promise<{ link: string; asks: boolean; why?: string }> {
+  async makeInvite(
+    team: string,
+    role: TeamRole,
+    askFirst = false,
+  ): Promise<{ link: string; asks: boolean; why?: string }> {
     const old = async (why?: string) => {
-      const r = await api<{ link: string }>(`/api/teams/${team}/invites`, { role });
+      const r = await api<{ link: string }>(`/api/teams/${team}/invites`, {
+        role,
+      });
       return { link: r.link, asks: true, why };
     };
     if (askFirst || role === "owner") return old();
     const { seed, key } = await newInviteKey();
-    const presigned = await signInvite({ team, role, expires: Date.now() + PRESIGNED_TTL_MS, key }, this.keys);
+    const presigned = await signInvite(
+      { team, role, expires: Date.now() + PRESIGNED_TTL_MS, key },
+      this.keys,
+    );
     try {
       await api(`/api/teams/${team}/invites`, { role, presigned });
     } catch (e) {
@@ -959,7 +1284,13 @@ export class ControlSession {
   /** What a presigned invite link says, as control has it. */
   async showPresigned(team: string, seed: string) {
     const { key } = await inviteKey(seed);
-    return api<{ invite: Invite; name: string; pin: TeamPin; roster: Roster; certs: AccountCerts }>(`/api/presigned/${team}/${key}`);
+    return api<{
+      invite: Invite;
+      name: string;
+      pin: TeamPin;
+      roster: Roster;
+      certs: AccountCerts;
+    }>(`/api/presigned/${team}/${key}`);
   }
 
   /** Join a team with a presigned invite: write its next version, adding
@@ -967,24 +1298,39 @@ export class ControlSession {
   async redeem(team: string, seed: string) {
     for (let attempt = 0; ; attempt++) {
       const p = await this.showPresigned(team, seed);
-      if (!pin(`team:${team}`, `${p.pin.founder}.${p.pin.founder_root}`)) throw new Error("this team isn't the one this browser saw before");
-      const next = await redeemInvite(p.roster, p.invite, seed, this.myMember());
-      const mine = await api<{ certs: Cert[]; revocations: Revocation[] }>("/api/devices");
-      const certs: AccountCerts = { ...p.certs, [this.account]: [mine.certs, mine.revocations] };
-      if (!(await follows(next, p.roster, p.pin, certs))) throw new Error("that invite doesn't check out");
+      if (!pin(`team:${team}`, `${p.pin.founder}.${p.pin.founder_root}`))
+        throw new Error("this team isn't the one this browser saw before");
+      const next = await redeemInvite(
+        p.roster,
+        p.invite,
+        seed,
+        this.myMember(),
+      );
+      const mine = await api<{ certs: Cert[]; revocations: Revocation[] }>(
+        "/api/devices",
+      );
+      const certs: AccountCerts = {
+        ...p.certs,
+        [this.account]: [mine.certs, mine.revocations],
+      };
+      if (!(await follows(next, p.roster, p.pin, certs)))
+        throw new Error("that invite doesn't check out");
       try {
         await api(`/api/teams/${team}/roster`, { roster: next });
         break;
       } catch (e) {
         // Someone else joined first: build on their version.
-        if (!(e instanceof HttpError && e.status === 409) || attempt >= 2) throw e;
+        if (!(e instanceof HttpError && e.status === 409) || attempt >= 2)
+          throw e;
       }
     }
     await this.refresh();
   }
 
   async showInvite(team: string, code: string) {
-    return api<{ team: string; name: string; role: TeamRole }>(`/api/invites/${team}/${code}`);
+    return api<{ team: string; name: string; role: TeamRole }>(
+      `/api/invites/${team}/${code}`,
+    );
   }
 
   async acceptInvite(team: string, code: string) {
@@ -999,12 +1345,16 @@ export class ControlSession {
 
   /** A team's one-click links nobody has used yet (owners only, #134). */
   async presignedInvites(team: string) {
-    return (await api<{ invites: PresignedInvite[] }>(`/api/teams/${team}/presigned`)).invites;
+    return (
+      await api<{ invites: PresignedInvite[] }>(`/api/teams/${team}/presigned`)
+    ).invites;
   }
 
   /** Cancel one of them: control refuses it from now on. */
   async cancelPresigned(team: string, key: string) {
-    const res = await fetch(`/api/teams/${team}/presigned/${key}`, { method: "DELETE" });
+    const res = await fetch(`/api/teams/${team}/presigned/${key}`, {
+      method: "DELETE",
+    });
     if (!res.ok && res.status !== 404) {
       const j = (await res.json().catch(() => ({}))) as { error?: string };
       throw new HttpError(res.status, j.error ?? `HTTP ${res.status}`, j);
@@ -1019,12 +1369,23 @@ export class ControlSession {
   /** Someone on control, by their login or name: whom to share with, and the root
    * device to pin for them (compare its fingerprint with them). */
   async person(login: string) {
-    return api<{ account: string; name: string; root: string }>(`/api/people?login=${encodeURIComponent(login)}`);
+    return api<{ account: string; name: string; root: string }>(
+      `/api/people?login=${encodeURIComponent(login)}`,
+    );
   }
 
   /** Hand control a push subscription, signed by this device (M21). */
   async subscribePush(sub: { endpoint: string; p256dh: string; auth: string }) {
-    const s = { v: 1, account: this.account, device: this.keys.id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, at: Date.now(), sig: "" };
+    const s = {
+      v: 1,
+      account: this.account,
+      device: this.keys.id,
+      endpoint: sub.endpoint,
+      p256dh: sub.p256dh,
+      auth: sub.auth,
+      at: Date.now(),
+      sig: "",
+    };
     // Frozen (#504): signed.
     const body = `illogical push v1\naccount ${s.account}\ndevice ${s.device}\nendpoint ${s.endpoint}\np256dh ${s.p256dh}\nauth ${s.auth}\nat ${s.at}\n`;
     s.sig = await signText(this.keys, body);
@@ -1043,19 +1404,50 @@ export class ControlSession {
     // Hosted sandboxes go through their provider, a socket each; the rest
     // share the page's one socket to the relay (M25).
     const mux = d.sandbox ? undefined : `${ws}/api/relay/m`;
-    return { daemon: { id: d.id, noise: d.cert.noise }, direct: d.urls, relay: `${ws}/api/relay/c/${d.id}`, mux, keys: this.keys };
+    return {
+      daemon: { id: d.id, noise: d.cert.noise },
+      direct: d.urls,
+      relay: `${ws}/api/relay/c/${d.id}`,
+      mux,
+      keys: this.keys,
+    };
   }
 
   /** A read-only link to a session on daemon `id` (M19): a one-off key, its
    * private half only in the link's fragment. */
-  async makeLink(request: (m: string, p: string, b?: unknown) => Promise<{ ok: boolean; json<T>(): Promise<T> }>, id: string, session: number, ttlSecs: number, history: boolean): Promise<string> {
+  async makeLink(
+    request: (
+      m: string,
+      p: string,
+      b?: unknown,
+    ) => Promise<{ ok: boolean; json<T>(): Promise<T> }>,
+    id: string,
+    session: number,
+    ttlSecs: number,
+    history: boolean,
+  ): Promise<string> {
     const d = this.daemons.find((x) => x.id === id);
     if (!d) throw new Error("no such machine");
-    const kp = (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"])) as CryptoKeyPair;
-    const seed = new Uint8Array(await crypto.subtle.exportKey("pkcs8", kp.privateKey)).slice(16);
-    const pub = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
-    const res = await request("POST", "/api/links", { session, key: hex(pub), ttl_secs: ttlSecs, history });
-    if (!res.ok) throw new Error((await res.json<{ error?: string }>().catch(() => null))?.error ?? "couldn't make a link");
+    const kp = (await crypto.subtle.generateKey({ name: "X25519" }, true, [
+      "deriveBits",
+    ])) as CryptoKeyPair;
+    const seed = new Uint8Array(
+      await crypto.subtle.exportKey("pkcs8", kp.privateKey),
+    ).slice(16);
+    const pub = new Uint8Array(
+      await crypto.subtle.exportKey("raw", kp.publicKey),
+    );
+    const res = await request("POST", "/api/links", {
+      session,
+      key: hex(pub),
+      ttl_secs: ttlSecs,
+      history,
+    });
+    if (!res.ok)
+      throw new Error(
+        (await res.json<{ error?: string }>().catch(() => null))?.error ??
+          "couldn't make a link",
+      );
     return `${this.info.url}/#link=${d.id}.${d.cert.noise}.${hex(seed)}.${hex(pub)}`;
   }
 
@@ -1066,9 +1458,16 @@ export class ControlSession {
   }
 
   private async approveDevice(c: Cert) {
-    const signed: Cert = { ...c, account: this.account, approver: this.keys.id, sig: "" };
+    const signed: Cert = {
+      ...c,
+      account: this.account,
+      approver: this.keys.id,
+      sig: "",
+    };
     signed.sig = await signText(this.keys, certBody(signed));
-    await this.approving(api(`/api/devices/${c.device}/approve`, { cert: signed }));
+    await this.approving(
+      api(`/api/devices/${c.device}/approve`, { cert: signed }),
+    );
   }
 
   /** An approval's request: refused, it says which check failed and what
@@ -1078,7 +1477,10 @@ export class ControlSession {
     try {
       await req;
     } catch (e) {
-      const reason = e instanceof HttpError && typeof e.body.reason === "string" ? e.body.reason : "";
+      const reason =
+        e instanceof HttpError && typeof e.body.reason === "string"
+          ? e.body.reason
+          : "";
       if (!reason) throw e;
       // Checked here too: if this browser's own reckoning agrees, refresh
       // switches to the screen that says so.
@@ -1099,22 +1501,35 @@ export class ControlSession {
     const c = normalizeCode(code);
     if (!c) throw new Error("a code is ten letters and digits");
     const j = await api<JoinRequest>(`/api/joins/${c}`);
-    if ((await joinCode(j.cert)) !== c) throw new Error("that request doesn't match its code: not approving it");
+    if ((await joinCode(j.cert)) !== c)
+      throw new Error("that request doesn't match its code: not approving it");
     return j;
   }
 
   /** Teams I can put my machines in (#332): any I'm in, but only those I
    * own while they're locked. */
   addableTeams(): Team[] {
-    return this.teams.filter((t) => t.verified && (t.role === "owner" || !t.locked));
+    return this.teams.filter(
+      (t) => t.verified && (t.role === "owner" || !t.locked),
+    );
   }
 
   /** Approve a daemon into this account, or into `team` (one I'm in): this
    * device signs the team in, so control can't pick one (#100). `devices`
    * waiting with its code (#326) are approved with it, before the page
    * hears of either, so its prompt stays up until both are done. */
-  async approveJoin(code: string, c: Cert, team: string | null = null, devices: Cert[] = []) {
-    const signed: Cert = { ...c, account: this.account, approver: this.keys.id, sig: "" };
+  async approveJoin(
+    code: string,
+    c: Cert,
+    team: string | null = null,
+    devices: Cert[] = [],
+  ) {
+    const signed: Cert = {
+      ...c,
+      account: this.account,
+      approver: this.keys.id,
+      sig: "",
+    };
     signed.sig = await signText(this.keys, certBody(signed));
     let teamSig: string | null = null;
     if (team) {
@@ -1122,7 +1537,13 @@ export class ControlSession {
       if (!t) throw new Error("only the team's members add machines to it");
       teamSig = await signText(this.keys, teamJoinBody(c.device, t.pin));
     }
-    await this.approving(api(`/api/joins/${code}/approve`, { cert: signed, team, team_sig: teamSig }));
+    await this.approving(
+      api(`/api/joins/${code}/approve`, {
+        cert: signed,
+        team,
+        team_sig: teamSig,
+      }),
+    );
     try {
       for (const d of devices) {
         try {
@@ -1148,21 +1569,37 @@ export class ControlSession {
     }
     const at = Date.now();
     const sig = await signText(this.keys, moveBody(daemon, pin, at));
-    await api(`/api/daemons/${daemon}/team`, { team: pin, at, by: this.keys.id, sig });
+    await api(`/api/daemons/${daemon}/team`, {
+      team: pin,
+      at,
+      by: this.keys.id,
+      sig,
+    });
     await this.refresh();
   }
 
   /** Turn a daemon's join down: it stops waiting. */
   /** M48: a desktop app asking to sign in as this account (`#app=`):
    * where it asked from, and whether that's this browser's network. */
-  async showAppLogin(id: string): Promise<{ name: string; code: string; allowed: boolean; from: string; same_network: boolean }> {
+  async showAppLogin(
+    id: string,
+  ): Promise<{
+    name: string;
+    code: string;
+    allowed: boolean;
+    from: string;
+    same_network: boolean;
+  }> {
     return api(`/api/app-login/${encodeURIComponent(id)}`);
   }
 
   /** Allow it: control answers with the app's loopback address, which this
    * browser hands the grant to (only the app on this computer hears it). */
   async allowAppLogin(id: string): Promise<string> {
-    const r = await api<{ redirect: string }>(`/api/app-login/${encodeURIComponent(id)}/allow`, {});
+    const r = await api<{ redirect: string }>(
+      `/api/app-login/${encodeURIComponent(id)}/allow`,
+      {},
+    );
     return r.redirect;
   }
 
@@ -1183,7 +1620,14 @@ export class ControlSession {
   }
 
   async revoke(id: string) {
-    const r: Revocation = { v: 1, account: this.account, device: id, at: Date.now(), by: this.keys.id, sig: "" };
+    const r: Revocation = {
+      v: 1,
+      account: this.account,
+      device: id,
+      at: Date.now(),
+      by: this.keys.id,
+      sig: "",
+    };
     r.sig = await signText(this.keys, revocationBody(r));
     await api("/api/revocations", { revocation: r });
     await this.refresh();

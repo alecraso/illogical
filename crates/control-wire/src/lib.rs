@@ -59,8 +59,16 @@ pub const RELAY_DIAL: &str = "/api/relay/dial";
 pub struct ControlInfo {
     #[serde(default)]
     pub control: bool,
+    /// The URL this answer was asked at.
     #[serde(default)]
     pub url: String,
+    /// Where control is now (#507), when it answers at more than one URL:
+    /// a daemon on another of them may move here.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub primary: String,
+    /// Every URL control answers at, `primary` first (#507).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub urls: Vec<String>,
     #[serde(default)]
     pub github: bool,
     /// Passkeys need a domain name: WebAuthn refuses IP addresses.

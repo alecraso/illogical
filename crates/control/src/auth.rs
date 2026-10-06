@@ -90,7 +90,7 @@ impl FromRequestParts<Arc<App>> for Session {
         if parts.method != Method::GET || upgrade {
             let origin = parts.headers.get(header::ORIGIN).and_then(|o| o.to_str().ok());
             match origin {
-                Some(o) if o == app.cfg.origin => {}
+                Some(o) if o == app.cfg.site(&parts.headers).origin => {}
                 None if !upgrade => {}
                 _ => return Err(err(StatusCode::FORBIDDEN, "cross-origin request refused")),
             }
@@ -263,11 +263,12 @@ fn safe_next(next: Option<&str>) -> String {
     }
 }
 
-fn callback_url(app: &App) -> String {
-    format!("{}/auth/github/callback", app.cfg.public_url)
+/// Back to the site the sign-in started on (#507): its cookies are there.
+fn callback_url(app: &App, headers: &HeaderMap) -> String {
+    format!("{}/auth/github/callback", app.cfg.site(headers).url)
 }
 
-pub async fn github_start(State(app): State<Arc<App>>, Query(q): Query<Start>) -> Response {
+pub async fn github_start(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<Start>) -> Response {
     let Some(gh) = &app.cfg.github else {
         return (StatusCode::NOT_FOUND, "GitHub sign-in isn't configured here").into_response();
     };
@@ -275,7 +276,7 @@ pub async fn github_start(State(app): State<Arc<App>>, Query(q): Query<Start>) -
     let next = safe_next(q.next.as_deref());
     let url = url::Url::parse_with_params(
         &format!("{}/login/oauth/authorize", gh.url),
-        &[("client_id", gh.client_id.as_str()), ("redirect_uri", &callback_url(&app)), ("state", &state)],
+        &[("client_id", gh.client_id.as_str()), ("redirect_uri", &callback_url(&app, &headers)), ("state", &state)],
     )
     .unwrap();
     let mut res = Redirect::to(url.as_str()).into_response();
@@ -358,7 +359,7 @@ async fn github_finish(app: &App, headers: &HeaderMap, q: Callback) -> Result<(S
         .append_pair("client_id", &gh.client_id)
         .append_pair("client_secret", &gh.client_secret)
         .append_pair("code", &code)
-        .append_pair("redirect_uri", &callback_url(app))
+        .append_pair("redirect_uri", &callback_url(app, headers))
         .finish();
     let tok: TokenResponse = app
         .http

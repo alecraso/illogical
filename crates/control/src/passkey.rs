@@ -32,7 +32,7 @@ use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::{ApiError, App, auth, err};
+use crate::{ApiError, App, Site, auth, err};
 
 const CHALLENGE_TTL_MS: u64 = 5 * 60 * 1000;
 const ES256: i64 = -7;
@@ -76,8 +76,10 @@ impl Challenges {
     }
 }
 
-fn rp_id(app: &App) -> String {
-    url::Url::parse(&app.cfg.public_url).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default()
+/// Passkeys are made for the site they're made on (#507): one made at an
+/// old URL works only there.
+fn rp_id(site: &Site) -> &str {
+    site.host()
 }
 
 fn bad(why: &str) -> ApiError {
@@ -99,7 +101,7 @@ async fn session_of(app: &Arc<App>, headers: &HeaderMap) -> Option<String> {
 
 fn same_origin(app: &App, headers: &HeaderMap) -> Result<(), ApiError> {
     match headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) {
-        Some(o) if o == app.cfg.origin => Ok(()),
+        Some(o) if o == app.cfg.site(headers).origin => Ok(()),
         _ => Err(err(StatusCode::FORBIDDEN, "cross-origin request refused")),
     }
 }
@@ -134,7 +136,7 @@ pub async fn register_start(
     let name = if name.is_empty() { "illogical".to_owned() } else { name };
     Ok(Json(json!({
         "challenge": challenge,
-        "rp": { "id": rp_id(&app), "name": "illogical" },
+        "rp": { "id": rp_id(app.cfg.site(&headers)), "name": "illogical" },
         "user": { "id": B64.encode(&user_id), "name": name, "displayName": name },
         "pubKeyCredParams": [
             { "type": "public-key", "alg": EDDSA },
@@ -165,24 +167,24 @@ struct ClientData {
     origin: String,
 }
 
-fn client_data(app: &App, b64: &str, kind: &str) -> Result<(ClientData, Vec<u8>), ApiError> {
+fn client_data(site: &Site, b64: &str, kind: &str) -> Result<(ClientData, Vec<u8>), ApiError> {
     let raw = B64.decode(b64).map_err(|_| bad("bad clientDataJSON"))?;
     let cd: ClientData = serde_json::from_slice(&raw).map_err(|_| bad("bad clientDataJSON"))?;
     if cd.kind != kind {
         return Err(bad("wrong WebAuthn ceremony"));
     }
-    if cd.origin != app.cfg.origin {
+    if cd.origin != site.origin {
         return Err(err(StatusCode::FORBIDDEN, "passkey from another site"));
     }
     Ok((cd, raw))
 }
 
 /// rpIdHash, flags, signCount; the rest.
-fn auth_data<'a>(app: &App, d: &'a [u8]) -> Result<(u8, u32, &'a [u8]), ApiError> {
+fn auth_data<'a>(site: &Site, d: &'a [u8]) -> Result<(u8, u32, &'a [u8]), ApiError> {
     if d.len() < 37 {
         return Err(bad("short authenticator data"));
     }
-    if d[..32] != Sha256::digest(rp_id(app).as_bytes())[..] {
+    if d[..32] != Sha256::digest(rp_id(site).as_bytes())[..] {
         return Err(bad("passkey for another site"));
     }
     let flags = d[32];
@@ -267,7 +269,8 @@ async fn register(
     r: Registration,
 ) -> Result<(String, Option<header::HeaderValue>), ApiError> {
     same_origin(app, headers)?;
-    let (cd, _) = client_data(app, &r.client_data, "webauthn.create")?;
+    let site = app.cfg.site(headers);
+    let (cd, _) = client_data(site, &r.client_data, "webauthn.create")?;
     let Some(Purpose::Register { account, name }) = app.passkeys.take(&cd.challenge) else {
         return Err(bad("that request expired; try again"));
     };
@@ -279,7 +282,7 @@ async fn register(
         .find(|(k, _)| k.as_text() == Some("authData"))
         .and_then(|(_, v)| v.as_bytes())
         .ok_or_else(|| bad("no authenticator data"))?;
-    let (flags, _count, rest) = auth_data(app, data)?;
+    let (flags, _count, rest) = auth_data(site, data)?;
     if flags & AT == 0 || rest.len() < 18 {
         return Err(bad("no credential in the attestation"));
     }
@@ -315,7 +318,7 @@ pub async fn login_start(
     app.limits.check(crate::limit::SIGN_INS, app.limits.client_ip(peer, &headers))?;
     let challenge = app.passkeys.issue(Purpose::Login);
     Ok(Json(
-        json!({ "challenge": challenge, "rpId": rp_id(&app), "userVerification": "required", "timeout": CHALLENGE_TTL_MS }),
+        json!({ "challenge": challenge, "rpId": rp_id(app.cfg.site(&headers)), "userVerification": "required", "timeout": CHALLENGE_TTL_MS }),
     ))
 }
 
@@ -342,14 +345,15 @@ pub async fn login_finish(State(app): State<Arc<App>>, headers: HeaderMap, Json(
 
 fn login(app: &Arc<App>, headers: &HeaderMap, a: Assertion) -> Result<header::HeaderValue, ApiError> {
     same_origin(app, headers)?;
-    let (cd, raw) = client_data(app, &a.client_data, "webauthn.get")?;
+    let site = app.cfg.site(headers);
+    let (cd, raw) = client_data(site, &a.client_data, "webauthn.get")?;
     if !matches!(app.passkeys.take(&cd.challenge), Some(Purpose::Login)) {
         return Err(bad("that request expired; try again"));
     }
     let pk =
         app.db.passkey(&a.id)?.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "this passkey isn't registered here"))?;
     let data = B64.decode(&a.authenticator_data).map_err(|_| bad("bad authenticator data"))?;
-    let (_, count, _) = auth_data(app, &data)?;
+    let (_, count, _) = auth_data(site, &data)?;
     let sig = B64.decode(&a.signature).map_err(|_| bad("bad signature"))?;
     let mut msg = data.clone();
     msg.extend_from_slice(&Sha256::digest(&raw));
@@ -448,7 +452,7 @@ mod tests {
             let cd = json!({ "type": kind, "challenge": challenge, "origin": app.cfg.origin });
             B64.encode(serde_json::to_vec(&cd).unwrap())
         };
-        let rp = Sha256::digest(rp_id(&app).as_bytes()).to_vec();
+        let rp = Sha256::digest(rp_id(&app.cfg.sites[0]).as_bytes()).to_vec();
 
         let k = aws_lc_rs::rsa::KeyPair::generate(KeySize::Rsa2048).unwrap();
         let cred = vec![9u8; 16];
@@ -509,6 +513,86 @@ mod tests {
         // Another key's signature doesn't.
         let other = aws_lc_rs::rsa::KeyPair::generate(KeySize::Rsa2048).unwrap();
         assert!(sign_in(&other).is_err());
+    }
+
+    /// #507: control at two URLs. A passkey is made for the site it's made
+    /// on, signs in there, and isn't taken at the other.
+    #[tokio::test]
+    async fn a_passkey_belongs_to_its_site() {
+        use aws_lc_rs::{rand::SystemRandom, rsa::KeySize, signature::RSA_PKCS1_SHA256};
+        let mut app = App::for_tests("http://control.test");
+        app.cfg.sites.push(crate::Site::new("http://old.test").unwrap());
+        let app = Arc::new(app);
+        let at = |host: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(header::HOST, host.parse().unwrap());
+            h.insert(header::ORIGIN, format!("http://{host}").parse().unwrap());
+            h
+        };
+        let (old, new) = (at("old.test"), at("control.test"));
+        let client = |kind: &str, challenge: &str, origin: &str| {
+            B64.encode(serde_json::to_vec(&json!({ "type": kind, "challenge": challenge, "origin": origin })).unwrap())
+        };
+        let rp = |host: &str| Sha256::digest(host.as_bytes()).to_vec();
+
+        // Each site names itself as the passkey's site.
+        let opts = login_start(State(app.clone()), ConnectInfo("127.0.0.1:1".parse().unwrap()), old.clone());
+        assert_eq!(opts.await.unwrap().0["rpId"], "old.test");
+        let opts = login_start(State(app.clone()), ConnectInfo("127.0.0.1:1".parse().unwrap()), new.clone());
+        assert_eq!(opts.await.unwrap().0["rpId"], "control.test");
+        // A page of one site can't start one at the other.
+        let mut crossed = old.clone();
+        crossed.insert(header::ORIGIN, "http://control.test".parse().unwrap());
+        assert!(login_start(State(app.clone()), ConnectInfo("127.0.0.1:1".parse().unwrap()), crossed).await.is_err());
+
+        // Made at the old site.
+        let k = aws_lc_rs::rsa::KeyPair::generate(KeySize::Rsa2048).unwrap();
+        let cred = vec![7u8; 16];
+        let mut data = rp("old.test");
+        data.push(UP | UV | AT);
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&[0; 16]);
+        data.extend_from_slice(&(cred.len() as u16).to_be_bytes());
+        data.extend_from_slice(&cred);
+        ciborium::into_writer(&rsa_cose(&k), &mut data).unwrap();
+        let att = Cbor::Map(vec![
+            (Cbor::from("fmt"), Cbor::from("none")),
+            (Cbor::from("attStmt"), Cbor::Map(vec![])),
+            (Cbor::from("authData"), Cbor::Bytes(data)),
+        ]);
+        let mut att_bytes = vec![];
+        ciborium::into_writer(&att, &mut att_bytes).unwrap();
+        let challenge = app.passkeys.issue(Purpose::Register { account: None, name: "Sam".into() });
+        let r = Registration {
+            id: B64.encode(&cred),
+            client_data: client("webauthn.create", &challenge, "http://old.test"),
+            attestation: B64.encode(&att_bytes),
+        };
+        register(&app, &old, r).await.unwrap();
+
+        let sign_in = |h: &HeaderMap, origin: &str, rp_host: &str| {
+            let challenge = app.passkeys.issue(Purpose::Login);
+            let cd = client("webauthn.get", &challenge, origin);
+            let mut data = rp(rp_host);
+            data.push(UP | UV);
+            data.extend_from_slice(&0u32.to_be_bytes());
+            let mut msg = data.clone();
+            msg.extend_from_slice(&Sha256::digest(B64.decode(&cd).unwrap()));
+            let mut sig = vec![0; k.public_modulus_len()];
+            k.sign(&RSA_PKCS1_SHA256, &SystemRandom::new(), &msg, &mut sig).unwrap();
+            let a = Assertion {
+                id: B64.encode(&cred),
+                client_data: cd,
+                authenticator_data: B64.encode(&data),
+                signature: B64.encode(&sig),
+            };
+            login(&app, h, a)
+        };
+        assert!(sign_in(&old, "http://old.test", "old.test").is_ok());
+        // At the new site, as a browser would present it there, or as the
+        // old site's: refused either way.
+        assert!(sign_in(&new, "http://control.test", "old.test").is_err());
+        assert!(sign_in(&new, "http://old.test", "old.test").is_err());
     }
 
     #[test]

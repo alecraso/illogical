@@ -241,6 +241,17 @@ in front of it: Caddy, Fly, or `tailscale serve`.
 illogical-control --public-url https://control.example.com --listen 127.0.0.1:7690 --db /var/lib/illogical/control.db
 ```
 
+- **Moving to another URL** (#507): run with `--public-url` set to the new
+  one and `--also-url` (`ILLOGICAL_CONTROL_ALSO_URLS`, comma-separated) to
+  the old. Both answer: a browser is served as the site it came in on, with
+  that site's own origin, cookies and passkeys (a passkey works only where
+  it was made), and its page on an old URL says where control is now.
+  Daemons and CLIs work at any of them. Register the GitHub callback for
+  each URL (an OAuth app takes one host; a GitHub App takes several). Once
+  people have signed in and approved their browsers at the new URL,
+  `--also-redirect` (`ILLOGICAL_CONTROL_ALSO_REDIRECT=true`) sends browsers
+  from an old URL's pages to the new one, while daemons, the API and
+  sign-ins already under way are still answered there.
 - **Sign-in:**
   - **Passkeys** work whenever control has a domain name (WebAuthn refuses
     IP addresses).
