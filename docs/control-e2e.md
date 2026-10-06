@@ -305,7 +305,7 @@ it came from.
   ```
 - AES-GCM rather than ChaCha20-Poly1305, because WebCrypto has AES-GCM and
   not ChaCha. The browser then ships no crypto code: the whole initiator is
-  [about 190 lines](../spikes/s15-control/web/noise.ts) over `crypto.subtle`.
+  [about 190 lines](archive/spikes:spikes/s15-control/web/noise.ts) over `crypto.subtle`.
 - **Prologue:** `"illogical/1" ‖ daemon id ‖ session id or empty`. If the
   relay splices a client onto the wrong daemon, the handshake fails.
 - **Message 1's payload** is encrypted to the daemon's static key only, so

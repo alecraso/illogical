@@ -1,1 +1,0 @@
-Use the Task tool to start a general-purpose subagent whose only job is to use the Bash tool to run exactly: touch from-subagent.txt   and report back. Then reply "sub done".

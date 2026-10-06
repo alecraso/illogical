@@ -1,1 +1,0 @@
-In hello.py change the returned string from "hello" to "hi there". Use the Edit tool. Nothing else.

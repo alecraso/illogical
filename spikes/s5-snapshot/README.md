@@ -1,4 +1,5 @@
 # S5: Ghostty's snapshot format (GHOSTSNP) for checkpoints
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s5-snapshot/<file>`.
 
 Run 2026-10-01 on geek. **Result: pass. Use GHOSTSNP for checkpoints**, with
 the caveats under "Format stability".

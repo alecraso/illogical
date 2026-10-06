@@ -1,1 +1,0 @@
-In hello.py change the returned string to "terminal no". Use the Edit tool. If rejected, say NO and stop.

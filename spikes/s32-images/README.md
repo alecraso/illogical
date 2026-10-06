@@ -1,4 +1,5 @@
 # S32: images into a pane, measured (#248)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s32-images/<file>`.
 
 Can a screenshot get into a Claude Code session in any pane, from any client, by uploading it to the pane's host and pasting the path (PLAN.md, "Images track")? This spike answers the questions that shape M70 and M71. Everything here ran on alecraso's Mac mini (macOS, arm64) on 2026-10-05:
 

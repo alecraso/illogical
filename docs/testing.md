@@ -270,8 +270,8 @@ Recorded from real systems and checked in, so tests see real shapes:
 | `crates/vt/fixtures/` | raw PTY output of scripted sessions (`.bin`) and their sizes and resizes (`.json`) | `just fixtures [names]` (`record.py`) |
 | `crates/vt/fixtures/screens/` | Claude Code and Codex screens, the title on the first line | by hand, from a real terminal or a recording |
 | `crates/vt/fixtures/agents/` | Claude Code and Codex sessions with their timing, for the replay agent | `crates/vt/fixtures/agents/record.py NAME` |
-| `crates/daemon/tests/fixtures/github`, `gitlab`, `forgejo` | API responses for real PRs and issues (from S23) | by hand, as in `spikes/s23-forge/` |
-| `crates/daemon/tests/fixtures/conversations/` | Claude Code transcripts, one per shape (S20) | by hand, as in `spikes/s20-conversations/` |
+| `crates/daemon/tests/fixtures/github`, `gitlab`, `forgejo` | API responses for real PRs and issues (from S23) | by hand, as in `archive/spikes:spikes/s23-forge/` |
+| `crates/daemon/tests/fixtures/conversations/` | Claude Code transcripts, one per shape (S20) | by hand, as in `archive/spikes:spikes/s20-conversations/` |
 | `crates/daemon/tests/fixtures/conversations/desktop/` | the Claude desktop app's Code tab session records (#81, #83), made up from the fields S20 saw | by hand |
 | `crates/daemon/tests/fixtures/s13-*`, `s18-*` | Claude Code hook payloads | by hand |
 | `crates/daemon/tests/fixtures/fountain/`, `chant/` | Fountain API and chant output | by hand |
@@ -327,19 +327,18 @@ WebKit needs `pnpm exec playwright install webkit` once.
 
 ### Spike: blocks through control (S27)
 
-`spikes/s27-blocks/` has its own Playwright suite for #148 (blocks served
-from control's block domain, carried to the daemon over Noise by a service
-worker). It isn't part of `just e2e`; run it from that directory:
+S27 (`spikes/s27-blocks/`, now on the `archive/spikes` branch) has its own
+Playwright suite for #148 (blocks served from control's block domain, carried
+to the daemon over Noise by a service worker). It isn't part of `just e2e`;
+check the branch out in its own worktree and run it from the spike's directory:
 
 ```sh
-cd spikes/s27-blocks
-pnpm install
-./fetch-code-server.sh      # once, for tests/code-server.spec.ts (it skips without)
+git worktree add ../illogical-spikes archive/spikes
+cd ../illogical-spikes/spikes/s27-blocks
 pnpm test                   # builds s27 and the worker, then Chromium and WebKit
 pnpm typecheck
 ./linux-webkit.sh [specs]   # WebKit on Linux in Playwright's container (Docker, Zig)
 node safari/safari.ts       # real Safari via safaridriver; --ios for the Simulator
-../../testnet/macos/s27-safari.sh   # the same in a fresh tart VM's Safari
 ./webkitgtk.sh              # the same in the desktop app's WebKitGTK (Ubuntu 22.04, Docker)
 ./netem.sh                  # the latency spec with control, box and browser 20 ms apart (Docker)
 ```
@@ -900,7 +899,7 @@ Real gaps, each one automatable:
   detach and reattach ([development.md](development.md#testing-iterm2))
   aren't in `just macos iterm2` yet; they can be, with the same
   AppleScript.
-- **S27 in iOS Safari:** `spikes/s27-blocks/safari/safari.ts --ios`
+- **S27 in iOS Safari:** `archive/spikes:spikes/s27-blocks/safari/safari.ts --ios`
   needs the Simulator, so the Xcode image (#257). macOS Safari runs
   unattended with `testnet/macos/s27-safari.sh`.
 - **The tart tests in CI** on the macos-arm64 runner ([above](#on-the-macos-arm64-runner)).

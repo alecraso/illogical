@@ -1,4 +1,5 @@
 # S4: reach (sprites, wisp, tailnet)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s4-reach/<file>`.
 
 Run 2026-10-01 from geek. The sandboxes tested:
 

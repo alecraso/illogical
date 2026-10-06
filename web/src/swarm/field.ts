@@ -1,5 +1,5 @@
 // The swarm's field (M26): every pane as a tile on one Canvas 2D, ported
-// from the prototype (spikes/s16-swarm/canvas.html). Tiles are coloured by
+// from the prototype (archive/spikes:spikes/s16-swarm/canvas.html). Tiles are coloured by
 // kind and lit by activity; each is pulled toward its cluster's centre in
 // proportion to how busy it is, so busy panes sit in the middle and idle
 // ones drift out, and they push each other apart through a grid. A pane

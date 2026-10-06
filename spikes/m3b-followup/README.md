@@ -1,4 +1,5 @@
 # M3b follow-up spike: awake, slow readers, kill, cold, replay
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/m3b-followup/<file>`.
 
 Run 2026-10-01 on geek against local wisp. It answers the "Still open" list of
 [the M3b spike](../m3b-machines/README.md), apart from Fly and a wispd

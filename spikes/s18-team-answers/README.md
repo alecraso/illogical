@@ -1,4 +1,5 @@
 # S18: team answers (permission hooks, follow-ups, notification answers)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s18-team-answers/<file>`.
 
 Run 2026-10-02 on geek, for #45 (before M29, #46). **Result: go on all three,
 with one change of method and two gaps for M29 to fill.**

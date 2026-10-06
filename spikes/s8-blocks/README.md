@@ -1,4 +1,5 @@
 # S8: which block types come next
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s8-blocks/<file>`.
 
 Run 2026-10-02 on geek, for #6 (before M10, #7, and M11, #8). **Result: build
 a cut of M11 (a diff block and a file block, for reviewing what an agent

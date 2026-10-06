@@ -1,4 +1,5 @@
 # S19: illogical as a TUI (herdr's shape)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s19-tui/<file>`.
 
 Run 2026-10-02 on geek, for #48. **Result: go. The protocol and libghostty already do
 the hard parts; drawing is under a millisecond a frame. What's left is

@@ -1,4 +1,5 @@
 # S26: how native can the desktop app get (macOS and Linux)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s26-native/<file>`.
 
 Run 2026-10-04 on geek (Ubuntu 26.04, GNOME/Wayland, 240 Hz, Radeon 8060S, GTK 4.22, libadwaita
 1.9) and on Jake's MacBook Air (M4, macOS 15.5, 60 Hz Retina). Built on jake-mini too. Issue #141.

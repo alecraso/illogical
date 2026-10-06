@@ -1,1 +1,0 @@
-In hello.py change the returned string to "reject me". Use the Edit tool. If the edit is rejected, just say REJECTED and stop.

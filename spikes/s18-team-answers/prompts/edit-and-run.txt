@@ -1,1 +1,0 @@
-First use the Write tool to create notes.txt containing the word hello. Then use the Bash tool to run exactly: python3 -c "print(5*5)"   Then reply "done".

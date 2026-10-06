@@ -1,4 +1,5 @@
 # S33: the phone as a hand
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s33-phone-hand/<file>`.
 
 Can an agent in a pane use the phone: its location, its camera, its mic, the person holding it? #268 asked this for native apps first, with a push to wake the phone. Two things changed the plan on the day (2026-10-05):
 

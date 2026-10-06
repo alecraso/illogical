@@ -1,4 +1,0 @@
-# netem.sh's image: Playwright's (Node and Chromium) plus tc.
-FROM mcr.microsoft.com/playwright:v1.63.0-noble
-RUN apt-get update && apt-get install -y --no-install-recommends iproute2 \
-    && rm -rf /var/lib/apt/lists/*

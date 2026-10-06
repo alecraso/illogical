@@ -1,4 +1,5 @@
 # S22: studio apps as panes (framing, hud's questions as illogical asks)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s22-apps/<file>`.
 
 Run 2026-10-02 on geek, against a real studio box: a clone of `arugula-box-template` on geek's
 wispd (`s21-app`, made before this spike was renumbered from S21), with hud, the door, the app and the

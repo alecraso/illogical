@@ -1,1 +1,0 @@
-Use the Task tool to start a general-purpose subagent whose only job is to use the Bash tool to run exactly: python3 -c "print(8*8)"   and report the output. Wait for it, then reply with the number.

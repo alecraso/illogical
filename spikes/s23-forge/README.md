@@ -1,4 +1,5 @@
 # S23: forge blocks (#87)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s23-forge/<file>`.
 
 Run 2026-10-02 on geek. Forgejo: this repo on `git.inevitable.fyi` (Forgejo 16.0.5, `tea` 0.16.0, login
 `forgejo`), plus Codeberg (also Forgejo) anonymously for PRs with reviews, forks and red checks, since

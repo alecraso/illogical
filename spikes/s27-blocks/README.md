@@ -1,4 +1,5 @@
 # S27: blocks through control, end to end
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s27-blocks/<file>`.
 
 Spike for #148 (PLAN.md, "No special machines track", S27). Run on
 2026-10-05 on an Apple M5 Pro (18 cores, macOS 26.6) under a shared,

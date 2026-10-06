@@ -1,4 +1,5 @@
 # S6: non-terminal blocks (agent blocks and browser blocks)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s6-blocks/<file>`.
 
 Run 2026-10-01 on geek. **Result: both block types are feasible.** Three
 assumptions in the M6 plan need to change:

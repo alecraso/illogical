@@ -1,6 +1,6 @@
 //! Snapshot round trips over recorded and generated sessions
 //! (`fixtures/*.bin`: S1's recordings from `fixtures/record.py`, and the
-//! S1/S5 follow-up's, from `spikes/s1s5-followup/gen.py` and
+//! S1/S5 follow-up's, from `archive/spikes:spikes/s1s5-followup/gen.py` and
 //! `record_claude.py`). Feed a fixture into A, snapshot A into a fresh B, and
 //! require that everything observable matches: as restored, and after each
 //! probe (bytes sent to both afterwards to bring out state that can't be

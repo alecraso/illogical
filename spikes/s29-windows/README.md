@@ -1,4 +1,5 @@
 # S29: Windows feasibility (#216)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s29-windows/<file>`.
 
 Can illogical run panes on Windows the way it does on Linux and macOS? This spike answers the questions that could change the track's shape (PLAN.md, "Windows track") before any milestone starts. Everything here was run in the Windows 11 VM on geek: Windows 11 Pro 25H2 (build 26200), 8 vCPUs, under KVM. The VM runs in docker as `illogical-win` and is reached with `ssh win`.
 

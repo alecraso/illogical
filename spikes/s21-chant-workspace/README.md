@@ -1,4 +1,5 @@
 # S21: a chant workspace as blocks (#70)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s21-chant-workspace/<file>`.
 
 **Verdict: go.** A `workspace` block that reads chant's read contract and nothing else is enough to make a chant workspace something you work *in*, not just look at. It shows members as cards you open shells, agents and diffs on. Records show with their blocked and drift state. A gate waiting in any member becomes illogical attention, and *Approve* resolves it with chant's own `approve`. None of it needed a change to chant.
 

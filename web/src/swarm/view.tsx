@@ -7,7 +7,7 @@
 // Code, Cursor or nvim follows its cursor (`follow.tsx`); its debugger
 // stopping, errors after a save, a merge conflict and Claude Code's diffs
 // are cards. The look and the motion are the prototype's
-// (spikes/s16-swarm/canvas.html). On a phone the rail is a strip of cards
+// (archive/spikes:spikes/s16-swarm/canvas.html). On a phone the rail is a strip of cards
 // along the bottom, and the field pinches and pans.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";

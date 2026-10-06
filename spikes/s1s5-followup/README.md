@@ -1,4 +1,5 @@
 # S1/S5 follow-up: new fixtures, both snapshot paths, Ghostty main
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s1s5-followup/<file>`.
 
 Run 2026-10-01 on geek. **Result:**
 

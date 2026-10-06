@@ -1,4 +1,5 @@
 # S31: a phone as a machine (#246)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s31-mobile/<file>`.
 
 Can a phone be an illogical machine, with illogicald running on it and panes that every other client can see and drive? A phone that's only a client already works. This spike asks about running terminals *on* the phone.
 

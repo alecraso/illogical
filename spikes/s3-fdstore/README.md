@@ -1,4 +1,5 @@
 # S3: PTYs survive daemon restarts (fd store + per-pane scopes)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s3-fdstore/<file>`.
 
 Run 2026-10-01 on geek (systemd 259, user manager). **Result: pass.**
 

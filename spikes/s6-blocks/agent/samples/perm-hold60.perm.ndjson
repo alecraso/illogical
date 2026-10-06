@@ -1,4 +1,0 @@
-{"t":0,"pid":578503,"ev":"start","mode":"hold:60"}
-{"t":34,"pid":578503,"ev":"notification","method":"notifications/initialized"}
-{"t":1956,"pid":578503,"ev":"request","params":{"name":"approve","arguments":{"tool_name":"Bash","input":{"command":"echo held > held60.txt","description":"Create a file with specific content"},"tool_use_id":"toolu_015u4Tic8FsuSMeBoLekFhHg"},"_meta":{"claudecode/toolUseId":"toolu_015u4Tic8FsuSMeBoLekFhHg","progressToken":2}}}
-{"t":61961,"pid":578503,"ev":"answer","decision":{"behavior":"allow","updatedInput":{"command":"echo held > held60.txt","description":"Create a file with specific content"}}}

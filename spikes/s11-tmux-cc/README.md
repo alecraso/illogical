@@ -1,4 +1,5 @@
 # S11: what a tmux `-CC` front end has to speak (M5)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s11-tmux-cc/<file>`.
 
 Run 2026-10-01 on geek. There is no Mac here, so this is iTerm2's source plus
 a scripted client that replays iTerm2's commands against real tmux 3.6.

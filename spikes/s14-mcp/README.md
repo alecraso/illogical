@@ -1,4 +1,5 @@
 # S14: MCP (rmcp, Claude Code and Codex as clients, VM reachability)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s14-mcp/<file>`.
 
 Run 2026-10-02 on geek, for #4 (before M16, #5). **Result: go on rmcp, with
 four changes to M16's plan.** rmcp 3.5 does everything M16 asks for, over

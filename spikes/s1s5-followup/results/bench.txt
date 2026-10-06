@@ -1,5 +1,0 @@
-s1_seq       crate 0.474 ms  patched 3.289 ms
-s1_nvim      crate 0.070 ms  patched 2.545 ms
-s1_top       crate 0.033 ms  patched 0.927 ms
-claude       crate 0.093 ms  patched 1.254 ms
-decsc_1049   crate 0.114 ms  patched 1.016 ms

@@ -1,4 +1,0 @@
-{"t":0,"pid":583687,"ev":"start","mode":"hold:10"}
-{"t":30,"pid":583687,"ev":"notification","method":"notifications/initialized"}
-{"t":1850,"pid":583687,"ev":"request","params":{"name":"approve","arguments":{"tool_name":"Bash","input":{"command":"echo orphan > eof-orphan.txt","description":"Create a file containing the text \"orphan\""},"tool_use_id":"toolu_011sfZaXDN2nsofmDumL5tCK"},"_meta":{"claudecode/toolUseId":"toolu_011sfZaXDN2nsofmDumL5tCK","progressToken":2}}}
-{"t":11852,"pid":583687,"ev":"answer","decision":{"behavior":"allow","updatedInput":{"command":"echo orphan > eof-orphan.txt","description":"Create a file containing the text \"orphan\""}}}

@@ -1,4 +1,5 @@
 # S1: libghostty-vt snapshot fidelity
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s1-ghostty/<file>`.
 
 Run 2026-10-01 on geek. **Result: pass.** With a ~150-line fix-up layer
 on top of libghostty-vt's formatter, a snapshot reproduces the source

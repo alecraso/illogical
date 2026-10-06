@@ -1,4 +1,5 @@
 # S7: the agent block as an ACP client
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s7-acp/<file>`.
 
 Run 2026-10-01 on geek. **Result: ACP works for the agent block, with
 changes.** One small hand-rolled client drove `claude-agent-acp`, `codex-acp`

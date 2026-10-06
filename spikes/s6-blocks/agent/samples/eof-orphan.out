@@ -1,9 +1,0 @@
-{"claude_pid":583667}
-[1ms] > sent "Run exactly `echo orphan > eof-orphan.txt` with the Bash tool, then say done."
-[423ms] < system/init session=63470cd4-f3a3-4041-aca7-4bcbef82eb59 model=claude-haiku-4-5-20251001 perm=default mcp=[{"name":"perm","status":"connected","source":"dynamic"}] tools=1
-[1313ms] < system/thinking_tokens {"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"estimated_tokens_delta":50,"session_id":"63470cd4-f3a3-4041-aca7-4bcbef82eb59","uuid":"bc082db1-a598-42a7-9b7b-52a38d2c8108","_t":13
-[1544ms] < system/thinking_tokens {"type":"system","subtype":"thinking_tokens","estimated_tokens":131,"estimated_tokens_delta":81,"session_id":"63470cd4-f3a3-4041-aca7-4bcbef82eb59","uuid":"c7ef4d72-d9a3-4e1a-a418-3a1dfeb6a00a","_t":1
-[1545ms] < assistant [{"thinking":1}]
-[2024ms] < assistant [{"tool_use":"Bash","input":{"command":"echo orphan > eof-orphan.txt","description":"Create a file containing the text \"orphan\""},"id":"toolu_011sfZaXDN2nsofmDumL5tCK"}]
-[2036ms] < rate_limit_event {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1790854200,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"out_of_credits","isUsingOverage":
-[2056ms] tool_use seen, permission held; harness SIGKILLs itself

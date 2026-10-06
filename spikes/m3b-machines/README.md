@@ -1,4 +1,5 @@
 # M3b spike: ephemeral wisp machines
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/m3b-machines/<file>`.
 
 Run 2026-10-01 on geek against local wisp. **Result: pass. Build M3b on exec
 TTY sessions; the proxy + in-guest daemon path is not needed for speed.** Two

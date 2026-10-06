@@ -1,4 +1,5 @@
 # S17: editors in the swarm (Claude Code's IDE protocol, remote extensions, editor events, servers)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s17-editors/<file>`.
 
 Run 2026-10-02 on geek, for #41 (before M27, #42, and M28, #43). **Result: go on
 illogicald as a Claude Code IDE (as a complement to M29's hook, not a

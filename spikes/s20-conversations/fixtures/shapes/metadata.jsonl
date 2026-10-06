@@ -1,6 +1,0 @@
-{"type": "ai-title", "aiTitle": "<36 chars>", "sessionId": "7de713da-2b1c-44ff-bd36-c843bc6c7fe8"}
-{"type": "custom-title", "customTitle": "<5 chars>", "sessionId": "29c39f5a-5aa0-4daf-84fd-2b25580e55e4"}
-{"type": "agent-name", "agentName": "<5 chars>", "sessionId": "29c39f5a-5aa0-4daf-84fd-2b25580e55e4"}
-{"type": "last-prompt", "lastPrompt": "<201 chars>", "leafUuid": "f3f6654b-b0d4-4077-a94c-776499834058", "sessionId": "7de713da-2b1c-44ff-bd36-c843bc6c7fe8"}
-{"type": "continued-in", "timestamp": "2026-09-29T04:57:54.462Z", "sessionId": "39702032-e752-410d-aeaa-5f0dd07ad044", "continuedInSessionId": "97b8ddf2-1289-478d-a4fb-53bc0291e94a"}
-{"type": "relocated", "sessionId": "8cd4c970-5f68-4ffb-9da8-00178437ac96", "relocatedCwd": "/work/project"}

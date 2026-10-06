@@ -1,4 +1,5 @@
 # S20: Claude Code conversations as blocks
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s20-conversations/<file>`.
 
 Run 2026-10-02 on geek. **Result: go, with three changes to M33.** A session
 the CLI made resumes through the adapter the daemon already installs, with its

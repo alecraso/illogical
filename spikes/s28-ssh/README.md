@@ -1,4 +1,5 @@
 # S28: reach a machine over ssh
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s28-ssh/<file>`.
 
 Spike for the SSH track (#153, tracker #157). Run on 2026-10-04 from a Mac
 (Apple silicon, OpenSSH 9.x) against the test stack's `ssh` profile

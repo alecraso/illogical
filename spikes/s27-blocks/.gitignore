@@ -1,7 +1,0 @@
-target/
-node_modules/
-dist/
-.run/
-test-results/
-playwright-report/
-.pnpm-store/

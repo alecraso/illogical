@@ -1,3 +1,0 @@
-# This spike pins libghostty-vt 0.2.2, whose Ghostty needs exactly this Zig.
-[tools]
-zig = "0.15.2"

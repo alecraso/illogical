@@ -1,1 +1,0 @@
-Use the Bash tool to run exactly: python3 -c "print(41+1)"   Then reply with its output.

@@ -1,4 +1,5 @@
 # S25: a desktop shell (Tauri 2 on WebKitGTK and WKWebView)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s25-desktop/<file>`.
 
 Run 2026-10-04 on geek (Ubuntu 26.04, GNOME on Wayland, Radeon 8060S, a 240 Hz display, WebKitGTK
 2.52.6) and jake-mini (macOS 15.5, arm64). The question (#130): is a Tauri 2 window around the

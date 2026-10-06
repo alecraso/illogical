@@ -1,4 +1,5 @@
 # S10: ghostty-web in the browser, and attach time
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s10-ghostty-web/<file>`.
 
 Run 2026-10-01 on geek. **Result: M8's trigger is not met.** ghostty-web's
 engine reproduces the daemon's screen for 6 of the 7 S1 fixtures in every

@@ -1,4 +1,5 @@
 # S9: memory per pane (does M9 need to happen?)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s9-memory/<file>`.
 
 Run 2026-10-01 on geek (Ryzen AI MAX+ 395, 32 threads, 121 GB). **Result: the
 M9 trigger holds today (3.1 to 3.7 MB of daemon RSS per idle pane), but

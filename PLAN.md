@@ -2849,7 +2849,7 @@ One live view of every pane on every machine you (or your team) can see. Panes f
   - `subscribe {summary: true}`: summaries only, for the swarm and the fleet: answered with a fresh `State` whose panes leave out `epoch`, `policy` and `integration`, and it attaches to nothing (`new Client(base, e2e, true)` in the web client makes no terminals);
   - role filtering: a person sees summaries only for sessions they have a role on, and someone else's private pane is only `{id, private: true, …}`, with no directory, command, kind, project, activity, title, question or reason;
   - `State::apply` (proto) for Rust clients: the tmux front end and the tests follow deltas; `illogical ls --json` shows kind, project and activity.
-- **Measured** (`spikes/s16-swarm/m23.py`, S16's load: 500 panes, 50 busy, a build-like command every ~5 s each, release build on geek):
+- **Measured** (`archive/spikes:spikes/s16-swarm/m23.py`, S16's load: 500 panes, 50 busy, a build-like command every ~5 s each, release build on geek):
 
   | | daemon CPU | to each client | deflate | messages |
   |---|---|---|---|---|
@@ -3240,7 +3240,7 @@ illogical in any terminal, as [herdr](https://herdr.dev) does. `illogical tui` d
 - **Kitty keys:** the daemon used to drop the kitty keyboard reply for everyone (xterm.js can't send those keys). Now `attach` takes `kitty_keys`, and a pane answers while a client that speaks them is attached. With that, Claude Code's Shift+Enter (CSI 13;2u) works in a TUI pane.
 - **Protocol:** it attaches as #49 and #52 left things (history 10k, zstd, acks), and holds a pane's drawing while its program is mid-frame (mode 2026, at most 250 ms).
 - **Moving a pane** is Alt-drag (or *Move pane…*, then a click): the panes have no title bars to drag by.
-- **Measured** (`spikes/s19-tui/bench.sh` with `TUI_BIN`, release, four flooding panes at 200x50): a frame builds in p99 0.86 ms and builds and writes in p99 1.5 ms, using 42% of a core.
+- **Measured** (`archive/spikes:spikes/s19-tui/bench.sh` with `TUI_BIN`, release, four flooding panes at 200x50): a frame builds in p99 0.86 ms and builds and writes in p99 1.5 ms, using 42% of a core.
 - **Tests:**
   - `web/e2e/tui.spec.ts` runs the TUI in tmux beside the browser: splits, typing, renames and closes go both ways;
   - unit tests for key encoding (kitty and legacy), the engine's view, and the agent transcript;
@@ -3951,7 +3951,7 @@ Today illogical knows Fountain only as an ACP command: an agent block runs `foun
 
 `illogical agent --as <fountain agent>`, and *Run here* in M43: a Claude agent block on this host, in a worktree (or the current directory), configured as that agent. A terminal `claude` launched from the picker as *Claude Code as…* gets the same bundle through flags.
 
-- **S24's q1 passed** through `claude-agent-acp` (`spikes/s24-fountain/q1-acp.mjs`). Keep `settingSources: []` when merging the options into Claude's `meta`.
+- **S24's q1 passed** through `claude-agent-acp` (`archive/spikes:spikes/s24-fountain/q1-acp.mjs`). Keep `settingSources: []` when merging the options into Claude's `meta`.
 - **The bundle** is built by the daemon from the agent's recipe (M43's read), and cached under `~/.cache/illogical/fountain/<agent id>/<updated_at>/`:
   - a plugin whose `skills/` holds the inline skills, plus the GitHub ones. GitHub repos are shallow-cloned into a shared cache and refreshed once a day;
   - the system prompt, after a short preamble: you're local, and `/home/sprite`, `/workspace`, vaults and spawning describe the sandbox;

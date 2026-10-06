@@ -1,4 +1,5 @@
 # S13: questions and forms from agents
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s13-questions/<file>`.
 
 Run 2026-10-01 on geek. **Result: the M6c design works, with four
 corrections.** AskUserQuestion arrives as a clean form elicitation from

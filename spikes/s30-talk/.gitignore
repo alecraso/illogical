@@ -1,6 +1,0 @@
-target/
-node_modules/
-webrtc/reports/
-webrtc/*.log
-webrtc/pw*.out
-webrtc/mac/S30Probe.app/

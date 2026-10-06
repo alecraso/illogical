@@ -1,4 +1,5 @@
 # S16: before the swarm (summaries, activity, fleet connections, canvas)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s16-swarm/<file>`.
 
 Run 2026-10-02 on geek (Ryzen AI MAX+ 395, 32 threads, 121 GB), for the
 swarm track (#36, cut for the MVP in #44). **Result: go on all three.**

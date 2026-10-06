@@ -1,1 +1,0 @@
-Use the Bash tool to run exactly: sleep 10   Then reply "slept".

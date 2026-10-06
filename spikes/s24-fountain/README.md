@@ -1,4 +1,5 @@
 # S24: Fountain, more deeply (agent catalog, agents worn locally, runners)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s24-fountain/<file>`.
 
 Run 2026-10-03 on geek, against hosted Fountain (`managoat.com`, Jake's account, CLI v0.21.0).
 Today illogical knows Fountain only as an ACP command: an agent block can run `fountain acp

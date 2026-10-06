@@ -1,9 +1,0 @@
-{
-  "name": "xterm-check",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@xterm/addon-unicode11": "^0.9.0",
-    "@xterm/headless": "^6.0.0"
-  }
-}

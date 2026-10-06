@@ -1,6 +1,0 @@
-{"t":0,"pid":575735,"ev":"start","mode":"auto"}
-{"t":32,"pid":575735,"ev":"notification","method":"notifications/initialized"}
-{"t":0,"pid":576414,"ev":"start","mode":"auto"}
-{"t":31,"pid":576414,"ev":"notification","method":"notifications/initialized"}
-{"t":5507,"pid":576414,"ev":"request","params":{"name":"approve","arguments":{"tool_name":"Bash","input":{"command":"echo hello > hello.txt","description":"Write hello to hello.txt"},"tool_use_id":"toolu_01Q2xP4aRWyRdbBPagQiWMTE"},"_meta":{"claudecode/toolUseId":"toolu_01Q2xP4aRWyRdbBPagQiWMTE","progressToken":2}}}
-{"t":5510,"pid":576414,"ev":"answer","decision":{"behavior":"allow","updatedInput":{"command":"echo hello > hello.txt","description":"Write hello to hello.txt"}}}

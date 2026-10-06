@@ -1,4 +1,5 @@
 # S30: talk spike (#239)
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s30-talk/<file>`.
 
 Run 2026-10-05 on geek (Ubuntu 26.04), jake-air (macOS 15.5) and the Win11 VM. This spike comes before the Talk track: M61 threads, M62 team channels, M63 voice. The tracker is #244.
 

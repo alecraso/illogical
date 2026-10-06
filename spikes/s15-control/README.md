@@ -1,4 +1,5 @@
 # S15: end-to-end channels, device keys and the relay
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s15-control/<file>`.
 
 Run 2026-10-01 from geek, with a throwaway relay on Fly
 (`illogical-s15-relay`, `shared-cpu-1x`, 256 MB). The design that came out

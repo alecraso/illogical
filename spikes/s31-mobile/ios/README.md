@@ -1,4 +1,5 @@
 # S31, iOS: what an iPhone app can run
+The code and fixtures for this spike are on the `archive/spikes` branch: `git show archive/spikes:spikes/s31-mobile/ios/<file>`.
 
 Everything here ran on a real iPhone 15 Pro (iOS 26.6.1), built on jake-air (Xcode 16.4) and installed with `devicectl`. The app was signed with the team's development profile, so it carries `get-task-allow`. The test app is `app/`: an Objective-C shell around `probe.c` (processes, ptys, dlopen, code generation), `wasmhost.c` (wasm3) and `rt/` (a Rust staticlib shaped like the daemon). The raw device output is in `results/`.
 

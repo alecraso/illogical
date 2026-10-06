@@ -1,1 +1,0 @@
-Create a new file notes.txt containing the single line "note". Use the Write tool. Nothing else.
