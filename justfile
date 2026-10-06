@@ -292,12 +292,16 @@ test: web
     {{cargo}} nextest run --workspace
     {{cargo}} test --workspace --doc
     cd web && pnpm run typecheck
-    just e2e-interop control-smoke
+    just e2e-interop
+    just control-smoke --all-targets
 
 # Control end to end without a browser: sign in (fake GitHub), enroll,
-# join a daemon, reach it through the relay and directly.
-control-smoke:
-    {{cargo}} build -p illogical-control -p illogicald -p illogical
+# join a daemon, reach it through the relay and directly. `test` passes
+# --all-targets: nextest built these binaries with the dev-dependencies'
+# features (rmcp's client ones), and a plain build relinked all three
+# with the features they ship with (45 s in CI).
+control-smoke *build_args:
+    {{cargo}} build -p illogical-control -p illogicald -p illogical {{build_args}}
     cd web && TARGET_DIR="{{target_dir}}/debug" node --experimental-strip-types --no-warnings control-smoke.ts
 
 # The swarm (M26) by hand: three throwaway daemons with scripted work on

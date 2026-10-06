@@ -8,8 +8,9 @@
 #   - testnet: the test stack's claims (ssh, then control);
 #   - e2e: the Playwright specs in six shards; stack: those on the test
 #     stack; perf: the specs that time things, once the shards are done;
-# - macos: test and the WebKit specs, on GitHub's macOS runner (when the
-#   push changes what runs there: scripts/macos-changed; main always).
+# - macos: test and, beside it, the WebKit specs, on GitHub's macOS
+#   runners (when the push changes what runs there: scripts/macos-changed;
+#   main always).
 # Jobs on geek take a build directory and a test stack of their own
 # (scripts/ci-env), so runs and jobs don't wait on each other. geek needs
 # Docker: the test stack (testnet/README.md) and the ssh
@@ -222,11 +223,17 @@ jobs:
   # GitHub's Apple silicon runner (free for a public repo, up to five at
   # once): jake-mini's one runner kept every run waiting 12-27 min for it,
   # and stays for releases. No Docker there, so the ssh tests skip
-  # (ILLOGICAL_SKIP_DOCKER=1, loudly); test runs them on geek.
+  # (ILLOGICAL_SKIP_DOCKER=1, loudly); test runs them on geek. `just test`
+  # and the WebKit specs on runners of their own: one after the other they
+  # were the run's longest job.
   macos:
     needs: macos-changed
     if: ${{ needs.macos-changed.outputs.run == 'true' }}
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [test, webkit]
     env:
       ILLOGICAL_SKIP_DOCKER: "1"
       # mise's GitHub downloads (nextest): unauthenticated, they share the
@@ -251,13 +258,23 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10
+      # The two build different things (test: the tests, with the
+      # dev-dependencies' features): a cache each.
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.part }}
       - run: just bootstrap
-      # Before `just test`: reboot.rs drives Chromium, the WebKit specs WebKit.
-      - name: Playwright's browsers
-        run: just browsers
-      - run: just test
+      # reboot.rs drives Chromium.
+      - name: Playwright's Chromium
+        if: matrix.part == 'test'
+        run: just browsers chromium
+      - if: matrix.part == 'test'
+        run: just test
+      - name: Playwright's WebKit
+        if: matrix.part == 'webkit'
+        run: just browsers webkit
       - name: The WebKit specs (Safari's engine)
+        if: matrix.part == 'webkit'
         run: just e2e-webkit
         env:
           E2E_PORT: "7769"

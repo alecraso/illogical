@@ -9,6 +9,8 @@ testnet = { max-threads = 1 }
 [[profile.default.overrides]]
 filter = "package(illogicald) & (binary(ssh) | binary(reboot) | (binary(guest_ssh) & test(jump_host)))"
 test-group = "testnet"
+# One at a time and among the slowest (reboot, the jump host): start early.
+priority = 10
 
 [profile.default]
 # A hung test fails after 5 minutes instead of holding the run.
@@ -21,3 +23,17 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 retries = 1
 failure-output = "immediate-final"
 fail-fast = false
+
+# The slowest tests (15-33 s in CI) start first: started last, one alone
+# held the run's end (formats_match_real_tmux was 825/825).
+[[profile.default.overrides]]
+filter = """
+    package(illogicald) & (
+        (binary(agent_screens) & (test(=claude_code_working_blocked_and_idle_from_its_screen) | test(=quiet_changes_nothing_for_an_agent_with_rules)))
+        | (binary(tmux) & (test(=formats_match_real_tmux) | test(=iterm2s_conversation_gets_tmuxs_answers) | test(=wezterm_and_ghostty_get_what_they_parse) | test(=falling_behind_pauses_the_pane)))
+        | (binary(threads) & test(=an_invite_from_a_mention_opens_that_thread_from_that_message))
+        | (binary(upgrade) & test(=shims_keep_panes_without_systemd))
+        | (binary(prompt) & test(=a_prompt_waits_through_the_turn_and_stops_at_a_question))
+    )
+"""
+priority = 10
