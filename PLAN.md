@@ -4782,6 +4782,111 @@ The TUI and iTerm2 send only text, so an image can only arrive as a path. A past
 
 **Done when:** in kitty and iTerm2 on jake-air, `illogical tui --ssh geek` gets a dropped screenshot into `claude` on geek as `[Image #1]`.
 
+### Chat page track (M73–M75, added 2026-10-05)
+
+The chat view (PR #290, `/#chat`) should be a page of its own that looks and works like Slack. Today it's a layer over the panes: `.chat` is `position: fixed` under the top bar (`top: var(--bar-h)`, z-index 46). The session button, the tabs and the huddle bar stay on top, picking a tab closes it, and Escape closes it. So it reads as a popout over the terminal app. Its messages use the thread drawer's `ThreadBody`: a name and a time over plain text, no avatars, and a two-line textarea with a Send button.
+
+**Where it should end up:** Chat is one of three places, beside Panes and Swarm. On a desktop it has Slack's frame:
+
+- its own top bar, which is the desktop app's titlebar;
+- a channel sidebar on the left;
+- the conversation in the middle, with a channel header and Slack's composer;
+- a details panel on the right that can show the pane itself.
+
+The phone keeps today's list-then-thread flow, styled to match.
+
+**Decisions (Jake, 2026-10-05):**
+
+- **Slack's layout and density, illogical's colors.** No aubergine sidebar and no Slack marks: the page uses our theme tokens in light and dark.
+- **The talk track's "Not Slack" still holds.** It looks like Slack, but there are no reactions, file uploads, video or screen share, and no DMs. If DMs come, they come with M62's MLS channels.
+- **The mapping:**
+  - a session is a channel (`#name`);
+  - a pane's thread sits under its session's channel, as now;
+  - each machine is a sidebar section, as now;
+  - M62's team channels go in a *Channels* section above the machines when they land.
+- **The panes stay alive.** Going to Chat hides the tab view and doesn't unmount it, so terminals keep their output and size. Coming back is instant.
+
+**Order:** M73, then M74, then M75. M74's message component also replaces the drawer's, so the drawer improves too. M62 (#241) is independent and lands in M73's sidebar. Tracker #339.
+
+#### M73: chat is a page (the frame) (#336)
+
+- `App` switches on the route. On `#chat` it renders `ChatPage` in place of `TopBar` and `<main>`. `<main>` stays mounted but hidden (`hidden`, not `display: none` on a parent that `measureCell` reads; check the cell cache).
+  - Swarm keeps its own overlay.
+  - The `ChatLayer` overlay and its `--bar-h` offset go.
+- **Chat's top bar** (`data-tauri-drag-region`, `WindowButtons`, the macOS traffic-light inset):
+  - a Panes · Swarm · Chat switch on the left, with Chat's unread count on its segment;
+  - a search field in the middle (inert until M75; it opens the palette meanwhile);
+  - the account avatar and `UpdateChip` on the right.
+  - The panes' `TopBar` gets the same switch in place of the separate Swarm and Chat buttons, so the three read as places.
+- **Leaving the page:**
+  - The switch and browser Back leave it. `openChat` pushes a history entry, and Back returns to the panes.
+  - Escape no longer leaves (Slack doesn't). It clears a quote or a draft's focus.
+  - "Go to pane" leaves and selects the pane, as now.
+  - Picking a tab can't happen from here, so the close-on-tab-change effect goes.
+- **The sidebar (260 px, resizable, width kept per browser):**
+  - a header with the workspace name (the team's on control, the machine's otherwise) and a ▾ menu (new session, mark all read);
+  - *Huddles*: the sessions with a live huddle, each with its members' avatars;
+  - one collapsible section per machine, holding sessions (`#`) with their pane threads (`↳`) under them, unread in bold, and mention counts as pills;
+  - *Show: all / unread* in the header menu.
+- **The huddle:** `HuddleBar` moves into the sidebar's footer on this page, like Slack's huddle panel. It stays in the corner on the panes page.
+- **The phone:** `.chat.phone` keeps its flow. The list gets the sidebar's sections and the bar gets the switch.
+- **The desktop app:** the page is served from the same origin as the panes, so `allow_control` already covers its window commands. Check drag, minimize, maximize and close on this page anyway (chat-view-titlebar lesson).
+
+**Done when:**
+- Playwright opens Chat from the switch. No tab bar or session button is visible. Back returns to the panes with the same pane focused and its scrollback intact, with no reconnect or resize sent.
+- Escape on the page doesn't leave it.
+- Screenshots in `docs/` at desktop width (light and dark) and phone width.
+- geek's desktop app: the window drags from Chat's bar and its buttons work. The same on jake-air.
+
+#### M74: messages and composer like Slack (#337, after M73)
+
+- **Messages:**
+  - a 36 px rounded-square avatar, the bold name and a dim time;
+  - follow-on messages from the same person within 5 minutes indent under it and show their time in the gutter on hover;
+  - date dividers (*Today*, *Yesterday*, dates);
+  - a red *New* line at the first unread (from `ThreadSummary.unread` against the loaded list).
+- **Avatars:**
+  - `ThreadMsg` gets `pic`. The daemon fills it at post time from the principal it already has (presence carries `pic`), and older messages fall back to initials on `colorOf`.
+  - An agent's message gets an *Agent* badge beside the name, like Slack's *APP*.
+- **Text:**
+  - a small Markdown subset: bold, italic, inline code, fenced code blocks, links, and @mentions as pills (mentions of you highlighted);
+  - no HTML, rendered as Preact nodes, never `innerHTML`.
+  - A terminal quote shows as a code block with a "from %7 · title" line that goes to the output, as now.
+- **On hover, a toolbar:**
+  - *Quote in reply* (puts the message in the composer as a quote);
+  - *Copy link*, a `#chat=<host>/<thread>&msg=<id>` deep link that scrolls to the message and flashes it;
+  - *Go to pane*.
+- **The channel header:**
+  - `# session` or `↳ %7 title`, with a topic line (the machine, the pane's cwd and command, or the session's pane count);
+  - a stack of members' avatars (presence now, plus whoever posted in the thread; the owner sees the share list), the huddle button, and ⓘ for details.
+- **The details panel (right, 320 px, toggled by ⓘ):**
+  - a live, read-only view of the pane (a second `terminal-view` on the same pane, or the session's panes as small tiles);
+  - members, the huddle, and *Open pane*.
+  - It's the one thing Slack can't show.
+- **The composer:**
+  - a rounded box with the placeholder "Message #session";
+  - it grows to 40% of the height;
+  - Enter sends and Shift+Enter makes a new line (check #334's Shift+Enter handling doesn't leak into it);
+  - a send arrow inside the box;
+  - @ opens autocomplete over the people with a role in the session plus `@agent` on a pane's thread;
+  - drafts are kept per thread in `sessionStorage`.
+- The drawer and the phone sheet use the same message component.
+
+**Done when:**
+- Playwright posts runs from two people and an agent across midnight (fake clock). It checks the grouping, the dividers, the *New* line, the avatars, the badge, the Markdown (and that `<script>` text stays text), the quote jump, the copy link round trip, autocomplete, and drafts across thread switches.
+- The details panel's pane view shows live output.
+- Old thread files (no `pic`) still load.
+
+#### M75: getting around like Slack (#338, after M74)
+
+- **Ctrl/Cmd+K on the chat page** is a channel switcher over every machine's channels and threads, ranked by unread and recency. It reuses the palette's matcher.
+- **Search:** the bar's field searches every machine's threads through each daemon's search (M61's hits carry `thread`), shows results grouped by channel, and opens the message at its place.
+- **Activity**, at the top of the sidebar: your @mentions and the agent answers to you, newest first, across machines.
+- **Keys:** Alt+↑/↓ moves between channels, and Alt+Shift+↑/↓ between unread ones. Shift+Esc marks everything read.
+- **Mark read up to here** from a message's hover menu.
+
+**Done when:** Playwright switches channels by keyboard only, finds a message on a second machine (the testnet profile) by search and lands on it, and sees a mention in Activity that clears when read.
+
 ## Acceptance tests (automated where possible)
 
 | Brief test | How it's checked |
