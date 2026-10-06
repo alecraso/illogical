@@ -23,6 +23,11 @@ case "${1:-}" in
     n=$("$here/ci-slot" "target-$job" 2)
     dir=$HOME/.cache/illogical-ci/$job-$n
     echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+    # A runner's checkout keeps the mtimes of the files its last checkout
+    # didn't change, and cargo goes by mtimes: a file older than the last
+    # build in this directory (another branch's) counts as built, and that
+    # branch's crate is used. Ours are newer than any build here.
+    git ls-files -z crates | xargs -0 touch
     # At one path for every runner's checkout: cargo keys its builds on it.
     install -m 755 "$here/ci-rustc" "$HOME/.cache/illogical-ci/ci-rustc"
     echo "RUSTC_WRAPPER=$HOME/.cache/illogical-ci/ci-rustc" >> "$GITHUB_ENV"
