@@ -47,11 +47,7 @@ made=$(
   } | sort -u
 )
 [ -n "$made" ] || { echo "FAIL  can't find what the desktop recipes make in the justfile"; exit 1; }
-# The recipe can make these, but the release doesn't yet: the arm64 Linux
-# app waits for GitHub's arm runner (#287). Empty this when it's back.
-pending='^illogical-desktop-linux-aarch64\.'
 for m in $made; do
-  grep -Eq "$pending" <<<"$m" && continue
   printf '%s\n' "${downloads[@]}" | grep -qx "$m" || bad "the build makes $m but scripts/release doesn't require it"
 done
 for d in "${downloads[@]}"; do

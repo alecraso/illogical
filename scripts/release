@@ -34,9 +34,8 @@ tap=git@github.com:arugula-salad/homebrew-tap.git
 # and the updater's latest.json (tauri.conf.json's endpoint).
 app_latest=app-latest
 # Every download an app release has (the updater's .app.tar.gz and .sig
-# files come too when TAURI_SIGNING_PRIVATE_KEY is set). The arm64 Linux
-# app comes back with GitHub's arm runner (#287).
-app_downloads="illogical-desktop-linux-x86_64.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe"
+# files come too when TAURI_SIGNING_PRIVATE_KEY is set).
+app_downloads="illogical-desktop-linux-{x86_64,aarch64}.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe"
 
 # The release for a tag, made if it isn't there yet (both build jobs may
 # race to make it; the loser finds the winner's).

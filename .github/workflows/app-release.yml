@@ -3,7 +3,7 @@
 # downloads illogicald and illogical from the latest daemon release (checked
 # against its SHA256SUMS: `scripts/release sidecars`), which the app installs
 # on a machine with none. Then it builds the app: a .deb, an .rpm and an
-# AppImage for Linux x86_64, a .dmg and a zipped app for each macOS arch, an
+# AppImage for each Linux arch, a .dmg and a zipped app for each macOS arch, an
 # installer for Windows. `app-publish` writes SHA256SUMS and the updater's
 # latest.json, publishes the release (never as latest: releases/latest is
 # the daemon's), and copies it all to the rolling `app-latest` release, where
@@ -39,9 +39,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # In an Ubuntu 22.04 container (podman); fails if the bundles need a
       # newer glibc than 2.35 (#170). x86_64 only: geek has no arm64
-      # emulation for podman, so the arm64 app moves to GitHub's arm runner
-      # (#287).
+      # emulation for podman, so linux-arm64 builds that one.
       - run: just desktop-linux x86_64
+        env:
+          ILLOGICAL_DESKTOP_BINARIES: ${{ runner.temp }}/sidecars
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/illogical-desktop-*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # GitHub's arm runner, free for a public repo (#287): the same container
+  # build, natively.
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: scripts/release check-app-version "$GITHUB_REF_NAME"
+      - run: scripts/release sidecars aarch64-unknown-linux-musl "$RUNNER_TEMP/sidecars"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: just desktop-linux aarch64
         env:
           ILLOGICAL_DESKTOP_BINARIES: ${{ runner.temp }}/sidecars
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -124,7 +145,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish:
-    needs: [linux, macos, windows]
+    needs: [linux, linux-arm64, macos, windows]
     runs-on: [self-hosted, linux-x86_64]
     steps:
       - uses: actions/checkout@v4
