@@ -4,7 +4,7 @@
 // daemon's code, and reach the daemon both directly and through the relay.
 //   just control-smoke
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createTcp, connect } from "node:net";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -45,6 +45,48 @@ const temp = (w: string) => {
   return d;
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Every process the smoke started, however deep. A daemon's panes run in
+// sessions of their own on purpose, so a process group would miss them:
+// find them by the temp dirs on their command lines (the daemon, and each
+// pane's shim), then walk down to their children. Taken before anything
+// dies, since orphans move to init.
+function smokeProcesses(): number[] {
+  const all = new Map<number, { ppid: number; command: string }>();
+  for (const line of execFileSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" }).split("\n")) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
+    if (m) all.set(Number(m[1]), { ppid: Number(m[2]), command: m[3] });
+  }
+  const found = [...all].filter(([, p]) => dirs.some((d) => p.command.includes(d))).map(([pid]) => pid);
+  for (const pid of found) for (const [c, p] of all) if (p.ppid === pid && !found.includes(c)) found.push(c);
+  return found.filter((pid) => pid !== process.pid);
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Kill it all and wait for it to be gone, so nothing is still writing when
+// the dirs are deleted. The waits are bounded.
+async function cleanup() {
+  const pids = smokeProcesses();
+  const exits = procs.filter((p) => p.exitCode === null && p.signalCode === null).map((p) => new Promise((r) => p.once("exit", r)));
+  for (const p of procs) p.kill("SIGKILL");
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // gone already
+    }
+  }
+  await Promise.race([Promise.all(exits), sleep(5000)]);
+  for (let i = 0; i < 50 && pids.some(alive); i++) await sleep(100);
+}
 
 // A fake GitHub: authorize redirects straight back, signing in whoever
 // the device asks for.
@@ -496,8 +538,19 @@ try {
   console.log("FAIL", e);
   failed++;
 } finally {
-  for (const p of procs) p.kill("SIGKILL");
+  // A cleanup error is noise: the checks have already said what they said.
+  try {
+    await cleanup();
+  } catch (e) {
+    console.log("cleanup:", e);
+  }
   gh.close();
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs) {
+    try {
+      rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (e) {
+      console.log("cleanup:", e);
+    }
+  }
 }
 process.exit(failed ? 1 : 0);
