@@ -159,7 +159,17 @@ export default defineConfig({
     storageState: { cookies: tokenCookies, origins: [] },
   },
   projects: [
-    { name: "chrome", use: { channel: process.env.E2E_CHROMIUM ? "chromium" : "chrome" }, ...chrome },
+    // Chrome hands a granted notification to the desktop over the session's
+    // D-Bus, and geek's CI runners run in the person's session: pointed at
+    // no bus, it keeps them to itself (getNotifications still sees them).
+    {
+      name: "chrome",
+      use: {
+        channel: process.env.E2E_CHROMIUM ? "chromium" : "chrome",
+        launchOptions: { env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent" } },
+      },
+      ...chrome,
+    },
     // The stack's and the frame rates' specs are all Chrome's.
     { name: "webkit", use: { browserName: "webkit" }, testMatch: set && SETS[set] ? /^$/ : WEBKIT },
   ],
