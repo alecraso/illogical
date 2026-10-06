@@ -24,8 +24,19 @@ const MAX_PER_PANE_KB: u64 = 2600;
 /// panes have closed. Without the malloc fixes it kept about 15 MB.
 const MAX_KEPT_KB: u64 = 8 * 1024;
 
+/// All the daemon keeps of the test's environment. Every pane copies the
+/// daemon's, and CI's job adds kilobytes: with 17 KB of it, the 49 closed
+/// panes kept 8.2-8.4 MB, over MAX_KEPT_KB, where they keep 6-7.5 MB.
+const KEEP_ENV: &[&str] = &["PATH", "HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "XDG_RUNTIME_DIR", "ILLOGICAL_CHANT"];
+
 fn start() -> Daemon {
-    let d = illogicald!("mem")
+    let mut b = illogicald!("mem");
+    for (k, _) in std::env::vars_os() {
+        if !KEEP_ENV.iter().any(|keep| k == *keep) {
+            b = b.env_remove(k);
+        }
+    }
+    let d = b
         .env("PS1", "$ ")
         // No systemd scopes or FD store, as S9 measured.
         .env_remove("LISTEN_FDS")
