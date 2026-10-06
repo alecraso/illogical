@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "illogical"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-control"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",
@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-core"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "proptest",
  "serde",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-e2e"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",
@@ -1819,7 +1819,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-proto"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "illogical-core",
  "serde",
@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-testkit"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "nix",
  "serde_json",
@@ -1838,7 +1838,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-vt"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "libghostty-vt",
  "regex",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "illogicald"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "aes-gcm 0.11.1",
  "anyhow",
