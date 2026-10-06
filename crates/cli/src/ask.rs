@@ -34,7 +34,7 @@ pub fn run(sock: Target) -> i32 {
     // pipe.
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
-    let Some(pane) = crate::env_pane() else { return 0 };
+    let Some(pane) = crate::util::env_pane() else { return 0 };
     let Ok(hook) = serde_json::from_str::<Value>(&input) else { return 0 };
     if hook["tool_name"].as_str().is_some_and(|t| t != "AskUserQuestion") {
         return 0;

@@ -39,7 +39,7 @@ const GIVE_UP: Duration = Duration::from_secs(60);
 fn stdin_hook() -> Option<(u32, Value)> {
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
-    let pane = crate::env_pane()?;
+    let pane = crate::util::env_pane()?;
     Some((pane, serde_json::from_str(&input).ok()?))
 }
 
