@@ -28,6 +28,7 @@ const SCROLLBACK_BYTES: usize = 16 * 1024 * 1024;
 /// Largest unfinished escape sequence a checkpoint can carry.
 const CONTINUATION_BYTES: usize = 1024 * 1024;
 
+// Frozen (#504): checkpoints already on disk start with it.
 const CHECKPOINT_MAGIC: &[u8] = b"ILLOGICAL-CKPT1\n";
 
 /// Which engine wrote a checkpoint. GHOSTSNP has changed incompatibly

@@ -41,6 +41,7 @@ fn clean(s: &str) -> bool {
 
 impl PushSub {
     pub fn body(&self) -> String {
+        // Frozen (#504): signed; see `frozen.rs`.
         format!(
             "illogical push v1\naccount {}\ndevice {}\nendpoint {}\np256dh {}\nauth {}\nat {}\n",
             self.account, self.device, self.endpoint, self.p256dh, self.auth, self.at

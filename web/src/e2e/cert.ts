@@ -50,6 +50,7 @@ const enc = new TextEncoder();
 
 export function certBody(c: Cert): string {
   return (
+    // Frozen (#504): signed; crates/e2e/src/frozen.rs pins the Rust side.
     `illogical device v1\naccount ${c.account}\ndevice ${c.device}\nkind ${c.kind}\nname ${c.name}\n` +
     `noise ${c.noise}\nsign ${c.sign}\ncreated ${c.created}\napprover ${c.approver}\n`
   );

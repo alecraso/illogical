@@ -975,6 +975,9 @@ fn watch_once(app: &AppHandle) -> anyhow::Result<()> {
 }
 
 fn main() {
+    // ARUGULA_X for ILLOGICAL_X (#504), before any thread exists.
+    // SAFETY: nothing else runs yet.
+    unsafe { illogical_proto::rename::alias_env() };
     // `illogical-desktop --agent status|register|unregister|restart`: the
     // daemon's launch agent, for tests and for fixing a Mac by hand.
     #[cfg(target_os = "macos")]

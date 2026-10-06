@@ -38,6 +38,7 @@ export interface Enrollment {
   cert: Cert;
 }
 
+// Frozen (#504): renaming it would lose every browser's device key.
 const DB = "illogical-device";
 
 function open(): Promise<IDBDatabase> {

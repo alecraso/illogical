@@ -60,6 +60,7 @@ pub fn socket_for(pane_dir: &Path) -> PathBuf {
         .as_encoded_bytes()
         .iter()
         .fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
+    // Frozen (#504): a restarted daemon finds running panes by it.
     std::env::temp_dir().join(format!("illogical-hold-{hash:016x}.sock"))
 }
 

@@ -556,8 +556,14 @@ fn github_app(a: &Args) -> anyhow::Result<Option<forge::GithubApp>> {
     Ok(Some(forge::GithubApp::new(id, a.github_app_slug.clone(), secret, &a.github_api, key)))
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // ARUGULA_X for ILLOGICAL_X (#504), before the runtime's threads exist.
+    // SAFETY: nothing else runs yet.
+    unsafe { illogical_core::rename::alias_env() };
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogical_control=info".into()),

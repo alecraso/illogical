@@ -107,6 +107,7 @@ impl Cert {
     }
 
     pub fn body(&self) -> String {
+        // Frozen (#504): signed into every certificate; see `frozen.rs`.
         format!(
             "illogical device v1\naccount {}\ndevice {}\nkind {}\nname {}\nnoise {}\nsign {}\ncreated {}\napprover {}\n",
             self.account,

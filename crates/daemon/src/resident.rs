@@ -35,12 +35,14 @@ use crate::{provider::ServiceDef, server::App};
 
 /// The daemon's port inside a sandbox, unless asked otherwise.
 pub const DEFAULT_PORT: u16 = 7681;
-/// The provider service that keeps it running.
+/// The provider service that keeps it running. Frozen (#504): daemons of
+/// other versions look for it in each other's sandboxes.
 pub const SERVICE: &str = "illogicald";
 /// How long a new resident daemon gets to answer.
 const START_PATIENCE: Duration = Duration::from_secs(60);
 /// Our own machines' sandboxes (VM panes and tabs, any daemon's): not for
-/// opening shells on or making resident.
+/// opening shells on or making resident. Frozen (#504), with
+/// `sprite_prefix`: daemons of other versions share an account.
 const EPHEMERAL: &str = "illogical-eph-";
 
 /// Where the static binaries to copy in are.

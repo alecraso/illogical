@@ -144,6 +144,7 @@ impl KeyRing {
 
     fn file_key(&self, id: u32, salt: &[u8], context: &str) -> io::Result<Aes256Gcm> {
         let master = self.keys.get(&id).ok_or_else(|| io::Error::other(format!("no key {id} in the ring")))?;
+        // Frozen (#504): synced files already sealed under it.
         let mut info = b"illogical sync v1\0".to_vec();
         info.extend_from_slice(context.as_bytes());
         let mut key = [0u8; 32];

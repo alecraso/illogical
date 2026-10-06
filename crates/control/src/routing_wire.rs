@@ -150,6 +150,15 @@ async fn daemon_signatures_cover_the_request_and_are_good_once() {
     assert_eq!(get(forged, pq).await.unwrap().status(), 401);
     assert_eq!(c.http.get(format!("{}{pq}", c.base)).send().await.unwrap().status(), 401);
 
+    // #504: the renamed daemon's header, checked the same way.
+    let h = v2(&d, "GET", pq, b"");
+    let renamed = || c.http.get(format!("{}{pq}", c.base)).header("x-arugula-auth", h.clone()).send();
+    assert_eq!(renamed().await.unwrap().status(), 200);
+    assert_eq!(renamed().await.unwrap().status(), 401, "good once under either name");
+    let forged = v2(&other, "GET", pq, b"").replacen(&other.id(), &d.id(), 1);
+    let r = c.http.get(format!("{}{pq}", c.base)).header("x-arugula-auth", forged).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+
     // A daemon from before 0.17 signs the old way: taken, once each.
     let h = v1(&d, "GET", "/api/daemon/trust");
     assert_eq!(get(h.clone(), "/api/daemon/trust").await.unwrap().status(), 200);

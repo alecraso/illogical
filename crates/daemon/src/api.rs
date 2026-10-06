@@ -460,7 +460,7 @@ async fn act(
     }
     // An agent's invite (#234): the owner's alone, and not an agent's on
     // the owner's CLI (a courtesy, as for `call`).
-    if !who.is_owner() || headers.get("x-illogical-agent").is_some() {
+    if !who.is_owner() || crate::invite::agent(&headers) {
         for p in &panes {
             if is_invite(&app, *p).await {
                 return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::OWNER_ONLY.into()));
@@ -1073,7 +1073,7 @@ async fn close(
 ) -> Res<Json<Empty>> {
     // An agent's invites (#234) are the owner's to close, not an agent's.
     let owner = who.is_none_or(|axum::Extension(w)| w.is_owner());
-    if (!owner || headers.get("x-illogical-agent").is_some()) && is_invite(&app, id).await {
+    if (!owner || crate::invite::agent(&headers)) && is_invite(&app, id).await {
         return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::CLOSE_OWNER_ONLY.into()));
     }
     match app.mux.api(|r| Api::Close(id, r)).await {
@@ -1148,7 +1148,7 @@ async fn open_block(
         if req.config["issue"] == "new" && req.config.is_object() {
             let by = who_is(&app, who.clone().unwrap_or(crate::acl::Principal::Owner)).await;
             req.config["by"] = serde_json::json!(by.map(|d| d.name));
-            if headers.get("x-illogical-agent").is_some() {
+            if crate::invite::agent(&headers) {
                 req.config["agent"] = true.into();
             }
         }
@@ -1407,14 +1407,14 @@ async fn call(
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
         // An agent's invites (#234) are the owner's, and not for an agent
         // on the owner's CLI either (as a forge's drafts, a courtesy).
-        if b.kind() == illogical_proto::BlockType::Invite && (!owner || headers.get("x-illogical-agent").is_some()) {
+        if b.kind() == illogical_proto::BlockType::Invite && (!owner || crate::invite::agent(&headers)) {
             return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::OWNER_ONLY.into()));
         }
         // The CLI says when an agent runs it (CLAUDECODE, AI_AGENT): a forge
         // block makes its writes drafts then (M36). A courtesy, not a
         // boundary.
         if b.kind() == illogical_proto::BlockType::Forge
-            && headers.get("x-illogical-agent").is_some()
+            && crate::invite::agent(&headers)
             && let Some(o) = args.as_object_mut()
         {
             o.insert("agent".into(), true.into());

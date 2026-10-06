@@ -33,6 +33,19 @@ Why: asciicast has no offsets and inflates the data.
 Where: `crates/proto/src/lib.rs` (`FrameKind`, `HEADER_LEN`), `crates/daemon/src/pane.rs`.
 From: [Decisions table](docs/plan-archive.md#decisions-on-the-briefs-open-questions), M1, M2.
 
+### Some names outlive the rename to Arugula
+The product is being renamed (#509). Names that something stored or running
+depends on stay "illogical" for good: the domains signed or hashed into
+certificates, rosters, proofs and push and call tokens, the Noise prologue,
+the sync key's HKDF info, the key file header, the checkpoint magic, the
+browser's IndexedDB `illogical-device`, and the names a restarted daemon or
+another version finds running panes and sandboxes by (holder socket, Windows'
+pane pipe, systemd scopes, `illogical-eph-`, the resident service). Where a
+name crosses between versions (headers, `ILLOGICAL_*` variables, service and
+binary names, `window.__illogicalApp`), the bridge release accepts both.
+Where: `crates/core/src/rename.rs`, `crates/e2e/src/frozen.rs` (pins the signed domains as hex), "Frozen (#504)" comments.
+From: #504.
+
 ### The server sends whole layouts, and deltas for summaries
 `State` carries the full tree and a `rev` on every layout change (trees are
 small). Pane summaries and attention, which change often and across many

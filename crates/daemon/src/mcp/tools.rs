@@ -1615,7 +1615,10 @@ impl<'a> Call<'a> {
     /// #379: the `CLAUDE_CONFIG_DIR` the stdio bridge sent for its client.
     fn claude_config_dir(&self) -> Option<String> {
         let parts = self.ctx.extensions.get::<axum::http::request::Parts>()?;
-        let d = parts.headers.get(illogical_proto::CLAUDE_CONFIG_DIR_HEADER)?.to_str().ok()?.trim();
+        let d = illogical_proto::rename::either(illogical_proto::rename::CLAUDE_CONFIG_DIR, |n| parts.headers.get(n))?
+            .to_str()
+            .ok()?
+            .trim();
         (!d.is_empty()).then(|| d.to_owned())
     }
 

@@ -458,7 +458,7 @@ fn refuse(why: Refused, browser: bool, up: WebSocketUpgrade) -> Response {
 
 /// Not signed, so a browser: daemons and the CLI sign their requests.
 fn browser(headers: &HeaderMap) -> bool {
-    !headers.contains_key(crate::auth::AUTH_HEADER)
+    crate::auth::auth_header(headers).is_none()
 }
 
 pub async fn client(

@@ -124,9 +124,6 @@ impl Caller {
     }
 }
 
-/// The header `illogical mcp` sends its pane in (`$ILLOGICAL_PANE`).
-pub const PANE_HEADER: &str = "x-illogical-pane";
-
 /// `/mcp`, for one of the daemon's routers.
 pub fn routes(app: &Arc<App>) -> Router<Arc<App>> {
     let config = StreamableHttpServerConfig::default().disable_allowed_hosts();
@@ -176,9 +173,7 @@ async fn authenticate(State(app): State<Arc<App>>, mut req: Request, next: Next)
             }
         }
     };
-    let pane = req
-        .headers()
-        .get(PANE_HEADER)
+    let pane = illogical_proto::rename::either(illogical_proto::rename::PANE, |n| req.headers().get(n))
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().trim_start_matches('%').parse::<PaneId>().ok());
     let caller = match bearer {

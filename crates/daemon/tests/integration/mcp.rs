@@ -1051,12 +1051,18 @@ async fn an_agents_mention_invites_nobody() {
 /// A POST on the socket as the CLI sends it under Claude Code: the HTTP
 /// status.
 fn as_agent(d: &Daemon, path: &str, body: Value) -> u16 {
+    as_agent_by(d, "X-Illogical-Agent", path, body)
+}
+
+/// The same, with the agent header named `header` (#504: the renamed CLI
+/// sends `X-Arugula-Agent`).
+fn as_agent_by(d: &Daemon, header: &str, path: &str, body: Value) -> u16 {
     use std::io::{Read, Write};
     let mut s = std::os::unix::net::UnixStream::connect(d.sock()).unwrap();
     let body = body.to_string();
     write!(
         s,
-        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nX-Illogical-Agent: 1\r\nContent-Length: {}\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\n{header}: 1\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     )
     .unwrap();
@@ -1150,8 +1156,11 @@ fn an_invite_waits_for_the_owner_and_only_they_send_it() {
     // own (whose words needn't be what it does), or pin a team.
     let session = d.get("/api/panes")[0]["session"].clone();
     let direct = json!({ "session": session, "who": sam, "role": "editor", "drive_minutes": 60 });
-    assert_eq!(as_agent(&d, "/api/invite", direct), 403);
+    assert_eq!(as_agent(&d, "/api/invite", direct.clone()), 403);
     assert_eq!(as_agent(&d, "/api/team-pins", json!({ "pins": {} })), 403);
+    // #504: the renamed CLI's header is an agent's too.
+    assert_eq!(as_agent_by(&d, "X-Arugula-Agent", "/api/invite", direct), 403);
+    assert_eq!(as_agent_by(&d, "X-Arugula-Agent", "/api/team-pins", json!({ "pins": {} })), 403);
     let forged = json!({ "type": "invite", "config": { "drafter": "%1", "drafts": [] } });
     let (status, text) = d.raw("POST", "/api/blocks", Some(forged));
     assert_eq!(status, 403, "{text}");

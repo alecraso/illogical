@@ -812,6 +812,7 @@ impl Process {
         let cwd = if spawn.cwd.is_dir() { spawn.cwd.as_path() } else { Path::new("/") };
         let _ = std::fs::remove_file(record);
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        // Frozen (#504): scopes are read back from /proc/*/cgroup (`scope_of`).
         let mut cmd = launch.command(&format!("illogical-pane-{pane}-{nanos}"));
         cmd.arg("_shim").arg("--record").arg(record);
         let hold = launch.hold.then(|| crate::holder::socket_for(record.parent().unwrap_or(Path::new("."))));

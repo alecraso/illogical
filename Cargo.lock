@@ -1770,6 +1770,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "illogical-control-wire",
+ "illogical-core",
  "illogical-e2e",
  "libc",
  "p256",

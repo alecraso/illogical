@@ -38,7 +38,11 @@ use crate::{ApiError, App, err};
 pub const SESSION_COOKIE: &str = "ilg_session";
 const STATE_COOKIE: &str = "ilg_oauth";
 const SESSION_DAYS: u64 = 30;
-pub const AUTH_HEADER: &str = "x-illogical-auth";
+/// The signature header, under either name (#504): daemons and CLIs send
+/// `x-illogical-auth` until the rename, `x-arugula-auth` after.
+pub fn auth_header(headers: &HeaderMap) -> Option<&HeaderValue> {
+    illogical_core::rename::either(illogical_core::rename::AUTH, |n| headers.get(n))
+}
 const SKEW_MS: u64 = 5 * 60 * 1000;
 
 pub fn token() -> String {
@@ -155,7 +159,7 @@ pub async fn verify_daemon(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    if !req.headers().contains_key(AUTH_HEADER) {
+    if auth_header(req.headers()).is_none() {
         return next.run(req).await;
     }
     let (mut parts, body) = req.into_parts();
@@ -169,7 +173,7 @@ pub async fn verify_daemon(
 
 fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError> {
     let bad = || err(StatusCode::UNAUTHORIZED, "bad daemon signature");
-    let h = parts.headers.get(AUTH_HEADER).and_then(|v| v.to_str().ok()).ok_or_else(bad)?;
+    let h = auth_header(&parts.headers).and_then(|v| v.to_str().ok()).ok_or_else(bad)?;
     let f: Vec<&str> = h.split_whitespace().collect();
     let (id, ms, sig, msg) = match f.as_slice() {
         ["v2", id, ms, nonce, sig] => {

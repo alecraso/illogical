@@ -135,7 +135,9 @@ pub fn run(sock: &Target, cmd: FsCmd, json_out: bool, remote: bool) -> anyhow::R
                 }
                 let extra = [format!("offset={at}"), format!("len={want}")];
                 let res = request(sock, "GET", &format!("/api/fs/read?{}", query(&on, &path, &extra)), None)?.ok()?;
-                let size: u64 = res.header("x-illogical-size").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let size: u64 = illogical_proto::rename::either(illogical_proto::rename::SIZE, |n| res.header(n))
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
                 let bytes = res.bytes()?;
                 out.write_all(&bytes)?;
                 at += bytes.len() as u64;

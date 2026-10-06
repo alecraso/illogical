@@ -45,6 +45,7 @@ pub const MAX_MSG: usize = 64 << 20;
 const TAG: usize = 16;
 
 pub fn prologue(daemon_id: &str) -> Vec<u8> {
+    // Frozen (#504): both ends of every channel must agree; see `frozen.rs`.
     format!("illogical/1\n{daemon_id}\n").into_bytes()
 }
 

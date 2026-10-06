@@ -21,6 +21,10 @@ pub const APP_PROGRAM: &str = "/Applications/illogical.app/Contents/MacOS/illogi
 /// `illogicald install`'s launchd label, and its systemd unit.
 pub const LABEL: &str = "illogicald";
 pub const UNIT: &str = "illogicald.service";
+/// Both, and the renamed release's (`arugulad`, #504): a machine whose
+/// daemon the renamed release set up still has its service found here.
+pub const LABELS: [&str; 2] = [LABEL, "arugulad"];
+pub const UNITS: [&str; 2] = [UNIT, "arugulad.service"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -57,12 +61,14 @@ impl Service {
     /// What runs it, in words: "the app's launch agent
     /// (wtf.widgets.illogical.daemon)".
     pub fn name(&self) -> String {
+        // The label, unit or task: the target's last part.
+        let label = self.target.rsplit('/').next().unwrap_or(&self.target);
         match self.kind {
             Kind::AppAgent => format!("the app's launch agent ({APP_LABEL})"),
-            Kind::Agent => format!("illogicald install's launch agent ({LABEL})"),
+            Kind::Agent => format!("illogicald install's launch agent ({label})"),
             Kind::LaunchDaemon => format!("illogicald install's LaunchDaemon ({})", self.target),
-            Kind::Systemd => format!("the systemd user unit {UNIT}"),
-            Kind::Task => format!("the scheduled task {LABEL}"),
+            Kind::Systemd => format!("the systemd user unit {label}"),
+            Kind::Task => format!("the scheduled task {label}"),
         }
     }
 
@@ -112,9 +118,16 @@ fn candidates() -> Vec<Service> {
     // The app's agent: loaded, or not (stopped) while it's the one the
     // app would register (no `illogicald install` plist).
     let app = launchd(&format!("{gui}/{APP_LABEL}"));
-    let agent_plist = home().map(|h| h.join(format!("Library/LaunchAgents/{LABEL}.plist")));
+    let file = |p: PathBuf| p.is_file().then_some(p);
+    let (label, agent_plist) = LABELS
+        .iter()
+        .find_map(|l| Some((*l, file(home()?.join(format!("Library/LaunchAgents/{l}.plist")))?)))
+        .map_or((LABEL, None), |(l, p)| (l, Some(p)));
     let user_name = std::env::var("USER").unwrap_or_default();
-    let daemon_plist = PathBuf::from(format!("/Library/LaunchDaemons/{LABEL}.{user_name}.plist"));
+    let (system_label, daemon_plist) = LABELS
+        .iter()
+        .find_map(|l| Some((*l, file(format!("/Library/LaunchDaemons/{l}.{user_name}.plist").into())?)))
+        .map_or((LABEL, PathBuf::new()), |(l, p)| (l, p));
     let scripted = agent_plist.as_ref().is_some_and(|p| p.is_file()) || daemon_plist.is_file();
     if app.is_some() || (!scripted && Path::new(APP_PLIST).is_file()) {
         out.push(Service {
@@ -126,7 +139,7 @@ fn candidates() -> Vec<Service> {
         });
     }
     if daemon_plist.is_file() {
-        let target = format!("system/{LABEL}.{user_name}");
+        let target = format!("system/{system_label}.{user_name}");
         let state = launchd(&target);
         out.push(Service {
             kind: Kind::LaunchDaemon,
@@ -140,13 +153,13 @@ fn candidates() -> Vec<Service> {
         // Loaded in the GUI domain, or the background one (no GUI login).
         let (target, state) = [&gui, &user]
             .into_iter()
-            .map(|d| format!("{d}/{LABEL}"))
+            .map(|d| format!("{d}/{label}"))
             .map(|t| {
                 let s = launchd(&t);
                 (t, s)
             })
             .find(|(_, s)| s.is_some())
-            .unwrap_or((format!("{gui}/{LABEL}"), None));
+            .unwrap_or((format!("{gui}/{label}"), None));
         out.push(Service {
             kind: Kind::Agent,
             target,
@@ -160,19 +173,26 @@ fn candidates() -> Vec<Service> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn candidates() -> Vec<Service> {
-    let Some(unit) = home().map(|h| h.join(".config/systemd/user").join(UNIT)).filter(|u| u.is_file()) else {
+    let Some(dir) = home().map(|h| h.join(".config/systemd/user")) else { return Vec::new() };
+    let Some((name, unit)) = UNITS.iter().map(|u| (*u, dir.join(u))).find(|(_, f)| f.is_file()) else {
         return Vec::new();
     };
-    let running = quiet(Command::new("systemctl").args(["--user", "is-active", "--quiet", UNIT]));
-    vec![Service { kind: Kind::Systemd, target: UNIT.into(), file: unit, running, loaded: true }]
+    let running = quiet(Command::new("systemctl").args(["--user", "is-active", "--quiet", name]));
+    vec![Service { kind: Kind::Systemd, target: name.into(), file: unit, running, loaded: true }]
 }
 
 #[cfg(windows)]
 fn candidates() -> Vec<Service> {
-    let out = Command::new("schtasks").args(["/Query", "/TN", LABEL, "/FO", "LIST"]).output();
-    let Some(out) = out.ok().filter(|o| o.status.success()) else { return Vec::new() };
-    let running = String::from_utf8_lossy(&out.stdout).contains("Running");
-    vec![Service { kind: Kind::Task, target: LABEL.into(), file: PathBuf::new(), running, loaded: true }]
+    LABELS
+        .iter()
+        .find_map(|l| {
+            let out = Command::new("schtasks").args(["/Query", "/TN", l, "/FO", "LIST"]).output();
+            let out = out.ok().filter(|o| o.status.success())?;
+            let running = String::from_utf8_lossy(&out.stdout).contains("Running");
+            Some(Service { kind: Kind::Task, target: (*l).into(), file: PathBuf::new(), running, loaded: true })
+        })
+        .into_iter()
+        .collect()
 }
 
 /// This user's id, for launchd's domains.
@@ -221,7 +241,7 @@ pub fn log() -> Option<Log> {
         let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
         return Some(Log::File(local.join("illogical").join("state").join("illogicald.log")));
     }
-    Some(Log::Journal(format!("journalctl --user -u {LABEL} -e")))
+    Some(Log::Journal(format!("journalctl --user -u {} -u {} -e", LABELS[0], LABELS[1])))
 }
 
 /// How the daemon here is doing, in one line: what the app's *Daemon*
@@ -244,7 +264,8 @@ mod tests {
     use super::*;
 
     fn svc(kind: Kind, running: bool) -> Service {
-        Service { kind, target: "gui/501/illogicald".into(), file: PathBuf::new(), running, loaded: running }
+        let target = if kind == Kind::Systemd { UNIT } else { "gui/501/illogicald" };
+        Service { kind, target: target.into(), file: PathBuf::new(), running, loaded: running }
     }
 
     #[test]
@@ -259,6 +280,9 @@ mod tests {
         );
         assert_eq!(line(Some("0.21.0"), None), "illogicald 0.21.0, running, not as a service");
         assert_eq!(line(None, Some(&svc(Kind::Systemd, false))), "Stopped (the systemd user unit illogicald.service)");
+        // #504: a unit the renamed release set up is named as it is.
+        let renamed = Service { target: UNITS[1].into(), ..svc(Kind::Systemd, false) };
+        assert_eq!(line(None, Some(&renamed)), "Stopped (the systemd user unit arugulad.service)");
         assert_eq!(line(None, None), "Not running, and not set up as a service");
     }
 

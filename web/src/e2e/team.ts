@@ -59,6 +59,7 @@ export interface TeamPin {
 export type AccountCerts = Record<string, [Cert[], Revocation[]]>;
 
 export function rosterBody(r: Roster): string {
+  // Frozen (#504): this and the signed bodies below; see crates/e2e/src/frozen.rs.
   let b = `illogical team v${r.v}\nteam ${r.team}\nname ${r.name}\nversion ${r.version}\nat ${r.at}\n`;
   for (const m of r.members) b += `member ${m.account} ${m.root} ${m.role} ${m.name}\n`;
   for (const x of r.spent ?? []) b += `spent ${x.key} ${x.expires}\n`;

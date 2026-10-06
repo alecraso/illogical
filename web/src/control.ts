@@ -354,7 +354,7 @@ const NO_NOISE = "0".repeat(64);
 /** A browser's name in its account's device list. */
 export function deviceName(): string {
   // M48: the desktop app says what it is ("illogical app on jake-air").
-  const app0 = (globalThis as { __illogicalApp?: { name?: string } }).__illogicalApp?.name;
+  const app0 = desktopApp()?.name;
   if (app0) return app0;
   const ua = navigator.userAgent;
   const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "browser";
@@ -1025,6 +1025,7 @@ export class ControlSession {
   /** Hand control a push subscription, signed by this device (M21). */
   async subscribePush(sub: { endpoint: string; p256dh: string; auth: string }) {
     const s = { v: 1, account: this.account, device: this.keys.id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, at: Date.now(), sig: "" };
+    // Frozen (#504): signed.
     const body = `illogical push v1\naccount ${s.account}\ndevice ${s.device}\nendpoint ${s.endpoint}\np256dh ${s.p256dh}\nauth ${s.auth}\nat ${s.at}\n`;
     s.sig = await signText(this.keys, body);
     await api("/api/push/subscribe", { sub: s });

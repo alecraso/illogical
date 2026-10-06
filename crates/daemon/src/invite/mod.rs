@@ -81,9 +81,10 @@ pub const CLOSE_OWNER_ONLY: &str = "only the session's owner closes an invite bl
 /// An agent on the owner's CLI asks; the owner sends.
 pub const AGENT_ASKS: &str = "an agent doesn't invite: ask the user with illogical's invite_person tool";
 
-/// Whether the owner's CLI says an agent runs it (as for a forge's drafts).
-fn agent(headers: &HeaderMap) -> bool {
-    headers.get("x-illogical-agent").is_some()
+/// Whether the owner's CLI says an agent runs it (as for a forge's drafts),
+/// under either name (#504).
+pub(crate) fn agent(headers: &HeaderMap) -> bool {
+    illogical_proto::rename::either(illogical_proto::rename::AGENT, |n| headers.get(n)).is_some()
 }
 
 /// An invite an agent drafted and the owner sent (#234), for the audit

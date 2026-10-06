@@ -557,7 +557,7 @@ fn restart(s: &Service) -> Result<(), String> {
     match s.kind {
         Kind::AppAgent | Kind::Agent => launchctl(&["kickstart", "-k", &s.target]),
         Kind::LaunchDaemon => as_admin(&format!("launchctl kickstart -k {}", s.target)),
-        Kind::Systemd => systemctl("restart"),
+        Kind::Systemd => systemctl("restart", &s.target),
         Kind::Task => Err("restarting the scheduled task isn't something the app does".into()),
     }
 }
@@ -568,7 +568,7 @@ fn stop(s: &Service) -> Result<(), String> {
     match s.kind {
         Kind::AppAgent | Kind::Agent => launchctl(&["bootout", &s.target]),
         Kind::LaunchDaemon => as_admin(&format!("launchctl bootout {}", s.target)),
-        Kind::Systemd => systemctl("stop"),
+        Kind::Systemd => systemctl("stop", &s.target),
         Kind::Task => Err("stopping the scheduled task isn't something the app does".into()),
     }
 }
@@ -597,7 +597,7 @@ fn start(s: &Service) -> Result<(), String> {
         }
         Kind::LaunchDaemon if s.loaded => as_admin(&format!("launchctl kickstart {}", s.target)),
         Kind::LaunchDaemon => as_admin(&format!("launchctl bootstrap system {file}")),
-        Kind::Systemd => systemctl("start"),
+        Kind::Systemd => systemctl("start", &s.target),
         Kind::Task => Err("starting the scheduled task isn't something the app does".into()),
     }
 }
@@ -606,8 +606,8 @@ fn launchctl(args: &[&str]) -> Result<(), String> {
     output(Command::new("launchctl").args(args), &format!("launchctl {}", args.join(" ")))
 }
 
-fn systemctl(verb: &str) -> Result<(), String> {
-    output(Command::new("systemctl").args(["--user", verb, service::UNIT]), &format!("systemctl --user {verb}"))
+fn systemctl(verb: &str, unit: &str) -> Result<(), String> {
+    output(Command::new("systemctl").args(["--user", verb, unit]), &format!("systemctl --user {verb} {unit}"))
 }
 
 /// The LaunchDaemon's: macOS asks for an administrator's password.
@@ -656,7 +656,7 @@ fn open_log() {
 
 fn journal() -> Result<PathBuf, String> {
     let out = Command::new("journalctl")
-        .args(["--user", "-u", service::LABEL, "-n", "5000", "--no-pager"])
+        .args(["--user", "-u", service::LABELS[0], "-u", service::LABELS[1], "-n", "5000", "--no-pager"])
         .output()
         .map_err(|e| format!("journalctl: {e}"))?;
     let file = std::env::temp_dir().join("illogicald-journal.log");

@@ -163,6 +163,7 @@ pub fn spawn_local(s: LocalSpawn, sink: Sink) -> std::io::Result<(Link, u32)> {
         crate::perm::open_mode(OpenOptions::new().create(true).append(true), 0o600).open(s.dir.join("agent.err"))?;
     let err_from = err.metadata().map_or(0, |m| m.len());
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    // Frozen (#504): scopes are read back from /proc/*/cgroup (`scope_of`).
     let mut cmd = s.launch.command(&format!("illogical-agent-{}-{nanos}", s.id));
     let cwd = if s.cwd.is_dir() { s.cwd } else { Path::new("/") };
     for k in s.remove {

@@ -221,6 +221,7 @@ export class E2ESocket {
         else rej(new Error("closed during the handshake (not an approved device?)"));
       };
       void ik
+        // Frozen (#504): the prologue both ends agree on.
         .write(new Uint8Array(), enc.encode(`illogical/1\n${daemon.id}\n`))
         .then((m) => ws.send(m))
         .catch(rej);

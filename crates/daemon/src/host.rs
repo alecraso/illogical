@@ -85,6 +85,7 @@ pub fn pipe_name(record: &Path) -> String {
         .fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
     let user = std::env::var("USERNAME").unwrap_or_default().to_lowercase();
     let user: String = user.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+    // Frozen (#504): a restarted daemon finds running panes by it.
     format!(r"\\.\pipe\illogical-{user}-pane-{hash:016x}")
 }
 

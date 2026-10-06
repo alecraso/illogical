@@ -107,6 +107,7 @@ pub struct Invite {
 
 impl Invite {
     pub fn body(&self) -> String {
+        // Frozen (#504): this and every signed body below; see `frozen.rs`.
         format!(
             "illogical team invite v1\nteam {}\nrole {}\nexpires {}\nkey {}\nby {}\n",
             self.team,

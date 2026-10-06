@@ -15,6 +15,9 @@ pub mod mux;
 pub mod push;
 pub mod team;
 
+#[cfg(test)]
+mod frozen;
+
 pub use cert::{Cert, Kind, Refusal, Revocation, Trust};
 pub use keys::DeviceKeys;
 

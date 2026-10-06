@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 
 use crate::channel::PARAMS;
 
-const HEADER: &str = "illogical-device-key 1";
+// Frozen (#504): written into every key file; see `frozen.rs`.
+pub(crate) const HEADER: &str = "illogical-device-key 1";
 
 pub struct DeviceKeys {
     pub noise_private: [u8; 32],

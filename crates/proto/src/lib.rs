@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Old and new names across the rename to Arugula (#504).
+pub use illogical_core::rename;
 pub use illogical_core::{
     ClientId, Dir, Edge, Intent, Layout, Node, NodeId, OptionMap, OptionScope, Options, PaneId, Rect, Session,
     SessionId, SplitRect, TabId,
@@ -170,6 +172,7 @@ pub const CALL_MAX: usize = 5;
 /// replaying it into another call or to another member.
 pub fn call_fingerprint_body(call: &str, from: ClientId, to: ClientId, sdp: &str) -> String {
     let fps: Vec<&str> = sdp.lines().map(str::trim).filter(|l| l.starts_with("a=fingerprint:")).collect();
+    // Frozen (#504): signed, and checked by other versions.
     format!("illogical call v1\ncall {call}\nfrom {from}\nto {to}\n{}\n", fps.join("\n"))
 }
 

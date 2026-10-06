@@ -7,6 +7,7 @@ pub mod access;
 pub mod layout;
 pub mod mux;
 pub mod names;
+pub mod rename;
 pub mod tree;
 
 pub type SessionId = u32;

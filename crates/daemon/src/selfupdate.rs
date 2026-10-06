@@ -71,6 +71,18 @@ fn stem(version: &str) -> Option<String> {
 const EXT: &str = if cfg!(windows) { "zip" } else { "tar.gz" };
 const EXE: &str = if cfg!(windows) { "illogicald.exe" } else { "illogicald" };
 
+/// The daemon in an unpacked release: `illogical-…/illogicald`, or the
+/// renamed release's `arugula-…/arugulad` (#504), which this version's
+/// updater installs too.
+fn daemon_in(dir: &Path, version: &str) -> Option<PathBuf> {
+    let target = target()?;
+    let exe = |n: &str| if cfg!(windows) { format!("{n}.exe") } else { n.to_owned() };
+    [("illogical", "illogicald"), ("arugula", "arugulad"), ("illogical", "arugulad"), ("arugula", "illogicald")]
+        .into_iter()
+        .map(|(folder, bin)| dir.join(format!("{folder}-{version}-{target}")).join(exe(bin)))
+        .find(|p| p.is_file())
+}
+
 /// `…/releases/latest` → `…/releases`, where the downloads are.
 pub fn releases(latest_url: &str) -> String {
     latest_url.trim_end_matches('/').trim_end_matches("/latest").to_owned()
@@ -117,7 +129,7 @@ pub async fn fetch(releases: &str, version: &str, into: &Path) -> anyhow::Result
     let archive = into.join(&name);
     std::fs::write(&archive, &bytes)?;
     unpack(&archive, into)?;
-    let exe = into.join(&stem).join(EXE);
+    let exe = daemon_in(into, version).unwrap_or_else(|| into.join(&stem).join(EXE));
     let says = version_of(&exe).with_context(|| format!("{} doesn't run", exe.display()))?;
     ensure!(says == version, "{} says it's {says}, not {version}", exe.display());
     Ok(exe)
@@ -464,17 +476,24 @@ mod tests {
 
     #[cfg(unix)]
     async fn fake_release(name: &str, version: &str, sums_lie: bool) -> String {
+        fake_release_of(name, version, sums_lie, "illogical", "illogicald").await
+    }
+
+    /// The same, with the folder and daemon in the archive named `folder`
+    /// and `bin`.
+    #[cfg(unix)]
+    async fn fake_release_of(name: &str, version: &str, sums_lie: bool, folder: &str, bin: &str) -> String {
         use axum::routing::get;
         let tmp = scratch(&format!("{name}-release"));
         let stem = stem(version).unwrap();
-        let folder = tmp.join(&stem);
-        std::fs::create_dir_all(&folder).unwrap();
-        let exe = folder.join("illogicald");
-        std::fs::write(&exe, format!("#!/bin/sh\necho illogicald {version}\n")).unwrap();
+        let inside = format!("{folder}-{version}-{}", target().unwrap());
+        std::fs::create_dir_all(tmp.join(&inside)).unwrap();
+        let exe = tmp.join(&inside).join(bin);
+        std::fs::write(&exe, format!("#!/bin/sh\necho {bin} {version}\n")).unwrap();
         crate::perm::set(&exe, 0o755).unwrap();
         let name = format!("{stem}.tar.gz");
         let mut tar = Command::new("tar");
-        tar.arg("-czf").arg(tmp.join(&name)).arg("-C").arg(&tmp).arg(&stem);
+        tar.arg("-czf").arg(tmp.join(&name)).arg("-C").arg(&tmp).arg(&inside);
         assert!(tar.status().unwrap().success());
         let archive = std::fs::read(tmp.join(&name)).unwrap();
         let sum = if sums_lie { "0".repeat(64) } else { hex::encode(Sha256::digest(&archive)) };
@@ -495,6 +514,18 @@ mod tests {
         let into = scratch("ok");
         let exe = fetch(&releases, "9.9.9", &into).await.unwrap();
         assert_eq!(version_of(&exe).as_deref(), Some("9.9.9"));
+    }
+
+    /// #504: the renamed release, under the archive name this version
+    /// asks for, holds `arugula-…/arugulad`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fetches_a_renamed_release() {
+        let releases = fake_release_of("renamed", "9.9.8", false, "arugula", "arugulad").await;
+        let into = scratch("renamed");
+        let exe = fetch(&releases, "9.9.8", &into).await.unwrap();
+        assert!(exe.ends_with("arugulad"), "{}", exe.display());
+        assert_eq!(version_of(&exe).as_deref(), Some("9.9.8"));
     }
 
     #[cfg(unix)]

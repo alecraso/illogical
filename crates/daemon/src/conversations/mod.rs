@@ -521,6 +521,7 @@ fn scope_of(pid: u32) -> (Option<PaneId>, Option<PaneId>) {
         let i = cg.find(prefix)? + prefix.len();
         cg[i..].split(['-', '.']).next()?.parse::<PaneId>().ok()
     };
+    // Frozen (#504): running panes keep the scopes they started in.
     (id("illogical-pane-"), id("illogical-agent-"))
 }
 

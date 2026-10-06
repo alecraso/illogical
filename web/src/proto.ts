@@ -20,6 +20,7 @@ export function callFingerprintBody(call: string, from: ClientId, to: ClientId, 
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.startsWith("a=fingerprint:"));
+  // Frozen (#504): signed.
   return `illogical call v1\ncall ${call}\nfrom ${from}\nto ${to}\n${fps.join("\n")}\n`;
 }
 

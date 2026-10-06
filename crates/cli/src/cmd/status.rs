@@ -85,7 +85,7 @@ pub fn daemon_lines(host: Option<&HostInfo>, unreachable: Option<&str>, here: Op
         (Some(_), _) => None,
         (None, Some(s)) if !s.running => Some(match s.kind {
             service::Kind::Systemd => {
-                format!("`systemctl --user start {}`, or the app's Daemon > Start", service::UNIT)
+                format!("`systemctl --user start {}`, or the app's Daemon > Start", s.target)
             }
             _ => "the app's Daemon > Start, or `illogicald install` (which keeps its flags)".into(),
         }),

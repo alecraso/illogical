@@ -497,6 +497,9 @@ fn default_socket() -> PathBuf {
 static VERSION_MARK: &str = concat!("\0illogical-version=", env!("CARGO_PKG_VERSION"), "\0");
 
 fn main() {
+    // ARUGULA_X for ILLOGICAL_X (#504), before any thread exists.
+    // SAFETY: nothing else runs yet.
+    unsafe { illogical_proto::rename::alias_env() };
     // Run as `tmux` (a link, or a copy on an ssh host's PATH): be tmux's
     // control mode, with tmux's own arguments.
     let argv0 = std::env::args_os().next().map(PathBuf::from);
