@@ -85,6 +85,9 @@
 //!   daemon's own update, which the setup page offers when the daemon is
 //!   too old for this app (`compat.rs`), and the *Daemon* menu when a newer
 //!   one is out (`daemon.rs`).
+//! - **`GET /api/setup?part=agents`** (`adapters`: `kind`, `label`,
+//!   `state`, `outdated`, `found`, `pinned`): an agent here without its
+//!   adapter, for one notification (`daemon.rs`, #335).
 //! - **`POST /api/run`** `{cwd, command}`, answering `{pane}`: a new tab
 //!   for `illogical://open`, a folder or a `.command` file (`links.rs`).
 //! - **The page**: `/`, `/#pane=N` and `/#getting-started=SECTION`, the
@@ -812,6 +815,8 @@ enum Click {
     Pane(u32),
     /// Getting started's cloud step, to join control again (#325).
     JoinAgain,
+    /// Getting started's agents step, to install an adapter (#335).
+    Agents,
 }
 
 impl Click {
@@ -821,6 +826,7 @@ impl Click {
         match self {
             Click::Pane(pane) => open_pane(app, pane),
             Click::JoinAgain => daemon::getting_started(app, "cloud"),
+            Click::Agents => daemon::getting_started(app, "agents"),
         }
     }
 }

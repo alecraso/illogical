@@ -1,9 +1,11 @@
 //! `illogical status`: how illogical is doing on this machine, one line
 //! per part: the daemon (answering, its version), the service that runs it,
 //! the binary that service runs and where its log is (#322), as the desktop
-//! app's *Daemon* menu says them; and its standing with illogical control
+//! app's *Daemon* menu says them; its standing with illogical control
 //! (#325): joined where and whether connected, not joined, or dropped by
-//! control and what it said. Each part is a [`Line`].
+//! control and what it said; and the agents (#335): each ACP adapter's
+//! state and whether Claude Code has illogical's MCP server. Each part is
+//! a [`Line`].
 //!
 //! The service, binary and log are this machine's: with `--host` or
 //! `--ssh` only the daemon's own answer is shown.
@@ -124,6 +126,46 @@ pub fn lines(
     out
 }
 
+const SETUP: &str = "`illogical setup claude`, or Getting started's Agents step";
+
+/// The agents' lines (#335), from `/api/setup?part=agents`: each adapter,
+/// then Claude Code's MCP server.
+pub fn agent_lines(v: &Value) -> Vec<Line> {
+    let mut out = Vec::new();
+    for a in v["adapters"].as_array().into_iter().flatten() {
+        let s = |k: &str| a[k].as_str().unwrap_or_default();
+        let (label, kind) = (s("label"), s("kind"));
+        let found = a["found"].as_bool().unwrap_or(false);
+        let setup = if kind == "claude" { SETUP.to_owned() } else { format!("`illogical setup {kind}`") };
+        let (says, fix) = match s("state") {
+            "installed" if a["outdated"] == true => (
+                format!("{label}'s adapter {}, out of date (illogical uses {})", s("version"), s("pinned")),
+                Some(format!("{setup} updates it")),
+            ),
+            "installed" if a["on_path"] == true => (format!("{label}'s adapter, on PATH"), None),
+            "installed" => (format!("{label}'s adapter {}", a["version"].as_str().unwrap_or(s("pinned"))), None),
+            "no_node" => (
+                format!("{}: agent blocks can't run {label}", s("why")),
+                Some(format!("install Node (`mise use -g node@22`), then {setup}")),
+            ),
+            // Missing: only worth fixing where the agent is used.
+            _ if found => (format!("{label}'s adapter isn't installed, and {label} is on this machine"), Some(setup)),
+            _ => (format!("{label}'s adapter isn't installed ({label} isn't on this machine)"), None),
+        };
+        out.push(Line { part: "adapter", says, fix });
+    }
+    let c = &v["claude"];
+    if c.is_object() {
+        let (says, fix) = match (c["installed"].as_bool(), c["tools"].as_bool()) {
+            (_, Some(true)) => ("Claude Code has illogical's MCP server".to_owned(), None),
+            (Some(true), _) => ("Claude Code doesn't have illogical's MCP server".to_owned(), Some(SETUP.to_owned())),
+            _ => ("Claude Code isn't on this machine".to_owned(), None),
+        };
+        out.push(Line { part: "mcp", says, fix });
+    }
+    out
+}
+
 pub fn run(ctx: Ctx) -> anyhow::Result<i32> {
     let Ctx { sock, json_out, .. } = ctx;
     let got = request(&sock, "GET", "/api/host", None).and_then(|r| r.json());
@@ -134,6 +176,10 @@ pub fn run(ctx: Ctx) -> anyhow::Result<i32> {
     let host = raw.as_ref().and_then(|v| serde_json::from_value::<HostInfo>(v.clone()).ok());
     let control = raw.as_ref().and_then(ControlState::of_host);
     let here = matches!(sock, Target::Socket(_)).then(|| Here { service: service::find(), log: service::log() });
+    // The agents (#335): an older daemon answers with all of /api/setup
+    // (no adapters), or not at all.
+    let agents =
+        host.as_ref().and_then(|_| request(&sock, "GET", "/api/setup?part=agents", None).and_then(|r| r.json()).ok());
     if json_out {
         let svc = here.as_ref().and_then(|h| h.service.as_ref());
         let v: Value = json!({
@@ -148,10 +194,13 @@ pub fn run(ctx: Ctx) -> anyhow::Result<i32> {
             })),
             "log": here.as_ref().and_then(|h| h.log.as_ref()).map(|l| l.to_string()),
             "control": control,
+            "agents": agents,
         });
         println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
     } else {
-        for l in lines(host.as_ref().map(|h| (h, control.as_ref())), err.as_deref(), here.as_ref()) {
+        let mut ls = lines(host.as_ref().map(|h| (h, control.as_ref())), err.as_deref(), here.as_ref());
+        ls.extend(agents.as_ref().map(agent_lines).unwrap_or_default());
+        for l in ls {
             println!("{:<8} {}", l.part, l.says);
             if let Some(f) = l.fix {
                 println!("{:<8} {f}", "");
@@ -209,6 +258,44 @@ mod tests {
 
         let none = ControlState { state: "not_joined".into(), ..Default::default() };
         assert_eq!(control_line(&none).says, "Not joined to illogical control");
+    }
+
+    #[test]
+    fn the_agent_lines_say_each_adapter_and_the_mcp_server() {
+        let v = json!({
+            "claude": { "installed": true, "tools": false },
+            "adapters": [
+                { "kind": "claude", "label": "Claude Code", "state": "missing", "found": true, "pinned": "0.85.0" },
+                { "kind": "codex", "label": "Codex", "state": "missing", "found": false, "pinned": "2.1.0" },
+            ],
+        });
+        let ls = agent_lines(&v);
+        let parts: Vec<_> = ls.iter().map(|l| l.part).collect();
+        assert_eq!(parts, ["adapter", "adapter", "mcp"]);
+        assert_eq!(ls[0].says, "Claude Code's adapter isn't installed, and Claude Code is on this machine");
+        assert!(ls[0].fix.as_deref().unwrap().contains("illogical setup claude"));
+        assert!(ls[1].fix.is_none(), "no Codex here: nothing to do");
+        assert_eq!(ls[2].says, "Claude Code doesn't have illogical's MCP server");
+        assert!(ls[2].fix.is_some());
+
+        let v = json!({
+            "claude": { "installed": true, "tools": true },
+            "adapters": [
+                { "kind": "claude", "label": "Claude Code", "state": "installed", "version": "0.81.2",
+                  "outdated": true, "pinned": "0.85.0", "found": true },
+                { "kind": "codex", "label": "Codex", "state": "installed", "version": "2.1.0",
+                  "outdated": false, "pinned": "2.1.0", "found": true },
+            ],
+        });
+        let ls = agent_lines(&v);
+        assert_eq!(ls[0].says, "Claude Code's adapter 0.81.2, out of date (illogical uses 0.85.0)");
+        assert!(ls[0].fix.as_deref().unwrap().ends_with("updates it"));
+        assert_eq!(ls[1].says, "Codex's adapter 2.1.0");
+        assert!(ls[1].fix.is_none());
+        assert_eq!(ls[2].says, "Claude Code has illogical's MCP server");
+
+        // An older daemon: no adapters, no lines for them.
+        assert_eq!(agent_lines(&json!({})).len(), 0);
     }
 
     #[test]

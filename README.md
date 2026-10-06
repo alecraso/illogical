@@ -204,8 +204,11 @@ most twice a day; nothing else is sent. `illogicald install --
    team machines and sharing one session: [docs/teams.md](docs/teams.md).
 6. **Agents.** *Start an agent…* in a pane's menu, or `illogical agent
    "fix the failing test"`. Claude Code and Codex run through an npm
-   adapter (needs Node 20+): *Start an agent…* offers to install it, in a
-   pane you can watch, or install it yourself:
+   adapter (needs Node 20+). `illogical setup claude`, or *Use Claude Code
+   with illogical* in Getting started's Agents step, installs Claude
+   Code's and adds illogical's MCP server (step 7) in one go; *Start an
+   agent…* offers to install it too, in a pane you can watch. Or install
+   it yourself:
 
    ```
    npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0

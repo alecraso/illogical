@@ -9,6 +9,14 @@
 // in Tailscale's admin console), with the command or the link. Where the
 // daemon can't be asked (a page through control, a guest), each step falls
 // back to the command.
+//
+// #335: agents need Claude Code's (or Codex's) ACP adapter, and Claude Code
+// needs illogical's MCP server to start its helpers as panes. The Agents
+// step says each adapter's state next to Start an agent, with Install (in
+// a pane) or the npm line when it can't; and "Use Claude Code with
+// illogical" does both in one click (`POST /api/setup/agents/claude`),
+// then says what changed. Where Claude Code is on the machine and isn't
+// set up, the first screen offers that click too.
 
 import qrcode from "qrcode-generator";
 import { useEffect, useState } from "preact/hooks";
@@ -19,6 +27,7 @@ import { startAgent } from "./agent-dialog";
 import type { ControlState } from "../proto";
 import { placeOf, refreshControlState } from "./control-state";
 import { desktopApp } from "../desktop";
+import { AdapterHelp, adapterLine, adapterReady, installAdapter, type Adapter } from "./adapter";
 
 const DOCS = "https://github.com/arugula-salad/illogical/blob/main/docs";
 /** illogical cloud, unless the daemon was started with `--control` (#207). */
@@ -63,7 +72,14 @@ interface Setup {
     state?: ControlState;
   };
   claude: { installed: boolean; tools: boolean };
+  /** #335: each adapter, with `found` (its agent's CLI is here). Absent
+   * from an older daemon. */
+  adapters?: Adapter[];
 }
+
+/** `GET /api/setup?part=agents`: what the welcome offer and the Agents
+ * step read, without waiting for Tailscale. */
+type AgentsSetup = Pick<Setup, "claude" | "adapters">;
 
 /** What a button did. */
 interface Outcome {
@@ -71,6 +87,8 @@ interface Outcome {
   error?: string;
   fix?: string;
   link?: { label: string; url: string };
+  /** What changed, a line each (#335). */
+  done?: string[];
 }
 
 const STEPS = [
@@ -202,8 +220,18 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
   // The cloud step's part comes back first (the rest asks Tailscale and
   // Claude Code): which control the button joins, at once (#207).
   const [early, setEarly] = useState<Setup["control"] | null>(null);
+  // #335: the agents' part too, so their step doesn't wait on Tailscale
+  // (whose `status` can take seconds when it's stopped). Once it's here,
+  // it's what that step and the offer read, refreshed after their clicks.
+  const [agentsPart, setAgentsPart] = useState<AgentsSetup | null>(null);
+  const refreshAgents = async () => {
+    const r = await fetch("/api/setup?part=agents").catch(() => null);
+    if (r?.ok) setAgentsPart((await r.json()) as AgentsSetup);
+  };
+  const agents: AgentsSetup | null = agentsPart ?? setup;
   useEffect(() => {
     void refresh();
+    void refreshAgents();
     fetch("/api/setup?part=control")
       .then((r) => (r.ok ? (r.json() as Promise<Pick<Setup, "control">>) : null))
       .then((r) => r && setEarly(r.control))
@@ -232,7 +260,7 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
     welcome: true,
     phone: !!(setup?.tailscale.serving || host?.tailnet_seen),
     cloud: !!(setup?.control.joined || (host?.control && host.control_state?.state !== "dropped")),
-    agents: !!setup?.claude.tools,
+    agents: claudeReady(agents),
     ready: false,
   };
   const id = STEPS[step].id;
@@ -282,12 +310,12 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
           <div class="start-kicker" data-start-progress>
             Step {step + 1} / {STEPS.length} · {STEPS[step].label}
           </div>
-          {id === "welcome" && <Welcome name={name} client={client} />}
+          {id === "welcome" && <Welcome name={name} client={client} setup={agents} manual={manual} refresh={refreshAgents} />}
           {id === "phone" && <Phone name={name} setup={setup} host={host} manual={manual} refresh={refresh} />}
           {id === "cloud" && (
             <Cloud name={name} setup={setup} early={early} host={host} manual={manual} refresh={refresh} setSetup={setSetup} onConfirmed={() => setConfirmed(true)} />
           )}
-          {id === "agents" && <Agents client={client} setup={setup} manual={manual} refresh={refresh} close={close} />}
+          {id === "agents" && <Agents client={client} setup={agents} manual={manual} refresh={refreshAgents} close={close} />}
           {id === "ready" && <Ready done={done} go={go} />}
         </div>
 
@@ -313,8 +341,17 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
 
 // ---- steps
 
-function Welcome({ name, client }: { name: string; client: Client | null }) {
+/** Claude Code works here: its adapter's at the pin and it has the MCP
+ * server. (An older daemon doesn't say the adapter's.) */
+function claudeReady(setup: AgentsSetup | null): boolean {
+  const a = setup?.adapters?.find((x) => x.kind === "claude");
+  return !!setup?.claude.tools && (!a || adapterReady(a));
+}
+
+function Welcome({ name, client, setup, manual, refresh }: { name: string; client: Client | null; setup: AgentsSetup | null; manual: boolean; refresh: () => Promise<void> }) {
   const panes = client?.state?.panes.length ?? 0;
+  // #335: Claude Code is here and isn't set up: offer it without being asked.
+  const offer = !manual && !!setup?.claude.installed && !claudeReady(setup);
   return (
     <section class="start-step">
       <h2>Terminals that outlive their windows</h2>
@@ -356,6 +393,15 @@ function Welcome({ name, client }: { name: string; client: Client | null }) {
           </div>
         </li>
       </ul>
+      {offer && (
+        <div class="start-offer" data-start-offer>
+          <p>
+            <b>Claude Code is on this machine.</b> One click lets it run here as agent panes, and start its helpers as panes you can watch: it installs Claude
+            Code's adapter and adds illogical's MCP server.
+          </p>
+          <UseClaude setup={setup} refresh={refresh} />
+        </div>
+      )}
       <p class="start-dim">Next: your phone, the cloud and agents. Each takes a click, and you can skip any of them.</p>
     </section>
   );
@@ -650,17 +696,49 @@ function Cloud({
   );
 }
 
-function Agents({ client, setup, manual, refresh, close }: { client: Client | null; setup: Setup | null; manual: boolean; refresh: () => Promise<void>; close: () => void }) {
+/** #335: "Use Claude Code with illogical": its adapter (installed, or
+ * updated to the pin) and illogical's MCP server, then what changed. */
+function UseClaude({ setup, refresh }: { setup: AgentsSetup | null; refresh: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const session = client?.session ?? null;
-  const cl = setup?.claude;
-  const add = async () => {
+  const go = async () => {
     setBusy(true);
-    setOutcome(await post("/api/setup/claude"));
+    setOutcome(await post("/api/setup/agents/claude"));
     await refresh();
     setBusy(false);
   };
+  const done = outcome?.done ?? [];
+  return (
+    <>
+      {!claudeReady(setup) && (
+        <button class="start-btn primary" disabled={busy || !setup} onClick={go} data-start-claude>
+          {busy ? "Setting it up…" : "Use Claude Code with illogical"}
+        </button>
+      )}
+      {done.length > 0 && (
+        <ul class="start-checks" data-start-done>
+          {done.map((d) => (
+            <Check key={d} state="done">
+              {d}
+            </Check>
+          ))}
+        </ul>
+      )}
+      <Said outcome={outcome} />
+    </>
+  );
+}
+
+function adapterCheck(a: Adapter): "done" | "wait" | "fail" | "todo" {
+  if (adapterReady(a)) return "done";
+  return a.state === "no_node" ? "fail" : a.outdated ? "wait" : "todo";
+}
+
+function Agents({ client, setup, manual, refresh, close }: { client: Client | null; setup: AgentsSetup | null; manual: boolean; refresh: () => Promise<void>; close: () => void }) {
+  const session = client?.session ?? null;
+  const cl = setup?.claude;
+  // Claude Code's always; another's where it's used here.
+  const adapters = (setup?.adapters ?? []).filter((a) => a.kind === "claude" || a.found || a.state === "installed");
   return (
     <section class="start-step">
       <h2>Put agents to work</h2>
@@ -671,6 +749,29 @@ function Agents({ client, setup, manual, refresh, close }: { client: Client | nu
           <div>
             <h3>Start an agent</h3>
             <p>Give it a task in this session; watch it work in a pane of its own.</p>
+            {!manual && adapters.length > 0 && (
+              <ul class="start-checks" data-start-adapters>
+                {adapters.map((a) => (
+                  <Check key={a.kind} state={adapterCheck(a)}>
+                    <span data-start-adapter={a.kind}>{adapterLine(a)}</span>
+                  </Check>
+                ))}
+              </ul>
+            )}
+            {client &&
+              !manual &&
+              adapters.map((a) => (
+                <AdapterHelp
+                  key={a.kind}
+                  client={client}
+                  a={a}
+                  then="start the agent once it's done."
+                  install={() => {
+                    close();
+                    void installAdapter(client, a.kind, { session: session ?? undefined });
+                  }}
+                />
+              ))}
             {client && session !== null && (
               <button
                 class="start-btn"
@@ -688,22 +789,30 @@ function Agents({ client, setup, manual, refresh, close }: { client: Client | nu
         <li>
           <span class="start-glyph agent">⚙</span>
           <div>
-            <h3>Claude Code, with illogical's tools</h3>
-            <p>Builds and servers in panes you can watch and take over, and its questions on cards.</p>
+            <h3>Claude Code, with illogical</h3>
+            <p>
+              Agent panes run it through its adapter. illogical's MCP server lets it put builds, servers and its own helpers in panes you can watch and take
+              over, and its questions on cards.
+            </p>
             {manual ? (
-              <CopyText text="claude mcp add illogical -- illogical mcp" data-mcp-command />
-            ) : cl?.tools ? (
-              <ul class="start-checks">
-                <Check state="done">
-                  <span data-start-tools>Claude Code has illogical's tools</span>
-                </Check>
-              </ul>
+              <>
+                <p class="start-dim">On this machine, both at once:</p>
+                <CopyText text="illogical setup claude" data-setup-command />
+                <p class="start-dim">Or only the MCP server:</p>
+                <CopyText text="claude mcp add illogical -- illogical mcp" data-mcp-command />
+              </>
             ) : (
-              <button class="start-btn" disabled={busy || !setup} onClick={add} data-start-claude>
-                {busy ? "Adding…" : cl && !cl.installed ? "Claude Code isn't installed" : "Add illogical to Claude Code"}
-              </button>
+              <>
+                <ul class="start-checks">
+                  <Check state={cl?.tools ? "done" : "todo"}>
+                    <span data-start-tools>
+                      {cl?.tools ? "Claude Code has illogical's tools" : cl && !cl.installed ? "Claude Code isn't installed" : "illogical's MCP server: not added yet"}
+                    </span>
+                  </Check>
+                </ul>
+                <UseClaude setup={setup} refresh={refresh} />
+              </>
             )}
-            <Said outcome={outcome} />
             <p class="start-dim">
               <a href={`${DOCS}/cli.md#mcp`} target="_blank" rel="noreferrer">
                 Which tools to allow
@@ -724,7 +833,7 @@ function Ready({ done, go }: { done: Record<StepId, boolean>; go: (i: number) =>
   const rows: [StepId, string, string][] = [
     ["phone", "On your phone", "Not yet: Tailscale"],
     ["cloud", "In illogical cloud", "Not yet: connect"],
-    ["agents", "Claude Code has illogical's tools", "Not yet: add them"],
+    ["agents", "Claude Code works with illogical", "Not yet: set up Claude Code"],
   ];
   const all = rows.every(([id]) => done[id]);
   return (

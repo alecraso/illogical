@@ -368,10 +368,18 @@ enum Command {
     /// How illogical is doing on this machine.
     ///
     /// The daemon (its version, the service that runs it, its binary and
-    /// log), and whether and where it's joined to illogical control
-    /// (connected, or dropped by control). Exits 1 when the daemon doesn't
-    /// answer or control dropped it.
+    /// log), whether and where it's joined to illogical control
+    /// (connected, or dropped by control), each agent's adapter and
+    /// whether Claude Code has illogical's MCP server. Exits 1 when the
+    /// daemon doesn't answer or control dropped it.
     Status,
+    /// Use Claude Code (or Codex) with illogical.
+    ///
+    /// Installs the ACP adapter agent blocks run it through, at the version
+    /// this daemon pins (or updates an older one), and for Claude Code adds
+    /// illogical's MCP server, so it can start its helpers as panes. Says
+    /// what changed. Getting started's Agents step does the same.
+    Setup(cmd::setup::Args),
     /// Join stdin and stdout to this daemon's socket.
     ///
     /// On a box a client reaches over ssh (`--ssh`). Clients run it; people
@@ -635,6 +643,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         Command::Tmux { args } => tmux::run(ctx.sock, &args),
         Command::Ls => cmd::ls::run(ctx),
         Command::Status => cmd::status::run(ctx),
+        Command::Setup(args) => cmd::setup::run(args, ctx),
         Command::Describe(args) => cmd::describe::run(args, ctx),
         Command::Call(args) => cmd::call::run(args, ctx),
         Command::Open(args) => cmd::open::run(args, ctx),

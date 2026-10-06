@@ -4630,6 +4630,22 @@ html[data-native-tabs][data-desktop="macos"] .bar {
   margin-top: 0;
 }
 
+/* #335: Claude Code is here and not set up: the first screen offers it. */
+.start-offer {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid rgb(185, 140, 255);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.start-offer p {
+  margin: 0 0 10px;
+  color: #c4cbd8;
+  font-size: 13px;
+}
+
 .start-reach {
   display: flex;
   gap: 16px;
@@ -6433,6 +6449,33 @@ html.chat-open .huddle-bar {
 }
 
 .app.phone .control-dropped {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* #335: an agent here whose adapter isn't, said once. */
+.agents-nudge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--accent);
+  background: var(--surface);
+  line-height: 1.45;
+}
+
+.agents-nudge p {
+  flex: 1;
+  margin: 0;
+}
+
+.agents-nudge-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app.phone .agents-nudge {
   flex-direction: column;
   align-items: stretch;
 }

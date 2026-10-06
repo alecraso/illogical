@@ -37,6 +37,7 @@ pub mod rules;
 pub mod run;
 pub mod search;
 pub mod send;
+pub mod setup;
 pub mod share;
 pub mod shell_env;
 pub mod status;

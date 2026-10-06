@@ -3,7 +3,7 @@
 // a read-only terminal, and the composer. The agent is the scripted fake
 // ACP server the daemon's tests use, so nothing here costs anything.
 
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
@@ -239,6 +239,64 @@ test("an adapter that isn't installed: its command to copy, and Install in a pan
   await expect(block.locator(".agent-status")).toHaveText("Ready");
   await expect(block.locator(".agent-error")).toBeHidden();
   await expect(block.locator(".adapter-help")).toBeHidden();
+});
+
+// #335: Getting started's Agents step says each adapter's state next to
+// Start an agent, and one click installs one (`POST /api/setup/agents/…`,
+// the daemon waiting for npm: the stand-in here), then says what changed;
+// an install older than the pin is out of date, and the same click
+// updates it. Codex's, since Claude Code's would also add illogical's MCP
+// server to the Claude Code on the test machine.
+test("Getting started: each adapter's state, and one click that installs or updates it", async ({ page }) => {
+  const dir = join(process.env.ILLOGICAL_AGENTS_DIR!, "codex");
+  rmSync(dir, { recursive: true, force: true });
+  await reset(page);
+  type A = { kind: string; state: string; outdated?: boolean; found: boolean; version?: string; pinned: string };
+  const codex = () =>
+    page.evaluate(async () => {
+      const r = await fetch("/api/setup?part=agents");
+      return ((await r.json()) as { adapters: A[] }).adapters.find((a) => a.kind === "codex")!;
+    });
+  const before = await codex();
+  test.skip(before.state === "installed", "codex-acp is on this machine's PATH");
+  expect(before.state).toBe("missing");
+  expect(typeof before.found).toBe("boolean");
+
+  // Claude Code's (the fake, no version) is next to Start an agent.
+  await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:getting-started", { detail: "agents" })));
+  const panel = page.getByRole("dialog", { name: "Getting started" });
+  await expect(panel.locator("[data-start-progress]")).toHaveText("Step 4 / 5 · Agents");
+  await expect(panel.locator('[data-start-adapter="claude"]')).toContainText("Claude Code's adapter");
+  await expect(panel.locator("[data-start-agent]")).toBeVisible();
+  await panel.getByRole("button", { name: "Close" }).click();
+
+  // One click: installed, and said so.
+  const use = () => page.evaluate(async () => (await fetch("/api/setup/agents/codex", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json());
+  let o = await use();
+  expect(o.ok).toBe(true);
+  expect(o.done).toEqual([`Installed Codex's adapter (${before.pinned}): Codex runs as agent panes here.`]);
+  expect(await codex()).toMatchObject({ state: "installed", version: before.pinned, outdated: false });
+  // Again: nothing to do.
+  o = await use();
+  expect(o.done).toEqual(["Already set up: Codex runs as agent panes here."]);
+
+  // An older install is out of date, in the status and the step.
+  writeFileSync(join(dir, "node_modules/@agentclientprotocol/codex-acp/package.json"), '{"version": "0.0.1"}');
+  expect(await codex()).toMatchObject({ state: "installed", version: "0.0.1", outdated: true });
+  if (before.found) {
+    await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:getting-started", { detail: "agents" })));
+    await expect(panel.locator('[data-start-adapter="codex"]')).toHaveText(`Codex's adapter 0.0.1: out of date (illogical uses ${before.pinned})`);
+    await expect(panel.locator('.adapter-help[data-adapter="outdated"]')).toBeVisible();
+    await panel.getByRole("button", { name: "Close" }).click();
+  }
+  // The same click updates it.
+  o = await use();
+  expect(o.done).toEqual([`Updated Codex's adapter from 0.0.1 to ${before.pinned}: agent panes use it from their next start.`]);
+  expect(await codex()).toMatchObject({ state: "installed", version: before.pinned, outdated: false });
+
+  // No such agent: said.
+  const bad = await page.evaluate(async () => (await fetch("/api/setup/agents/nope", { method: "POST" })).json());
+  expect(bad.ok).toBe(false);
 });
 
 test.describe("phone", () => {

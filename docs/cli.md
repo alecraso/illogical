@@ -5,8 +5,12 @@
 ```
 illogical web                                 # this machine's page in your browser, signed in (--print: the link)
 illogical status                              # the daemon: its version, the service that runs it, its
-                                              #   binary and log; and whether and where it's joined to
-                                              #   control (connected, or dropped by control: exit 1)
+                                              #   binary and log; whether and where it's joined to
+                                              #   control (connected, or dropped by control: exit 1);
+                                              #   each agent's adapter, and Claude Code's MCP server
+illogical setup claude                        # Claude Code's adapter (installed, or updated to the pin)
+                                              #   and illogical's MCP server, then what changed
+                                              #   (`setup codex`: Codex's adapter)
 illogical ls                                  # panes, what they're running, who needs you
 illogical run -- make test                    # in a new tab; prints its pane (%N)
 illogical run --wait -- cargo build           # and exits with its exit code
@@ -182,6 +186,10 @@ started and stopped freely, and a daemon restart doesn't break it.
 claude mcp add illogical -- illogical mcp
 codex mcp add illogical -- illogical mcp
 ```
+
+`illogical setup claude` (or Getting started's *Use Claude Code with
+illogical*) adds it to Claude Code, and installs the adapter agent blocks
+run Claude Code through, in one go.
 
 The tools. `list`, `show` and `draft` each group several jobs under a
 `kind` argument, so a client's list stays short; the tool's

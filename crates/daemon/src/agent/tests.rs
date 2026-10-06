@@ -132,6 +132,16 @@ fn a_missing_adapter_is_said_once_and_kept_until_it_starts() {
     ));
     assert_eq!(g.error.as_deref(), Some("the agent couldn't start: Claude Code's adapter isn't installed"));
     assert_eq!(g.adapter.as_ref(), Some(&adapter));
+    // #335: its text says how to go on, where the page has Install.
+    let fix = adapter_fix(&adapter, 7).unwrap();
+    assert!(fix.contains("`illogical setup claude`"), "{fix}");
+    assert!(
+        fix.contains("`npm install --prefix ~/x/claude p@1`") && fix.contains("`illogical call %7 resume`"),
+        "{fix}"
+    );
+    let node = json!({ "kind": "codex", "state": "no_node", "npm": "npm i", "node_major": 20 });
+    assert!(adapter_fix(&node, 7).unwrap().contains("install Node 20+"));
+    assert!(adapter_fix(&json!({ "kind": "claude", "state": "installed" }), 7).is_none());
     assert_eq!(g.t.markdown().matches("couldn't start").count(), 1);
     g.rebuild_line(&frame("note", json!({ "e": "spawn", "resume": true })));
     assert!(g.adapter.is_none() && g.error.is_none());

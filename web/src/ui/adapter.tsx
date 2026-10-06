@@ -1,6 +1,8 @@
 // An agent whose adapter isn't installed here, or has no Node to run on
 // (#111): the command that installs it, copyable, and Install, which runs
-// it in a pane you can watch. In the Start an agent dialog and the block.
+// it in a pane you can watch. In the Start an agent dialog, the block and
+// Getting started's Agents step, which also says when one is out of date
+// (#335): older than the daemon's pin, and the same install updates it.
 
 import type { Client } from "../client";
 import type { PaneId } from "../proto";
@@ -16,9 +18,30 @@ export interface Adapter {
   npm: string;
   state: "installed" | "missing" | "no_node";
   version?: string | null;
+  /** Installed, older than `pinned` (#335). */
+  outdated?: boolean;
+  /** Installed by the person, on PATH, not in illogical's directory. */
+  on_path?: boolean;
+  /** Why it can't start, when it can't. */
+  why?: string;
+  /** `/api/setup` only: its agent's CLI is on this machine (#335). */
+  found?: boolean;
   /** The Node found, when it's too old. */
   node?: string | null;
   node_major: number;
+}
+
+/** Its state in a few words, for a checklist line. */
+export function adapterLine(a: Adapter): string {
+  if (a.state === "no_node") return a.why ?? `${a.label}'s adapter needs Node ${a.node_major}+`;
+  if (a.state === "missing") return `${a.label}'s adapter isn't installed`;
+  if (a.outdated) return `${a.label}'s adapter ${a.version}: out of date (illogical uses ${a.pinned})`;
+  return a.on_path ? `${a.label}'s adapter, on PATH` : `${a.label}'s adapter ${a.version ?? a.pinned}`;
+}
+
+/** Nothing to install: there, at the pin. */
+export function adapterReady(a: Adapter): boolean {
+  return a.state === "installed" && !a.outdated;
 }
 
 /** The adapters' status, or null if this person can't ask (a guest). */
@@ -47,8 +70,25 @@ export async function installAdapter(client: Client, kind: string, where: { spli
  * headline is shown already (the block's error), so only how to fix it.
  */
 export function AdapterHelp({ client, a, said, install, then }: { client: Client; a: Adapter; said?: boolean; install: () => void; then?: string }) {
-  if (a.state === "installed") return null;
+  if (a.state === "installed" && !a.outdated) return null;
   const owner = !client.state?.roles;
+  if (a.state === "installed")
+    return (
+      <div class="adapter-help" data-adapter="outdated">
+        <p>
+          {a.label}'s adapter is {a.version}; this illogical uses {a.pinned}. Update it with:
+        </p>
+        <CopyText text={a.npm} data-adapter-npm />
+        {owner && (
+          <p class="adapter-install">
+            <button type="button" data-adapter-install onClick={install}>
+              Update
+            </button>{" "}
+            runs it in a new pane{then ? `; ${then}` : "."}
+          </p>
+        )}
+      </div>
+    );
   if (a.state === "no_node")
     return (
       <div class="adapter-help" data-adapter={a.state}>

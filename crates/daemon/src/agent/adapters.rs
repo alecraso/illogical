@@ -1,7 +1,8 @@
 //! The npm adapters Claude Code and Codex run through (#111): whether each
 //! is installed on this host, and the `npm install` that installs it, made
 //! from the pins in `defs.rs` (the README's commands are checked against
-//! these in a test).
+//! these in a test). An install older than the pin is out of date (#335):
+//! the same install updates it.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,6 +17,9 @@ pub const NODE_MAJOR: u32 = 20;
 pub struct Adapter {
     pub kind: Kind,
     pub label: &'static str,
+    /// The agent's own CLI, whose being on this machine says it's used here
+    /// (#335).
+    pub cli: &'static str,
     /// Its directory under the agents directory.
     pub dir: &'static str,
     pub bin: &'static str,
@@ -30,6 +34,7 @@ pub const ADAPTERS: &[Adapter] = &[
     Adapter {
         kind: Kind::Claude,
         label: "Claude Code",
+        cli: "claude",
         dir: "claude",
         bin: "claude-agent-acp",
         package: CLAUDE_ACP,
@@ -38,6 +43,7 @@ pub const ADAPTERS: &[Adapter] = &[
     Adapter {
         kind: Kind::Codex,
         label: "Codex",
+        cli: "codex",
         dir: "codex",
         bin: "codex-acp",
         package: CODEX_ACP,
@@ -118,6 +124,18 @@ impl Status {
         matches!(self.state, State::Installed { .. })
     }
 
+    /// Installed in our directory, but not the version the pin says (#335):
+    /// it still runs, and installing again updates it.
+    pub fn outdated(&self) -> bool {
+        matches!(&self.state, State::Installed { version: Some(v), .. } if v != self.adapter.pinned())
+    }
+
+    /// Nothing to install: it's there, at the pin (or on PATH, which is
+    /// the person's own).
+    pub fn current(&self) -> bool {
+        self.ok() && !self.outdated()
+    }
+
     /// Why the agent can't start, for its block.
     pub fn why(&self) -> String {
         match &self.state {
@@ -145,12 +163,16 @@ impl Status {
                 v["state"] = json!("installed");
                 v["version"] = json!(version);
                 v["on_path"] = json!(on_path);
+                v["outdated"] = json!(self.outdated());
             }
             State::Missing => v["state"] = json!("missing"),
             State::NoNode { found } => {
                 v["state"] = json!("no_node");
                 v["node"] = json!(found);
             }
+        }
+        if !self.ok() {
+            v["why"] = json!(self.why());
         }
         v
     }
@@ -210,6 +232,34 @@ pub fn status(a: &'static Adapter, home: &Path, env: &[(String, String)]) -> Sta
 /// Every adapter's status.
 pub fn all(home: &Path, env: &[(String, String)]) -> Vec<Value> {
     ADAPTERS.iter().map(|a| status(a, home, env).json()).collect()
+}
+
+/// The PATH an install runs with: `env`'s, with the Node an agent block
+/// would get put first.
+pub fn node_path(home: &Path, env: &[(String, String)]) -> String {
+    let mut env = env.to_vec();
+    super::with_node_on_path(&mut env, home);
+    path_of(&env)
+}
+
+/// The install, to run here and wait for (Getting started's one click and
+/// `illogical setup`, #335): the same `npm install` an *Install* pane runs,
+/// into the real directory, with `path` (`node_path`). `ILLOGICAL_NPM`
+/// replaces npm. `None` when there's no npm on that PATH.
+pub fn npm_install(a: &Adapter, home: &Path, path: &str) -> Option<Command> {
+    let npm = match std::env::var("ILLOGICAL_NPM") {
+        Ok(other) if !other.is_empty() => PathBuf::from(other),
+        _ => which("npm", path)?,
+    };
+    let mut cmd = Command::new(npm);
+    cmd.arg("install")
+        .args(a.flags.split_whitespace())
+        .arg("--prefix")
+        .arg(agents_dir(home).join(a.dir))
+        .arg(a.package)
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null());
+    Some(cmd)
 }
 
 /// What an *Install* pane runs: the shown command, but into the real
@@ -305,6 +355,7 @@ mod tests {
         assert_eq!(s.state, State::Missing);
         assert_eq!(s.why(), "Claude Code's adapter isn't installed");
         assert_eq!(s.json()["state"], "missing");
+        assert_eq!(s.json()["why"], "Claude Code's adapter isn't installed");
 
         // Installed in our directory, with its version.
         let pkg = agents_dir(home).join("claude/node_modules");
@@ -314,6 +365,25 @@ mod tests {
         std::fs::write(pkg.join(claude.name()).join("package.json"), r#"{"version":"0.85.0"}"#).unwrap();
         let s = status(claude, home, &env);
         assert_eq!(s.state, State::Installed { version: Some("0.85.0".into()), on_path: false });
+        assert_eq!(s.outdated(), claude.pinned() != "0.85.0");
+
+        // #335: an older version than the pin is out of date, and says so.
+        std::fs::write(pkg.join(claude.name()).join("package.json"), r#"{"version":"0.1.0"}"#).unwrap();
+        let s = status(claude, home, &env);
+        assert!(s.ok() && s.outdated() && !s.current());
+        assert_eq!(s.json()["state"], "installed");
+        assert_eq!(s.json()["outdated"], true);
+        std::fs::write(pkg.join(claude.name()).join("package.json"), format!(r#"{{"version":"{}"}}"#, claude.pinned()))
+            .unwrap();
+        let s = status(claude, home, &env);
+        assert!(s.current() && s.json()["outdated"] == false);
+
+        // The install runs npm with the pin, into our directory.
+        std::fs::write(bin.join("npm"), "").unwrap();
+        let cmd = npm_install(claude, home, &bin.display().to_string()).unwrap();
+        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(args, ["install", "--prefix", &agents_dir(home).join("claude").display().to_string(), CLAUDE_ACP]);
+        assert!(npm_install(claude, home, &home.join("nothing").display().to_string()).is_none());
 
         // Too old a Node.
         std::fs::write(&node, "#!/bin/sh\necho v18.2.0\n").unwrap();

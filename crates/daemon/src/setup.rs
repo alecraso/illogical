@@ -12,13 +12,19 @@
 //!   `false` drops it. On a machine control dropped (#325), the same
 //!   button joins again: the old enrollment is set aside first.
 //! - `POST /api/setup/claude`: `claude mcp add illogical -- illogical mcp`.
+//! - `POST /api/setup/agents/{kind}` (#335), "Use Claude Code with
+//!   illogical": installs (or updates) the agent's ACP adapter, waiting for
+//!   npm, and for Claude Code adds the MCP server too; the answer says what
+//!   changed (`done`). `illogical setup claude` asks the same.
 //!
 //! When control says this machine's key was removed from its account
 //! (#330), the daemon makes a new key and starts a join itself; `GET
 //! /api/setup` shows that as `control.removed`, beside the new code. Back
 //! into the same account, it saves the join without asking again.
 //!
-//! `GET /api/setup` says how far along each one is. When a step needs
+//! `GET /api/setup` says how far along each one is; `?part=agents`, only
+//! the agents' (each adapter's state, whether its agent's CLI is on this
+//! machine, and whether Claude Code has the MCP server). When a step needs
 //! something only a person can do (a one-time sudo, a switch in
 //! Tailscale's admin console, a sign-in), the error says so, with the
 //! command or the link.
@@ -37,6 +43,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agent::{
+    adapters::{ADAPTERS, Adapter, State as AdapterState},
+    defs::Kind,
+};
 use crate::server::App;
 
 type AppState = State<Arc<App>>;
@@ -52,6 +62,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/setup/control", post(control_join))
         .route("/api/setup/control/confirm", post(control_confirm))
         .route("/api/setup/claude", post(claude_mcp))
+        .route("/api/setup/agents/{kind}", post(use_agent))
 }
 
 /// What a button did: done, or why not and what fixes it.
@@ -64,8 +75,12 @@ struct Outcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     fix: Option<String>,
     /// A page for the person to open (Tailscale's admin console, say).
+    /// (Boxed: an `Err` of its own in `install` and `add_mcp`.)
     #[serde(skip_serializing_if = "Option::is_none")]
-    link: Option<Link>,
+    link: Option<Box<Link>>,
+    /// What changed, a line each (#335).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    done: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -86,7 +101,7 @@ impl Outcome {
         self
     }
     fn link(mut self, label: &str, url: impl Into<String>) -> Self {
-        self.link = Some(Link { label: label.into(), url: url.into() });
+        self.link = Some(Box::new(Link { label: label.into(), url: url.into() }));
         self
     }
 }
@@ -96,6 +111,9 @@ struct Status {
     tailscale: TailscaleStatus,
     control: ControlStatus,
     claude: ClaudeStatus,
+    /// Each adapter's state (`adapters::Status::json`), with `found`: its
+    /// agent's CLI is on this machine (#335).
+    adapters: Vec<Value>,
 }
 
 #[derive(Serialize, Default)]
@@ -540,28 +558,162 @@ async fn claude_status(app: &App) -> ClaudeStatus {
 }
 
 async fn claude_mcp(State(app): AppState) -> Json<Outcome> {
-    let Some(c) = claude(&app).await else {
-        return Json(
-            Outcome::err("Claude Code isn't installed on this machine.")
-                .link("Install Claude Code", "https://docs.anthropic.com/en/docs/claude-code"),
-        );
+    Json(match add_mcp(&app).await {
+        Ok(_) => Outcome::ok(),
+        Err(o) => o,
+    })
+}
+
+/// `claude mcp add`, unless Claude Code has it already: whether it added.
+async fn add_mcp(app: &App) -> Result<bool, Outcome> {
+    let Some(c) = claude(app).await else {
+        return Err(Outcome::err("Claude Code isn't installed on this machine.")
+            .link("Install Claude Code", "https://docs.anthropic.com/en/docs/claude-code"));
     };
-    if claude_status(&app).await.tools {
-        return Json(Outcome::ok());
+    if claude_status(app).await.tools {
+        return Ok(false);
     }
-    let Some(cli) = cli(&app).await else {
-        return Json(Outcome::err("Can't find the illogical CLI next to the daemon."));
+    let Some(cli) = cli(app).await else {
+        return Err(Outcome::err("Can't find the illogical CLI next to the daemon."));
     };
     let cli = cli.display().to_string();
-    match run(&app, &c, &["mcp", "add", "--scope", "user", "illogical", "--", &cli, "mcp"], Duration::from_secs(20))
+    match run(app, &c, &["mcp", "add", "--scope", "user", "illogical", "--", &cli, "mcp"], Duration::from_secs(20))
         .await
     {
-        Ok((true, _, _)) => Json(Outcome::ok()),
+        Ok((true, _, _)) => Ok(true),
         Ok((false, out, err)) => {
-            Json(Outcome::err(format!("claude mcp add: {}", if err.is_empty() { out.trim().to_owned() } else { err })))
+            Err(Outcome::err(format!("claude mcp add: {}", if err.is_empty() { out.trim().to_owned() } else { err })))
         }
-        Err(e) => Json(Outcome::err(e)),
+        Err(e) => Err(Outcome::err(e)),
     }
+}
+
+// ---- agents' adapters (#335)
+
+const NODE_DOWNLOAD: &str = "https://nodejs.org/en/download";
+/// How long an install may take (npm fetching a few MB, or a slow network).
+const NPM_TIMEOUT: Duration = Duration::from_secs(300);
+/// One install at a time.
+static INSTALLING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Where else an agent's CLI is, when the shell's PATH doesn't have it.
+async fn agent_cli(app: &App, a: &Adapter) -> Option<PathBuf> {
+    if a.kind == Kind::Claude {
+        return claude(app).await;
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let local = format!("{home}/.local/bin/{}", a.cli);
+    let brew = format!("/opt/homebrew/bin/{}", a.cli);
+    let usr = format!("/usr/local/bin/{}", a.cli);
+    find(app, a.cli, &[&local, &brew, &usr]).await
+}
+
+/// Every adapter's state, as an agent block would find it, and whether its
+/// agent's CLI is here.
+async fn adapters_status(app: &App) -> Vec<Value> {
+    let Ok((home, env)) = crate::api::agent_env(app).await else { return Vec::new() };
+    let mut list =
+        tokio::task::spawn_blocking(move || crate::agent::adapters::all(&home, &env)).await.unwrap_or_default();
+    for (v, a) in list.iter_mut().zip(ADAPTERS) {
+        v["found"] = agent_cli(app, a).await.is_some().into();
+    }
+    list
+}
+
+/// What `use_agent` said it did, a line each.
+fn installed_line(a: &Adapter, was: &AdapterState) -> String {
+    match was {
+        AdapterState::Installed { version: Some(v), .. } => {
+            format!(
+                "Updated {}'s adapter from {v} to {}: agent panes use it from their next start.",
+                a.label,
+                a.pinned()
+            )
+        }
+        _ => format!("Installed {}'s adapter ({}): {} runs as agent panes here.", a.label, a.pinned(), a.label),
+    }
+}
+
+/// The adapter, installed or updated to the pin, waiting for npm: what
+/// changed (a line), or nothing when it was current.
+async fn install(app: &App, a: &'static Adapter) -> Result<Option<String>, Outcome> {
+    let (home, env) = crate::api::agent_env(app).await.map_err(|e| Outcome::err(e.1))?;
+    let (st, path, home) = tokio::task::spawn_blocking(move || {
+        let st = crate::agent::adapters::status(a, &home, &env);
+        let path = crate::agent::adapters::node_path(&home, &env);
+        (st, path, home)
+    })
+    .await
+    .map_err(|e| Outcome::err(e.to_string()))?;
+    if let AdapterState::NoNode { .. } = st.state {
+        return Err(Outcome::err(format!(
+            "{}. Install Node (nodejs.org, or `mise use -g node@22`) and try again, or run this once Node is there:",
+            st.why()
+        ))
+        .fix(st.npm)
+        .link("Get Node", NODE_DOWNLOAD));
+    }
+    if st.current() {
+        return Ok(None);
+    }
+    let Ok(_one) = INSTALLING.try_lock() else {
+        return Err(Outcome::err("An adapter is being installed already: try again when it's done."));
+    };
+    let Some(cmd) = crate::agent::adapters::npm_install(a, &home, &path) else {
+        return Err(Outcome::err("There's no npm next to this machine's Node: install it, or run this:").fix(st.npm));
+    };
+    let mut cmd = tokio::process::Command::from(cmd);
+    cmd.kill_on_drop(true);
+    tracing::info!(adapter = a.package, "installing an agent's adapter (#335)");
+    match tokio::time::timeout(NPM_TIMEOUT, cmd.output()).await {
+        Err(_) => {
+            Err(Outcome::err(format!("npm didn't finish in {} s: run it yourself:", NPM_TIMEOUT.as_secs())).fix(st.npm))
+        }
+        Ok(Err(e)) => Err(Outcome::err(format!("npm: {e}")).fix(st.npm)),
+        Ok(Ok(o)) if !o.status.success() => {
+            let said = String::from_utf8_lossy(&o.stderr);
+            let tail: Vec<&str> = said.lines().filter(|l| !l.trim().is_empty()).collect();
+            let tail = tail[tail.len().saturating_sub(4)..].join("\n");
+            Err(Outcome::err(format!(
+                "npm install failed: {}",
+                if tail.is_empty() { "it didn't say why" } else { &tail }
+            ))
+            .fix(st.npm))
+        }
+        Ok(Ok(_)) => Ok(Some(installed_line(a, &st.state))),
+    }
+}
+
+/// `POST /api/setup/agents/{kind}`: "Use Claude Code with illogical" (or
+/// Codex): its adapter installed or brought up to the pin, and for Claude
+/// Code illogical's MCP server added. Run by the person, never by itself.
+async fn use_agent(State(app): AppState, axum::extract::Path(kind): axum::extract::Path<String>) -> Json<Outcome> {
+    let Some(a) = ADAPTERS.iter().find(|a| a.dir == kind || a.cli == kind) else {
+        return Json(Outcome::err(format!("no agent {kind} to set up (claude or codex)")));
+    };
+    let mut done = Vec::new();
+    match install(&app, a).await {
+        Ok(Some(line)) => done.push(line),
+        Ok(None) => {}
+        Err(o) => return Json(o),
+    }
+    if a.kind == Kind::Claude {
+        match add_mcp(&app).await {
+            Ok(true) => done.push(
+                "Added illogical's MCP server to Claude Code: it can start its helpers as panes in your next session."
+                    .into(),
+            ),
+            Ok(false) => {}
+            Err(o) => return Json(Outcome { done, ..o }),
+        }
+    }
+    if done.is_empty() {
+        done.push(match a.kind {
+            Kind::Claude => "Already set up: agent panes work, and Claude Code has illogical's MCP server.".into(),
+            _ => format!("Already set up: {} runs as agent panes here.", a.label),
+        });
+    }
+    Json(Outcome { done, ..Outcome::ok() })
 }
 
 // ---- status
@@ -569,8 +721,9 @@ async fn claude_mcp(State(app): AppState) -> Json<Outcome> {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct StatusQuery {
-    /// `control`: only that (cheap, for polling while a join waits); the
-    /// others run `tailscale` and `claude`.
+    /// `control`: only that (cheap, for polling while a join waits);
+    /// `agents`: Claude Code's MCP server and the adapters (#335). The
+    /// whole runs `tailscale`, `claude` and `node`.
     part: Option<String>,
 }
 
@@ -578,13 +731,35 @@ async fn status(State(app): AppState, Query(q): Query<StatusQuery>) -> Json<Valu
     if q.part.as_deref() == Some("control") {
         return Json(serde_json::json!({ "control": control_status(&app) }));
     }
-    let (tailscale, claude) = tokio::join!(tailscale_status(&app), claude_status(&app));
-    Json(serde_json::to_value(Status { tailscale, control: control_status(&app), claude }).unwrap())
+    if q.part.as_deref() == Some("agents") {
+        let (claude, adapters) = tokio::join!(claude_status(&app), adapters_status(&app));
+        return Json(serde_json::json!({ "claude": claude, "adapters": adapters }));
+    }
+    let (tailscale, claude, adapters) =
+        tokio::join!(tailscale_status(&app), claude_status(&app), adapters_status(&app));
+    Json(serde_json::to_value(Status { tailscale, control: control_status(&app), claude, adapters }).unwrap())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_an_install_says_it_did() {
+        let claude = ADAPTERS.iter().find(|a| a.kind == Kind::Claude).unwrap();
+        let fresh = installed_line(claude, &AdapterState::Missing);
+        assert_eq!(
+            fresh,
+            format!("Installed Claude Code's adapter ({}): Claude Code runs as agent panes here.", claude.pinned())
+        );
+        let old = AdapterState::Installed { version: Some("0.81.2".into()), on_path: false };
+        assert!(installed_line(claude, &old).starts_with("Updated Claude Code's adapter from 0.81.2 to "));
+        // An outcome's lines go out only when there are some.
+        let o = serde_json::to_value(Outcome::ok()).unwrap();
+        assert!(o.get("done").is_none());
+        let o = serde_json::to_value(Outcome { done: vec![fresh], ..Outcome::ok() }).unwrap();
+        assert_eq!(o["done"].as_array().unwrap().len(), 1);
+    }
 
     #[test]
     fn serve_status_finds_this_port() {

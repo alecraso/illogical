@@ -258,6 +258,18 @@ stopping, crashing, or the machine rebooting:
     (Codex uses `~/.local/bin/codex`). They need Node on PATH (a Node
     mise installed is used if there's none). A test keeps these in step
     with the pins in `defs.rs`.
+  - Without having to know: Getting started's Agents step shows
+    each adapter's state next to *Start an agent…*, and *Use Claude Code
+    with illogical* installs the adapter and adds illogical's MCP server
+    in one click, then says what changed (`illogical setup claude` from a
+    terminal). Where Claude Code is on the machine and isn't set up, the
+    first screen offers that click. When Claude Code or Codex is here and
+    its adapter isn't, a line under the top bar says so once (and the
+    desktop app notifies once), leading to that step. An install older
+    than the pin is out of date, and the same click updates it.
+    `illogical status` lists each adapter and Claude Code's MCP server; a
+    block that couldn't start says `illogical setup claude` in its text,
+    and `illogical agent` says it instead of making that block.
   - **Questions and forms**. Claude Code's AskUserQuestion is a
     question card: buttons for one answer, checkboxes for several, each
     option's description, an "Other" box (on its own it's the answer; next

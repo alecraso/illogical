@@ -4,7 +4,7 @@ use super::Ctx;
 use crate::http::request;
 use crate::util::{Pane, REMOTE, absolute, env_pane, print_json};
 use anyhow::Context;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -183,6 +183,17 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
             if !prompt.is_empty() {
                 config["prompt"] = json!(prompt);
             }
+            // #335: Claude Code's or Codex's adapter isn't installed here:
+            // say how, rather than make a block that can't start.
+            if acp.is_none()
+                && fountain.is_none()
+                && !vm
+                && machine.is_none()
+                && let Some(why) = adapter_missing(&sock, config["agent"].as_str().unwrap_or_default())
+            {
+                eprintln!("{why}");
+                return Ok(1);
+            }
             let host =
                 machine.map(|h| h.trim_start_matches('m').parse::<u32>()).transpose().context("--machine: m<N>")?;
             let body = json!({
@@ -210,4 +221,49 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
         }
     }
     Ok(0)
+}
+
+/// Why an agent of `kind` can't start on this daemon, and how to fix it
+/// (#335); `None` when it can, or the daemon doesn't say.
+fn adapter_missing(sock: &crate::http::Target, kind: &str) -> Option<String> {
+    let v = request(sock, "GET", "/api/agents/adapters", None).ok()?.json().ok()?;
+    let a = v["adapters"].as_array()?.iter().find(|a| a["kind"] == kind)?;
+    adapter_fix(a)
+}
+
+fn adapter_fix(a: &Value) -> Option<String> {
+    let kind = a["kind"].as_str()?;
+    let why = a["why"].as_str().map(str::to_owned).unwrap_or_else(|| format!("{kind}'s adapter can't start"));
+    let npm = a["npm"].as_str().unwrap_or_default();
+    match a["state"].as_str()? {
+        "missing" => Some(format!(
+            "{why}: agent blocks run it through it.\n`illogical setup {kind}` installs it (or: {npm}); then run this again."
+        )),
+        "no_node" => Some(format!(
+            "{why}.\nInstall Node (`mise use -g node@22`, or nodejs.org), then `illogical setup {kind}` (or: {npm})."
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn a_missing_adapter_says_how() {
+        let a = json!({
+            "kind": "claude",
+            "state": "missing",
+            "why": "Claude Code's adapter isn't installed",
+            "npm": "npm install --prefix ~/.local/share/illogical/agents/claude p@1",
+        });
+        let said = super::adapter_fix(&a).unwrap();
+        assert!(said.starts_with("Claude Code's adapter isn't installed"), "{said}");
+        assert!(said.contains("`illogical setup claude`") && said.contains("npm install --prefix"), "{said}");
+        let node =
+            json!({ "kind": "codex", "state": "no_node", "why": "Codex's adapter needs Node 20+", "npm": "npm i" });
+        assert!(super::adapter_fix(&node).unwrap().contains("mise use -g node@22"));
+        assert!(super::adapter_fix(&json!({ "kind": "claude", "state": "installed" })).is_none());
+    }
 }

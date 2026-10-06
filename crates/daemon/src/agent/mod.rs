@@ -1571,6 +1571,25 @@ fn auth_failed(e: &Value) -> bool {
         || ["authenticat", "/login", "oauth", "not logged in", "invalid api key"].iter().any(|w| m.contains(w))
 }
 
+/// How to get a block whose adapter is missing going (#335), for its text
+/// (`tail`, `capture`, the TUI): the page has *Install* for it.
+fn adapter_fix(adapter: &Value, block: illogical_proto::PaneId) -> Option<String> {
+    let kind = adapter["kind"].as_str()?;
+    let npm = adapter["npm"].as_str().unwrap_or_default();
+    Some(match adapter["state"].as_str()? {
+        "no_node" => format!(
+            "**To start it:** install Node {}+ (`mise use -g node@22`, or nodejs.org), then `illogical setup {kind}` \
+             (or `{npm}`), then `illogical call %{block} resume`.\n\n",
+            adapter["node_major"].as_u64().unwrap_or(adapters::NODE_MAJOR as u64)
+        ),
+        "missing" => format!(
+            "**To start it:** `illogical setup {kind}` installs the adapter (or `{npm}`), then \
+             `illogical call %{block} resume`.\n\n"
+        ),
+        _ => return None,
+    })
+}
+
 /// The credentials an agent in a VM gets in its environment: an Anthropic
 /// API key if there's one, else a Claude Code token.
 fn secret_env(ctx: &BlockCtx) -> Result<Vec<(String, String)>, String> {
@@ -2446,6 +2465,9 @@ impl Block for Agent {
         }
         for a in g.asks.iter().filter(|a| !a.ask.accepted) {
             out.push_str(&format!("**Waiting for your answer:** {} (`answer {}`)\n\n", a.ask.headline(), a.ask.id));
+        }
+        if let Some(fix) = g.adapter.as_ref().and_then(|a| adapter_fix(a, self.ctx.id)) {
+            out.push_str(&fix);
         }
         out
     }

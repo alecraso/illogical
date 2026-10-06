@@ -22,6 +22,13 @@
 //! - **Dropped by control** (#325): one native notification per drop (a
 //!   new `dropped_ms`, remembered across launches in `daemon.json` beside
 //!   the app's settings). Its click opens Getting started's join.
+//! - **Agents without their adapter** (#335): once a run, when a daemon
+//!   speaking a protocol this app works with (`compat.rs`) first answers,
+//!   the app asks it about the agents. Claude Code or Codex on this
+//!   machine without its ACP adapter (or with one older than the daemon's
+//!   pin) gets one notification per pin, remembered in `daemon.json` too,
+//!   whose click opens Getting started's Agents step and its "Use Claude
+//!   Code with illogical".
 //!
 //! A thread (`follow`) reads `/api/host`, `/api/update` and the service
 //! every few seconds, and rebuilds the menus when what they'd say changes.
@@ -254,15 +261,25 @@ pub fn last_entries() -> Vec<Entry> {
     if shown.is_empty() { entries(&Status::default(), Some("Looking…")) } else { shown }
 }
 
-/// The thread: the menus, and a notification when control drops this
-/// machine.
+/// The thread: the menus, a notification when control drops this
+/// machine, and one about the agents.
 pub fn follow(app: AppHandle) {
+    let mut asked = false;
     loop {
         let s = read();
         *LAST.lock().unwrap() = Some(s.clone());
         show(&app, &s);
         if let Some(c) = &s.control {
             dropped(&app, c);
+        }
+        // Not a daemon this app doesn't work with (#390): the setup page
+        // updates one side first, and the daemon that answers after is
+        // asked.
+        if !asked && s.host.is_some() && s.behind.is_none() {
+            asked = true;
+            let app = app.clone();
+            // It runs `claude` and `node`: not in the menus' way.
+            std::thread::spawn(move || agents(&app));
         }
         std::thread::sleep(POLL);
     }
@@ -274,28 +291,99 @@ fn new_drop(c: &ControlState, seen: Option<u64>) -> Option<u64> {
     c.dropped_ms.filter(|at| c.is_dropped() && seen != Some(*at))
 }
 
-/// One notification per drop: a `dropped_ms` not seen before, in this run
-/// or an earlier one (`daemon.json` beside the app's settings).
-fn dropped(app: &AppHandle, c: &ControlState) {
+/// What the app remembers of the daemon across launches (`daemon.json`
+/// beside its settings): the last drop it said, the adapters it said.
+fn remembered(app: &AppHandle) -> (Option<PathBuf>, serde_json::Value) {
     let file = app.path().app_config_dir().ok().map(|d| d.join("daemon.json"));
-    let seen = file
+    let v = file
         .as_ref()
         .and_then(|f| std::fs::read(f).ok())
         .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .and_then(|v| v["dropped_ms"].as_u64());
-    let Some(at) = new_drop(c, seen) else { return };
-    if let Some(f) = &file {
-        if let Some(d) = f.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        let _ = std::fs::write(f, serde_json::json!({ "dropped_ms": at }).to_string());
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    (file, v)
+}
+
+fn remember(file: Option<PathBuf>, mut v: serde_json::Value, key: &str, value: serde_json::Value) {
+    let Some(f) = file else { return };
+    if let Some(d) = f.parent() {
+        let _ = std::fs::create_dir_all(d);
     }
+    v[key] = value;
+    let _ = std::fs::write(f, v.to_string());
+}
+
+/// One notification per drop: a `dropped_ms` not seen before, in this run
+/// or an earlier one.
+fn dropped(app: &AppHandle, c: &ControlState) {
+    let (file, v) = remembered(app);
+    let Some(at) = new_drop(c, v["dropped_ms"].as_u64()) else { return };
+    remember(file, v, "dropped_ms", at.into());
     eprintln!("illogical: control dropped this machine: {}", c.line());
     let what = match &c.code {
         Some(code) => format!("{}. It asks to join again: approve {code} on a device you use.", c.line()),
         None => format!("{}. Click to join again.", c.line()),
     };
     crate::notify(app, crate::Click::JoinAgain, "This machine is no longer in illogical control".into(), what);
+}
+
+/// #335: the daemon's `/api/setup?part=agents`, and a notification for
+/// an agent here whose adapter isn't (or is out of date), once per pin.
+fn agents(app: &AppHandle) {
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).build().into();
+    let mut req = agent.get(&format!("{}/api/setup?part=agents", crate::page()));
+    if let Some(b) = crate::bearer() {
+        req = req.header("Authorization", &b);
+    }
+    let Some(v) = req.call().ok().and_then(|mut r| r.body_mut().read_json::<serde_json::Value>().ok()) else { return };
+    let (file, mem) = remembered(app);
+    let seen: Vec<String> =
+        mem["adapters_said"].as_array().into_iter().flatten().filter_map(|k| k.as_str().map(str::to_owned)).collect();
+    let Some(n) = nudge(&v, &seen) else { return };
+    let all: Vec<String> = seen.into_iter().chain(n.keys).collect();
+    remember(file, mem, "adapters_said", all.into());
+    eprintln!("illogical: {}", n.body);
+    crate::notify(app, crate::Click::Agents, n.title, n.body);
+}
+
+/// What to say about the agents (#335), if anything not said before
+/// (`seen`: `kind@pin` keys).
+pub struct Nudge {
+    pub keys: Vec<String>,
+    pub title: String,
+    pub body: String,
+}
+
+pub fn nudge(v: &serde_json::Value, seen: &[String]) -> Option<Nudge> {
+    let mut keys = Vec::new();
+    let mut labels = Vec::new();
+    let mut outdated = false;
+    for a in v["adapters"].as_array().into_iter().flatten() {
+        let ready = a["state"] == "installed" && a["outdated"] != true;
+        if a["found"] != true || ready {
+            continue;
+        }
+        let key = format!("{}@{}", a["kind"].as_str().unwrap_or_default(), a["pinned"].as_str().unwrap_or_default());
+        if seen.contains(&key) {
+            continue;
+        }
+        outdated |= a["state"] == "installed";
+        keys.push(key);
+        labels.push(a["label"].as_str().unwrap_or("An agent").to_owned());
+    }
+    let first = labels.first()?.clone();
+    let who = labels.join(" and ");
+    let title = if outdated && labels.len() == 1 {
+        format!("{first}'s adapter is out of date")
+    } else {
+        format!("Agent panes need {first}'s adapter")
+    };
+    let body = if outdated && labels.len() == 1 {
+        format!("This illogical runs a newer {first} adapter than the one installed. Click to update it.")
+    } else {
+        format!("{who} is on this machine, but illogical can't run it in agent panes yet. Click to set it up.")
+    };
+    Some(Nudge { keys, title, body })
 }
 
 /// Getting started on the daemon's page, at `section` (`cloud`: to join
@@ -899,6 +987,36 @@ mod tests {
         assert_eq!(new_drop(&dropped, Some(3)), Some(7), "another drop");
         let joined = ControlState { state: "joined".into(), ..Default::default() };
         assert_eq!(new_drop(&joined, None), None);
+    }
+
+    #[test]
+    fn says_an_agent_here_without_its_adapter_once_per_pin() {
+        let v = serde_json::json!({ "adapters": [
+            { "kind": "claude", "label": "Claude Code", "pinned": "0.85.0", "state": "missing", "found": true },
+            { "kind": "codex", "label": "Codex", "pinned": "2.1.0", "state": "missing", "found": false },
+        ] });
+        let n = nudge(&v, &[]).unwrap();
+        assert_eq!(n.keys, ["claude@0.85.0"]);
+        assert_eq!(n.title, "Agent panes need Claude Code's adapter");
+        assert!(n.body.starts_with("Claude Code is on this machine"), "{}", n.body);
+        // Said already, for this pin: nothing.
+        assert!(nudge(&v, &["claude@0.85.0".into()]).is_none());
+
+        // A new pin, and the installed one older: out of date.
+        let v = serde_json::json!({ "adapters": [
+            { "kind": "claude", "label": "Claude Code", "pinned": "0.90.0", "state": "installed",
+              "version": "0.85.0", "outdated": true, "found": true },
+        ] });
+        let n = nudge(&v, &["claude@0.85.0".into()]).unwrap();
+        assert_eq!(n.title, "Claude Code's adapter is out of date");
+
+        // Installed at the pin, or an older daemon that doesn't say: nothing.
+        let v = serde_json::json!({ "adapters": [
+            { "kind": "claude", "label": "Claude Code", "pinned": "0.85.0", "state": "installed",
+              "outdated": false, "found": true },
+        ] });
+        assert!(nudge(&v, &[]).is_none());
+        assert!(nudge(&serde_json::json!({ "claude": {} }), &[]).is_none());
     }
 
     #[cfg(not(windows))]
