@@ -89,7 +89,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
   const chatOpen = useChatOpen() && !!state && client.hasThreads();
   return (
     <div class={phone ? "app phone" : "app"}>
-      {state && state.sessions.length > 0 && (phone ? (
+      {state && (phone ? (
         <PhoneHeader client={client} />
       ) : (
         <TopBar client={client} renaming={renaming} setRenaming={setRenaming} inert={chatOpen} />
@@ -98,12 +98,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
         {!state ? (
           <HostPicker />
         ) : state.sessions.length === 0 ? (
-          <div class="empty">
-            <p>No sessions.</p>
-            <button class="primary" onClick={() => client.intent({ op: "new_session", name: null, from_pane: null })}>
-              New session
-            </button>
-          </div>
+          <NoSessions client={client} phone={phone} />
         ) : tab ? (
           <TabArea client={client} tab={tab} cell={cell} phone={phone} />
         ) : null}
@@ -131,6 +126,25 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
   );
 }
 
+/** The empty state, below the bar. Through control it says which machine
+ * this is and where to switch, since the machine may not be the one meant. */
+function NoSessions({ client, phone }: { client: Client; phone: boolean }) {
+  useSubscribe((fn) => directory.subscribe(fn));
+  return (
+    <div class="empty">
+      <p>No sessions.</p>
+      {directory.control && (
+        <p data-no-sessions-host>
+          No sessions on {directory.current}. Switch machines from the {phone ? "menu at the top" : "menu at the top left"}.
+        </p>
+      )}
+      <button class="primary" onClick={() => client.intent({ op: "new_session", name: null, from_pane: null })}>
+        New session
+      </button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- top bar
 
 function TopBar({
@@ -146,11 +160,14 @@ function TopBar({
 }) {
   useSubscribe(drag.subscribe);
   const state = client.state!;
+  // None at all, on a machine with no sessions: the bar is still here for
+  // the host and account menus.
   const session = state.sessions.find((s) => s.id === client.session) ?? state.sessions[0];
   const target = drag.current?.target;
-  const marker = target?.kind === "tabbar" ? Math.min(target.index, session.tabs.length) : null;
+  const marker = session && target?.kind === "tabbar" ? Math.min(target.index, session.tabs.length) : null;
 
   const sessionMenu = (e: MouseEvent) => {
+    if (!session) return;
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     openFresh(client, { clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, () => [
       ...state.sessions.map((s) => ({
@@ -167,53 +184,57 @@ function TopBar({
     <header class="bar" data-tauri-drag-region inert={inert}>
       <HostButton />
       <Places client={client} at="panes" />
-      {renaming?.kind === "session" && renaming.id === session.id ? (
-        <RenameInput
-          value={session.name}
-          onDone={(name) => {
-            setRenaming(null);
-            if (name && name !== session.name) client.intent({ op: "rename_session", session: session.id, name });
-          }}
-        />
-      ) : (
-        <button class="session-button" title="Sessions" onClick={sessionMenu} onContextMenu={sessionMenu}>
-          {session.name}
-          {/* M61: the session's thread has messages you haven't read. */}
-          {client.thread({ session: session.id })?.unread ? (
-            <span class={client.thread({ session: session.id })?.mention ? "session-unread mention" : "session-unread"} title="New in the session thread" />
-          ) : null}{" "}
-          <span class="caret">▾</span>
-        </button>
+      {session && (
+        <>
+          {renaming?.kind === "session" && renaming.id === session.id ? (
+            <RenameInput
+              value={session.name}
+              onDone={(name) => {
+                setRenaming(null);
+                if (name && name !== session.name) client.intent({ op: "rename_session", session: session.id, name });
+              }}
+            />
+          ) : (
+            <button class="session-button" title="Sessions" onClick={sessionMenu} onContextMenu={sessionMenu}>
+              {session.name}
+              {/* M61: the session's thread has messages you haven't read. */}
+              {client.thread({ session: session.id })?.unread ? (
+                <span class={client.thread({ session: session.id })?.mention ? "session-unread mention" : "session-unread"} title="New in the session thread" />
+              ) : null}{" "}
+              <span class="caret">▾</span>
+            </button>
+          )}
+          <HuddleButton client={client} session={session.id} />
+          <div class="tabbar" role="tablist">
+            {session.tabs.map((id, i) => {
+              const t = client.tabView(id);
+              if (!t) return null;
+              return (
+                <Fragment key={id}>
+                  {marker === i && <div class="drop-marker" />}
+                  <TabItem
+                    client={client}
+                    tab={t}
+                    index={i}
+                    selected={id === client.tab}
+                    renaming={renaming?.kind === "tab" && renaming.id === id}
+                    setRenaming={setRenaming}
+                  />
+                </Fragment>
+              );
+            })}
+            {marker === session.tabs.length && <div class="drop-marker" />}
+            <button
+              class="new-tab"
+              title={client.has("vms") ? "New tab (right-click for a VM tab)" : "New tab (right-click for more)"}
+              onClick={() => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null })}
+              onContextMenu={(e) => openFresh(client, e, () => newTabItems(client, session.id))}
+            >
+              +
+            </button>
+          </div>
+        </>
       )}
-      <HuddleButton client={client} session={session.id} />
-      <div class="tabbar" role="tablist">
-        {session.tabs.map((id, i) => {
-          const t = client.tabView(id);
-          if (!t) return null;
-          return (
-            <Fragment key={id}>
-              {marker === i && <div class="drop-marker" />}
-              <TabItem
-                client={client}
-                tab={t}
-                index={i}
-                selected={id === client.tab}
-                renaming={renaming?.kind === "tab" && renaming.id === id}
-                setRenaming={setRenaming}
-              />
-            </Fragment>
-          );
-        })}
-        {marker === session.tabs.length && <div class="drop-marker" />}
-        <button
-          class="new-tab"
-          title={client.has("vms") ? "New tab (right-click for a VM tab)" : "New tab (right-click for more)"}
-          onClick={() => client.intent({ op: "new_tab", session: session.id, from_pane: client.active() ?? null })}
-          onContextMenu={(e) => openFresh(client, e, () => newTabItems(client, session.id))}
-        >
-          +
-        </button>
-      </div>
       <div class="bar-fill" data-tauri-drag-region />
       <UpdateChip client={client} />
       <PeopleBar client={client} />

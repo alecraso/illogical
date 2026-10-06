@@ -479,6 +479,37 @@ test("removing the phone cuts it off, once confirmed in a dialog", async () => {
   expect(await connected(phone)).toBe(false);
 });
 
+test("with no sessions on the machine shown, control's page still has the host and account menus", async () => {
+  await showHost(laptop, "box");
+  const none = () => laptop.evaluate(() => window.__illogical.client.state?.sessions.length ?? -1);
+  await expect.poll(none).toBeGreaterThan(0);
+  const closeAll = () =>
+    laptop.evaluate(() => {
+      const c = window.__illogical.client;
+      for (const s of c.state!.sessions) c.intent({ op: "close_session", session: s.id });
+    });
+  await closeAll();
+  await expect.poll(none).toBe(0);
+  // It says which machine this is and where to switch.
+  await expect(laptop.locator("[data-no-sessions-host]")).toHaveText("No sessions on box. Switch machines from the menu at the top left.");
+  await expect(laptop.locator("header.bar .host-button")).toHaveText(/box/);
+  await laptop.locator(".host-button").click();
+  await expect(laptop.getByRole("menuitem", { name: "Teams…" })).toBeVisible();
+  await expect(laptop.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
+  await laptop.getByRole("menuitem", { name: "Devices and machines…" }).click();
+  await expect(laptop.getByRole("heading", { name: "Devices and machines" })).toBeVisible();
+  await laptop.locator(".prompt").getByRole("button", { name: "Done" }).click();
+  // The other machine is reached from there, with no session made.
+  await laptop.locator(".host-button").click();
+  await laptop.getByRole("menuitem", { name: /^\s*mac\s/ }).click();
+  await expect.poll(() => laptop.evaluate(() => window.__illogical.hosts.current), { timeout: 20_000 }).toBe("mac");
+  await showHost(laptop, "box");
+  // Leave box with a session, as the next tests found it.
+  await expect(laptop.locator("[data-no-sessions-host]")).toBeVisible();
+  await laptop.getByRole("button", { name: "New session" }).click();
+  await expect.poll(none).toBe(1);
+});
+
 test("Getting started asks to check the account's fingerprint before the machine trusts it", async ({ browser }) => {
   const state = temp("starter");
   procs.push(

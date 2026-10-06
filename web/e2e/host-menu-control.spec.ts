@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { Device } from "../fixtures/device.ts";
 import { fakeGithub } from "../fixtures/fakes.ts";
 import { ANY, controlPort, daemonPort } from "./ports";
@@ -121,4 +121,57 @@ test("a daemon that isn't joined has no such link", async ({ page }) => {
   // One host and no control: nothing to switch to, so no menu at all.
   await expect(page.locator(".host-button")).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "All your machines…" })).toHaveCount(0);
+});
+
+const closeAll = (page: Page) =>
+  page.evaluate(() => {
+    const c = window.__illogical.client;
+    for (const s of c.state!.sessions) c.intent({ op: "close_session", session: s.id });
+  });
+const sessions = (page: Page) => page.evaluate(() => window.__illogical.client.state?.sessions.length ?? -1);
+
+test("with no sessions the bar and its host menu are still there, and after closing the last one", async ({ page }) => {
+  await page.goto(joinedUrl);
+  await expect.poll(() => page.evaluate(() => !!window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => sessions(page)).toBeGreaterThan(0);
+  await closeAll(page);
+  await expect.poll(() => sessions(page)).toBe(0);
+  await expect(page.locator(".empty")).toContainText("No sessions.");
+  await expect(page.locator("header.bar .host-button")).toHaveText(/mini/);
+  // Nothing of a session in the bar, and no stale tab behind it.
+  await expect(page.locator(".session-button, .tab")).toHaveCount(0);
+  await page.locator(".host-button").click();
+  await expect(page.getByRole("menuitem", { name: "All your machines…" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // A session made from the empty state brings its name and tab...
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(page.locator(".session-button")).toBeVisible();
+  await expect(page.locator(".tab")).toHaveCount(1);
+  // ...and closing that last one lands on the working bar again.
+  await closeAll(page);
+  await expect.poll(() => sessions(page)).toBe(0);
+  await expect(page.locator(".empty")).toContainText("No sessions.");
+  await expect(page.locator(".session-button, .tab")).toHaveCount(0);
+  expect(await page.evaluate(() => [window.__illogical.client.session, window.__illogical.client.tab])).toEqual([null, null]);
+  await page.locator(".host-button").click();
+  await expect(page.getByRole("menuitem", { name: "All your machines…" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(page.locator(".tab")).toHaveCount(1);
+});
+
+test("on a phone, with no sessions, the header opens the sheet with the machines", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.goto(joinedUrl);
+  await expect.poll(() => page.evaluate(() => !!window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => sessions(page)).toBeGreaterThan(0);
+  await closeAll(page);
+  await expect.poll(() => sessions(page)).toBe(0);
+  await expect(page.locator(".empty")).toContainText("No sessions.");
+  await page.locator(".phone-bar .sheet-button").click();
+  await expect(page.locator(".sheet-hosts")).toContainText("mini");
+  await page.locator(".sheet-backdrop").click({ position: { x: 380, y: 750 } });
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(page.locator(".phone-bar .crumb").first()).toBeVisible();
 });

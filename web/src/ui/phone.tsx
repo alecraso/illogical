@@ -32,9 +32,13 @@ export function PhoneHeader({ client }: { client: Client }) {
       <header class="bar phone-bar">
         <button class="sheet-button" aria-expanded={open} onClick={() => setOpen(!open)}>
           {client.state?.panes.some((p) => p.attention === "needs_input") ? <span class="att needs_input">●</span> : "☰"} <HostCrumb />
-          <span class="crumb">{session?.name}</span> ›{" "}
-          {tab && client.tabMachine(tab.id) && <span class="host-tag">VM</span>}
-          <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
+          {session && (
+            <>
+              <span class="crumb">{session.name}</span> ›{" "}
+              {tab && client.tabMachine(tab.id) && <span class="host-tag">VM</span>}
+              <span class="crumb">{tab ? tabLabel(client, tab) : ""}</span>
+            </>
+          )}
         </button>
         {session && <HuddleButton client={client} session={session.id} />}
         {panes.length > 1 && (
