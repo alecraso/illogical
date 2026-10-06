@@ -129,7 +129,21 @@ fn two_panes_in_one_repo_each_resume_their_own_conversation() {
     for p in [1, two] {
         until("its conversation on screen", || screen(&b.d, p).contains("trust this folder"));
     }
+    // Still known as running after the daemon has looked at the panes again
+    // (it does each second): the resumed agent is in the foreground (#376).
+    std::thread::sleep(Duration::from_millis(2500));
     assert_eq!(pane(&b.d, 1)["resumes"], format!("Claude Code conversation {}", &A[..8]));
+    assert_eq!(pane(&b.d, two)["resumes"], format!("Claude Code conversation {}", &B[..8]));
+
+    // And a second reboot resumes them again.
+    let before = b.claude.starts().len();
+    b.d.stop();
+    b.d.start();
+    until("both resumed again", || {
+        starts_in(&b.claude, 1, before).len() == 1 && starts_in(&b.claude, two, before).len() == 1
+    });
+    assert_eq!(starts_in(&b.claude, 1, before), vec![json!(["--resume", A])]);
+    assert_eq!(starts_in(&b.claude, two, before), vec![json!(["--resume", B])]);
 }
 
 #[test]

@@ -555,9 +555,12 @@ impl Config {
         let then = std::iter::once(shell.program.as_str()).chain(shell.args.iter().map(String::as_str));
         let then = then.collect::<Vec<_>>().join(" ");
         let fish = std::path::Path::new(&self.shell).file_name().is_some_and(|n| n == "fish");
+        // With job control the program is the terminal's foreground group,
+        // as if typed: without it the shell is, and the pane reads as
+        // running no agent (#376).
         let (script, words) = match (run, fish) {
-            (Run::Argv(argv), false) => (format!("\"$@\"; exec {then}"), argv),
-            (Run::Argv(argv), true) => (format!("$argv; exec {then}"), argv),
+            (Run::Argv(argv), false) => (format!("set -m; \"$@\"; exec {then}"), argv),
+            (Run::Argv(argv), true) => (format!("status job-control full; $argv; exec {then}"), argv),
             (Run::Note(note), false) => (format!("printf '\\033[2m[%s]\\033[0m\\n' \"$1\"; exec {then}"), vec![note]),
             (Run::Note(note), true) => (format!("printf '\\033[2m[%s]\\033[0m\\n' $argv[1]; exec {then}"), vec![note]),
         };
@@ -2671,7 +2674,10 @@ impl Daemon {
         let m = self.meta.entry(pane).or_default();
         let old = m.session.as_ref().filter(|s| s.agent == agent && s.id == id);
         let new = |a: Option<String>, b: Option<&String>| a.is_none() || a.as_ref() == b;
-        if old.is_some_and(|s| new(transcript.clone(), s.transcript.as_ref()) && new(cwd.clone(), s.cwd.as_ref())) {
+        // The same conversation, still known to be running: nothing new.
+        if old.is_some_and(|s| {
+            s.running && new(transcript.clone(), s.transcript.as_ref()) && new(cwd.clone(), s.cwd.as_ref())
+        }) {
             return;
         }
         let transcript = transcript.or_else(|| old.and_then(|s| s.transcript.clone()));
