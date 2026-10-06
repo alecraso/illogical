@@ -44,7 +44,7 @@ jobs:
         run: just bootstrap && just web
       - name: forges_github_real
         if: steps.have.outputs.run == 'true'
-        run: mise exec -- cargo test -p illogicald --test integration forges_github_real:: -- --nocapture
+        run: "mise exec -- cargo test -p illogicald --test integration forges_github_real:: -- --nocapture"
 
   forges:
     runs-on: [self-hosted, linux-x86_64]
