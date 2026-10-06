@@ -355,7 +355,11 @@ fn revoke_expiry_and_closing_the_pane_end_sessions() {
     assert!(g.text().contains("the invite was revoked"), "{:?}", g.text());
 
     // Expiry: a live session ends at the deadline, and nobody gets in
-    // after it.
+    // after it. A second invite keeps the listener up, so the late guest
+    // meets the server's refusal: with none left the daemon stops
+    // listening, and on a slow machine that came first (connection
+    // refused; the closed port has its own test below).
+    d.invite(json!({"pane": pane}));
     let inv = d.invite(json!({"pane": pane, "ttl_secs": 3, "reusable": true}));
     let cmd = inv["command"].as_str().unwrap().to_owned();
     let mut g = Guest::run(&cmd);
