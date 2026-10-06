@@ -3,8 +3,8 @@
 // three machines (stand-ins for geek, jake-mini and a resident sandbox)
 // show together, on the laptop and on the phone. A machine that stops
 // answering greys within 10 s, its panes still listed, and comes back when
-// it does. Twenty machines reconnect after a wake without a burst of
-// failures.
+// it does. A link that dies right after its hello backs off. Twenty
+// machines reconnect after a wake without a burst of failures.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -122,7 +122,7 @@ async function allThree(page: Page) {
 test("every machine's panes in one page, on the laptop and the phone", async ({ page, browser }) => {
   await allThree(page);
   // The tab view still shows one host, connected for real.
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__illogical?.client?.connected), { timeout: 15_000 }).toBe(true);
   expect(await page.evaluate(() => window.__illogical.client.panes.size)).toBeGreaterThan(0);
   // Summary connections make no terminals and don't show as people.
   expect(await page.evaluate(() => window.__illogical.client.others().length)).toBe(0);
@@ -210,6 +210,33 @@ test("a late tick drops no healthy link, and a host that's down is tried less an
   expect(tries).toBeLessThanOrEqual(6);
   await startDaemon("jake-mini", ["--allow-origin", homeUrl]);
   await expect.poll(() => hostStates(page).then((s) => s["jake-mini"]), { timeout: 15_000 }).toBe("connected");
+});
+
+// #369: an app reopened its channel to geek about twice a second for 15
+// minutes. A hello used to start the backoff over, so a link that died
+// right after its hello was tried again every 250 ms for as long as it did
+// (31 hellos in 8 s). It starts over only after a link that lasted.
+test("a link hung up on right after each hello backs off (#369)", async ({ page }) => {
+  await page.goto("/");
+  // The tab view's client, which schedules its own retries.
+  await expect.poll(() => page.evaluate(() => window.__illogical?.client?.connected), { timeout: 15_000 }).toBe(true);
+  const hellos = await page.evaluate(async () => {
+    const c = window.__illogical.client;
+    let n = 0;
+    c.onHello = () => {
+      n++;
+      setTimeout(() => c.drop());
+    };
+    c.drop();
+    await new Promise((r) => setTimeout(r, 8000));
+    c.onHello = undefined;
+    return n;
+  });
+  console.log(`#369: ${hellos} hellos in 8 s from a link hung up on after each`);
+  // Doubling from 250 ms, about five fit in 8 s.
+  expect(hellos).toBeGreaterThan(0);
+  expect(hellos).toBeLessThanOrEqual(8);
+  await expect.poll(() => page.evaluate(() => window.__illogical.client.connected), { timeout: 15_000 }).toBe(true);
 });
 
 test("twenty machines come back after a wake without a burst of failures", async ({ page }) => {

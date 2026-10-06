@@ -156,11 +156,18 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     out.send(m2).await?;
     let out = Arc::new(Out { ch: Arc::new(ch), q: tokio::sync::Mutex::new(out) });
     let ch = out.ch.clone();
-    info!(device = device.device, account = device.account, name = device.name, who = principal.id(), "channel open");
 
     // An owner here through control has a name of their own (M30).
     let name = principal.is_owner().then(|| app.control.name_of_account(&device.account)).flatten();
     let client = app.new_client_id();
+    info!(
+        device = device.device,
+        account = device.account,
+        name = device.name,
+        who = principal.id(),
+        client,
+        "channel open"
+    );
     let (data_tx, mut data_rx) = client_queue();
     let (ctrl_tx, mut ctrl_rx) = mpsc::unbounded_channel();
     app.hands.connect(
@@ -182,7 +189,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     });
     // The callers drop this future when the socket's reader ends first,
     // which is how most channels end: leave the mux and the hands then too.
-    let _left = Leave { app: app.clone(), client, device: device.device.clone() };
+    let _left = Leave { app: app.clone(), client, device: device.device.clone(), opened: std::time::Instant::now() };
     let router = crate::server::channel_router(app.clone());
     let mut changed = app.control.changed.subscribe();
     loop {
@@ -236,13 +243,17 @@ struct Leave {
     app: Arc<App>,
     client: illogical_proto::ClientId,
     device: String,
+    /// So "channel closed" says how long it lasted: a device that keeps
+    /// reopening its channel stands out in the log (#369).
+    opened: std::time::Instant,
 }
 
 impl Drop for Leave {
     fn drop(&mut self) {
         self.app.mux.send(Cmd::Disconnect { client: self.client });
         self.app.hands.disconnect(self.client);
-        info!(device = self.device, "channel closed");
+        let lasted_ms = self.opened.elapsed().as_millis() as u64;
+        info!(device = self.device, client = self.client, lasted_ms, "channel closed");
     }
 }
 
