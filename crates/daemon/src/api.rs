@@ -24,8 +24,8 @@ use futures_util::stream::{self, StreamExt};
 use illogical_proto::{
     Driver, EventKind, Frame, FrameKind, PaneId, SessionId,
     api::{
-        AttentionRequest, KeysRequest, MouseRequest, Process, PromptRequest, PromptResult, RunRequest, RunResponse,
-        SendRequest, WaitResult,
+        AttentionRequest, HistoryKind, KeysRequest, MouseRequest, Process, PromptRequest, PromptResult, RunRequest,
+        RunResponse, SendRequest, WaitResult,
     },
 };
 use regex::Regex;
@@ -1970,6 +1970,9 @@ struct HistoryQuery {
     cwd: Option<String>,
     #[serde(rename = "match", default)]
     matching: Option<String>,
+    /// `command`, `answer` or `agent`; none is all.
+    #[serde(default)]
+    kind: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
     /// Another host's synced history (`*`: every host's).
@@ -2037,9 +2040,15 @@ async fn drivers(State(app): AppState, Path(id): Path<PaneId>) -> Res<Response> 
 
 async fn history_(State(app): AppState, Query(q): Query<HistoryQuery>) -> Res<Response> {
     let matching = q.matching.as_deref().map(Regex::new).transpose().map_err(|e| bad(format!("match: {e}")))?;
+    let kind = q
+        .kind
+        .as_deref()
+        .map(|k| HistoryKind::parse(k).ok_or_else(|| bad(format!("kind: {k:?} isn't command, answer or agent"))))
+        .transpose()?;
     let filter = Filter {
         pane: q.pane,
         failed: q.failed == Some(1),
+        kind,
         since_ms: q.since.map(|s| now_ms().saturating_sub(s * 1000)),
         cwd: q.cwd,
         matching,

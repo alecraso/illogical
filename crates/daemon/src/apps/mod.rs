@@ -37,7 +37,9 @@ pub mod studio;
 use std::sync::{Arc, Mutex, Weak};
 
 use futures_util::future::BoxFuture;
+use illogical_proto::api::HistoryKind;
 use illogical_proto::{Attention, BlockType, Gate, Project, ReasonKind, WorkKind};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -222,6 +224,7 @@ impl AppBlock {
                     text: Some(text),
                     cwd: None,
                     by: by.clone(),
+                    kind: HistoryKind::Answer,
                 },
             );
             let _ = l.record(
@@ -261,6 +264,7 @@ impl AppBlock {
                     text: Some(format!("prompted {}: {text}", tab.title)),
                     cwd: None,
                     by: by.clone(),
+                    kind: HistoryKind::Command,
                 },
             );
             let _ = l.record(

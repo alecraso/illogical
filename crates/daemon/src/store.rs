@@ -30,7 +30,7 @@ use std::{
 };
 
 use illogical_core::Mux;
-use illogical_proto::{BlockType, Machine, MachineId, PaneId, Policy};
+use illogical_proto::{BlockType, Machine, MachineId, PaneId, Policy, api::HistoryKind};
 use serde::{Deserialize, Serialize};
 
 pub const LAYOUT_VERSION: u32 = 1;
@@ -272,6 +272,9 @@ pub enum Event {
         /// Who typed it (M13).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         by: Option<String>,
+        /// What it is; none is a command (older records, shells).
+        #[serde(default, skip_serializing_if = "HistoryKind::is_command")]
+        kind: HistoryKind,
     },
     /// Someone else started typing here (M13): one record per handoff, not
     /// per keystroke.
@@ -573,7 +576,13 @@ mod tests {
         let mut log = PaneLog::open(dir.clone()).unwrap();
         log.record(0, Event::Resize { cols: 80, rows: 24 }).unwrap();
         log.record(42, Event::Restore { at_ms: 7 }).unwrap();
-        let cmd = Event::Command { at_ms: 9, text: Some("echo \"a;b\"".into()), cwd: None, by: None };
+        let cmd = Event::Command {
+            at_ms: 9,
+            text: Some("echo \"a;b\"".into()),
+            cwd: None,
+            by: None,
+            kind: HistoryKind::Command,
+        };
         log.record(50, cmd.clone()).unwrap();
         assert_eq!(
             log.events(),

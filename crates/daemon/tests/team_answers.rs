@@ -117,6 +117,15 @@ fn a_permission_prompt_is_a_card_answered_by_whoever_may() {
         hist.as_array().unwrap().iter().any(|h| h["text"] == "allowed: Bash: touch a.txt" && h["by"].is_string()),
         "{hist}"
     );
+    // It's an answer: not a command, so not a failure, and never the
+    // pane's last command.
+    let answers = d.get(&format!("/api/history?pane={pane}&kind=answer"));
+    assert!(answers.as_array().unwrap().iter().any(|h| h["text"] == "allowed: Bash: touch a.txt"), "{answers}");
+    let commands = d.get(&format!("/api/history?pane={pane}&kind=command"));
+    assert!(commands.as_array().unwrap().iter().all(|h| h["kind"] == "command"), "{commands}");
+    assert!(!commands.as_array().unwrap().iter().any(|h| h["text"] == "allowed: Bash: touch a.txt"), "{commands}");
+    let (status, _) = d.raw("GET", "/api/history?kind=nope", None);
+    assert_eq!(status, 400);
     let acl = d.get("/api/acl");
     assert!(acl["audit"].as_array().unwrap().iter().any(|a| a["action"] == "answer" && a["how"] == "allowed"), "{acl}");
 

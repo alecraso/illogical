@@ -384,6 +384,37 @@ pub enum WaitResult {
     Timeout,
 }
 
+/// What a history entry is. Only a command ran in a shell and has an exit
+/// code worth counting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HistoryKind {
+    /// Ran in a shell.
+    #[default]
+    Command,
+    /// An answer or an approval: who said what to a card or a gate.
+    Answer,
+    /// What an agent block did: a tool call that isn't a shell command,
+    /// or a turn.
+    Agent,
+}
+
+impl HistoryKind {
+    pub fn is_command(&self) -> bool {
+        *self == HistoryKind::Command
+    }
+
+    /// `command`, `answer` or `agent`.
+    pub fn parse(s: &str) -> Option<HistoryKind> {
+        match s {
+            "command" => Some(HistoryKind::Command),
+            "answer" => Some(HistoryKind::Answer),
+            "agent" => Some(HistoryKind::Agent),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub pane: PaneId,
@@ -403,6 +434,9 @@ pub struct HistoryEntry {
     /// Who typed it (M13).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
+    /// Command, answer or agent. Older records have none: commands.
+    #[serde(default)]
+    pub kind: HistoryKind,
 }
 
 /// A handoff in a pane: from here on, `who` typed (`illogical log --who`).

@@ -28,7 +28,7 @@
 //! dropped it.
 
 use super::*;
-use illogical_proto::PaneId;
+use illogical_proto::{PaneId, api::HistoryKind};
 
 /// The agent working on an issue, and what it made.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -451,7 +451,13 @@ impl ForgeBlock {
             let text = format!("agent %{block} on {repo}#{number}, branch {branch} from {base}");
             let _ = l.record(
                 at,
-                crate::store::Event::Command { at_ms: now_ms(), text: Some(text), cwd: Some(wt.clone()), by: None },
+                crate::store::Event::Command {
+                    at_ms: now_ms(),
+                    text: Some(text),
+                    cwd: Some(wt.clone()),
+                    by: None,
+                    kind: HistoryKind::Command,
+                },
             );
             let _ = l.record(at, crate::store::Event::End { at_ms: now_ms(), exit: Some(0) });
         }
@@ -577,7 +583,13 @@ impl ForgeBlock {
             text.push_str(&format!(": {}", n.title));
             let _ = l.record(
                 at,
-                crate::store::Event::Command { at_ms: now_ms(), text: Some(text), cwd: None, by: by.clone() },
+                crate::store::Event::Command {
+                    at_ms: now_ms(),
+                    text: Some(text),
+                    cwd: None,
+                    by: by.clone(),
+                    kind: HistoryKind::Command,
+                },
             );
             let _ =
                 l.record(at, crate::store::Event::End { at_ms: now_ms(), exit: Some(if r.is_ok() { 0 } else { 1 }) });

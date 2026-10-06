@@ -7,6 +7,7 @@ session/resume work from a new process.
 Prompts:
   hello          a reply, a usage_update (cost grows by 0.01 per turn)
   run CMD        a tool call that asks permission, then "prints" its output
+  read PATH      a Read tool call with no command that fails (not a shell command)
   slow           streams for ~10s unless cancelled
   remember WORD  remembers WORD; "recall" says it (across processes)
   crash          exits with code 3 mid-turn
@@ -408,6 +409,12 @@ def prompt(mid, p):
             update(sid, s, {"sessionUpdate": "tool_call_update", "toolCallId": tid, "status": "failed",
                             "rawOutput": "User refused permission to run tool"})
             msg("Not allowed.")
+    elif text.startswith("read "):
+        tid = f"tool{n}"
+        update(sid, s, {"sessionUpdate": "tool_call", "toolCallId": tid, "title": f"Read {text[5:]}",
+                        "kind": "read", "status": "pending"})
+        update(sid, s, {"sessionUpdate": "tool_call_update", "toolCallId": tid, "status": "failed"})
+        msg("Couldn't read it.")
     elif text == "slow":
         for i in range(50):
             if sid in cancelled:

@@ -67,6 +67,7 @@ use std::{
 use futures_util::future::BoxFuture;
 use illogical_proto::{
     Action, Attention, BlockType, Gate, GateSource, Project, Reason, ReasonKind, WorkKind,
+    api::HistoryKind,
     api::{OpenRequest, RunRequest},
     ask::{Ask, AskKind},
 };
@@ -1203,6 +1204,7 @@ impl ForgeBlock {
                     text: Some(text),
                     cwd: None,
                     by: by.map(str::to_owned),
+                    kind: HistoryKind::Command,
                 },
             );
             let _ = l.record(at, crate::store::Event::End { at_ms: now_ms(), exit: Some(if ok { 0 } else { 1 }) });

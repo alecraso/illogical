@@ -151,6 +151,14 @@ async fn tools_through_the_stdio_bridge() {
         (cmds[0]["command"].as_str(), cmds[0]["by"].as_str()),
         (Some("ls /nonexistent-m16"), Some("mcp:claude-code"))
     );
+    assert_eq!(cmds[0]["kind"], "command", "{h}");
+    // Nothing here is an answer, and a kind that doesn't exist says so.
+    let h = call(&s, "history", json!({ "kind": "answer", "cwd": dir })).await;
+    assert!(h["commands"].as_array().unwrap().is_empty(), "{h}");
+    let h = call(&s, "history", json!({ "kind": "command", "cwd": dir })).await;
+    assert!(!h["commands"].as_array().unwrap().is_empty(), "{h}");
+    let e = refused(&s, "history", json!({ "kind": "nope" })).await;
+    assert!(e.contains("command, answer or agent"), "{e}");
 
     // Paged output: a long command's, a page at a time, all of it.
     let r = call(&s, "run", json!({ "command": "seq 1 4000", "wait": true })).await;

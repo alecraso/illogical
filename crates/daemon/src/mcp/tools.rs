@@ -7,7 +7,7 @@ use std::{future::Future, sync::Arc, time::Duration};
 
 use illogical_proto::{
     Attention, BlockType, Driver, PaneId, Policy, SessionId, StartedBy, ThreadTarget,
-    api::{ActRequest, HistoryEntry, OpenRequest, PaneSummary, RunRequest, WaitResult},
+    api::{ActRequest, HistoryEntry, HistoryKind, OpenRequest, PaneSummary, RunRequest, WaitResult},
 };
 use rmcp::{
     Peer, RoleServer,
@@ -245,9 +245,15 @@ pub struct PostThreadArgs {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct HistoryArgs {
-    /// Only commands that failed (exit code not 0).
+    /// Only commands that failed (exit code not 0); answers and agent
+    /// steps never count.
     #[serde(default)]
     pub failed: bool,
+    /// `command` (ran in a shell), `answer` (an answer or approval, with
+    /// who gave it) or `agent` (an agent block's non-shell steps). Without
+    /// it, all three.
+    #[serde(default)]
+    pub kind: Option<String>,
     /// Started at most this long ago: `90m`, `36h`, `2d`, or seconds.
     #[serde(default)]
     pub since: Option<String>,
@@ -796,7 +802,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "history",
             title: "Command history",
-            description: "Commands run across panes (open and recently closed), newest first: exit codes, directories, when, and who ran them. Filter by failed, since/before (\"2d\", \"36h\"), cwd, a regex.",
+            description: "What happened across panes (open and recently closed), newest first: commands with exit codes, directories, when, and who ran them, and answers and approvals with who gave them. Each has a kind (command, answer or agent); filter by kind, failed (commands only), since/before (\"2d\", \"36h\"), cwd, a regex.",
             schema: schema_for_type::<HistoryArgs>,
             read_only: true,
             destructive: false,
@@ -1435,7 +1441,11 @@ impl<'a> Call<'a> {
     async fn gone(&self, pane: PaneId) -> String {
         let store = self.app.mux.store.clone();
         let last = tokio::task::spawn_blocking(move || {
-            history::history(&store, &Filter { pane: Some(pane), ..Default::default() }, 1)
+            history::history(
+                &store,
+                &Filter { pane: Some(pane), kind: Some(HistoryKind::Command), ..Default::default() },
+                1,
+            )
         })
         .await
         .ok()
@@ -2112,9 +2122,15 @@ impl<'a> Call<'a> {
         let matching = a.matching.as_deref().map(regex::Regex::new).transpose().map_err(|e| format!("match: {e}"))?;
         let pane = a.pane.as_ref().map(PaneArg::id).transpose()?;
         let only = self.tab_panes().await;
+        let kind = a
+            .kind
+            .as_deref()
+            .map(|k| HistoryKind::parse(k).ok_or_else(|| format!("kind: {k:?} isn't command, answer or agent")))
+            .transpose()?;
         let filter = Filter {
             pane,
             failed: a.failed,
+            kind,
             since_ms: since.map(|s| now_ms().saturating_sub(s * 1000)),
             cwd: a.cwd.clone(),
             matching,
@@ -2144,6 +2160,7 @@ impl<'a> Call<'a> {
                     "started": ago(h.started_ms),
                     "seconds": h.ended_ms.map(|e| e.saturating_sub(h.started_ms) / 1000),
                     "by": h.by,
+                    "kind": h.kind,
                     "output_offset": h.start,
                 })
             })
@@ -3000,6 +3017,7 @@ impl<'a> Call<'a> {
             ["history"] => {
                 self.history(HistoryArgs {
                     failed: false,
+                    kind: None,
                     since: None,
                     before: None,
                     cwd: None,

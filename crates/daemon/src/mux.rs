@@ -16,6 +16,7 @@ use illogical_proto::{
     Driver, Event, EventKind, Machine, MachineId, MachineState, Owner, PaneId, PaneInfo, PaneOp, Policy, Presence,
     Quote, Reason, ReasonKind, ServerMsg, SessionId, State, TabId, TabView, ThreadMsg, ThreadSummary, ThreadTarget,
     WorkKind,
+    api::HistoryKind,
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::{Ask, AskKind},
 };
@@ -2624,7 +2625,7 @@ impl Daemon {
             },
         );
         if let Some(p) = self.panes.get(&pane) {
-            p.note(format!("{how}: {headline}"), by.name.clone());
+            p.note(format!("{how}: {headline}"), by.name.clone(), HistoryKind::Answer);
         }
         self.config.acl.record(serde_json::json!({
             "at": at_ms, "by": by.who, "name": by.name, "action": "answer", "pane": pane, "how": how,
@@ -2767,7 +2768,7 @@ impl Daemon {
             return Err("an empty follow-up".into());
         }
         info!(pane, who = by.who, "follow-up");
-        p.note(format!("follow-up: {text}"), by.name.clone());
+        p.note(format!("follow-up: {text}"), by.name.clone(), HistoryKind::Answer);
         self.config.acl.record(serde_json::json!({
             "at": now_ms(), "by": by.who, "name": by.name, "action": "follow_up", "pane": pane, "text": text,
         }));

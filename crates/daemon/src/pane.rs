@@ -27,7 +27,7 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
-use illogical_proto::{ClientId, Frame, FrameKind, PaneId, ServerMsg};
+use illogical_proto::{ClientId, Frame, FrameKind, PaneId, ServerMsg, api::HistoryKind};
 use illogical_vt::{
     GhosttyEngine, VtEngine,
     detect::{Agent, AgentState, Debounce},
@@ -316,7 +316,7 @@ enum Cmd {
     Input(Vec<u8>, Option<String>),
     /// Something someone did here that isn't typing (M29: an approval, a
     /// follow-up), for the pane's history.
-    Note(String, String),
+    Note(String, String, HistoryKind),
     Purge,
     Checkpoint(Sender<()>),
     /// Text as a paste into this pane: bracketed if its program asked
@@ -432,8 +432,8 @@ impl PaneHandle {
     /// Record what `by` did here that isn't typing (an approval, a
     /// follow-up to its agent): in its history as theirs, and in `log
     /// --who` as them taking a turn.
-    pub fn note(&self, text: String, by: String) {
-        let _ = self.tx.send(Cmd::Note(text, by));
+    pub fn note(&self, text: String, by: String, kind: HistoryKind) {
+        let _ = self.tx.send(Cmd::Note(text, by, kind));
     }
     /// Let go of the session on the pane's machine without a word, before
     /// the machine is deleted (and `restart` follows).
@@ -542,9 +542,15 @@ impl PaneHandle {
 /// knew before. A restore (a new program) ends whatever was running.
 fn status_from(events: &[(u64, Event)]) -> (Option<CommandRec>, Option<CommandRec>, Option<String>) {
     let (mut current, mut last, mut dir) = (None::<CommandRec>, None, None);
+    let mut skip_end = false;
     for (at, e) in events {
         match e {
-            Event::Command { at_ms, text, cwd, by } => {
+            Event::Command { kind, .. } if !kind.is_command() => {
+                // A note (an answer, say) is no command: it's never the
+                // last, and it doesn't end the one that is running.
+                skip_end = true;
+            }
+            Event::Command { at_ms, text, cwd, by, .. } => {
                 current = Some(CommandRec {
                     text: text.clone(),
                     cwd: cwd.clone(),
@@ -554,6 +560,7 @@ fn status_from(events: &[(u64, Event)]) -> (Option<CommandRec>, Option<CommandRe
                     ..Default::default()
                 });
             }
+            Event::End { .. } if std::mem::take(&mut skip_end) => {}
             Event::End { at_ms, exit } => {
                 if let Some(mut rec) = current.take() {
                     (rec.end, rec.ended_ms, rec.exit) = (Some(*at), Some(*at_ms), *exit);
@@ -1524,7 +1531,7 @@ fn run(mut st: State, rx: Receiver<Cmd>, program: Receiver<Cmd>) {
                 }
                 st.input(data)
             }
-            Cmd::Note(text, by) => st.note(text, by),
+            Cmd::Note(text, by, kind) => st.note(text, by, kind),
             Cmd::Attach { sub, want } => st.attach(sub, want),
             Cmd::Ack { client, offset } => st.ack(client, offset),
             Cmd::Detach { client } => {
@@ -1883,11 +1890,11 @@ impl State {
     }
 
     /// What someone did here, as a finished entry in its history.
-    fn note(&mut self, text: String, by: String) {
+    fn note(&mut self, text: String, by: String, kind: HistoryKind) {
         self.typed_by(by.clone());
         let at = self.ring.end();
         let cwd = self.status.lock().unwrap().cwd.clone();
-        self.index(at, Event::Command { at_ms: now_ms(), text: Some(text), cwd, by: Some(by) });
+        self.index(at, Event::Command { at_ms: now_ms(), text: Some(text), cwd, by: Some(by), kind });
         self.index(at, Event::End { at_ms: now_ms(), exit: Some(0) });
     }
 
@@ -2148,7 +2155,16 @@ impl State {
                 let text = self.pending_text.take();
                 let cwd = self.status.lock().unwrap().cwd.clone();
                 let by = self.typed_by.clone();
-                self.index(at, Event::Command { at_ms: ms, text: text.clone(), cwd: cwd.clone(), by: by.clone() });
+                self.index(
+                    at,
+                    Event::Command {
+                        at_ms: ms,
+                        text: text.clone(),
+                        cwd: cwd.clone(),
+                        by: by.clone(),
+                        kind: HistoryKind::Command,
+                    },
+                );
                 let rec = CommandRec { text, cwd, start: at, started_ms: ms, by, ..Default::default() };
                 let mut st = self.status.lock().unwrap();
                 st.current = Some(rec);
@@ -2437,7 +2453,13 @@ mod tests {
 
     #[test]
     fn an_adopted_panes_status_comes_from_its_index() {
-        let cmd = |at_ms, text: &str| Event::Command { at_ms, text: Some(text.into()), cwd: None, by: None };
+        let cmd = |at_ms, text: &str| Event::Command {
+            at_ms,
+            text: Some(text.into()),
+            cwd: None,
+            by: None,
+            kind: HistoryKind::Command,
+        };
         let events = vec![
             (0, Event::Cwd { path: "/src".into() }),
             (10, cmd(1, "make")),
@@ -2454,6 +2476,42 @@ mod tests {
         let mut restored = events.clone();
         restored.push((40, Event::Restore { at_ms: 4 }));
         assert!(status_from(&restored).0.is_none());
+    }
+
+    #[test]
+    fn an_answer_is_never_a_panes_last_command_nor_ends_the_running_one() {
+        let note = |at_ms, text: &str| Event::Command {
+            at_ms,
+            text: Some(text.into()),
+            cwd: None,
+            by: Some("sam".into()),
+            kind: HistoryKind::Answer,
+        };
+        let cmd = |at_ms, text: &str| Event::Command {
+            at_ms,
+            text: Some(text.into()),
+            cwd: None,
+            by: None,
+            kind: HistoryKind::Command,
+        };
+        let events = vec![
+            (10, cmd(1, "make")),
+            (20, Event::End { at_ms: 2, exit: Some(0) }),
+            (30, note(3, "allowed: Bash: touch a")),
+            (30, Event::End { at_ms: 3, exit: Some(0) }),
+        ];
+        let (current, last, _) = status_from(&events);
+        assert!(current.is_none());
+        assert_eq!(last.unwrap().text.as_deref(), Some("make"), "the answer isn't the last command");
+        // Answered while a command runs: it still runs.
+        let events = vec![
+            (10, cmd(1, "claude")),
+            (30, note(3, "allowed: Bash: touch a")),
+            (30, Event::End { at_ms: 3, exit: Some(0) }),
+        ];
+        let (current, last, _) = status_from(&events);
+        assert_eq!(current.unwrap().text.as_deref(), Some("claude"));
+        assert!(last.is_none());
     }
 
     #[test]

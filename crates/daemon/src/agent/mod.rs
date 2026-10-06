@@ -63,6 +63,7 @@ use std::{
 use futures_util::future::BoxFuture;
 use illogical_proto::{
     Attention, BlockType, Policy,
+    api::HistoryKind,
     ask::{self, Ask, AskKind},
 };
 use serde::{Deserialize, Serialize};
@@ -1839,16 +1840,18 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             send_next(ctx, g);
         }
         Effect::TurnEnded => {
-            // In history as a command of its own: the prompt, and whether
-            // the turn finished.
+            // In history as an entry of its own: the prompt. Not a command
+            // and no exit code: a turn that stopped early isn't a failure of
+            // anything that ran.
             if let Some(t) = g.turns.last().cloned() {
                 let cwd = g.cfg.cwd.clone();
                 let label = format!("{}: {}", g.cfg.def.label(), t.prompt.lines().next().unwrap_or(""));
                 if let Some(log) = g.log.as_mut() {
                     let at = log.end();
-                    let exit = Some(if t.stop.as_deref() == Some("end_turn") { 0 } else { 1 });
-                    let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(label), cwd, by: None });
-                    let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit });
+                    let kind = HistoryKind::Agent;
+                    let _ =
+                        log.record(at, Event::Command { at_ms: t.started_ms, text: Some(label), cwd, by: None, kind });
+                    let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit: None });
                 }
             }
             send_next(ctx, g)
@@ -1889,8 +1892,15 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
             let cwd = g.cfg.cwd.clone();
             if let Some(log) = g.log.as_mut() {
                 let at = log.end();
-                let exit = t.exit.or(Some(if t.status == "completed" { 0 } else { 1 }));
-                let _ = log.record(at, Event::Command { at_ms: t.started_ms, text: Some(t.label()), cwd, by: None });
+                // A shell command has its own exit code (none when it was
+                // stopped); a Read, an Edit or a Monitor isn't one, and a
+                // failed call isn't a failed command.
+                let (kind, exit) = match &t.command {
+                    Some(_) => (HistoryKind::Command, t.exit.or((t.status == "completed").then_some(0))),
+                    None => (HistoryKind::Agent, None),
+                };
+                let _ =
+                    log.record(at, Event::Command { at_ms: t.started_ms, text: Some(t.label()), cwd, by: None, kind });
                 let _ = log.record(at, Event::End { at_ms: t.ended_ms.unwrap_or(t.started_ms), exit });
             }
         }
@@ -2168,7 +2178,16 @@ impl Agent {
         let cwd = g.cfg.cwd.clone();
         if let Some(log) = g.log.as_mut() {
             let at = log.end();
-            let _ = log.record(at, Event::Command { at_ms: a.at_ms, text: Some(text), cwd, by: by.map(str::to_owned) });
+            let _ = log.record(
+                at,
+                Event::Command {
+                    at_ms: a.at_ms,
+                    text: Some(text),
+                    cwd,
+                    by: by.map(str::to_owned),
+                    kind: HistoryKind::Answer,
+                },
+            );
             let _ = log.record(at, Event::End { at_ms: now_ms(), exit: Some(exit) });
         }
     }

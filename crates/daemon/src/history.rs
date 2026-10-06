@@ -7,7 +7,7 @@ use std::path::Path;
 
 use illogical_proto::{
     Event as ApiEvent, EventKind, PaneId,
-    api::{DriverEntry, HistoryEntry, SearchHit},
+    api::{DriverEntry, HistoryEntry, HistoryKind, SearchHit},
 };
 use regex::Regex;
 
@@ -20,6 +20,8 @@ use crate::{
 pub struct Filter {
     pub pane: Option<PaneId>,
     pub failed: bool,
+    /// Only this kind; none is all of them.
+    pub kind: Option<HistoryKind>,
     pub since_ms: Option<u64>,
     pub cwd: Option<String>,
     pub matching: Option<Regex>,
@@ -48,7 +50,7 @@ pub fn commands_in(events: Vec<(u64, Event)>, pane: PaneId, open: bool) -> Vec<H
     for (offset, e) in events {
         match e {
             Event::Cwd { path } => cwd = Some(path),
-            Event::Command { at_ms, text, cwd: c, by } => out.push(HistoryEntry {
+            Event::Command { at_ms, text, cwd: c, by, kind } => out.push(HistoryEntry {
                 pane,
                 open,
                 text,
@@ -60,6 +62,7 @@ pub fn commands_in(events: Vec<(u64, Event)>, pane: PaneId, open: bool) -> Vec<H
                 end: None,
                 host: None,
                 by,
+                kind,
             }),
             Event::End { at_ms, exit } => {
                 // The latest one still running: a note recorded inside a
@@ -85,11 +88,13 @@ pub fn history(store: &StateDir, f: &Filter, limit: usize) -> Vec<HistoryEntry> 
     filtered(all, f, limit)
 }
 
-/// Commands that pass the filter, the last `limit` by start time.
+/// Entries that pass the filter, the last `limit` by start time.
 pub fn filtered(all: impl Iterator<Item = HistoryEntry>, f: &Filter, limit: usize) -> Vec<HistoryEntry> {
     let dirs = f.cwd.as_deref().map(crate::paths::forms);
     let mut all: Vec<HistoryEntry> = all
-        .filter(|c| !f.failed || c.exit.is_some_and(|e| e != 0))
+        // Only a command that ran has an exit code that means failure.
+        .filter(|c| !f.failed || (c.kind.is_command() && c.exit.is_some_and(|e| e != 0)))
+        .filter(|c| f.kind.is_none_or(|k| k == c.kind))
         .filter(|c| f.since_ms.is_none_or(|s| c.started_ms >= s))
         .filter(|c| {
             dirs.as_ref()
@@ -326,7 +331,13 @@ mod tests {
         log.append(b"$ make test\r\n").unwrap();
         log.record(
             13,
-            Event::Command { at_ms: 1_000, text: Some("make test".into()), cwd: Some("/src".into()), by: None },
+            Event::Command {
+                at_ms: 1_000,
+                text: Some("make test".into()),
+                cwd: Some("/src".into()),
+                by: None,
+                kind: HistoryKind::Command,
+            },
         )
         .unwrap();
         log.append(b"\x1b[31mFAILED\x1b[0m: 2 tests\r\n").unwrap();
@@ -378,6 +389,7 @@ mod tests {
             end: None,
             host: None,
             by: None,
+            kind: HistoryKind::Command,
         };
         let cwds = [format!("{real}/repo"), format!("{real}/repo/src"), format!("{real}/repo2")];
         let under = |dir: String| {
@@ -391,5 +403,49 @@ mod tests {
         assert_eq!(under(format!("{real}/rep")), Vec::<String>::new());
         assert_eq!(under("/".into()).len(), 3);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn answers_are_not_commands_and_a_kind_filters() {
+        let root = std::env::temp_dir().join(format!("illogical-kinds-{}-{}", std::process::id(), now_ms()));
+        let store = StateDir::open(root.clone()).unwrap();
+        let mut log = PaneLog::open(store.pane_dir(4)).unwrap();
+        let mut entry = |at_ms, text: &str, by: Option<&str>, kind, exit| {
+            let at = log.end();
+            let cmd = Event::Command { at_ms, text: Some(text.into()), cwd: None, by: by.map(Into::into), kind };
+            log.record(at, cmd).unwrap();
+            log.record(at, Event::End { at_ms: at_ms + 1, exit }).unwrap();
+        };
+        entry(1_000, "make", None, HistoryKind::Command, Some(2));
+        // What a person did: a record with an exit code of 1 or 0, still not a command.
+        entry(2_000, "allowed: Bash: make", Some("sam"), HistoryKind::Answer, Some(1));
+        entry(3_000, "Read /x", None, HistoryKind::Agent, None);
+        entry(4_000, "ls", None, HistoryKind::Command, Some(0));
+
+        let texts = |f: &Filter| history(&store, f, 10).into_iter().map(|h| h.text.unwrap()).collect::<Vec<_>>();
+        assert_eq!(texts(&Filter::default()), ["make", "allowed: Bash: make", "Read /x", "ls"], "all, by default");
+        assert_eq!(texts(&Filter { failed: true, ..Default::default() }), ["make"]);
+        let answer = Filter { kind: Some(HistoryKind::Answer), ..Default::default() };
+        let h = history(&store, &answer, 10);
+        assert_eq!((h.len(), h[0].by.as_deref(), h[0].kind), (1, Some("sam"), HistoryKind::Answer));
+        let command = Filter { kind: Some(HistoryKind::Command), ..Default::default() };
+        assert_eq!(texts(&command), ["make", "ls"]);
+        // Asking for failed answers finds none: they don't fail.
+        assert!(texts(&Filter { failed: true, kind: Some(HistoryKind::Answer), ..Default::default() }).is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_record_without_a_kind_is_a_command() {
+        let old = r#"{"e":"command","at_ms":5,"text":"ls","by":"sam"}"#;
+        let e: Event = serde_json::from_str(old).expect("an older index record reads");
+        assert!(matches!(e, Event::Command { kind: HistoryKind::Command, .. }), "{e:?}");
+        // Commands are written as they always were; others say what they are.
+        let cmd = Event::Command { at_ms: 5, text: None, cwd: None, by: None, kind: HistoryKind::Command };
+        assert!(!serde_json::to_string(&cmd).unwrap().contains("kind"));
+        let ans = Event::Command { at_ms: 5, text: None, cwd: None, by: None, kind: HistoryKind::Answer };
+        assert!(serde_json::to_string(&ans).unwrap().contains(r#""kind":"answer""#));
+        assert_eq!(HistoryKind::parse("answer"), Some(HistoryKind::Answer));
+        assert_eq!(HistoryKind::parse("nope"), None);
     }
 }

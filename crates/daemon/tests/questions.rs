@@ -125,11 +125,14 @@ fn skip_declines_and_stop_ends_the_turn_at_once() {
     let s = d.state(id);
     assert_eq!(last_msg(&s), "You didn't answer the question.");
     assert!(notes(&s).contains(&"Skipped: Which colour do you prefer?".to_owned()), "{s}");
-    let failed = d.get(&format!("/api/history?pane={id}&failed=1"));
+    // A skipped question is an answer, in history but not a failed command.
+    let answers = d.get(&format!("/api/history?pane={id}&kind=answer"));
     assert!(
-        failed.as_array().unwrap().iter().any(|c| c["text"] == "Which colour do you prefer? → skipped"),
-        "{failed}"
+        answers.as_array().unwrap().iter().any(|c| c["text"] == "Which colour do you prefer? → skipped"),
+        "{answers}"
     );
+    let failed = d.get(&format!("/api/history?pane={id}&failed=1"));
+    assert!(failed.as_array().unwrap().is_empty(), "{failed}");
 
     // Stop with a question open: session/cancel alone; the agent withdraws
     // its request and the turn ends.

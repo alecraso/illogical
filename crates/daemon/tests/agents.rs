@@ -106,8 +106,17 @@ fn an_agent_block_runs_turns_and_asks_before_it_acts() {
     let h = d.get(&format!("/api/history?pane={id}"));
     let texts: Vec<&str> = h.as_array().unwrap().iter().filter_map(|c| c["text"].as_str()).collect();
     assert!(texts.contains(&"touch x") && texts.iter().any(|t| t.ends_with(": hello")), "{h}");
+    // A refused command never ran: no exit code, so it isn't a failure. A
+    // turn isn't a command either.
+    let denied = h.as_array().unwrap().iter().find(|c| c["text"] == "rm -rf y").unwrap();
+    assert_eq!((denied["kind"].as_str(), denied["exit"].is_null()), (Some("command"), true), "{h}");
+    let turn = h.as_array().unwrap().iter().find(|c| c["text"].as_str().is_some_and(|t| t.ends_with(": hello")));
+    assert_eq!(turn.map(|t| t["kind"].clone()), Some(json!("agent")), "{h}");
+    assert!(turn.unwrap()["exit"].is_null(), "{h}");
+    let ran = h.as_array().unwrap().iter().find(|c| c["text"] == "touch x").unwrap();
+    assert_eq!((ran["kind"].as_str(), ran["exit"].as_i64()), (Some("command"), Some(0)), "{h}");
     let failed = d.get(&format!("/api/history?pane={id}&failed=1"));
-    assert!(failed.as_array().unwrap().iter().any(|c| c["text"] == "rm -rf y"), "{failed}");
+    assert!(failed.as_array().unwrap().is_empty(), "nothing ran and failed: {failed}");
     let hits = d.get("/api/search?re=Hello!%20I%20am");
     assert!(hits.as_array().unwrap().iter().any(|h| h["pane"] == id), "{hits}");
 
@@ -116,6 +125,25 @@ fn an_agent_block_runs_turns_and_asks_before_it_acts() {
     assert!(alive(pid));
     d.post(&format!("/api/panes/{id}/close"), json!({}));
     d.wait_for("the agent server to go", || !alive(pid));
+}
+
+#[test]
+fn an_agents_tool_calls_are_not_failed_commands_in_history() {
+    // A Read that failed is the agent's step, not a shell command with an
+    // exit code.
+    let d = Daemon::child();
+    let id = d.open("read /nope/a.txt");
+    assert_eq!(d.wait(id, "idle"), "done");
+    let h = d.get(&format!("/api/history?pane={id}"));
+    let read = h.as_array().unwrap().iter().find(|c| c["text"] == "Read /nope/a.txt").expect("it is in history");
+    assert_eq!(read["kind"], "agent", "{h}");
+    assert!(read["exit"].is_null(), "{h}");
+    let failed = d.get(&format!("/api/history?pane={id}&failed=1"));
+    assert!(failed.as_array().unwrap().is_empty(), "{failed}");
+    let agent = d.get(&format!("/api/history?pane={id}&kind=agent"));
+    assert!(agent.as_array().unwrap().iter().any(|c| c["text"] == "Read /nope/a.txt"), "{agent}");
+    let commands = d.get(&format!("/api/history?pane={id}&kind=command"));
+    assert!(commands.as_array().unwrap().is_empty(), "{commands}");
 }
 
 #[test]

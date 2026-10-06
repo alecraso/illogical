@@ -32,7 +32,9 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
+use illogical_proto::api::HistoryKind;
 use illogical_proto::{Attention, BlockType, Gate, GateSource, ReasonKind};
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -260,7 +262,13 @@ impl Workspace {
             let text = format!("approved {}: {} at gate {}", gate.member, gate.op, gate.gate);
             let _ = l.record(
                 at,
-                Event::Command { at_ms: now_ms(), text: Some(text), cwd: Some(dir.clone()), by: by.clone() },
+                Event::Command {
+                    at_ms: now_ms(),
+                    text: Some(text),
+                    cwd: Some(dir.clone()),
+                    by: by.clone(),
+                    kind: HistoryKind::Answer,
+                },
             );
             let _ = l.record(at, Event::End { at_ms: now_ms(), exit: Some(if ok { 0 } else { 1 }) });
         }

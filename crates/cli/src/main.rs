@@ -637,13 +637,18 @@ enum Command {
         #[arg(long)]
         pane: Option<Pane>,
     },
-    /// Commands run in any pane, including recently closed ones.
+    /// Commands run in any pane, including recently closed ones, and the
+    /// answers and approvals given there (`--kind command|answer|agent`).
     History {
         #[arg(long)]
         pane: Option<Pane>,
         /// Only commands that failed.
         #[arg(long)]
         failed: bool,
+        /// Only this kind: command (ran in a shell), answer (an answer or
+        /// approval) or agent (an agent block's steps that aren't commands).
+        #[arg(long, value_parser = ["command", "answer", "agent"])]
+        kind: Option<String>,
         /// e.g. 30m, 2h, 7d.
         #[arg(long)]
         since: Option<String>,
@@ -3154,7 +3159,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             let path = format!("/api/panes/{pane}/attention");
             request(&sock, "POST", &path, Some(&json!({"state": state, "why": hook_message()})))?.json()?;
         }
-        Command::History { pane, failed, since, cwd, matching, limit, synced } => {
+        Command::History { pane, failed, kind, since, cwd, matching, limit, synced } => {
             let mut q = vec![format!("limit={limit}")];
             q.extend(synced_q(synced));
             if let Some(p) = pane {
@@ -3162,6 +3167,9 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
             }
             if failed {
                 q.push("failed=1".into());
+            }
+            if let Some(k) = kind {
+                q.push(format!("kind={k}"));
             }
             if let Some(s) = since {
                 q.push(format!("since={}", duration(&s)?));
@@ -3186,6 +3194,10 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
                 let closed = if c["open"].as_bool() == Some(false) { " (closed)" } else { "" };
                 let host = c["host"].as_str().map(|h| format!("{h}:")).unwrap_or_default();
                 let by = c["by"].as_str().map(|b| format!("  by {b}")).unwrap_or_default();
+                let by = match c["kind"].as_str() {
+                    Some(k @ ("answer" | "agent")) => format!("  ({k}){by}"),
+                    _ => by,
+                };
                 println!(
                     "{exit}  {host}%{:<4} {:>8}  {}{closed}   [{}]{by}",
                     c["pane"],
