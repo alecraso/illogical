@@ -135,6 +135,9 @@ export class E2ESocket {
   readonly url: string;
   /** #369: why it closed, once it has. */
   why = "";
+  /** #369: a piece of a message arrived (any piece: a big message comes
+   * in many, and only the last one delivers it). */
+  onWire: () => void = () => {};
 
   private sendQ: Promise<void> = Promise.resolve();
   private recvQ: Promise<void> = Promise.resolve();
@@ -159,7 +162,10 @@ export class E2ESocket {
     // What the daemon sent right after its handshake message (its hello)
     // arrived while we were still finishing ours.
     for (const w of early) take(w);
-    ws.onmessage = (e) => take(new Uint8Array(e.data as ArrayBuffer));
+    ws.onmessage = (e) => {
+      this.onWire();
+      take(new Uint8Array(e.data as ArrayBuffer));
+    };
     // A relay channel says why control closed it (`reason`).
     ws.onclose = () => this.close((ws as { reason?: string }).reason ? `relay closed it: ${(ws as { reason?: string }).reason}` : "socket closed");
   }
@@ -223,6 +229,16 @@ export class E2ESocket {
 
   get open(): boolean {
     return !this.closed && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /** #369: what the way to the daemon looks like, for a link that's
+   * dropped: how much of a message has arrived, and the socket's state. */
+  health(): string {
+    const ws = this.ws as SocketLike & { bufferedAmount?: number; health?(): string };
+    const parts = [`${this.partialLen} B of a message in`];
+    if (ws.health) parts.push(ws.health());
+    else parts.push(`socket state ${ws.readyState}, ${ws.bufferedAmount ?? 0} B unsent`);
+    return parts.join(", ");
   }
 
   private async take(wire: Uint8Array) {

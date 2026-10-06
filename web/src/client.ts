@@ -100,6 +100,11 @@ export interface E2ETarget {
 interface Link {
   onText: (t: string) => void;
   onBinary: (b: ArrayBuffer) => void;
+  /** #369: part of a message arrived (end to end, a big one comes in
+   * pieces): the daemon is answering, however long the whole takes. */
+  onWire?: () => void;
+  /** #369: the way to the daemon, for the console when it's dropped. */
+  health?(): string;
   /** `why`: for the console (#369). */
   onClose: (why: string) => void;
   readonly open: boolean;
@@ -138,6 +143,7 @@ class SocketLink implements Link {
 class E2ELink implements Link {
   onText: (t: string) => void = () => {};
   onBinary: (b: ArrayBuffer) => void = () => {};
+  onWire: () => void = () => {};
   onClose: (why: string) => void = () => {};
   sock: E2ESocket | undefined;
   full: string | undefined;
@@ -156,6 +162,7 @@ class E2ELink implements Link {
         if (this.closed) return sock.close();
         this.sock = sock;
         onPath(target.direct.some((u) => sock.url.startsWith(u.replace(/^http/, "ws").replace(/\/$/, ""))) ? "direct" : "relayed");
+        sock.onWire = () => this.onWire();
         sock.onText = (t) => this.onText(t);
         sock.onBinary = (b) => this.onBinary(b.slice().buffer as ArrayBuffer);
         sock.onClose = () => this.onClose(sock.why);
@@ -175,6 +182,9 @@ class E2ELink implements Link {
   }
   sendBinary(b: Uint8Array) {
     this.sock?.sendBinary(b);
+  }
+  health(): string {
+    return this.sock?.health() ?? "no socket";
   }
   close() {
     this.closed = true;
@@ -257,7 +267,13 @@ export class Client {
   keepAlive(now: number, heartbeatMs: number, answerMs: number): boolean {
     if (!this.connected) return false;
     if (this.asked && now - this.asked > answerMs) {
-      this.drop("no answer to a heartbeat");
+      // What it was waiting on, to tell a lost answer from a stuck socket
+      // or a slowed page.
+      const health = this.link?.health?.();
+      this.drop(
+        `no answer to a heartbeat (asked ${now - this.asked}ms ago, last heard ${now - this.lastHeard}ms ago` +
+          `${health ? `, ${health}` : ""}${document.hidden ? ", page hidden" : ""})`,
+      );
       return true;
     }
     if (!this.asked && now - this.lastHeard > heartbeatMs) this.heartbeat();
@@ -893,6 +909,11 @@ export class Client {
       this.lastHeard = Date.now();
       this.asked = 0;
       this.onFrame(b);
+    };
+    // #369: a piece of a big message answers too: the pong is behind it.
+    link.onWire = () => {
+      this.lastHeard = Date.now();
+      this.asked = 0;
     };
     link.onClose = (why) => {
       if (this.link !== link) return;
