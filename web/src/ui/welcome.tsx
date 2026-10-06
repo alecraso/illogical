@@ -18,6 +18,7 @@ import { notifyBlocker, pushNow, serveCommand, subscribePush } from "./notify";
 import { startAgent } from "./agent-dialog";
 import type { ControlState } from "../proto";
 import { placeOf, refreshControlState } from "./control-state";
+import { desktopApp } from "../desktop";
 
 const DOCS = "https://github.com/arugula-salad/illogical/blob/main/docs";
 /** illogical cloud, unless the daemon was started with `--control` (#207). */
@@ -284,7 +285,7 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
           {id === "welcome" && <Welcome name={name} client={client} />}
           {id === "phone" && <Phone name={name} setup={setup} host={host} manual={manual} refresh={refresh} />}
           {id === "cloud" && (
-            <Cloud setup={setup} early={early} host={host} manual={manual} refresh={refresh} setSetup={setSetup} onConfirmed={() => setConfirmed(true)} />
+            <Cloud name={name} setup={setup} early={early} host={host} manual={manual} refresh={refresh} setSetup={setSetup} onConfirmed={() => setConfirmed(true)} />
           )}
           {id === "agents" && <Agents client={client} setup={setup} manual={manual} refresh={refresh} close={close} />}
           {id === "ready" && <Ready done={done} go={go} />}
@@ -475,7 +476,12 @@ function hostOf(url: string): string {
   }
 }
 
+/** #326: joining this machine is one approval, of its code, on a device
+ * already in the account, where the account or team is picked. Approving
+ * a browser (or the app's window) as a device is another, for reaching
+ * machines from it, and joining doesn't need it: the step says so. */
 function Cloud({
+  name,
   setup,
   early,
   host,
@@ -484,6 +490,7 @@ function Cloud({
   setSetup,
   onConfirmed,
 }: {
+  name: string;
   setup: Setup | null;
   early: Setup["control"] | null;
   host: HostInfo | null;
@@ -543,7 +550,7 @@ function Cloud({
   );
   return (
     <section class="start-step">
-      <h2>Use it from anywhere</h2>
+      <h2 data-start-cloud-title>{joined ? "Use it from anywhere" : dropped ? `Put ${name} back in your account or team` : `Add ${name} to your account or team`}</h2>
       <p class="start-lede">
         illogical cloud reaches this machine from any browser, with no tailnet, and lets your team in on the sessions you share. Your terminals stay here:
         the cloud passes encrypted traffic, and only your devices hold the keys.
@@ -554,14 +561,21 @@ function Cloud({
           <CopyText text={`illogicald join ${control}`} data-join-command />
         </>
       ) : joined ? (
-        <ul class="start-checks">
-          <Check state="done">
-            <span data-start-joined>Joined{team ? ` to the team ${team}` : " to your account"}</span> ·{" "}
-            <a href={joined} target="_blank" rel="noreferrer">
-              open the cloud ↗
-            </a>
-          </Check>
-        </ul>
+        <>
+          <ul class="start-checks">
+            <Check state="done">
+              <span data-start-joined>Joined{team ? ` to the team ${team}` : " to your account"}</span> ·{" "}
+              <a href={joined} target="_blank" rel="noreferrer">
+                open the cloud ↗
+              </a>
+            </Check>
+          </ul>
+          <p class="start-dim" data-start-next-device>
+            {desktopApp()
+              ? "Next, if you like: sign the app in and approve it as a device, so this window reaches your other machines too. It's optional: this machine is in already."
+              : "To reach it from another browser or phone, sign in to the cloud there. Each one is approved once as a device; this machine doesn't need that."}
+          </p>
+        </>
       ) : c?.confirm ? (
         <div class="start-code" data-start-confirm>
           <div class="start-kicker">Approved on {c.confirm.approver || "your device"}. Is this your account?</div>
@@ -584,7 +598,7 @@ function Cloud({
       ) : c?.pending ? (
         <div class="start-code" data-start-pending>
           {droppedNote}
-          <div class="start-kicker">Approve this code on a signed-in device</div>
+          <div class="start-kicker">Approve this code on a device you use</div>
           <div class="start-code-big" data-start-code>
             {c.pending.code}
           </div>
@@ -592,7 +606,12 @@ function Cloud({
             Approve in illogical cloud ↗
           </a>
           <p class="start-dim">
-            <span class="start-pulse" /> Waiting for the approval. New here? It signs you up first (a passkey or GitHub), then asks: your account, or a team you own.
+            <span class="start-pulse" /> Waiting for the approval. Open the link (or type the code) on a browser or phone you already use with illogical; that's
+            where you pick where {name} goes: your account, or a team you own. New here? It signs you up first (a passkey or GitHub).
+          </p>
+          <p class="start-dim" data-start-one-approval>
+            That's the only approval {name} needs. A browser that isn't one of your devices yet asks to be approved itself; that's separate, and only for
+            reaching your machines from it. A device you already use approves both at once.
           </p>
         </div>
       ) : c?.elsewhere ? (
@@ -614,6 +633,9 @@ function Cloud({
       ) : (
         <>
           {droppedNote}
+          <p class="start-dim" data-start-join-how>
+            {name} shows a code, and you approve it on a device you use, picking your account or a team there: that one approval joins it.
+          </p>
           <button class="start-btn primary big" disabled={busy || !setup} onClick={connect} data-start-connect>
             {busy ? "Asking the cloud…" : dropped ? `Join ${hostOf(control)} again` : ours ? "Connect to illogical cloud" : `Connect to ${hostOf(control)}`}
           </button>

@@ -3,13 +3,17 @@
 // or not), not joined, or dropped by control. Dropped is a banner under the
 // top bar with Join again (Getting started's join); the host menu has a
 // line for it either way. A machine whose key was removed (#330) asks to
-// join again by itself: the banner shows that join's code. Only the
+// join again by itself: the banner shows that join's code. In the desktop
+// app, whose window comes back to this page when control drops the machine
+// (cloud.rs), the join itself opens, once per drop (#326): that's what the
+// person came to do. Only the
 // owner's own daemon says (not a guest, not a page from control), and it's
 // asked again every half minute, so a drop shows within a minute or two of
 // control's.
 
 import { useEffect } from "preact/hooks";
 import type { Client } from "../client";
+import { desktopApp } from "../desktop";
 import type { ControlState } from "../proto";
 import { useSubscribe } from "./hooks";
 import type { MenuItem } from "./menu";
@@ -17,6 +21,7 @@ import { openGettingStarted } from "./welcome";
 
 const POLL_MS = 30 * 1000;
 const HIDDEN_KEY = "illogical.control-dropped.hidden";
+const OPENED_KEY = "illogical.control-dropped.opened";
 
 let now: ControlState | null = null;
 const listeners = new Set<() => void>();
@@ -131,6 +136,18 @@ function when(ms?: number): string {
  * this tab until control says it again (another drop). */
 export function ControlBanner({ client }: { client: Client }) {
   const s = useControlState(client);
+  const drop = s?.state === "dropped" ? String(s.dropped_ms ?? "") : null;
+  useEffect(() => {
+    if (drop === null || !desktopApp()) return;
+    try {
+      if (localStorage.getItem(OPENED_KEY) === drop) return;
+      localStorage.setItem(OPENED_KEY, drop);
+    } catch {
+      // Nothing to remember it in: the banner's Join again is there.
+      return;
+    }
+    joinAgain();
+  }, [drop]);
   if (!s || s.state !== "dropped") return null;
   const key = String(s.dropped_ms ?? "");
   if (hiddenFor() === key) return null;

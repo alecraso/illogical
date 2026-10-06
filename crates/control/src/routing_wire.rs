@@ -419,6 +419,66 @@ async fn a_second_join_from_one_machine_keeps_the_approval() {
     assert_eq!(poll(&code2, "nope").await.0, 403);
 }
 
+/// #326: a browser that came to approve a machine's join, and isn't one
+/// of the account's devices yet, says which; the device that approves it
+/// sees the machine alongside, while that join is open.
+#[tokio::test]
+async fn a_waiting_browser_brings_the_machine_it_came_for() {
+    let c = control(|_| {}).await;
+    let root = person(&c.app, "jake", "a1");
+    let cookie = session(&c.app, "a1");
+    let asks = |keys: &DeviceKeys| {
+        let b = join_body(keys, true);
+        let c = &c;
+        async move {
+            let r: Value =
+                c.http.post(format!("{}/api/join", c.base)).json(&b).send().await.unwrap().json().await.unwrap();
+            r["code"].as_str().unwrap().to_owned()
+        }
+    };
+    let machine = DeviceKeys::generate();
+    let code = asks(&machine).await;
+
+    let browser = DeviceKeys::generate();
+    let enrolls = |keys: &DeviceKeys, join: Option<&str>| {
+        let cert = Cert::new(keys, "a1", Kind::Browser, "illogical app on box");
+        let (c, cookie) = (&c, cookie.clone());
+        let body = json!({ "cert": cert, "join": join });
+        async move { c.as_person(&cookie, "POST", "/api/devices", Some(body)).await }
+    };
+    let joins = || {
+        let (c, cookie) = (&c, cookie.clone());
+        async move { c.as_person(&cookie, "GET", "/api/devices", None).await.1 }
+    };
+    // Lower case and without its dash, as typed.
+    let typed = code.replace('-', "").to_lowercase();
+    let (st, r) = enrolls(&browser, Some(&typed)).await;
+    assert_eq!((st, &r["approved"]), (200, &json!(false)), "{r}");
+    assert_eq!(joins().await["joins"], json!({ browser.id(): code }));
+
+    // Not a code: nothing to show with it.
+    let other = DeviceKeys::generate();
+    assert_eq!(enrolls(&other, Some("nope")).await.0, 200);
+    assert_eq!(joins().await["joins"], json!({ browser.id(): code }));
+
+    // The machine approved (here from the account's first device): the
+    // browser still waits, on its own.
+    let mut cert = Cert { account: "a1".into(), ..Cert::new(&machine, "", Kind::Daemon, "box") };
+    cert.sign_with(&root);
+    let path = format!("/api/joins/{code}/approve");
+    assert_eq!(c.as_person(&cookie, "POST", &path, Some(json!({ "cert": cert }))).await.0, 200);
+    let devs = joins().await;
+    assert_eq!(devs["joins"], json!({}));
+    assert!(devs["pending"].to_string().contains(&browser.id()), "{devs}");
+
+    // Asking again with another code shows that one; without one, none.
+    let code2 = asks(&DeviceKeys::generate()).await;
+    assert_eq!(enrolls(&browser, Some(&code2)).await.0, 200);
+    assert_eq!(joins().await["joins"], json!({ browser.id(): code2 }));
+    assert_eq!(enrolls(&browser, None).await.0, 200);
+    assert_eq!(joins().await["joins"], json!({}));
+}
+
 /// #330: a removed machine is refused everywhere, so only its own
 /// account removes it, and nobody else's revocation keeps it out.
 #[tokio::test]

@@ -287,8 +287,10 @@ test("a phone needs the laptop's approval", async ({ browser }) => {
   phone = await (await phoneContext(browser)).newPage();
   await signIn(phone);
   await expect(phone.getByText("Approve this browser")).toBeVisible();
-  // It says where to approve it (#105).
+  // It says where to approve it (#105), and that a machine's join is
+  // another approval that doesn't need this one (#326).
   await expect(phone.locator("[data-control-url]")).toHaveText(base);
+  await expect(phone.locator("[data-waiting-machine]")).toContainText("doesn't need this one");
   await expect(phone.locator("[data-sign-out]")).toBeVisible();
   const fp = await phone.locator("[data-fingerprint]").getAttribute("data-fingerprint");
   // The laptop is asked, and shows the same fingerprint.
@@ -357,7 +359,9 @@ test("the desktop app signs in through the browser, then is approved as a device
   const app = await (await browser.newContext()).newPage();
   await app.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "illogical app on test-mac" } }));
   await app.goto(`${base}/#app-redeem=${t.ticket}.${grant}.${verifier}`);
-  await expect(app.getByText("Approve this browser")).toBeVisible();
+  // It says it's the app being approved, by name (#326).
+  await expect(app.getByText("Approve this app as a device")).toBeVisible();
+  await expect(app.locator("[data-waiting-browser]")).toContainText("the illogical app on test-mac");
   const fp = await app.locator("[data-fingerprint]").getAttribute("data-fingerprint");
   await expect(laptop.locator(`[data-pending="${fp}"]`)).toBeVisible({ timeout: 20_000 });
   await expect(laptop.locator(".prompt")).toContainText("illogical app on test-mac");
@@ -520,7 +524,8 @@ test("a browser the account removed says so before offering Approve, and enrolls
   await expect(phone.locator("[data-sign-out-forget]")).toBeVisible();
   // Forgotten, it asks as a new device, with the recovery form open.
   await phone.locator("[data-enroll-again]").click();
-  await expect(phone.getByText("Approve this browser")).toBeVisible();
+  // Still on the machine's link, it leads with that (#326).
+  await expect(phone.locator('[data-waiting-join="AAAAA-AAAAA"]')).toBeVisible();
   await expect(phone.locator("[data-recovery-input]")).toBeVisible();
   // Not wanted back: the laptop turns it down, so nothing waits on it.
   await expect(laptop.locator("[data-pending]")).toBeVisible({ timeout: 20_000 });
@@ -597,6 +602,53 @@ test("Getting started asks to check the account's fingerprint before the machine
     await expect(laptop.locator("[data-account-fingerprint]")).toHaveAttribute("data-account-fingerprint", account, { timeout: 1000 });
   }).toPass({ timeout: 15_000 });
   await laptop.getByRole("button", { name: "Done" }).click();
+});
+
+test("a browser that isn't a device yet, here to approve a machine, leads with its code; one approval covers both (#326)", async ({ browser }) => {
+  const state = temp("rejoiner");
+  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", "rejoiner", "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
+  procs.push(joining);
+  const link = await new Promise<string>((res) => {
+    let out = "";
+    joining.stdout!.on("data", (d) => {
+      out += d;
+      const m = out.match(/(http\S+#join=[A-Z0-9-]+)/);
+      if (m) res(m[1]);
+    });
+  });
+  const code = link.split("#join=")[1];
+  const exited = new Promise<number | null>((r) => joining.on("exit", r));
+
+  // The machine's approval link, in a browser that isn't one of the
+  // account's devices: signed in, it can't approve, so it says where to.
+  const visitor = await (await browser.newContext()).newPage();
+  await visitor.goto(link);
+  await expect(visitor.locator('[data-why="join"]')).toBeVisible();
+  await visitor.locator("[data-signin=github]").click();
+  await expect(visitor.locator(`[data-waiting-join="${code}"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(visitor.getByRole("heading", { name: "Approve the machine on a device you use" })).toBeVisible();
+  await expect(visitor.locator("[data-control-join-link]")).toHaveText(`${base}/#join=${code}`);
+  await expect(visitor.locator("[data-waiting-also]")).toContainText("the machine joins either way");
+  const fp = (await visitor.locator("[data-fingerprint]").getAttribute("data-fingerprint"))!;
+
+  // The laptop gets one prompt with both, side by side.
+  await laptop.goto("/");
+  await expect(laptop.locator("[data-join-both]")).toBeVisible({ timeout: 20_000 });
+  await expect(laptop.locator("[data-join-machine] [data-join-code]")).toHaveText(code);
+  await expect(laptop.locator(`[data-join-alongside="${fp}"] [data-pending="${fp}"]`)).toBeVisible();
+  await expect(laptop.locator(`[data-join-also="${fp}"]`)).toBeChecked();
+  const account = await laptop.locator("[data-join-account]").getAttribute("data-join-account");
+  await expect(laptop.locator("[data-approve-join]")).toHaveText("Approve both");
+  await laptop.locator("[data-approve-join]").click();
+  joining.stdin!.end(`${account}\n`);
+  expect(await exited).toBe(0);
+  // One approval: the browser is in too, and nothing else waits.
+  await booted(visitor);
+  // Its link's code is spent: it says so rather than a bare "no such code".
+  await expect(visitor.locator(`[data-join-done="${code}"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(laptop.locator("[data-pending]")).toHaveCount(0);
+  await expect(laptop.locator(".prompt")).toHaveCount(0);
+  await visitor.context().close();
 });
 
 test("sessions: where you're signed in, and signing out everywhere (#173)", async () => {

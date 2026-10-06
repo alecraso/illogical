@@ -12,6 +12,7 @@
 import { certBody, deviceId, evaluate, hex, joinCode, normalizeCode, type Cert, type Revocation, revocationBody, unhex } from "./e2e/cert.ts";
 import { forget, loadEnrollment, loadKeys, saveEnrollment, saveWorkerDirectory, signText, type DeviceKeys, type Enrollment } from "./e2e/keys.ts";
 import type { E2ETarget } from "./client";
+import { desktopApp } from "./desktop";
 import {
   follows,
   inviteKey,
@@ -146,6 +147,14 @@ export class RefusedError extends Error {
   constructor(reason: string, message: string) {
     super(message);
     this.reason = reason;
+  }
+}
+
+/** The machine was approved, but a device approved with it wasn't
+ * (#326): the machine's prompt is done, and that device asks on its own. */
+export class AlongsideError extends Error {
+  constructor(name: string, why: string) {
+    super(`The machine is approved, but not ${name}: ${why}`);
   }
 }
 
@@ -343,7 +352,7 @@ async function recoveryKey(seed: Uint8Array): Promise<CryptoKey> {
 const NO_NOISE = "0".repeat(64);
 
 /** A browser's name in its account's device list. */
-function deviceName(): string {
+export function deviceName(): string {
   // M48: the desktop app says what it is ("illogical app on jake-air").
   const app0 = (globalThis as { __illogicalApp?: { name?: string } }).__illogicalApp?.name;
   if (app0) return app0;
@@ -351,6 +360,18 @@ function deviceName(): string {
   const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "browser";
   const app = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
   return `${app ? `${app} on ` : ""}${os}`;
+}
+
+/** The machine's join code this page was opened to approve
+ * (`#join=CODE`), if any. */
+export function joinInHash(hash: string = location.hash): string | null {
+  const m = /^#join=([A-Za-z0-9-]+)$/.exec(hash);
+  return m ? normalizeCode(m[1]) : null;
+}
+
+/** Whether this page is the desktop app's window (M48). */
+export function inApp(): boolean {
+  return !!desktopApp();
 }
 
 /** M48: the desktop app's window, after the person allowed its sign-in in
@@ -361,7 +382,7 @@ async function redeemAppLogin() {
   const m = /^#app-redeem=([0-9a-f]+)\.([0-9a-f]+)\.([0-9a-f]+)$/.exec(location.hash);
   if (!m) return;
   history.replaceState(null, "", location.pathname + location.search);
-  if (!(globalThis as { __illogicalApp?: unknown }).__illogicalApp) return;
+  if (!inApp()) return;
   await api(`/auth/app/${m[1]}/redeem`, { grant: m[2], verifier: m[3] }).catch(() => {});
 }
 
@@ -400,6 +421,9 @@ export class ControlSession {
   trusted = new Map<string, Cert>();
   /** Devices asking to join, for this one to approve. */
   pending: Cert[] = [];
+  /** #326: the machine's join code a waiting device came to approve, by
+   * the device's id, while that join is open: approved together. */
+  pendingJoins = new Map<string, string>();
   revocations: Revocation[] = [];
   daemons: DirDaemon[] = [];
   /** Shares waiting for this account's yes. */
@@ -501,8 +525,13 @@ export class ControlSession {
       cert.sig = await signText(k, certBody(cert));
     }
     this.request = cert;
-    const ask = () => api<{ approved: boolean; cert?: Cert }>("/api/devices", { cert });
+    // #326: here to approve a machine, which this browser can't until it's
+    // one of the account's devices: the device that approves it is shown
+    // the machine alongside, and approves both at once.
+    const join = joinInHash();
+    const ask = () => api<{ approved: boolean; cert?: Cert }>("/api/devices", { cert, join });
     let r = await ask();
+    if (!r.approved) this.brought = join;
     while (!r.approved) {
       this.set("waiting");
       await new Promise((res) => setTimeout(res, 2000));
@@ -560,6 +589,10 @@ export class ControlSession {
 
   /** This browser's request, as it asks to join. */
   private request: Cert | null = null;
+
+  /** #326: the machine's join code this browser waited with, which the
+   * device that approved it may have approved alongside. */
+  brought: string | null = null;
 
   /** After a turn-down: ask again. */
   tryAgain() {
@@ -649,7 +682,7 @@ export class ControlSession {
     if (!e) return;
     try {
       const [devs, dir] = await Promise.all([
-        api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[]; pending: Cert[] }>("/api/devices"),
+        api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[]; pending: Cert[]; joins?: Record<string, string> }>("/api/devices"),
         api<{ daemons: ForeignEntry[]; offers?: ShareOffer[] }>("/api/directory"),
       ]);
       this.rootMismatch = !!devs.trust && devs.trust.root !== e.root;
@@ -663,6 +696,7 @@ export class ControlSession {
       if (!mine && (this.phase === "ready" || this.phase === "loading")) this.phase = "untrusted";
       else if (mine && this.phase === "untrusted") this.phase = "ready";
       this.pending = devs.pending;
+      this.pendingJoins = new Map(Object.entries(devs.joins ?? {}));
       const daemons: DirDaemon[] = [];
       for (const d of dir.daemons) {
         const { chain, ...entry } = d;
@@ -1026,10 +1060,14 @@ export class ControlSession {
 
   /** Approve another device's request: sign its certificate. */
   async approve(c: Cert) {
+    await this.approveDevice(c);
+    await this.refresh();
+  }
+
+  private async approveDevice(c: Cert) {
     const signed: Cert = { ...c, account: this.account, approver: this.keys.id, sig: "" };
     signed.sig = await signText(this.keys, certBody(signed));
     await this.approving(api(`/api/devices/${c.device}/approve`, { cert: signed }));
-    await this.refresh();
   }
 
   /** An approval's request: refused, it says which check failed and what
@@ -1071,8 +1109,10 @@ export class ControlSession {
   }
 
   /** Approve a daemon into this account, or into `team` (one I'm in): this
-   * device signs the team in, so control can't pick one (#100). */
-  async approveJoin(code: string, c: Cert, team: string | null = null) {
+   * device signs the team in, so control can't pick one (#100). `devices`
+   * waiting with its code (#326) are approved with it, before the page
+   * hears of either, so its prompt stays up until both are done. */
+  async approveJoin(code: string, c: Cert, team: string | null = null, devices: Cert[] = []) {
     const signed: Cert = { ...c, account: this.account, approver: this.keys.id, sig: "" };
     signed.sig = await signText(this.keys, certBody(signed));
     let teamSig: string | null = null;
@@ -1082,7 +1122,17 @@ export class ControlSession {
       teamSig = await signText(this.keys, teamJoinBody(c.device, t.pin));
     }
     await this.approving(api(`/api/joins/${code}/approve`, { cert: signed, team, team_sig: teamSig }));
-    await this.refresh();
+    try {
+      for (const d of devices) {
+        try {
+          await this.approveDevice(d);
+        } catch (e) {
+          throw new AlongsideError(d.name, (e as Error).message);
+        }
+      }
+    } finally {
+      await this.refresh();
+    }
   }
 
   /** Move a machine of this account into `team` (one I'm in), or back to

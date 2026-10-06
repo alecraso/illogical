@@ -3,8 +3,8 @@
 // list, and how to add a machine.
 
 import { useEffect, useState } from "preact/hooks";
-import { cameToRecover, inviteInHash, passkeyRegister, passkeySignIn, previewInvite, RefusedError, signInNext, type ControlSession, type JoinRequest } from "../control";
-import { fingerprint, type Cert } from "../e2e/cert.ts";
+import { AlongsideError, cameToRecover, deviceName, inApp, inviteInHash, joinInHash, passkeyRegister, passkeySignIn, previewInvite, RefusedError, signInNext, type ControlSession, type JoinRequest } from "../control";
+import { fingerprint, normalizeCode, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 import { directory } from "../hosts";
 import { CopyButton, CopyText, download } from "./copy";
@@ -73,23 +73,7 @@ export function ControlGate({ s }: { s: ControlSession }) {
       </Center>
     );
   }
-  if (s.phase === "waiting")
-    return (
-      <Center>
-        <h1>Approve this browser</h1>
-        <p>
-          You're signed in as <b>{s.login}</b>. Before this browser can reach your machines, a device you already use approves it. Open{" "}
-          <CopyText inline text={s.info.url} data-control-url /> on that device; it asks there.
-        </p>
-        <p>It shows this fingerprint; check it matches:</p>
-        <p class="fingerprint" data-fingerprint={s.keys.id}>
-          {fingerprint(s.keys.id)}
-        </p>
-        <p class="dim">Waiting…</p>
-        <RecoveryForm s={s} open={recovering()} />
-        <SignOuts s={s} />
-      </Center>
-    );
+  if (s.phase === "waiting") return <Waiting s={s} />;
   if (s.phase === "lost-key")
     return (
       <Center>
@@ -162,6 +146,68 @@ function SignOuts({ s }: { s: ControlSession }) {
 /** Here from forgetting a stale browser: the recovery form starts open. */
 let recover: boolean | undefined;
 const recovering = () => (recover ??= cameToRecover());
+
+/** This browser waits for a device the account trusts to approve it.
+ * #326: it says it's the browser (or the app's window) being approved, by
+ * name, and that adding a machine is a separate approval that doesn't need
+ * this one. Here from a machine's approval link (`#join=`), it leads with
+ * that: the code goes to a device already in the account, which sees this
+ * browser's request alongside and approves both at once. */
+function Waiting({ s }: { s: ControlSession }) {
+  const [hash, setHash] = useState(location.hash);
+  useEffect(() => {
+    const on = () => setHash(location.hash);
+    addEventListener("hashchange", on);
+    return () => removeEventListener("hashchange", on);
+  }, []);
+  const code = joinInHash(hash);
+  const name = deviceName();
+  // "the illogical app on jake-air", or "this browser (Chrome on Mac)".
+  const what = inApp() ? `the ${name}` : `this browser (${name})`;
+  const fp = (
+    <p class="fingerprint" data-fingerprint={s.keys.id}>
+      {fingerprint(s.keys.id)}
+    </p>
+  );
+  if (code)
+    return (
+      <Center>
+        <h1>Approve the machine on a device you use</h1>
+        <p data-waiting-join={code}>
+          You're signed in as <b>{s.login}</b>, here to add a machine with code <b>{code}</b>. Only a device already in your account can approve it,
+          and this browser isn't one yet. On a browser or phone you use with illogical, open:
+        </p>
+        <CopyText text={`${s.info.url}/#join=${code}`} data-control-join-link />
+        <p>Approve the code there, and pick where the machine goes: your account, or a team you own. That's the one approval the machine needs.</p>
+        <p class="dim" data-waiting-also>
+          That device also lists {what} next to the machine, with this fingerprint. Approve it too only if you want this browser to reach your
+          machines; the machine joins either way.
+        </p>
+        {fp}
+        <p class="dim">Waiting…</p>
+        <RecoveryForm s={s} open={recovering()} />
+        <SignOuts s={s} />
+      </Center>
+    );
+  return (
+    <Center>
+      <h1>{inApp() ? "Approve this app as a device" : "Approve this browser"}</h1>
+      <p data-waiting-browser={name}>
+        You're signed in as <b>{s.login}</b>. This approves {what} as one of your devices, so it can reach your machines. A device you already use
+        approves it: open <CopyText inline text={s.info.url} data-control-url /> on that device; it asks there.
+      </p>
+      <p>It shows this fingerprint; check it matches:</p>
+      {fp}
+      <p class="dim">Waiting…</p>
+      <p class="control-aside" data-waiting-machine>
+        Here to add a machine to your account or a team? That's a separate approval, and it doesn't need this one. The machine shows a code (in
+        Getting started, or where you ran <code>illogicald join</code>): approve that code on a device you already use.
+      </p>
+      <RecoveryForm s={s} open={recovering()} />
+      <SignOuts s={s} />
+    </Center>
+  );
+}
 
 /** Signed out, but following a link (#103): say what it was for. The hash
  * survives signing in, so it opens once you're in. */
@@ -501,6 +547,9 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
   const req = s.teams.flatMap((t) => (t.role === "owner" ? t.requests.map((r) => ({ t, r })) : []))[0];
   if (req) return <AdmitPrompt s={s} team={req.t} req={req.r} />;
   const asking = s.pending[0];
+  // #326: a device that came to approve a machine's join: both together.
+  const asked = asking && s.pendingJoins.get(asking.device);
+  if (asking && asked) return <JoinPrompt key={asked} s={s} code={asked} from={asking} />;
   if (asking) return <DevicePrompt s={s} c={asking} />;
   const offer = s.offers[0];
   if (offer) return <ShareOfferPrompt s={s} o={offer} />;
@@ -551,7 +600,11 @@ function dropHash() {
   history.replaceState(null, "", location.pathname + location.search);
 }
 
-function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
+/** A machine's join, by its code: from its approval link, typed in, or
+ * (#326) brought by a waiting device that came to approve it (`from`).
+ * Devices waiting with this code are listed alongside, and one Approve
+ * covers the machine and them. */
+function JoinPrompt({ s, code, from }: { s: ControlSession; code: string; from?: Cert }) {
   const [j, setJ] = useState<JoinRequest | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -560,6 +613,8 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
   const [refused, setRefused] = useState(false);
   // "" is just me; else a team's id.
   const [to, setTo] = useState("");
+  // Devices alongside that the person unticked.
+  const [skip, setSkip] = useState<Set<string>>(new Set());
   useEffect(() => {
     // This browser's own trust, fresh, before it offers Approve (#327).
     void s.refresh();
@@ -571,14 +626,38 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
       (e: Error) => setErr(e.message),
     );
   }, [code]);
+  // The machine's code is gone (approved elsewhere, expired): the device
+  // that brought it asks on its own.
+  if (from && err && !j) return <DevicePrompt s={s} c={from} />;
+  // This browser waited with this code (#326), and it's gone: most likely
+  // approved with this browser, on the device that approved both.
+  if (!from && err && !j && s.brought === normalizeCode(code))
+    return (
+      <Modal close={clearHash}>
+        <h2>Add a machine?</h2>
+        <p data-join-done={code}>
+          Code <b>{s.brought}</b> isn't waiting any more: the device that approved this browser approved the machine with it, or the code expired. The
+          machine says which.
+        </p>
+        <div class="prompt-buttons">
+          <button class="primary" onClick={clearHash}>
+            Done
+          </button>
+        </div>
+      </Modal>
+    );
   // Teams I'm in (#332), and the one it asked for even if I can't add to it.
   const teams = s.addableTeams();
   const asked = j?.team && !teams.some((t) => t.team === j.team!.team) ? j.team : null;
   const team = teams.find((t) => t.team === to);
   const cant = !!to && !team;
   const locked = !!asked && !!s.teams.find((t) => t.team === asked.team)?.locked;
+  // Devices waiting with this code (#326), approved with the machine
+  // unless unticked.
+  const alongside = j ? s.pending.filter((c) => s.pendingJoins.get(c.device) === j.code) : [];
+  const also = alongside.filter((c) => !skip.has(c.device));
   const cancel = () => {
-    if (j && !refused) void s.rejectJoin(j.code).catch(() => {});
+    if (j && !refused) void s.rejectJoin(j.code).then(() => s.refresh(), () => {});
     clearHash();
   };
   const failed = (e: unknown) => {
@@ -588,9 +667,18 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
   };
   // M49: the illogical CLI on a machine, asking to be one of your devices.
   if (j?.cert.kind === "cli") return <CliJoin s={s} j={j} cancel={cancel} refused={refused} failed={failed} />;
+  const machine = j ? (
+    <>
+      <p>
+        <b>{j.cert.name}</b> asks to join {j.team ? <>the team <b data-join-team={j.team.team}>{j.team.name}</b></> : "your account"} with code{" "}
+        <b data-join-code={j.code}>{j.code}</b>. Check it's the code the machine shows (in Getting started, or where you ran <code>illogicald join</code>).
+      </p>
+      <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
+    </>
+  ) : null;
   return (
-    <Modal close={clearHash}>
-      <h2>Add a machine?</h2>
+    <Modal close={from ? undefined : clearHash}>
+      <h2>{alongside.length ? "Add a machine and a device?" : "Add a machine?"}</h2>
       {err ? (
         <p class="control-error" data-join-error>
           {err}
@@ -598,11 +686,39 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
       ) : null}
       {j ? (
         <>
-          <p>
-            <b>{j.cert.name}</b> asks to join {j.team ? <>the team <b data-join-team={j.team.team}>{j.team.name}</b></> : "your account"} with code{" "}
-            <b data-join-code={j.code}>{j.code}</b>. Check it's the code the machine shows (in Getting started, or where you ran <code>illogicald join</code>).
-          </p>
-          <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
+          {alongside.length ? (
+            <div class="control-both" data-join-both>
+              <div class="control-both-card" data-join-machine>
+                <div class="control-both-kind">{j.cert.name} (machine)</div>
+                {machine}
+              </div>
+              {alongside.map((c) => (
+                <div key={c.device} class="control-both-card" data-join-alongside={c.device}>
+                  <div class="control-both-kind">{c.name} (browser)</div>
+                  <p>Signed in to come here and approve this machine. Approved too, it reaches your machines. It shows this fingerprint:</p>
+                  <p class="fingerprint" data-pending={c.device}>
+                    {fingerprint(c.device)}
+                  </p>
+                  <label class="control-check">
+                    <input
+                      type="checkbox"
+                      data-join-also={c.device}
+                      checked={!skip.has(c.device)}
+                      onChange={(e) => {
+                        const next = new Set(skip);
+                        if ((e.target as HTMLInputElement).checked) next.delete(c.device);
+                        else next.add(c.device);
+                        setSkip(next);
+                      }}
+                    />{" "}
+                    Approve it too
+                  </label>
+                </div>
+              ))}
+            </div>
+          ) : (
+            machine
+          )}
           {s.enrollment ? (
             <p>
               Your account:{" "}
@@ -662,14 +778,17 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
             if (!j) return;
             setBusy(true);
             try {
-              await s.approveJoin(j.code, j.cert, team?.team ?? null);
+              // The machine, then the devices that came with it.
+              await s.approveJoin(j.code, j.cert, team?.team ?? null, also);
               clearHash();
             } catch (e) {
+              // The machine is in: only the device is left to ask again.
+              if (e instanceof AlongsideError) setJ(null);
               failed(e);
             }
           }}
         >
-          Approve
+          {also.length > 1 ? "Approve them all" : also.length ? "Approve both" : "Approve"}
         </button>
       </div>
     </Modal>
@@ -801,7 +920,10 @@ function AppLoginDone() {
   return (
     <Modal close={clearHash}>
       <h2>Sign in the app?</h2>
-      <p data-app-login-done>Signed in. Next the app asks to be approved as a new device: the prompt shows here in a moment. Then it reaches your machines.</p>
+      <p data-app-login-done>
+        Signed in. Next the app's window asks to be approved as a device, so it reaches your machines: the prompt shows here in a moment. Its own
+        machine joins separately, with a code, and doesn't need this.
+      </p>
       <div class="prompt-buttons">
         <button class="primary" onClick={clearHash}>
           Done

@@ -71,14 +71,24 @@ vs team machines and sharing a session:
    An approval is never lost to a second request from the same machine.
    If control refuses an approval, the page says which check failed and
    what to do; closing it then doesn't turn the machine down.
+   The machine's approval is the only one it needs. If the browser you
+   open its link in isn't one of your devices yet, it can't approve the
+   machine: it says so, shows the link to open on a device you already
+   use, and asks to be approved itself. That device then shows the machine
+   and the browser side by side, and *Approve both* lets both in (untick
+   the browser to leave it out: the machine joins either way). Each is
+   still a device approval, signed by the device that approves it.
 3. **Add your phone** (or any other browser): *Add a phone or browser…* in
    the host menu shows control's address as a QR code and a link. Sign in
    there. It shows a fingerprint and waits. Your devices ask *New device?*
    with the same fingerprint; approve it on one of them.
-4. **Sign in the desktop app.** Once its machine has joined (*Getting
-   started*'s *Cloud* step, or `illogicald join`), the app's window is
-   control's page. The window can't use passkeys, so the app signs in
-   through your browser:
+4. **Sign in the desktop app** (optional). Once its machine has joined
+   (*Getting started*'s *Cloud* step, or `illogicald join`), the app
+   offers to sign in, so its window reaches your other machines too; the
+   machine needs nothing more, and *Just this machine for now* skips it.
+   A machine control dropped counts as not joined: the app opens its own
+   page with *Getting started*'s join, not the sign-in. The window can't
+   use passkeys, so the app signs in through your browser:
    - *Sign in* in the app opens control in your browser and shows a short
      code;
    - signed in there, control asks *Sign in the app?* with the machine's
@@ -112,6 +122,23 @@ vs team machines and sharing a session:
    A removed browser says so when it opens control's page, and offers to
    forget its key and enroll again, approved by another device or a
    recovery code.
+
+**From the desktop app, first run or after a drop**, it's one
+sequence:
+
+1. Install the app and open it. It starts the daemon and shows the
+   daemon's own page; Getting started opens once.
+2. Join the machine: Getting started's *Cloud* step ("Add … to your
+   account or team", or "Put … back" after a drop) shows a code. Approve
+   it on a device you already use, picking your account or a team there,
+   then check the account's fingerprint (*They match*). That's the one
+   approval the machine needs. After a drop, the app opens this step by
+   itself, once.
+3. Sign the app in (optional): its window then reaches your other
+   machines too. It's a second approval, of the app's window as a device;
+   the sign-in page says so, and *Just this machine for now* skips it.
+4. The machine is in the host menu of your devices and, by role, your
+   team's.
 
 **How a device reaches a machine:**
 

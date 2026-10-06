@@ -3,7 +3,8 @@
 // whether and where it's joined. The test daemon isn't joined to any
 // control, so these answer `control_state` themselves (on the real
 // `/api/host`); the daemon's side is
-// crates/daemon/tests/integration/control_state.rs.
+// crates/daemon/tests/integration/control_state.rs. In the desktop app a
+// drop opens the join by itself (#326).
 
 import { expect, test, type Page } from "@playwright/test";
 import { reset } from "./helpers";
@@ -88,6 +89,22 @@ test("a removed key: the join it asked for, in the banner and Getting started", 
   await expect(start.locator("[data-start-approve]")).toHaveAttribute("href", approve);
   await expect(start.locator("[data-start-dropped]")).toContainText("it made a new one (3333-4444)");
   await start.getByRole("button", { name: "Close" }).click();
+});
+
+test("in the app, a drop opens the join itself, once, leading with the machine (#326)", async ({ page }) => {
+  await page.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "illogical app on test-mac" } }));
+  await standing(page, dropped);
+  await reset(page);
+  const start = page.getByRole("dialog", { name: "Getting started" });
+  await expect(start.locator("[data-getting-started]")).toHaveAttribute("data-step", "cloud");
+  await expect(start.locator("[data-start-cloud-title]")).toContainText("back in your account or team");
+  // One approval, of the machine's code, on a device the person uses.
+  await expect(start.locator("[data-start-join-how]")).toContainText("that one approval joins it");
+  await start.getByRole("button", { name: "Close" }).click();
+  // Once per drop: not again on a reload.
+  await page.reload();
+  await expect(page.locator("[data-control-dropped]")).toBeVisible();
+  await expect(start).toBeHidden();
 });
 
 test("joined and connected: no banner, and the host menu says where", async ({ page }) => {

@@ -14,6 +14,8 @@
   .code b { display: block; font: 800 46px/1 "Big Shoulders Display", "Arial Narrow", sans-serif; letter-spacing: 0.18em; color: var(--ask); }
   button { border: 1px solid var(--line); background: none; color: var(--ink); border-radius: 999px; padding: 10px 18px; font: 600 12px/1 ui-monospace, Menlo, monospace; cursor: pointer; }
   button.primary { background: var(--ink); color: var(--void); border-color: var(--ink); text-transform: uppercase; letter-spacing: 0.08em; }
+  .steps { color: #c4cbd8; padding-left: 1.2em; }
+  .steps li { margin: 4px 0; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
   .dim { color: var(--mute); font-size: 13px; }
   .err { color: #ff5468; }
@@ -23,16 +25,21 @@
 </head>
 <body>
 <main>
-  <div class="kicker">illogical cloud</div>
-  <h1>All your machines, here</h1>
-  <p id="lede">This machine is in illogical cloud. Sign in, and this window reaches every machine in your account and your teams, end to end encrypted.</p>
+  <div class="kicker">illogical cloud · optional</div>
+  <h1>This window, every machine</h1>
+  <p id="lede">This machine is in illogical cloud already: your other devices reach it now, and it needs nothing more from you.</p>
+  <p>Next, if you like: sign the app in and approve it as a device, so this window can reach your other machines too. That's an approval for the app (<b id="device">the illogical app</b>), separate from the machine's.</p>
+  <ol class="steps">
+    <li>Sign in with your browser, and check it shows the code below.</li>
+    <li>Approve <b class="device">the app</b> on a device you already use: it asks there, with this window's fingerprint.</li>
+  </ol>
   <div id="waiting" hidden>
     <div class="code"><span class="dim">Check your browser shows</span><b id="code">…</b></div>
-    <p><span class="pulse"></span>Allow it in your browser. Then approve this app as a new device when your browser asks: it's how a new device gets into your account.</p>
+    <p><span class="pulse"></span>Allow it in your browser. Then approve <b class="device">the app</b> as a device when a device you already use asks.</p>
   </div>
   <p id="err" class="err" hidden></p>
   <div class="row">
-    <button class="primary" id="go" autofocus>Sign in with your browser</button>
+    <button class="primary" id="go" autofocus>Sign the app in</button>
     <button id="local">Just this machine for now</button>
   </div>
   <p class="dim" id="who"></p>
@@ -42,6 +49,14 @@
   const $ = (id) => document.getElementById(id);
   invoke("cloud_status").then((s) => {
     if (s.control) $("who").textContent = `${s.name} · ${s.control}`;
+    // #326: what's being approved, by name, and where the machine is.
+    if (s.name) {
+      $("device").textContent = s.name;
+      for (const el of document.querySelectorAll(".device")) el.textContent = s.name;
+    }
+    const machine = s.machine || "This machine";
+    if (s.place) $("lede").textContent = `${machine} is in ${s.place}: your other devices reach it now, and it needs nothing more from you.`;
+    else if (s.machine) $("lede").textContent = `${machine} is in illogical cloud already: your other devices reach it now, and it needs nothing more from you.`;
     if (s.auto) $("go").click();
   });
   $("go").onclick = async () => {

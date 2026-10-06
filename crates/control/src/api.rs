@@ -138,12 +138,18 @@ fn approval_ok(app: &App, account: &str, cert: &Cert, what: &str) -> Result<(), 
 #[derive(Deserialize)]
 pub struct Enroll {
     cert: Cert,
+    /// The machine's join code this browser came to approve (#326): a
+    /// browser that isn't one of the account's devices yet can't, so the
+    /// device that approves it is shown the machine alongside.
+    #[serde(default)]
+    join: Option<String>,
 }
 
 /// A browser or CLI asks to join the account. The first device is
 /// self-signed and trusted on first use; later ones wait for an approval.
 pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enroll>) -> R {
     let c = b.cert;
+    let join = b.join.as_deref().and_then(|j| normalize_code(j).ok());
     if let Err(e) = c.check_request() {
         refused("enroll", &s.account, &c, &e.to_string());
         return Err(err(StatusCode::BAD_REQUEST, &e.to_string()));
@@ -175,16 +181,21 @@ pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enrol
                 app.limits.check_account(crate::limit::ENROLLS, &s.account)?;
             }
             app.db.put_device(&Cert { approver: String::new(), sig: String::new(), ..c.clone() }, false, now_ms())?;
+            app.db.set_device_join(&s.account, &c.device, join.as_deref())?;
             // The account's other devices hear of it once (#104), not on
             // every reload of the waiting page.
             if new {
-                crate::push::notify(
-                    &app,
-                    vec![s.account.clone()],
-                    "control-device",
-                    "A new browser wants into your account".into(),
-                    "Open illogical to check its fingerprint and approve it.".into(),
-                );
+                let (title, body) = match join {
+                    Some(_) => (
+                        "A new browser and a machine want into your account",
+                        "Open illogical to check them and approve both at once.",
+                    ),
+                    None => (
+                        "A new browser wants into your account",
+                        "Open illogical to check its fingerprint and approve it.",
+                    ),
+                };
+                crate::push::notify(&app, vec![s.account.clone()], "control-device", title.into(), body.into());
             }
             Ok(Json(json!({ "approved": false, "root": root })))
         }
@@ -246,7 +257,11 @@ pub async fn add_recovery(State(app): State<Arc<App>>, s: Session, Json(b): Json
 pub async fn devices(State(app): State<Arc<App>>, s: Session) -> R {
     let (trust, certs, revs) = trusted(&app, &s.account)?;
     let (_, pending) = app.db.devices(&s.account)?;
-    Ok(Json(json!({ "trust": trust, "certs": certs, "revocations": revs, "pending": pending })))
+    // #326: the machine a waiting browser came to approve, by its code,
+    // while that join is open.
+    let joins: serde_json::Map<String, Value> =
+        app.db.device_joins(&s.account, now_ms())?.into_iter().map(|(d, code)| (d, Value::String(code))).collect();
+    Ok(Json(json!({ "trust": trust, "certs": certs, "revocations": revs, "pending": pending, "joins": joins })))
 }
 
 pub async fn device(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>) -> Result<Response, ApiError> {

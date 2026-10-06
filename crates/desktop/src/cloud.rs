@@ -15,6 +15,13 @@
 //! The window is then a new device, which a trusted device approves on
 //! control's page as any browser is. All of that is control's page's own
 //! code; this module only routes the window and runs the ticket.
+//!
+//! #326: the machine's join comes first, and is its own approval (a code,
+//! approved on a device the person uses, where the team is picked). A
+//! machine control dropped (#325) counts as not joined here: the window
+//! goes to the daemon's page, whose Getting started joins it again, not to
+//! a sign-in that would only approve the app. Once it's joined, signing
+//! the app in is an optional second step, and its page says so and why.
 
 use std::{
     path::PathBuf,
@@ -39,7 +46,32 @@ pub struct Local {
     /// This machine's name, for the device ("illogical app on jake-air").
     pub name: String,
     /// The control it's joined to (`ILLOGICAL_CONTROL` overrides, for tests).
+    /// None while control has dropped it (#325, #326): it isn't in.
     pub control: Option<String>,
+    /// Where it's joined, as the daemon's `control_state` says: "the team
+    /// arugula", "lex00's account".
+    pub place: Option<String>,
+}
+
+/// Whether `/api/host`'s `control_state` says control dropped this
+/// machine (#325): what it saved doesn't count.
+fn dropped(host: &Value) -> bool {
+    host["control_state"]["state"].as_str() == Some("dropped")
+}
+
+/// Where `/api/host`'s `control_state` says this machine is joined.
+fn place(host: &Value) -> Option<String> {
+    let s = &host["control_state"];
+    if s["state"].as_str() != Some("joined") {
+        return None;
+    }
+    let name = s["name"].as_str().filter(|n| !n.is_empty());
+    Some(match (s["kind"].as_str(), name) {
+        (Some("team"), Some(n)) => format!("the team {n}"),
+        (Some("team"), None) => "a team".into(),
+        (_, Some(n)) => format!("{n}'s account"),
+        (_, None) => "your account".into(),
+    })
 }
 
 static LOCAL: Mutex<Option<Local>> = Mutex::new(None);
@@ -56,8 +88,9 @@ pub fn local() -> Local {
         let control = std::env::var("ILLOGICAL_CONTROL")
             .ok()
             .or_else(|| v["control"].as_str().map(str::to_owned))
-            .map(|c| c.trim_end_matches('/').to_owned());
-        Some(Local { name: v["name"].as_str().unwrap_or("this machine").to_owned(), control })
+            .map(|c| c.trim_end_matches('/').to_owned())
+            .filter(|_| !dropped(&v));
+        Some(Local { name: v["name"].as_str().unwrap_or("this machine").to_owned(), control, place: place(&v) })
     };
     match read() {
         Some(l) => {
@@ -272,14 +305,26 @@ pub fn init_script() -> String {
 #[derive(serde::Serialize)]
 pub struct Status {
     control: Option<String>,
+    /// The app's name as a device ("illogical app on jake-air").
     name: String,
+    /// This machine's name.
+    machine: String,
+    /// Where it's joined ("the team arugula"), when the daemon says.
+    place: Option<String>,
     /// `ILLOGICAL_SIGNIN_AUTO=1` (for tests): start signing in on load.
     auto: bool,
 }
 
 #[tauri::command]
 pub fn cloud_status() -> Status {
-    Status { control: control(), name: device_name(), auto: std::env::var_os("ILLOGICAL_SIGNIN_AUTO").is_some() }
+    let local = LOCAL.lock().unwrap().clone().unwrap_or_default();
+    Status {
+        control: control(),
+        name: device_name(),
+        machine: local.name,
+        place: local.place,
+        auto: std::env::var_os("ILLOGICAL_SIGNIN_AUTO").is_some(),
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -423,5 +468,37 @@ mod tests {
         assert!(!moves(c, None, &daemon, true), "already home");
         // Joined elsewhere: off the old control.
         assert!(moves(c, Some("https://other.test"), &url("https://control.test/"), false));
+    }
+
+    /// #326: a machine control dropped isn't joined, for where the window
+    /// goes: the daemon's page joins it again, not a sign-in that would
+    /// only approve the app. Joined, the sign-in page says where.
+    #[test]
+    fn a_dropped_machine_is_not_joined_and_a_joined_one_says_where() {
+        let dropped_host = json!({
+            "control": "https://control.test",
+            "control_state": { "state": "dropped", "url": "https://control.test", "kind": "team", "name": "arugula" },
+        });
+        assert!(dropped(&dropped_host));
+        assert_eq!(place(&dropped_host), None);
+        // An older daemon says nothing about its standing: as before.
+        assert!(!dropped(&json!({ "control": "https://control.test" })));
+
+        let team =
+            json!({ "control_state": { "state": "joined", "kind": "team", "name": "arugula", "connected": true } });
+        assert!(!dropped(&team));
+        assert_eq!(place(&team).as_deref(), Some("the team arugula"));
+        let mine = json!({ "control_state": { "state": "joined", "kind": "account", "name": "lex00" } });
+        assert_eq!(place(&mine).as_deref(), Some("lex00's account"));
+        let unnamed = json!({ "control_state": { "state": "joined", "kind": "account", "name": "" } });
+        assert_eq!(place(&unnamed).as_deref(), Some("your account"));
+        assert_eq!(place(&json!({ "control_state": { "state": "not_joined" } })), None);
+
+        // Dropped then joined again: the window moves from the daemon's
+        // page to the sign-in (or control's page), as for a first join.
+        let daemon = url("http://127.0.0.1:7681/");
+        assert!(moves(None, Some("https://control.test"), &daemon, true));
+        // And on the drop, off control's page to the daemon's.
+        assert!(moves(Some("https://control.test"), None, &url("https://control.test/"), false));
     }
 }

@@ -2608,6 +2608,36 @@ html[data-native-tabs][data-desktop="macos"] .bar {
   cursor: default;
 }
 
+/* #326: a machine's join and the device that came to approve it, side by
+ * side, approved together. */
+.control-both {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.control-both-card {
+  padding: 8px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.control-both-kind {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+/* What a screen isn't for, and where that is (#326). */
+.control-aside {
+  margin-top: 14px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--divider);
+  color: var(--dim);
+}
+
 /* Taller than the window (the device list): it scrolls. */
 .prompt.control-prompt {
   max-height: calc(85vh - 16px);

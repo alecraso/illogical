@@ -264,6 +264,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("joins", "proven")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN proven INTEGER NOT NULL DEFAULT 0")?;
     }
+    // #326: the machine's join code a waiting browser came to approve.
+    if !has("devices", "join_code")? {
+        conn.execute_batch("ALTER TABLE devices ADD COLUMN join_code TEXT")?;
+    }
     // #208: what a passkey is (its maker, from its AAGUID), the browser
     // that added it, and when it last signed in, to tell them apart.
     if !has("passkeys", "agent")? {
@@ -998,6 +1002,30 @@ impl Db {
             params![code, serde_json::to_string(cert)?, cert.account, team.map(|t| t.0), team.map(|t| t.1)],
         )?;
         Ok(())
+    }
+
+    /// The machine's join code a waiting device came to approve (#326), or
+    /// none: the device that approves it sees both together.
+    pub fn set_device_join(&self, account: &str, id: &str, code: Option<&str>) -> anyhow::Result<()> {
+        self.c().execute(
+            "UPDATE devices SET join_code = ?3 WHERE account = ?1 AND id = ?2 AND approved = 0",
+            params![account, id, code],
+        )?;
+        Ok(())
+    }
+
+    /// Waiting devices of an account with the join code each came to
+    /// approve, while that join is still open (not approved, turned down,
+    /// collected or expired): (device, code).
+    pub fn device_joins(&self, account: &str, now: u64) -> anyhow::Result<Vec<(String, String)>> {
+        let c = self.c();
+        let mut q = c.prepare(
+            "SELECT d.id, d.join_code FROM devices d JOIN joins j ON j.code = d.join_code
+             WHERE d.account = ?1 AND d.approved = 0 AND j.account IS NULL AND j.rejected IS NULL
+             AND j.created >= ?2",
+        )?;
+        let rows = q.query_map(params![account, now.saturating_sub(JOIN_TTL_MS)], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Turned down: the daemon learns it on its next poll.
