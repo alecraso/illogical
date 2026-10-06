@@ -23,10 +23,16 @@
 #             folder in Finder and picking *New illogical Tab Here* opens a
 #             tab there in the running app and shows it; a .command file
 #             opened with the app runs in a new tab
+#   this      #323: the tray's *This machine*, clicked again and again,
+#             brings forward the window already showing this machine: no
+#             new window, no native tab
 #   drag      #316: the page's bar moves the window as before, and so does
 #             the top strip of a page with no drag markup (as an old
 #             daemon's); a double-click there zooms it
-#   tabs      Cmd-N opens a window as a native tab of the first
+#   tabs      Cmd-N opens a window as a native tab of the first; with two
+#             and three tabs the page's bar sits below AppKit's tab bar
+#             (#323); Cmd-Shift-W closes tabs back to one, and the strip
+#             goes and the bar is back in the titlebar
 #   hotkey    off by default; on (desktop.json), Ctrl-Option-Space hides
 #             the app and brings it back
 #   restart   the app quits and starts again; the daemon and its panes
@@ -62,7 +68,7 @@ DMG="${ILLOGICAL_DMG:-$ROOT/dist/illogical-desktop-macos-arm64.dmg}"
 # shellcheck source=testnet/macos/need-tart.sh
 . "$HERE/need-tart.sh"
 claims=("$@")
-[ ${#claims[@]} -gt 0 ] || claims=(install agent pane keys links finder drag tabs hotkey restart)
+[ ${#claims[@]} -gt 0 ] || claims=(install agent pane keys links finder this drag tabs hotkey restart)
 if [[ " ${claims[*]} " == *" install "* ]]; then
   [ -f "$DMG" ] || { echo "no .dmg (ILLOGICAL_DMG, or build one: just desktop)" >&2; exit 2; }
 fi
@@ -325,6 +331,43 @@ claim_finder() {
   fi
 }
 
+# The tray's menu: click ITEM in it (tray.js, a mouse click on the icon).
+tray() { vs "osascript -l JavaScript /tmp/tray.js $(printf %q "$1")" >/dev/null; }
+# WINDOW_TOP STRIP_BOTTOM BAR_TOP TABS of the front window (tab-bar.js).
+tab_bar() { vs 'osascript -l JavaScript /tmp/tab-bar.js'; }
+
+claim_this() {
+  v push "$HERE/tab-bar.js" "$HERE/tray.js" /tmp/
+  front
+  local before; before=$(windows)
+  for _ in 1 2 3; do
+    tray "This machine" || { fail this "no This machine in the tray's menu"; return; }
+    sleep 2
+  done
+  local t tabs; t=$(tab_bar || echo "? ? ? ?"); tabs=$(echo "$t" | awk '{print $4}')
+  if [ "$(windows)" = "$before" ] && [ "$tabs" = 0 ]; then
+    pass this "three clicks on This machine left $before window, no native tabs"
+  else
+    fail this "after three clicks: $(windows) windows (was $before), tab bar $t"
+  fi
+  local front; front=$(osa 'tell application "System Events" to get name of first process whose frontmost is true')
+  if [ "$front" = illogical-desktop ]; then pass this "and brought the app forward"; else fail this "the front app is $front"; fi
+}
+
+# The page's bar starts below the tab bar, with N native tabs.
+bars_apart() {
+  local t top strip bar tabs
+  t=$(tab_bar) || { fail tabs "$1 tabs: $t"; return; }
+  read -r top strip bar tabs <<<"$t"
+  if [ "$tabs" -ne "$1" ]; then
+    fail tabs "want $1 native tabs, the tab bar shows $tabs"
+  elif [ "$bar" -ge "$strip" ]; then
+    pass tabs "$1 tabs: the page's bar starts at $bar, below the tab bar's end at $strip (window top $top)"
+  else
+    fail tabs "$1 tabs: the page's bar starts at $bar, under the tab bar (ends at $strip, window top $top)"
+  fi
+}
+
 # Moved: drag.js's frames (X0 Y0 W0 H0 X1 Y1 W1 H1) moved >= 100, 50.
 moved() { awk '{ exit !($5 - $1 >= 100 && $6 - $2 >= 50) }' <<<"$1"; }
 # Room to move down: AppKit keeps a window that exactly fills the screen
@@ -381,6 +424,7 @@ claim_drag() {
 }
 
 claim_tabs() {
+  v push "$HERE/tab-bar.js" /tmp/tab-bar.js
   front
   keys 'keystroke "n" using command down'
   sleep 3
@@ -391,7 +435,26 @@ claim_tabs() {
   else
     fail tabs "Cmd-N: $tabs tabs, $(windows) windows"
   fi
-  vs 'screencapture -x /tmp/tabs.png' && v ssh 'cat /tmp/tabs.png' >"${TMPDIR:-/tmp}/illogical-macos-tabs.png" || true
+  bars_apart 2
+  front
+  keys 'keystroke "n" using command down'
+  sleep 3
+  bars_apart 3
+  # Cmd-Shift-W closes the window (Cmd-W is a pane's), back to one tab.
+  for _ in 1 2; do
+    front
+    keys 'keystroke "w" using {command down, shift down}'
+    sleep 2
+  done
+  local t top strip bar n
+  t=$(tab_bar || echo "? ? ? ?")
+  read -r top strip bar n <<<"$t"
+  if [ "$n" = 0 ] && [ "$strip" = 0 ] && [ "$bar" -lt $((top + 40)) ] 2>/dev/null; then
+    pass tabs "Cmd-Shift-W closed tabs back to one: no strip, the bar is in the titlebar again ($bar, window top $top)"
+  else
+    fail tabs "after closing back to one tab: $t (window top, strip end, bar top, tabs)"
+  fi
+  [ "$(windows)" -ge 1 ] || fail tabs "Cmd-Shift-W closed every window"
 }
 
 claim_hotkey() {

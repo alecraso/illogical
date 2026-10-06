@@ -68,11 +68,12 @@ windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"
-# SMAppService for the daemon's launch agent, and NSWindow tabs (M46).
+# SMAppService for the daemon's launch agent, and NSWindow tabs (M46) and
+# their tab bar (#323).
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSArray", "NSURL"] }
 # Finder's service (M47): the provider and its pasteboard.
-objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSResponder", "NSApplication", "NSPasteboard", "NSPasteboardItem"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSWindowTabGroup", "NSResponder", "NSApplication", "NSPasteboard", "NSPasteboardItem"] }
 objc2-service-management = { version = "0.3", features = ["SMAppService"] }
 
 # Its own workspace, out of the main build: Tauri needs WebKitGTK headers

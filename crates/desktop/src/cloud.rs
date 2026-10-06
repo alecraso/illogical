@@ -153,7 +153,8 @@ pub fn is_control_signin(url: &tauri::Url) -> bool {
 /// The window's titlebar is the page's (an overlay titlebar on macOS, none
 /// on Linux), so a page that doesn't mark its bar as a drag region (an
 /// older daemon's, an error page, the app's own pages) left the window
-/// stuck. A primary-button press in the top strip (the bar's height) on
+/// stuck. A primary-button press in the top strip (the bar's height, or
+/// on macOS the titlebar and native tab bar's, `--native-tabs`, #323) on
 /// nothing interactive moves the window (on macOS at once; elsewhere once
 /// the mouse moves with the button held); a double-click there zooms it
 /// (on mouseup on macOS, unless the mouse moved, as AppKit does). Where
@@ -164,7 +165,11 @@ const DRAG_SCRIPT: &str = r#"(() => {
   const macos = __OS__ === 'macos';
   const CLICKABLE = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL', 'SUMMARY', 'OPTION', 'VIDEO', 'AUDIO', 'IFRAME']);
   const ROLES = new Set(['button', 'link', 'menuitem', 'tab', 'checkbox', 'radio', 'switch', 'option', 'slider', 'textbox']);
-  const strip = () => STRIP;
+  // With AppKit's tab bar showing, the app sets --native-tabs (#323).
+  const strip = () => {
+    const tabs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--native-tabs')) || 0;
+    return Math.max(STRIP, tabs);
+  };
   // Whether a press at this path moves the window: not on anything
   // interactive, nor where the page handles dragging itself.
   const ours = (path) => {

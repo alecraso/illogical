@@ -81,6 +81,19 @@ html[data-desktop="macos"] .bar {
   padding-left: 78px;
 }
 
+/* macOS with AppKit's tab bar showing (two or more native tabs, #323): the
+   app sets --native-tabs to the height of the titlebar and the strip, which
+   draw over the top of the page. The bar sits below them, and the window
+   buttons are in the titlebar above it, so it needs no room for them. */
+html[data-native-tabs] .app {
+  margin-top: var(--native-tabs);
+  height: calc(var(--app-height) - var(--native-tabs));
+}
+
+html[data-native-tabs][data-desktop="macos"] .bar {
+  padding-left: 0;
+}
+
 .window-buttons {
   display: flex;
   align-items: stretch;

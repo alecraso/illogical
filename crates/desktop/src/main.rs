@@ -23,9 +23,10 @@
 //!   which hands on to a newer one the daemon's update put in
 //!   `~/.local/bin`.
 //! - **Every key reaches the page** (S25), except a Mac's own: on macOS
-//!   the app menu has Hide (Cmd-H), Hide Others and Quit (Cmd-Q, #320), and
-//!   the rest is Edit only, so Cmd-W, T, N, M and U are the client's; on
-//!   Linux GTK's F10 menu-bar key is turned off.
+//!   the app menu has Hide (Cmd-H), Hide Others and Quit (Cmd-Q, #320) and
+//!   Close Window (Cmd-Shift-W, #323), and the rest is Edit only, so Cmd-W,
+//!   T, N, M and U are the client's; on Linux GTK's F10 menu-bar key is
+//!   turned off.
 //! - **Native notifications** (S25: a webview has no push): a thread
 //!   follows the daemon's state, notifies when a pane starts needing you and
 //!   no window has focus, and a click opens that pane. The needs-you count
@@ -40,14 +41,16 @@
 //! - **Tabs in the titlebar** (M46): the client's bar is the titlebar
 //!   (macOS: under the window buttons; Linux: undecorated, with the
 //!   client's own buttons). On macOS new windows join the first as native
-//!   tabs, which *Move Tab to New Window* takes back out.
+//!   tabs, which *Move Tab to New Window* takes back out. When AppKit shows
+//!   its tab bar, the page's bar moves below it (`tab_bars`, #323).
 //! - **`illogical://` links** (`links.rs`), **a global hotkey**, off by
 //!   default (`settings.rs`), and **app updates** (`updates.rs`).
 //! - **The file managers** (M47): Finder's *New illogical Tab Here*
 //!   service (`finder.rs`) and `.command` files on macOS; Nautilus's
 //!   *Open in illogical* (`linux/nautilus/illogical.py`) on Linux.
-//! - A tray icon with *New window* and *This machine*; one instance (a
-//!   second launch opens a window in the first).
+//! - A tray icon with *New window* and *This machine* (which brings forward
+//!   a window already showing this machine, #323); one instance (a second
+//!   launch opens a window in the first).
 //! - **When control drops this machine** (#325, `daemon.rs`): a native
 //!   notification, once per drop, whose click opens Getting started's join.
 //! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
@@ -546,6 +549,17 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
             }
             tauri::webview::NewWindowResponse::Deny
         })
+        // macOS: the window's title, which its native tab shows (#323),
+        // says what the page is; and a new page hears whether AppKit's tab
+        // bar shows. (Linux keeps "illogical": the tests find the window
+        // by it.)
+        .on_page_load(|_w, _load| {
+            #[cfg(target_os = "macos")]
+            if let tauri::webview::PageLoadEvent::Finished = _load.event() {
+                let _ = _w.set_title(&title_for(_load.url()));
+                tab_bar_reload(&_w);
+            }
+        })
         // Control's own sign-in (GitHub) can't finish in the window: the
         // app's sign-in takes over. A link away from the daemon and control:
         // the browser takes it.
@@ -596,18 +610,131 @@ fn tab_in(w: &tauri::WebviewWindow) {
     });
 }
 
+/// What a window's title (a native tab's label) says for `url`.
+#[cfg(target_os = "macos")]
+fn title_for(url: &tauri::Url) -> String {
+    if daemons(url) {
+        return "This machine".into();
+    }
+    let control = cloud::control().and_then(|c| c.parse::<tauri::Url>().ok());
+    match control {
+        Some(c) if c.origin() == url.origin() => c.host_str().unwrap_or("illogical").to_owned(),
+        _ => "illogical".into(),
+    }
+}
+
+/// A window of ours already showing a page `wanted` picks, the focused
+/// one first.
+fn showing(app: &AppHandle, wanted: impl Fn(&tauri::Url) -> bool) -> Option<tauri::WebviewWindow> {
+    let mut found: Vec<_> = app.webview_windows().into_values().filter(|w| w.url().is_ok_and(|u| wanted(&u))).collect();
+    found.sort_by_key(|w| !w.is_focused().unwrap_or(false));
+    found.into_iter().next()
+}
+
+fn bring_forward(w: &tauri::WebviewWindow) {
+    let _ = w.unminimize();
+    let _ = w.show();
+    let _ = w.set_focus();
+}
+
+/// *Open illogical*: a window showing home (control's page, or the
+/// daemon's) comes forward, else any window, and one opens only when there
+/// is none (#323).
 fn focus_or_open(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     let _ = app.show();
-    match app.webview_windows().values().next() {
-        Some(w) => {
-            let _ = w.unminimize();
-            let _ = w.show();
-            let _ = w.set_focus();
-        }
+    let control = cloud::control().and_then(|c| c.parse::<tauri::Url>().ok());
+    let home = |u: &tauri::Url| daemons(u) || control.as_ref().is_some_and(|c| c.origin() == u.origin());
+    match showing(app, home).or_else(|| showing(app, |_| true)) {
+        Some(w) => bring_forward(&w),
         None => {
             let _ = open_window(app, target(app));
         }
+    }
+}
+
+/// *This machine*: the daemon's own page, whatever home is, unless it
+/// doesn't match this app (the setup page). A window already showing it
+/// comes forward; another click doesn't add a tab (#323).
+fn this_machine(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
+    if compat::mismatch().is_some() {
+        let _ = open_window(app, target(app));
+        return;
+    }
+    match showing(app, daemons) {
+        Some(w) => bring_forward(&w),
+        None => {
+            let _ = open_window(app, WebviewUrl::External(page_at("/")));
+        }
+    }
+}
+
+/// macOS (#323): once a window has two native tabs AppKit shows its tab
+/// bar across the top of the window, over the page (the content runs under
+/// the titlebar). The page hears how tall the titlebar and the strip are
+/// (`--native-tabs` and `data-native-tabs` on its root), and moves its bar
+/// below them; 0 when the strip is gone. AppKit says nothing when it shows
+/// or hides the strip (a new tab, *Merge All Windows*, a tab closed), so
+/// the app looks a few times a second and tells a page only what changed.
+#[cfg(target_os = "macos")]
+static TAB_BARS: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+fn follow_tab_bars(app: AppHandle) {
+    loop {
+        std::thread::sleep(Duration::from_millis(400));
+        let a = app.clone();
+        let _ = app.run_on_main_thread(move || tab_bars(&a));
+    }
+}
+
+/// On the main thread.
+#[cfg(target_os = "macos")]
+fn tab_bars(app: &AppHandle) {
+    let windows = app.webview_windows();
+    let mut shown = TAB_BARS.lock().unwrap();
+    let shown = shown.get_or_insert_with(HashMap::new);
+    shown.retain(|label, _| windows.contains_key(label));
+    for (label, w) in windows {
+        let Ok(ptr) = w.ns_window() else { continue };
+        // SAFETY: the window's NSWindow, on the main thread, while it lives.
+        let ns = unsafe { &*(ptr as *const objc2_app_kit::NSWindow) };
+        let strip = ns.tabGroup().is_some_and(|g| g.isTabBarVisible());
+        let h = if strip {
+            (ns.frame().size.height - ns.contentLayoutRect().size.height).max(0.0).round() as u32
+        } else {
+            0
+        };
+        if shown.get(&label) == Some(&h) {
+            continue;
+        }
+        let js = format!(
+            "(h => {{ const d = document.documentElement; if (h) {{ d.dataset.nativeTabs = ''; d.style.setProperty('--native-tabs', h + 'px'); }} else {{ delete d.dataset.nativeTabs; d.style.removeProperty('--native-tabs'); }} }})({h})"
+        );
+        if w.eval(js).is_ok() {
+            shown.insert(label, h);
+        }
+    }
+}
+
+/// A new page in `w` knows nothing of the strip: tell it again.
+#[cfg(target_os = "macos")]
+fn tab_bar_reload(w: &tauri::WebviewWindow) {
+    if let Some(shown) = TAB_BARS.lock().unwrap().as_mut() {
+        shown.remove(w.label());
+    }
+    let app = w.app_handle().clone();
+    let a = app.clone();
+    let _ = app.run_on_main_thread(move || tab_bars(&a));
+}
+
+/// Cmd-Shift-W (#323): the focused window goes, with its native tab. (Cmd-W
+/// is the page's: it closes a pane.)
+fn close_window(app: &AppHandle) {
+    if let Some(w) = app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false)) {
+        let _ = w.close();
     }
 }
 
@@ -620,7 +747,7 @@ fn open_pane(app: &AppHandle, pane: u32) {
     let url = page_at(&format!("/#pane={pane}"));
     #[cfg(target_os = "macos")]
     let _ = app.show();
-    match app.webview_windows().values().next() {
+    match showing(app, daemons).or_else(|| app.webview_windows().into_values().next()) {
         Some(w) => {
             // Already on the daemon's page: the client opens it (main.tsx),
             // without a reload.
@@ -925,6 +1052,9 @@ fn main() {
                         &PredefinedMenuItem::hide_others(app, None)?,
                         &PredefinedMenuItem::show_all(app, None)?,
                         &PredefinedMenuItem::separator(app)?,
+                        // Cmd-W is the page's (a pane); this closes the
+                        // window, and its native tab (#323).
+                        &MenuItem::with_id(app, "close-window", "Close Window", true, Some("CmdOrCtrl+Shift+W"))?,
                         &PredefinedMenuItem::quit(app, Some("Quit illogical"))?,
                     ],
                 )?;
@@ -943,11 +1073,12 @@ fn main() {
             #[cfg(not(target_os = "macos"))]
             Menu::new(app)
         })
-        // The app menu's Check for Updates… (macOS, #419).
-        .on_menu_event(|app, e| {
-            if e.id().as_ref() == "check-updates" {
-                updates::check_now(app);
-            }
+        // The app menu's Check for Updates… (#419) and Close Window (#323),
+        // macOS.
+        .on_menu_event(|app, e| match e.id().as_ref() {
+            "check-updates" => updates::check_now(app),
+            "close-window" => close_window(app),
+            _ => {}
         })
         .setup(move |app| {
             #[cfg(target_os = "linux")]
@@ -1024,15 +1155,7 @@ fn main() {
                     "new" => {
                         let _ = open_window(app, target(app));
                     }
-                    // The daemon's own page, whatever the window shows,
-                    // unless it doesn't match this app (the setup page).
-                    "this" => {
-                        let to = match compat::mismatch() {
-                            Some(_) => target(app),
-                            None => WebviewUrl::External(page_at("/")),
-                        };
-                        let _ = open_window(app, to);
-                    }
+                    "this" => this_machine(app),
                     "hotkey" => {
                         let mut prefs = settings::load(app);
                         prefs.hotkey_on = !prefs.hotkey_on;
@@ -1065,6 +1188,11 @@ fn main() {
             std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
             let handle = app.handle().clone();
             std::thread::Builder::new().name("daemon".into()).spawn(move || daemon::follow(handle))?;
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                std::thread::Builder::new().name("tab-bars".into()).spawn(move || follow_tab_bars(handle))?;
+            }
             Ok(())
         })
         .build(context)
