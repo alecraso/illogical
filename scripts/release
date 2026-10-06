@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
-# Release steps for .github/workflows/release.yml, with the gh CLI.
+# Release steps, with the gh CLI. Two lanes (#393): the daemon's `v*`
+# tags (.github/workflows/release.yml) and the desktop app's `app-v*` tags
+# (.github/workflows/app-release.yml). `releases/latest` is always the
+# daemon's: install.sh, install.ps1 and the daemon's update check read it.
 #
+# The daemon (v*):
 #   release check-version TAG      the tag matches the workspace version
-#   release check-desktop-version TAG   the tag matches the desktop app's
 #   release upload TAG FILE...     attach files to TAG's release (a draft, made if new)
-#   release publish TAG            its notes from docs/releases/, then published as latest
-#   release sums TAG               SHA256SUMS of the release's tarballs
+#   release sums TAG               SHA256SUMS of the release's tarballs and zip
+#   release publish TAG            its notes from docs/releases/, then published
+#                                  as latest
 #   release homebrew TAG           bump the formula in the Homebrew tap
-#   release updater TAG            latest.json for the desktop app's updater,
-#                                  from the release's .sig files
+#
+# The app (app-v*):
+#   release check-app-version TAG  the tag matches crates/desktop's version
+#   release sidecars TARGET DIR    the latest daemon release's illogicald and
+#                                  illogical for TARGET, checked against its
+#                                  SHA256SUMS, into DIR (Windows: with ConPTY)
+#   release app-upload TAG FILE... attach files to the app's release (a draft)
+#   release app-publish TAG        SHA256SUMS and latest.json, notes from
+#                                  docs/releases/app-X.md, published (never as
+#                                  latest), and copied to the rolling app-latest
+#                                  release the site and the updater read
 #
 # GH_TOKEN (upload, sums) writes releases (in CI, the job token with
 # contents: write; by hand, your gh login); HOMEBREW_TAP_KEY (homebrew) is
@@ -17,17 +30,66 @@ set -euo pipefail
 
 repo=${GITHUB_REPOSITORY:-arugula-salad/illogical}
 tap=git@github.com:arugula-salad/homebrew-tap.git
+# The rolling release with the newest app: its downloads under fixed names,
+# and the updater's latest.json (tauri.conf.json's endpoint).
+app_latest=app-latest
+# Every download an app release has (the updater's .app.tar.gz and .sig
+# files come too when TAURI_SIGNING_PRIVATE_KEY is set). The arm64 Linux
+# app comes back with GitHub's arm runner (#287).
+app_downloads="illogical-desktop-linux-x86_64.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe"
 
 # The release for a tag, made if it isn't there yet (both build jobs may
 # race to make it; the loser finds the winner's).
 ensure_release() {
-  local tag=$1
+  local tag=$1 title notes
   gh release view "$tag" -R "$repo" >/dev/null 2>&1 && return
+  case "$tag" in
+    app-v*) title="illogical app ${tag#app-v}"
+      notes="The desktop app. It installs the daemon on a machine that has none; the daemon updates itself." ;;
+    *) title="illogical ${tag#v}"
+      notes="Download the desktop app at https://illogical.widgets.wtf (it installs the daemon). Servers and headless machines: curl -fsSL https://illogical.widgets.wtf/install.sh | sh" ;;
+  esac
   # A draft until `publish`: a release with only the first job's files
   # would be "latest" and break every other download link meanwhile.
-  gh release create "$tag" -R "$repo" --verify-tag --draft --title "illogical ${tag#v}" \
-    --notes "Download the desktop app at https://illogical.widgets.wtf (it installs the daemon). Servers and headless machines: curl -fsSL https://illogical.widgets.wtf/install.sh | sh" >/dev/null 2>&1 \
+  gh release create "$tag" -R "$repo" --verify-tag --draft --latest=false --title "$title" --notes "$notes" >/dev/null 2>&1 \
     || gh release view "$tag" -R "$repo" >/dev/null
+}
+
+# releases/latest is a daemon release (v*), not an app's.
+check_latest() {
+  local t
+  t=$(gh api "repos/$repo/releases/latest" --jq .tag_name)
+  case "$t" in
+    v*) echo "releases/latest is still $t" ;;
+    *) echo "releases/latest is $t, not a daemon release: fix it with gh release edit vX.Y.Z --latest" >&2; exit 1 ;;
+  esac
+}
+
+# The Tauri updater's manifest (M46) for app version V, from the .sig files
+# in DIR: each platform's download (at BASE) and its signature from the
+# updater key. Without signatures (no TAURI_SIGNING_PRIVATE_KEY in the
+# build jobs) it lists no platforms, and apps find nothing to update to.
+updater() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, os, sys, datetime
+v, base, d = sys.argv[1:]
+files = {
+    "darwin-aarch64": "illogical-desktop-macos-arm64.app.tar.gz",
+    "darwin-x86_64": "illogical-desktop-macos-x86_64.app.tar.gz",
+    "linux-x86_64": "illogical-desktop-linux-x86_64.AppImage",
+    "linux-aarch64": "illogical-desktop-linux-aarch64.AppImage",
+    "windows-x86_64": "illogical-desktop-windows-x86_64-setup.exe",
+}
+platforms = {}
+for p, f in files.items():
+    sig = os.path.join(d, f + ".sig")
+    if os.path.exists(sig):
+        platforms[p] = {"signature": open(sig).read().strip(), "url": f"{base}/{f}"}
+if not platforms:
+    print("no updater signatures: the TAURI_SIGNING_PRIVATE_KEY secret isn't set", file=sys.stderr)
+json.dump({"version": v, "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+           "platforms": platforms}, sys.stdout, indent=2)
+PY
 }
 
 version() { mise exec -- cargo pkgid -p illogicald | sed 's/.*[#@]//'; }
@@ -36,14 +98,38 @@ case "${1:-}" in
   check-version)
     v=$(version)
     [ "$2" = "v$v" ] || { echo "tag $2 doesn't match the workspace version $v" >&2; exit 1; }
-    # The desktop app is its own workspace: its version is kept in step.
-    d=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
-    [ "$d" = "$v" ] || { echo "crates/desktop is $d, not $v: bump it too" >&2; exit 1; }
     ;;
-  check-desktop-version)
-    # Without cargo or mise (the Windows runner builds only the app).
+  check-app-version)
+    # The app has its own version (#393). Without cargo or mise.
     d=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
-    [ "$2" = "v$d" ] || { echo "tag $2 doesn't match crates/desktop's version $d" >&2; exit 1; }
+    [ "$2" = "app-v$d" ] || { echo "tag $2 doesn't match crates/desktop's version $d" >&2; exit 1; }
+    ;;
+  sidecars)
+    # From the latest daemon release (releases/latest), which this app then
+    # carries for a machine with no daemon.
+    target=$2; out=$3
+    tag=$(gh api "repos/$repo/releases/latest" --jq .tag_name)
+    case "$tag" in v*) ;; *) echo "releases/latest is $tag, not a daemon release" >&2; exit 1 ;; esac
+    v=${tag#v}
+    case "$target" in *-windows-*) ext=zip ;; *) ext=tar.gz ;; esac
+    name=illogical-$v-$target
+    dir=$(mktemp -d)
+    gh release download "$tag" -R "$repo" -p "$name.$ext" -p SHA256SUMS -D "$dir"
+    want=$(awk -v f="$name.$ext" '$2 == f { print $1 }' "$dir/SHA256SUMS")
+    [ -n "$want" ] || { echo "$name.$ext isn't in $tag's SHA256SUMS" >&2; exit 1; }
+    if command -v sha256sum >/dev/null; then got=$(sha256sum "$dir/$name.$ext" | cut -d' ' -f1); else got=$(shasum -a 256 "$dir/$name.$ext" | cut -d' ' -f1); fi
+    [ "$got" = "$want" ] || { echo "$name.$ext doesn't match $tag's SHA256SUMS" >&2; exit 1; }
+    if [ "$ext" = zip ]; then
+      powershell -NoProfile -Command "Expand-Archive -Force '$(cygpath -w "$dir/$name.zip")' '$(cygpath -w "$dir")'"
+    else
+      tar -xzf "$dir/$name.tar.gz" -C "$dir"
+    fi
+    mkdir -p "$out"
+    for f in illogicald illogical illogicald.exe illogical.exe conpty.dll OpenConsole.exe ConPTY-LICENSE.txt; do
+      [ ! -f "$dir/$name/$f" ] || cp "$dir/$name/$f" "$out/"
+    done
+    echo "$out: illogicald $v for $target, from $tag"
+    "$out/illogicald" --version 2>/dev/null || true
     ;;
   upload)
     tag=$2; shift 2
@@ -56,23 +142,55 @@ case "${1:-}" in
     tag=$2; notes=docs/releases/${tag#v}.md
     if [ -f "$notes" ]; then gh release edit "$tag" -R "$repo" --notes-file "$notes"; fi
     gh release edit "$tag" -R "$repo" --draft=false --latest
+    check_latest
+    ;;
+  app-upload)
+    tag=$2; shift 2
+    ensure_release "$tag"
+    gh release upload "$tag" -R "$repo" --clobber "$@"
+    ;;
+  app-publish)
+    tag=$2; v=${tag#app-v}
+    dir=$(mktemp -d)
+    gh release download "$tag" -R "$repo" -p 'illogical-desktop-*' -D "$dir"
+    for f in $(eval "echo $app_downloads"); do
+      [ -f "$dir/$f" ] || { echo "the release has no $f" >&2; exit 1; }
+    done
+    (cd "$dir" && sha256sum -- illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
+    gh release upload "$tag" -R "$repo" --clobber "$dir/SHA256SUMS"
+    # The updater's manifest, pointing at this release's own files (which
+    # never change, so a copy of it anywhere stays right).
+    updater "$v" "https://github.com/$repo/releases/download/$tag" "$dir" >"$dir/latest.json"
+    gh release upload "$tag" -R "$repo" --clobber "$dir/latest.json"
+    notes=docs/releases/app-$v.md
+    if [ -f "$notes" ]; then gh release edit "$tag" -R "$repo" --notes-file "$notes"; fi
+    gh release edit "$tag" -R "$repo" --draft=false --latest=false
+    # The rolling release: made once (its tag follows the newest app's
+    # commit), then its files replaced. Never latest.
+    sha=$(gh api "repos/$repo/git/ref/tags/$tag" --jq .object.sha)
+    gh api "repos/$repo/git/tags/$sha" --jq .object.sha >/dev/null 2>&1 && sha=$(gh api "repos/$repo/git/tags/$sha" --jq .object.sha)
+    if gh api "repos/$repo/git/ref/tags/$app_latest" >/dev/null 2>&1; then
+      gh api -X PATCH "repos/$repo/git/refs/tags/$app_latest" -f sha="$sha" -F force=true >/dev/null
+    else
+      gh api -X POST "repos/$repo/git/refs" -f ref="refs/tags/$app_latest" -f sha="$sha" >/dev/null
+    fi
+    gh release view "$app_latest" -R "$repo" >/dev/null 2>&1 \
+      || gh release create "$app_latest" -R "$repo" --verify-tag --latest=false --title "illogical app (latest)" \
+        --notes "The newest desktop app, always: its downloads keep these names. Each version's own release is app-vX.Y.Z." >/dev/null
+    gh release upload "$app_latest" -R "$repo" --clobber "$dir"/illogical-desktop-* "$dir/SHA256SUMS" "$dir/latest.json"
+    gh release edit "$app_latest" -R "$repo" --latest=false --notes "The newest desktop app, always: $v ($tag). Its downloads keep these names." >/dev/null
+    check_latest
     ;;
   sums)
     ensure_release "$2"
     dir=$(mktemp -d)
-    gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-desktop-*' -p 'illogical-[0-9]*.zip' -D "$dir"
+    gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-[0-9]*.zip' -D "$dir"
     n=$(find "$dir" -name "illogical-[0-9]*.tar.gz" | wc -l | tr -d " ")
     [ "$n" = 4 ] || { echo "expected 4 tarballs, found $n" >&2; exit 1; }
     # Windows' zip (install.ps1's, M59).
     w=$(find "$dir" -name "illogical-[0-9]*-x86_64-pc-windows-msvc.zip" | wc -l | tr -d " ")
     [ "$w" = 1 ] || { echo "expected the Windows zip, found $w" >&2; exit 1; }
-    # Every desktop download a release has (the updater's .app.tar.gz and
-    # .sig files come too when TAURI_SIGNING_PRIVATE_KEY is set).
-    # The arm64 Linux app comes back with GitHub's arm runner (#287).
-    for f in illogical-desktop-linux-x86_64.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe; do
-      [ -f "$dir/$f" ] || { echo "the release has no $f" >&2; exit 1; }
-    done
-    (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-[0-9]*.zip illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
+    (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-[0-9]*.zip > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
     ;;
   homebrew)
@@ -101,40 +219,8 @@ case "${1:-}" in
     git push -q origin HEAD
     echo "formula bumped to $v"
     ;;
-  updater)
-    # The Tauri updater's manifest (M46): each platform's download and its
-    # signature from the updater key. Without signatures (no
-    # TAURI_SIGNING_PRIVATE_KEY in the build jobs) there's nothing to offer.
-    tag=$2; v=${tag#v}
-    dir=$(mktemp -d)
-    gh release download "$tag" -R "$repo" -p '*.sig' -D "$dir" 2>/dev/null || true
-    if [ -z "$(ls "$dir")" ]; then
-      echo "no latest.json: the release has no updater signatures (the TAURI_SIGNING_PRIVATE_KEY secret isn't set)"
-      exit 0
-    fi
-    base=https://github.com/$repo/releases/download/$tag
-    python3 - "$v" "$base" "$dir" >"$dir/latest.json" <<'PY'
-import json, os, sys, datetime
-v, base, d = sys.argv[1:]
-files = {
-    "darwin-aarch64": "illogical-desktop-macos-arm64.app.tar.gz",
-    "darwin-x86_64": "illogical-desktop-macos-x86_64.app.tar.gz",
-    "linux-x86_64": "illogical-desktop-linux-x86_64.AppImage",
-    "linux-aarch64": "illogical-desktop-linux-aarch64.AppImage",
-}
-platforms = {}
-for p, f in files.items():
-    sig = os.path.join(d, f + ".sig")
-    if os.path.exists(sig):
-        platforms[p] = {"signature": open(sig).read().strip(), "url": f"{base}/{f}"}
-json.dump({"version": v, "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "platforms": platforms}, sys.stdout, indent=2)
-PY
-    cat "$dir/latest.json"
-    gh release upload "$tag" -R "$repo" --clobber "$dir/latest.json"
-    ;;
   *)
-    sed -n '2,14p' "$0" >&2
+    sed -n '2,24p' "$0" >&2
     exit 2
     ;;
 esac

@@ -124,6 +124,8 @@ desktop-linux arch="x86_64" *tauri_args="":
     arch={{arch}}
     case "$arch" in x86_64) platform=linux/amd64 ;; aarch64) platform=linux/arm64 ;; *) echo "arch: x86_64 or aarch64" >&2; exit 2 ;; esac
     src={{target_dir}}/$arch-unknown-linux-musl/release
+    # The daemon release's binaries (app-release.yml's `scripts/release sidecars`).
+    src=${ILLOGICAL_DESKTOP_BINARIES:-$src}
     mkdir -p crates/desktop/binaries
     for b in illogicald illogical; do install -m 755 "$src/$b" "crates/desktop/binaries/$b-$arch-unknown-linux-gnu"; done
     engine=$(command -v podman || command -v docker) || { echo "the Linux desktop build needs podman or docker" >&2; exit 1; }
@@ -189,7 +191,8 @@ desktop-macos arch="" *tauri_args="":
     # The Mac's own arch builds without --target (`just build`).
     src={{target_dir}}/$t/release
     if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/illogicald ]; then src={{target_dir}}/release; fi
-    # A test's own daemon and CLI (testnet/macos/update.sh's older ones).
+    # A test's own daemon and CLI (testnet/macos/update.sh's older ones), or
+    # the daemon release's (app-release.yml's `scripts/release sidecars`).
     src=${ILLOGICAL_DESKTOP_BINARIES:-$src}
     out=${CARGO_TARGET_DIR:-$PWD/target}
     flags=()

@@ -824,6 +824,7 @@ fn main() {
     }
     let context = tauri::generate_context!();
     let updater = updates::configured(context.config());
+    updates::init(updater);
     let mut builder = tauri::Builder::default()
         // A second launch: its links (Linux runs the app with the link), or
         // a new window.
@@ -942,7 +943,7 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &new, &this];
             items.push(&hotkey);
-            if updater && updates::can_update() {
+            if updates::enabled() {
                 items.push(&update);
             }
             items.push(&quit);
@@ -974,7 +975,7 @@ fn main() {
                         settings::save(app, &prefs);
                         let _ = hotkey_item.set_checked(on);
                     }
-                    "update" => app.restart(),
+                    "update" => updates::from_tray(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })

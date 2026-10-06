@@ -13,15 +13,18 @@ fail=0
 bad() { printf 'FAIL  %s\n' "$*"; fail=1; }
 
 # The sources of truth: `just dist`'s targets, and the desktop downloads
-# scripts/release requires before it writes SHA256SUMS. Each download must
-# be one the build makes (`just desktop-linux ARCH` through
+# scripts/release requires before it publishes an app release. Each download
+# must be one the build makes (`just desktop-linux ARCH` through
 # packaging/desktop/build-linux.sh, `just desktop-macos ARCH`, and the
-# Windows installer, which release.yml builds itself on GitHub's runner),
-# and each one the build makes must be required.
+# Windows installer, which app-release.yml builds itself on GitHub's
+# runner), and each one the build makes must be required. The daemon's
+# release (release.yml, v*) builds the targets; the app's (app-release.yml,
+# app-v*) the downloads (#393).
 wf=.github/workflows/release.yml
+awf=.github/workflows/app-release.yml
 read -ra targets <<<"$(sed -n '/^dist:/,/^[^ ]/p' justfile | sed -n 's/^ *for t in \(.*\); do$/\1/p')"
 [ "${#targets[@]}" -gt 0 ] || { echo "FAIL  can't find just dist's targets in the justfile"; exit 1; }
-list=$(sed -n '/^  sums)/,/;;/p' scripts/release | sed -n 's/^ *for f in \(illogical-desktop-.*\); do$/\1/p')
+list=$(sed -n 's/^app_downloads="\(illogical-desktop-.*\)"$/\1/p' scripts/release)
 [ -n "$list" ] || { echo "FAIL  can't find scripts/release's desktop downloads"; exit 1; }
 downloads=()
 # Brace expansion of scripts/release's own list; it names files only.
@@ -40,7 +43,7 @@ made=$(
     names=$(sed -n 's/.*) name=\(macos-[a-z0-9_]*\) ;;.*/\1/p' <<<"$macos")
     exts=$(grep -o '\$dist/illogical-desktop-\$name\.[a-z]*$' <<<"$macos" | sed 's/.*\.//' | sort -u)
     for n in $names; do for e in $exts; do echo "illogical-desktop-$n.$e"; done; done
-    grep -o 'dist/illogical-desktop-windows-[A-Za-z0-9_.-]*\.exe' "$wf" | sed 's:^dist/::'
+    grep -o 'dist/illogical-desktop-windows-[A-Za-z0-9_.-]*\.exe' "$awf" | sed 's:^dist/::'
   } | sort -u
 )
 [ -n "$made" ] || { echo "FAIL  can't find what the desktop recipes make in the justfile"; exit 1; }
@@ -57,6 +60,12 @@ done
 
 # A release.yml step runs it, alone or in an `a && b` chain.
 runs() { grep -Eq "^ *- run: (.* && )?$1( && .*)?$" "$wf"; }
+# An app-release.yml step (or a line of one) runs it, maybe with VAR=value
+# in front.
+app_runs() { grep -Eq "^ *(- run: )?([A-Z_]+=[^ ]+ )*$1\$" "$awf"; }
+
+# The daemon's release makes no app.
+! grep -q 'illogical-desktop\|desktop-linux\|desktop-macos\|tauri' "$wf" || bad "$wf builds the desktop app; that's app-release.yml's (#393)"
 
 # release.yml builds every target and every download.
 for t in "${targets[@]}"; do
@@ -73,10 +82,10 @@ for d in "${downloads[@]}"; do
     illogical-desktop-linux-*) a=${d#illogical-desktop-linux-}; step="just desktop-linux ${a%%.*}" ;;
     illogical-desktop-macos-arm64.*) step="just desktop-macos aarch64" ;;
     illogical-desktop-macos-*) a=${d#illogical-desktop-macos-}; step="just desktop-macos ${a%%.*}" ;;
-    illogical-desktop-windows-*) step="scripts/release upload \"\\\$GITHUB_REF_NAME\" dist/$d" ;;
-    *) bad "$d: no rule for how release.yml makes it; add one here"; continue ;;
+    illogical-desktop-windows-*) step="scripts/release app-upload \"\\\$GITHUB_REF_NAME\" dist/$d\\*" ;;
+    *) bad "$d: no rule for how app-release.yml makes it; add one here"; continue ;;
   esac
-  runs "$step" || bad "$wf doesn't make $d (expected: run: $step)"
+  app_runs "$step" || bad "$awf doesn't make $d (expected: run: $step)"
 done
 
 # scripts/release counts exactly these tarballs before it writes SHA256SUMS.
@@ -115,8 +124,8 @@ done
 # #130); they're in each release. Linking one there drops it from here.
 not_on_site='\.rpm$|\.dmg$|^illogical-desktop-linux-aarch64\.'
 for dl in "${downloads[@]}"; do
-  grep -Eq "$not_on_site" <<<"$dl" && ! grep -q "releases/latest/download/$dl\"" site/index.html && continue
-  grep -q "releases/latest/download/$dl\"" site/index.html || bad "site/index.html doesn't link $dl"
+  grep -Eq "$not_on_site" <<<"$dl" && ! grep -q "releases/download/app-latest/$dl\"" site/index.html && continue
+  grep -q "releases/download/app-latest/$dl\"" site/index.html || bad "site/index.html doesn't link $dl from app-latest"
 done
 while IFS=: read -r f name; do
   printf '%s\n' "${downloads[@]}" | grep -qx "$name" || bad "$f links $name, which no release makes"

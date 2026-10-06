@@ -26,7 +26,7 @@ release tarballs in `dist/`.
 alone. [testing.md](testing.md) covers the tests, fakes and fixtures.
 `just test-scripts` tests install.sh and checks that what a release
 ships (targets, desktop downloads) is named the same in release.yml,
-scripts/release, the Homebrew formula, install.sh and the site: add a
+app-release.yml, scripts/release, the Homebrew formula, install.sh and the site: add a
 target or download and it says what else needs it. `just check` is what
 CI runs; `just e2e` drives the system Chrome
 against throwaway daemons, or `just e2e https://home.<tailnet>.ts.net`
@@ -44,18 +44,56 @@ test` runs its claims; `testnet/README.md` lists them.
 
 ## Releasing
 
+The daemon and the desktop app release apart (#388): a daemon or web change
+ships without rebuilding, signing and notarizing the apps, and an app
+release carries the newest daemon without building it.
+`releases/latest` is always the daemon's: install.sh, install.ps1 and the
+daemon's update check read it.
+
+**The daemon (`v*`).**
+
 1. Set the version in the workspace `Cargo.toml` and commit (`just
    notices` if dependencies changed; CI fails if THIRD_PARTY.md is stale).
+   Notes go in `docs/releases/X.Y.Z.md`.
 2. `git tag -a vX.Y.Z -m "illogical X.Y.Z" && git push origin vX.Y.Z`.
-   `.github/workflows/release.yml` builds the Linux tarballs on geek and
-   the macOS ones on jake-mini (Apple silicon natively, Intel
-   cross-compiled with `just build-macos-x86_64` and `just desktop
-   x86_64`), attaches them and `SHA256SUMS` to the
-   GitHub release, and bumps the formula in `arugula-salad/homebrew-tap`
+   `.github/workflows/release.yml` builds the Linux tarballs on geek, the
+   macOS ones on jake-mini (Apple silicon natively, Intel cross-compiled
+   with `just build-macos-x86_64`) and the Windows zip on GitHub's runner,
+   attaches them and `SHA256SUMS` to the GitHub release, publishes it as
+   latest, and bumps the formula in `arugula-salad/homebrew-tap`
    (`scripts/release`; the tap's deploy key is the `HOMEBREW_TAP_KEY`
-   secret).
-3. `install.sh` picks up the latest release by itself. If the page
-   changed, `just site-deploy` publishes it (wrangler's login on geek).
+   secret). It builds no app.
+3. Running daemons find it within 12 hours and offer *Update now*
+   (`illogicald update` from a terminal); `install.sh` picks it up by
+   itself. If the page changed, `just site-deploy` publishes it (wrangler's
+   login on geek).
+
+**The app (`app-v*`)**, only when `crates/desktop` changes:
+
+1. Set the version in `crates/desktop/Cargo.toml` (its own numbering, not
+   the daemon's) and commit. Notes go in `docs/releases/app-X.Y.Z.md`.
+2. `git tag -a app-vX.Y.Z -m "illogical app X.Y.Z" && git push origin
+   app-vX.Y.Z`. `.github/workflows/app-release.yml` downloads illogicald
+   and illogical from the latest daemon release (checked against its
+   `SHA256SUMS`) for the app to carry, builds and signs the apps (Linux on
+   geek, macOS on jake-mini, notarized with the Developer ID when its
+   secrets are set, Windows on GitHub's runner), and publishes the release
+   with its own `SHA256SUMS` and the updater's `latest.json`. It's never
+   marked latest.
+3. It copies the downloads, `SHA256SUMS` and `latest.json` to the rolling
+   `app-latest` release, whose tag follows the newest app's commit. The
+   site's download buttons and the updater's endpoint
+   (`tauri.conf.json`) point there, so they get the new app at once.
+4. Apps from before the split (0.23 and older) have no updater key, so they
+   never check: their people install the new app once, by hand.
+
+`scripts/release` (`check-version`, `sums`, `publish`, `homebrew` for the
+daemon; `check-app-version`, `sidecars`, `app-upload`, `app-publish` for the
+app) checks that `releases/latest` is still a daemon release after each
+publish. `scripts/tests/release-targets.sh` (`just test-scripts`) fails if the
+daemon's workflow builds an app, or if the downloads the app's workflow
+makes, the ones `scripts/release` requires and the ones the site links
+drift apart.
 
 CI runs on two self-hosted GitHub Actions runners in the arugula-salad
 org's `illogical` runner group, which only this repo may use: geek

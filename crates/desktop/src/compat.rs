@@ -24,9 +24,8 @@ const MIN_PROTOCOL: u32 = 1;
 pub const SUPPORTED: RangeInclusive<u32> = MIN_PROTOCOL..=PROTOCOL;
 
 /// Where to get the app by hand, when it can't update itself (a .deb or
-/// .rpm, a build without an updater key). #393 gives the app's downloads
-/// a home of their own.
-const DOWNLOADS: &str = "https://github.com/arugula-salad/illogical/releases/latest";
+/// .rpm, a build without an updater key): the newest app release (#393).
+const DOWNLOADS: &str = "https://github.com/arugula-salad/illogical/releases/tag/app-latest";
 
 /// Which side is behind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,7 +196,7 @@ pub async fn compat_fix(app: AppHandle, window: WebviewWindow) -> Result<(), Str
                 tauri::async_runtime::spawn_blocking(move || crate::home(&app)).await.map_err(|e| e.to_string())?;
             window.navigate(to).map_err(|e| e.to_string())
         }
-        Behind::App if app_updates(&app) => match crate::updates::check(&app).await? {
+        Behind::App if app_updates(&app) => match crate::updates::fetch(&app, true).await? {
             Some(_) => app.restart(),
             None => Err(format!("No newer app is out yet. Look for one at {DOWNLOADS}.")),
         },

@@ -69,7 +69,7 @@ serves ([what holds](docs/control-e2e.md#what-holds-against-control)).
 **The desktop app** (macOS 13 or later on Apple silicon or Intel, Linux
 x86_64, Windows 10 or 11 x86_64), from
 [illogical.widgets.wtf](https://illogical.widgets.wtf) or the
-[latest release](https://github.com/arugula-salad/illogical/releases/latest):
+[newest app release](https://github.com/arugula-salad/illogical/releases/tag/app-latest):
 `illogical-desktop-macos-arm64.zip` (Apple silicon),
 `illogical-desktop-macos-x86_64.zip` (Intel),
 `illogical-desktop-linux-x86_64.AppImage` or `.deb` (the Linux app runs on
