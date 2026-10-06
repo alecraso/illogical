@@ -33,6 +33,13 @@ concurrency:
 
 env:
   NEXTEST_PROFILE: ci
+  # Debug and test builds keep line tables only (backtraces keep their
+  # files and lines; no variables for a debugger): a full rebuild's test
+  # binaries were 1.2 GB instead of 2.3 GB, which the kept build
+  # directories (scripts/ci-cap-target) and macOS's cache carry (#466).
+  # Not faster to build: rust-lld links them at the same speed.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   lint:
