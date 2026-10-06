@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 
-mod testnet;
+use crate::testnet;
 
 use testnet::{Env, cli_bin, wait_for};
 

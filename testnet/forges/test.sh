@@ -2,7 +2,7 @@
 #
 # Run the forge blocks' tests against the running forges (#93).
 #
-#   testnet/forges/test.sh forgejo     crates/daemon/tests/forges_real.rs, forgejo_*
+#   testnet/forges/test.sh forgejo     crates/daemon/tests/integration/forges_real.rs, forgejo_*
 #   testnet/forges/test.sh gitlab      ... gitlab_*
 #   testnet/forges/test.sh all         every forge that's up
 #
@@ -34,4 +34,4 @@ for f in $files; do
 done
 
 cd "$ROOT"
-ILLOGICAL_TESTNET_FORGES="$HERE/.state" mise exec -- cargo test -p illogicald --test forges_real -- --ignored "$filter"
+ILLOGICAL_TESTNET_FORGES="$HERE/.state" mise exec -- cargo test -p illogicald --test integration -- --ignored "forges_real::$filter"

@@ -8,7 +8,7 @@
 #
 # Writes testnet/forges/.state/<forge>.json: the forge's URL, the URL it
 # reaches the host by (for webhooks), and each bot's login and token.
-# crates/daemon/tests/forges_real.rs reads it (ILLOGICAL_TESTNET_FORGES
+# crates/daemon/tests/integration/forges_real.rs reads it (ILLOGICAL_TESTNET_FORGES
 # names the directory). The tokens are the stack's own, made fresh by this
 # script; nothing here is a real account.
 #

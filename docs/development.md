@@ -225,7 +225,7 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   control-mode front end (M5): the command parser and `-F` format expander,
   layout strings derived from the daemon's ratios (spike S11's converter),
   and a mirror terminal per pane so captures line up with the output
-  stream. `crates/daemon/tests/tmux.rs` replays iTerm2's command sequence
+  stream. `crates/daemon/tests/integration/tmux.rs` replays iTerm2's command sequence
   and compares every reply with what tmux 3.6 answered (S11's transcript).
 - `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
   are moved between slots rather than recreated, Playwright tests (desktop
@@ -251,7 +251,7 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
   gave every thread a zeroed copy: 1.3 MB per pane. Check `readelf -S`
   for `.tbss` after a libghostty upgrade. glibc also kept about half a busy
   daemon's peak after panes closed, until `heap.rs` fixed the mmap
-  threshold. `crates/daemon/tests/memory.rs` guards both.
+  threshold. `crates/daemon/tests/integration/memory.rs` guards both.
 - **Offsets need an epoch.** A reconnecting client's offset is only valid for
   the stream it came from; the pane's epoch changes when the daemon restarts.
 - **Size travels in order with output.** A client must resize before drawing

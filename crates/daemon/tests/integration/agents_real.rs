@@ -2,7 +2,7 @@
 //! haiku each), so they only run when asked:
 //!
 //! ```sh
-//! ILLOGICAL_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp,mcp-cc,screen cargo test -p illogicald --test agents_real
+//! ILLOGICAL_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp,mcp-cc,screen cargo test -p illogicald --test integration agents_real::
 //! ```
 //!
 //! - `screen` (#145, #146, #147): Claude Code's TUI in a terminal pane with
@@ -47,7 +47,7 @@
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
 #![cfg(unix)]
 
-mod agentd;
+use crate::agentd;
 
 use std::path::PathBuf;
 

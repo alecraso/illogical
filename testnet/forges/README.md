@@ -6,7 +6,7 @@ Forgejo and GitLab CE in Docker, each with two bot users, for the checks
 
 ```sh
 just forges up forgejo      # seconds
-just forges test forgejo    # crates/daemon/tests/forges_real.rs, forgejo_*
+just forges test forgejo    # crates/daemon/tests/integration/forges_real.rs, forgejo_*
 just forges up gitlab       # GitLab CE and a shell runner: 3-5 minutes, 4 GB
 just forges test gitlab
 just forges down            # both, with their volumes and tokens

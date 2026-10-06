@@ -11,7 +11,7 @@
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
 #![cfg(unix)]
 
-mod agentd;
+use crate::agentd;
 
 use std::{path::PathBuf, time::Duration};
 

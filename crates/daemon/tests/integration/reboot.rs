@@ -44,7 +44,7 @@ use std::{
 
 use serde_json::Value;
 
-mod testnet;
+use crate::testnet;
 
 use testnet::{Env, cli_bin, wait_for, wait_up_to};
 

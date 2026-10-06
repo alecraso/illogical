@@ -3,7 +3,7 @@
 //! that lands as a file here, a denied call, and a call that fails because
 //! the phone went away.
 
-mod agentd;
+use crate::agentd;
 
 use std::{
     path::{Path, PathBuf},

@@ -1,7 +1,7 @@
 # Nightly: forge blocks against real forges (#93). Never on pull requests:
 # these run on our own machines.
 #
-# - github: crates/daemon/tests/forges_github_real.rs against github.com,
+# - github: crates/daemon/tests/integration/forges_github_real.rs against github.com,
 #   with a test organization's repository, two bot accounts and a copy of
 #   the GitHub App. Without those secrets the job says so and passes.
 # - forgejo, gitlab: testnet/forges in Docker. Without Docker on the
@@ -44,7 +44,7 @@ jobs:
         run: just bootstrap && just web
       - name: forges_github_real
         if: steps.have.outputs.run == 'true'
-        run: mise exec -- cargo test -p illogicald --test forges_github_real -- --nocapture
+        run: mise exec -- cargo test -p illogicald --test integration forges_github_real:: -- --nocapture
 
   forges:
     runs-on: [self-hosted, linux-x86_64]

@@ -79,7 +79,7 @@ test("a push for a failure offers Dismiss", async ({ browser }) => {
       if (r) resolve(r.registrationId);
     });
   });
-  // What the daemon sends for a failure (see crates/daemon/tests/attention.rs).
+  // What the daemon sends for a failure (see crates/daemon/tests/integration/attention.rs).
   const payload = {
     title: "Failed",
     body: "cargo test failed (exit 101) after 3s",
