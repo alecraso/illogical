@@ -8,7 +8,8 @@
 #   - testnet: the test stack's claims (ssh, then control);
 #   - e2e: the Playwright specs in six shards; stack: those on the test
 #     stack; perf: the specs that time things, once the shards are done;
-# - macos: test and the WebKit specs, on GitHub's macOS runner.
+# - macos: test and the WebKit specs, on GitHub's macOS runner (when the
+#   push changes what runs there: scripts/macos-changed; main always).
 # Jobs on geek take a build directory and a test stack of their own
 # (scripts/ci-env), so runs and jobs don't wait on each other. geek needs
 # Docker: the test stack (testnet/README.md) and the ssh
@@ -207,11 +208,24 @@ jobs:
           E2E_CHROMIUM: "1"
           E2E_SET: perf
 
+  # Does the push need the macOS runner (scripts/macos-changed)? main's
+  # always do; a branch's only when it changes what runs on macOS.
+  macos-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.ask.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ask
+        run: if scripts/macos-changed "${{ github.event.before }}"; then echo run=true >> "$GITHUB_OUTPUT"; else echo run=false >> "$GITHUB_OUTPUT"; fi
+
   # GitHub's Apple silicon runner (free for a public repo, up to five at
   # once): jake-mini's one runner kept every run waiting 12-27 min for it,
   # and stays for releases. No Docker there, so the ssh tests skip
   # (ILLOGICAL_SKIP_DOCKER=1, loudly); test runs them on geek.
   macos:
+    needs: macos-changed
+    if: ${{ needs.macos-changed.outputs.run == 'true' }}
     runs-on: macos-15
     env:
       ILLOGICAL_SKIP_DOCKER: "1"

@@ -5,36 +5,7 @@
 #
 #   scripts/app-changed [BEFORE]
 #
-# BEFORE is the push's previous commit (github.event.before). On main it's
-# the base; on another branch the base is where it left main. Exits 0
-# (yes, check the app) when anything listed changed, and whenever it can't
-# tell: a new branch with no base found, a manual run, a failed fetch.
-set -euo pipefail
-paths=(crates/desktop crates/proto crates/core Cargo.toml THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE
-  .github/workflows/windows-desktop.yml .github/workflows/check.yml scripts/app-changed)
-before=${1:-}
-ref=${GITHUB_REF:-}
-yes() { echo "the app may have changed ($1): checking it"; exit 0; }
-[ "${GITHUB_EVENT_NAME:-push}" = push ] || yes "a ${GITHUB_EVENT_NAME} run"
-if [ "$ref" = refs/heads/main ]; then
-  [ -n "$before" ] && [ "$before" != 0000000000000000000000000000000000000000 ] || yes "no previous commit"
-  depth=()
-  [ "$(git rev-parse --is-shallow-repository)" = true ] && depth=(--depth=1)
-  git cat-file -e "$before^{commit}" 2>/dev/null || git fetch -q --no-tags "${depth[@]}" origin "$before" 2>/dev/null ||
-    yes "can't fetch $before"
-  base=$before
-else
-  # CI's checkout is shallow: fetch enough of this branch and of main to
-  # meet. (Never --depth in a full clone: that would make it shallow.)
-  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-    git fetch -q --no-tags --depth=500 origin "+refs/heads/main:refs/remotes/origin/main" "+$ref:refs/remotes/origin/pushed" 2>/dev/null ||
-      yes "can't fetch main"
-  else
-    git fetch -q --no-tags origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || yes "can't fetch main"
-  fi
-  base=$(git merge-base origin/main HEAD 2>/dev/null) || yes "no merge base with main"
-fi
-changed=$(git diff --name-only "$base" HEAD -- "${paths[@]}") || yes "can't diff against $base"
-[ -n "$changed" ] && yes "$(echo "$changed" | head -3 | tr '\n' ' ')"
-echo "nothing the app is built from changed since ${base:0:12}: skipping it"
-exit 1
+# See scripts/changed for BEFORE and the exit status.
+exec "$(dirname "$0")/changed" "the app" "${1:-}" \
+  crates/desktop crates/proto crates/core Cargo.toml THIRD_PARTY.md LICENSE-MIT LICENSE-APACHE \
+  .github/workflows/windows-desktop.yml .github/workflows/check.yml scripts/app-changed scripts/changed
