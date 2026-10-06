@@ -22,6 +22,9 @@
 #             folder in Finder and picking *New illogical Tab Here* opens a
 #             tab there in the running app and shows it; a .command file
 #             opened with the app runs in a new tab
+#   drag      #316: the page's bar moves the window as before, and so does
+#             the top strip of a page with no drag markup (as an old
+#             daemon's); a double-click there zooms it
 #   tabs      Cmd-N opens a window as a native tab of the first
 #   hotkey    off by default; on (desktop.json), Ctrl-Option-Space hides
 #             the app and brings it back
@@ -58,7 +61,7 @@ DMG="${ILLOGICAL_DMG:-$ROOT/dist/illogical-desktop-macos-arm64.dmg}"
 # shellcheck source=testnet/macos/need-tart.sh
 . "$HERE/need-tart.sh"
 claims=("$@")
-[ ${#claims[@]} -gt 0 ] || claims=(install agent pane keys links finder tabs hotkey restart)
+[ ${#claims[@]} -gt 0 ] || claims=(install agent pane keys links finder drag tabs hotkey restart)
 if [[ " ${claims[*]} " == *" install "* ]]; then
   [ -f "$DMG" ] || { echo "no .dmg (ILLOGICAL_DMG, or build one: just desktop)" >&2; exit 2; }
 fi
@@ -295,6 +298,61 @@ claim_finder() {
   else
     fail finder "opening hello.command with the app ran nothing"
   fi
+}
+
+# Moved: drag.js's frames (X0 Y0 W0 H0 X1 Y1 W1 H1) moved >= 100, 50.
+moved() { awk '{ exit !($5 - $1 >= 100 && $6 - $2 >= 50) }' <<<"$1"; }
+# Room to move down: AppKit keeps a window that exactly fills the screen
+# above the Dock (1024x678 on the VM's screen) from going lower, so a drag
+# moves it sideways only. Shorter, at the top left, it can.
+room() { osa 'tell application "System Events" to tell window 1 of process "illogical-desktop" to set {position, size} to {{0, 30}, {1024, 560}}' >/dev/null; sleep 1; }
+
+claim_drag() {
+  v push "$HERE/drag.js" "$HERE/banners.js" /tmp/
+  # The app's "App Background Activity" banner covers the bar's right end
+  # for minutes after its first start.
+  vs 'osascript -l JavaScript /tmp/banners.js' >/dev/null || true
+  front
+  room
+  # The client's bar, its empty middle (.bar-fill): the page's own region,
+  # found between its buttons (by now there are tabs enough to reach a
+  # fixed spot).
+  local f; f=$(vs 'osascript -l JavaScript /tmp/drag.js gap 16' || echo "")
+  if moved "$f"; then pass drag "the page's bar moved the window ($f)"; else fail drag "dragging the page's bar: $f"; fi
+  # A page with no drag markup: a stand-in for an old daemon, served in the
+  # VM (nc, one answer at a time) at ILLOGICAL_URL. It has no /api/host,
+  # so the app doesn't judge its protocol and shows it.
+  vs 'osascript -e "quit app \"illogical\""; sleep 2; pkill -x illogical-desktop; true'
+  vs 'printf "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<!doctype html><title>bare</title><body style=\"margin:0;background:#444\"><p style=\"margin:80px\">no drag markup</p></body>\n" > /tmp/bare.http
+      (nohup sh -c "while :; do nc -l 127.0.0.1 7799 < /tmp/bare.http >/dev/null; done" >/dev/null 2>&1 &)
+      (ILLOGICAL_URL=http://127.0.0.1:7799 ILLOGICAL_LOCAL_TOKEN_FILE=/nonexistent \
+        nohup /Applications/illogical.app/Contents/MacOS/illogical-desktop >/tmp/bare-app.log 2>&1 &)'
+  if wait_for 30 has_window; then
+    sleep 3
+    front
+    room
+    f=$(vs 'osascript -l JavaScript /tmp/drag.js 400 12' || echo "")
+    if moved "$f"; then
+      pass drag "a page with no drag markup moved by its top strip ($f)"
+    else
+      fail drag "dragging a plain page's top strip: $f"
+    fi
+    f=$(vs 'osascript -l JavaScript /tmp/drag.js 400 200' || echo "")
+    if [ -n "$f" ] && ! moved "$f"; then pass drag "below the strip the page keeps its mouse"; else fail drag "a drag in the page's body: $f"; fi
+    f=$(vs 'osascript -l JavaScript /tmp/drag.js 400 12 double' || echo "")
+    # Zoomed: a new frame, no smaller. A window that already fills the
+    # VM's small screen keeps its size and moves into the zoomed frame.
+    if [ -n "$f" ] && awk '{ exit !($7 * $8 >= $3 * $4 && ($1 != $5 || $2 != $6 || $3 != $7 || $4 != $8)) }' <<<"$f"; then
+      pass drag "a double-click on the strip zoomed it ($f)"
+    else
+      fail drag "a double-click on the strip: $f"
+    fi
+  else
+    fail drag "the app didn't show the plain page: $(vs 'tail -3 /tmp/bare-app.log')"
+  fi
+  vs 'pkill -x illogical-desktop; pkill -f "nc -l 127.0.0.1 7799"; pkill -f "while :; do nc"; sleep 1; open -a /Applications/illogical.app' || true
+  wait_for 30 has_window || fail drag "the app didn't come back on the daemon"
+  sleep 3
 }
 
 claim_tabs() {

@@ -7,6 +7,8 @@
 #             (GTK's menu key) and Alt as Meta arrive in the pane as bytes
 #   titlebar  the window has no decorations; the client's bar moves it
 #             (drag), and its own buttons maximize and minimize it
+#   bare      #316: a page with no drag markup (as an old daemon's) still
+#             moves by its top strip, and a double-click there maximizes
 #   links     `illogical-desktop 'illogical://open?cwd=DIR'` (what the
 #             .desktop file's x-scheme-handler runs) opens a tab in DIR in
 #             the running app and shows it; `illogical://pane/%N` shows pane N
@@ -27,7 +29,7 @@ daemon=$2
 cli=$3
 shift 3
 claims=("$@")
-[ ${#claims[@]} -gt 0 ] || claims=(keys titlebar links hotkey)
+[ ${#claims[@]} -gt 0 ] || claims=(keys titlebar bare links hotkey)
 here=$(cd "$(dirname "$0")" && pwd)
 desktop_dir=$(cd "$here/../../../crates/desktop" && pwd)
 work=$(mktemp -d)
@@ -174,6 +176,63 @@ claim_titlebar() {
   fi
   xdotool windowactivate --sync "$w" 2>/dev/null || xdotool windowmap "$w"
   sleep 1
+}
+
+# The app on a plain page with no drag markup and no client (#316): a
+# stand-in for an old daemon, at ILLOGICAL_URL. Then back to the daemon.
+claim_bare() {
+  stop_app
+  local site=$work/bare
+  mkdir -p "$site"
+  printf '<!doctype html><title>bare</title><body style="margin:0;background:#444"><p style="margin:80px">no drag markup</p></body>\n' >"$site/index.html"
+  python3 -m http.server 7799 --bind 127.0.0.1 -d "$site" >"$work/bare.log" 2>&1 &
+  local srv=$!
+  pids+=("$srv")
+  ILLOGICAL_URL=http://127.0.0.1:7799 ILLOGICAL_LOCAL_TOKEN_FILE=$work/no-token ILLOGICAL_STATE_DIR=$work/bare-state \
+    ILLOGICAL_DESKTOP_SETTINGS=$work/desktop.json \
+    WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
+    "$app" >>"$work/app.log" 2>&1 &
+  app_pid=$!
+  if ! wait_for 90 has_window || ! wait_for 20 grep -q 'GET / ' "$work/bare.log"; then
+    bad bare "the app never showed the plain page"
+  else
+    sleep 2
+    local w; w=$(window)
+    xdotool windowsize "$w" 1000 700 windowmove "$w" 100 100
+    sleep 1
+    eval "$(xdotool getwindowgeometry --shell "$w")"
+    local x0=$X y0=$Y
+    xdotool mousemove --window "$w" $((WIDTH / 2)) 12 mousedown 1 sleep 0.3 \
+      mousemove_relative 50 30 sleep 0.2 mousemove_relative 100 50 sleep 0.3 mouseup 1
+    sleep 1
+    eval "$(xdotool getwindowgeometry --shell "$w")"
+    if [ $((X - x0)) -ge 100 ] && [ $((Y - y0)) -ge 50 ]; then
+      ok bare "dragging the top strip of a page with no drag markup moved the window from $x0,$y0 to $X,$Y"
+    else
+      bad bare "dragging the plain page's top strip left the window at $X,$Y (was $x0,$y0)"
+    fi
+    # Below the strip, the page's own: no move.
+    x0=$X y0=$Y
+    xdotool mousemove --window "$w" $((WIDTH / 2)) 200 mousedown 1 sleep 0.3 mousemove_relative 100 50 sleep 0.3 mouseup 1
+    sleep 1
+    eval "$(xdotool getwindowgeometry --shell "$w")"
+    if [ "$X" = "$x0" ] && [ "$Y" = "$y0" ]; then
+      ok bare "below the strip the page keeps its mouse"
+    else
+      bad bare "a drag in the page's body moved the window ($x0,$y0 -> $X,$Y)"
+    fi
+    xdotool mousemove --window "$w" $((WIDTH / 2)) 12 click --repeat 2 --delay 80 1
+    sleep 1.5
+    eval "$(xdotool getwindowgeometry --shell "$w")"
+    if [ "$WIDTH" -ge 1270 ] && [ "$HEIGHT" -ge 850 ]; then
+      ok bare "a double-click on the strip maximized it (${WIDTH}x$HEIGHT)"
+    else
+      bad bare "after a double-click on the strip the window is ${WIDTH}x$HEIGHT"
+    fi
+  fi
+  stop_app
+  kill "$srv" 2>/dev/null || true
+  start_app
 }
 
 claim_links() {

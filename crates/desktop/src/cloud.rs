@@ -148,8 +148,86 @@ pub fn is_control_signin(url: &tauri::Url) -> bool {
     url.as_str().starts_with(&format!("{c}/auth/github"))
 }
 
+/// The app's own window dragging (#316), on every page in its windows.
+///
+/// The window's titlebar is the page's (an overlay titlebar on macOS, none
+/// on Linux), so a page that doesn't mark its bar as a drag region (an
+/// older daemon's, an error page, the app's own pages) left the window
+/// stuck. A primary-button press in the top strip (the bar's height) on
+/// nothing interactive moves the window (on macOS at once; elsewhere once
+/// the mouse moves with the button held); a double-click there zooms it
+/// (on mouseup on macOS, unless the mouse moved, as AppKit does). Where
+/// the page marks its own regions (`data-tauri-drag-region`, Tauri's drag
+/// script, which runs first) this stays out, so nothing is handled twice.
+const DRAG_SCRIPT: &str = r#"(() => {
+  const STRIP = 36;
+  const macos = __OS__ === 'macos';
+  const CLICKABLE = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL', 'SUMMARY', 'OPTION', 'VIDEO', 'AUDIO', 'IFRAME']);
+  const ROLES = new Set(['button', 'link', 'menuitem', 'tab', 'checkbox', 'radio', 'switch', 'option', 'slider', 'textbox']);
+  const strip = () => STRIP;
+  // Whether a press at this path moves the window: not on anything
+  // interactive, nor where the page handles dragging itself.
+  const ours = (path) => {
+    for (const el of path) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (el === document.body || el === document.documentElement) return true;
+      if (el.hasAttribute('data-tauri-drag-region')) return false;
+      if (CLICKABLE.has(el.tagName) || ROLES.has(el.getAttribute('role') || '') || el.isContentEditable) return false;
+      if (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') return false;
+      if (el.classList.contains('tab') || el.classList.contains('xterm')) return false;
+      const s = getComputedStyle(el);
+      if ((s.getPropertyValue('app-region') || s.getPropertyValue('-webkit-app-region')) === 'no-drag') return false;
+      if (s.cursor === 'pointer' || s.cursor === 'text') return false;
+    }
+    return true;
+  };
+  const invoke = (cmd) => window.__TAURI_INTERNALS__?.invoke('plugin:window|' + cmd).catch(() => {});
+  let down = null;
+  let press = null;
+  addEventListener('mousedown', (e) => {
+    down = null;
+    press = null;
+    if (e.defaultPrevented || e.button !== 0 || e.clientY >= strip()) return;
+    if (!(e.detail === 1 || e.detail === 2) || !ours(e.composedPath())) return;
+    if (macos && e.detail === 2) {
+      down = [e.clientX, e.clientY];
+      return;
+    }
+    e.preventDefault();
+    if (e.detail === 2) invoke('internal_toggle_maximize');
+    else if (macos) invoke('start_dragging');
+    // Elsewhere the move starts once the mouse moves with the button
+    // held (#316): on mousedown, the window manager's move often begins
+    // after the button is up (the invoke is async), and then it takes
+    // the next click, so a double-click never reached the page.
+    else press = [e.clientX, e.clientY];
+  });
+  if (!macos) {
+    addEventListener('mousemove', (e) => {
+      if (!press) return;
+      if (!(e.buttons & 1)) {
+        press = null;
+      } else if (e.clientX !== press[0] || e.clientY !== press[1]) {
+        press = null;
+        invoke('start_dragging');
+      }
+    });
+    addEventListener('mouseup', () => (press = null));
+  }
+  if (macos) {
+    addEventListener('mouseup', (e) => {
+      const at = down;
+      down = null;
+      if (at && e.button === 0 && e.detail === 2 && e.clientX === at[0] && e.clientY === at[1]) {
+        invoke('internal_toggle_maximize');
+      }
+    });
+  }
+})();"#;
+
 /// Script for every page in the app's windows: the name control's page
-/// gives this device, and no passkey button where passkeys can't work.
+/// gives this device, no passkey button where passkeys can't work, and
+/// window dragging (`DRAG_SCRIPT`).
 pub fn init_script() -> String {
     let control = control().unwrap_or_default();
     // Debug builds only: a test's script for the page (the native huddle
@@ -173,11 +251,17 @@ pub fn init_script() -> String {
         // Huddles run in Rust here (M63, crates/desktop/src/calls.rs).
         cfg!(all(target_os = "linux", feature = "native-calls")),
     );
+    // Windows keeps its system titlebar.
+    let drag = if cfg!(any(target_os = "macos", target_os = "linux")) {
+        DRAG_SCRIPT.replace("__OS__", if cfg!(target_os = "macos") { "'macos'" } else { "'linux'" })
+    } else {
+        String::new()
+    };
     #[cfg(debug_assertions)]
     if !test.is_empty() {
         eprintln!("illogical: a test script for the page ({} bytes)", test.len());
     }
-    s + "\n" + &test
+    s + "\n" + &drag + "\n" + &test
 }
 
 #[derive(serde::Serialize)]
