@@ -257,6 +257,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has("sessions", "agent")? {
         conn.execute_batch("ALTER TABLE sessions ADD COLUMN agent TEXT")?;
     }
+    // Poll hashes a later join from the same machine took over from (#329).
+    if !has("joins", "replaced")? {
+        conn.execute_batch("ALTER TABLE joins ADD COLUMN replaced TEXT NOT NULL DEFAULT ''")?;
+    }
     if !has("joins", "proven")? {
         conn.execute_batch("ALTER TABLE joins ADD COLUMN proven INTEGER NOT NULL DEFAULT 0")?;
     }
@@ -405,6 +409,20 @@ pub struct Join {
     pub features: String,
     /// It signed for its key when it asked (0.17 and newer).
     pub proven: bool,
+    /// Poll hashes of requests a later one from this machine took over
+    /// from, space-separated (#329).
+    pub replaced: String,
+}
+
+/// What asking for a join code did (#329).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// A new join, or this request took over the one waiting (keeping an
+    /// approval it had).
+    Waiting,
+    /// A join from this machine is waiting already, and this request can't
+    /// take it over: it didn't prove it holds the key.
+    Taken,
 }
 
 /// A row that's already there (a primary key), as opposed to anything
@@ -863,6 +881,12 @@ impl Db {
 
     // ---- joins
 
+    /// Ask for a join code. A code is the machine's key's, so a second
+    /// request from the machine finds the first one's row (#329). Proven to
+    /// hold the key (or both unproven, as older daemons ask), it takes the
+    /// row over: the first requester's polls are told so, and an approval
+    /// already given stays, for this request to collect. Otherwise
+    /// [`Asked::Taken`].
     #[allow(clippy::too_many_arguments)]
     pub fn add_join(
         &self,
@@ -875,11 +899,51 @@ impl Db {
         features: &str,
         proven: bool,
         now: u64,
-    ) -> anyhow::Result<()> {
-        let c = self.c();
+    ) -> anyhow::Result<Asked> {
+        let mut c = self.c();
+        let tx = c.transaction()?;
         // Old ones go first; a code can be asked for again.
-        c.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
-        c.execute(
+        tx.execute("DELETE FROM joins WHERE created < ?1", params![now.saturating_sub(JOIN_TTL_MS)])?;
+        let had: Option<(String, Option<String>, bool, String)> = tx
+            .query_row(
+                "SELECT poll_hash, account, proven, replaced FROM joins WHERE code = ?1 AND rejected IS NULL",
+                params![code],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        if let Some((old, account, was_proven, replaced)) = had {
+            if !proven && (was_proven || account.is_some()) {
+                return Ok(Asked::Taken);
+            }
+            let replaced = format!("{replaced} {old}").trim().to_owned();
+            if account.is_some() {
+                // Approved: the approval (and the approver's team) stays.
+                tx.execute(
+                    "UPDATE joins SET poll_hash = ?2, replaced = ?3 WHERE code = ?1",
+                    params![code, poll_hash, replaced],
+                )?;
+            } else {
+                tx.execute(
+                    "UPDATE joins SET cert = ?2, poll_hash = ?3, urls = ?4, created = ?5, team = ?6, sandbox = ?7,
+                     features = ?8, proven = ?9, replaced = ?10 WHERE code = ?1",
+                    params![
+                        code,
+                        serde_json::to_string(cert)?,
+                        poll_hash,
+                        serde_json::to_string(urls)?,
+                        now,
+                        team,
+                        sandbox,
+                        features,
+                        proven,
+                        replaced
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            return Ok(Asked::Waiting);
+        }
+        tx.execute(
             "INSERT OR REPLACE INTO joins (code, cert, poll_hash, urls, created, account, team, sandbox, features, proven)
              VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9)",
             params![
@@ -894,7 +958,8 @@ impl Db {
                 proven
             ],
         )?;
-        Ok(())
+        tx.commit()?;
+        Ok(Asked::Waiting)
     }
 
     pub fn join(&self, code: &str, now: u64) -> anyhow::Result<Option<Join>> {
@@ -902,7 +967,7 @@ impl Db {
             .c()
             .query_row(
                 "SELECT cert, poll_hash, urls, created, account, team, sandbox, team_sig, rejected,
-                 COALESCE(features, ''), proven FROM joins
+                 COALESCE(features, ''), proven, replaced FROM joins
                  WHERE code = ?1 AND created >= ?2",
                 params![code, now.saturating_sub(JOIN_TTL_MS)],
                 |r| {
@@ -918,6 +983,7 @@ impl Db {
                         rejected: r.get(8)?,
                         features: r.get(9)?,
                         proven: r.get(10)?,
+                        replaced: r.get(11)?,
                     })
                 },
             )

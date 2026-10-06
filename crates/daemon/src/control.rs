@@ -1392,6 +1392,104 @@ fn whose(s: &Saved) -> String {
     }
 }
 
+/// `<state>/join.lock`: one join at a time per machine (#329). The CLI's
+/// `illogicald join` and Getting started's button (the running daemon)
+/// would otherwise ask control for the same code, and the second would
+/// take it over from the first.
+pub const JOIN_LOCK: &str = "join.lock";
+
+/// What `join.lock` says: who holds it, and the code once there is one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JoinLockInfo {
+    pid: u32,
+    /// "`illogicald join`" or "Getting started".
+    pub by: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub approve: Option<String>,
+    /// When it stops counting (ms since the epoch): the code's expiry, or
+    /// a short while to ask for one.
+    pub expires_ms: u64,
+}
+
+impl JoinLockInfo {
+    /// Held by this process.
+    pub fn mine(&self) -> bool {
+        self.pid == std::process::id()
+    }
+}
+
+/// A held `join.lock`, removed when dropped.
+pub struct JoinLock {
+    path: PathBuf,
+    info: JoinLockInfo,
+}
+
+impl JoinLock {
+    /// Take the lock, or say which join holds it. One whose process is
+    /// gone (a CLI stopped with Ctrl-C) or whose time is up doesn't count.
+    fn take(state_dir: &Path, by: &str) -> anyhow::Result<Self> {
+        use std::io::Write;
+        let path = state_dir.join(JOIN_LOCK);
+        let info = JoinLockInfo {
+            pid: std::process::id(),
+            by: by.to_owned(),
+            code: None,
+            approve: None,
+            expires_ms: now_ms() + 2 * 60 * 1000,
+        };
+        std::fs::create_dir_all(state_dir)?;
+        for _ in 0..2 {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut f) => {
+                    f.write_all(&serde_json::to_vec(&info)?)?;
+                    return Ok(Self { path, info });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let held = Self::held(state_dir);
+                    if let Some(h) = held {
+                        let mins = h.expires_ms.saturating_sub(now_ms()).div_ceil(60_000);
+                        match (&h.code, &h.approve) {
+                            (Some(code), Some(at)) => bail!(
+                                "a join is waiting on this machine already ({}, code {code}): approve it at {at}, or wait for it to end (in {mins} min)",
+                                h.by
+                            ),
+                            _ => bail!("{} is asking control to add this machine; try again in a moment", h.by),
+                        }
+                    }
+                    let _ = std::fs::remove_file(&path);
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        bail!("can't take {}", path.display())
+    }
+
+    /// The join holding the lock, if one does.
+    pub fn held(state_dir: &Path) -> Option<JoinLockInfo> {
+        let b = std::fs::read(state_dir.join(JOIN_LOCK)).ok()?;
+        let h: JoinLockInfo = serde_json::from_slice(&b).ok()?;
+        (h.expires_ms > now_ms() && crate::procinfo::alive(h.pid)).then_some(h)
+    }
+
+    /// Say which code it's waiting on, for the other way in to point at.
+    fn waiting(&mut self, code: &str, approve: &str, expires_ms: u64) {
+        self.info.code = Some(code.to_owned());
+        self.info.approve = Some(approve.to_owned());
+        self.info.expires_ms = expires_ms;
+        if let Ok(b) = serde_json::to_vec(&self.info) {
+            let _ = crate::store::write_atomic(&self.path, &b);
+        }
+    }
+}
+
+impl Drop for JoinLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// A join control has started: the code someone approves, and what
 /// [`join_finish`] needs to wait for it.
 pub struct JoinPending {
@@ -1405,6 +1503,8 @@ pub struct JoinPending {
     poll: String,
     ask: Cert,
     http: reqwest::Client,
+    /// Held until the join ends (#329).
+    _lock: JoinLock,
 }
 
 impl JoinPending {
@@ -1495,6 +1595,7 @@ pub async fn join_start(
     team: Option<&str>,
     ticket: Option<&str>,
     state_dir: &Path,
+    by: &str,
 ) -> anyhow::Result<JoinPending> {
     let url = url.trim_end_matches('/').to_owned();
     if !url.starts_with("https://") && !private_http(&url) {
@@ -1519,6 +1620,8 @@ pub async fn join_start(
             ),
         }
     }
+    // One join at a time on this machine (#329).
+    let mut lock = JoinLock::take(state_dir, by)?;
     let http = crate::roots::http().timeout(Duration::from_secs(20)).build()?;
     let mut renewed: Option<Removed> = None;
     let (res, ask) = loop {
@@ -1559,6 +1662,7 @@ pub async fn join_start(
     }
     let started: JoinStarted = res.json().await?;
     debug_assert_eq!(started.code, join_code(&ask));
+    lock.waiting(&started.code, &format!("{url}/#join={}", started.code), now_ms() + started.expires_in_secs * 1000);
     Ok(JoinPending {
         url,
         code: started.code,
@@ -1568,6 +1672,7 @@ pub async fn join_start(
         poll: started.poll,
         ask,
         http,
+        _lock: lock,
     })
 }
 
@@ -1575,7 +1680,7 @@ pub async fn join_start(
 /// approving device chose. Nothing is saved until the person confirms the
 /// account ([`Approved::save`]).
 pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
-    let JoinPending { url, code, expires_in_secs, team_name, poll, ask, http, .. } = p;
+    let JoinPending { url, code, expires_in_secs, team_name, poll, ask, http, _lock, .. } = p;
     let mins = expires_in_secs / 60;
     let deadline = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
     let got = loop {
@@ -1667,7 +1772,7 @@ pub async fn join(
     state_dir: &Path,
 ) -> anyhow::Result<()> {
     let account = account.map(parse_fingerprint).transpose()?;
-    let p = join_start(url, name, team, ticket, state_dir).await?;
+    let p = join_start(url, name, team, ticket, state_dir, "`illogicald join`").await?;
     if let Some(r) = &p.renewed {
         println!();
         println!("  Control says {}.", r.said);
@@ -1881,7 +1986,7 @@ mod tests {
         assert!(read_saved(&dir).unwrap().is_none(), "nothing pinned");
 
         // The approval itself checks out: only the account is wrong.
-        let a = join_finish(join_start(&url, "box", None, None, &dir).await.unwrap()).await.unwrap();
+        let a = join_finish(join_start(&url, "box", None, None, &dir, "a test").await.unwrap()).await.unwrap();
         assert_eq!(a.joined.account, fingerprint(&root.device));
         assert!(!a.is_account(&mine) && a.is_account(&fingerprint(&root.device)));
 
@@ -2323,7 +2428,7 @@ mod tests {
         write_saved(&dir, &s).unwrap();
 
         // The old key asks once and is told; the new one gets the code.
-        let p = join_start(&url, "box", None, None, &dir).await.unwrap();
+        let p = join_start(&url, "box", None, None, &dir, "a test").await.unwrap();
         let r = p.renewed.clone().expect("renewed");
         assert_eq!(r.by.as_deref(), Some("laptop"));
         assert_eq!(r.at, Some(1_790_000_000_000));
@@ -2356,6 +2461,50 @@ mod tests {
         let now = read_saved(&dir).unwrap().unwrap();
         assert_ne!(now.cert.device, old.id());
         assert_eq!(now.trust.root, root.device);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #329: one join at a time on a machine. A second way in is told which
+    /// code is waiting and where to approve it; a lock whose process is gone
+    /// doesn't count.
+    #[tokio::test]
+    async fn one_join_at_a_time_on_a_machine() {
+        use axum::{Json, Router, routing::post};
+        let app = Router::new().route(
+            "/api/join",
+            post(|Json(b): Json<serde_json::Value>| async move {
+                let c: Cert = serde_json::from_value(b["cert"].clone()).unwrap();
+                Json(serde_json::json!({ "code": join_code(&c), "poll": "p", "expires_in_secs": 900 }))
+            }),
+        );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await });
+        let dir = std::env::temp_dir().join(format!("illogical-join-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let first = join_start(&url, "box", None, None, &dir, "Getting started").await.unwrap();
+        let held = JoinLock::held(&dir).unwrap();
+        assert!(held.mine() && held.code.as_deref() == Some(first.code.as_str()));
+        let e = join_start(&url, "box", None, None, &dir, "`illogicald join`").await.err().unwrap().to_string();
+        assert!(e.contains("Getting started") && e.contains(&first.code) && e.contains(&first.approve_url()), "{e}");
+        // Ended (approved, failed, or given up): the next one may ask.
+        drop(first);
+        assert!(JoinLock::held(&dir).is_none());
+        let second = join_start(&url, "box", None, None, &dir, "`illogicald join`").await.unwrap();
+        drop(second);
+
+        // A CLI stopped with Ctrl-C leaves its lock behind: it doesn't count.
+        let gone = JoinLockInfo {
+            pid: 999_999_999,
+            by: "`illogicald join`".into(),
+            code: Some("AAAAA-AAAAA".into()),
+            approve: None,
+            expires_ms: now_ms() + 600_000,
+        };
+        std::fs::write(dir.join(JOIN_LOCK), serde_json::to_vec(&gone).unwrap()).unwrap();
+        assert!(JoinLock::held(&dir).is_none());
+        join_start(&url, "box", None, None, &dir, "Getting started").await.unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

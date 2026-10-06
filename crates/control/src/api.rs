@@ -455,7 +455,7 @@ pub async fn join(
         }
         None => None,
     };
-    app.db.add_join(
+    let asked = app.db.add_join(
         &code,
         &b.cert,
         &hash(&poll),
@@ -466,6 +466,16 @@ pub async fn join(
         proven,
         now_ms(),
     )?;
+    // Another join from this machine is waiting (#329), and this request
+    // didn't prove it holds the key: it doesn't take that one over.
+    if asked == crate::db::Asked::Taken {
+        return Err(err(
+            StatusCode::CONFLICT,
+            &format!(
+                "this machine has a join waiting already (code {code}): finish it there, or wait for it to expire"
+            ),
+        ));
+    }
     Ok(Json(
         json!({ "code": code, "poll": poll, "expires_in_secs": crate::db::JOIN_TTL_MS / 1000, "team_name": team_name }),
     )
@@ -483,6 +493,13 @@ pub async fn join_poll(State(app): State<Arc<App>>, Path(code): Path<String>, Qu
     let j =
         app.db.join(&code, now_ms())?.ok_or_else(|| err(StatusCode::NOT_FOUND, "that code expired; run join again"))?;
     if j.poll_hash != hash(&q.poll) {
+        // A later request from this machine took it over (#329).
+        if j.replaced.split(' ').any(|h| h == hash(&q.poll)) {
+            return Err(err(
+                StatusCode::CONFLICT,
+                "replaced by another join from this machine (Getting started, or `illogicald join`): finish it there",
+            ));
+        }
         return Err(err(StatusCode::FORBIDDEN, "not your join"));
     }
     if let Some(on) = j.rejected {

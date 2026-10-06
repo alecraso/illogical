@@ -271,6 +271,7 @@ async fn a_removed_machine_rejoins_only_with_a_new_key() {
     // A code it got before (or from an older control) is refused for the
     // real reason.
     let ask = Cert { account: String::new(), ..Cert::new(&old, "", Kind::Daemon, "box") };
+    c.app.db.drop_join(&old_code).unwrap();
     c.app.db.add_join(&old_code, &ask, &hash("p"), &[], None, None, "", true, now_ms()).unwrap();
     let (st, said) = approve(&old, &old_code).await;
     assert_eq!(st, 403);
@@ -288,6 +289,75 @@ async fn a_removed_machine_rejoins_only_with_a_new_key() {
     // The old key stays out.
     assert_eq!(c.daemon_get(&old, "/api/daemon/trust").await.0, 410);
     assert_eq!(post(join_body(&old, true)).await.unwrap().status(), 410);
+}
+
+/// #329: two joins from one machine (the CLI and Getting started, say)
+/// share a code. The second never wipes an approval the first got, and the
+/// requester that lost out is told why.
+#[tokio::test]
+async fn a_second_join_from_one_machine_keeps_the_approval() {
+    let c = control(|_| {}).await;
+    let root = person(&c.app, "jake", "a1");
+    let cookie = session(&c.app, "a1");
+    let keys = DeviceKeys::generate();
+    let ask = |proof: bool| {
+        let b = join_body(&keys, proof);
+        let c = &c;
+        async move {
+            let r = c.http.post(format!("{}/api/join", c.base)).json(&b).send().await.unwrap();
+            (r.status().as_u16(), r.json::<Value>().await.unwrap_or_default())
+        }
+    };
+    let poll = |code: &str, poll: &str| {
+        let url = format!("{}/api/join/{code}?poll={poll}", c.base);
+        let c = &c;
+        async move {
+            let r = c.http.get(url).send().await.unwrap();
+            (r.status().as_u16(), r.json::<Value>().await.unwrap_or_default())
+        }
+    };
+    let approve = |code: &str| {
+        let mut cert = Cert { account: "a1".into(), ..Cert::new(&keys, "", Kind::Daemon, "box") };
+        cert.sign_with(&root);
+        let path = format!("/api/joins/{code}/approve");
+        let (c, cookie) = (&c, cookie.clone());
+        async move { c.as_person(&cookie, "POST", &path, Some(json!({ "cert": cert }))).await }
+    };
+
+    // The first asks and is approved; then a second asks from the machine.
+    let (_, first) = ask(true).await;
+    let code = first["code"].as_str().unwrap().to_owned();
+    assert_eq!(approve(&code).await.0, 200);
+    let (st, second) = ask(true).await;
+    assert_eq!(st, 200, "{second}");
+    assert_eq!(second["code"], code.as_str());
+    // The approval stands: the second collects it, and the first is told.
+    let (st, said) = poll(&code, first["poll"].as_str().unwrap()).await;
+    assert_eq!(st, 409, "{said}");
+    assert!(said["error"].as_str().unwrap().contains("another join from this machine"), "{said}");
+    let (st, got) = poll(&code, second["poll"].as_str().unwrap()).await;
+    assert_eq!(st, 200);
+    assert_eq!(got["approved"], true, "{got}");
+    assert_eq!(got["trust"]["root"], root.id());
+
+    // Before an approval: the second takes the code over; the first hears
+    // so; one approval does for the second.
+    let keys2 = DeviceKeys::generate();
+    let b1 = join_body(&keys2, true);
+    let first: Value =
+        c.http.post(format!("{}/api/join", c.base)).json(&b1).send().await.unwrap().json().await.unwrap();
+    let b2 = join_body(&keys2, true);
+    let second: Value =
+        c.http.post(format!("{}/api/join", c.base)).json(&b2).send().await.unwrap().json().await.unwrap();
+    let code2 = second["code"].as_str().unwrap().to_owned();
+    assert_eq!(poll(&code2, first["poll"].as_str().unwrap()).await.0, 409);
+    assert_eq!(poll(&code2, second["poll"].as_str().unwrap()).await.1["approved"], false);
+    // Someone with only its certificate can't take a waiting join over.
+    let r = c.http.post(format!("{}/api/join", c.base)).json(&join_body(&keys2, false)).send().await.unwrap();
+    assert_eq!(r.status(), 409);
+    assert_eq!(poll(&code2, second["poll"].as_str().unwrap()).await.0, 200);
+    // A poll token nobody was given is still nobody's.
+    assert_eq!(poll(&code2, "nope").await.0, 403);
 }
 
 /// #330: a removed machine is refused everywhere, so only its own

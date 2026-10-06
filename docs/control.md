@@ -65,7 +65,10 @@ vs team machines and sharing a session:
    `--account FINGERPRINT` answers ahead, for scripts. *Join to* picks
    your account (*Just me*) or a team you own; `--team ID` picks the team
    ahead. *Cancel* turns it down. A running daemon connects within a few
-   seconds, and the machine appears in the host menu.
+   seconds, and the machine appears in the host menu. A machine runs one
+   join at a time: while Getting started's waits, `illogicald join` says
+   which code it is and where to approve it, and the other way round.
+   An approval is never lost to a second request from the same machine.
 3. **Add your phone** (or any other browser): *Add a phone or browser…* in
    the host menu shows control's address as a QR code and a link. Sign in
    there. It shows a fingerprint and waits. Your devices ask *New device?*

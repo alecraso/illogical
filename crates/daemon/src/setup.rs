@@ -135,6 +135,10 @@ struct ControlStatus {
     /// by which device, and both keys' fingerprints.
     #[serde(skip_serializing_if = "Option::is_none")]
     removed: Option<crate::control::Removed>,
+    /// A join `illogicald join` started on this machine (#329): its code
+    /// and where to approve it. Only one join runs at a time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elsewhere: Option<crate::control::JoinLockInfo>,
     /// The control the button joins: `--control`, else illogical cloud
     /// (#207). The page sends it back with the join.
     url: String,
@@ -352,6 +356,7 @@ fn control_status(app: &App) -> ControlStatus {
         }),
         error: error.filter(|_| saved.is_none()),
         removed: REMOVED.lock().unwrap().clone().filter(|_| saved.is_none()),
+        elsewhere: crate::control::JoinLock::held(app.control.state_dir()).filter(|h| !h.mine() && saved.is_none()),
         url: app.control.default_url.clone(),
     }
 }
@@ -392,7 +397,7 @@ pub fn rejoin(app: Arc<App>, url: String) {
 async fn start_join(app: &Arc<App>, url: &str, team: Option<&str>) -> Value {
     let name = app.hosts.name().to_owned();
     let dir = app.control.state_dir().to_owned();
-    match crate::control::join_start(url, &name, team, None, &dir).await {
+    match crate::control::join_start(url, &name, team, None, &dir, "Getting started").await {
         Ok(p) => {
             let pending = Pending {
                 code: p.code.clone(),
