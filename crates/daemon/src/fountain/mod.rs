@@ -22,8 +22,8 @@
 //! block; for any other, or with no checkout, Fountain's page for it in a
 //! browser block). `filter {...}` changes the filters, `profile {name}` the
 //! login, `specs {dir}` the checkout. `agents {query?, source?}` and `agent
-//! {name}` read without changing anything (MCP's `list_agents` and
-//! `read_agent`).
+//! {name}` read without changing anything (MCP's `list` kinds
+//! `fountain_agents` and `fountain_agent`).
 //!
 //! **`view: runner`** (M45b, [`runner`]): this host as the account's
 //! Fountain runner. `GET /api/runners` every minute while drawn and every
@@ -233,7 +233,7 @@ pub(crate) async fn local_runner(shell_env: &crate::shellenv::ShellEnv) -> Runne
     Runner::Local { env: crate::shellenv::merge(&env, &shell, None), home }
 }
 
-/// The account's agents for MCP (`list_agents`, `read_agent`): the last
+/// The account's agents for MCP (`list`'s Fountain kinds): the last
 /// list read within a poll, else a fresh one.
 pub(crate) async fn agents_for(runner: &Runner, profile: Option<&str>) -> Result<Agents, String> {
     let found = login::read(runner).await?;
@@ -264,12 +264,12 @@ pub fn find<'a>(agents: &'a [Agent], which: &str) -> Option<&'a Agent> {
     })
 }
 
-/// Compact rows for `list_agents`: the filter's agents as cards.
+/// Compact rows for MCP's `fountain_agents`: the filter's agents as cards.
 pub fn rows(agents: &[Agent], filter: &Filter) -> Vec<Card> {
     agents.iter().filter(|a| filter.matches(a)).map(|a| catalog::card(a, &BTreeMap::new())).collect()
 }
 
-/// The whole recipe for `read_agent` and the block's `agent`: as Fountain
+/// The whole recipe for MCP's `fountain_agent` and the block's `agent`: as Fountain
 /// returns it, a `${VAR}` left as it is, but an MCP header or env value
 /// typed in literally (which may be a secret) as `<redacted>`; plus where
 /// it comes from.

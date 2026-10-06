@@ -140,7 +140,7 @@ stopping, crashing, or the machine rebooting:
   range). Tap a file for its unified hunks, highlighted; tap a line to
   open a file block there, scrolled to it and marked. `illogical diff
   [%N] [REV_A [REV_B]]` and `illogical view [%N:|mN:]PATH[:LINE]` open them
-  from a shell, `show_changes` and `show_file` from MCP, and *Open file*
+  from a shell, MCP's `show` (kind `changes` or `file`), and *Open file*
   on an agent's tool call opens the file it touched.
   - **Live while looked at.** Both follow the files as they change (every
     second), but only while some client
@@ -336,7 +336,7 @@ stopping, crashing, or the machine rebooting:
   - **Opening one.** *Open pull request…* (a pane's menu, the `+`
     button's menu; *Pull request* in the phone's sheet), `illogical pr
     URL | OWNER/REPO#N | N` (N: in this directory's repository), MCP's
-    `open_pr`, or clicking a Forgejo PR link (`…/pulls/N`) in a terminal
+    `show` (kind `pr`), or clicking a Forgejo PR link (`…/pulls/N`) in a terminal
     (Shift-click opens it in the browser instead).
   - **Your login.** It reads and writes with your own `tea` login, run
     with your shell's environment. The token comes from tea's credential
@@ -359,7 +359,7 @@ stopping, crashing, or the machine rebooting:
     your PR, or a mention since you last looked (*Waiting for you*); your
     PR merged, or green with nothing holding it (*Finished*, once).
   - **Agents draft, people send.** An agent's comment, review or merge
-    (MCP's `pr_comment`, `pr_review`, `pr_merge`, or `illogical pr …` and
+    (MCP's `draft`, kind `comment`, `review` or `merge`, or `illogical pr …` and
     `illogical call` run under Claude Code) never reaches the forge by
     itself: it waits on the block as a card with the text to edit. *Send*
     posts it (as edited) with the owner's login; *Drop* drops it. The
@@ -444,7 +444,7 @@ stopping, crashing, or the machine rebooting:
   yet.
   - **Opening one.** *Open issue…* (a pane's menu, the `+` button's menu;
     *Issue* in the phone's sheet), `illogical issue URL | OWNER/REPO#N | N`,
-    MCP's `open_issue`, or clicking an issue link (`…/issues/N`) in a
+    MCP's `show` (kind `issue`), or clicking an issue link (`…/issues/N`) in a
     terminal.
   - **What waits on you:** an open issue given to you, or a mention, since
     you last looked (*Waiting for you*); one given to you that closes
@@ -468,10 +468,10 @@ stopping, crashing, or the machine rebooting:
     it beside the agent, once. `illogical issue agent %N` does the same.
   - **New issues.** `illogical issue new -t TITLE [-b TEXT]` (in a clone,
     or `--repo`) opens one with your login, and the block shows it. An
-    agent's (MCP's `issue_new`, or the CLI under Claude Code) is a draft:
+    agent's (MCP's `draft` kind `issue`, or the CLI under Claude Code) is a draft:
     a block holding a card with the title and text to edit, which *Send*
     opens on the forge (the block becomes the issue) and *Drop* drops.
-    Comments on issues (`issue_comment`, `illogical issue comment %N`) are
+    Comments on issues (`draft` kind `comment`, `illogical issue comment %N`) are
     drafts from agents too, as on a PR.
 
 - **Your machines through control**. The main way to reach
@@ -692,9 +692,12 @@ stopping, crashing, or the machine rebooting:
   gets illogical as tools: `run` a command in a pane you can watch and
   take over (it outlives the
   agent's turn), `wait` for it and `read_output`, `send_input`, `list`,
-  `close`, `history` and `search`, `open_port` (a dev server in a browser
-  block beside its terminal), `start_agent` and `agent_respond` (one agent
-  supervising another), `read_file`. `claude mcp add illogical --
+  `close`, `history` (commands, or output matching a regex), `show` (a
+  block beside a pane: a dev server in a browser, a diff, a file, a PR or
+  issue, a conversation), `draft` (a comment, review, merge or new issue
+  for the user to send), `start_agent` and `agent_respond` (one agent
+  supervising another), `read_file`. The tools that do several jobs take a
+  `kind`, so the list stays short. `claude mcp add illogical --
   illogical mcp` sets it up; see the README. Output comes in pages, a long
   wait sends progress and answers "still running" by 100s with where to
   pick up, and errors say what happened ("pane %7 is gone; its last

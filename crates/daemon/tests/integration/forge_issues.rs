@@ -551,13 +551,15 @@ fn agent_on_this_makes_a_branch_an_agent_and_a_tab_and_its_pr_joins_them() {
 
     // The agent reads the issue through MCP, and drafts: a comment, and a
     // new issue (a block beside it holding the draft). Nothing goes out.
-    let r = agent_mcp(&d, agent, "read_issue", json!({ "block": block })).unwrap();
+    let r = agent_mcp(&d, agent, "read_forge", json!({ "block": block })).unwrap();
     assert!(r["text"].as_str().unwrap().contains("Add a frobnicator to the CLI"), "{r}");
-    let r = agent_mcp(&d, agent, "issue_comment", json!({ "block": block, "body": "Starting on it." })).unwrap();
+    let r =
+        agent_mcp(&d, agent, "draft", json!({ "kind": "comment", "block": block, "body": "Starting on it." })).unwrap();
     assert_eq!(r["status"], "waiting", "{r}");
     d.wait_for("the comment's card", || info(&d, block)["ask"]["id"] == r["draft"]);
     assert!(info(&d, block)["ask"]["message"].as_str().unwrap().ends_with(&format!("drafted a comment on {REPO}#{N}")));
-    let r = agent_mcp(&d, agent, "issue_new", json!({ "repo": REPO, "title": "Frobnicate needs docs" })).unwrap();
+    let r = agent_mcp(&d, agent, "draft", json!({ "kind": "issue", "repo": REPO, "title": "Frobnicate needs docs" }))
+        .unwrap();
     let drafted = r["block"].as_u64().unwrap();
     assert_eq!(r["status"], "waiting", "{r}");
     d.wait_for("the new issue's card", || info(&d, drafted)["ask"]["id"] == "new");

@@ -52,7 +52,7 @@ stack.
 | Test | #93's box |
 |---|---|
 | `forgejo_a_review_asked_of_you_reaches_the_rail_and_is_approved_as_you` | a review request reaches the rail and the phone (a push), approve, Forgejo shows it as you |
-| `forgejo_an_agents_pr_comment_waits_and_goes_out_edited_as_you` | `pr_comment` over MCP waits as a card, edited, sent, on Forgejo with `history` naming who sent it |
+| `forgejo_an_agents_pr_comment_waits_and_goes_out_edited_as_you` | MCP's `draft` (kind `comment`) waits as a card, edited, sent, on Forgejo with `history` naming who sent it |
 | `forgejo_agent_on_this_works_on_a_branch_and_its_pr_joins_the_tab` | *Agent on this* on a real issue: `iNN-<slug>`, the PR block joins the tab |
 | `forgejo_live_updates_make_a_real_hook_the_forge_delivers_to` | *Live updates*: the hook is made with your token, Forgejo delivers, the block hears a comment inside a minute-long poll, off removes it |
 | `forgejo_a_red_check_is_a_failure_with_its_link` | a red status is a failure with its run's link |

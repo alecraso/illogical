@@ -266,13 +266,16 @@ impl CacheHints for ReadResourceResult {
 const INSTRUCTIONS_BASE: &str = "illogical runs commands in durable terminal panes that the user can watch \
 (on the web and the phone) and take over. Use run to start a build or a dev server in a pane (wait: true \
 to wait for it), wait and read_output to follow it (they return \"still running\" with an offset: call \
-again), list to see what's there, open_port to show a dev server in a browser block beside its terminal, \
-attach to put a file (a screenshot) into a terminal or an agent block, open_pr to show a pull request (read_pr reads it; pr_comment, pr_review and pr_merge draft writes the user sends), open_issue to show an issue (read_issue reads it; issue_comment and issue_new draft what the user sends), invite_person to ask the user to bring someone into the session (read_invite says what became of it), start_agent and agent_respond to supervise another agent, list_conversations and open_conversation to \
-pick up a Claude Code conversation from a terminal or the desktop app, and history and search for what \
-happened before. Output is paged: pass next_offset back as offset. \
-Blocks you can open: a terminal (run), a browser (open_port), a diff (show_changes), a file (show_file), \
-a PR or issue (open_pr, open_issue), a \
-conversation (open_conversation); show one instead of describing it, and wait (until idle or needs_input) instead of polling output. \
+again; read_output with screen: true is what a full-screen program shows), list to see what's there (kind \
+conversations: Claude Code conversations from a terminal or the desktop app), attach to put a file (a \
+screenshot) into a terminal or an agent block, show to put a block in front of the user beside a pane, \
+read_forge to read a PR or issue block and draft for a comment, review, merge or new issue the user sends, \
+invite_person to ask the user to bring someone into the session (read_invite says what became of it), \
+start_agent and agent_respond to supervise another agent, \
+history for what happened before (kind output: what panes printed). Output is paged: pass next_offset \
+back as offset. show's kinds: port (a dev server in a browser block beside its terminal), changes (a \
+diff), file (at a line), pr, issue, conversation (a Claude Code conversation, to continue or fork); show \
+one instead of describing it, and wait (until idle or needs_input) instead of polling output. \
 Claude Code hooks put your questions (illogical ask), permission prompts (illogical hook, which anyone allowed can \
 answer), follow-ups (illogical inbox) and attention on cards; without them your questions stay in the terminal. \
 `illogical hooks install` adds them: ask your person first.";
@@ -286,7 +289,7 @@ pub(crate) fn instructions(labs: bool) -> String {
     if !labs {
         return INSTRUCTIONS_BASE.to_owned();
     }
-    let at = INSTRUCTIONS_BASE.find("list_conversations and").expect("the instructions name list_conversations");
+    let at = INSTRUCTIONS_BASE.find("history for what").expect("the instructions name history");
     format!("{}{THREAD_INSTRUCTIONS}{}", &INSTRUCTIONS_BASE[..at], &INSTRUCTIONS_BASE[at..])
 }
 

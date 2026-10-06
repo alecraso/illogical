@@ -118,6 +118,13 @@ async fn refused(s: &Session, tool: &str, args: Value) -> String {
     r.content.iter().filter_map(|c| c.as_text().map(|t| t.text.clone())).collect()
 }
 
+/// The kinds a grouped tool lists (`show`'s, say).
+fn kinds(tools: &[rmcp::model::Tool], tool: &str) -> Vec<String> {
+    let t = tools.iter().find(|t| t.name == tool).unwrap_or_else(|| panic!("no {tool}"));
+    let kinds = t.input_schema.get("properties").and_then(|p| p.get("kind")).and_then(|k| k.get("enum"));
+    kinds.and_then(Value::as_array).into_iter().flatten().filter_map(|k| k.as_str().map(str::to_owned)).collect()
+}
+
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
@@ -129,19 +136,28 @@ async fn tools_through_the_stdio_bridge() {
     let progress = client.progress.clone();
     let s = bridge(&d, client).await;
 
-    // The tools, with honest annotations.
+    // The tools, with honest annotations: grouped by kind (#349).
     let tools = s.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 32);
+    assert_eq!(tools.len(), 18);
     // Fountain, studio apps, chant workspaces and chat aren't listed without
-    // `labs`, but a caller who names one still reaches it (here: no Fountain
-    // login, so it says so).
-    for name in
-        ["open_fountain", "list_agents", "read_agent", "open_app", "open_workspace", "read_thread", "post_thread"]
-    {
+    // `labs` (chat's tools, the others' kinds), but a caller who names one
+    // still reaches it (here: no Fountain login, so it says so).
+    for name in ["read_thread", "post_thread"] {
         assert!(tools.iter().all(|t| t.name != name), "{name} is listed");
     }
+    for (tool, kind) in [
+        ("show", "fountain"),
+        ("list", "fountain_agents"),
+        ("list", "fountain_agent"),
+        ("show", "app"),
+        ("show", "workspace"),
+    ] {
+        assert!(!kinds(&tools, tool).contains(&kind.to_owned()), "{tool} kind {kind} is listed");
+    }
+    let said = refused(&s, "list", json!({ "kind": "fountain_agent", "name": "nobody" })).await;
+    assert!(!said.contains("no tool") && !said.contains("no kind"), "an unlisted kind still answers: {said}");
     let said = refused(&s, "read_agent", json!({ "name": "nobody" })).await;
-    assert!(!said.contains("no tool"), "an unlisted tool still answers: {said}");
+    assert!(!said.contains("no tool") && !said.contains("no kind"), "so does its name before #349: {said}");
     let ro = |n: &str| tools.iter().find(|t| t.name == n).unwrap().annotations.as_ref().unwrap().read_only_hint;
     assert_eq!(
         (ro("read_output"), ro("wait"), ro("run"), ro("close")),
@@ -224,8 +240,12 @@ async fn tools_through_the_stdio_bridge() {
     call(&s, "send_input", json!({ "pane": p, "text": "echo typed-$((2+2))" })).await;
     let m = call(&s, "wait", json!({ "pane": p, "until": "match", "pattern": "typed-4", "timeout": 10 })).await;
     assert_eq!(m["match"], "typed-4", "{m}");
-    let screen = call(&s, "capture_screen", json!({ "pane": p })).await;
-    assert!(screen["text"].as_str().unwrap().contains("typed-4"));
+    let screen = call(&s, "read_output", json!({ "pane": p, "screen": true })).await;
+    assert!(screen["text"].as_str().unwrap().contains("typed-4"), "{screen}");
+    // By its name before #349 too, though it isn't listed.
+    assert!(tools.iter().all(|t| t.name != "capture_screen"));
+    let old = call(&s, "capture_screen", json!({ "pane": p })).await;
+    assert!(old["text"].as_str().unwrap().contains("typed-4"), "{old}");
 
     // list, search, and the resources.
     let l = call(&s, "list", json!({})).await;
@@ -233,8 +253,15 @@ async fn tools_through_the_stdio_bridge() {
         l["panes"].as_array().unwrap().iter().any(|e| e["pane"] == p && e["started_by"] == "mcp:claude-code"),
         "{l}"
     );
-    let hits = call(&s, "search", json!({ "pattern": "built-42" })).await;
+    let hits = call(&s, "history", json!({ "kind": "output", "pattern": "built-42" })).await;
     assert!(hits["hits"].as_array().unwrap().iter().any(|h| h["pane"] == pane), "{hits}");
+    let old = call(&s, "search", json!({ "pattern": "built-42" })).await;
+    assert!(old["hits"].as_array().unwrap().iter().any(|h| h["pane"] == pane), "{old}");
+    // A grouped tool says what's wrong with a call.
+    let why = refused(&s, "show", json!({ "port": 1 })).await;
+    assert!(why.contains("show needs a kind"), "{why}");
+    let why = refused(&s, "history", json!({ "kind": "output", "pattern": "x", "failed": true })).await;
+    assert!(why.contains("failed isn't an argument of history kind output"), "{why}");
     let templates = s.list_all_resource_templates().await.unwrap();
     assert_eq!(templates.len(), 3);
     let res = s
@@ -255,6 +282,54 @@ async fn tools_through_the_stdio_bridge() {
     assert!(why.contains(&format!("pane %{pane} is gone")) && why.contains("exited 0"), "{why}");
     let gone = call(&s, "read_output", json!({ "pane": pane })).await;
     assert!(gone["text"].as_str().unwrap().contains("built-42"), "{gone}");
+    s.cancel().await.unwrap();
+}
+
+/// `show`'s blocks (#349): a diff of a repository and a file at a line, by
+/// kind, as show_changes and show_file did; and by those names too.
+#[tokio::test(flavor = "multi_thread")]
+async fn show_opens_each_kind_of_block() {
+    let d = Daemon::child();
+    let s = bridge(&d, Client::named("claude-code")).await;
+    let repo = d.sessions.join("shown");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q"]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["commit", "-qm", "a"]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+
+    let c = call(&s, "show", json!({ "kind": "changes", "repo": repo })).await;
+    let files = c["files"].as_array().unwrap();
+    assert_eq!((files.len(), files[0]["path"].as_str(), files[0]["add"].as_u64()), (1, Some("a.txt"), Some(1)), "{c}");
+    let diff = d.get(&format!("/api/blocks/{}", c["block"]))["info"]["type"].clone();
+    assert_eq!(diff, "diff");
+
+    let path = repo.join("a.txt").display().to_string();
+    let f = call(&s, "show", json!({ "kind": "file", "path": path, "line": 2 })).await;
+    let info = d.get(&format!("/api/blocks/{}", f["block"]))["info"].clone();
+    assert_eq!(info["type"], "file", "{info}");
+    assert!(f["summary"].as_str().unwrap().contains("at line 2"), "{f}");
+
+    // The old names reach the same kinds.
+    let old = call(&s, "show_file", json!({ "path": path })).await;
+    assert_eq!(d.get(&format!("/api/blocks/{}", old["block"]))["info"]["type"], "file");
+    let old = call(&s, "show_changes", json!({ "repo": repo })).await;
+    assert_eq!(old["files"].as_array().unwrap().len(), 1, "{old}");
+    // And a PR or issue block is what read_forge and draft take.
+    let why = refused(&s, "read_forge", json!({ "block": f["block"] })).await;
+    assert!(why.contains("isn't a PR or issue block"), "{why}");
+    let why = refused(&s, "draft", json!({ "kind": "comment", "block": f["block"], "body": "hi" })).await;
+    assert!(why.contains("isn't a PR or issue block"), "{why}");
     s.cancel().await.unwrap();
 }
 
@@ -280,7 +355,7 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     // (and retries it, then gives up: no tools).
     let tools = s.list_tools(None).await.unwrap();
     assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
-    assert_eq!(tools.tools.len(), 32, "without labs");
+    assert_eq!(tools.tools.len(), 18, "without labs");
     let t = s.list_resource_templates(None).await.unwrap();
     assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
     let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
@@ -341,8 +416,12 @@ async fn http_with_a_token_until_it_is_revoked() {
         d.post("/api/mcp/tokens", json!({ "name": "watcher", "scope": "read" }))["token"].as_str().unwrap().to_owned();
     let w = http(&d, &ro, Client::named("watcher")).await.unwrap();
     // (Chat's read_thread is among the read-only tools only with labs.)
-    assert_eq!(w.list_all_tools().await.unwrap().len(), 12);
+    assert_eq!(w.list_all_tools().await.unwrap().len(), 7);
     assert!(refused(&w, "run", json!({ "command": "true" })).await.contains("may only read"));
+    // Grouped or by an old name, a write is still a write.
+    assert!(refused(&w, "show", json!({ "kind": "port", "port": 1 })).await.contains("may only read"));
+    assert!(refused(&w, "open_port", json!({ "port": 1 })).await.contains("show changes things"));
+    call(&w, "list", json!({ "kind": "devices" })).await;
     // #234: nor ask to invite anyone.
     let invite = json!({ "who": "tailnet:sam@example.com", "pane": 1, "note": "x" });
     assert!(refused(&w, "invite_person", invite).await.contains("may only read"));
@@ -472,7 +551,7 @@ fn an_agent_block_works_in_its_own_tab() {
             .unwrap();
     assert_eq!(m["state"], "matched", "{m}");
     // ...and the page in a browser block beside itself.
-    let b = agent_mcp(&d, a, "open_port", json!({ "port": port })).unwrap()["block"].as_u64().unwrap();
+    let b = agent_mcp(&d, a, "show", json!({ "kind": "port", "port": port })).unwrap()["block"].as_u64().unwrap();
     assert_eq!(tab_of(&d, b), tab_of(&d, a));
     let info = d.get(&format!("/api/blocks/{b}"))["info"].clone();
     assert_eq!((info["type"].as_str(), info["started_by"]["block"].as_u64()), (Some("browser"), Some(a)), "{info}");
@@ -489,7 +568,7 @@ fn an_agent_block_works_in_its_own_tab() {
         ("close", json!({ "pane": other })),
         ("run", json!({ "command": "true", "split": other })),
         ("run", json!({ "command": "true", "vm": true })),
-        ("open_port", json!({ "port": port, "beside": other })),
+        ("show", json!({ "kind": "port", "port": port, "beside": other })),
     ] {
         let e = agent_mcp(&d, a, tool, args.clone()).expect_err(&format!("{tool} {args}"));
         assert!(e.contains("own tab") || e.contains("another tab"), "{tool}: {e}");
@@ -584,7 +663,7 @@ fn an_agent_attaches_a_screenshot_to_a_pane() {
     assert!(pasted.ends_with(".png") && pasted.contains("illogical-uploads"), "{r}");
     assert_eq!(std::fs::read(&pasted).unwrap(), png());
     d.wait_for("the path on its screen", || {
-        let screen = agent_mcp(&d, a, "capture_screen", json!({ "pane": sh })).unwrap();
+        let screen = agent_mcp(&d, a, "read_output", json!({ "pane": sh, "screen": true })).unwrap();
         screen["text"].as_str().unwrap_or("").replace('\n', "").contains(&pasted)
     });
 
@@ -744,7 +823,8 @@ async fn prompt_agent_waits_for_the_turn() {
     assert_eq!(v["result"], "blocked", "{v}");
 }
 
-/// The `labs` file in the state dir lists the other seven tools and brings
+/// The `labs` file in the state dir lists chat's two tools and the other
+/// five jobs (kinds of show and list), and brings
 /// back the thread text in the instructions, and removing it takes them away
 /// again, both with no restart. Each is read where it's used, on a `stat`.
 #[tokio::test(flavor = "multi_thread")]
@@ -753,16 +833,23 @@ async fn labs_lists_all_the_tools_and_the_thread_text() {
     let s = bridge(&d, Client::named("claude-code")).await;
     let names = |tools: &[rmcp::model::Tool]| tools.iter().map(|t| t.name.to_string()).collect::<Vec<_>>();
     let instructions = |s: &Session| s.peer_info().and_then(|i| i.instructions.clone()).unwrap_or_default();
-    assert_eq!(s.list_all_tools().await.unwrap().len(), 32);
+    assert_eq!(s.list_all_tools().await.unwrap().len(), 18);
     assert!(!instructions(&s).contains("read_thread"), "{}", instructions(&s));
 
     std::fs::write(d.state.join("labs"), "").unwrap();
     let with = s.list_all_tools().await.unwrap();
-    assert_eq!(with.len(), 39, "{:?}", names(&with));
-    for name in
-        ["open_fountain", "list_agents", "read_agent", "open_app", "open_workspace", "read_thread", "post_thread"]
-    {
+    assert_eq!(with.len(), 20, "{:?}", names(&with));
+    for name in ["read_thread", "post_thread"] {
         assert!(with.iter().any(|t| t.name == name), "{name} isn't listed with labs");
+    }
+    for (tool, kind) in [
+        ("show", "fountain"),
+        ("list", "fountain_agents"),
+        ("list", "fountain_agent"),
+        ("show", "app"),
+        ("show", "workspace"),
+    ] {
+        assert!(kinds(&with, tool).contains(&kind.to_owned()), "{tool} kind {kind} isn't listed with labs");
     }
     // A new connection's instructions have the thread text.
     let s2 = bridge(&d, Client::named("claude-code")).await;
@@ -770,7 +857,9 @@ async fn labs_lists_all_the_tools_and_the_thread_text() {
     s2.cancel().await.unwrap();
 
     std::fs::remove_file(d.state.join("labs")).unwrap();
-    assert_eq!(s.list_all_tools().await.unwrap().len(), 32);
+    let without = s.list_all_tools().await.unwrap();
+    assert_eq!(without.len(), 18);
+    assert!(!kinds(&without, "show").contains(&"fountain".to_owned()));
     s.cancel().await.unwrap();
 }
 

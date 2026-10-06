@@ -12,7 +12,7 @@
 //! What's checked, as #93's boxes ask for a person to check by hand:
 //! - a review asked of you reaches the rail (and the phone) and is approved
 //!   from there; the forge shows the approval as you;
-//! - an agent's `pr_comment` (MCP) waits as a card, is edited and sent, and
+//! - an agent's comment (MCP's `draft`) waits as a card, is edited and sent, and
 //!   is on the forge as you, with the history naming who sent it;
 //! - *Agent on this* on a real issue: the agent's branch, and its PR block
 //!   joining the tab once the branch's PR is opened on the forge;
@@ -387,13 +387,13 @@ fn forgejo_an_agents_pr_comment_waits_and_goes_out_edited_as_you() {
     let d = fj.daemon(&dir, AUTHOR, &[]);
     let agent = d.open("hi");
     d.wait(agent, "idle");
-    // The agent opens the PR beside itself, as open_pr does.
-    let opened = agent_mcp(&d, agent, "open_pr", json!({ "pr": pr.url }));
+    // The agent opens the PR beside itself, as show (kind pr) does.
+    let opened = agent_mcp(&d, agent, "show", json!({ "kind": "pr", "pr": pr.url }));
     let block = opened["block"].as_u64().unwrap_or_else(|| panic!("{opened}"));
     read(&d, block);
 
     // The agent drafts through MCP: nothing reaches Forgejo.
-    let r = agent_mcp(&d, agent, "pr_comment", json!({ "block": block, "body": "LGTM, one nit" }));
+    let r = agent_mcp(&d, agent, "draft", json!({ "kind": "comment", "block": block, "body": "LGTM, one nit" }));
     assert_eq!(r["status"], "waiting", "{r}");
     until("the card", 20, || info(&d, block)["ask"]["id"] == r["draft"]);
     assert_eq!(info(&d, block)["ask"]["schema"]["properties"]["body"]["default"], "LGTM, one nit");

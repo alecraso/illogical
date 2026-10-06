@@ -1158,7 +1158,7 @@ impl ForgeBlock {
             }
             let waiting = self.config.lock().unwrap().drafts.len();
             return Ok(json!({ "draft": id, "status": "waiting", "queued": waiting,
-                "note": "a person sends, edits or drops it; read_pr (or describe) shows what became of it" }));
+                "note": "a person sends, edits or drops it; read_forge (or describe) shows what became of it" }));
         }
         // Approving the review asked of you (the rail's `allow`): its card
         // closes saying who.

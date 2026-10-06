@@ -211,7 +211,7 @@ fn haystack(a: &Agent) -> String {
     s.to_lowercase()
 }
 
-/// One agent as a client draws it (and `list_agents` returns it).
+/// One agent as a client draws it (and MCP's `fountain_agents` returns it).
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Card {
     pub id: String,
@@ -297,7 +297,7 @@ pub fn sort(agents: &mut [Agent]) {
     agents.sort_by_key(|a| (source(a).0, a.name.to_lowercase()));
 }
 
-/// One line per agent, for `capture --text` and `list_agents`.
+/// One line per agent, for `capture --text` and MCP's `fountain_agents`.
 pub fn line(c: &Card) -> String {
     let mut s = format!("{} [{}", c.name, c.runtime);
     if !c.model.is_empty() {

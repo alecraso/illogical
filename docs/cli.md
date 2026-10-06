@@ -180,37 +180,34 @@ claude mcp add illogical -- illogical mcp
 codex mcp add illogical -- illogical mcp
 ```
 
-The tools:
+The tools. `list`, `show` and `draft` each group several jobs under a
+`kind` argument, so a client's list stays short; the tool's
+description says what each kind takes:
 
 | Tool | What it does | Reads only |
 |---|---|---|
 | `run` | A command in a new tab or split (`cwd`, `split`, `machine`, `session`, `policy`), typed into a shell so it's in history and you can take over. With `wait`, its exit code and last lines. | no |
 | `send_input` | Text (Enter after it unless `enter: false`) and named keys (`C-c`, `Up`) to a pane; to an agent block, its next prompt | no |
 | `attach` | A file (a `path` on this host, or base64 `data`) into a pane: into a terminal, its path pasted where a shell or an agent reads it (else refused unless `force`); to an agent block, with `text` as its next prompt, an image as an image | no |
-| `read_output` | A pane's output as text: the latest, from an `offset`, or its `last_command`'s. Paged (16,000 characters by default): pass `next_offset` back | yes |
-| `capture_screen` | What a pane shows now | yes |
+| `read_output` | A pane's output as text: the latest, from an `offset`, or its `last_command`'s. Paged (16,000 characters by default): pass `next_offset` back. `screen: true`: what it shows now | yes |
 | `wait` | Until `command_end`, `exit`, `match` (a `pattern`), `idle` or `needs_input`. After `timeout` seconds (100 by default) it answers "still running" with the offset: call it again | yes |
-| `list` | Panes and blocks: where, what they run, attention, who started them | yes |
+| `list` | By `kind`: `panes` (the default: where, what they run, attention, who started them), `conversations` (Claude Code's here, a terminal's or the desktop app's: `query`, `cwd`, `live`, `all`) or `devices` (the user's devices lending tools) | yes |
 | `close` | Close a pane or block | no |
-| `history` | Commands across panes, and answers and approvals with who gave them: `kind` (`command`, `answer`, `agent`), `failed` (commands only), `since` and `before` (`2d`, `36h`), `cwd`, `match` | yes |
-| `search` | Lines of output matching a regex | yes |
-| `open_port` | A browser block on a port of a pane's machine, beside it | no |
+| `history` | Commands across panes, and answers and approvals with who gave them: `kind` (`command`, `answer`, `agent`), `failed` (commands only), `since` and `before` (`2d`, `36h`), `cwd`, `match`. `kind: "output"`: lines of output matching a `pattern` instead (`since`, `limit`) | yes |
+| `show` | A block beside a pane (`beside`), by `kind`: `port` (a browser on a port of the pane's machine), `changes` (a diff of its repository, `rev_a`, `rev_b`; returns the files with +/−), `file` (at a `line`, followed live), `pr` and `issue` (a link, `OWNER/REPO#N`, or N in `dir`'s repo; returns it as text), `conversation` (a Claude Code conversation by `id`; `then`: `continue` or `fork`) | no |
 | `start_agent` | An agent block (Claude Code, Codex, any ACP agent) with a prompt | no |
 | `prompt_agent` | A prompt to an agent (an agent block, or Claude Code or Codex in a terminal), waited through in one call: `done`, `needs_input` with its question, or `stalled` with its screen's last lines when nothing starts within 5 seconds. An agent waiting on someone isn't typed at (`answering` to answer it) | no |
 | `agent_respond` | Allow or deny an agent's pending approval, or answer or skip its question | no |
-| `list_conversations` | Claude Code conversations here (a terminal's, the desktop app's): `query`, `cwd`, `live`, `all` | yes |
-| `open_conversation` | One as an agent block beside a pane; `then`: `continue` or `fork` | no |
-| `read_file` | A text file on this host or a pane's machine, paged | yes |
-| `show_changes` | A diff block beside a pane: what changed in its repository (`rev_a`, `rev_b`); returns the files with +/− | no |
-| `show_file` | A file block beside a pane, at a `line`, followed live | no |
-| `open_pr` | A pull request (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
-| `read_pr` | A PR block as text, what it waits on the user for, and your drafts (waiting, sent with who and a link, dropped) | yes |
-| `open_issue` | An issue (link, `OWNER/REPO#N`, or N in `dir`'s repo) as a block beside a pane; returns it as text | no |
-| `read_issue` | An issue block as text: linked PRs, the agent on it and its PR, what it waits on the user for, your drafts | yes |
-| `issue_comment`, `issue_new` | Draft a comment on an issue block, or a new issue (a block beside you holding the draft): a card the user sends, edits or drops | no |
-| `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
+| `read_forge` | A PR or issue block as text: what it waits on the user for, an issue's agent and its PR, and your drafts (waiting, sent with who and a link, dropped) | yes |
+| `draft` | By `kind`: `comment` on a PR or issue block, `review` (`event`) or `merge` of a PR block, or `issue`, a new one (a block beside you holding the draft). Each is a card the user sends, edits or drops; returns the draft's id at once | no |
 | `invite_person` | Ask to bring someone (`who`: a teammate, a grantee, `tailnet:<login>`) into the pane's session as a viewer or an editor (`role`), with a `note`: a card on an invite block beside you that only the session's owner sends (editing the role, note or drive trust) or declines. `pane` defaults to your own (`illogical mcp` in a pane sends `$ILLOGICAL_PANE`); returns the draft's id at once | no |
 | `read_invite` | What became of a draft: `waiting`, `sent` (grant, `delivery`), `declined` (reason), `dropped` (unanswered for a day, or its block closed by the owner, the only one who may) or `failed`; who settled it, when | yes |
+| `read_file` | A text file on this host or a pane's machine, paged | yes |
+| `device_call` | A tool on one of the user's devices (`list` kind `devices`), which the user allows or denies there | no |
+
+The older tool names (`capture_screen`, `search`, `open_port`,
+`open_pr`, `pr_comment`, `read_issue` and the rest) still answer, as the
+tool and kind that do their job now; they aren't listed.
 
 Resources: `illogical://history`, and the templates
 `illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and

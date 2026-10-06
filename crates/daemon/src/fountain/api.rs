@@ -8,7 +8,7 @@
 //! default ones (S24 saw Python's get a 403).
 //!
 //! The types keep what illogical reads and pass the rest through
-//! (`extra`), so `read_agent` returns the whole recipe. Fountain never
+//! (`extra`), so MCP's `fountain_agent` returns the whole recipe. Fountain never
 //! returns a secret's value: an MCP server's header or env holds a
 //! `${VAR}` reference, or a value someone typed in.
 
@@ -152,7 +152,7 @@ pub struct Agent {
     #[serde(default)]
     pub updated_at: Option<String>,
     /// The rest (permission policy, session config, ids of what it may
-    /// attach), passed through to `read_agent`.
+    /// attach), passed through to MCP's `fountain_agent`.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

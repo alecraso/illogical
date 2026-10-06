@@ -93,7 +93,7 @@ async fn an_agent_uses_a_phone() {
     .await;
 
     let listed = loop {
-        let r = call(&s, "list_devices", json!({})).await;
+        let r = call(&s, "list", json!({ "kind": "devices" })).await;
         let v = r.structured_content.unwrap();
         if v["devices"].as_array().is_some_and(|a| !a.is_empty()) {
             break v;
@@ -153,6 +153,6 @@ async fn an_agent_uses_a_phone() {
     });
     assert_eq!(r.is_error, Some(true));
     assert!(text(&r).contains("went away"), "{}", text(&r));
-    let r = call(&s, "list_devices", json!({})).await;
+    let r = call(&s, "list", json!({ "kind": "devices" })).await;
     assert_eq!(r.structured_content.unwrap()["devices"], json!([]));
 }

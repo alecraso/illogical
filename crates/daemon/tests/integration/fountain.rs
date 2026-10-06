@@ -8,7 +8,7 @@
 //! comes from, and the filters (kept in the config); `capture --text`; *Run
 //! on Fountain* opening an agent block beside it; *Run here* refused with
 //! its reason; *Spec* opening the agent-specs file, or Fountain's page;
-//! `GET /api/fountain/agents`; and MCP's `list_agents` and `read_agent`
+//! `GET /api/fountain/agents`; and MCP's `list` kinds `fountain_agents` and `fountain_agent`
 //! from an agent.
 //!
 //! M45b's runner view, against the same fake with synthetic
@@ -489,23 +489,27 @@ fn agents_through_mcp() {
     let agent = d.open("hello");
     assert_eq!(d.wait(agent, "idle"), "done");
     // A local agent finds designer by its skill.
-    let r = agent_mcp(&d, agent, "list_agents", json!({ "query": "frontend-design" })).unwrap();
+    let r = agent_mcp(&d, agent, "list", json!({ "kind": "fountain_agents", "query": "frontend-design" })).unwrap();
     assert_eq!(r["agents"].as_array().unwrap().len(), 1, "{r}");
     assert_eq!(r["agents"][0]["name"], "designer");
     assert!(r["agents"][0]["skills"].as_array().unwrap().contains(&json!("frontend-design")));
-    let r = agent_mcp(&d, agent, "list_agents", json!({ "source": "agent-specs" })).unwrap();
+    let r = agent_mcp(&d, agent, "list", json!({ "kind": "fountain_agents", "source": "agent-specs" })).unwrap();
     assert_eq!(r["agents"].as_array().unwrap().len(), 23);
     // Read within the poll: one read of the list for both.
     assert_eq!(fz.f.gets("agents"), 1);
     // The whole recipe, ${VAR}s as they are.
-    let r = agent_mcp(&d, agent, "read_agent", json!({ "name": "pr-reviewer" })).unwrap();
+    let r = agent_mcp(&d, agent, "list", json!({ "kind": "fountain_agent", "name": "pr-reviewer" })).unwrap();
     assert_eq!(r["name"], "pr-reviewer");
     assert_eq!(r["source"], "agent-specs");
     assert_eq!(r["mcp_servers"]["github"]["headers"]["Authorization"], "Bearer ${X}");
     assert!(r["system"].as_str().is_some());
-    assert!(agent_mcp(&d, agent, "read_agent", json!({ "name": "nobody" })).unwrap_err().contains("no agent"));
-    // open_fountain: the catalog beside the agent, filtered.
-    let r = agent_mcp(&d, agent, "open_fountain", json!({ "source": "agent-specs" })).unwrap();
+    assert!(
+        agent_mcp(&d, agent, "list", json!({ "kind": "fountain_agent", "name": "nobody" }))
+            .unwrap_err()
+            .contains("no agent")
+    );
+    // show kind fountain: the catalog beside the agent, filtered.
+    let r = agent_mcp(&d, agent, "show", json!({ "kind": "fountain", "source": "agent-specs" })).unwrap();
     let block = r["block"].as_u64().unwrap();
     assert_eq!(d.state(block)["agents"].as_array().unwrap().len(), 23);
     assert_eq!(info(&d, block)["tab"], info(&d, agent)["tab"]);
@@ -587,7 +591,7 @@ fn odd_rows_and_literal_values() {
     assert!(text.contains("1 agent couldn't be read"), "{text}");
     assert!(names(&st).contains(&"fixture-nulls".to_owned()));
     // A header typed in literally is never shown: not in the block's agent
-    // call, its state or its text, nor through MCP's read_agent.
+    // call, its state or its text, nor through MCP's list kind fountain_agent.
     let r = d.call(block, "agent", json!({ "name": "fixture-literal-header" }));
     let h = &r["mcp_servers"]["tool"]["headers"];
     assert_eq!(
@@ -599,10 +603,11 @@ fn odd_rows_and_literal_values() {
     assert!(!text.contains("typed-in-literally"));
     let agent = d.open("hello");
     assert_eq!(d.wait(agent, "idle"), "done");
-    let r = agent_mcp(&d, agent, "read_agent", json!({ "name": "fixture-literal-header" })).unwrap();
+    let r =
+        agent_mcp(&d, agent, "list", json!({ "kind": "fountain_agent", "name": "fixture-literal-header" })).unwrap();
     assert_eq!(r["mcp_servers"]["tool"]["headers"]["X-Api-Key"], "<redacted>", "{r}");
     assert!(!r.to_string().contains("typed-in-literally"));
-    let r = agent_mcp(&d, agent, "list_agents", json!({})).unwrap();
+    let r = agent_mcp(&d, agent, "list", json!({ "kind": "fountain_agents" })).unwrap();
     assert_eq!((r["total"].as_u64(), r["unreadable"].as_u64()), (Some(110), Some(1)));
 }
 
@@ -942,14 +947,14 @@ fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
         d.raw("POST", &format!("/api/blocks/{block}/call/follow"), Some(json!({ "conversation": "nope" })));
     assert_eq!(status, 400);
 
-    // MCP: open_fountain with view "runner", beside an agent.
+    // MCP: show kind fountain with view "runner", beside an agent.
     let me = d.open("hello");
     assert_eq!(d.wait(me, "idle"), "done");
-    let r = agent_mcp(&d, me, "open_fountain", json!({ "view": "runner" })).unwrap();
+    let r = agent_mcp(&d, me, "show", json!({ "kind": "fountain", "view": "runner" })).unwrap();
     assert!(r["text"].as_str().unwrap().contains("this host: runner-1 (unit fountain-runner active), online"), "{r}");
     let rb = r["block"].as_u64().unwrap();
     d.wait_for("its view saved", || layout_config(&d, rb)["view"] == "runner");
-    assert!(agent_mcp(&d, me, "open_fountain", json!({ "view": "nope" })).is_err());
+    assert!(agent_mcp(&d, me, "show", json!({ "kind": "fountain", "view": "nope" })).is_err());
 }
 
 #[test]
