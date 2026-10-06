@@ -49,6 +49,7 @@
 
 pub mod adapters;
 pub mod defs;
+pub mod images;
 mod link;
 pub mod transcript;
 
@@ -224,6 +225,25 @@ pub struct TurnStat {
     cost_base: Option<f64>,
 }
 
+/// A prompt waiting for the agent: its text, and images (M71) by name in
+/// the block's folder.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Queued {
+    pub text: String,
+    pub images: Vec<String>,
+}
+
+impl Queued {
+    /// What the block shows of it while it waits.
+    fn label(&self) -> String {
+        match self.images.len() {
+            0 => self.text.clone(),
+            1 => format!("{} [image]", self.text).trim_start().to_owned(),
+            n => format!("{} [{n} images]", self.text).trim_start().to_owned(),
+        }
+    }
+}
+
 /// Why we sent a request, for when its answer comes.
 #[derive(Debug, Clone, PartialEq)]
 enum Purpose {
@@ -263,7 +283,7 @@ enum Effect {
     /// Fountain: a turn may still be running remotely.
     CheckRemote,
     /// The agent said to try the prompt again shortly.
-    Retry(String),
+    Retry(Queued),
 }
 
 struct Inner {
@@ -282,7 +302,7 @@ struct Inner {
     caps: Value,
     title: Option<String>,
     prompt_id: Option<u64>,
-    queue: VecDeque<String>,
+    queue: VecDeque<Queued>,
     cost: Option<f64>,
     currency: Option<String>,
     turns: Vec<TurnStat>,
@@ -411,8 +431,8 @@ impl Inner {
     /// Queue a prompt for the agent. It's in the log, so a prompt queued
     /// while the agent is down survives a daemon restart; sending it takes
     /// it off (see `session/prompt` in `on_out`).
-    fn enqueue(&mut self, text: &str, front: bool) {
-        self.note(json!({ "e": "queue", "text": text, "front": front }));
+    fn enqueue(&mut self, q: &Queued, front: bool) {
+        self.note(json!({ "e": "queue", "text": q.text, "images": q.images, "front": front }));
     }
 
     /// The MCP servers a session gets: the block's own, and illogical's
@@ -476,7 +496,7 @@ impl Inner {
     /// Send a frame: log it, account for it, then write it.
     fn out(&mut self, frame: Value) {
         let secrets = self.secrets();
-        self.write_log("out", &redacted(&frame, &secrets));
+        self.write_log("out", &without_images(&redacted(&frame, &secrets)));
         self.on_out(&frame, now_ms());
         if let Some(link) = &self.link {
             link.send(frame.to_string().into_bytes());
@@ -502,10 +522,11 @@ impl Inner {
     fn on_note(&mut self, e: &Value, at: u64) {
         match e["e"].as_str().unwrap_or("") {
             "queue" => {
-                let text = e["text"].as_str().unwrap_or_default().to_owned();
+                let q =
+                    Queued { text: e["text"].as_str().unwrap_or_default().to_owned(), images: strings(&e["images"]) };
                 match e["front"].as_bool() {
-                    Some(true) => self.queue.push_front(text),
-                    _ => self.queue.push_back(text),
+                    Some(true) => self.queue.push_front(q),
+                    _ => self.queue.push_back(q),
                 }
             }
             "queue_clear" => self.queue.clear(),
@@ -646,17 +667,22 @@ impl Inner {
                     "session/set_config_option" => Purpose::SetModel,
                     "session/set_mode" => Purpose::SetMode(m["params"]["modeId"].as_str().unwrap_or("").to_owned()),
                     "session/prompt" => {
-                        let text: String = m["params"]["prompt"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
+                        // An image (or, to an agent that takes none, its
+                        // path) is named in its block's `_meta` (M71).
+                        let blocks = m["params"]["prompt"].as_array().map(Vec::as_slice).unwrap_or_default();
+                        let image = |c: &Value| c["_meta"][images::META].as_str().map(str::to_owned);
+                        let text: String = blocks
+                            .iter()
+                            .filter(|c| image(c).is_none())
                             .filter_map(|c| c["text"].as_str())
                             .collect::<Vec<_>>()
                             .join("\n");
-                        if self.queue.front() == Some(&text) {
+                        let sent = Queued { text, images: blocks.iter().filter_map(image).collect() };
+                        if self.queue.front() == Some(&sent) {
                             self.queue.pop_front();
                         }
-                        self.t.user(&text, at);
+                        let Queued { text, images } = sent;
+                        self.t.user(&text, images, at);
                         self.prompt_id = Some(id);
                         self.status = Status::Working;
                         self.error = None;
@@ -753,9 +779,9 @@ impl Inner {
                         self.prompt_id = None;
                         self.status = Status::Ready;
                         self.turns.pop();
-                        if let Some(Entry::User { text, .. }) = self.t.entries.last().cloned() {
+                        if let Some(Entry::User { text, images, .. }) = self.t.entries.last().cloned() {
                             self.t.entries.pop();
-                            fx.push(Effect::Retry(text));
+                            fx.push(Effect::Retry(Queued { text, images }));
                         }
                     }
                     (Purpose::Prompt, result) => {
@@ -1027,7 +1053,7 @@ impl Inner {
             "current_tool": self.t.current_tool().map(|t| json!({ "id": t.id, "title": t.title, "kind": t.kind })),
             "pending": self.pending,
             "asks": self.asks.iter().map(|a| &a.ask).collect::<Vec<_>>(),
-            "queued": self.queue,
+            "queued": self.queue.iter().map(Queued::label).collect::<Vec<_>>(),
             "cost": self.cost.map(|c| json!({ "total": c, "currency": self.currency, "last_turn": self.turns.last().and_then(|t| t.cost) })),
             "tokens": { "total": total_tokens, "last_turn": self.turns.last().and_then(|t| t.tokens.clone()) },
             "turns": self.turns.len(),
@@ -1117,7 +1143,7 @@ impl Agent {
     fn begin(&self) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(p) = inner.cfg.prompt.take() {
-            inner.enqueue(&p, false);
+            inner.enqueue(&Queued { text: p, images: vec![] }, false);
         }
         if inner.cfg.import.is_some() {
             if let Some(t) = inner.cfg.import.as_ref().and_then(|i| i.title.clone()) {
@@ -1587,12 +1613,12 @@ async fn run(
                         _ => {}
                     }
                     for f in fx.drain(..) {
-                        if let Effect::Retry(text) = &f {
+                        if let Effect::Retry(q) = &f {
                             retries += 1;
                             if retries > MAX_RETRIES {
                                 g.note(json!({ "e": "error", "message": "The agent kept asking to retry; send it again later" }));
                             } else {
-                                g.enqueue(text, true);
+                                g.enqueue(q, true);
                                 retry_at = Some(tokio::time::Instant::now() + RETRY_AFTER);
                             }
                             continue;
@@ -1693,6 +1719,12 @@ fn refresh_import(ctx: &BlockCtx, g: &mut Inner) -> bool {
         // Only what was appended since (#80); a held change rereads none.
         if let Ok(new) = g.follow.read(Path::new(&imp.path)) {
             if new || g.import_stamp.is_none() {
+                // Its prompts' images, kept for clients to show (M71).
+                for bytes in g.follow.take_images() {
+                    if let Err(e) = images::keep(&ctx.dir, &bytes) {
+                        warn!(block = ctx.id, error = %e, "can't keep an imported image");
+                    }
+                }
                 g.t = Transcript::from_entries(g.follow.entries(g.held.is_none()));
                 changed = true;
             }
@@ -1869,6 +1901,23 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
 /// A frame as the log keeps it: without illogical's MCP token (M16), and
 /// (M44) without a worn Fountain agent's secrets: its servers' headers and
 /// env, and any of `secrets` anywhere else.
+/// A prompt as the log keeps it: an image we kept (M71) by its name in the
+/// block's folder, not its data.
+fn without_images<'a>(frame: &'a Value) -> std::borrow::Cow<'a, Value> {
+    use std::borrow::Cow;
+    let kept = |c: &Value| c["_meta"][images::META].is_string() && c.get("data").is_some();
+    if !frame["params"]["prompt"].as_array().is_some_and(|p| p.iter().any(kept)) {
+        return Cow::Borrowed(frame);
+    }
+    let mut f = frame.clone();
+    for c in f["params"]["prompt"].as_array_mut().into_iter().flatten().filter(|c| kept(c)) {
+        if let Some(o) = c.as_object_mut() {
+            o.remove("data");
+        }
+    }
+    Cow::Owned(f)
+}
+
 fn redacted<'a>(frame: &'a Value, secrets: &[String]) -> std::borrow::Cow<'a, Value> {
     use std::borrow::Cow;
     let ours = |s: &Value| s["name"] == crate::mcp::SERVER_NAME;
@@ -1959,9 +2008,31 @@ fn send_next(ctx: &BlockCtx, g: &mut Inner) {
     if g.status != Status::Ready || g.prompt_id.is_some() || g.cfg.session_id.is_none() {
         return;
     }
-    let Some(text) = g.queue.front().cloned() else { return };
+    let Some(q) = g.queue.front().cloned() else { return };
     let session = g.session();
-    let mut params = json!({ "sessionId": session, "prompt": [{ "type": "text", "text": text }] });
+    let mut prompt = vec![];
+    if !q.text.is_empty() {
+        prompt.push(json!({ "type": "text", "text": q.text }));
+    }
+    // M71: images as image blocks to an agent that takes them; to one that
+    // doesn't, their paths (on this host) for it to read.
+    let takes = g.caps["promptCapabilities"]["image"] == true;
+    for name in &q.images {
+        let block = match images::block(&ctx.dir, name) {
+            Ok(b) if takes => b,
+            Ok(_) => json!({
+                "type": "text",
+                "text": images::path(&ctx.dir, name).map(|p| p.display().to_string()).unwrap_or_default(),
+                "_meta": { images::META: name },
+            }),
+            Err(e) => {
+                warn!(block = ctx.id, image = %name, error = %e, "can't read a queued image");
+                json!({ "type": "text", "text": format!("[image {name}: gone]"), "_meta": { images::META: name } })
+            }
+        };
+        prompt.push(block);
+    }
+    let mut params = json!({ "sessionId": session, "prompt": prompt });
     if g.cfg.def.agent == Kind::Fountain {
         params["_meta"] = json!({ "clientRequestId": format!("illogical-{}-{}", ctx.id, g.next_id) });
     }
@@ -2172,8 +2243,16 @@ impl Agent {
         Ok(json!({ "cancelled": true }))
     }
 
+    /// `send {text, files?}`: the next prompt. `files` (M71) are paths M70's
+    /// upload route answered for this block.
     fn send(&self, args: &Value, by: Option<&str>) -> Result<Value, String> {
-        let text = args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or("send needs {\"text\": …}")?;
+        let text = args["text"].as_str().map(str::trim).unwrap_or_default();
+        let files = strings(&args["files"]);
+        if text.is_empty() && files.is_empty() {
+            return Err("send needs {\"text\": …}".into());
+        }
+        let mut q = Queued { text: text.to_owned(), images: vec![] };
+        attach(&self.ctx, &mut q, &files)?;
         let mut g = self.inner.lock().unwrap();
         if let Some(by) = by {
             // A follow-up from someone (M29): the transcript says whose.
@@ -2182,7 +2261,7 @@ impl Agent {
         if matches!(g.status, Status::Exited | Status::Stopped) {
             self.continue_import(&mut g)?;
         }
-        g.enqueue(text, false);
+        g.enqueue(&q, false);
         g.error = None;
         match g.status {
             Status::Exited | Status::Stopped => self.spawn(&mut g),
@@ -2320,6 +2399,7 @@ impl Block for Agent {
                 Ok(json!({}))
             }
             "state" => Ok(self.state()),
+            "image" => images::read(&self.ctx.dir, args["name"].as_str().unwrap_or_default()),
             m => Err(no_method(BlockType::Agent, m)),
         };
         Box::pin(async move { result })
@@ -2380,6 +2460,35 @@ impl Block for Agent {
             at_ms: e.ask.at_ms,
         })
     }
+}
+
+/// A list of strings, skipping anything else.
+fn strings(v: &Value) -> Vec<String> {
+    v.as_array().into_iter().flatten().filter_map(|s| s.as_str().map(str::to_owned)).collect()
+}
+
+/// A prompt's files (M71), uploaded for this block with M70's route: an
+/// image is kept in the block's folder (and its upload goes); anything else
+/// goes as its path.
+fn attach(ctx: &BlockCtx, q: &mut Queued, files: &[String]) -> Result<(), String> {
+    #[cfg(unix)]
+    for f in files {
+        let path = crate::upload::take(ctx.id, f).map_err(|e| format!("{f}: {e}"))?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("{f}: {e}"))?;
+        if images::sniff(&bytes).is_some() {
+            q.images.push(images::keep(&ctx.dir, &bytes).map_err(|e| format!("can't keep {f}: {e}"))?);
+            let _ = std::fs::remove_file(&path);
+        } else {
+            let sep = if q.text.is_empty() { "" } else { "\n\n" };
+            q.text = format!("{}{sep}{}", q.text, path.display());
+        }
+    }
+    #[cfg(not(unix))]
+    if !files.is_empty() {
+        let _ = (ctx, q);
+        return Err("files can't be attached on this host yet".into());
+    }
+    Ok(())
 }
 
 /// " by Sam", when a note says who (M29).

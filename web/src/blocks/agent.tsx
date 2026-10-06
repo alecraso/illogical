@@ -1,7 +1,8 @@
 // Agent blocks (M6b): an agent run as messages, thoughts and tool-call
 // cards, with its commands' output in a read-only terminal, permission
 // requests as approve/deny cards, questions and forms as cards (M6c), and a
-// composer. Works the same on a phone.
+// composer, which takes images and files pasted, dropped or picked (M71).
+// Works the same on a phone.
 
 import { render, type ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -16,6 +17,7 @@ import { answeredLine, mayAnswer } from "../ui/term-ask";
 import { registerBlock, type BlockView } from "./view";
 import { openFile } from "./diff";
 import { AskCard, headline, type Ask, type Question } from "./ask";
+import { pick, store } from "../upload";
 
 export interface Tool {
   type: "tool";
@@ -40,7 +42,7 @@ export interface Tool {
 type Mark = { forgotten?: boolean };
 
 export type Entry =
-  | ({ type: "user"; text: string; at_ms: number } & Mark)
+  | ({ type: "user"; text: string; images?: string[]; at_ms: number } & Mark)
   | ({ type: "agent"; text: string; id?: string } & Mark)
   | ({ type: "thought"; text: string; id?: string } & Mark)
   | ({ type: "note"; text: string; at_ms: number } & Mark)
@@ -339,13 +341,102 @@ function PermCard({ client, id, p, cwd, owner }: { client: Client; id: PaneId; p
   );
 }
 
-function Composer({ client, id, s }: { client: Client; id: PaneId; s: AgentState }) {
+/** Images the block keeps (M71), fetched once each: a URL to show. */
+const kept = new Map<string, Promise<string | null>>();
+
+function keptImage(client: Client, id: PaneId, name: string): Promise<string | null> {
+  const key = `${id}/${name}`;
+  let p = kept.get(key);
+  if (!p) {
+    p = client
+      .request("POST", `/api/blocks/${id}/call/image`, { name })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const { mime, data } = await res.json<{ mime: string; data: string }>();
+        const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+        return URL.createObjectURL(new Blob([bytes], { type: mime }));
+      })
+      .catch(() => null);
+    kept.set(key, p);
+  }
+  return p;
+}
+
+function KeptImage({ client, id, name }: { client: Client; id: PaneId; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void keptImage(client, id, name).then((u) => live && setUrl(u));
+    return () => {
+      live = false;
+    };
+  }, [id, name]);
+  if (!url) return <span class="agent-image missing">image</span>;
+  return (
+    <a href={url} target="_blank" rel="noopener" class="agent-image">
+      <img src={url} alt="image" />
+    </a>
+  );
+}
+
+/** A file waiting in the composer, with a preview if it's an image. */
+function Attached({ file, remove }: { file: File; remove: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file.type.startsWith("image/")) return;
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return (
+    <span class="agent-attached-file" title={file.name}>
+      {url ? <img src={url} alt={file.name} /> : <span class="agent-attached-name">{file.name || "file"}</span>}
+      <button type="button" aria-label={`Remove ${file.name || "file"}`} onClick={remove}>
+        ×
+      </button>
+    </span>
+  );
+}
+
+/** Files in a paste or a drop. */
+function filesOf(data: DataTransfer | null): File[] {
+  return data ? [...data.files] : [];
+}
+
+function Composer({
+  client,
+  id,
+  s,
+  attached,
+  setAttached,
+}: {
+  client: Client;
+  id: PaneId;
+  s: AgentState;
+  attached: File[];
+  setAttached: (f: File[]) => void;
+}) {
   const [text, setText] = useState("");
+  const [sending, setSending] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const send = async () => {
     const t = text.trim();
-    if (!t) return;
-    if (await client.api(`/api/blocks/${id}/call/send`, { text: t }, "couldn't send")) setText("");
+    if ((!t && !attached.length) || sending) return;
+    let files: string[] = [];
+    if (attached.length) {
+      try {
+        files = await store((m, p, b) => client.request(m, p, b), id, attached, setSending);
+      } catch (e) {
+        setSending(null);
+        client.toast((e as Error).message);
+        return;
+      }
+    }
+    setSending(null);
+    if (await client.api(`/api/blocks/${id}/call/send`, { text: t, files }, "couldn't send")) {
+      setText("");
+      setAttached([]);
+    }
   };
   const busy = s.status === "working" || s.status === "remote" || (s.status === "starting" && s.queued.length > 0);
   const opened = s.import && !s.import.continued;
@@ -357,10 +448,34 @@ function Composer({ client, id, s }: { client: Client; id: PaneId; s: AgentState
         void send();
       }}
     >
+      {(attached.length > 0 || sending) && (
+        <div class="agent-attached">
+          {attached.map((f, i) => (
+            <Attached key={i} file={f} remove={() => setAttached(attached.filter((_, j) => j !== i))} />
+          ))}
+          {sending && <span class="agent-attached-note">{sending}</span>}
+        </div>
+      )}
+      <button
+        type="button"
+        class="attach"
+        aria-label="Attach files"
+        title="Attach images or files"
+        onClick={() => void pick().then((f) => f.length && setAttached([...attached, ...f]))}
+      >
+        📎
+      </button>
       <textarea
         ref={area}
         rows={1}
         value={text}
+        onPaste={(e) => {
+          // A screenshot or a copied file: attached, not pasted as text.
+          const files = filesOf(e.clipboardData);
+          if (!files.length) return;
+          e.preventDefault();
+          setAttached([...attached, ...files]);
+        }}
         placeholder={busy ? "Queue a message…" : opened ? (s.import?.held ? "Fork it to go on here" : "Continue the conversation…") : "Message the agent…"}
         onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
         onKeyDown={(e) => {
@@ -376,7 +491,7 @@ function Composer({ client, id, s }: { client: Client; id: PaneId; s: AgentState
           Stop
         </button>
       ) : null}
-      <button type="submit" class="primary" disabled={!text.trim()}>
+      <button type="submit" class="primary" disabled={(!text.trim() && !attached.length) || !!sending}>
         Send
       </button>
     </form>
@@ -386,6 +501,8 @@ function Composer({ client, id, s }: { client: Client; id: PaneId; s: AgentState
 function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentState | null }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // Files for the next prompt (M71), dropped anywhere on the block.
+  const [attached, setAttached] = useState<File[]>([]);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -403,7 +520,18 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
   const answered = client.info(id)?.answered ?? null;
   const can = mayAnswer(client, id);
   return (
-    <div class="agent">
+    <div
+      class="agent"
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        const files = filesOf(e.dataTransfer);
+        if (!files.length) return;
+        e.preventDefault();
+        setAttached([...attached, ...files]);
+      }}
+    >
       <div class="agent-bar">
         <span class={`agent-status ${s.status}`}>
           {s.pending.length || open.length ? "Needs you" : s.import && !s.import.continued ? (s.import.held ? "Open elsewhere" : "Conversation") : STATUS[s.status]}
@@ -463,6 +591,13 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
               return (
                 <div key={i} class="agent-user">
                   {e.text}
+                  {e.images?.length ? (
+                    <div class="agent-images">
+                      {e.images.map((name) => (
+                        <KeptImage key={name} client={client} id={id} name={name} />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               );
             case "agent":
@@ -525,7 +660,7 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
           ))}
         </div>
       )}
-      <Composer client={client} id={id} s={s} />
+      <Composer client={client} id={id} s={s} attached={attached} setAttached={setAttached} />
     </div>
   );
 }
@@ -565,7 +700,7 @@ function plain(s: AgentState): string {
   const out: string[] = [];
   for (const e of s.entries) {
     if (e.type === "tool") out.push(`[${e.status}] ${e.title}${e.output ? `\n${strip(e.output)}` : e.text ? `\n${e.text}` : ""}`);
-    else if (e.type === "user") out.push(`> ${e.text}`);
+    else if (e.type === "user") out.push(`> ${e.text}${(e.images ?? []).map((n) => ` [image ${n}]`).join("")}`);
     else out.push(e.text);
   }
   for (const p of s.pending) out.push(`(waiting for approval: ${p.title})`);

@@ -19,6 +19,10 @@ pub enum Entry {
     /// What you sent.
     User {
         text: String,
+        /// Images sent with it, by name in the block's folder (M71; see
+        /// [`super::images`]).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<String>,
         at_ms: u64,
         #[serde(default, skip_serializing_if = "is_false")]
         forgotten: bool,
@@ -170,8 +174,8 @@ impl Transcript {
         Self { entries, tools }
     }
 
-    pub fn user(&mut self, text: &str, at_ms: u64) {
-        self.entries.push(Entry::User { text: text.to_owned(), at_ms, forgotten: false });
+    pub fn user(&mut self, text: &str, images: Vec<String>, at_ms: u64) {
+        self.entries.push(Entry::User { text: text.to_owned(), images, at_ms, forgotten: false });
     }
 
     pub fn note(&mut self, text: impl Into<String>, at_ms: u64) {
@@ -202,7 +206,7 @@ impl Transcript {
                 if let Some(t) = text_of(&u["content"]) {
                     match self.entries.last_mut() {
                         Some(Entry::User { text, .. }) => text.push_str(t),
-                        _ => self.user(t, at_ms),
+                        _ => self.user(t, vec![], at_ms),
                     }
                 }
                 Applied::Nothing
@@ -297,9 +301,12 @@ impl Transcript {
         let mut out = String::new();
         for e in &self.entries {
             match e {
-                Entry::User { text, .. } => {
+                Entry::User { text, images, .. } => {
                     out.push_str("## You\n\n");
                     out.push_str(text.trim_end());
+                    for i in images {
+                        out.push_str(&format!("\n\n[image {i}]"));
+                    }
                     out.push_str("\n\n");
                 }
                 Entry::Agent { text, .. } => {
@@ -475,7 +482,7 @@ mod tests {
     #[test]
     fn chunks_tools_and_markdown() {
         let mut t = Transcript::default();
-        t.user("run ls", 1);
+        t.user("run ls", vec![], 1);
         t.apply(&json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Let me "}}), 2);
         t.apply(&json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"look."}}), 2);
         t.apply(
@@ -518,7 +525,7 @@ mod tests {
     #[test]
     fn a_replay_merges_by_id() {
         let mut ours = Transcript::default();
-        ours.user("hi", 1);
+        ours.user("hi", vec![], 1);
         ours.apply(
             &json!({"sessionUpdate":"agent_message_chunk","messageId":"m1","content":{"type":"text","text":"Hel"}}),
             2,

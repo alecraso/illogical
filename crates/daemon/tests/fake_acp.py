@@ -28,6 +28,11 @@ Prompts:
   model          says the model set_config_option chose
   mode           says the permission mode session/set_mode chose (it knows
                  claude-agent-acp's: default, acceptEdits, plan, auto)
+  look           says what came with the prompt (M71): its images' types,
+                 and any other text blocks (an image's path, to an agent
+                 that takes no images); the prompt's blocks are in
+                 $FAKE_ACP_DIR/prompt-<session>.json. Run with --images, it
+                 says it takes images (promptCapabilities.image).
   mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
                  one, as illogical passes local agents, M16; or a stdio one,
                  as it passes agents in a VM, #59) with JSON as its
@@ -366,13 +371,20 @@ def mcp_call_stdio(srv, tool, args):
 def prompt(mid, p):
     sid = p["sessionId"]
     s = load(sid)
-    text = "".join(c.get("text", "") for c in p.get("prompt", []))
+    blocks = p.get("prompt", [])
+    with open(os.path.join(DIR, f"prompt-{sid}.json"), "w") as f:
+        json.dump(blocks, f)
+    text = "".join(c.get("text", "") for c in blocks)
     update(sid, s, {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": text}})
     n = len(s["updates"])
     msg = lambda t: update(sid, s, {"sessionUpdate": "agent_message_chunk", "messageId": f"m{n}",
                                    "content": {"type": "text", "text": t}})
     stop = "end_turn"
-    if text.startswith("run "):
+    if text.startswith("look"):
+        images = [c.get("mimeType") for c in blocks if c.get("type") == "image"]
+        others = [c.get("text", "") for c in blocks[1:] if c.get("type") == "text"]
+        msg(f"Saw {len(images)} image(s) {images}; text {others}")
+    elif text.startswith("run "):
         cmd = text[4:]
         tid = f"tool{n}"
         update(sid, s, {"sessionUpdate": "tool_call", "toolCallId": tid, "title": "Terminal", "kind": "execute",
@@ -493,6 +505,8 @@ def handle(m):
         # load or resume a session (M45b's Follow refuses it).
         no_load = "--agent" in sys.argv[:-1] and sys.argv[sys.argv.index("--agent") + 1] == "no-load-session"
         agent_caps = {"mcpCapabilities": {"http": True}}
+        if "--images" in sys.argv:
+            agent_caps["promptCapabilities"] = {"image": True}
         if not no_load:
             agent_caps.update({"loadSession": True, "sessionCapabilities": {"resume": {}, "fork": {}}})
         send({"id": mid, "result": {"protocolVersion": 1, "agentCapabilities": agent_caps,

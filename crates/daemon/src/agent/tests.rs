@@ -214,7 +214,7 @@ fn a_prompt_queued_while_the_agent_is_down_survives_a_restart() {
     ] {
         inner.rebuild_line(&l);
     }
-    assert_eq!(inner.queue, ["whats this project?"]);
+    assert_eq!(inner.queue, [Queued { text: "whats this project?".into(), images: vec![] }]);
     // Sending it takes it off, here as when it's rebuilt.
     inner.rebuild_line(&frame(
         "out",

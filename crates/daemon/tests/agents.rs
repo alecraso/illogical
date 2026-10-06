@@ -341,6 +341,86 @@ fn a_restart_mid_turn_keeps_the_agent_and_its_pending_approval() {
     d.wait_for("the agent server to go", || !alive(pid));
 }
 
+/// M71: an image pasted into an agent block's composer reaches an agent
+/// that takes images as an image content block, and one that doesn't as
+/// its path; either way the transcript names it and the block serves it,
+/// and the log keeps its name, not its data. Another file goes as its
+/// path; only the block's own uploads are taken; and a paste into the
+/// block (`illogical upload`) sends them.
+#[test]
+fn an_image_reaches_the_agent_as_an_image_or_a_path() {
+    let tmp = std::env::temp_dir().join(format!("ilg-agent-images-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let d = Daemon::child_env(&[], &[("TMPDIR", tmp.to_str().unwrap())]);
+    let open = |args: &[&str]| {
+        let mut command = vec!["python3".to_owned(), fake()];
+        command.extend(args.iter().map(|a| a.to_string()));
+        let config = json!({ "agent": "acp", "command": command, "cwd": d.sessions, "prompt": "hello" });
+        let id = d.open_with(json!({ "type": "agent", "config": config }));
+        d.wait(id, "idle");
+        id
+    };
+    let said =
+        |id: u64| entries(&d.state(id)).iter().rev().find(|e| e["type"] == "agent").map(|e| e["text"].clone()).unwrap();
+    let last_user = |id: u64| entries(&d.state(id)).into_iter().rev().find(|e| e["type"] == "user").unwrap();
+
+    // An agent that takes images gets one.
+    let a = open(&["--images"]);
+    let up = d.upload(a, "png", &png());
+    d.call(a, "send", json!({ "text": "look", "files": [up] }));
+    assert_eq!(d.wait(a, "idle"), "done");
+    assert_eq!(said(a), "Saw 1 image(s) ['image/png']; text []");
+    let user = last_user(a);
+    assert_eq!(user["text"], "look");
+    let name = user["images"][0].as_str().unwrap().to_owned();
+    assert!(name.ends_with(".png"), "{user}");
+    let session = d.state(a)["session_id"].as_str().unwrap().to_owned();
+    let sent: Value =
+        serde_json::from_slice(&std::fs::read(d.sessions.join(format!("prompt-{session}.json"))).unwrap()).unwrap();
+    assert_eq!(sent[1]["data"], PNG_B64, "{sent}");
+    assert_eq!(sent[1]["_meta"]["illogical/image"], name);
+    let served = d.call(a, "image", json!({ "name": name }));
+    assert_eq!((served["mime"].as_str(), served["data"].as_str()), (Some("image/png"), Some(PNG_B64)));
+    assert!(!std::path::Path::new(&up).exists(), "the upload went into the block");
+    let log = std::fs::read_dir(d.state.join(format!("blocks/{a}")))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("seg-"))
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .collect::<String>();
+    assert!(log.contains(&name) && !log.contains(PNG_B64), "the log names it");
+    assert_eq!(d.raw("POST", &format!("/api/blocks/{a}/call/image"), Some(json!({ "name": "../kind" }))).0, 400);
+
+    // Another file goes as its path; a file that isn't its upload, not at all.
+    let notes = d.upload(a, "txt", b"some notes");
+    d.call(a, "send", json!({ "text": "look", "files": [notes] }));
+    d.wait(a, "idle");
+    assert_eq!(last_user(a)["text"], format!("look\n\n{notes}"));
+    let (status, body) =
+        d.raw("POST", &format!("/api/blocks/{a}/call/send"), Some(json!({ "text": "x", "files": ["/etc/hosts"] })));
+    assert_eq!(status, 400, "{body}");
+
+    // One that takes none gets its path, to the copy the block keeps.
+    let b = open(&[]);
+    let up = d.upload(b, "png", &png());
+    d.call(b, "send", json!({ "text": "look", "files": [up] }));
+    d.wait(b, "idle");
+    let user = last_user(b);
+    let kept = d.state.join(format!("blocks/{b}/images/{}", user["images"][0].as_str().unwrap()));
+    assert_eq!(said(b), format!("Saw 0 image(s) []; text ['{}']", kept.display()));
+    assert_eq!(std::fs::read(&kept).unwrap(), png());
+
+    // A paste into the block sends what it's given.
+    let up = d.upload(b, "png", &png());
+    let r = d.post(&format!("/api/panes/{b}/paste"), json!({ "paths": [up] }));
+    assert_eq!(r, json!({ "pasted": true, "sent": true }));
+    d.wait(b, "idle");
+    let user = last_user(b);
+    assert_eq!((user["text"].as_str(), user["images"].as_array().map(Vec::len)), (Some(""), Some(1)), "{user}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// A permission request reaches a subscribed phone as a push with what to
 /// approve, and approving by its id (as the notification's action does)
 /// works.

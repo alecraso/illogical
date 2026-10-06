@@ -21,6 +21,10 @@
 //!
 //! A VM pane's file is staged here, then written on its machine, in
 //! `~/.cache/illogical/uploads/<pane>/` there.
+//!
+//! M71: an agent block takes uploads too, always on this host: its `send
+//! {text, files}` takes them as its prompt's files (images go to the agent
+//! as images), and `paste` into it sends them so.
 
 use std::{
     fs::{self, DirBuilder, OpenOptions},
@@ -188,14 +192,50 @@ fn write_chunk(path: &FsPath, offset: u64, body: &[u8]) -> io::Result<()> {
     f.write_all(body)
 }
 
+/// An agent block (M71), which takes uploads as its prompts' files.
+async fn agent(app: &App, id: PaneId) -> Option<Arc<dyn crate::block::Block>> {
+    app.mux.api(|r| Api::Block(id, r)).await.flatten().filter(|b| b.kind() == illogical_proto::BlockType::Agent)
+}
+
+/// One of `pane`'s uploads, by the path the route answered: a file (not a
+/// link) right in its folder here.
+pub fn take(pane: PaneId, path: &str) -> io::Result<PathBuf> {
+    let name = FsPath::new(path).file_name().ok_or_else(|| io::Error::other("not an upload"))?;
+    let ours = folder(pane)?.join(name);
+    if ours != FsPath::new(path) || !fs::symlink_metadata(&ours)?.is_file() {
+        return Err(io::Error::other("not one of this block's uploads"));
+    }
+    Ok(ours)
+}
+
 pub async fn upload(
     State(app): State<Arc<App>>,
     Path(id): Path<PaneId>,
     Query(q): Query<UploadQuery>,
     body: Bytes,
 ) -> Res<Json<serde_json::Value>> {
-    pane(&app, id).await?;
-    let machine = app.mux.api(|r| Api::MachineOf(id, r)).await.flatten();
+    store(&app, id, q, body).await.map(Json)
+}
+
+/// A whole file from an agent through MCP (M71's `attach`): its path, as
+/// the route would answer it.
+pub async fn store_whole(app: &App, id: PaneId, ext: &str, body: Vec<u8>) -> Res<String> {
+    use std::hash::{BuildHasher, RandomState};
+    let tag = format!("{:016x}", RandomState::new().hash_one(std::time::SystemTime::now()));
+    let q = UploadQuery { id: tag, ext: ext.to_owned(), offset: 0, last: true };
+    let out = store(app, id, q, body.into()).await?;
+    Ok(out["path"].as_str().unwrap_or_default().to_owned())
+}
+
+async fn store(app: &App, id: PaneId, q: UploadQuery, body: Bytes) -> Res<serde_json::Value> {
+    // An agent block's stay here; a VM pane's go on to its machine.
+    let machine = match agent(app, id).await {
+        Some(_) => None,
+        None => {
+            pane(app, id).await?;
+            app.mux.api(|r| Api::MachineOf(id, r)).await.flatten()
+        }
+    };
     if q.id.is_empty() || q.id.len() > 32 || !q.id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(err(StatusCode::BAD_REQUEST, "id: up to 32 hex digits"));
     }
@@ -224,10 +264,10 @@ pub async fn upload(
     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))??;
     // A VM pane's file goes on to its machine once it's all here.
     let path = match machine {
-        Some(m) if last => to_machine(&app, id, &m.sprite, &path).await?,
+        Some(m) if last => to_machine(app, id, &m.sprite, &path).await?,
         _ => path.to_string_lossy().into_owned(),
     };
-    Ok(Json(serde_json::json!({ "path": path, "done": last })))
+    Ok(serde_json::json!({ "path": path, "done": last }))
 }
 
 /// On a machine: `~/.cache/illogical/uploads/<pane>`, `0700`, made by
@@ -322,10 +362,29 @@ pub async fn paste(
     Path(id): Path<PaneId>,
     Json(req): Json<PasteRequest>,
 ) -> Res<Json<serde_json::Value>> {
-    let p = pane(&app, id).await?;
-    if req.paths.is_empty() {
+    paste_into(&app, id, req.paths, req.force, None).await.map(Json)
+}
+
+/// Paste `paths` into a pane; into an agent block (M71), send them as a
+/// prompt (`by`: whose).
+pub async fn paste_into(
+    app: &App,
+    id: PaneId,
+    paths: Vec<String>,
+    force: bool,
+    by: Option<&str>,
+) -> Res<serde_json::Value> {
+    if paths.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "nothing to paste"));
     }
+    if let Some(b) = agent(app, id).await {
+        b.call_by("send", serde_json::json!({ "files": paths }), by)
+            .await
+            .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+        return Ok(serde_json::json!({ "pasted": true, "sent": true }));
+    }
+    let p = pane(app, id).await?;
+    let req = PasteRequest { paths, force };
     let text = joined(&req.paths);
     // What's in front: its foreground job, else its own program. A VM's
     // processes aren't ours to read; its pane is a shell or what's run
@@ -340,7 +399,7 @@ pub async fn paste(
         .ok()
         .flatten();
         if let Some(front) = front.filter(|c| !takes_paths(c)) {
-            return Ok(Json(serde_json::json!({ "pasted": false, "front": front, "text": text })));
+            return Ok(serde_json::json!({ "pasted": false, "front": front, "text": text }));
         }
     }
     let data = tokio::task::spawn_blocking({
@@ -353,7 +412,7 @@ pub async fn paste(
     .ok_or_else(|| err(StatusCode::CONFLICT, "the pane isn't answering"))?;
     p.mark_input();
     app.mux.send(Cmd::Input { client: None, pane: id, data });
-    Ok(Json(serde_json::json!({ "pasted": true })))
+    Ok(serde_json::json!({ "pasted": true }))
 }
 
 #[cfg(test)]

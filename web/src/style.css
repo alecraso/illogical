@@ -1683,6 +1683,7 @@ html[data-desktop="macos"] .bar {
 
 .agent-composer {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: flex-end;
   padding: 6px 8px 8px;
@@ -1728,6 +1729,82 @@ html[data-desktop="macos"] .bar {
 
 .agent-composer button.danger {
   color: var(--danger);
+}
+
+.agent-composer button.attach {
+  padding: 6px 8px;
+}
+
+/* M71: what goes with the next prompt, above the box. */
+.agent-attached {
+  flex-basis: 100%;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  overflow-x: auto;
+}
+
+.agent-attached-file {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 56px;
+  max-width: 160px;
+  border-radius: 6px;
+  background: var(--raised);
+  overflow: hidden;
+}
+
+.agent-attached-file img {
+  height: 100%;
+  width: auto;
+  display: block;
+}
+
+.agent-attached-name {
+  padding: 0 24px 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-composer .agent-attached-file button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-height: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 1;
+  background: color-mix(in srgb, var(--letterbox) 80%, transparent);
+}
+
+.agent-attached-note {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.agent-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-image img {
+  display: block;
+  max-width: min(240px, 100%);
+  max-height: 180px;
+  border-radius: 6px;
+}
+
+.agent-image.missing {
+  font-size: 12px;
+  color: var(--dim);
 }
 
 .agent-empty {

@@ -122,7 +122,7 @@ async fn tools_through_the_stdio_bridge() {
 
     // The tools, with honest annotations.
     let tools = s.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 38);
+    assert_eq!(tools.len(), 39);
     let ro = |n: &str| tools.iter().find(|t| t.name == n).unwrap().annotations.as_ref().unwrap().read_only_hint;
     assert_eq!(
         (ro("read_output"), ro("wait"), ro("run"), ro("close")),
@@ -253,7 +253,7 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     // (and retries it, then gives up: no tools).
     let tools = s.list_tools(None).await.unwrap();
     assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
-    assert_eq!(tools.tools.len(), 38);
+    assert_eq!(tools.tools.len(), 39);
     let t = s.list_resource_templates(None).await.unwrap();
     assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
     let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
@@ -500,6 +500,54 @@ fn one_agent_starts_another_and_answers_its_question() {
     let s = d.state(c);
     assert_eq!((s["allow"].clone(), s["permission_mode"].as_str()), (json!([{ "tool": "Bash" }]), Some("auto")));
     assert!(entries(&s).iter().any(|e| e["text"] == "Mode: auto"), "{s}");
+}
+
+/// M71: an agent attaches a file of its own: to an agent it started, as
+/// that agent's prompt with an image in it; into a shell it started, its
+/// path pasted; not into a program that wouldn't read a path, nor into
+/// what it didn't start.
+#[test]
+fn an_agent_attaches_a_screenshot_to_a_pane() {
+    let tmp = std::env::temp_dir().join(format!("ilg-attach-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let d = Daemon::child_env(&[], &[("TMPDIR", tmp.to_str().unwrap())]);
+    let a = d.open("hello");
+    d.wait(a, "idle");
+
+    // To an agent it started, as base64.
+    let command = format!("python3 {} --images", fake());
+    let b = agent_mcp(&d, a, "start_agent", json!({ "agent": "acp", "command": command, "prompt": "hello" })).unwrap()
+        ["block"]
+        .as_u64()
+        .unwrap();
+    d.wait(b, "idle");
+    agent_mcp(&d, a, "attach", json!({ "pane": b, "data": PNG_B64, "text": "look" })).unwrap();
+    d.wait(b, "idle");
+    let said = entries(&d.state(b)).into_iter().rev().find(|e| e["type"] == "agent").unwrap();
+    assert_eq!(said["text"], "Saw 1 image(s) ['image/png']; text []");
+
+    // Into a shell it started, by its path here.
+    let shot = d.sessions.join("shot.png");
+    std::fs::write(&shot, png()).unwrap();
+    let sh = agent_mcp(&d, a, "run", json!({ "command": "true", "wait": true })).unwrap()["pane"].as_u64().unwrap();
+    let r = agent_mcp(&d, a, "attach", json!({ "pane": sh, "path": shot })).unwrap();
+    let pasted = r["path"].as_str().unwrap().to_owned();
+    assert!(pasted.ends_with(".png") && pasted.contains("illogical-uploads"), "{r}");
+    assert_eq!(std::fs::read(&pasted).unwrap(), png());
+    d.wait_for("the path on its screen", || {
+        let screen = agent_mcp(&d, a, "capture_screen", json!({ "pane": sh })).unwrap();
+        screen["text"].as_str().unwrap_or("").replace('\n', "").contains(&pasted)
+    });
+
+    // Not into what wouldn't read a path, nor what it didn't start.
+    let busy = agent_mcp(&d, a, "run", json!({ "command": "sleep 60" })).unwrap()["pane"].as_u64().unwrap();
+    d.wait_for("sleep in front", || {
+        agent_mcp(&d, a, "attach", json!({ "pane": busy, "path": shot })).is_err_and(|e| e.contains("sleep"))
+    });
+    let e = agent_mcp(&d, a, "attach", json!({ "pane": a, "data": PNG_B64 })).unwrap_err();
+    assert!(e.contains("wasn't started by this agent"), "{e}");
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[tokio::test(flavor = "multi_thread")]

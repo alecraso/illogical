@@ -165,6 +165,38 @@ impl Daemon {
     pub fn open_with(&self, req: Value) -> u64 {
         self.post("/api/blocks", req)["block"].as_u64().unwrap()
     }
+
+    /// M70's upload route, one chunk: the path it answered.
+    #[cfg(unix)]
+    #[allow(dead_code)]
+    pub fn upload(&self, id: u64, ext: &str, body: &[u8]) -> String {
+        use std::io::{Read, Write};
+        let path = format!("/api/panes/{id}/upload?id={:x}&ext={ext}&offset=0&last=true", body.len() + ext.len());
+        let mut s = std::os::unix::net::UnixStream::connect(self.sock()).unwrap();
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        s.write_all(head.as_bytes()).unwrap();
+        s.write_all(body).unwrap();
+        let mut res = String::new();
+        s.read_to_string(&mut res).unwrap();
+        let (head, body) = res.split_once("\r\n\r\n").unwrap_or((&res, ""));
+        assert!(head.starts_with("HTTP/1.1 200"), "{res}");
+        let v: Value = serde_json::from_str(body).unwrap();
+        v["path"].as_str().unwrap().to_owned()
+    }
+}
+
+/// A 1×1 PNG, as base64 and as bytes.
+#[allow(dead_code)]
+pub const PNG_B64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+#[allow(dead_code)]
+pub fn png() -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(PNG_B64).unwrap()
 }
 
 pub fn entries(state: &Value) -> Vec<Value> {

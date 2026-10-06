@@ -12,6 +12,7 @@ illogical send %4 --wait 'fix the test'       # prompt the agent there and wait 
                                               #   2 it asks for you, 3 stalled: nothing started)
 illogical keys %3 C-c Up Enter                # named keys
 illogical upload %4 shot.png                  # a file onto %4's host, its path pasted in (for a claude there)
+                                              # (to an agent block: sent as its prompt, an image as an image)
 illogical wait %3 --command-end               # exit code of what that started
 illogical wait %3 --match 'listening on' --timeout 30
 illogical tail %3 -f --text                   # follow output, escapes stripped
@@ -217,6 +218,7 @@ The tools:
 |---|---|---|
 | `run` | A command in a new tab or split (`cwd`, `split`, `vm`, `vm_tab`, `machine`, `session`, `policy`), typed into a shell so it's in history and you can take over. With `wait`, its exit code and last lines. | no |
 | `send_input` | Text (Enter after it unless `enter: false`) and named keys (`C-c`, `Up`) to a pane; to an agent block, its next prompt; to an app block, a prompt to its box's agent (`tab`: which) | no |
+| `attach` | A file (a `path` on this host, or base64 `data`) into a pane: into a terminal, its path pasted where a shell or an agent reads it (else refused unless `force`); to an agent block, with `text` as its next prompt, an image as an image | no |
 | `read_output` | A pane's output as text: the latest, from an `offset`, or its `last_command`'s. Paged (16,000 characters by default): pass `next_offset` back | yes |
 | `capture_screen` | What a pane shows now | yes |
 | `wait` | Until `command_end`, `exit`, `match` (a `pattern`), `idle` or `needs_input`. After `timeout` seconds (100 by default) it answers "still running" with the offset: call it again | yes |

@@ -145,6 +145,28 @@ pub struct SendArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct AttachArgs {
+    pub pane: PaneArg,
+    /// A file on this host (a screenshot, a log). An agent on a machine of
+    /// its own sends data instead.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Or the file itself, base64.
+    #[serde(default)]
+    pub data: Option<String>,
+    /// With data: its extension (png, jpg, txt); an image's is found.
+    #[serde(default)]
+    pub ext: Option<String>,
+    /// To an agent block: a prompt to send with it.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Into a terminal: paste the path even if what's in front isn't a
+    /// shell or an agent.
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ReadArgs {
     pub pane: PaneArg,
     /// Where to start (a stream offset: a previous result's next_offset).
@@ -692,6 +714,16 @@ fn defs() -> Vec<Def> {
             open_world: false,
         },
         Def {
+            name: "attach",
+            title: "Attach a file to a pane",
+            description: "Put a file (a screenshot, an image, a log) into a pane: into a terminal, its path is pasted where a shell or an agent like claude reads it (whatever else is in front is refused unless force); to an agent block, it goes with text as its next prompt, an image as an image. Give a path on this host, or the file as base64 data.",
+            schema: schema_for_type::<AttachArgs>,
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        },
+        Def {
             name: "read_output",
             title: "Read a pane's output",
             description: "A pane's output as text (escape sequences stripped): the latest, from an offset, or its last command's. Paged: pass next_offset back as offset for more.",
@@ -1145,6 +1177,10 @@ impl<'a> Call<'a> {
             },
             "send_input" => match parse(args) {
                 Ok(a) => self.send_input(a).await,
+                Err(e) => Err(e),
+            },
+            "attach" => match parse(args) {
+                Ok(a) => self.attach(a).await,
                 Err(e) => Err(e),
             },
             "read_output" => match parse(args) {
@@ -1691,6 +1727,70 @@ impl<'a> Call<'a> {
             }
             WaitResult::Timeout => self.still_running(pane, Duration::ZERO).await,
         }
+    }
+
+    /// M71: a file into a terminal (M70's upload and paste) or an agent
+    /// block (its prompt's file), under the checks the routes make.
+    #[cfg(unix)]
+    async fn attach(&self, a: AttachArgs) -> Out {
+        use base64::Engine;
+        const MAX: u64 = 20 << 20;
+        let pane = a.pane.id()?;
+        let p = self.drivable(pane).await?;
+        if !matches!(p.info.kind, BlockType::Terminal | BlockType::Agent) {
+            return Err("attach puts a file into a terminal or an agent block".into());
+        }
+        let (bytes, ext) = match (a.path, a.data) {
+            (Some(path), None) => {
+                // Its paths are on its machine, not here.
+                if let Some(me) = self.me()
+                    && self.app.mux.api(|r| Api::MachineOf(me, r)).await.flatten().is_some()
+                {
+                    return Err("this agent runs on a machine of its own: send the file as data".into());
+                }
+                let size = tokio::fs::metadata(&path).await.map_err(|e| format!("{path}: {e}"))?.len();
+                if size > MAX {
+                    return Err("a file can be 20 MB at most".into());
+                }
+                let bytes = tokio::fs::read(&path).await.map_err(|e| format!("{path}: {e}"))?;
+                let ext = std::path::Path::new(&path).extension().map(|e| e.to_string_lossy().into_owned());
+                (bytes, ext)
+            }
+            (None, Some(data)) => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(data.trim())
+                    .map_err(|e| format!("data isn't base64: {e}"))?;
+                (bytes, a.ext)
+            }
+            _ => return Err("give path or data".into()),
+        };
+        let ext = match crate::agent::images::sniff(&bytes) {
+            Some(m) => m.trim_start_matches("image/").replace("jpeg", "jpg"),
+            None => ext.unwrap_or_default(),
+        };
+        let path = crate::upload::store_whole(self.app, pane, &ext, bytes).await.map_err(|e| e.1)?;
+        let by = self.by();
+        if p.info.kind == BlockType::Agent {
+            let b =
+                self.app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
+            b.call_by("send", json!({ "text": a.text.unwrap_or_default(), "files": [path] }), Some(&by)).await?;
+            return done(format!("Sent %{pane} a prompt with the file"), json!({ "pane": pane }));
+        }
+        let out =
+            crate::upload::paste_into(self.app, pane, vec![path.clone()], a.force, Some(&by)).await.map_err(|e| e.1)?;
+        if out["pasted"] != true {
+            let front = out["front"].as_str().unwrap_or("something");
+            return Err(format!(
+                "%{pane} is running {front}, which wouldn't read a path; it's at {path} (force pastes it anyway)"
+            ));
+        }
+        done(format!("Pasted {path} into %{pane}"), json!({ "pane": pane, "path": path }))
+    }
+
+    #[cfg(not(unix))]
+    async fn attach(&self, a: AttachArgs) -> Out {
+        let _ = (a.pane, a.path, a.data, a.ext, a.text, a.force);
+        Err("files can't be attached on this host yet".into())
     }
 
     async fn send_input(&self, a: SendArgs) -> Out {
@@ -3181,7 +3281,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 38);
+        assert_eq!(all.len(), 39);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))

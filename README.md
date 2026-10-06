@@ -226,7 +226,7 @@ most twice a day; nothing else is sent. `illogicald install --
          "mcp__illogical__read_file", "mcp__illogical__list_devices"
        ],
        "ask": [
-         "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__close", "mcp__illogical__post_thread",
+         "mcp__illogical__run", "mcp__illogical__send_input", "mcp__illogical__attach", "mcp__illogical__close", "mcp__illogical__post_thread",
          "mcp__illogical__open_port", "mcp__illogical__open_app", "mcp__illogical__start_agent",
          "mcp__illogical__open_conversation", "mcp__illogical__prompt_agent", "mcp__illogical__agent_respond",
          "mcp__illogical__show_changes", "mcp__illogical__show_file", "mcp__illogical__open_workspace", "mcp__illogical__open_pr",

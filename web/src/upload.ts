@@ -2,6 +2,8 @@
 // pane's host in chunks (`/api/panes/<id>/upload`), then their paths are
 // pasted into the pane together (`/paste`), so a `claude` there reads them
 // as images. A chip on the pane shows the progress, then what happened.
+// An agent block's composer (M71) sends them the same way, then with its
+// prompt (`send {text, files}`).
 //
 // Before going: an image wider or taller than Claude reads (it scales
 // anything over ~1568 px down itself) is scaled down here, which keeps a
@@ -72,39 +74,47 @@ async function why(res: { status: number; json<T>(): Promise<T> }): Promise<stri
   return e?.error ?? `refused (${res.status})`;
 }
 
-/** Send `files` to the pane's host, then paste their paths into it. */
-export async function upload(request: Request, pane: PaneId, files: File[], chip: Chip | undefined): Promise<void> {
-  if (!files.length) return;
+/** Send `files` to the pane's host: their paths there. `progress` hears
+ * how it's going; a refusal throws, saying which file. */
+export async function store(request: Request, pane: PaneId, files: File[], progress: (text: string) => void): Promise<string[]> {
   const paths: string[] = [];
   const many = files.length > 1;
   for (const [i, f] of files.entries()) {
     const label = many ? `${f.name || "file"} (${i + 1} of ${files.length})` : f.name || "file";
-    chip?.show(`Preparing ${label}…`);
+    progress(`Preparing ${label}…`);
     const { bytes, ext } = await prepare(f);
     const id = hexId();
-    let path = "";
     for (let at = 0; ; at += CHUNK) {
       const last = at + CHUNK >= bytes.length;
-      chip?.show(`Uploading ${label}… ${Math.round((Math.min(at + CHUNK, bytes.length) / Math.max(bytes.length, 1)) * 100)}%`);
+      progress(`Uploading ${label}… ${Math.round((Math.min(at + CHUNK, bytes.length) / Math.max(bytes.length, 1)) * 100)}%`);
       const q = `id=${id}&ext=${encodeURIComponent(ext)}&offset=${at}${last ? "&last=true" : ""}`;
       let res;
       try {
         res = await request("POST", `/api/panes/${pane}/upload?${q}`, bytes.subarray(at, at + CHUNK));
       } catch (e) {
-        chip?.show(`Couldn't upload ${label}: ${(e as Error).message}`, { error: true, hideAfterMs: 8000 });
-        return;
+        throw new Error(`Couldn't upload ${label}: ${(e as Error).message}`);
       }
-      if (!res.ok) {
-        chip?.show(`Couldn't upload ${label}: ${await why(res)}`, { error: true, hideAfterMs: 8000 });
-        return;
-      }
+      if (!res.ok) throw new Error(`Couldn't upload ${label}: ${await why(res)}`);
       if (last) {
-        path = (await res.json<{ path: string }>()).path;
+        paths.push((await res.json<{ path: string }>()).path);
         break;
       }
     }
-    paths.push(path);
   }
+  return paths;
+}
+
+/** Send `files` to the pane's host, then paste their paths into it. */
+export async function upload(request: Request, pane: PaneId, files: File[], chip: Chip | undefined): Promise<void> {
+  if (!files.length) return;
+  let paths: string[];
+  try {
+    paths = await store(request, pane, files, (text) => chip?.show(text));
+  } catch (e) {
+    chip?.show((e as Error).message, { error: true, hideAfterMs: 8000 });
+    return;
+  }
+  const many = files.length > 1;
   const what = many ? `${files.length} files` : "the file";
   const paste = async (force: boolean) => {
     const res = await request("POST", `/api/panes/${pane}/paste`, { paths, force });

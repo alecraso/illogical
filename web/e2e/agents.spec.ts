@@ -73,6 +73,54 @@ test.describe("desktop", () => {
   });
 });
 
+// M71: an image pasted into the composer goes with the prompt as an image
+// (the fake agent says it takes them), and the transcript shows it; one
+// dropped on the block waits beside it until it's removed.
+test("an image pasted into the composer reaches the agent and shows in the transcript", async ({ page }) => {
+  await reset(page);
+  const [term] = await panes(page);
+  await menu(page, paneEl(page, term), "Start an agent…");
+  const dialog = page.getByRole("dialog", { name: "Start an agent" });
+  await dialog.locator("select[name=agent]").selectOption("acp");
+  await dialog.locator("input[name=acp]").fill(`python3 ${fake} --images`);
+  await dialog.locator("textarea[name=prompt]").fill("hello");
+  await dialog.getByRole("button", { name: "Start" }).click();
+  await expect.poll(() => agentBlock(page)).not.toBeNull();
+  const block = paneEl(page, (await agentBlock(page))!);
+  await expect(block.locator(".agent-msg").last()).toHaveText("Hello! I am fake.");
+
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const give = (selector: string, event: "paste" | "drop", name: string) =>
+    block.locator(selector).evaluate(
+      (el, [b64, event, name]) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], name, { type: "image/png" }));
+        el.dispatchEvent(
+          event === "paste"
+            ? new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })
+            : new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }),
+        );
+      },
+      [png, event, name] as const,
+    );
+  const composer = block.locator(".agent-composer");
+  await give(".agent-composer textarea", "paste", "shot.png");
+  await expect(composer.locator(".agent-attached-file img")).toHaveCount(1);
+  await expect(composer.locator("textarea")).toHaveValue("");
+  await give(".agent-log", "drop", "other.png");
+  await expect(composer.locator(".agent-attached-file")).toHaveCount(2);
+  await composer.getByRole("button", { name: "Remove other.png" }).click();
+  await expect(composer.locator(".agent-attached-file")).toHaveCount(1);
+
+  await composer.locator("textarea").fill("look");
+  await composer.locator("textarea").press("Enter");
+  await expect(block.locator(".agent-msg").last()).toHaveText("Saw 1 image(s) ['image/png']; text []");
+  await expect(composer.locator(".agent-attached-file")).toHaveCount(0);
+  const shown = block.locator(".agent-user").last().locator(".agent-image img");
+  await expect(shown).toBeVisible();
+  expect(await shown.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
+});
+
 // #166: "From now on…" on a card makes a standing rule the daemon keeps:
 // the next agent block started there never asks, the session menu lists
 // the rule, and forgetting it there brings the card back.
