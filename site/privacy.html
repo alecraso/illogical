@@ -35,7 +35,7 @@
 <header><a href="/"><img src="/icon.svg" alt="">illogical</a></header>
 <main>
   <h1>Privacy notice</h1>
-  <p class="dim">Effective 4 October 2026.</p>
+  <p class="dim">Effective 5 October 2026.</p>
 
   <p>This covers <b>illogical control</b>, the hosted service at <a href="https://control.illogical.widgets.wtf">control.illogical.widgets.wtf</a>, and this website. It's run by <b>Jake Gaylor</b>, an individual, who decides what's collected and why. Questions, requests and complaints: <a href="mailto:privacy@illogical.widgets.wtf">privacy@illogical.widgets.wtf</a>.</p>
 
@@ -54,18 +54,21 @@
     <li><b>Teams:</b> a team's name, its member list and roles (signed by its owners' devices), invites (stored as hashes) and requests to join.</li>
     <li><b>Notifications:</b> if you turn on push notifications, your browser's push subscription. Your machines encrypt their notifications for your device themselves; control passes them to your browser's push service and sees only that one was sent and its size.</li>
     <li><b>Relay use:</b> how many bytes it relayed for your account each day.</li>
+    <li><b>Sharing:</b> if a machine shares with other accounts, which accounts (by id) it has offered to and let in, whether each accepted or turned down, and when; and until when read-only links may use the relay. The machine tells control this so it can route connections; the machine still decides for itself who gets in. A machine's list replaces the last one it sent, so a person it stops sharing with drops off at once; an answer you gave stays until the machine is removed or either account is deleted.</li>
+    <li><b>Guest ssh links</b> (if you invite someone to ssh into a machine control has to relay to): control doesn't store the invite. While it lives, the machine gives control a hash of its route, held in memory only and dropped when the invite ends or the machine's connection to control closes. When a guest connects, control's ssh hop sees the address they connect from, which machine they asked for and how many bytes passed (added to that machine's account's relay use). The ssh session itself is encrypted between the guest and the machine; control can't read it.</li>
+    <li><b>Huddles:</b> control stores nothing about a call. It gets short-lived relay credentials (valid for 8 hours) from Cloudflare for your machine to hand to the people in it.</li>
     <li><b>Hosted sandboxes</b> (offered by invitation during the beta): a record of each one you start, until it's deleted.</li>
     <li><b>Live updates from GitHub</b> (if you use the GitHub App for pull request and issue blocks): control checks each webhook's signature and passes only which repository and item changed to your machines; it never stores the payload. It asks GitHub whether you may see a repository and remembers the answer for ten minutes.</li>
   </ul>
-  <p><b>IP addresses.</b> Control uses the address you connect from to limit how often sign-ins and other requests can be tried. It holds these in memory only, not in its database. Its logs record events (a sign-in, a refused approval, an account deleted) with account and device ids, not what you did in your terminals.</p>
+  <p><b>IP addresses.</b> Control uses the address you connect from to limit how often sign-ins and other requests can be tried. It holds these in memory only, not in its database. Its logs record events (a sign-in, a refused approval, an account deleted) with account and device ids, not what you did in your terminals. The exception is the guest ssh hop, whose logs also record the address a guest connected from, when one connects or is turned away.</p>
 
   <h2>Why</h2>
   <p>To provide the service you asked for: signing you in, approving devices, connecting them to your machines and relaying when they can't connect directly (under the GDPR, performing our contract with you). To keep it secure and working: rate limits, logs and backups (our legitimate interest in running a safe service).</p>
 
   <h2>Who else handles it</h2>
   <ul>
-    <li><b>Fly.io</b> runs control and keeps its database and logs (in the United States). Hosted sandboxes run on Fly.io's Sprites.</li>
-    <li><b>Cloudflare</b> serves this website, answers DNS for control's domain, holds control's encrypted database backups (R2), and forwards email to the address above.</li>
+    <li><b>Fly.io</b> runs control and keeps its database and logs (in the United States), and takes daily snapshots of the volume the database is on. Hosted sandboxes run on Fly.io's Sprites.</li>
+    <li><b>Cloudflare</b> serves this website, answers DNS for control's domain, relays huddle calls, and forwards email to the address above. For a huddle, Cloudflare's relay (TURN) sees the addresses of the people on the call and how much they send, but not the call itself, which is encrypted between them. Where there's no relay, their devices ask Cloudflare's public STUN service for their own address.</li>
     <li><b>GitHub</b>, when you sign in with GitHub or use the GitHub App. Its own privacy statement applies to your GitHub account.</li>
     <li><b>Your browser's push service</b> (Google, Apple or Mozilla, depending on the browser), if you turn on notifications.</li>
   </ul>
@@ -75,12 +78,14 @@
   <ul>
     <li>Your account and what belongs to it: until you delete it.</li>
     <li>Sign-in sessions: 30 days at most. Codes for joining a machine: 15 minutes. Desktop app sign-in links: 10 minutes.</li>
-    <li>Backups: overwritten as they age, kept for at most 30 days.</li>
+    <li>Sharing: until the machine stops sharing (offers and access), or until the machine or either account is removed (your answers).</li>
+    <li>Guest ssh routes: in memory only, until the invite ends or the machine disconnects. The hop's log lines, with a guest's address: kept by Fly.io, like the other logs.</li>
+    <li>Backups: Fly.io's daily snapshots of the database volume, kept for 5 days.</li>
     <li>Logs: kept by Fly.io for a short time under its own policy.</li>
   </ul>
 
   <h2>Deleting your account</h2>
-  <p><b>Delete account</b> on control's page removes what control holds that is only yours: your sign-ins, sessions, passkeys, devices and machines, push subscriptions, hosted sandboxes, usage counts, and teams you founded. If you belong to a team someone else founded, the team keeps listing your name until an owner removes it, and the public keys and device names your devices used to sign its member list are kept while that team exists, so its history can still be checked. Backups age out within 30 days. You can also ask by email.</p>
+  <p><b>Delete account</b> on control's page removes what control holds that is only yours: your sign-ins, sessions, passkeys, devices and machines, push subscriptions, hosted sandboxes, usage counts, and teams you founded. If you belong to a team someone else founded, the team keeps listing your name until an owner removes it, and the public keys and device names your devices used to sign its member list are kept while that team exists, so its history can still be checked. Backups age out within 5 days. You can also ask by email.</p>
 
   <h2>Your rights</h2>
   <p>You can ask for a copy of what control holds about you, to have it corrected or deleted, or to stop a use you object to. Write to <a href="mailto:privacy@illogical.widgets.wtf">privacy@illogical.widgets.wtf</a>; you'll get an answer within a month. If you're in the EU or UK, you can also complain to your data protection authority. California residents have the same rights under the CCPA; your information is not sold or shared for advertising.</p>
