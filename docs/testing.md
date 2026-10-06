@@ -34,9 +34,9 @@ or an account skip without it and name what's missing
 | `just forges`, `just testnet-hosts`, `just testnet-editors` | real forges, two hosts and VS Code over Remote-SSH, in Docker ([below](#real-forges-two-hosts-vs-code-over-remote-ssh)) | the forges nightly (`forges-nightly.yml`) |
 | `just macos <test>` | the tart VM's checks: launchd with no GUI session, real Safari, iTerm2, the desktop app ([below](#a-fresh-mac-the-tart-vm-harness)) | no |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
-| `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): `join` (#204) and `m46` (see [The desktop app's tests](#the-desktop-apps-tests)) | no |
+| `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): `join` (#204), `m46`, `m47` and `stale` (#317) (see [The desktop app's tests](#the-desktop-apps-tests)) | no |
 | `just desktop-packages ARCH` | the .deb on Ubuntu 22.04 and the .rpm on Fedora 42 install and claim `illogical://` (after `just desktop-linux ARCH`) | no |
-| `testnet/macos/desktop.sh`, `testnet/macos/update.sh` | the macOS app from its .dmg in a fresh tart VM, and its updater | no |
+| `testnet/macos/desktop.sh`, `testnet/macos/update.sh`, `testnet/macos/stale-daemon.sh` | the macOS app from its .dmg in a fresh tart VM, its updater, and a daemon too old for it (#317) | no |
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
 CI (`.github/workflows/check.yml`) runs on pushes, every job it can at
@@ -427,14 +427,15 @@ logged-in session over ssh.
 | Panes outlive the app | | `restart`: the daemon's pids and panes are the same after the app restarts | |
 | Right-click a folder (M47) | `m47` (`just desktop-xvfb m47`): with the packages' .desktop file and Nautilus extension, a right-click on a folder (and inside one) in Nautilus, *Open in illogical*, opens a tab there in the running app and shows it | `finder`: the service is registered (`pbs`); a right-click on a folder in Finder, *New illogical Tab Here*, opens a tab there; a `.command` file opened with the app runs in a new pane | the file manager's menu has no entry, or it starts a second app |
 | Packages | `just desktop-packages ARCH`: .deb and .rpm install, libraries resolve, xdg-mime hands `illogical://` to the app, the .desktop file passes the link (`%u`) and has a New Tab action, the Nautilus extension is in place | `install` above | |
+| A daemon too old for the app (#317) | `just desktop-xvfb stale`: a 0.8.0 stand-in (`old-daemon.py`, no protocol) installed as the service, stopped (`stopped`) or running (`running`): the app says 0.8.0 runs and 0.19.0 is needed, 0.8.0 still answers afterwards, and it served no page | `stale-daemon.sh`: the same with the released 0.8.0 (`OLD=` another below 0.19.0), installed with its own `illogicald install` | the app shows an old daemon's page, or replaces a daemon (#392) |
 | Updates | | `update.sh`: 0.17.0 refuses a manifest signed with another key, then replaces itself with 0.17.1 and restarts; the new app carries a newer daemon and leaves the running one alone (#392); a running vim and a counting build carry on | |
 
 `update.sh` makes a throwaway updater key and builds the app twice with
 it. The installed one carries a daemon one minor version older than the
 tree's (built from a copy of the tree with only the version changed, kept
-in `target/update-old`), so the update also runs `upgrade.rs`'s path: the
-new app finds the older daemon, restarts its launch agent on the bundle's
-newer one, and the panes stay.
+in `target/update-old`), so the new app carries a newer daemon than the
+one running and must leave it alone (#392): the same process, at the same
+version, with its panes.
 
 Nautilus and Finder are driven as a person would: the mouse right-clicks
 the folder (xdotool at the spot AT-SPI reports, under Xvfb; a CGEvent at

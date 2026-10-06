@@ -257,11 +257,19 @@ From: [M1](docs/plan-archive.md#m1-multiplexer), [M8](docs/plan-archive.md#m8-cl
 
 ### The desktop app is a window and a supervisor; the daemon stays a service
 The app (Tauri 2) loads the UI from the local daemon, bundles `illogicald` and
-`illogical`, registers the daemon as a login service (SMAppService on macOS)
-and upgrades it in place. Sessions outlive the window: if the app owned the
-PTYs, quitting it would end every pane. `desktop` depends only on `proto`.
-Where: `crates/desktop/src/main.rs`, `crates/desktop/src/service.rs`.
-From: [Desktop track](docs/plan-archive.md#desktop-track-s25-m46m48-added-2026-10-04), [S26](docs/plan-archive.md#s26-how-native-can-it-get-141).
+`illogical`, and registers the daemon as a login service (SMAppService on
+macOS). Sessions outlive the window: if the app owned the PTYs, quitting it
+would end every pane. `desktop` depends only on `proto`.
+The app never replaces a daemon that's there (#392): the bundled copy only
+installs one on a machine with none, and a daemon updates itself (#391). At
+launch the app checks the daemon's protocol number against its range (#390),
+and a daemon that reports none must be 0.19.0 or newer, the titlebar's
+release (#317). Otherwise its window stays on the app's setup page, which
+says which side is behind and offers that side's update; the app never shows
+a daemon's page it doesn't match.
+Where: `crates/desktop/src/main.rs`, `crates/desktop/src/service.rs`,
+`crates/desktop/src/compat.rs`.
+From: [Desktop track](docs/plan-archive.md#desktop-track-s25-m46m48-added-2026-10-04), [S26](docs/plan-archive.md#s26-how-native-can-it-get-141), #317, #390, #392.
 
 ### Clients run ssh; daemons don't
 The CLI, the TUI and the desktop app run the system `ssh` themselves, where

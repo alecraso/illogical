@@ -66,7 +66,8 @@
 //! - **`GET /ws`**: the WebSocket, with the local token as a bearer. The
 //!   app only reads it.
 //! - **`GET /api/host`**: `version` and `protocol`
-//!   (`compat.rs`; absent means the baseline), `name` and `control`
+//!   (`compat.rs`; absent means the baseline, and below 0.19.0 too old,
+//!   #317), `name` and `control`
 //!   (`cloud.rs`).
 //! - **`GET /api/update`** (`apply`, `command`) and **`POST
 //!   /api/update/apply`** (#391): the daemon's own update, which the setup
@@ -605,8 +606,12 @@ fn focus_or_open(app: &AppHandle) {
     }
 }
 
-/// From a notification: the pane, in a window of ours.
+/// From a notification: the pane, in a window of ours. Not while the
+/// daemon and the app don't match: the setup page says why.
 fn open_pane(app: &AppHandle, pane: u32) {
+    if compat::mismatch().is_some() {
+        return focus_or_open(app);
+    }
     let url = page_at(&format!("/#pane={pane}"));
     #[cfg(target_os = "macos")]
     let _ = app.show();
@@ -980,9 +985,14 @@ fn main() {
                     "new" => {
                         let _ = open_window(app, target(app));
                     }
-                    // The daemon's own page, whatever the window shows.
+                    // The daemon's own page, whatever the window shows,
+                    // unless it doesn't match this app (the setup page).
                     "this" => {
-                        let _ = open_window(app, WebviewUrl::External(page_at("/")));
+                        let to = match compat::mismatch() {
+                            Some(_) => target(app),
+                            None => WebviewUrl::External(page_at("/")),
+                        };
+                        let _ = open_window(app, to);
                     }
                     "hotkey" => {
                         let mut prefs = settings::load(app);

@@ -1,0 +1,28 @@
+#!/bin/sh
+# systemd for the stale-daemon test (#317), on PATH before any real one:
+# one user unit, illogicald.service, run from its ExecStart= (%h is HOME).
+# Enough for `illogicald install` and the app's is-active check.
+[ "$1" = --user ] && shift
+unit=$HOME/.config/systemd/user/illogicald.service
+pidf=$HOME/.illogicald.pid
+alive() { [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; }
+stop() {
+  if alive; then
+    kill "$(cat "$pidf")"
+    while alive; do sleep 0.1; done
+  fi
+  rm -f "$pidf"
+}
+case "$1" in
+  daemon-reload | enable) ;;
+  is-active) alive ;;
+  stop) stop ;;
+  start | restart)
+    stop
+    cmd=$(sed -n 's/^ExecStart=//p' "$unit" | sed "s|%h|$HOME|g")
+    # shellcheck disable=SC2086 # the unit's words
+    nohup $cmd >>"$HOME/illogicald.log" 2>&1 &
+    echo $! >"$pidf"
+    ;;
+  *) exit 1 ;;
+esac

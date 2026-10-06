@@ -8,8 +8,12 @@
 //! is behind and offers its update: the daemon's own (#391, `POST
 //! /api/update/apply`, else the command it gives) or the app's
 //! (`updates.rs`).
+//!
+//! A daemon that reports no protocol (0.23 and earlier) is judged by its
+//! version too: below [`MIN_VERSION`] it's behind (#317), whatever the
+//! baseline says.
 
-use std::{ops::RangeInclusive, sync::Mutex, time::Duration};
+use std::{ops::RangeInclusive, path::Path, sync::Mutex, time::Duration};
 
 use illogical_proto::{PROTOCOL, PROTOCOL_BASELINE};
 use serde_json::Value;
@@ -22,6 +26,13 @@ const MIN_PROTOCOL: u32 = 1;
 /// The daemon protocols this app works with: up to the one its own
 /// `proto` speaks.
 pub const SUPPORTED: RangeInclusive<u32> = MIN_PROTOCOL..=PROTOCOL;
+
+/// The oldest daemon this app shows, of those that report no protocol
+/// (#317): 0.19.0, the titlebar's release. The window's tabs, its buttons
+/// and dragging it come from the daemon's page, so on an older daemon the
+/// app can't be moved or closed the way it should. Daemons that report a
+/// protocol are all newer than this.
+const MIN_VERSION: &str = "0.19.0";
 
 /// Where to get the app by hand, when it can't update itself (a .deb or
 /// .rpm, a build without an updater key): the newest app release (#393).
@@ -36,9 +47,12 @@ pub enum Behind {
     App,
 }
 
-/// A daemon speaking `protocol` (`None`: it doesn't say), against the
-/// range an app supports.
-pub fn judge(protocol: Option<u32>, supported: &RangeInclusive<u32>) -> Option<Behind> {
+/// A daemon speaking `protocol` (`None`: it doesn't say) at `version`,
+/// against the range an app supports.
+pub fn judge(protocol: Option<u32>, version: &str, supported: &RangeInclusive<u32>) -> Option<Behind> {
+    if below_floor(protocol, version) {
+        return Some(Behind::Daemon);
+    }
     let p = protocol.unwrap_or(PROTOCOL_BASELINE);
     if p < *supported.start() {
         Some(Behind::Daemon)
@@ -47,6 +61,19 @@ pub fn judge(protocol: Option<u32>, supported: &RangeInclusive<u32>) -> Option<B
     } else {
         None
     }
+}
+
+/// A daemon too old to report a protocol, and older than [`MIN_VERSION`].
+/// A version that doesn't parse isn't held against it.
+fn below_floor(protocol: Option<u32>, version: &str) -> bool {
+    protocol.is_none() && matches!((numbers(version), numbers(MIN_VERSION)), (Some(v), Some(min)) if v < min)
+}
+
+/// `X.Y.Z` (a leading `v`, a pre-release or build suffix ignored).
+fn numbers(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version.trim().trim_start_matches('v').split(['-', '+']).next()?;
+    let mut parts = core.split('.').map(|n| n.parse::<u64>().ok());
+    Some((parts.next()??, parts.next()??, parts.next().unwrap_or(Some(0))?))
 }
 
 /// The daemon's protocol, from what `GET /api/host` answered.
@@ -58,15 +85,20 @@ pub fn protocol_of(host: &Value) -> Option<u32> {
 #[derive(Debug, Clone)]
 pub struct Mismatch {
     pub behind: Behind,
-    /// The daemon's version and protocol.
+    /// The daemon's version, and its protocol if it reports one.
     pub version: String,
-    pub protocol: u32,
+    pub protocol: Option<u32>,
 }
 
 impl Mismatch {
     pub fn message(&self) -> String {
-        let (v, p) = (&self.version, self.protocol);
+        let (v, p) = (&self.version, self.protocol.unwrap_or(PROTOCOL_BASELINE));
         match self.behind {
+            Behind::Daemon if below_floor(self.protocol, v) => format!(
+                "illogicald here is {v}; this app needs {MIN_VERSION} or newer. The window's titlebar \
+                 (its tabs, its buttons, dragging it) comes from the daemon's page, and {v}'s doesn't \
+                 have it. Update illogicald to use this app."
+            ),
             Behind::Daemon => format!(
                 "illogicald here is {v}, which speaks protocol {p}; this app needs {} or newer. \
                  Update illogicald to use this app.",
@@ -91,11 +123,8 @@ pub fn check() {
         return;
     };
     let protocol = protocol_of(&host);
-    let found = judge(protocol, &SUPPORTED).map(|behind| Mismatch {
-        behind,
-        version: host["version"].as_str().unwrap_or("unknown").to_owned(),
-        protocol: protocol.unwrap_or(PROTOCOL_BASELINE),
-    });
+    let version = host["version"].as_str().unwrap_or("unknown").to_owned();
+    let found = judge(protocol, &version, &SUPPORTED).map(|behind| Mismatch { behind, version, protocol });
     if let Some(m) = &found {
         eprintln!("illogical: {}", m.message());
     }
@@ -134,9 +163,30 @@ fn host() -> Option<Value> {
 pub enum DaemonUpdate {
     Apply,
     Command(String),
-    /// Neither: a daemon older than #391's `apply`, or installed some way
-    /// with no command (a build, the app's bundle).
+    /// Neither: a daemon from before `GET /api/update` (0.18), or
+    /// installed some way with no command (a build, the app's bundle).
     ByHand,
+}
+
+const INSTALL_SH: &str = "curl -fsSL https://illogical.widgets.wtf/install.sh | sh";
+const INSTALL_PS1: &str = "irm https://illogical.widgets.wtf/install.ps1 | iex";
+const BREW: &str = "brew upgrade illogical && illogicald install";
+
+/// The command for a daemon that doesn't give one, from where its binary
+/// is installed (the copy the app would start, `installed()`): Homebrew's
+/// (a link into a `Cellar`), else install.sh again, as the daemon's own
+/// `update.rs` decides.
+fn command_for(installed: Option<&Path>) -> &'static str {
+    match installed {
+        Some(p) if p.components().any(|c| c.as_os_str() == "Cellar") => BREW,
+        _ if cfg!(windows) => INSTALL_PS1,
+        _ => INSTALL_SH,
+    }
+}
+
+fn by_hand() -> &'static str {
+    let installed = crate::installed("illogicald").map(|p| p.canonicalize().unwrap_or(p));
+    command_for(installed.as_deref())
 }
 
 pub fn daemon_update_of(update: &Value) -> DaemonUpdate {
@@ -168,13 +218,17 @@ pub async fn compat(app: AppHandle) -> Result<Option<Problem>, String> {
     let action = match m.behind {
         Behind::Daemon => {
             match tauri::async_runtime::spawn_blocking(daemon_update).await.map_err(|e| e.to_string())? {
-                DaemonUpdate::Apply => Some("Update illogicald"),
+                DaemonUpdate::Apply => {
+                    message.push_str(" Or run:\n\n  illogicald update");
+                    Some("Update illogicald")
+                }
                 DaemonUpdate::Command(c) => {
                     message.push_str(&format!(" To update it, run:\n\n  {c}"));
                     None
                 }
                 DaemonUpdate::ByHand => {
-                    message.push_str(&format!(" Update it the way it was installed ({DOWNLOADS})."));
+                    let c = by_hand();
+                    message.push_str(&format!(" To update it the way it was installed, run:\n\n  {c}"));
                     None
                 }
             }
@@ -245,31 +299,73 @@ fn update_daemon() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Behind, DaemonUpdate, daemon_update_of, judge, protocol_of};
+    use std::path::Path;
+
+    use super::{Behind, DaemonUpdate, Mismatch, command_for, daemon_update_of, judge, protocol_of};
 
     #[test]
     fn judges_both_directions() {
         let app = 2..=3;
-        assert_eq!(judge(Some(2), &app), None);
-        assert_eq!(judge(Some(3), &app), None);
+        assert_eq!(judge(Some(2), "0.30.0", &app), None);
+        assert_eq!(judge(Some(3), "0.30.0", &app), None);
         // The daemon is behind: it gets the update.
-        assert_eq!(judge(Some(1), &app), Some(Behind::Daemon));
+        assert_eq!(judge(Some(1), "0.30.0", &app), Some(Behind::Daemon));
         // The app is behind: it gets the update.
-        assert_eq!(judge(Some(4), &app), Some(Behind::App));
+        assert_eq!(judge(Some(4), "0.30.0", &app), Some(Behind::App));
     }
 
     #[test]
     fn a_daemon_without_a_number_is_the_baseline() {
-        assert_eq!(judge(None, &(1..=1)), None);
-        assert_eq!(judge(None, &(1..=4)), None);
-        assert_eq!(judge(None, &(2..=4)), Some(Behind::Daemon));
+        assert_eq!(judge(None, "0.23.0", &(1..=1)), None);
+        assert_eq!(judge(None, "0.23.0", &(1..=4)), None);
+        assert_eq!(judge(None, "0.23.0", &(2..=4)), Some(Behind::Daemon));
     }
 
     #[test]
     fn this_app_takes_its_own_protocol_and_the_baseline() {
-        assert_eq!(judge(Some(illogical_proto::PROTOCOL), &super::SUPPORTED), None);
-        assert_eq!(judge(None, &super::SUPPORTED), None, "today's apps work with 0.23's daemons");
-        assert_eq!(judge(Some(illogical_proto::PROTOCOL + 1), &super::SUPPORTED), Some(Behind::App));
+        assert_eq!(judge(Some(illogical_proto::PROTOCOL), "0.24.0", &super::SUPPORTED), None);
+        assert_eq!(judge(None, "0.23.0", &super::SUPPORTED), None, "today's apps work with 0.23's daemons");
+        assert_eq!(judge(Some(illogical_proto::PROTOCOL + 1), "0.30.0", &super::SUPPORTED), Some(Behind::App));
+    }
+
+    /// #317: the baseline protocol, but older than the titlebar's release.
+    #[test]
+    fn a_daemon_without_a_number_below_the_floor_is_behind() {
+        let app = &super::SUPPORTED;
+        assert_eq!(judge(None, "0.8.0", app), Some(Behind::Daemon), "the 0.8.0 that #317 saw");
+        assert_eq!(judge(None, "0.18.9", app), Some(Behind::Daemon));
+        assert_eq!(judge(None, "v0.18.0", app), Some(Behind::Daemon));
+        // At or above it, the baseline holds.
+        assert_eq!(judge(None, "0.19.0", app), None);
+        assert_eq!(judge(None, "0.19.0-rc.1", app), None);
+        assert_eq!(judge(None, "0.23.0", app), None);
+        assert_eq!(judge(None, "1.0.0", app), None);
+        // A version that doesn't parse isn't held against it.
+        assert_eq!(judge(None, "unknown", app), None);
+        // A daemon that reports a protocol is judged by that alone.
+        assert_eq!(judge(Some(illogical_proto::PROTOCOL), "0.8.0", app), None);
+    }
+
+    #[test]
+    fn says_which_version_runs_and_which_the_app_needs() {
+        let m = Mismatch { behind: Behind::Daemon, version: "0.8.0".into(), protocol: None };
+        let said = m.message();
+        assert!(said.contains("illogicald here is 0.8.0"), "{said}");
+        assert!(said.contains("needs 0.19.0 or newer"), "{said}");
+        assert!(said.contains("titlebar"), "{said}");
+        // Behind on the protocol: says so, as before.
+        let m = Mismatch { behind: Behind::Daemon, version: "0.30.0".into(), protocol: Some(1) };
+        assert!(m.message().contains("speaks protocol 1"), "{}", m.message());
+    }
+
+    #[test]
+    fn the_command_for_how_it_was_installed() {
+        let brew = Path::new("/opt/homebrew/Cellar/illogical/0.8.0/bin/illogicald");
+        assert_eq!(command_for(Some(brew)), "brew upgrade illogical && illogicald install");
+        let script = Path::new("/home/me/.local/bin/illogicald");
+        let sh = if cfg!(windows) { super::INSTALL_PS1 } else { super::INSTALL_SH };
+        assert_eq!(command_for(Some(script)), sh);
+        assert_eq!(command_for(None), sh);
     }
 
     #[test]

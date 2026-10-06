@@ -243,11 +243,12 @@ desktop-macos arch="" *tauri_args="":
 # no bundle) in its build image (packaging/desktop/Containerfile) and runs
 # packaging/desktop/xvfb's tests against a static daemon: `join` (#204,
 # test.sh, with a stand-in control), `m46` (m46.sh: keys, the titlebar,
-# illogical:// links, the global hotkey) and `m47` (a right-click in
-# Nautilus opens a tab). Needs podman or docker; the
-# container runs the host's architecture (aarch64 under Docker Desktop on a
-# Mac). `just desktop-xvfb m46 keys` runs one claim.
-desktop-xvfb *tests="join m46 m47":
+# illogical:// links, the global hotkey), `m47` (a right-click in
+# Nautilus opens a tab) and `stale` (#317, stale.sh: a 0.8.0 daemon, stopped
+# or running, gets the setup page and is left alone). Needs podman or
+# docker; the container runs the host's architecture (aarch64 under Docker
+# Desktop on a Mac). `just desktop-xvfb m46 keys` runs one claim.
+desktop-xvfb *tests="join m46 m47 stale":
     #!/usr/bin/env bash
     set -euo pipefail
     root={{justfile_directory()}}
