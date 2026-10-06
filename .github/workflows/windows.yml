@@ -1,5 +1,6 @@
 # Windows on GitHub's own runners (the Windows track, #224). They're not our
-# host runners, so pull requests can run this too.
+# host runners, so pull requests can run this too. The desktop app's
+# installer builds in windows-desktop.yml, only when the app can change.
 name: windows
 on:
   push:
@@ -11,35 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  # M54 (#217): lint the desktop app and build its installer, kept as an
-  # artifact for testing in the VM.
-  desktop:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
-        working-directory: crates/desktop
-    steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/desktop
-      # Stand-ins for what the release builds (scripts/windows-dist): the
-      # daemon, the CLI and Microsoft's ConPTY. This installer is for
-      # checking the app; the release's carries the real ones.
-      - run: |
-          mkdir -p binaries
-          for f in illogicald-x86_64-pc-windows-msvc.exe illogical-x86_64-pc-windows-msvc.exe conpty.dll OpenConsole.exe ConPTY-LICENSE.txt; do
-            [ -e "binaries/$f" ] || : > "binaries/$f"
-          done
-      - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: npx --yes @tauri-apps/cli@2 build --bundles nsis
-      - uses: actions/upload-artifact@v4
-        with:
-          name: illogical-desktop-windows-x86_64
-          path: crates/desktop/target/release/bundle/nsis/*-setup.exe
-
   # M55 (#218): the workspace compiles on Windows, and its unit tests pass.
   # (control runs on Fly, and the integration tests use the Unix socket
   # until M56.)
