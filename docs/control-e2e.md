@@ -2,7 +2,7 @@
 
 Written 2026-10-01, from S15 ([spikes/s15-control](../spikes/s15-control/README.md)).
 This is the design M17–M21 build. It turns the control track's promise
-(PLAN.md, "Control track") into mechanisms: **control can refuse service,
+(plan-archive.md, "Control track") into mechanisms: **control can refuse service,
 but it can't read.** That promise has limits, set out in
 [What holds against control](#what-holds-against-control): the client code
 control serves, and the first account a machine joins, are trusted.

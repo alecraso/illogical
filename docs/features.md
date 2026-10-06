@@ -1,6 +1,6 @@
 # Features
 
-What illogical does, roughly in the order it was built. [PLAN.md](../PLAN.md) has the reasoning and the milestones.
+What illogical does, roughly in the order it was built. [plan-archive.md](plan-archive.md) has the reasoning and the milestones, and [DECISIONS.md](../DECISIONS.md) the decisions that still hold.
 
 Examples name the machine that serves the page `home`; on a real tailnet it's your machine's MagicDNS name.
 

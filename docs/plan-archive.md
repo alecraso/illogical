@@ -1,3 +1,129 @@
+# The plan, archived
+
+This was PLAN.md until #444. It is kept as written; the decisions that still hold are in [DECISIONS.md](../DECISIONS.md).
+
+Links inside the plan below are relative to the repo root (`docs/research.md`, `spikes/s1-ghostty/README.md`), so from this file they need a `../` in front. Milestone codes (M0 … M75) and spike codes (S1 … S33) in source comments and docs mean the sections of this file; the index finds them. The plan has no M66, M67 or S34.
+
+## Index of milestones and spikes
+
+Each row is one code. The last column links to the section that holds it (the section's own heading, where the code is one bullet inside a larger section such as the spikes list).
+
+| Code | Title | What it delivered or decided | Section |
+|---|---|---|---|
+| S1 | libghostty-vt | Seven recorded fixtures round-trip exactly; the formatter needs a fix-up layer | [section](#s-spikes-each-about-half-a-day-before-the-milestone-named) |
+| S2 | tailnet | Tailscale serve gives a valid cert, WSS, and the real Tailscale-User-Login header | [section](#s-spikes-each-about-half-a-day-before-the-milestone-named) |
+| S3 | fd store | A pane's PTY master survives a daemon restart in systemd's FD store | [section](#s-spikes-each-about-half-a-day-before-the-milestone-named) |
+| S4 | reach | Fly and wisp sprites as machines: what keeps them awake, how they wake | [section](#s-spikes-each-about-half-a-day-before-the-milestone-named) |
+| S5 | upstream snapshot | GHOSTSNP checkpoints round-trip exactly; kept as a cache over the log | [section](#s-spikes-each-about-half-a-day-before-the-milestone-named) |
+| S6 | blocks spike | Browser and agent blocks are feasible; findings folded into M6 | [section](#s6-done-2026-10-01) |
+| S7 | ACP spike | A hand-rolled ACP client drives claude-agent-acp, codex-acp and fountain acp | [section](#s7-acp-spike-done-2026-10-01) |
+| S8 | block exploration | Next blocks chosen from use: a cut of M11; no job or notes blocks | [section](#s8-done-2026-10-02) |
+| S9 | parking, measured | The parking trigger already held; the step was deferred (#10) | [section](#m9-parking-scale) |
+| S10 | ghostty-web, measured | Visible-first attach not worth building for xterm.js | [section](#m8-client-terminal-engine-ghostty-web-and-local-echo) |
+| S11 | tmux control mode, recorded | The -CC protocol recorded against real tmux for the M5 front end | [section](#m5-tmux-control-mode--cc-front-end) |
+| S12 | spike before M12 (about half a day) | Sharing questions answered before M12: node sharing, shared-in identity | [section](#s12-spike-before-m12-about-half-a-day) |
+| S13 | questions spike | How Claude Code asks questions and how to answer them | [section](#s13-done-2026-10-01) |
+| S14 | MCP, measured | Transports and clients measured for the M16 server | [section](#m16-an-mcp-server-illogical-as-tools-for-any-agent) |
+| S15 | spike before M17 (about two days) | Control's E2E design: Noise channels, device keys, relay, push | [section](#s15-spike-before-m17-about-two-days) |
+| S16 | swarm spike (summary cost, fleet connections, canvas) | Swarm: delta summaries go; fleet connections; canvas | [section](#s16-swarm-spike-summary-cost-fleet-connections-canvas) |
+| S17 | editors spike (Claude Code's IDE protocol, remote extensions, editor events, servers) | Editors: Claude Code's IDE protocol, remote extensions, servers | [section](#s17-editors-spike-claude-codes-ide-protocol-remote-extensions-editor-events-servers) |
+| S18 | team answers spike (permission hooks, follow-ups, notification answers) | Team answers: permission hooks, follow-ups, notification answers | [section](#s18-team-answers-spike-permission-hooks-follow-ups-notification-answers) |
+| S19 | TUI spike | A ratatui TUI on the web client's protocol: go | [section](#s19-tui-spike) |
+| S20 | conversations spike (about half a day) | Claude Code's transcript shape, and how to index conversations | [section](#s20-conversations-spike-about-half-a-day) |
+| S21 | chant workspace as blocks spike | A chant workspace as a block through its read contract: go | [section](#s21-chant-workspace-as-blocks-spike) |
+| S22 | studio apps spike | A studio box as a block: framing, cookies, the box's agent: go | [section](#s22-studio-apps-spike) |
+| S23 | forge blocks spike (#87, about half a day) | One forge block with a provider adapter; read path through the CLIs: go | [section](#s23-forge-blocks-spike-87-about-half-a-day) |
+| S24 | Fountain spike (#120) | Fountain's catalog, ACP and runner measured against hosted Fountain: go | [section](#s24-fountain-spike-120) |
+| S25 | desktop shell spike | Tauri 2 desktop shell works in WebKitGTK: go | [section](#s25-desktop-shell-spike) |
+| S26 | how native can it get (#141) | Native terminals measured; the app stays on Tauri | [section](#s26-how-native-can-it-get-141) |
+| S27 | blocks through control, end to end (#148) | Block sites through control, end to end: go for M50 per browser | [section](#s27-blocks-through-control-end-to-end-148) |
+| S28 | reach a machine over ssh (#153) | ssh as a transport and an installer, daemon lifetime over a login | [section](#s28-reach-a-machine-over-ssh-153) |
+| S29 | Windows feasibility (risks first) (#216) | Windows feasibility, risks first: Ghostty build, ConPTY, pipes, shims | [section](#s29-windows-feasibility-risks-first-216) |
+| S30 | talk spike (#239) | WebRTC, mic and TURN in each client | [section](#s30-talk-spike-239) |
+| S31 | a phone as a machine (#246) | A phone as a machine: Android go, iOS no-go | [section](#s31-a-phone-as-a-machine-246) |
+| S32 | images into a pane, measured (#248) | What Claude Code takes as an image, measured | [section](#s32-images-into-a-pane-measured-248) |
+| S33 | the phone as a hand (#268) | The phone as a hand that agents call through control | [section](#s33-the-phone-as-a-hand-268) |
+| M0 | the loop | Workspace, CI, one PTY, VtEngine, a WebSocket and one xterm page | [section](#m0-the-loop) |
+| M1 | multiplexer | Tree, intents, tabs, splits, web layout, phone view, size arbitration | [section](#m1-multiplexer) |
+| M2 | durability | Log store, checkpoints, layout.json, restart policies, install, restore | [section](#m2-durability) |
+| M2b | in-place daemon upgrade (start of daily use) | Per-pane scopes, the shim, the FD store: restart the daemon, keep the shells | [section](#m2b-in-place-daemon-upgrade-start-of-daily-use) |
+| M3 | structure and CLI | Shell integration, command marks, and the CLI over the socket | [section](#m3-structure-and-cli) |
+| M3b | ephemeral machines (a fresh VM owned by a pane) | A throwaway VM owned by one pane | [section](#m3b-ephemeral-machines-a-fresh-vm-owned-by-a-pane) |
+| M3c | tab-owned machines (a throwaway box per tab) | A throwaway VM owned by a tab, shared by its panes | [section](#m3c-tab-owned-machines-a-throwaway-box-per-tab) |
+| M4 | reach (a shell on any machine or sandbox) | Peer daemons, host list, transports, providers (M4a, M4b), dial-out and log sync (M4c) | [section](#m4-reach-a-shell-on-any-machine-or-sandbox) |
+| M5 | tmux control mode (-CC) front end | tmux -CC front end, so iTerm2 shows tabs and splits as windows | [section](#m5-tmux-control-mode--cc-front-end) |
+| M6 | non-terminal blocks (after M4b; M5 is independent of it) | Non-terminal blocks: the Block trait, browser (M6a), agent (M6b), forms (M6c) | [section](#m6-non-terminal-blocks-after-m4b-m5-is-independent-of-it) |
+| M7 | files and navigation | Files and navigation: the fs methods and the directory picker | [section](#m7-files-and-navigation) |
+| M8 | client terminal engine (ghostty-web) and local echo | Client terminal engine (ghostty-web) and local echo; gated, not built | [section](#m8-client-terminal-engine-ghostty-web-and-local-echo) |
+| M9 | parking (scale) | Parking for scale; step 1 (memory) done, parking itself deferred | [section](#m9-parking-scale) |
+| M10 | job and service blocks | Job and service blocks: not built as block types (S8) | [section](#m10-job-and-service-blocks) |
+| M11 | file and diff blocks (after M7) | File and diff blocks (a cut), and Rerun | [section](#m11-file-and-diff-blocks-after-m7) |
+| M12 | principals and roles | Principals, roles per session, and the one access decision function | [section](#m12-principals-and-roles) |
+| M13 | live sharing and presence | Live sharing and presence | [section](#m13-live-sharing-and-presence) |
+| M14 | safe write access | Safe write access: a guest's panes run in VMs unless trusted | [section](#m14-safe-write-access) |
+| M15 | beyond the tailnet | Sharing beyond the tailnet; superseded by M19 | [section](#m15-beyond-the-tailnet) |
+| M16 | an MCP server (illogical as tools for any agent) | The MCP server at /mcp, and agent blocks in a VM (#59) | [section](#m16-an-mcp-server-illogical-as-tools-for-any-agent) |
+| M17 | illogical control (accounts, devices, enrollment, directory) | Control: accounts, devices, enrollment, directory | [section](#m17-illogical-control-accounts-devices-enrollment-directory) |
+| M18 | relay and end-to-end encryption | The relay and the Noise channel end to end | [section](#m18-relay-and-end-to-end-encryption) |
+| M19 | teams (sharing, roles, team daemons, invites) | Teams: signed rosters, sharing, team daemons, invites | [section](#m19-teams-sharing-roles-team-daemons-invites) |
+| M20 | hosted sandboxes | Hosted sandboxes made by control | [section](#m20-hosted-sandboxes) |
+| M21 | push relay | Push relay with control's VAPID key | [section](#m21-push-relay) |
+| M22 | billing and metering (hosted control only) | Billing and metering for hosted control | [section](#m22-billing-and-metering-hosted-control-only) |
+| M23 | pane summaries | Pane summaries and delta state | [section](#m23-pane-summaries) |
+| M24 | attention reasons and actions | Attention reasons and actions | [section](#m24-attention-reasons-and-actions) |
+| M25 | the fleet in one page | The fleet in one page | [section](#m25-the-fleet-in-one-page) |
+| M26 | the swarm view | The swarm view | [section](#m26-the-swarm-view) |
+| M27 | VS Code blocks | VS Code as an editor block | [section](#m27-vs-code-blocks) |
+| M28 | your editor in the swarm | Your own editor joins the swarm | [section](#m28-your-editor-in-the-swarm) |
+| M29 | team answers | Team answers: every answer has an author | [section](#m29-team-answers) |
+| M30 | the team's swarm | The team's swarm | [section](#m30-the-teams-swarm) |
+| M31 | illogical tui | illogical tui: tabs, splits and a needs-you sidebar in a terminal | [section](#m31-illogical-tui) |
+| M32 | copy mode in the TUI | Copy mode in the TUI | [section](#m32-copy-mode-in-the-tui) |
+| M33 | Claude Code conversations as blocks (#72) | Claude Code conversations as agent blocks | [section](#m33-claude-code-conversations-as-blocks-72) |
+| M34 | chant workspace blocks (#73) | Chant workspace blocks | [section](#m34-chant-workspace-blocks-73) |
+| M35 | studio app blocks (#85) | Studio app blocks | [section](#m35-studio-app-blocks-85) |
+| M36 | Forgejo pull request blocks (#88) | Forgejo pull request blocks (the forge block) | [section](#m36-forgejo-pull-request-blocks-88) |
+| M37 | issue blocks, and issue → agent (#89) | Issue blocks, and issue to agent | [section](#m37-issue-blocks-and-issue--agent-89) |
+| M38 | GitHub (#90) | GitHub through gh | [section](#m38-github-90) |
+| M39 | GitLab (#91) | GitLab through glab | [section](#m39-gitlab-91) |
+| M40 | webhooks and hosted boxes (#92) | Forge webhooks and hosted boxes | [section](#m40-webhooks-and-hosted-boxes-92) |
+| M41 | swarm themes, blocks and city (#116) | Swarm themes: blocks and city | [section](#m41-swarm-themes-blocks-and-city-116) |
+| M42 | the hive and the timeline themes (#117) | Swarm themes: hive and timeline | [section](#m42-the-hive-and-the-timeline-themes-117) |
+| M43 | Fountain agent catalog (#121) | Fountain agent catalog block | [section](#m43-fountain-agent-catalog-121) |
+| M44 | wear a Fountain agent locally (#122) | Wear a Fountain agent locally | [section](#m44-wear-a-fountain-agent-locally-122) |
+| M45 | geek as the Fountain runner (#123) | geek as the Fountain runner | [section](#m45-geek-as-the-fountain-runner-123) |
+| M46 | the app as window, installer and supervisor | The desktop app as window, installer and supervisor | [section](#m46-the-app-as-window-installer-and-supervisor) |
+| M47 | OS integration | OS integration: open a folder in the app | [section](#m47-os-integration) |
+| M48 | native transport | Native transport: the app as control's client | [section](#m48-native-transport) |
+| M49 | the CLI and the daemon page without a hub (#149) | The CLI and the daemon page without a hub | [section](#m49-the-cli-and-the-daemon-page-without-a-hub-149) |
+| M50 | blocks through control (#150, after S27) | Block sites through control | [section](#m50-blocks-through-control-150-after-s27) |
+| M51 | the CLI and the TUI over ssh (#154) | The CLI and the TUI over ssh | [section](#m51-the-cli-and-the-tui-over-ssh-154) |
+| M52 | add a machine over ssh and join it to control (#155) | Add a machine over ssh and join it to control | [section](#m52-add-a-machine-over-ssh-and-join-it-to-control-155) |
+| M53 | the desktop app over ssh (#156, gated, after M51) | The desktop app over ssh; gated | [section](#m53-the-desktop-app-over-ssh-156-gated-after-m51) |
+| M54 | the desktop app on Windows as a cloud client (#217) | The desktop app on Windows as a cloud client | [section](#m54-the-desktop-app-on-windows-as-a-cloud-client-217) |
+| M55 | the workspace compiles on Windows (#218) | The workspace compiles on Windows | [section](#m55-the-workspace-compiles-on-windows-218) |
+| M56 | illogicald runs panes on Windows (#219) | illogicald runs panes on Windows | [section](#m56-illogicald-runs-panes-on-windows-219) |
+| M57 | the CLI and the TUI on Windows (#220) | The CLI and the TUI on Windows | [section](#m57-the-cli-and-the-tui-on-windows-220) |
+| M58 | panes survive daemon restarts on Windows (#221) | Panes survive daemon restarts on Windows | [section](#m58-panes-survive-daemon-restarts-on-windows-221) |
+| M59 | install, upgrade and the app carrying the daemon on Windows (#222) | Install, upgrade and the app carrying the daemon on Windows | [section](#m59-install-upgrade-and-the-app-carrying-the-daemon-on-windows-222) |
+| M60 | Windows parity (#223) | Windows parity: procinfo and PowerShell shell integration | [section](#m60-windows-parity-223) |
+| M61 | threads on panes and sessions (#240) | Threads on panes and sessions | [section](#m61-threads-on-panes-and-sessions-240) |
+| M62 | team channels (#241, after S30 and M61) | Team channels, end-to-end encrypted with MLS | [section](#m62-team-channels-241-after-s30-and-m61) |
+| M63 | voice on a session (#242, after S30) | Voice on a session (WebRTC) | [section](#m63-voice-on-a-session-242-after-s30) |
+| M64 | bigger calls and calls in channels (#243, gated, after M63) | Bigger calls and calls in channels; gated | [section](#m64-bigger-calls-and-calls-in-channels-243-gated-after-m63) |
+| M65 | a pane for a guest who has only OpenSSH (#198, decided 2026-10-04) | A pane for a guest who has only OpenSSH | [section](#m65-a-pane-for-a-guest-who-has-only-openssh-198-decided-2026-10-04) |
+| M68 | illogicald on Android, in Termux (#274) | illogicald on Android, in Termux | [section](#m68-illogicald-on-android-in-termux-274) |
+| M69 | the illogical Android app as a machine (#275, after M68 and #276) | The Android app as a machine | [section](#m69-the-illogical-android-app-as-a-machine-275-after-m68-and-276) |
+| M70 | images into terminal panes (#249) | Images and files into terminal panes | [section](#m70-images-into-terminal-panes-249) |
+| M71 | images in agent blocks (#250) | Images in agent blocks | [section](#m71-images-in-agent-blocks-250) |
+| M72 | the TUI and iTerm2 (#251, gated, after M70) | Images in the TUI and iTerm2; gated | [section](#m72-the-tui-and-iterm2-251-gated-after-m70) |
+| M73 | chat is a page (the frame) (#336) | Chat is a page of its own: the frame | [section](#m73-chat-is-a-page-the-frame-336) |
+| M74 | messages and composer like Slack (#337, after M73) | Messages and composer like Slack | [section](#m74-messages-and-composer-like-slack-337-after-m73) |
+| M75 | getting around like Slack (#338, after M74) | Getting around like Slack | [section](#m75-getting-around-like-slack-338-after-m74) |
+
+
+---
+
 # illogical: plan
 
 Written 2026-10-01 from the original brief and [docs/research.md](docs/research.md).

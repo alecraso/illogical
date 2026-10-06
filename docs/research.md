@@ -1,6 +1,6 @@
 # Research notes
 
-Gathered 2026-10-01 to back the decisions in [PLAN.md](../PLAN.md). Items
+Gathered 2026-10-01 to back the decisions in [plan-archive.md](plan-archive.md). Items
 marked *(unverified)* were not checked against a primary source.
 
 ## Server-side VT engine
@@ -17,7 +17,7 @@ marked *(unverified)* were not checked against a primary source.
 its modes extra switches screens before writing content. While vim or htop is
 running, the attach would show the alt screen correctly but an empty primary
 screen and no scrollback. The Zig side can format the screens separately; the
-C API does not expose that *(unverified)*. Fix options are in PLAN.md, spike S1.
+C API does not expose that *(unverified)*. Fix options are in plan-archive.md, spike S1.
 
 Links: [ghostty](https://github.com/ghostty-org/ghostty),
 [formatter.h](https://github.com/ghostty-org/ghostty/blob/main/include/ghostty/vt/formatter.h),

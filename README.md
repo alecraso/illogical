@@ -284,7 +284,8 @@ panes. `illogical --ssh` doesn't reach Windows yet.
 - [docs/cli.md](docs/cli.md): the CLI and the HTTP API.
 - [docs/development.md](docs/development.md): building, testing, the code's
   layout, and what building it taught us.
-- [PLAN.md](PLAN.md): the decisions and the milestones.
+- [DECISIONS.md](DECISIONS.md): the decisions that still hold.
+- [docs/plan-archive.md](docs/plan-archive.md): the original plan and every milestone.
 
 ## License
 

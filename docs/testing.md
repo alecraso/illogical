@@ -601,7 +601,7 @@ checking GitHub's signature on a real delivery is not covered there.
 ## The SSH track's tests
 
 S28 (#153), M51 (#154), M52 (#155) and M65 (#198) each promise something
-about reaching a machine over ssh (PLAN.md, "SSH track" and M65). The
+about reaching a machine over ssh (plan-archive.md, "SSH track" and M65). The
 tests below guard those promises, so when one fails, the table says which
 promise broke.
 
@@ -748,7 +748,7 @@ in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
 - **Tailscale SSH's check mode** (S28): it sends the user to an identity
   provider's login, so no test can answer whether its prompt shows in the
   client's terminal. It's in [By hand](#by-hand).
-- **M53**, the desktop app over ssh: gated (PLAN.md), no tests.
+- **M53**, the desktop app over ssh: gated (plan-archive.md), no tests.
 
 ## A fresh Mac: the tart VM harness
 
@@ -816,7 +816,7 @@ What they found (2026-10-05, macOS 26.6.2 in the VM):
   logs in to the GUI again, and an ssh login doesn't. A LaunchDaemon with
   `UserName` survives both, with its panes restored. `illogicald install`
   now picks the Background agent when there's no GUI domain and says the
-  restart caveat, and `--system` installs the LaunchDaemon (PLAN.md, M52);
+  restart caveat, and `--system` installs the LaunchDaemon (plan-archive.md, M52);
   every `launchd` check passes, and every one fails with `BREAK=1`.
 - **A hard stop loses recent pane output.** `tart stop` on this image is
   a power cut (the guest doesn't shut down in time), and a pane made a
