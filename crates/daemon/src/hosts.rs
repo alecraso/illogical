@@ -517,6 +517,7 @@ async fn host(State(app): AppState) -> Json<HostInfo> {
     Json(HostInfo {
         name: app.hosts.name().to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
+        protocol: Some(illogical_proto::PROTOCOL),
         tailnet_url: app.access.tailnet_url(),
         tailnet_seen: app.tailnet_seen.load(std::sync::atomic::Ordering::Relaxed),
         control: saved.map(|s| s.url.clone()),

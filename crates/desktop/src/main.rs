@@ -47,10 +47,48 @@
 //! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
 //!   the app is control's client only, so a window opens on sign-in or
 //!   control's page, and nothing local is installed, watched or offered.
+//!
+//! ## What the app uses from the daemon (#390)
+//!
+//! The app and the daemon will ship apart (#388), so an app can meet an
+//! older or a newer daemon. This is everything it relies on. A daemon that
+//! changes any of it so that an app built before would break bumps
+//! `illogical_proto::PROTOCOL`; the app checks that number at launch
+//! (`compat.rs`).
+//!
+//! - **`proto` types**: [`ServerMsg`]'s `hello`, `state` and `delta`
+//!   (others are skipped), [`State`] and [`State::apply`], and of each pane
+//!   its `id`, [`Attention`] (`needs_input`), `reason.headline` and
+//!   `command`, for notifications and the badge.
+//! - **`GET /ws`**: the WebSocket, with the local token as a bearer. The
+//!   app only reads it.
+//! - **`GET /api/host`**: `version` (`upgrade.rs`), `protocol`
+//!   (`compat.rs`; absent means the baseline), `name` and `control`
+//!   (`cloud.rs`).
+//! - **`GET /api/update`** (`apply`, `command`) and **`POST
+//!   /api/update/apply`** (#391): the daemon's own update, which the setup
+//!   page offers when the daemon is too old for this app (`compat.rs`).
+//! - **`POST /api/run`** `{cwd, command}`, answering `{pane}`: a new tab
+//!   for `illogical://open`, a folder or a `.command` file (`links.rs`).
+//! - **The page**: `/` and `/#pane=N`, the sign-in link
+//!   `/auth?token=…&next=…`, and the `illogical:open-pane` event the app
+//!   sends a page already open. The other way, the page reads
+//!   `window.__illogicalApp` and calls the app's huddle commands
+//!   (`call_native_*`) and window permissions (capabilities/default.json).
+//! - **The local files**: the state directory's `listen` (the address) and
+//!   `local-token`.
+//! - **The service install**: `illogicald install`, which copies itself to
+//!   `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\illogical`), keeps the
+//!   flags the last install wrote and (re)starts the service: the systemd
+//!   user unit `illogicald.service`, the launchd agent `illogicald`, or the
+//!   scheduled task `illogicald`. On macOS the app's own launch agent runs
+//!   the bundled copy instead (`service.rs`). And `illogicald --version`,
+//!   printing `illogicald X.Y.Z`.
 
 #[cfg(all(target_os = "linux", feature = "native-calls"))]
 mod calls;
 mod cloud;
+mod compat;
 #[cfg(target_os = "macos")]
 mod finder;
 mod links;
@@ -298,11 +336,13 @@ fn start_agent() -> Result<(), String> {
 /// Where a new window starts:
 /// - no daemon answering, or an older one to update: the setup page, which
 ///   installs, starts or updates it (`retry`) and then comes back here;
+/// - a daemon speaking a protocol this app doesn't (#390): the setup page,
+///   which says which side is behind and offers its update (`compat.rs`);
 /// - joined to control and signed in: control's client, every machine;
 /// - joined, not signed in: the app's sign-in page;
 /// - otherwise (or "just this machine"): the daemon's own page.
 fn target(app: &AppHandle) -> WebviewUrl {
-    if !reachable() || upgrade::pending().is_some() {
+    if !reachable() || upgrade::pending().is_some() || compat::mismatch().is_some() {
         return WebviewUrl::App("index.html".into());
     }
     WebviewUrl::External(home(app))
@@ -597,6 +637,9 @@ fn daemon_status() -> String {
     if let Some(updating) = upgrade::pending() {
         return updating;
     }
+    if let Some(m) = compat::mismatch() {
+        return m.message();
+    }
     match installed("illogicald") {
         Some(bin) => format!("Starting {}…", bin.display()),
         None if bundled("illogicald").is_some() => "Installing illogicald (a service that starts at login)…".into(),
@@ -606,7 +649,14 @@ fn daemon_status() -> String {
 
 #[tauri::command]
 async fn retry(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
-    let r = tauri::async_runtime::spawn_blocking(ensure_daemon).await.map_err(|e| e.to_string())?;
+    let r = tauri::async_runtime::spawn_blocking(|| {
+        ensure_daemon()?;
+        // Answering now: does it speak a protocol this app does?
+        compat::check();
+        compat::mismatch().map_or(Ok(()), |m| Err(m.message()))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     *STATUS.lock().unwrap() = r.clone().err().unwrap_or_default();
     r?;
     let to = tauri::async_runtime::spawn_blocking(move || home(&app)).await.map_err(|e| e.to_string())?;
@@ -797,6 +847,8 @@ fn main() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         daemon_status,
         retry,
+        compat::compat,
+        compat::compat_fix,
         cloud::cloud_status,
         cloud::cloud_signin,
         cloud::cloud_local,
@@ -812,6 +864,8 @@ fn main() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         daemon_status,
         retry,
+        compat::compat,
+        compat::compat_fix,
         cloud::cloud_status,
         cloud::cloud_signin,
         cloud::cloud_local
@@ -861,6 +915,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             finder::init(app.handle());
             upgrade::check();
+            compat::check();
             let prefs = settings::load(app.handle());
             let hotkey_ok = match settings::apply(app.handle(), &prefs) {
                 Ok(()) => prefs.hotkey_on,

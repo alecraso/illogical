@@ -23,6 +23,22 @@ pub mod keys;
 #[cfg(all(test, feature = "ts"))]
 mod ts;
 
+/// The app↔daemon protocol (#390). The desktop app relies on a few things
+/// from the daemon, listed in `crates/desktop/src/main.rs`'s docs; the
+/// daemon reports this number beside its version (`GET /api/host`), and
+/// the app checks it against the range it supports at launch.
+///
+/// Bump it only when something on that list changes so that an app built
+/// before the change breaks against this daemon: a type the app reads
+/// changes shape, an endpoint it calls goes or answers differently, the
+/// daemon's page needs an app command older apps don't have. Additions
+/// an older app ignores (a new field, a new endpoint) don't bump it.
+pub const PROTOCOL: u32 = 1;
+
+/// What a daemon that reports no protocol number speaks: every daemon from
+/// before the number (0.23 and earlier).
+pub const PROTOCOL_BASELINE: u32 = 1;
+
 /// Control messages from a client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

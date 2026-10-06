@@ -8,7 +8,9 @@
 //! checked against the key and put in place of this app; it runs from the
 //! next start, which the tray offers (*Restart to update*). The daemon
 //! keeps the panes through that restart, and the new app updates the
-//! daemon if it carries a newer one (`upgrade.rs`).
+//! daemon if it carries a newer one (`upgrade.rs`). When the daemon here
+//! speaks a newer protocol than this app knows, the setup page offers the
+//! update straight away and restarts into it (`compat.rs`).
 //!
 //! Where it can update: the macOS app and the Linux AppImage. A .deb or
 //! .rpm belongs to the package manager.
@@ -61,8 +63,9 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// Download and put in place a newer release; its version.
-async fn check(app: &AppHandle) -> Result<Option<String>, String> {
+/// Download and put in place a newer release; its version. Also when the
+/// daemon here is newer than this app knows (`compat.rs`).
+pub async fn check(app: &AppHandle) -> Result<Option<String>, String> {
     let mut b = app.updater_builder();
     if let Some(u) = std::env::var("ILLOGICAL_UPDATE_URL").ok().filter(|u| !u.is_empty()) {
         b = b

@@ -104,6 +104,16 @@ fn wait_for(what: &str, f: impl FnMut() -> bool) {
     illogical_testkit::wait_for(what, Duration::from_secs(15), f);
 }
 
+/// The desktop app checks this number against the range it supports
+/// (#390), next to the version it already read.
+#[test]
+fn the_host_says_its_protocol_for_the_app() {
+    let d = start("proto", &[]);
+    let host = d.get("/api/host");
+    assert_eq!(host["protocol"], illogical_proto::PROTOCOL);
+    assert_eq!(host["version"], env!("CARGO_PKG_VERSION"));
+}
+
 #[test]
 fn the_home_list_and_host_flag_reach_another_daemon() {
     let home = start("home", &[]);

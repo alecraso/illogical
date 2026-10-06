@@ -91,6 +91,11 @@ pub struct AddHost {
 pub struct HostInfo {
     pub name: String,
     pub version: String,
+    /// The app↔daemon protocol it speaks ([`crate::PROTOCOL`], #390).
+    /// Absent from daemons older than the number, which speak
+    /// [`crate::PROTOCOL_BASELINE`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<u32>,
     /// Where `tailscale serve` puts the app, when tailscaled told us this
     /// node's name (#109): `https://NAME.TAILNET.ts.net`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

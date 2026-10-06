@@ -9,6 +9,8 @@
   "permissions": [
     "allow-daemon-status",
     "allow-retry",
+    "allow-compat",
+    "allow-compat-fix",
     "allow-cloud-status",
     "allow-cloud-signin",
     "allow-cloud-local"

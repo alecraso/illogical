@@ -5,6 +5,8 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
         "daemon_status",
         "retry",
+        "compat",
+        "compat_fix",
         "cloud_status",
         "cloud_signin",
         "cloud_local",

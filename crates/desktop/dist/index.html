@@ -21,24 +21,48 @@
   <p>The app shows <code>illogicald</code>, the daemon on this machine that keeps your terminals running when
     windows close. It isn't answering, so the app is starting it, or installing the copy it carries
     (to <code>~/.local/bin</code>, as a service that starts at login). Or it's older than that copy,
-    and the app is updating it.</p>
+    and the app is updating it. Or the two don't match, and one of them needs an update.</p>
   <pre id="why">…</pre>
   <button id="retry" hidden>Retry</button>
+  <button id="fix" hidden></button>
 </main>
 <script>
   const invoke = window.__TAURI__.core.invoke;
   const why = document.getElementById("why");
   const button = document.getElementById("retry");
+  const fix = document.getElementById("fix");
+  // The daemon and the app don't match (#390): say which is behind, and
+  // offer its update when the app can do it.
+  const compat = async () => {
+    const c = await invoke("compat");
+    if (!c) return false;
+    why.textContent = c.message;
+    fix.textContent = c.action ?? "";
+    fix.hidden = !c.action;
+    button.hidden = !!c.action;
+    return true;
+  };
   const go = async () => {
     button.hidden = true;
+    fix.hidden = true;
     why.textContent = await invoke("daemon_status");
     try {
       await invoke("retry");
     } catch (e) {
       // Stays here: say why, and offer another go.
+      if (await compat()) return;
       why.textContent = String(e);
       button.hidden = false;
     }
+  };
+  fix.onclick = async () => {
+    fix.disabled = true;
+    try {
+      await invoke("compat_fix");
+    } catch (e) {
+      why.textContent = String(e);
+    }
+    fix.disabled = false;
   };
   button.onclick = go;
   go();
