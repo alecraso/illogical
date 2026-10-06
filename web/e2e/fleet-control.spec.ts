@@ -208,6 +208,38 @@ test("a relayed machine that goes away greys within 10 s, and comes back", async
   await expect.poll(() => fleetPanes(laptop).then((p) => p.mac?.stale)).toBe(false);
 });
 
+test("a big message arriving in pieces keeps a relayed link; real silence drops it, saying why (#369)", async () => {
+  await everyMachine(laptop);
+  const lines: string[] = [];
+  laptop.on("console", (m) => lines.push(m.text()));
+  type Sock = { onText: (t: string) => void; onBinary: (b: Uint8Array) => void; onWire: () => void };
+  type Inside = { hosts: Map<string, { client: { clientId: number | null; link?: { sock?: Sock } } | null }> };
+  const id = () =>
+    laptop.evaluate(() => (window.__illogical.fleet as unknown as Inside).hosts.get("mac")?.client?.clientId ?? null);
+  const before = await id();
+  // mac's whole messages stop landing (one is still arriving), but its
+  // pieces keep coming: longer than a heartbeat and its answer (6 s).
+  await laptop.evaluate(() => {
+    const sock = (window.__illogical.fleet as unknown as Inside).hosts.get("mac")!.client!.link!.sock!;
+    sock.onText = () => {};
+    sock.onBinary = () => {};
+    const w = window as unknown as { pieces?: number };
+    w.pieces = window.setInterval(() => sock.onWire(), 200);
+  });
+  await laptop.waitForTimeout(8000);
+  expect(await id()).toBe(before);
+  // Now nothing at all: asked, unanswered, dropped, with what it was
+  // waiting on in the console.
+  await laptop.evaluate(() => {
+    window.clearInterval((window as unknown as { pieces?: number }).pieces);
+    (window.__illogical.fleet as unknown as Inside).hosts.get("mac")!.client!.link!.sock!.onWire = () => {};
+  });
+  await expect.poll(() => lines.find((l) => l.includes("no answer to a heartbeat")), { timeout: 10_000 }).toBeTruthy();
+  const line = lines.find((l) => l.includes("no answer to a heartbeat"))!;
+  expect(line).toMatch(/asked \d+ms ago, last heard \d+ms ago, \d+ B of a message in, relay socket state 1, quiet \d+ms/);
+  await expect.poll(() => hosts(laptop).then((h) => h.mac?.state), { timeout: 30_000 }).toBe("connected");
+});
+
 test("twenty machines, nineteen of them relayed: one socket, back after a wake without failures", async () => {
   test.setTimeout(180_000);
   for (let i = 0; i < 17; i++) await addMachine(laptop, `r${String(i).padStart(2, "0")}`, false);
