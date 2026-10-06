@@ -298,3 +298,106 @@ fn a_remote_pane_runs_there_and_has_its_place_here() {
     assert!(!ids(&home).contains(&block2));
     wait_for("the pane there to close", || !ids(&other).contains(&json!(pane2)));
 }
+
+/// What a stranger doesn't get follows the `labs` file in the state dir:
+/// `GET /api/host` says so, with threads and huddles (and Fountain, studio
+/// and VMs, where set up) following it, and creating or removing the file on
+/// a running daemon flips it with no restart.
+#[test]
+fn the_labs_file_turns_on_what_a_stranger_doesnt_get() {
+    // A Fountain login is set up here, so that `fountain` shows what labs
+    // does to it.
+    let d = illogicald!("hosts")
+        .args(["--name", "plain"])
+        .no_wisp()
+        .no_tailscale()
+        .env("PS1", "$ ")
+        .env("FOUNTAIN_API_KEY", "fk_test")
+        .env("ILLOGICAL_LOCAL_TOKEN_FILE", token_file())
+        .start();
+    let features = || d.get("/api/host")["features"].clone();
+    let f = features();
+    assert_eq!(f["labs"], false, "{f}");
+    for key in ["threads", "calls", "fountain", "studio", "vms"] {
+        assert_eq!(f[key], false, "{key} without labs: {f}");
+    }
+
+    let file = d.state.join("labs");
+    std::fs::write(&file, "").unwrap();
+    let f = features();
+    assert_eq!((f["labs"].clone(), f["threads"].clone(), f["calls"].clone()), (true.into(), true.into(), true.into()));
+    // Fountain, studio and VMs need their own setup as well: only the
+    // login this daemon has shows.
+    assert_eq!(
+        (f["fountain"].clone(), f["studio"].clone(), f["vms"].clone()),
+        (true.into(), false.into(), false.into())
+    );
+
+    // Whatever it holds; and gone, it's off again.
+    std::fs::write(&file, "anything\n").unwrap();
+    assert_eq!(features()["labs"], true);
+    std::fs::remove_file(&file).unwrap();
+    let f = features();
+    assert_eq!(
+        (f["labs"].clone(), f["threads"].clone(), f["calls"].clone()),
+        (false.into(), false.into(), false.into())
+    );
+}
+
+/// The three readers of the `labs` file agree: the daemon's `/api/host`
+/// (above), and the two `--help`s, which find the same file through the
+/// state directory the program would use: `ILLOGICAL_STATE_DIR` for both,
+/// and `--state-dir` for `illogicald`. Without the file the help hides what
+/// a stranger can't use; with it, it lists it; and either way the internals
+/// stay out.
+#[test]
+fn both_helps_follow_the_same_labs_file() {
+    let dir = illogical_testkit::Scratch::new("labs-help");
+    let help = |bin: PathBuf, extra: &[&str], state: Option<&Path>| {
+        let mut c = Command::new(bin);
+        c.args(extra).arg("--help").env_remove("ILLOGICAL_STATE_DIR").env_remove("XDG_STATE_HOME");
+        // No labs file of the person running this in their own home, either.
+        c.env("HOME", &*dir);
+        if let Some(s) = state {
+            c.env("ILLOGICAL_STATE_DIR", s);
+        }
+        let o = c.output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let listed = |help: &str, word: &str| help.lines().any(|l| l.split_whitespace().next() == Some(word));
+    let daemon = || PathBuf::from(env!("CARGO_BIN_EXE_illogicald"));
+    let state = dir.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+
+    // Off: the commands, options and flags #342 hid stay hidden.
+    let (cli_off, d_off) = (help(cli_bin(), &[], Some(&state)), help(daemon(), &[], Some(&state)));
+    for c in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
+        assert!(!listed(&cli_off, c), "{c} in `illogical --help` without labs");
+    }
+    assert!(listed(&cli_off, "run") && listed(&cli_off, "pr"), "{cli_off}");
+    for f in ["--studio-file", "--guest-ssh", "--wisp-url"] {
+        assert!(!d_off.contains(f), "{f} in `illogicald --help` without labs");
+    }
+
+    // On, through the environment, and for illogicald through its flag too.
+    std::fs::write(state.join("labs"), "").unwrap();
+    let cli_on = help(cli_bin(), &[], Some(&state));
+    for c in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
+        assert!(listed(&cli_on, c), "{c} isn't in `illogical --help` with labs");
+    }
+    assert!(!listed(&cli_on, "bridge"), "an internal is in the help with labs");
+    let elsewhere = dir.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let by_env = help(daemon(), &[], Some(&state));
+    let by_flag = help(daemon(), &["--state-dir", state.to_str().unwrap()], None);
+    let flag_without = help(daemon(), &["--state-dir", elsewhere.to_str().unwrap()], Some(&state));
+    for f in ["--studio-file", "--guest-ssh", "--wisp-url"] {
+        assert!(by_env.contains(f), "{f} isn't in `illogicald --help` with labs (environment)");
+        assert!(by_flag.contains(f), "{f} isn't in `illogicald --help` with labs (--state-dir)");
+        assert!(!flag_without.contains(f), "{f}: the flag's directory has no labs, whatever the environment's does");
+    }
+    for f in ["--log-file", "--no-relay", "--sandbox-of-control", "--guest-machines"] {
+        assert!(!by_env.contains(f), "{f} is internal");
+    }
+}

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { active, menu, open, paneEl, ready, run, text } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 let url = "";
 let daemon: ChildProcess | undefined;
@@ -16,15 +17,12 @@ let state = "";
 test.use({ baseURL: async ({}, use) => use(url) });
 test.describe.configure({ mode: "serial" });
 
-// The ssh invite isn't in the menu by default; this test turns it on.
-test.beforeEach(({ page }) => page.addInitScript(() => localStorage.setItem("illogical.more", "1")));
-
 test.beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), "illogical-e2e-guest-ssh-"));
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--state-dir", state],
+      ...["--listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...["--guest-ssh", "127.0.0.1:0", "--guest-ssh-host", "127.0.0.1"],
     ],
@@ -91,16 +89,7 @@ async function watchesAndCantType(page: Page) {
   }
 }
 
-test("a pane's menu doesn't offer the ssh invite unless asked for", async ({ page }) => {
-  await page.addInitScript(() => localStorage.removeItem("illogical.more"));
-  await open(page);
-  const pane = await active(page);
-  await ready(page, pane);
-  await paneEl(page, pane).click({ button: "right", position: { x: 60, y: 60 } });
-  await expect(page.getByRole("menuitem", { name: "Share read-only link…" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Invite over ssh…" })).toHaveCount(0);
-});
-
+// That the invite isn't offered without labs is in labs-off.spec.ts.
 test("a pane's menu makes an ssh invite a stock ssh client can watch with", async ({ page }) => {
   await watchesAndCantType(page);
 });

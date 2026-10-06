@@ -16,6 +16,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { daemonPort } from "./ports.ts";
+import { labs } from "./labs";
 
 const fixtures = resolve(import.meta.dirname, "../../crates/daemon/tests/fixtures");
 
@@ -124,7 +125,7 @@ export class FakeFleet {
     const proc = spawn(
       resolve(import.meta.dirname, "../../target/debug/illogicald"),
       [
-        ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", state],
+        ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
         ...(home ? ["--allow-origin", home] : []),
       ],

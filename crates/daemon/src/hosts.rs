@@ -532,14 +532,20 @@ async fn host(State(app): AppState) -> Json<HostInfo> {
 
 /// What this machine is set up for, so the menus offer only that (#180)
 /// or say how to turn it on (#171). Cheap: nothing here asks anyone.
-fn features(app: &App) -> HostFeatures {
+///
+/// What a stranger doesn't get follows the `labs` file in the state dir:
+/// threads and huddles are its alone, and Fountain, studio and VMs need it
+/// as well as their own setup.
+pub(crate) fn features(app: &App) -> HostFeatures {
+    let labs = illogical_proto::hosts::labs(app.control.state_dir());
     HostFeatures {
+        labs,
         blocks: crate::sites::get().is_some(),
-        vms: app.mux.provider.is_some(),
-        fountain: fountain_login_here(&app.mux.shell_env),
-        studio: crate::apps::studio::get().and_then(|s| s.url()).is_some(),
-        threads: true,
-        calls: true,
+        vms: labs && app.mux.provider.is_some(),
+        fountain: labs && fountain_login_here(&app.mux.shell_env),
+        studio: labs && crate::apps::studio::get().and_then(|s| s.url()).is_some(),
+        threads: labs,
+        calls: labs,
     }
 }
 

@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { ANY, daemonPort } from "./ports";
 import { closeContexts } from "./helpers";
+import { labs } from "./labs";
 
 test.afterAll(closeContexts);
 
@@ -76,7 +77,7 @@ test.beforeAll(async () => {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--block-listen", ANY, "--state-dir", state],
+      ...["--listen", ANY, "--block-listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
     ],
     { stdio: "ignore", env: { ...process.env, ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent", XDG_DATA_HOME: join(dir, "data") } },

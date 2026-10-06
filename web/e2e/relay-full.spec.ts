@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ANY, controlPort, listen } from "./ports";
 import { closeContexts } from "./helpers";
+import { labs } from "./labs";
 
 test.afterAll(closeContexts);
 
@@ -117,7 +118,7 @@ test("a full relay: the page says so and waits; signing in still works", async (
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", ANY, "--name", "mac", "--state-dir", state],
+        ...["--listen", ANY, "--name", "mac", "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },

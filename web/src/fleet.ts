@@ -523,7 +523,9 @@ export class Fleet {
       const watchers = new Map<number, Presence[]>();
       for (const p of st.presence ?? []) if (p.pane !== undefined) (watchers.get(p.pane) ?? watchers.set(p.pane, []).get(p.pane)!).push(p);
       const threads = new Map<number, ThreadSummary>();
-      for (const t of st.threads ?? []) if ("pane" in t.target) threads.set(t.target.pane, t);
+      // Only where the machine has threads (labs): a cached summary has no
+      // client to ask, so shows none.
+      if (e.client?.hasThreads()) for (const t of st.threads ?? []) if ("pane" in t.target) threads.set(t.target.pane, t);
       for (const info of st.panes) {
         // Someone else's private pane (M14): not even a tile.
         if (info.private && st.roles) continue;

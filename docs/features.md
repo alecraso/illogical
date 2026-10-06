@@ -697,6 +697,12 @@ stopping, crashing, or the machine rebooting:
   tabs. Over HTTP (`/mcp`), the owner gets in as for the web client;
   anything else needs a token from `illogical mcp token`, revocable at any
   time.
+## Labs
+
+What follows is on only where the machine has a `labs` file (see
+[Advanced setup](advanced.md#labs)); without it, none of it shows in the
+menus, the bar or the swarm.
+
 - **Threads on panes and sessions**. Every pane and every session has
   a thread where the people working on it talk: *Thread* in a pane's menu,
   *Session thread* in the session menu, or the bubble on a pane. Messages

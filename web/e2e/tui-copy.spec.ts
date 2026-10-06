@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 let base = "";
 const TMUX = ["-L", `illogical-e2e-tui-copy-${process.pid}`];
@@ -35,7 +36,7 @@ test.beforeAll(async () => {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--state-dir", state],
+      ...["--listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
     ],
     { stdio: "ignore", env: { ...process.env, PS1: "$ " } },

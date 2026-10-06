@@ -378,6 +378,12 @@ schema: unknown, };
  */
 export type HostFeatures = { 
 /**
+ * The machine has a `labs` file in its state dir (see [`labs`]): what a
+ * stranger doesn't get is on. Absent from older daemons, and pages
+ * treat that as off.
+ */
+labs: boolean, 
+/**
  * Browser blocks on ports and editor blocks: block sites are on
  * (`--block-listen`).
  */
@@ -396,12 +402,12 @@ fountain: boolean,
  */
 studio: boolean, 
 /**
- * Threads on panes and sessions (M61): always, from daemons that have
- * them. Older daemons leave it out, and pages hide threads there.
+ * Threads on panes and sessions: with `labs`. Older daemons leave it
+ * out, and pages hide threads there.
  */
 threads?: boolean, 
 /**
- * Huddles on sessions (M63), likewise.
+ * Huddles on sessions, likewise.
  */
 calls?: boolean, };
 

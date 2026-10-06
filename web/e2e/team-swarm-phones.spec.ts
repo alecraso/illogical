@@ -234,6 +234,8 @@ test("a machine on another network, behind netem, in both phones' swarms", async
     await alice.locator("[data-approve-join]").tap();
     joining.stdin!.end(`${account}\n`);
     expect(await exited).toBe(0);
+    // With labs, like the rest of the suite's daemons (see labs.ts).
+    docker("exec", name, "touch", "/root/state/labs");
     spawn("docker", ["exec", "-d", name, "illogicald", "--listen", "127.0.0.1:0", "--name", "far", "--state-dir", "/root/state", "--shell", "bash --norc --noprofile", "--no-manager-env"], {
       stdio: "ignore",
     });

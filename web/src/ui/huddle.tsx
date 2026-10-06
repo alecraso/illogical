@@ -25,7 +25,6 @@ function inHere(h: Huddle | null, client: Client, session: SessionId): boolean {
 
 /** Why `client` can't join a huddle on `session`, if it can't. */
 function cantJoin(client: Client, session: SessionId): string | null {
-  if (!client.hasCalls()) return "This machine's illogical is too old for huddles.";
   const call = client.call(session);
   if (call && call.members.length >= CALL_MAX) return `This huddle is full (${CALL_MAX} people).`;
   return unsupported();

@@ -19,6 +19,7 @@ import { createECDH, createHmac, createDecipheriv, createPublicKey, randomBytes,
 import { createServer, type Server } from "node:http";
 import { devices, expect, webkit, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { ANY, daemonPort, listen } from "./ports";
+import { labs } from "./labs";
 
 type Device = (typeof devices)[string];
 const phone = (d: Device) => {
@@ -226,7 +227,7 @@ export async function tap(context: BrowserContext, tag: string, action: string) 
 export async function daemon(state: string, args: string[] = [], env: Record<string, string> = {}): Promise<{ proc: ChildProcess; port: number; url: string }> {
   const proc = spawn(
     "../target/debug/illogicald",
-    ["--listen", ANY, "--state-dir", state, "--shell", "bash --norc --noprofile", "--no-manager-env", ...args],
+    ["--listen", ANY, "--state-dir", labs(state), "--shell", "bash --norc --noprofile", "--no-manager-env", ...args],
     { stdio: "ignore", env: { ...process.env, ...env } },
   );
   const port = await daemonPort(state, proc);

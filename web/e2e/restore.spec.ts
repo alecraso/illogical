@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { active, menu, open, paneEl, panes, ready, run, tab, tabsInSession, text, type } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 let PORT = 0;
 let state = "";
@@ -18,7 +19,7 @@ test.use({ baseURL: async ({}, use) => use(`http://127.0.0.1:${PORT}`) });
 async function startDaemon(): Promise<ChildProcess> {
   const d = spawn(
     "../target/debug/illogicald",
-    ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", state],
+    ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", labs(state)],
     { stdio: "ignore" },
   );
   PORT ||= await daemonPort(state, d);

@@ -37,7 +37,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use clap::{Parser, Subcommand};
+use clap::{FromArgMatches, Parser, Subcommand};
 use http::{enc, request};
 use serde_json::{Value, json};
 
@@ -1140,6 +1140,47 @@ fn env_pane() -> Option<u32> {
     std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse().ok())
 }
 
+/// The local daemon's state directory, resolved as the daemon and the desktop
+/// app do: `ILLOGICAL_STATE_DIR`, then on Windows
+/// `%LOCALAPPDATA%\illogical\state`, then `$XDG_STATE_HOME/illogical`, then
+/// `~/.local/state/illogical`.
+fn state_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let windows = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("illogical").join("state"));
+    #[cfg(not(windows))]
+    let windows = None;
+    std::env::var_os("ILLOGICAL_STATE_DIR")
+        .map(PathBuf::from)
+        .or(windows)
+        .or_else(|| std::env::var_os("XDG_STATE_HOME").map(|d| PathBuf::from(d).join("illogical")))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state/illogical")))
+}
+
+/// Commands and options that work but stay out of `--help` unless the machine
+/// has the `labs` file: they're for what a stranger doesn't have. Others that
+/// are `hide = true` are internals, and stay hidden.
+const LABS_COMMANDS: [&str; 7] = ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"];
+const LABS_OPTIONS: [(&str, &[&str]); 3] = [
+    ("agent", &["fountain", "as_fountain", "vault", "vm"]),
+    ("run", &["vm", "vm_tab", "image", "sandbox"]),
+    ("share", &["guest", "rw", "reusable", "relay", "addr", "name"]),
+];
+
+/// The command line, listing the labs set in `--help` when `labs`.
+fn labs_command(labs: bool) -> clap::Command {
+    use clap::CommandFactory;
+    let mut cmd = Cli::command();
+    if labs {
+        for name in LABS_COMMANDS {
+            cmd = cmd.mut_subcommand(name, |s| s.hide(false));
+        }
+        for (name, opts) in LABS_OPTIONS {
+            cmd = cmd.mut_subcommand(name, |s| opts.iter().fold(s, |s, o| s.mut_arg(*o, |a| a.hide(false))));
+        }
+    }
+    cmd
+}
+
 fn socket(cli: &Cli) -> PathBuf {
     cli.socket.clone().unwrap_or_else(default_socket)
 }
@@ -1653,7 +1694,10 @@ fn main() {
             }
         }
     }
-    let cli = Cli::parse();
+    // What a stranger doesn't get shows in `--help` where this machine has
+    // the `labs` file; everything works either way.
+    let labs = state_dir().is_some_and(|d| illogical_proto::hosts::labs(&d));
+    let cli = Cli::from_arg_matches(&labs_command(labs).get_matches()).unwrap_or_else(|e| e.exit());
     match real_main(cli) {
         Ok(code) => std::process::exit(code),
         Err(e) => {
@@ -3556,6 +3600,81 @@ mod tests {
         assert!(super::Cli::try_parse_from(["illogical", "run", "--vm", "--", "make"]).is_ok());
         assert!(super::Cli::try_parse_from(["illogical", "share", "--guest", "--rw", "%3"]).is_ok());
         assert!(super::Cli::try_parse_from(["illogical", "guests"]).is_ok());
+    }
+
+    /// With the `labs` file the help lists what #342 hid, all of it and
+    /// nothing more: the internals stay hidden, and everything parses either
+    /// way. The test passes the bool; it reads neither the filesystem nor the
+    /// environment.
+    #[test]
+    fn labs_unhides_the_labs_set_and_only_that() {
+        // What `--help` hides, as `command` or `command --option`.
+        fn hidden(c: &clap::Command) -> Vec<String> {
+            let mut out = vec![];
+            for a in c.get_arguments().filter(|a| a.is_hide_set()) {
+                out.push(format!("--{}", a.get_id()));
+            }
+            for sub in c.get_subcommands() {
+                if sub.is_hide_set() {
+                    out.push(sub.get_name().to_owned());
+                }
+                for h in hidden(sub) {
+                    out.push(format!("{} {h}", sub.get_name()));
+                }
+            }
+            out.sort();
+            out
+        }
+        let (off, on) = (hidden(&super::labs_command(false)), hidden(&super::labs_command(true)));
+        let mut set: Vec<String> =
+            ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"].map(String::from).into();
+        for (cmd, opts) in [
+            ("agent", &["fountain", "as_fountain", "vault", "vm"][..]),
+            ("run", &["vm", "vm_tab", "image", "sandbox"][..]),
+            ("share", &["guest", "rw", "reusable", "relay", "addr", "name"][..]),
+        ] {
+            set.extend(opts.iter().map(|o| format!("{cmd} --{o}")));
+        }
+        for h in &set {
+            assert!(off.contains(h), "{h} isn't hidden without labs");
+            assert!(!on.contains(h), "{h} is still hidden with labs");
+        }
+        // Only those: the rest of what is hidden is hidden both ways.
+        let rest: Vec<&String> = off.iter().filter(|h| !set.contains(h)).collect();
+        assert!(rest.iter().any(|h| *h == "bridge"), "{rest:?}");
+        assert_eq!(on.iter().collect::<Vec<_>>(), rest, "labs unhides something that isn't in its set");
+        assert_eq!(off.len(), set.len() + rest.len());
+
+        // The help lists them with labs and not without.
+        let listed = |labs: bool| {
+            let help = super::labs_command(labs).render_long_help().to_string();
+            help.lines()
+                .filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let (without, with) = (listed(false), listed(true));
+        for name in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
+            assert!(!without.iter().any(|l| l == name), "{name} in `illogical --help` without labs");
+            assert!(with.iter().any(|l| l == name), "{name} isn't in `illogical --help` with labs");
+        }
+        assert!(!with.iter().any(|l| l == "bridge"), "an internal is listed with labs");
+        let sub_help = |labs: bool, cmd: &str| {
+            let mut root = super::labs_command(labs);
+            root.find_subcommand_mut(cmd).unwrap().render_long_help().to_string()
+        };
+        for (cmd, flag) in [("run", "--vm-tab"), ("agent", "--fountain"), ("share", "--guest")] {
+            assert!(!sub_help(false, cmd).contains(flag), "{cmd} {flag} without labs");
+            assert!(sub_help(true, cmd).contains(flag), "{cmd} {flag} with labs");
+        }
+        // And either way they parse.
+        for labs in [false, true] {
+            use clap::FromArgMatches;
+            let parse = |a: &[&str]| {
+                super::Cli::from_arg_matches(&super::labs_command(labs).try_get_matches_from(a).unwrap()).is_ok()
+            };
+            assert!(parse(&["illogical", "run", "--vm", "--", "make"]));
+            assert!(parse(&["illogical", "guests"]));
+        }
     }
 
     /// The help is for strangers: no milestone or issue numbers, no names of

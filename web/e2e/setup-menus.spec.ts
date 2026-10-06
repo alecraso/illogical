@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { paneEl, panes, reset } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 let APP = "";
 test.use({ baseURL: async ({}, use) => use(APP) });
@@ -26,7 +27,7 @@ test.beforeAll(async () => {
     stdio: "ignore",
     env: {
       ...process.env,
-      ILLOGICAL_STATE_DIR: state,
+      ILLOGICAL_STATE_DIR: labs(state),
       ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent",
       ILLOGICAL_FOUNTAIN_CREDENTIALS: join(state, "no-fountain-credentials"),
       ILLOGICAL_FOUNTAIN_UNIT_FILE: join(state, "no-fountain-runner.service"),
@@ -45,6 +46,7 @@ const items = async (page: Page) => (await page.getByRole("menuitem").allInnerTe
 test("menus offer only what this machine is set up for", async ({ page }) => {
   await reset(page);
   expect(await page.evaluate(() => fetch("/api/host").then((r) => r.json()).then((h) => h.features))).toEqual({
+    labs: true,
     blocks: false,
     vms: false,
     fountain: false,

@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { ready, type as typeIn } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
 const STATIC = "../target/x86_64-unknown-linux-musl/release";
@@ -79,7 +80,7 @@ test.beforeAll(async () => {
   home = spawn(
     "../target/debug/illogicald",
     ["--listen", ANY, "--name", "home", "--shell", "bash --norc --noprofile", "--no-manager-env"]
-      .concat(["--state-dir", state, "--static-dir", STATIC]),
+      .concat(["--state-dir", labs(state), "--static-dir", STATIC]),
     { stdio: "ignore" },
   );
   base = `http://127.0.0.1:${await daemonPort(state, home)}`;

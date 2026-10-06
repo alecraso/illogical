@@ -13,6 +13,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { ready, run } from "./helpers";
 import { deliver, tap } from "./phones";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 let base = "";
 const OWNER = "me@example.com";
@@ -29,7 +30,7 @@ test.beforeAll(async () => {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--state-dir", dir, "--owner", OWNER],
+      ...["--listen", ANY, "--state-dir", labs(dir), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
     { stdio: "ignore" },
@@ -205,6 +206,15 @@ test("a mention's notification opens its thread", async ({ browser }) => {
   // ...so a tap opens the thread over the pane.
   await expect(page.locator(".thread-panel")).toHaveCount(0);
   await tap(context, tag, "");
+  await expect(page.locator(".thread-panel")).toContainText(`Thread · %${pane}`);
+  await expect(page.locator(".thread-panel .thread-msg")).toHaveCount(4);
+  await context.close();
+});
+
+test("a cold load of a mention's link opens its thread, once the machine says it has threads", async ({ browser }) => {
+  const context = await browser.newContext({ extraHTTPHeaders: { "tailscale-user-login": FRIEND } });
+  const page = await context.newPage();
+  await page.goto(`/#pane=${pane}&thread=pane-${pane}`);
   await expect(page.locator(".thread-panel")).toContainText(`Thread · %${pane}`);
   await expect(page.locator(".thread-panel .thread-msg")).toHaveCount(4);
   await context.close();

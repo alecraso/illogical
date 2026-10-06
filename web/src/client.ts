@@ -192,6 +192,9 @@ class E2ELink implements Link {
   }
 }
 
+/** The host features that follow `labs`: also off without it. */
+const LABS_FEATURES: (keyof HostFeatures)[] = ["vms", "fountain", "studio"];
+
 export class Client {
   /** The daemon's origin (`https://box.….ts.net`), or "" for the one this
    * page came from. Another daemon must list this page's origin as
@@ -462,12 +465,15 @@ export class Client {
     return this.state?.presence?.find((p) => p.client === this.clientId)?.who ?? "owner";
   }
 
-  // ---- threads (M61)
+  // ---- threads
 
   private threadListeners = new Map<string, Set<(m: ThreadMsg) => void>>();
 
-  /** A thread as this person has it, if it has messages. */
+  /** A thread as this person has it, if it has messages (and this machine
+   *  has labs: without them nothing here shows threads, however many there
+   *  are). */
   thread(t: ThreadTarget): ThreadSummary | undefined {
+    if (!this.hasThreads()) return undefined;
     const key = threadKey(t);
     return this.state?.threads?.find((x) => threadKey(x.target) === key);
   }
@@ -540,8 +546,9 @@ export class Client {
 
   private callListeners = new Set<(m: Extract<ServerMsg, { type: "call_signal" }>) => void>();
 
-  /** The huddle on a session, if there is one. */
+  /** The huddle on a session, if there is one (and this machine has labs). */
   call(session: SessionId): Call | undefined {
+    if (!this.hasCalls()) return undefined;
     return this.state?.calls?.find((c) => c.session === session);
   }
 
@@ -551,9 +558,10 @@ export class Client {
     return () => this.callListeners.delete(fn);
   }
 
-  /** Whether this daemon has huddles (unknown means no, like threads). */
+  /** Whether this machine has huddles: labs, and a daemon that has them
+   *  (unknown means no, like threads). */
   hasCalls(): boolean {
-    return this.features?.calls === true;
+    return this.hasLabs() && this.features?.calls === true;
   }
 
   /** Whether this page talks to the daemon with a device key: what it
@@ -669,15 +677,25 @@ export class Client {
     }
   }
 
-  /** Is `f` set up here? Yes when the daemon didn't say. */
+  /** Is `f` set up here? Yes when the daemon didn't say, except for what
+   * labs turns on (VMs, Fountain, studio): those need `hasLabs()` as well. */
   has(f: keyof HostFeatures): boolean {
+    if (LABS_FEATURES.includes(f) && !this.hasLabs()) return false;
     return this.features?.[f] ?? true;
   }
 
-  /** M61: whether this daemon keeps threads. Unlike the rest, unknown means
-   * no: control serves this page to older daemons too. */
+  /** Whether this machine has a `labs` file, which turns on what a stranger
+   * doesn't get: chat, huddles, Fountain, studio, VMs, guest ssh and the
+   * swarm's extra views. Unlike `has`, unknown means no: control serves this
+   * page to older daemons too, which never say. */
+  hasLabs(): boolean {
+    return this.features?.labs === true;
+  }
+
+  /** Whether this machine keeps threads: labs, and a daemon that has them.
+   * Unknown means no. */
   hasThreads(): boolean {
-    return this.features?.threads === true;
+    return this.hasLabs() && this.features?.threads === true;
   }
 
   /** POST to the API; a failure shows as a toast. */

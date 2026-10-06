@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 const OWNER = "me@example.com";
 const FRIEND = "friend@example.com";
@@ -29,7 +30,7 @@ async function start() {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--name", "box", "--state-dir", dir, "--owner", OWNER],
+      ...["--listen", ANY, "--name", "box", "--state-dir", labs(dir), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
     { stdio: "ignore" },

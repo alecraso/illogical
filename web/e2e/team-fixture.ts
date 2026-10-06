@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
 import { ANY, controlPort, listen } from "./ports";
+import { labs } from "./labs";
 
 export class TeamControl {
   base = "";
@@ -121,7 +122,7 @@ export class TeamControl {
       spawn(
         "../target/debug/illogicald",
         [
-          ...["--listen", ANY, "--name", name, "--state-dir", state],
+          ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
           ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
         ],
         { stdio: "ignore" },

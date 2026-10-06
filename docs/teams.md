@@ -160,7 +160,16 @@ To share a session (a set of tabs) instead of a whole machine:
 On your own machine, people you share with still can't type in its panes
 until you allow it (above).
 
-## Talking about it: threads
+## Labs
+
+Chat and huddles are labs features: they are there on a machine that has a
+`labs` file in its state directory, and not otherwise
+([Advanced setup](advanced.md#labs) says where it goes). The file belongs to
+the machine, so on a team every team machine gets one. Someone you share a
+session on a machine with labs with sees chat and huddles there; on a machine
+without it, nobody does.
+
+### Talking about it: threads
 
 Every pane and every session has a thread: *Thread* in a pane's
 menu, *Session thread* in the session menu, or the bubble on a pane.
@@ -183,7 +192,7 @@ menu, *Session thread* in the session menu, or the bubble on a pane.
 - *Quote selection in thread* (pane menu) posts what you selected in the
   terminal; clicking the quote jumps back to it.
 
-## Talking out loud: huddles
+### Talking out loud: huddles
 
 A session can have a huddle, a voice call for the people in it: the
 headphones button by the session's name, or *Start a huddle* in the

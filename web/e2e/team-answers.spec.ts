@@ -22,6 +22,7 @@ import { join, resolve } from "node:path";
 import { devices, expect, test, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
 import { text, closeContexts } from "./helpers";
 import { ANY, controlPort, listen } from "./ports";
+import { labs } from "./labs";
 
 test.afterAll(closeContexts);
 
@@ -131,7 +132,7 @@ async function machine(owner: Page, name: string, team?: string): Promise<string
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", ANY, "--name", name, "--state-dir", state],
+        ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },

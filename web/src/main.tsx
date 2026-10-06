@@ -219,13 +219,16 @@ if (!linkTarget) {
 function Swarm() {
   const [, set] = useState(0);
   useEffect(() => onSwarmRoute(() => set((n) => n + 1)), []);
+  // The home machine's name arrives with the directory, after a cold load.
+  useSubscribe((fn) => directory.subscribe(fn));
   const route = swarmRoute();
   if (!route || linkTarget) return null;
   if (session && session.phase !== "ready") return null;
   const f = route.focus;
   // A notification through control names its daemon; else it's this page's.
   const host = f ? (f.daemon ? directory.list?.hosts.find((h) => h.id === f.daemon)?.name : (directory.home ?? directory.names[0])) : undefined;
-  return <SwarmView fleet={fleet} back={closeSwarm} focus={f && host ? { host, pane: f.pane } : null} />;
+  const home = directory.home ?? directory.names[0] ?? null;
+  return <SwarmView fleet={fleet} back={closeSwarm} home={home} focus={f && host ? { host, pane: f.pane } : null} />;
 }
 
 const draw = () =>
@@ -265,7 +268,14 @@ const openPane = (pane: number, daemon?: string, thread?: string) => {
     if (!client.info(pane)) return false;
     client.setActive(pane);
     const t = /^(pane|session)-(\d+)$/.exec(thread ?? "");
-    if (t) openThread(client, t[1] === "pane" ? { pane: Number(t[2]) } : { session: Number(t[2]) });
+    // Only where the machine has threads, which it says in its features:
+    // read them first, so a cold load doesn't open a thread nobody sees.
+    if (t) {
+      const c = client;
+      void c.loadFeatures().then(() => {
+        if (c.hasThreads()) openThread(c, t[1] === "pane" ? { pane: Number(t[2]) } : { session: Number(t[2]) });
+      });
+    }
     return true;
   };
   if (!go()) {

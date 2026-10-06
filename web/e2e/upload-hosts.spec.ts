@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { active, menu, open, paneEl, pasteFile, ready, uploadedPath } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 let homeUrl = "";
 const dirs: string[] = [];
@@ -36,7 +37,7 @@ async function startDaemon(name: string, extra: string[] = []) {
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--name", name, "--state-dir", state],
+      ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...extra,
     ],

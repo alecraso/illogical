@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { controlPanel, ready, run, text, closeContexts } from "./helpers";
 import { ANY, controlPort, listen } from "./ports";
+import { labs } from "./labs";
 
 test.afterAll(closeContexts);
 
@@ -220,7 +221,7 @@ function runDaemon(name: string, state: string, opts: { env?: NodeJS.ProcessEnv;
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--name", name, "--state-dir", state],
+      ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
     { stdio: opts.log ? ["ignore", "pipe", "pipe"] : "ignore", env: { ...process.env, ...opts.env } },

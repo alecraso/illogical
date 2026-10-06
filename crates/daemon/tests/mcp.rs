@@ -131,10 +131,13 @@ async fn tools_through_the_stdio_bridge() {
 
     // The tools, with honest annotations.
     let tools = s.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 34);
-    // Fountain, studio apps and chant workspaces aren't listed, but a caller
-    // who names one still reaches it (here: no Fountain login, so it says so).
-    for name in ["open_fountain", "list_agents", "read_agent", "open_app", "open_workspace"] {
+    assert_eq!(tools.len(), 32);
+    // Fountain, studio apps, chant workspaces and chat aren't listed without
+    // `labs`, but a caller who names one still reaches it (here: no Fountain
+    // login, so it says so).
+    for name in
+        ["open_fountain", "list_agents", "read_agent", "open_app", "open_workspace", "read_thread", "post_thread"]
+    {
         assert!(tools.iter().all(|t| t.name != name), "{name} is listed");
     }
     let said = refused(&s, "read_agent", json!({ "name": "nobody" })).await;
@@ -277,7 +280,7 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     // (and retries it, then gives up: no tools).
     let tools = s.list_tools(None).await.unwrap();
     assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
-    assert_eq!(tools.tools.len(), 34);
+    assert_eq!(tools.tools.len(), 32, "without labs");
     let t = s.list_resource_templates(None).await.unwrap();
     assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
     let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
@@ -317,7 +320,8 @@ async fn http_with_a_token_until_it_is_revoked() {
     let ro =
         d.post("/api/mcp/tokens", json!({ "name": "watcher", "scope": "read" }))["token"].as_str().unwrap().to_owned();
     let w = http(&d, &ro, Client::named("watcher")).await.unwrap();
-    assert_eq!(w.list_all_tools().await.unwrap().len(), 13);
+    // (Chat's read_thread is among the read-only tools only with labs.)
+    assert_eq!(w.list_all_tools().await.unwrap().len(), 12);
     assert!(refused(&w, "run", json!({ "command": "true" })).await.contains("may only read"));
     // #234: nor ask to invite anyone.
     let invite = json!({ "who": "tailnet:sam@example.com", "pane": 1, "note": "x" });
@@ -720,6 +724,36 @@ async fn prompt_agent_waits_for_the_turn() {
     assert_eq!(v["result"], "blocked", "{v}");
 }
 
+/// The `labs` file in the state dir lists the other seven tools and brings
+/// back the thread text in the instructions, and removing it takes them away
+/// again, both with no restart. Each is read where it's used, on a `stat`.
+#[tokio::test(flavor = "multi_thread")]
+async fn labs_lists_all_the_tools_and_the_thread_text() {
+    let d = Daemon::child();
+    let s = bridge(&d, Client::named("claude-code")).await;
+    let names = |tools: &[rmcp::model::Tool]| tools.iter().map(|t| t.name.to_string()).collect::<Vec<_>>();
+    let instructions = |s: &Session| s.peer_info().and_then(|i| i.instructions.clone()).unwrap_or_default();
+    assert_eq!(s.list_all_tools().await.unwrap().len(), 32);
+    assert!(!instructions(&s).contains("read_thread"), "{}", instructions(&s));
+
+    std::fs::write(d.state.join("labs"), "").unwrap();
+    let with = s.list_all_tools().await.unwrap();
+    assert_eq!(with.len(), 39, "{:?}", names(&with));
+    for name in
+        ["open_fountain", "list_agents", "read_agent", "open_app", "open_workspace", "read_thread", "post_thread"]
+    {
+        assert!(with.iter().any(|t| t.name == name), "{name} isn't listed with labs");
+    }
+    // A new connection's instructions have the thread text.
+    let s2 = bridge(&d, Client::named("claude-code")).await;
+    assert!(instructions(&s2).contains("read_thread and post_thread"), "{}", instructions(&s2));
+    s2.cancel().await.unwrap();
+
+    std::fs::remove_file(d.state.join("labs")).unwrap();
+    assert_eq!(s.list_all_tools().await.unwrap().len(), 32);
+    s.cancel().await.unwrap();
+}
+
 /// M61: an agent reads the people's thread about a pane and answers in it.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_agent_reads_and_posts_in_threads() {
@@ -883,6 +917,8 @@ async fn an_agents_mention_invites_nobody() {
     let other =
         d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == elsewhere).unwrap()["session"].clone();
     d.post("/api/acl", json!({ "session": other, "principal": "tailnet:sam@example.com", "role": "viewer" }));
+    // post_thread is listed on a machine with labs.
+    std::fs::write(d.state.join("labs"), "").unwrap();
     let s = bridge(&d, Client::named("claude-code")).await;
     let tools = s.list_tools(None).await.unwrap();
     let post = tools.tools.iter().find(|t| t.name == "post_thread").unwrap();

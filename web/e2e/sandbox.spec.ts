@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { active, ready, run } from "./helpers";
 import { daemonPort } from "./ports";
+import { labs } from "./labs";
 
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
 const STATIC = "../target/x86_64-unknown-linux-musl/release";
@@ -97,7 +98,7 @@ test.beforeAll(async () => {
   homeState = mkdtempSync(join(tmpdir(), "illogical-e2e-home-"));
   home = spawn(
     "../target/debug/illogicald",
-    ["--listen", `${tailnetIp}:0`, "--name", "home", "--state-dir", homeState, "--no-manager-env"],
+    ["--listen", `${tailnetIp}:0`, "--name", "home", "--state-dir", labs(homeState), "--no-manager-env"],
     { stdio: "ignore" },
   );
   homeUrl = `http://${tailnetIp}:${await daemonPort(homeState, home)}`;

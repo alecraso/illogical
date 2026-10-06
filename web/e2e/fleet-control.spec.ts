@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ANY, controlPort, daemonPort, listen } from "./ports";
 import { closeContexts } from "./helpers";
+import { labs } from "./labs";
 
 test.afterAll(closeContexts);
 
@@ -115,7 +116,7 @@ async function addMachine(page: Page, name: string, direct: boolean) {
   joining.stdin!.end(`${account}\n`);
   expect(await exited).toBe(0);
   const args = [
-    ...["--listen", ANY, "--name", name, "--state-dir", state],
+    ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
     ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ...(direct ? ["--direct-url", "http://127.0.0.1:0"] : []),
   ];

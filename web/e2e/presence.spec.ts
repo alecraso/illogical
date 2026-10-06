@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { ready, run, text, closeContexts } from "./helpers";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 test.afterAll(closeContexts);
 
@@ -29,7 +30,7 @@ test.beforeAll(async () => {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--state-dir", dir, "--owner", OWNER],
+      ...["--listen", ANY, "--state-dir", labs(dir), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
     // #118: drivers who stop typing let go after 8 s here.

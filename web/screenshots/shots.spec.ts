@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
 import type { PaneId } from "../src/proto";
 import { menu, open, paneEl, panes, ready, reset, text } from "../e2e/helpers";
+import { labs } from "../e2e/labs";
 import "../e2e/local-token";
 
 // SHOTS_PORT moves the daemon (and its block port, the next one up) and
@@ -292,7 +293,7 @@ async function startDaemon() {
   daemon = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", `127.0.0.1:${PORT}`, "--state-dir", state],
+      ...["--listen", `127.0.0.1:${PORT}`, "--state-dir", labs(state)],
       ...["--shell", "bash", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...["--block-listen", `127.0.0.1:${BLOCK_PORT}`],
       // The pinned code-server, if this machine has it already, rather

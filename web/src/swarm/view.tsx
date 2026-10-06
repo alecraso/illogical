@@ -17,7 +17,6 @@ import { AskCard, type Answered } from "../blocks/ask";
 import { ANSWERED_MS, answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE, type Requester } from "../ui/answer-card";
 import { Avatar } from "../ui/people";
 import { MenuLayer, openMenu } from "../ui/menu";
-import { showMore } from "../more";
 import { usePhone, useSubscribe } from "../ui/hooks";
 import { Field, type FieldHooks, type FieldPane, type HistoryRun, type SwarmScene } from "./field";
 import { FollowView, appName } from "./follow";
@@ -30,14 +29,15 @@ const THEME_KEY = "illogical.swarm.theme";
 /** How the swarm is drawn. Blocks is the field; the city is 3D; the hive is a
  * cell per pane and the timeline a lane per pane over time. */
 export type Theme = "blocks" | "city" | "hive" | "timeline";
-/** The themes on offer. The others are built but not offered yet. With one,
- * there's no picker. */
+/** The themes on offer without labs. The others are built but only a machine
+ * with labs offers them. With one, there's no picker. */
 export const THEMES: Theme[] = ["blocks"];
 const ALL_THEMES: Theme[] = ["blocks", "city", "hive", "timeline"];
 
-/** The themes to offer here: `THEMES`, or all of them where `showMore` says. */
-export function offeredThemes(): Theme[] {
-  return showMore() ? ALL_THEMES : THEMES;
+/** The themes to offer: `THEMES`, or all of them where the home machine has
+ * labs. */
+export function offeredThemes(labs: boolean): Theme[] {
+  return labs ? ALL_THEMES : THEMES;
 }
 
 /** A done card leaves the rail by itself after this long. */
@@ -52,10 +52,13 @@ function savedBy(): GroupBy {
   }
 }
 
+/** The theme this browser picked last. Whether it's on offer waits for the
+ * machine's features, which arrive after the first draw: it's kept until
+ * then, not thrown away. */
 function savedTheme(): Theme {
   try {
     const v = localStorage.getItem(THEME_KEY) as Theme | null;
-    return v && offeredThemes().includes(v) ? v : "blocks";
+    return v && ALL_THEMES.includes(v) ? v : "blocks";
   } catch {
     return "blocks";
   }
@@ -97,9 +100,13 @@ export function SwarmView({
   fleet,
   back,
   focus,
+  home,
 }: {
   fleet: Fleet;
   back: () => void;
+  /** The machine this page is of: its labs say whether the extra themes
+   * are offered. */
+  home: string | null;
   /** Opened from a notification: the pane to show, and its card. */
   focus?: { host: string; pane: number } | null;
 }) {
@@ -108,8 +115,10 @@ export function SwarmView({
   useEffect(() => watchRunners(fleet), [fleet]);
   const phone = usePhone();
   const [by, setBy] = useState<GroupBy>(savedBy);
-  const [theme, setTheme] = useState<Theme>(savedTheme);
-  const [themes] = useState(offeredThemes);
+  const [chosen, setChosen] = useState<Theme>(savedTheme);
+  // Read on each render: the features arrive after the first one.
+  const themes = offeredThemes(!!home && !!fleet.clientOf(home)?.hasLabs());
+  const theme = themes.includes(chosen) ? chosen : "blocks";
   const [peek, setPeek] = useState<{ key: string; x: number; y: number; text: string } | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Done[]>([]);
@@ -186,7 +195,7 @@ export function SwarmView({
       })
       .catch((e) => {
         console.error(`the ${theme} theme didn't load`, e);
-        if (!gone) setTheme("blocks");
+        if (!gone) setChosen("blocks");
       });
     addEventListener("resize", resize);
     return () => {
@@ -240,7 +249,7 @@ export function SwarmView({
     field.current?.regroup();
   }, [by]);
   const pickTheme = (t: Theme) => {
-    setTheme(t);
+    setChosen(t);
     setPeek(null);
     try {
       localStorage.setItem(THEME_KEY, t);

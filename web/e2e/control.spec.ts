@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { closeContexts, controlPanel, pasteFile, ready, run, text, uploadedPath } from "./helpers";
 import { ANY, controlPort, daemonPort, listen } from "./ports";
+import { labs } from "./labs";
 
 test.afterAll(closeContexts);
 
@@ -114,7 +115,7 @@ async function addMachine(page: Page, name: string, direct: boolean) {
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", ANY, "--name", name, "--state-dir", state],
+        ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
         ...(direct ? ["--direct-url", "http://127.0.0.1:0"] : []),
       ],
@@ -516,7 +517,7 @@ test("Getting started asks to check the account's fingerprint before the machine
     spawn(
       "../target/debug/illogicald",
       [
-        ...["--listen", ANY, "--name", "starter", "--state-dir", state, "--control", base],
+        ...["--listen", ANY, "--name", "starter", "--state-dir", labs(state), "--control", base],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
       ],
       { stdio: "ignore" },

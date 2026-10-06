@@ -11,6 +11,7 @@ import { devices, expect, test, type Page } from "@playwright/test";
 import { paneEl, ready, text, type as typeIn } from "./helpers";
 import { ANY, daemonPort } from "./ports";
 import type { PaneId } from "../src/proto";
+import { labs } from "./labs";
 
 let homeUrl = "";
 let otherUrl = "";
@@ -39,7 +40,7 @@ async function startDaemon(name: string, extra: string[] = []) {
   const d = spawn(
     "../target/debug/illogicald",
     [
-      ...["--listen", ANY, "--name", name, "--state-dir", state],
+      ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
       ...extra,
     ],

@@ -692,14 +692,21 @@ struct Def {
     open_world: bool,
 }
 
-/// The tools that work but aren't listed: they're for setups a stranger
-/// doesn't have (Fountain, the studio, chant workspaces). A caller who names
-/// one still reaches it (`dispatch`).
+/// The tools that work but aren't listed without `labs`: they're for setups
+/// a stranger doesn't have (Fountain, the studio, chant workspaces). A caller
+/// who names one still reaches it (`dispatch`).
 const UNLISTED: [&str; 5] = ["open_app", "open_workspace", "list_agents", "read_agent", "open_fountain"];
 
-/// The tools `tools/list` shows.
-fn defs() -> Vec<Def> {
-    all_defs().into_iter().filter(|d| !UNLISTED.contains(&d.name)).collect()
+/// Chat's two tools, unlisted without `labs` like the rest.
+const UNLISTED_THREADS: [&str; 2] = ["read_thread", "post_thread"];
+
+/// The tools `tools/list` shows: all of them with `labs`, else without those
+/// a stranger can't use.
+fn defs(labs: bool) -> Vec<Def> {
+    all_defs()
+        .into_iter()
+        .filter(|d| labs || !(UNLISTED.contains(&d.name) || UNLISTED_THREADS.contains(&d.name)))
+        .collect()
 }
 
 /// Every tool there is, listed or not.
@@ -1118,9 +1125,9 @@ pub struct DeviceCallArgs {
     pub timeout: Option<f64>,
 }
 
-/// The tools `scope` may call.
-pub fn list(scope: Scope) -> Vec<Tool> {
-    defs()
+/// The tools `scope` may call, with `labs` or without.
+pub fn list(scope: Scope, labs: bool) -> Vec<Tool> {
+    defs(labs)
         .into_iter()
         .filter(|d| scope != Scope::Read || d.read_only)
         .map(|d| {
@@ -3332,8 +3339,8 @@ mod tests {
 
     #[test]
     fn annotations_are_honest() {
-        let all = list(Scope::Full);
-        assert_eq!(all.len(), 34);
+        let all = list(Scope::Full, false);
+        assert_eq!(all.len(), 32);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -3346,7 +3353,6 @@ mod tests {
                 "capture_screen",
                 "wait",
                 "list",
-                "read_thread",
                 "history",
                 "search",
                 "list_conversations",
@@ -3357,43 +3363,69 @@ mod tests {
                 "list_devices"
             ]
         );
-        assert_eq!(list(Scope::Read).len(), ro.len(), "a read token sees the read-only tools only");
+        assert_eq!(list(Scope::Read, false).len(), ro.len(), "a read token sees the read-only tools only");
         let close = all.iter().find(|t| t.name == "close").unwrap();
         assert_eq!(close.annotations.as_ref().unwrap().destructive_hint, Some(true));
     }
 
-    /// Fountain, studio apps and chant workspaces are for setups a stranger
-    /// doesn't have: their tools aren't listed, but are still there for a
-    /// caller who names one.
+    /// Fountain, studio apps, chant workspaces and chat are for what a
+    /// stranger doesn't have: without `labs` their tools aren't listed (32 of
+    /// 39), with it all are, and a caller who names one reaches it either way.
     #[test]
-    fn unlisted_tools_are_not_listed_but_are_there() {
+    fn unlisted_tools_are_not_listed_without_labs_but_are_there() {
+        let hidden: Vec<&str> = UNLISTED.iter().chain(UNLISTED_THREADS.iter()).copied().collect();
         for scope in [Scope::Full, Scope::Read] {
-            let listed: Vec<String> = list(scope).iter().map(|t| t.name.to_string()).collect();
-            for name in UNLISTED {
-                assert!(!listed.contains(&name.to_owned()), "{name} is listed for {scope:?}");
+            let listed: Vec<String> = list(scope, false).iter().map(|t| t.name.to_string()).collect();
+            for name in &hidden {
+                assert!(!listed.contains(&name.to_string()), "{name} is listed for {scope:?} without labs");
+            }
+            let with: Vec<String> = list(scope, true).iter().map(|t| t.name.to_string()).collect();
+            for d in all_defs().iter().filter(|d| scope == Scope::Full || d.read_only) {
+                assert!(with.contains(&d.name.to_string()), "{} isn't listed for {scope:?} with labs", d.name);
             }
         }
         let every: Vec<&str> = all_defs().iter().map(|d| d.name).collect();
-        for name in UNLISTED {
-            assert!(every.contains(&name), "{name} no longer has a definition");
+        for name in &hidden {
+            assert!(every.contains(name), "{name} no longer has a definition");
         }
-        assert_eq!(every.len(), defs().len() + UNLISTED.len());
+        assert_eq!(every.len(), 39);
+        assert_eq!(defs(false).len(), 32);
+        assert_eq!(defs(true).len(), 39);
+        assert_eq!(every.len(), defs(false).len() + hidden.len());
     }
 
     /// What a stranger can't use isn't in the instructions or in the tools'
-    /// descriptions either.
+    /// descriptions either; chat's text is there only with `labs`.
     #[test]
     fn the_prose_leaves_out_what_a_stranger_cant_use() {
-        let mut prose = vec![crate::mcp::INSTRUCTIONS.to_owned()];
+        let mut prose = vec![crate::mcp::instructions(false)];
         prose.extend(
-            list(Scope::Full).iter().map(|t| format!("{}: {}", t.name, t.description.as_deref().unwrap_or_default())),
+            list(Scope::Full, false)
+                .iter()
+                .map(|t| format!("{}: {}", t.name, t.description.as_deref().unwrap_or_default())),
         );
         for text in &prose {
             let lower = text.to_lowercase();
-            for word in ["fountain", "studio", "chant", "workspace", "throwaway vm", "sandbox", "wisp", "open_app"] {
+            for word in [
+                "fountain",
+                "studio",
+                "chant",
+                "workspace",
+                "throwaway vm",
+                "sandbox",
+                "wisp",
+                "open_app",
+                "thread",
+                "@agent",
+            ] {
                 assert!(!lower.contains(word), "{word} in: {text}");
             }
         }
+        let with = crate::mcp::instructions(true);
+        assert!(with.contains("read_thread and post_thread") && with.contains("@agent"), "{with}");
+        // Labs only adds the thread sentence.
+        let without = crate::mcp::instructions(false);
+        assert!(with.len() > without.len() && with.replace(crate::mcp::THREAD_INSTRUCTIONS, "") == without);
     }
 
     /// The README's permissions snippet allows the read-only tools and asks
@@ -3408,7 +3440,8 @@ mod tests {
             let body = &body[..body.find(']').unwrap()];
             body.split('"').filter_map(|s| s.strip_prefix("mcp__illogical__")).collect()
         };
-        let defs = defs();
+        // The README lists what a stranger sees; the two chat tools join with labs.
+        let defs = defs(false);
         let want = |ro: bool| -> Vec<&str> { defs.iter().filter(|d| d.read_only == ro).map(|d| d.name).collect() };
         assert_eq!(list("allow"), want(true), "README.md's allow list: the read-only tools, in defs() order");
         assert_eq!(list("ask"), want(false), "README.md's ask list: every other tool, in defs() order");

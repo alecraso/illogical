@@ -18,7 +18,6 @@ import { openRules } from "./rules";
 import { desktopApp, desktopPlatform, openInNewWindow } from "../desktop";
 import { sessionThreadItems, threadItems } from "./threads";
 import { huddleItems } from "./huddle";
-import { showMore } from "../more";
 
 /** Chords, as menus and the palette show them. */
 export const PICKER_KEY = "Ctrl+Shift+G";
@@ -118,9 +117,9 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
             },
           } as MenuItem,
         ]),
-    // An ssh command for a guest with only OpenSSH. The owner's. Not offered
-    // yet (`showMore`).
-    ...(client.base.startsWith("/") || client.state?.roles || !showMore()
+    // An ssh command for a guest with only OpenSSH. The owner's. Only where
+    // this machine has labs.
+    ...(client.base.startsWith("/") || client.state?.roles || !client.hasLabs()
       ? []
       : [
           {
@@ -226,7 +225,7 @@ export function sessionItems(client: Client, session: SessionId, rename: () => v
 function fountainItems(client: Client, where: { session?: number; split?: PaneId }): MenuItem[] {
   return [
     ...(client.has("fountain") ? [{ label: "Fountain agents…", run: () => void openFountain(client, where) } as MenuItem] : []),
-    ...(client.features === null || client.fountainRunner
+    ...(client.hasLabs() && (client.features === null || client.fountainRunner)
       ? [{ label: "Fountain runner…", run: () => void openFountain(client, where, "runner") } as MenuItem]
       : []),
   ];

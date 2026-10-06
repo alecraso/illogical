@@ -18,6 +18,7 @@ Examples call the machine that serves the page `home` and the tailnet
 - [A container on the tailnet](#a-container-on-the-tailnet)
 - [A box that can only dial out](#a-box-that-can-only-dial-out)
 - [iTerm2, as a tmux client](#iterm2-as-a-tmux-client)
+- [Labs](#labs)
 
 ## Service and logs
 
@@ -297,3 +298,30 @@ your `PATH`, where it would hide the real tmux.
 
 A manual test script, and how to record the conversation, are in
 [development.md](development.md#testing-iterm2).
+
+## Labs
+
+A file named `labs` in a machine's state directory turns on what a new
+install doesn't show: chat and threads, huddles, Fountain, studio apps,
+chant workspaces, VM tabs and sandboxes, ssh invites for guests, the swarm's
+city, hive and timeline views, and the matching tools, commands and options
+of `illogical mcp`, `illogical --help` and `illogicald --help`. They all keep
+working without it; they just aren't offered.
+
+```
+touch ~/.local/state/illogical/labs
+```
+
+The state directory is `$ILLOGICAL_STATE_DIR` if set, else
+`$XDG_STATE_HOME/illogical`, else `~/.local/state/illogical`; on Windows,
+`%LOCALAPPDATA%\illogical\state`. The file can be empty. Delete it to turn
+labs off again.
+
+- **Per machine.** It's read by the machine that serves the page, so every
+  machine you want them on needs its own. Someone you share a session with
+  sees chat and huddles on your machine if it has labs, and not otherwise.
+- **No restart.** The daemon looks for the file whenever it's asked; reload the
+  page to see the change.
+- **Each feature still needs its own setup.** Fountain needs a login, studio a
+  link, VMs a sandbox provider, guest ssh its listener; labs only stops
+  them from being hidden.

@@ -12,6 +12,7 @@ import { devices, expect, test, type Page } from "@playwright/test";
 import { dragTo, menu, open, paneEl, screen, text, type as typeIn } from "./helpers";
 import type { PaneId } from "../src/proto";
 import { ANY, daemonPort } from "./ports";
+import { labs } from "./labs";
 
 let PORT = 0;
 const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
@@ -30,7 +31,7 @@ test.describe.configure({ mode: "serial" });
 async function startDaemon(): Promise<ChildProcess> {
   const d = spawn(
     "../target/debug/illogicald",
-    ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", state],
+    ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", labs(state)],
     { stdio: "ignore" },
   );
   PORT ||= await daemonPort(state, d);

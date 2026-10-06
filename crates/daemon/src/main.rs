@@ -85,7 +85,7 @@ mod workspace;
 use std::{net::SocketAddr, path::PathBuf};
 
 use axum::serve::ListenerExt;
-use clap::{Parser, Subcommand};
+use clap::{FromArgMatches, Parser, Subcommand};
 use tracing::{info, warn};
 
 #[derive(Parser, Debug)]
@@ -737,6 +737,40 @@ fn editors_socket(state_dir: &std::path::Path) -> std::io::Result<tokio::net::Un
     Ok(l)
 }
 
+/// Options that work but stay out of `--help` unless the machine has the
+/// `labs` file: guest ssh, the studio file and the sandbox provider. The
+/// others that are `hide = true` are internals, and stay hidden.
+const LABS_OPTIONS: [&str; 5] = ["guest_ssh", "guest_ssh_host", "studio_file", "wisp_url", "wisp_token_file"];
+
+/// The command line, listing the labs options in `--help` when `labs`.
+fn labs_command(labs: bool) -> clap::Command {
+    use clap::CommandFactory;
+    let mut cmd = Args::command();
+    if labs {
+        for opt in LABS_OPTIONS {
+            cmd = cmd.mut_arg(opt, |a| a.hide(false));
+        }
+    }
+    cmd
+}
+
+/// This machine has the `labs` file, in the state dir it was told to use
+/// (`--state-dir`, read from the command line before it's parsed, or
+/// `ILLOGICAL_STATE_DIR`) or the default one.
+fn labs_here() -> bool {
+    let mut given = None;
+    let mut argv = std::env::args().skip(1);
+    while let Some(a) = argv.next() {
+        if a == "--state-dir" {
+            given = argv.next().map(PathBuf::from);
+        } else if let Some(v) = a.strip_prefix("--state-dir=") {
+            given = Some(PathBuf::from(v));
+        }
+    }
+    let dir = given.or_else(|| std::env::var_os("ILLOGICAL_STATE_DIR").map(PathBuf::from));
+    illogical_proto::hosts::labs(&dir.unwrap_or_else(default_state_dir))
+}
+
 fn default_state_dir() -> PathBuf {
     // Windows: beside the desktop app, which its installer puts in
     // %LOCALAPPDATA%\illogical (M54).
@@ -859,7 +893,7 @@ fn main() -> anyhow::Result<()> {
         let args = ide::relay::Args { dir: argv[2].clone().into(), lock_dir: argv[3].clone().into() };
         return Ok(tokio::runtime::Runtime::new()?.block_on(ide::relay::run(args))?);
     }
-    let args = Args::parse();
+    let args = Args::from_arg_matches(&labs_command(labs_here()).get_matches()).unwrap_or_else(|e| e.exit());
     match args.command {
         #[cfg(unix)]
         Some(Command::Install {
@@ -1367,5 +1401,50 @@ mod tests {
         }
         // Still there for whoever knows them.
         assert!(super::Args::command().get_arguments().any(|a| a.get_long() == Some("studio-file")));
+    }
+
+    /// With the `labs` file `illogicald --help` lists the sandbox provider,
+    /// the studio file and guest ssh, and no other hidden option. The test
+    /// passes the bool; it reads neither the filesystem nor the environment.
+    #[test]
+    fn labs_unhides_its_options_and_only_those() {
+        let labs = ["--wisp-url", "--wisp-token-file", "--studio-file", "--guest-ssh", "--guest-ssh-host"];
+        let hidden_internals = [
+            "--guest-machines",
+            "--static-dir",
+            "--log-file",
+            "--no-relay",
+            "--sandbox-of-control",
+            "--provider-token-sha256",
+        ];
+        let help = |on: bool| super::labs_command(on).render_long_help().to_string();
+        let (off, on) = (help(false), help(true));
+        for flag in labs {
+            assert!(!off.contains(&format!("{flag} ")) && !off.contains(&format!("{flag}\n")), "{flag} without labs");
+            assert!(on.contains(flag), "{flag} isn't in `illogicald --help` with labs");
+        }
+        for flag in hidden_internals {
+            assert!(!off.contains(flag) && !on.contains(flag), "{flag} is listed");
+        }
+        // The labs set is all that differs, and the hidden options still parse.
+        let hidden = |on: bool| {
+            let mut ids: Vec<String> = super::labs_command(on)
+                .get_arguments()
+                .filter(|a| a.is_hide_set())
+                .map(|a| a.get_id().to_string())
+                .collect();
+            ids.sort();
+            ids
+        };
+        let (h_off, h_on) = (hidden(false), hidden(true));
+        assert_eq!(h_off.len() - h_on.len(), labs.len(), "{h_off:?} vs {h_on:?}");
+        assert!(h_on.iter().all(|i| h_off.contains(i)));
+        for on in [false, true] {
+            assert!(
+                super::labs_command(on)
+                    .try_get_matches_from(["illogicald", "--studio-file", "/x", "--guest-ssh", "off"])
+                    .is_ok()
+            );
+        }
     }
 }
