@@ -566,12 +566,18 @@ fn uploads_are_refused_past_their_limits_and_swept_after_a_restart() {
     assert_eq!(status, 507, "{body}");
     std::fs::remove_file(other.join("big.png")).unwrap();
 
-    // `ssh` in front: the path would mean nothing on the far side.
+    // `ssh` in front: the path would mean nothing on the far side. A
+    // script of that name, not a link to a binary: a multicall coreutils
+    // (uutils, as Ubuntu ships) runs as whatever it's called, and there's
+    // no `ssh` in it.
+    use std::os::unix::fs::PermissionsExt;
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::os::unix::fs::symlink("/bin/cat", bin.join("ssh")).unwrap();
-    d.post(&format!("/api/panes/{pane}/send"), json!({"text": bin.join("ssh").display().to_string(), "enter": true}));
-    // Its command line (macOS names a linked binary after its target).
+    let ssh = bin.join("ssh");
+    std::fs::write(&ssh, "#!/bin/sh\nsleep 600\n").unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    d.post(&format!("/api/panes/{pane}/send"), json!({"text": ssh.display().to_string(), "enter": true}));
+    // Its command line: `/bin/sh …/bin/ssh`.
     d.wait_for("ssh in front", || d.raw("GET", &format!("/api/panes/{pane}/process"), None).1.contains("bin/ssh\""));
     let (status, v) = bytes(&d, &format!("/api/panes/{pane}/upload?id=ef&ext=png&offset=0&last=true"), b"png");
     assert_eq!(status, 200, "{v}");
