@@ -23,22 +23,24 @@ pub enum HostsCmd {
     Add {
         name: String,
         /// Its URL(s), best first: `https://box.tailnet.ts.net`. Or one
-        /// `ssh://[user@]box[:port]` (M51): reached over ssh from each client,
+        /// `ssh://[user@]box[:port]`: reached over ssh from each client,
         /// with your own ssh and its ~/.ssh/config; only that is kept.
         #[arg(required = true)]
         urls: Vec<String>,
     },
     /// Remove a daemon from the list.
     Rm { name: String },
-    /// A one-time token that lets a sandbox add itself
-    /// (`illogicald install --tailnet … --join TOKEN`).
+    /// A one-time token that lets another daemon add itself.
+    ///
+    /// Used as `illogicald install --tailnet … --join TOKEN`.
     Invite {
         /// How long it's good for (e.g. 30m, 2h).
         #[arg(long, default_value = "1h")]
         ttl: String,
     },
-    /// Mint a per-host token for a host without tailnet identity: one that
-    /// dials out (`illogicald --peer wss://this-daemon --token FILE`) or
+    /// Mint a per-host token for a host without tailnet identity.
+    ///
+    /// One that dials out (`illogicald --peer wss://this-daemon --token FILE`) or
     /// pushes its history (`--sync`). Adds it as a dial-out host if it isn't
     /// listed; replaces any token it had. Printed once; only its hash is
     /// kept.
@@ -49,9 +51,11 @@ pub enum HostsCmd {
 
 #[derive(Subcommand)]
 pub enum SandboxesCmd {
-    /// Copy the static daemon into a sandbox and keep it running there as
-    /// a provider service; it joins the host list, reached through this
-    /// daemon's tunnel (`--host NAME`).
+    /// Make a daemon resident in a sandbox.
+    ///
+    /// Copy the static daemon into it and keep it running there as a provider
+    /// service; it joins the host list, reached through this daemon's tunnel
+    /// (`--host NAME`).
     Promote {
         sandbox: String,
         /// Its name in the host list [default: the sandbox's].

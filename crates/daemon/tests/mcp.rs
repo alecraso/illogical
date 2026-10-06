@@ -131,7 +131,14 @@ async fn tools_through_the_stdio_bridge() {
 
     // The tools, with honest annotations.
     let tools = s.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 39);
+    assert_eq!(tools.len(), 34);
+    // Fountain, studio apps and chant workspaces aren't listed, but a caller
+    // who names one still reaches it (here: no Fountain login, so it says so).
+    for name in ["open_fountain", "list_agents", "read_agent", "open_app", "open_workspace"] {
+        assert!(tools.iter().all(|t| t.name != name), "{name} is listed");
+    }
+    let said = refused(&s, "read_agent", json!({ "name": "nobody" })).await;
+    assert!(!said.contains("no tool"), "an unlisted tool still answers: {said}");
     let ro = |n: &str| tools.iter().find(|t| t.name == n).unwrap().annotations.as_ref().unwrap().read_only_hint;
     assert_eq!(
         (ro("read_output"), ro("wait"), ro("run"), ro("close")),
@@ -270,7 +277,7 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     // (and retries it, then gives up: no tools).
     let tools = s.list_tools(None).await.unwrap();
     assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
-    assert_eq!(tools.tools.len(), 39);
+    assert_eq!(tools.tools.len(), 34);
     let t = s.list_resource_templates(None).await.unwrap();
     assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
     let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
@@ -310,7 +317,7 @@ async fn http_with_a_token_until_it_is_revoked() {
     let ro =
         d.post("/api/mcp/tokens", json!({ "name": "watcher", "scope": "read" }))["token"].as_str().unwrap().to_owned();
     let w = http(&d, &ro, Client::named("watcher")).await.unwrap();
-    assert_eq!(w.list_all_tools().await.unwrap().len(), 15);
+    assert_eq!(w.list_all_tools().await.unwrap().len(), 13);
     assert!(refused(&w, "run", json!({ "command": "true" })).await.contains("may only read"));
     // #234: nor ask to invite anyone.
     let invite = json!({ "who": "tailnet:sam@example.com", "pane": 1, "note": "x" });

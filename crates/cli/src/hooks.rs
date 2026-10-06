@@ -37,8 +37,9 @@ pub const HOOKS_SNIPPET: &str = r#"{
 
 #[derive(Subcommand)]
 pub enum HooksCmd {
-    /// Merge the hooks into Claude Code's settings.json, keeping everything
-    /// already there. Running it again changes nothing.
+    /// Merge the hooks into Claude Code's settings.json.
+    ///
+    /// Everything already there is kept. Running it again changes nothing.
     Install {
         /// Write DIR/.claude/settings.json instead of ~/.claude/settings.json.
         #[arg(long, value_name = "DIR")]

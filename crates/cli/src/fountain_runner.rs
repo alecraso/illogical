@@ -45,9 +45,11 @@ const SETUP_URL: &str =
 
 #[derive(Subcommand)]
 pub enum RunnerCmd {
-    /// After `sudo bash scripts/fountain-runner-setup.sh`: create the
-    /// runner's key (never printed), write it for the `fountain` user and
-    /// start the unit. A key that's there already is kept.
+    /// Make the runner's key and start the unit.
+    ///
+    /// After `sudo bash scripts/fountain-runner-setup.sh`: create the key
+    /// (never printed), write it for the `fountain` user and start the unit.
+    /// A key that's there already is kept.
     Install {
         /// The key's name on Fountain.
         #[arg(long, default_value = "illogical-runner")]
@@ -59,9 +61,10 @@ pub enum RunnerCmd {
     },
     /// The unit (`systemctl is-active`) and every runner Fountain knows.
     Status,
-    /// Put agents on the runner provider (`sandbox_provider: runner`).
-    /// One that chant manages is refused, with what to change in
-    /// agent-specs instead.
+    /// Put agents on the runner provider.
+    ///
+    /// `sandbox_provider: runner`. One that chant manages is refused, with
+    /// what to change in agent-specs instead.
     Adopt {
         /// Agent names or ids.
         #[arg(required = true)]

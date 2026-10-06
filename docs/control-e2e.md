@@ -60,7 +60,7 @@ S15 checked in Chrome 153 (desktop, headless) that:
 Safari and Firefox support both curves (Safari 17+, Firefox 130+). The
 phone runs below confirm Safari on iOS.
 
-**WebKit loses X25519 keys in IndexedDB (#94).** Playwright's WebKit
+**WebKit loses X25519 keys in IndexedDB.** Playwright's WebKit
 (Safari 26.6's engine, on Linux) stores a record holding an X25519
 `CryptoKey` and reads it back as `null`, in the same page load or the next;
 Ed25519 and AES-GCM keys come back fine. A Safari that enrolled therefore
@@ -251,7 +251,7 @@ would pass. So the daemon doesn't take the root on control's word:
     Its *Devices and machines…* fingerprint and `control.json`'s
     `trust.root` should be the same; if not, `illogicald leave` and join
     again.
-- **Hosted sandboxes** (M20) skip the check: control creates the VM through
+- **Hosted sandboxes** skip the check: control creates the VM through
   its provider and writes the sandbox's `control.json` itself
   (`crates/control/src/sandboxes.rs`). The operator runs that machine, so it
   can read it whatever the keys say. A sandbox is end to end encrypted
@@ -279,7 +279,7 @@ code. A modified page could send keys or plaintext anywhere. That applies
 to:
 
 - any browser or phone that opens control's page;
-- **the desktop app once it's joined** (M48): its window then loads
+- **the desktop app once it's joined**: its window then loads
   control's page, signed in through your browser;
 - not to a daemon's own page (`http://127.0.0.1:7681`, or its tailnet
   name) or the desktop app before it's joined: the daemon serves those from
@@ -439,7 +439,7 @@ daemon today: 41.7 ms against 1.4 ms direct. The daemon now sets
 ### Direct paths, and Chrome's Local Network Access
 
 The client tries the tailnet or LAN URLs from the directory first, then the
-relay (M18). S15 found a wrinkle:
+relay. S15 found a wrinkle:
 
 - **Chrome (153) blocks a public origin from connecting to a private
   address**, and that includes the tailnet's 100.64.0.0/10:

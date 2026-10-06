@@ -18,6 +18,7 @@ import { openRules } from "./rules";
 import { desktopApp, openInNewWindow } from "../desktop";
 import { sessionThreadItems, threadItems } from "./threads";
 import { huddleItems } from "./huddle";
+import { showMore } from "../more";
 
 /** Chords, as menus and the palette show them. */
 export const PICKER_KEY = "Ctrl+Shift+G";
@@ -113,8 +114,9 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
             },
           } as MenuItem,
         ]),
-    // M65: an ssh command for a guest with only OpenSSH. The owner's.
-    ...(client.base.startsWith("/") || client.state?.roles
+    // An ssh command for a guest with only OpenSSH. The owner's. Not offered
+    // yet (`showMore`).
+    ...(client.base.startsWith("/") || client.state?.roles || !showMore()
       ? []
       : [
           {

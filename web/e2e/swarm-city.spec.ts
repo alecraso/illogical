@@ -24,6 +24,9 @@ test.beforeAll(async () => {
 
 test.afterAll(() => fake?.stop());
 
+// The themes past blocks aren't offered by default; these tests turn them on.
+test.beforeEach(({ page }) => page.addInitScript(() => localStorage.setItem("illogical.more", "1")));
+
 interface CityScene {
   clusters: { name: string; n: number }[];
   screenOf(k: string): { x: number; y: number } | null;

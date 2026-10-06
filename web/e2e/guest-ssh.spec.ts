@@ -16,6 +16,9 @@ let state = "";
 test.use({ baseURL: async ({}, use) => use(url) });
 test.describe.configure({ mode: "serial" });
 
+// The ssh invite isn't in the menu by default; this test turns it on.
+test.beforeEach(({ page }) => page.addInitScript(() => localStorage.setItem("illogical.more", "1")));
+
 test.beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), "illogical-e2e-guest-ssh-"));
   daemon = spawn(
@@ -87,6 +90,16 @@ async function watchesAndCantType(page: Page) {
     }
   }
 }
+
+test("a pane's menu doesn't offer the ssh invite unless asked for", async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem("illogical.more"));
+  await open(page);
+  const pane = await active(page);
+  await ready(page, pane);
+  await paneEl(page, pane).click({ button: "right", position: { x: 60, y: 60 } });
+  await expect(page.getByRole("menuitem", { name: "Share read-only link…" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Invite over ssh…" })).toHaveCount(0);
+});
 
 test("a pane's menu makes an ssh invite a stock ssh client can watch with", async ({ page }) => {
   await watchesAndCantType(page);

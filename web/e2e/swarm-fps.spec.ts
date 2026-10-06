@@ -12,6 +12,7 @@ test.afterAll(closeContexts);
 const MARK = { city: "lotOf", hive: "cellOf", timeline: "runsOf" } as const;
 
 async function measure(page: Page, theme: "blocks" | "city" | "hive" | "timeline" = "blocks") {
+  await page.addInitScript(() => localStorage.setItem("illogical.more", "1"));
   await page.addInitScript((t) => localStorage.setItem("illogical.swarm.theme", t), theme);
   await page.goto("/#swarm");
   await open(page).catch(() => {});

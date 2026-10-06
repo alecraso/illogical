@@ -2,10 +2,9 @@
 
 Everything here is optional. The [quickstart](../README.md#install) gets you
 durable panes, the phone, your other machines through
-[illogical control](control.md), and agent blocks; these add VMs, web apps
-and VS Code beside your terminals, sandboxes, and iTerm2. The menus offer a
-VM or a sandbox only on a machine set up for them, and *Open a port…* and
-*Open in editor* say how to turn them on until they are.
+[illogical control](control.md), and agent blocks; these add web apps and VS
+Code beside your terminals, containers, and iTerm2. *Open a port…* and *Open
+in editor* say how to turn them on until they are.
 
 Examples call the machine that serves the page `home` and the tailnet
 `<tailnet>.ts.net`; use your own names.
@@ -13,14 +12,11 @@ Examples call the machine that serves the page `home` and the tailnet
 - [Service and logs](#service-and-logs)
 - [Pane environment](#pane-environment)
 - [Claude Code hooks](#claude-code-hooks)
-- [VM tabs and panes (wisp)](#vm-tabs-and-panes-wisp)
 - [Browser blocks on ports](#browser-blocks-on-ports)
 - [Editor blocks](#editor-blocks)
-- [Agents in a VM](#agents-in-a-vm)
 - [More machines](#more-machines)
-- [A sandbox on the tailnet](#a-sandbox-on-the-tailnet)
-- [A sandbox that can only dial out](#a-sandbox-that-can-only-dial-out)
-- [Sandboxes from a provider](#sandboxes-from-a-provider)
+- [A container on the tailnet](#a-container-on-the-tailnet)
+- [A box that can only dial out](#a-box-that-can-only-dial-out)
 - [iTerm2, as a tmux client](#iterm2-as-a-tmux-client)
 
 ## Service and logs
@@ -114,11 +110,11 @@ pane should have from boot (`PATH` additions, `EDITOR`), put `KEY=value`
 lines in `~/.config/environment.d/50-illogical.conf`. Panes run `$SHELL -l`,
 so your profile runs too.
 
-Blocks that run your tools for you (a chant workspace, say) don't have a
+Blocks that run your tools for you don't have a
 shell of their own, so the daemon reads your shell's environment once, as
 VS Code does: it runs `$SHELL -l -i` when it starts and keeps the `PATH`
 and variables your rc files set, so node from mise or nvm is found there as
-in a pane. On a VM it does the same once per machine, with `bash -l -i`. If
+in a pane. If
 your shell takes more than 10 seconds or fails, those blocks get the
 daemon's own environment, and the log says why. After changing an rc file,
 `illogical shell-env --refresh` reads it again (`illogical shell-env` shows
@@ -132,23 +128,6 @@ and take follow-ups from them, all through hooks in
 `~/.claude/settings.json`. The whole block, and what each part does, is in
 [the CLI's *Claude Code in a pane*](cli.md#claude-code-in-a-pane). Outside
 an illogical pane the hooks do nothing, so they're safe everywhere.
-
-## VM tabs and panes (wisp)
-
-*New VM tab* and *New VM pane* give a tab or a pane its own throwaway
-Firecracker microVM, for agents and untrusted builds. They need wisp
-(`wispd`, a separate sandbox daemon that isn't published yet) running on
-the same Linux host, and its API token:
-
-```
-illogicald install -- --wisp-url http://127.0.0.1:7788 --wisp-token-file ~/.local/share/wisp/token
-```
-
-Those are the defaults, so with wispd installed the usual way, nothing is
-needed. Without the token, VM panes are off and the menus don't offer them
-(nor *Sandboxes…*).
-The base image is plain Ubuntu 24.04; install what you need in it (Claude
-Code: `curl -fsSL https://claude.ai/install.sh | bash`).
 
 ## Browser blocks on ports
 
@@ -206,8 +185,7 @@ them on.
   an editor opens (about 230 MB) into `$XDG_CACHE_HOME/illogical/code-server`
   and checked against its SHA-256. `--code-server PATH` runs another one
   instead (a recent one: illogical passes `--idle-timeout-seconds` and
-  `--socket-mode`). In a VM the same
-  release is downloaded inside the VM.
+  `--socket-mode`).
 - **Where things are:** settings, extensions and VS Code's state in
   `<state>/editor/` (`user/User/settings.json` is yours after the first
   start), its log in `<state>/editor/code-server.log`, its socket beside
@@ -216,17 +194,6 @@ them on.
 - **Stopping:** `--editor-idle SECONDS` (default 900, at least 60) after the
   last window closes. It runs in a scope of its own, so restarting the daemon
   leaves it, and open windows reconnect.
-
-## Agents in a VM
-
-`illogical agent --vm` (or the dialog's checkbox) runs the agent server on
-a VM; its first start installs Node and the adapter there. Claude Code
-there needs credentials: a token from `claude setup-token` in
-`~/.config/illogical/claude-oauth-token`, or an API key in
-`~/.config/illogical/anthropic-key` (used first). `--claude-token-file` and
-`--anthropic-key-file` move them. They reach the agent on its stdin, into
-its environment only: never the VM's disk, a URL, an argv, the log or the
-layout.
 
 ## More machines
 
@@ -249,18 +216,18 @@ The CLI still reaches only the daemon on its own machine, or one on the
 tailnet with `illogical --host NAME …` once that daemon's list has it
 (`illogical hosts add NAME https://NAME.<tailnet>.ts.net`).
 
-## A sandbox on the tailnet
+## A container on the tailnet
 
-A container or VM without systemd can run the static Linux binaries from a
+A container or box without systemd can run the static Linux binaries from a
 release. Copy `illogicald` and `illogical` into it, then:
 
 ```
 illogical hosts invite                                  # on home: prints a token
 illogical install --tailnet file:KEYFILE \
-  --home https://home.<tailnet>.ts.net --join TOKEN     # in the sandbox
+  --home https://home.<tailnet>.ts.net --join TOKEN     # in the container
 ```
 
-The key is an ephemeral, tagged Tailscale auth key (e.g. `tag:sandbox`), in
+The key is an ephemeral, tagged Tailscale auth key (e.g. `tag:container`), in
 a file (or `-` for stdin; never on a command line). This downloads
 tailscaled if it isn't there, runs it in userspace mode with its own state
 in `~/.local/state/illogical-sandbox`, joins, puts the daemon behind
@@ -269,31 +236,21 @@ sandbox` keeps tailscaled and the daemon running; after a reboot, run
 `illogicald sandbox &` again. Without `--join` it prints the `illogical
 hosts add` line to run on home.
 
-## A sandbox that can only dial out
+## A box that can only dial out
 
-For a sandbox that allows nothing in but outbound HTTPS. On home,
-`illogical hosts token sbx` (or `hosts invite`); in the sandbox:
+For a box that allows nothing in but outbound HTTPS. On home,
+`illogical hosts token sbx` (or `hosts invite`); on the box:
 
 ```
 illogicald --peer wss://home.<tailnet>.ts.net --token ~/.config/illogical/host-token \
   [--join INVITE] [--sync [--sync-live]] &
 ```
 
-The home daemon must be reachable at that URL from the sandbox and accept
-its name as a Host (`--public-host`). The home daemon lists the sandbox and
+The home daemon must be reachable at that URL from the box and accept
+its name as a Host (`--public-host`). The home daemon lists the box and
 answers for it at `/h/sbx/…`, so the host switcher and `illogical --host
 sbx` work as for any host. `--sync` pushes closed panes' history to the
 home daemon, encrypted at rest there; `--sync-live` pushes open ones too.
-
-## Sandboxes from a provider
-
-With a sandbox provider configured (wisp sprites; Fly's Sprites API fits
-the same adapter), *Sandboxes…* lists them, *Shell* opens a disposable
-shell on one with nothing installed, and *Make resident* (`illogical
-sandboxes promote NAME`) copies the static daemon in and runs it as a
-service there. The home daemon looks for the static binaries in
-`--static-dir` (default `~/.local/share/illogical/static`); put a
-release's Linux x86_64 binaries there.
 
 ## iTerm2, as a tmux client
 

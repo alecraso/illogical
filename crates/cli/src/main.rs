@@ -94,11 +94,10 @@ enum Command {
         /// Split this pane instead of opening a tab.
         #[arg(long)]
         split: Option<Pane>,
-        /// With --split: run where that pane runs (its VM tab's machine, or
-        /// the sandbox it has a shell on) instead of this host.
+        /// With --split: run where that pane runs instead of this host.
         #[arg(long, requires = "split")]
         join: bool,
-        /// Where it starts (with --join, or on a VM: a directory there).
+        /// Where it starts (with --join: a directory there).
         #[arg(long)]
         cwd: Option<String>,
         /// After a restart: shell, none, rerun, rerun-ask, or hook:COMMAND.
@@ -109,19 +108,19 @@ enum Command {
         wait: bool,
         /// On a new throwaway VM, deleted when the pane closes. Without a
         /// command: a shell on one.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         vm: bool,
         /// In a new tab whose panes share one throwaway VM (splits join it),
         /// deleted when the tab closes.
-        #[arg(long, conflicts_with_all = ["vm", "split"])]
+        #[arg(long, hide = true, conflicts_with_all = ["vm", "split"])]
         vm_tab: bool,
         /// The VM's image (with --vm or --vm-tab).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         image: Option<String>,
         /// On a sandbox that exists (`illogical sandboxes`), over a plain
         /// exec with no daemon there: disposable, and the sandbox stays
         /// when the pane closes. Without a command: a shell.
-        #[arg(long, conflicts_with_all = ["vm", "vm_tab", "image"])]
+        #[arg(long, hide = true, conflicts_with_all = ["vm", "vm_tab", "image"])]
         sandbox: Option<String>,
         /// With --host: run it on that host but put it in this daemon's
         /// layout (a tab here, or beside --split, a pane here), as a remote
@@ -130,26 +129,29 @@ enum Command {
         home: bool,
         /// One argument is a shell command line (`'make && ./app'`);
         /// several are a program and its arguments, quoted as given. None
-        /// (with --cwd, --join, --home or a VM): a shell.
+        /// (with --cwd, --join or --home): a shell.
         #[arg(trailing_var_arg = true, required_unless_present_any = ["vm", "vm_tab", "sandbox", "join", "cwd", "home"])]
         command: Vec<String>,
     },
-    /// Machines that panes run on (VM panes).
+    /// Machines that panes run on.
+    #[command(hide = true)]
     Machines,
-    /// Files on a host, read-only: `ls`, `stat`, `cat`, `watch`, `recent`.
-    /// `%N:PATH` is on the host pane %N runs on (its VM), `mN:PATH` on
-    /// machine N.
+    /// Files on a host, read-only.
+    ///
+    /// `ls`, `stat`, `cat`, `watch`, `recent`. `%N:PATH` is on the host pane %N
+    /// runs on, `mN:PATH` on machine N.
     Fs {
         #[command(subcommand)]
         cmd: fs::FsCmd,
     },
     /// Type `cd DIR` into a pane's shell, if it's waiting at its prompt.
     Cd { pane: Pane, dir: String },
-    /// A block's type, place and state (any type). With `--detection`, how
-    /// the screen of the agent in a terminal pane reads: each rule, the
-    /// text it looked at, and which one fired. `describe --agents`: the
-    /// agents configured on this machine (`chant audit --agents`), which
-    /// decide whose screen rules run here.
+    /// A block's type, place and state (any type).
+    ///
+    /// With `--detection`, how the screen of the agent in a terminal pane reads:
+    /// each rule, the text it looked at, and which one fired. `describe --agents`:
+    /// the agents configured on this machine, which decide whose screen rules run
+    /// here.
     Describe {
         #[arg(required_unless_present = "agents")]
         block: Option<Pane>,
@@ -161,33 +163,36 @@ enum Command {
         #[arg(long, requires = "agents")]
         refresh: bool,
     },
-    /// Call one of a block's methods, e.g. `call %4 navigate '{"url":"…"}'`.
+    /// Call one of a block's methods.
+    ///
+    /// For example `call %4 navigate '{"url":"…"}'`.
     Call {
         block: Pane,
         method: String,
         /// Arguments as JSON.
         args: Option<String>,
     },
-    /// Open a browser block: a port (`:5173/path`) on its machine, or a web
-    /// page (`https://…`).
+    /// Open a browser block on a port or a web page.
+    ///
+    /// `:PORT[/path]` is a port on its machine, `https://…` a web page.
     Open {
         /// `:PORT[/path]`, or a URL.
         target: String,
         /// Split a block instead of opening a tab: `right` for the one this
-        /// runs in, or `%N`. In a VM tab the block is on the tab's machine.
+        /// runs in, or `%N`.
         #[arg(long)]
         split: Option<String>,
-        /// The machine whose port it is: `mN` (see `illogical machines`), or
-        /// `local` for this host [default: the VM tab's, when splitting
-        /// there; else this host]. (`--host` is another daemon.)
+        /// The machine whose port it is: `mN`, or `local` for this host
+        /// [default: this host]. (`--host` is another daemon.)
         #[arg(long)]
         machine: Option<String>,
         #[arg(long)]
         session: Option<String>,
     },
-    /// Open an editor block: VS Code (code-server) on a folder, or on a
-    /// file in its project, on the machine this pane runs on. Prints its
-    /// block.
+    /// Open VS Code on a folder or a file; prints its block.
+    ///
+    /// The editor runs on the machine this pane runs on. A file opens in its
+    /// project.
     Edit {
         /// A folder or file, optionally `FILE:LINE` [default: here].
         path: Option<String>,
@@ -205,10 +210,11 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// What changed in a git repository (M11): opens a diff block, prints
-    /// it, then its files with +/−. No revisions: the working tree (staged,
-    /// unstaged, untracked) against HEAD; one: against that; two: the
-    /// range. `%N` first: the repository pane %N is in, on its machine.
+    /// Show what changed in a git repository.
+    ///
+    /// Opens a diff block, prints it, then its files with +/−. No revisions: the
+    /// working tree (staged, unstaged, untracked) against HEAD; one: against that;
+    /// two: the range. `%N` first: the repository pane %N is in, on its machine.
     Diff {
         /// `[%N] [REV_A [REV_B]]`.
         args: Vec<String>,
@@ -223,10 +229,10 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// Show a file in a file block (M11), read-only and followed live:
-    /// `PATH[:LINE]` here, `%N:PATH[:LINE]` on the host pane %N runs on
-    /// (relative to its directory), `mN:PATH[:LINE]` on machine N. Prints
-    /// its block.
+    /// Show a file in a file block, read-only and followed live.
+    ///
+    /// `PATH[:LINE]` here, `%N:PATH[:LINE]` on the host pane %N runs on (relative
+    /// to its directory), `mN:PATH[:LINE]` on machine N. Prints its block.
     View {
         spec: String,
         /// The line to mark and show.
@@ -239,11 +245,13 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// Show a chant workspace as a block (M34): its members as cards to
-    /// open shells, agents and diffs on, its records, and the gates waiting
-    /// for a person, which are attention you approve (`call %N approve`).
-    /// Read through the workspace's own chant. Prints the block, then its
-    /// members and gates.
+    /// Show a chant workspace as a block.
+    ///
+    /// Its members as cards to open shells, agents and diffs on, its records, and
+    /// the gates waiting for a person, which are attention you approve (`call %N
+    /// approve`). Read through the workspace's own chant. Prints the block, then
+    /// its members and gates.
+    #[command(hide = true)]
     Workspace {
         /// The workspace root, holding chant.workspace.json [default: here].
         dir: Option<String>,
@@ -257,15 +265,15 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// Show a pull request as a block (M36: Forgejo, through your `tea`
-    /// login; M38: GitHub, through `gh`'s; M39: a GitLab merge request,
-    /// through your `glab` login, or read-only without one): its checks,
+    /// Show a pull request as a block.
+    ///
+    /// Forgejo through your `tea` login, GitHub through `gh`'s, a GitLab merge
+    /// request through your `glab` login (or read-only without one): its checks,
     /// reviews and timeline, and what it waits on you for. `URL`,
-    /// `OWNER/REPO#N`, `GROUP/PROJECT!N`, or `N` in this directory's
-    /// repository. Prints the block, then the PR as text. `pr
-    /// comment|review|merge|rerun %N`
-    /// write to it; run by an agent (CLAUDECODE or AI_AGENT set), a write
-    /// is a draft that waits for a person to send it.
+    /// `OWNER/REPO#N`, `GROUP/PROJECT!N`, or `N` in this directory's repository.
+    /// Prints the block, then the PR as text. `pr comment|review|merge|rerun %N`
+    /// write to it; run by an agent (CLAUDECODE or AI_AGENT set), a write is a
+    /// draft that waits for a person to send it.
     #[command(args_conflicts_with_subcommands = true)]
     Pr {
         #[command(subcommand)]
@@ -279,14 +287,15 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// Your Fountain agents as a catalog block (M43), read with your own
-    /// `fountain` login (FOUNTAIN_API_KEY or ~/.fountain/credentials): a
-    /// card per agent, where it comes from (agent-specs, hand-made, an
-    /// app), filters, and Run on Fountain / Spec. Prints the block, then the
-    /// list. `fountain agents [QUERY]` lists them here without a block.
-    /// `fountain --view runner` (M45b): this host as the account's runner
-    /// instead, with its sandboxes (Follow, Changes, Shell).
-    #[command(args_conflicts_with_subcommands = true)]
+    /// Your Fountain agents as a catalog block.
+    ///
+    /// Read with your own `fountain` login (FOUNTAIN_API_KEY or
+    /// ~/.fountain/credentials): a card per agent, where it comes from, filters,
+    /// and Run on Fountain / Spec. Prints the block, then the list. `fountain
+    /// agents [QUERY]` lists them here without a block. `fountain --view runner`:
+    /// this host as the account's runner instead, with its sandboxes (Follow,
+    /// Changes, Shell).
+    #[command(args_conflicts_with_subcommands = true, hide = true)]
     Fountain {
         #[command(subcommand)]
         cmd: Option<FountainCmd>,
@@ -310,12 +319,13 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// Show an issue as a block (M37: Forgejo, through your `tea` login):
-    /// its labels, assignees, linked pull requests and timeline. `URL`,
-    /// `OWNER/REPO#N`, or `N` in this directory's repository. `issue new`
-    /// opens one (run by an agent, it's a draft a person sends); `issue
-    /// comment %N` comments; `issue agent %N` starts an agent on it in a
-    /// worktree and branch of its own, in a tab with the issue.
+    /// Show an issue as a block.
+    ///
+    /// Forgejo through your `tea` login: its labels, assignees, linked pull
+    /// requests and timeline. `URL`, `OWNER/REPO#N`, or `N` in this directory's
+    /// repository. `issue new` opens one (run by an agent, it's a draft a person
+    /// sends); `issue comment %N` comments; `issue agent %N` starts an agent on it
+    /// in a worktree and branch of its own, in a tab with the issue.
     #[command(args_conflicts_with_subcommands = true)]
     Issue {
         #[command(subcommand)]
@@ -329,25 +339,31 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// Type a pane's failed command again (M24's `failed`), once its shell
-    /// is waiting at its prompt.
+    /// Type a pane's failed command again.
+    ///
+    /// Once its shell is waiting at its prompt.
     Rerun { pane: Option<Pane> },
-    /// Claude Code conversations on this machine, from a terminal or the
-    /// desktop app's Code tab (M33). `open` shows one as an agent block;
-    /// `illogical agent --resume ID` continues one.
+    /// Claude Code conversations on this machine.
+    ///
+    /// From a terminal or the desktop app's Code tab. `open` shows one as an agent
+    /// block; `illogical agent --resume ID` continues one.
     Claude {
         #[command(subcommand)]
         cmd: ClaudeCmd,
     },
-    /// Your studio (M35: arugula-salad's): `login URL` keeps a studio
-    /// token in the daemon (read from stdin), `logout` forgets it, and
-    /// `follower APP` keeps a hud follower link for an app's box.
+    /// Your studio.
+    ///
+    /// `login URL` keeps a studio token in the daemon (read from stdin), `logout`
+    /// forgets it, and `follower APP` keeps a hud follower link for an app's box.
+    #[command(hide = true)]
     Studio {
         #[command(subcommand)]
         cmd: Option<StudioCmd>,
     },
-    /// Open a studio app's box as a block (M35); prints its block. With no
-    /// name, lists your apps.
+    /// Open a studio app's box as a block; prints its block.
+    ///
+    /// With no name, lists your apps.
+    #[command(hide = true)]
     App {
         /// The app's name in studio.
         name: Option<String>,
@@ -363,55 +379,62 @@ enum Command {
         #[arg(long)]
         follower: bool,
     },
-    /// Editors in the swarm (M28): VS Code, Cursor or nvim that joined, and
-    /// editor blocks. `editors install` adds illogical's extension to VS
-    /// Code or Cursor here (in a Remote-SSH window's terminal: there).
+    /// Editors in the swarm: VS Code, Cursor or nvim that joined.
+    ///
+    /// Also editor blocks. `editors install` adds illogical's extension to VS Code
+    /// or Cursor here (in a Remote-SSH window's terminal: there).
     Editors {
         #[command(subcommand)]
         cmd: Option<EditorsCmd>,
     },
-    /// illogicald as Claude Code's IDE (M28): its port, and which IDE gets
-    /// Claude Code's diffs (`--diffs illogical`, or another IDE's name as
-    /// it registered, e.g. "Visual Studio Code").
+    /// illogicald as Claude Code's IDE.
+    ///
+    /// Its port, and which IDE gets Claude Code's diffs (`--diffs illogical`, or
+    /// another IDE's name as it registered, e.g. "Visual Studio Code").
     Ide {
         #[arg(long)]
         diffs: Option<String>,
     },
-    /// Standing permission rules (#166): what agent blocks on this daemon
-    /// allow without asking, made by "Always" for a directory or for every
-    /// block. `--forget N` forgets one; `--forget-all`, all of them.
+    /// Standing permission rules for agent blocks.
+    ///
+    /// What agent blocks on this daemon allow without asking, made by "Always" for
+    /// a directory or for every block. `--forget N` forgets one; `--forget-all`,
+    /// all of them.
     Rules {
         #[arg(long, conflicts_with = "forget_all")]
         forget: Option<usize>,
         #[arg(long)]
         forget_all: bool,
     },
-    /// The shell environment blocks that run your tools get (your login
-    /// shell's, read once): its PATH. `--refresh` reads it again, after
+    /// The shell environment blocks that run your tools get.
+    ///
+    /// Your login shell's, read once: its PATH. `--refresh` reads it again, after
     /// you change an rc file.
     ShellEnv {
         #[arg(long)]
         refresh: bool,
     },
-    /// Start an agent block (Claude Code by default) and send it a prompt;
-    /// prints its block. Then: `wait %N --idle`, `tail %N`, `call %N approve`.
+    /// Start an agent block and send it a prompt; prints its block.
+    ///
+    /// Claude Code by default. Then: `wait %N --idle`, `tail %N`, `call %N
+    /// approve`.
     Agent {
         /// Any ACP agent server, by its command line.
         #[arg(long, conflicts_with_all = ["fountain", "codex"])]
         acp: Option<String>,
         /// A Fountain agent (name or id), run in Fountain's sandbox.
-        #[arg(long, conflicts_with = "codex")]
+        #[arg(long, hide = true, conflicts_with = "codex")]
         fountain: Option<String>,
         /// Claude Code wearing a Fountain agent (name or id), on this host:
-        /// its system prompt, skills and MCP servers (M44).
-        #[arg(long = "as", value_name = "AGENT", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine"])]
+        /// its system prompt, skills and MCP servers.
+        #[arg(long = "as", value_name = "AGENT", hide = true, conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine"])]
         as_fountain: Option<String>,
         /// Codex instead of Claude Code.
         #[arg(long)]
         codex: bool,
         /// Fountain: a vault for its secrets (with `--as`: whose agent-specs
         /// mapping its `${VAR}`s go through, over its environment's).
-        #[arg(long)]
+        #[arg(long, hide = true)]
         vault: Option<String>,
         /// A model to switch to (e.g. `haiku`).
         #[arg(long)]
@@ -433,7 +456,7 @@ enum Command {
         #[arg(long, conflicts_with_all = ["acp", "fountain", "codex"])]
         user_settings: bool,
         /// On a new throwaway VM of its own.
-        #[arg(long, conflicts_with = "machine")]
+        #[arg(long, hide = true, conflicts_with = "machine")]
         vm: bool,
         /// On this existing machine (`m3` or `3`). (`--host` is another
         /// daemon.)
@@ -461,11 +484,12 @@ enum Command {
         /// The first prompt.
         prompt: Vec<String>,
     },
-    /// Type text into a pane (`-` reads stdin). With `--wait`, it's a
-    /// prompt for the agent there (Claude Code or Codex in the terminal, or
-    /// an agent block): sent with Enter, then waited through. Prints what
-    /// it came to and exits 0 when the turn ended, 2 when it needs someone
-    /// (or already did, so nothing was typed), 3 when it stalled (no sign
+    /// Type text into a pane (`-` reads stdin).
+    ///
+    /// With `--wait`, it's a prompt for the agent there (Claude Code or Codex in
+    /// the terminal, or an agent block): sent with Enter, then waited through.
+    /// Prints what it came to and exits 0 when the turn ended, 2 when it needs
+    /// someone (or already did, so nothing was typed), 3 when it stalled (no sign
     /// of work), 4 still running at --timeout.
     Send {
         pane: Pane,
@@ -490,10 +514,11 @@ enum Command {
         #[arg(required = true)]
         keys: Vec<String>,
     },
-    /// Copy files onto the pane's host and paste their paths into it (M70),
-    /// for an agent there to read: a screenshot into a `claude` on another
-    /// machine, say. Only into a shell or an agent unless `--force`; exits
-    /// 2 if it wasn't pasted, printing the paths.
+    /// Copy files onto the pane's host and paste their paths into it.
+    ///
+    /// For an agent there to read: a screenshot into a `claude` on another
+    /// machine, say. Only into a shell or an agent unless `--force`; exits 2 if it
+    /// wasn't pasted, printing the paths.
     Upload {
         pane: Pane,
         #[arg(required = true)]
@@ -537,7 +562,9 @@ enum Command {
         #[arg(long, value_name = "HOST", conflicts_with_all = ["follow", "last_command"])]
         synced: Option<String>,
     },
-    /// Wait for a command to finish, the program to exit, or output to match.
+    /// Wait for a command, an exit, a match, or an agent.
+    ///
+    /// For a command to finish, the program to exit, or output to match.
     /// Exits with the command's exit code; 124 on timeout.
     Wait {
         pane: Option<Pane>,
@@ -561,8 +588,9 @@ enum Command {
     },
     /// Use a pane from this terminal (Ctrl-] to detach).
     Attach { pane: Option<Pane> },
-    /// The daemon's tabs and splits in this terminal, with a sidebar of
-    /// sessions, tabs and what needs you. Ctrl-] is the menu key.
+    /// The daemon's tabs and splits in this terminal.
+    ///
+    /// With a sidebar of sessions, tabs and what needs you. Ctrl-] is the menu key.
     Tui {
         /// Start in this session (name or id); made if there's none.
         #[arg(long)]
@@ -608,37 +636,46 @@ enum Command {
         #[arg(required = true)]
         panes: Vec<Pane>,
     },
-    /// Claude Code's PreToolUse hook on AskUserQuestion: show its questions
-    /// as a card beside this pane (every client, with a push), wait, and
-    /// print the answer for Claude Code. Outside an illogical pane, or
+    /// Claude Code's hook for its questions (PreToolUse on AskUserQuestion).
+    ///
+    /// Shows its questions as a card beside this pane (every client, with a push),
+    /// waits, and prints the answer for Claude Code. Outside an illogical pane, or
     /// "Answer in terminal": no output, so Claude Code shows its picker.
     Ask,
-    /// Claude Code's hooks (M29): `PermissionRequest` becomes an approval
-    /// card anyone who may answer can allow or deny; other events close a
-    /// card the terminal answered first. Outside an illogical pane: nothing.
+    /// Claude Code's hook for permission prompts.
+    ///
+    /// `PermissionRequest` becomes an approval card anyone who may answer can allow
+    /// or deny; other events close a card the terminal answered first. Outside an
+    /// illogical pane: nothing.
     Hook,
-    /// Claude Code's background (asyncRewake) `Stop` and `SessionStart`
-    /// hook: wait for a follow-up someone sends the agent, and wake it with
-    /// it (exit 2). A session nobody drives (`claude -p`, the SDK) isn't
-    /// held: it exits 0 at once.
+    /// Claude Code's background hook for follow-ups (`Stop`, `SessionStart`).
+    ///
+    /// Waits for a follow-up someone sends the agent, and wakes it with it (exit
+    /// 2). A session nobody drives (`claude -p`, the SDK) isn't held: it exits 0 at
+    /// once.
     Inbox,
-    /// Put those hooks in Claude Code's settings.json (`install`), or say
-    /// which are there (`status`). Nothing else in the file is touched.
+    /// Put Claude Code's hooks in its settings.json, or say which are there.
+    ///
+    /// `install` adds them, `status` says which are there. Nothing else in the
+    /// file is touched.
     Hooks {
         #[command(subcommand)]
         cmd: hooks::HooksCmd,
     },
-    /// What wants you, and why (M24); or, given a state, tell illogical
-    /// whether this pane needs you (for agent hooks, which pass their JSON
-    /// on stdin: its `message` becomes the headline).
+    /// What wants you, and why.
+    ///
+    /// Or, given a state, tell illogical whether this pane needs you (for agent
+    /// hooks, which pass their JSON on stdin: its `message` becomes the headline).
     Attention {
         /// needs-input, done, working or idle; none lists what wants you.
         state: Option<String>,
         #[arg(long)]
         pane: Option<Pane>,
     },
-    /// Commands run in any pane, including recently closed ones, and the
-    /// answers and approvals given there (`--kind command|answer|agent`).
+    /// Commands run in any pane, including recently closed ones
+    ///
+    /// Also the answers and approvals given there, and what agent blocks did
+    /// (`--kind command|answer|agent`).
     History {
         #[arg(long)]
         pane: Option<Pane>,
@@ -664,8 +701,9 @@ enum Command {
         #[arg(long, value_name = "HOST")]
         synced: Option<String>,
     },
-    /// A pane's commands and who ran each; `--who`: who typed in it over
-    /// time (each handoff).
+    /// A pane's commands and who ran each.
+    ///
+    /// `--who`: who typed in it over time (each handoff).
     Log {
         pane: Option<Pane>,
         #[arg(long)]
@@ -682,59 +720,60 @@ enum Command {
         #[arg(long, value_name = "HOST")]
         synced: Option<String>,
     },
-    /// A read-only link to a pane: whoever opens it on the tailnet sees it
-    /// live and can't type, resize or see anything else.
+    /// A read-only link to a pane.
     ///
-    /// With --guest: an invite for someone with only OpenSSH. It prints an
-    /// `ssh` command to send them, with this machine's host key pinned.
-    /// Read-only unless --rw; one login unless --reusable. A machine joined
-    /// to control with no --addr (or --guest-ssh-host) is reached through
-    /// control's ssh jump host, so a box behind NAT works too.
+    /// Whoever opens it on the tailnet sees it live and can't type, resize or see
+    /// anything else.
     Share {
         pane: Option<Pane>,
-        /// How long it works (e.g. 30m, 2h, 7d; a week at most, a day with
-        /// --guest, two hours with --rw).
+        /// How long it works (e.g. 30m, 2h, 7d; a week at most).
         #[arg(long, default_value = "1h")]
         ttl: String,
-        /// An ssh invite instead of a link (M65). (`--ssh` is taken: it
+        /// An ssh invite instead of a link. (`--ssh` is taken: it
         /// reaches a box over ssh, so `--ssh box share --guest` makes an
         /// invite there.)
-        #[arg(long)]
+        #[arg(long, hide = true)]
         guest: bool,
         /// They may type, when nobody else is driving the pane.
-        #[arg(long, requires = "guest")]
+        #[arg(long, hide = true, requires = "guest")]
         rw: bool,
         /// Good for any number of logins until it ends.
-        #[arg(long, requires = "guest")]
+        #[arg(long, hide = true, requires = "guest")]
         reusable: bool,
         /// What to call them on their input [default: guest].
-        #[arg(long, requires = "guest")]
+        #[arg(long, hide = true, requires = "guest")]
         name: Option<String>,
         /// The address they should ssh to [default: the daemon's
         /// --guest-ssh-host, else its hostname]. Not through control.
-        #[arg(long = "addr", requires = "guest", conflicts_with = "relay")]
+        #[arg(long = "addr", hide = true, requires = "guest", conflicts_with = "relay")]
         addr: Option<String>,
         /// Through control's ssh jump host, or fail [default: when this
         /// machine is joined to control and no address is set].
-        #[arg(long, requires = "guest")]
+        #[arg(long, hide = true, requires = "guest")]
         relay: bool,
     },
-    /// ssh invites that still work (`share --guest`); `guests revoke ID` ends
-    /// one and cuts off anyone using it.
+    /// ssh invites that still work.
+    ///
+    /// Made with `share --guest`. `guests revoke ID` ends one and cuts off
+    /// anyone using it.
+    #[command(hide = true)]
     Guests {
         #[command(subcommand)]
         cmd: Option<SharesCmd>,
     },
-    /// Who else can reach which sessions: `access` lists grants,
-    /// `access grant SESSION WHO ROLE`, `access revoke SESSION WHO`, `access
-    /// log`. WHO is a tailnet login (or `account:ID` from control).
+    /// Who else can reach which sessions.
+    ///
+    /// `access` lists grants, `access grant SESSION WHO ROLE`, `access revoke
+    /// SESSION WHO`, `access log`. WHO is a tailnet login (or `account:ID` from
+    /// control).
     Access {
         #[command(subcommand)]
         cmd: Option<AccessCmd>,
     },
-    /// Bring someone into a session: share it with them (as a viewer
-    /// unless --role says otherwise) and notify them alone, opening at a
-    /// pane. WHO is a tailnet login, someone already shared with, or (when
+    /// Bring someone into a session.
+    ///
+    /// Shares it with them (as a viewer unless --role says otherwise) and
+    /// notifies them alone, opening at a pane. WHO is a tailnet login, someone already shared with, or (when
     /// joined to illogical control) a member of your teams, by name.
     /// Prints whether the notification reached them: sent, pending (they
     /// haven't accepted this machine yet) or unreachable, and why.
@@ -767,7 +806,9 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
-    /// Share links that still work; `shares revoke ID` ends one.
+    /// Share links that still work.
+    ///
+    /// `shares revoke ID` ends one.
     Shares {
         #[command(subcommand)]
         cmd: Option<SharesCmd>,
@@ -777,25 +818,28 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<SyncedCmd>,
     },
-    /// Open this machine's page in your browser, signed in. Programs and
-    /// browsers on this machine show the daemon's local token; this opens
-    /// a sign-in link that gives your browser it (once: it stays signed
-    /// in). `--print` prints the link instead (it holds the token).
+    /// Open this machine's page in your browser, signed in.
+    ///
+    /// Programs and browsers on this machine show the daemon's local token; this
+    /// opens a sign-in link that gives your browser it (once: it stays signed in).
+    /// `--print` prints the link instead (it holds the token).
     Web {
         #[arg(long)]
         print: bool,
     },
-    /// Install the daemon: `illogicald install` with these arguments (e.g.
-    /// `--tailnet file:KEY --home URL --join TOKEN` in a sandbox).
+    /// Install the daemon.
+    ///
+    /// `illogicald install` with these arguments.
     Install {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Add a machine to your account on illogical control, so the web, the
-    /// phone and other machines reach it through control (M52). With
-    /// `--ssh user@box`: that box, set up over ssh first (illogical
-    /// installed, its daemon kept running after you log out); its code
-    /// shows here, to approve from a signed-in device. Without: this machine.
+    /// Add a machine to your account on illogical control.
+    ///
+    /// So the web, the phone and other machines reach it through control. With
+    /// `--ssh user@box`: that box, set up over ssh first (illogical installed, its
+    /// daemon kept running after you log out); its code shows here, to approve from
+    /// a signed-in device. Without: this machine.
     Join {
         /// The control [default: https://control.illogical.widgets.wtf].
         url: Option<String>,
@@ -810,10 +854,10 @@ enum Command {
         #[arg(long, value_name = "FINGERPRINT")]
         account: Option<String>,
     },
-    /// Make this CLI one of your devices on illogical control (M49), so
-    /// `--host NAME` reaches every machine on your account, directly or
-    /// through control's relay. Shows a code to approve on a signed-in
-    /// device.
+    /// Make this CLI one of your devices on illogical control.
+    ///
+    /// So `--host NAME` reaches every machine on your account, directly or through
+    /// control's relay. Shows a code to approve on a signed-in device.
     Login {
         /// The control [default: the one this machine's daemon joined, else
         /// https://control.illogical.widgets.wtf].
@@ -829,29 +873,37 @@ enum Command {
     },
     /// Forget this CLI's key for control (`illogical login` makes a new one).
     Logout,
-    /// On a box a client reaches over ssh (`--ssh`): join stdin and stdout
-    /// to this daemon's socket. Clients run it; people don't.
+    /// Join stdin and stdout to this daemon's socket.
+    ///
+    /// On a box a client reaches over ssh (`--ssh`). Clients run it; people
+    /// don't.
     #[command(hide = true)]
     Bridge {
         /// Print what's installed and whether the daemon answers, as JSON.
         #[arg(long)]
         probe: bool,
     },
-    /// Other daemons to switch to (this daemon's host list).
+    /// Other daemons to switch to.
+    ///
+    /// This daemon's host list.
     Hosts {
         #[command(subcommand)]
         cmd: Option<hosts::HostsCmd>,
     },
-    /// The sandbox provider's sandboxes (this daemon's): open a shell on
-    /// one (`run --sandbox`), or make a daemon resident there.
+    /// The sandbox provider's sandboxes.
+    ///
+    /// This daemon's: open a shell on one (`run --sandbox`), or make a daemon
+    /// resident there.
+    #[command(hide = true)]
     Sandboxes {
         #[command(subcommand)]
         cmd: Option<hosts::SandboxesCmd>,
     },
-    /// An MCP server on stdio, for agents that start one as a command
-    /// (`claude mcp add illogical -- illogical mcp`): illogical's tools,
-    /// bridged to the daemon's `/mcp`. `mcp token` makes tokens for
-    /// clients that reach `/mcp` over HTTP without a tailnet identity.
+    /// An MCP server on stdio, for agents that start one as a command.
+    ///
+    /// `claude mcp add illogical -- illogical mcp`: illogical's tools, bridged to
+    /// the daemon's `/mcp`. `mcp token` makes tokens for clients that reach `/mcp`
+    /// over HTTP without a tailnet identity.
     Mcp {
         /// A token to send (an agent block's, or a client token for a
         /// daemon this machine has no identity on).
@@ -860,9 +912,10 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<McpCmd>,
     },
-    /// Be a tmux server in control mode for iTerm2 (and other tmux `-CC`
-    /// clients): `illogical tmux -CC [attach -t SESSION | new -s NAME]`.
-    /// Linked or installed as `tmux`, the CLI does this by itself.
+    /// Be a tmux server in control mode for iTerm2.
+    ///
+    /// Also other tmux `-CC` clients: `illogical tmux -CC [attach -t SESSION | new
+    /// -s NAME]`. Linked or installed as `tmux`, the CLI does this by itself.
     Tmux {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -871,9 +924,10 @@ enum Command {
 
 #[derive(Subcommand)]
 enum McpCmd {
-    /// Make a token for an MCP client to use `/mcp` over HTTP (as
-    /// `Authorization: Bearer TOKEN`), printed once; `--list` shows them,
-    /// `--revoke NAME` cuts one off.
+    /// Make a token for an MCP client that uses `/mcp` over HTTP.
+    ///
+    /// Sent as `Authorization: Bearer TOKEN`, printed once; `--list` shows
+    /// them, `--revoke NAME` cuts one off.
     Token {
         /// What to call it (the client, or the machine it's on). A token
         /// with the same name is replaced.
@@ -909,8 +963,10 @@ enum ClaudeCmd {
         /// Words in the title, prompts or folder.
         words: Vec<String>,
     },
-    /// Show one as an agent block (stopped, its transcript as it grows);
-    /// prints the block. The block that has it already, if one does.
+    /// Show one as an agent block; prints the block.
+    ///
+    /// Stopped, its transcript as it grows. The block that has it already, if
+    /// one does.
     Open {
         /// Its id, or the start of it.
         id: String,
@@ -922,30 +978,35 @@ enum ClaudeCmd {
     },
 }
 
-/// Writes to a PR block (M36).
+/// Writes to a PR block.
 #[derive(Subcommand)]
 enum PrCmd {
     /// Comment on it.
     Comment { block: Pane, body: String },
     /// Review it: approve, request_changes or comment.
     Review { block: Pane, event: String, body: Option<String> },
-    /// Merge it (merge, rebase, rebase-merge, squash, fast-forward-only;
-    /// GitHub: merge, squash or rebase).
+    /// Merge it.
+    ///
+    /// merge, rebase, rebase-merge, squash, fast-forward-only; GitHub: merge,
+    /// squash or rebase.
     Merge {
         block: Pane,
         #[arg(long)]
         style: Option<String>,
     },
-    /// Rerun its failed checks (GitHub: each red workflow run's failed
-    /// jobs; Forgejo has no API for it).
+    /// Rerun its failed checks.
+    ///
+    /// GitHub: each red workflow run's failed jobs; Forgejo has no API for it.
     Rerun { block: Pane },
 }
 
-/// Fountain: the catalog (M43) and this machine as the runner (M45).
+/// Fountain: the catalog and this machine as the runner.
 #[derive(Subcommand)]
 enum FountainCmd {
-    /// This machine as the account's Fountain runner (M45): `install`,
-    /// `status`, `adopt` (the root half is `scripts/fountain-runner-setup.sh`).
+    /// This machine as the account's Fountain runner.
+    ///
+    /// `install`, `status`, `adopt` (the root half is
+    /// `scripts/fountain-runner-setup.sh`).
     Runner {
         #[command(subcommand)]
         cmd: fountain_runner::RunnerCmd,
@@ -962,7 +1023,7 @@ enum FountainCmd {
     },
 }
 
-/// Issues (M37).
+/// Issues.
 #[derive(Subcommand)]
 enum IssueCmd {
     /// Open a new issue in this directory's repository (or --repo).
@@ -981,8 +1042,10 @@ enum IssueCmd {
     },
     /// Comment on an issue block's issue.
     Comment { block: Pane, body: String },
-    /// Start an agent on it: a worktree and branch `iN-<slug>`, the agent
-    /// there with the issue as its prompt, and the two in a tab.
+    /// Start an agent on it.
+    ///
+    /// A worktree and branch `iN-<slug>`, the agent there with the issue as
+    /// its prompt, and the two in a tab.
     Agent {
         block: Pane,
         /// claude (the default), codex, fountain or acp.
@@ -999,16 +1062,20 @@ enum IssueCmd {
 
 #[derive(Subcommand)]
 enum StudioCmd {
-    /// Keep a studio token in the daemon (mode 0600, never sent to a
-    /// client). The token is read from stdin, or asked for.
+    /// Keep a studio token in the daemon.
+    ///
+    /// Mode 0600, never sent to a client. The token is read from stdin, or
+    /// asked for.
     Login {
         /// The studio, e.g. `https://studio.example`.
         url: String,
     },
     /// Forget the token, and every follower link.
     Logout,
-    /// Keep the follower link the box's owner made with `hud share --role
-    /// follower` (read from stdin), or with `--forget`, drop it.
+    /// Keep an app's follower link, or drop it.
+    ///
+    /// The link the box's owner made with `hud share --role follower` (read
+    /// from stdin); with `--forget`, drop it.
     Follower {
         app: String,
         #[arg(long)]
@@ -1024,8 +1091,9 @@ enum EditorsCmd {
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
-    /// Install illogical's extension in VS Code or Cursor with their CLI
-    /// (`code --install-extension`).
+    /// Install illogical's extension in VS Code or Cursor.
+    ///
+    /// With their CLI (`code --install-extension`).
     Install {
         /// The editor's command [default: `code`, else `cursor`].
         #[arg(long)]
@@ -1041,9 +1109,10 @@ enum SharesCmd {
 
 #[derive(Subcommand)]
 enum AccessCmd {
-    /// Let someone reach a session: as a viewer (watch), an editor (drive
-    /// its panes, make and close tabs and splits) or an owner. Takes effect
-    /// at once.
+    /// Let someone reach a session, at once.
+    ///
+    /// As a viewer (watch), an editor (drive its panes, make and close tabs
+    /// and splits) or an owner.
     Grant { session: String, who: String, role: String },
     /// Take it away; they're cut off at once.
     Revoke { session: String, who: String },
@@ -3452,5 +3521,108 @@ mod tests {
         assert!(super::Cli::try_parse_from(["illogical", "agent", "--vm", "--machine", "m3"]).is_err());
         assert!(super::looks_like_machine("m2") && super::looks_like_machine("local"));
         assert!(!super::looks_like_machine("box"));
+    }
+
+    /// What a newcomer can't use stays out of the help, and still works for
+    /// anyone who knows the command.
+    #[test]
+    fn what_a_stranger_cant_use_is_hidden_but_there() {
+        use clap::{CommandFactory, Parser};
+        let mut root = super::Cli::command();
+        let listed = root.render_long_help().to_string();
+        let listed: Vec<&str> =
+            listed.lines().filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next()).collect();
+        for hidden in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
+            assert!(root.find_subcommand(hidden).unwrap().is_hide_set(), "{hidden} isn't hidden");
+            assert!(!listed.contains(&hidden), "{hidden} is in `illogical --help`");
+            // Asking for it by name still gives its help.
+            let e = super::Cli::try_parse_from(["illogical", hidden, "--help"]).err().expect("help is an early exit");
+            assert_eq!(e.kind(), clap::error::ErrorKind::DisplayHelp, "{hidden}");
+        }
+        assert!(listed.contains(&"run") && listed.contains(&"pr"), "{listed:?}");
+        // Options: out of the subcommand's help, still parsed.
+        for (cmd, opts) in [
+            ("agent", &["fountain", "as_fountain", "vault", "vm"][..]),
+            ("run", &["vm", "vm_tab", "image", "sandbox"][..]),
+            ("share", &["guest", "rw", "reusable", "relay", "addr", "name"][..]),
+        ] {
+            let sub = root.find_subcommand(cmd).unwrap();
+            for o in opts {
+                let arg = sub.get_arguments().find(|a| a.get_id() == o).unwrap_or_else(|| panic!("{cmd} has no {o}"));
+                assert!(arg.is_hide_set(), "{cmd} {o} isn't hidden");
+            }
+        }
+        assert!(super::Cli::try_parse_from(["illogical", "agent", "--fountain", "x", "hi"]).is_ok());
+        assert!(super::Cli::try_parse_from(["illogical", "run", "--vm", "--", "make"]).is_ok());
+        assert!(super::Cli::try_parse_from(["illogical", "share", "--guest", "--rw", "%3"]).is_ok());
+        assert!(super::Cli::try_parse_from(["illogical", "guests"]).is_ok());
+    }
+
+    /// The help is for strangers: no milestone or issue numbers, no names of
+    /// our own machines, and each command's summary is one short line.
+    #[test]
+    fn help_has_no_internal_numbers_or_names_and_short_summaries() {
+        use clap::CommandFactory;
+        fn walk(c: &mut clap::Command, path: &str, bad: &mut Vec<String>) {
+            let help = c.render_long_help().to_string();
+            let bytes = help.as_bytes();
+            for (at, ch) in help.char_indices() {
+                let before_ok = at == 0 || !bytes[at - 1].is_ascii_alphanumeric();
+                let digits = |from: usize| help[from..].chars().take_while(|c| c.is_ascii_digit()).count();
+                // M36, S18 (a letter and two digits) and #166.
+                let milestone = matches!(ch, 'M' | 'S') && before_ok && digits(at + 1) >= 2;
+                let issue = ch == '#' && digits(at + 1) >= 2;
+                if milestone || issue {
+                    bad.push(format!("{path}: {}", &help[at..(at + 12).min(help.len())]));
+                }
+            }
+            for name in ["geek", "jake-mini", "arugula-salad"] {
+                if help.contains(name) {
+                    bad.push(format!("{path}: {name}"));
+                }
+            }
+            for sub in c.get_subcommands_mut() {
+                if let Some(about) = sub.get_about() {
+                    let about = about.to_string();
+                    if about.contains('\n') || about.len() > 90 {
+                        bad.push(format!("{path} {}: summary {about:?}", sub.get_name()));
+                    }
+                }
+                let name = format!("{path} {}", sub.get_name());
+                walk(sub, &name, bad);
+            }
+        }
+        let mut bad = vec![];
+        walk(&mut super::Cli::command(), "illogical", &mut bad);
+        assert!(bad.is_empty(), "{bad:#?}");
+    }
+
+    /// The README and the docs for users don't carry the milestone log, and
+    /// the README opens with the agents pitch, as the site does.
+    #[test]
+    fn the_readme_and_docs_have_no_milestone_numbers() {
+        let docs = [
+            ("README.md", include_str!("../../../README.md")),
+            ("docs/features.md", include_str!("../../../docs/features.md")),
+            ("docs/cli.md", include_str!("../../../docs/cli.md")),
+            ("docs/advanced.md", include_str!("../../../docs/advanced.md")),
+            ("docs/teams.md", include_str!("../../../docs/teams.md")),
+            ("docs/control.md", include_str!("../../../docs/control.md")),
+        ];
+        for (name, text) in docs {
+            let b = text.as_bytes();
+            for (at, _) in text.match_indices('M') {
+                let word_start = at == 0 || !b[at - 1].is_ascii_alphanumeric();
+                let digits = b[at + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+                assert!(!(word_start && digits >= 2), "{name}: {}", &text[at..(at + 20).min(text.len())]);
+            }
+            for hash in text.match_indices(" (#") {
+                let n = text[hash.0 + 3..].chars().take_while(|c| c.is_ascii_digit()).count();
+                assert!(n == 0, "{name}: {}", &text[hash.0..(hash.0 + 20).min(text.len())]);
+            }
+        }
+        let readme = docs[0].1;
+        let first = readme.lines().skip(2).take_while(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+        assert!(first.starts_with("Keep track of your agents without checking every session."), "{first}");
     }
 }

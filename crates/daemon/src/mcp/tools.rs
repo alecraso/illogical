@@ -692,12 +692,23 @@ struct Def {
     open_world: bool,
 }
 
+/// The tools that work but aren't listed: they're for setups a stranger
+/// doesn't have (Fountain, the studio, chant workspaces). A caller who names
+/// one still reaches it (`dispatch`).
+const UNLISTED: [&str; 5] = ["open_app", "open_workspace", "list_agents", "read_agent", "open_fountain"];
+
+/// The tools `tools/list` shows.
 fn defs() -> Vec<Def> {
+    all_defs().into_iter().filter(|d| !UNLISTED.contains(&d.name)).collect()
+}
+
+/// Every tool there is, listed or not.
+fn all_defs() -> Vec<Def> {
     vec![
         Def {
             name: "run",
             title: "Run a command in a pane",
-            description: "Run a command in a new terminal pane (a new tab, or a split), on this host, a new throwaway VM, or a sandbox. The command is typed into a shell, so the user can watch it, scroll it and take over, and it outlives this conversation. With wait, waits for it to finish (up to timeout) and returns its exit code and last lines; past the timeout it answers \"still running\": call wait.",
+            description: "Run a command in a new terminal pane (a new tab, or a split). The command is typed into a shell, so the user can watch it, scroll it and take over, and it outlives this conversation. With wait, waits for it to finish (up to timeout) and returns its exit code and last lines; past the timeout it answers \"still running\": call wait.",
             schema: schema_for_type::<RunArgs>,
             read_only: false,
             destructive: true,
@@ -707,7 +718,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "send_input",
             title: "Type into a pane",
-            description: "Type text (Enter after it unless enter is false) and/or press named keys (C-c, Up, Escape, ...) in a pane. To an agent block, text is its next prompt; to an app block, a prompt to its box's agent (in tab, else its first).",
+            description: "Type text (Enter after it unless enter is false) and/or press named keys (C-c, Up, Escape, ...) in a pane. To an agent block, text is its next prompt.",
             schema: schema_for_type::<SendArgs>,
             read_only: false,
             destructive: true,
@@ -767,7 +778,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "close",
             title: "Close a pane",
-            description: "Close a pane or block, ending what runs in it (and deleting a VM the pane owns).",
+            description: "Close a pane or block, ending what runs in it.",
             schema: schema_for_type::<PaneOnly>,
             read_only: false,
             destructive: true,
@@ -837,7 +848,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "start_agent",
             title: "Start an agent",
-            description: "Start an agent (Claude Code, Codex, a Fountain agent, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user. {agent: claude, as_fountain: NAME} is a Claude Code here wearing one of the user's Fountain agents (its prompt, skills and MCP servers).",
+            description: "Start an agent (Claude Code, Codex, any ACP agent) in an agent block with a prompt. Its approvals and questions come to the block; wait until needs_input, then agent_respond, or leave them for the user.",
             schema: schema_for_type::<StartAgentArgs>,
             read_only: false,
             destructive: false,
@@ -1163,7 +1174,7 @@ impl<'a> Call<'a> {
     }
 
     pub async fn dispatch(&self, name: &str, args: Value) -> CallToolResult {
-        let Some(def) = defs().into_iter().find(|d| d.name == name) else {
+        let Some(def) = all_defs().into_iter().find(|d| d.name == name) else {
             return CallToolResult::error(vec![ContentBlock::text(format!("no tool {name}"))]);
         };
         if self.caller.scope == Scope::Read && !def.read_only {
@@ -3322,7 +3333,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 39);
+        assert_eq!(all.len(), 34);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -3342,8 +3353,6 @@ mod tests {
                 "read_pr",
                 "read_issue",
                 "read_invite",
-                "list_agents",
-                "read_agent",
                 "read_file",
                 "list_devices"
             ]
@@ -3351,6 +3360,40 @@ mod tests {
         assert_eq!(list(Scope::Read).len(), ro.len(), "a read token sees the read-only tools only");
         let close = all.iter().find(|t| t.name == "close").unwrap();
         assert_eq!(close.annotations.as_ref().unwrap().destructive_hint, Some(true));
+    }
+
+    /// Fountain, studio apps and chant workspaces are for setups a stranger
+    /// doesn't have: their tools aren't listed, but are still there for a
+    /// caller who names one.
+    #[test]
+    fn unlisted_tools_are_not_listed_but_are_there() {
+        for scope in [Scope::Full, Scope::Read] {
+            let listed: Vec<String> = list(scope).iter().map(|t| t.name.to_string()).collect();
+            for name in UNLISTED {
+                assert!(!listed.contains(&name.to_owned()), "{name} is listed for {scope:?}");
+            }
+        }
+        let every: Vec<&str> = all_defs().iter().map(|d| d.name).collect();
+        for name in UNLISTED {
+            assert!(every.contains(&name), "{name} no longer has a definition");
+        }
+        assert_eq!(every.len(), defs().len() + UNLISTED.len());
+    }
+
+    /// What a stranger can't use isn't in the instructions or in the tools'
+    /// descriptions either.
+    #[test]
+    fn the_prose_leaves_out_what_a_stranger_cant_use() {
+        let mut prose = vec![crate::mcp::INSTRUCTIONS.to_owned()];
+        prose.extend(
+            list(Scope::Full).iter().map(|t| format!("{}: {}", t.name, t.description.as_deref().unwrap_or_default())),
+        );
+        for text in &prose {
+            let lower = text.to_lowercase();
+            for word in ["fountain", "studio", "chant", "workspace", "throwaway vm", "sandbox", "wisp", "open_app"] {
+                assert!(!lower.contains(word), "{word} in: {text}");
+            }
+        }
     }
 
     /// The README's permissions snippet allows the read-only tools and asks

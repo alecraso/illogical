@@ -25,7 +25,7 @@ repository (below).
     `illogicald` and the CLI don't come from control.
   - **hosted sandboxes.** They run on control's provider, which writes
     their trust files; the operator can read them.
-- **Huddles** (voice calls, M63) don't go through control. Control hands
+- **Huddles** (voice calls) don't go through control. Control hands
   machines short-lived TURN credentials (from Cloudflare, for the hosted
   control); a relayed call's audio is encrypted end to end, so the relay
   sees only addresses and volume.
@@ -183,7 +183,7 @@ illogical-control --public-url https://control.example.com --listen 127.0.0.1:76
   - **GitHub**: register a GitHub App (or OAuth app) with the callback
     `https://control.example.com/auth/github/callback`, then set
     `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
-- **The GitHub App** (M40, optional): forge blocks' live updates from
+- **The GitHub App** (optional): forge blocks' live updates from
   GitHub, and read access for hosted boxes with no `gh` login. Make it
   with GitHub's manifest flow (or by hand at *Settings → Developer settings
   → GitHub Apps*):
@@ -339,7 +339,7 @@ To turn it on:
 
 Fly's own daily volume snapshots (kept 5 days) still run.
 
-**TURN for huddles (M63).** Machines ask control for TURN credentials for
+**TURN for huddles.** Machines ask control for TURN credentials for
 their huddles (`GET /api/daemon/turn`), and control asks Cloudflare's TURN
 service for short-lived ones (8 hours; a machine reuses them for an hour).
 Without a key, machines get Cloudflare's public STUN only, which is enough
@@ -356,8 +356,8 @@ start when they're missing. A self-hosted control can run coturn instead
 (not wired up yet).
 
 **A spend alert** isn't something this repository sets: it belongs to
-the Fly organization's billing settings in Fly's dashboard (#174 leaves
-it to Jake).
+the Fly organization's billing settings in Fly's dashboard (it's the
+operator's to set).
 
 ## Testing
 

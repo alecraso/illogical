@@ -17,6 +17,7 @@ import { AskCard, type Answered } from "../blocks/ask";
 import { ANSWERED_MS, answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE, type Requester } from "../ui/answer-card";
 import { Avatar } from "../ui/people";
 import { MenuLayer, openMenu } from "../ui/menu";
+import { showMore } from "../more";
 import { usePhone, useSubscribe } from "../ui/hooks";
 import { Field, type FieldHooks, type FieldPane, type HistoryRun, type SwarmScene } from "./field";
 import { FollowView, appName } from "./follow";
@@ -26,10 +27,19 @@ import { activityOf, bundleOf, cardTitle, followable, GROUPINGS, groupOf, isPres
 
 const BY_KEY = "illogical.swarm.by";
 const THEME_KEY = "illogical.swarm.theme";
-/** M41: how the swarm is drawn. Blocks is the field; the city is 3D; M42's
- * hive is a cell per pane and the timeline a lane per pane over time. */
+/** How the swarm is drawn. Blocks is the field; the city is 3D; the hive is a
+ * cell per pane and the timeline a lane per pane over time. */
 export type Theme = "blocks" | "city" | "hive" | "timeline";
-export const THEMES: Theme[] = ["blocks", "city", "hive", "timeline"];
+/** The themes on offer. The others are built but not offered yet. With one,
+ * there's no picker. */
+export const THEMES: Theme[] = ["blocks"];
+const ALL_THEMES: Theme[] = ["blocks", "city", "hive", "timeline"];
+
+/** The themes to offer here: `THEMES`, or all of them where `showMore` says. */
+export function offeredThemes(): Theme[] {
+  return showMore() ? ALL_THEMES : THEMES;
+}
+
 /** A done card leaves the rail by itself after this long. */
 export const DONE_MS = 15_000;
 
@@ -45,7 +55,7 @@ function savedBy(): GroupBy {
 function savedTheme(): Theme {
   try {
     const v = localStorage.getItem(THEME_KEY) as Theme | null;
-    return v && THEMES.includes(v) ? v : "blocks";
+    return v && offeredThemes().includes(v) ? v : "blocks";
   } catch {
     return "blocks";
   }
@@ -99,6 +109,7 @@ export function SwarmView({
   const phone = usePhone();
   const [by, setBy] = useState<GroupBy>(savedBy);
   const [theme, setTheme] = useState<Theme>(savedTheme);
+  const [themes] = useState(offeredThemes);
   const [peek, setPeek] = useState<{ key: string; x: number; y: number; text: string } | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Done[]>([]);
@@ -396,16 +407,18 @@ export function SwarmView({
             ))}
           </div>
         </div>
-        <div>
-          <div class="swarm-seg-l">Theme</div>
-          <div class="swarm-seg" role="group" aria-label="Theme">
-            {THEMES.map((t) => (
-              <button key={t} data-theme-pick={t} aria-pressed={t === theme} onClick={() => pickTheme(t)}>
-                {t}
-              </button>
-            ))}
+        {themes.length > 1 && (
+          <div>
+            <div class="swarm-seg-l">Theme</div>
+            <div class="swarm-seg" role="group" aria-label="Theme">
+              {themes.map((t) => (
+                <button key={t} data-theme-pick={t} aria-pressed={t === theme} onClick={() => pickTheme(t)}>
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
         <div class="swarm-tools">
           <button data-fit onClick={() => field.current?.fitAll()}>
             Fit

@@ -112,8 +112,7 @@ panes leave their screens within a second. *Unlock* lets them back in.
 - **On your own machine, a pane runs as you.** A teammate who wants to
   type in one (or answer its agent) asks first, and you get *{name} asks
   to drive %N* with how long: 10 minutes, 30 minutes or 2 hours. Until
-  then they can work in throwaway VM tabs of their own (Linux, with wisp;
-  see [advanced.md](advanced.md)).
+  then they can't type in it.
 - **On a team machine** nobody's OK is needed: members drive it by their
   role.
 - **Private panes:** *Private (only you see it)* in a pane's menu keeps it
@@ -163,7 +162,7 @@ until you allow it (above).
 
 ## Talking about it: threads
 
-Every pane and every session has a thread (M61): *Thread* in a pane's
+Every pane and every session has a thread: *Thread* in a pane's
 menu, *Session thread* in the session menu, or the bubble on a pane.
 
 - **Who sees what:** the same people as the pane or session. Watchers read;
@@ -186,7 +185,7 @@ menu, *Session thread* in the session menu, or the bubble on a pane.
 
 ## Talking out loud: huddles
 
-A session can have a huddle (M63), a voice call for the people in it: the
+A session can have a huddle, a voice call for the people in it: the
 headphones button by the session's name, or *Start a huddle* in the
 session menu. Up to 5 people.
 
