@@ -277,10 +277,16 @@ pub fn strip(data: &[u8]) -> String {
         match b {
             b'\n' | b'\t' => out.push(b),
             b'\r' => {
+                if let Some(used) = eol_mark(&mut out, &data[i + 1..]) {
+                    i += 1 + used;
+                    continue;
+                }
                 // CR LF is a newline; a bare CR rewrites the line, which for
-                // reading purposes we treat as a newline too. CRs in a row
-                // are one: a macOS pty sometimes writes CR CR LF for a LF.
-                if !matches!(data.get(i + 1), Some(b'\n' | b'\r')) {
+                // reading purposes we treat as a newline too (but not right
+                // after one, where it moves nothing; at the start of `data`
+                // it may end a line from the read before). CRs in a row are
+                // one: a macOS pty sometimes writes CR CR LF for a LF.
+                if out.last() != Some(&b'\n') && !matches!(data.get(i + 1), Some(b'\n' | b'\r')) {
                     out.push(b'\n');
                 }
             }
@@ -293,6 +299,62 @@ pub fn strip(data: &[u8]) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// zsh's PROMPT_SP (#348): before each prompt it writes PROMPT_EOL_MARK
+/// (a reverse-video `%`, or `#` for root), pads the line to the screen's
+/// width, then `\r`, as many spaces as the mark is wide, and `\r` again.
+/// If the output ended with a newline that blanks the mark; if not, the
+/// padding wraps and the mark stays after the output. It isn't the
+/// program's output either way.
+///
+/// Called at the first `\r` with `out` stripped so far and `rest` the bytes
+/// after it: when they're `<w spaces>\r` and `out`'s line ends with a mark
+/// `w` columns wide and its padding, drop both and say how many bytes of
+/// `rest` that used. A `%` the program wrote stays: only the `w` columns
+/// right before the padding are the mark.
+fn eol_mark(out: &mut Vec<u8>, rest: &[u8]) -> Option<usize> {
+    /// The fewest padding spaces taken for PROMPT_SP's (a pane narrower
+    /// than this plus the mark gets its marker kept).
+    const MIN_PAD: usize = 8;
+    let w = rest.iter().take_while(|b| **b == b' ').count();
+    if w > 8 || rest.get(w) != Some(&b'\r') {
+        return None;
+    }
+    let line_start = out.iter().rposition(|b| *b == b'\n').map_or(0, |n| n + 1);
+    let line = &out[line_start..];
+    let pad = line.iter().rev().take_while(|b| **b == b' ').count();
+    if pad < MIN_PAD {
+        return None;
+    }
+    let before = std::str::from_utf8(&line[..line.len() - pad]).ok()?;
+    let mut cut = before.len();
+    let mut cols = 0;
+    for (at, c) in before.char_indices().rev() {
+        if cols >= w {
+            break;
+        }
+        cols += if wide(c) { 2 } else { 1 };
+        cut = at;
+    }
+    if cols != w {
+        return None;
+    }
+    out.truncate(line_start + cut);
+    // Output with no newline: the padding wrapped, so the prompt is on the
+    // next line.
+    if cut > 0 {
+        out.push(b'\n');
+    }
+    Some(w + 1)
+}
+
+/// A character two columns wide (East Asian wide and emoji), near enough
+/// for an end-of-line mark.
+fn wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115f | 0x2e80..=0xa4cf | 0xac00..=0xd7a3 | 0xf900..=0xfaff
+        | 0xfe30..=0xfe4f | 0xff00..=0xff60 | 0xffe0..=0xffe6 | 0x1f300..=0x1faff | 0x20000..=0x3fffd)
 }
 
 #[cfg(test)]
@@ -367,5 +429,42 @@ mod tests {
         let raw = b"\x1b[1;31mred\x1b[0m plain\r\nnext\x1b]133;A\x07 line\rover\x08x\n";
         assert_eq!(strip(raw), "red plain\nnext line\novex\n");
         assert_eq!(strip(b"491\r\r\n492\r\r493\r\n"), "491\n492\n493\n");
+    }
+
+    /// Bytes from zsh 5.9 in a 40-column pty (`zsh -f -i`, PS1='$ '): its
+    /// PROMPT_SP mark and padding, after output with and without a newline.
+    #[test]
+    fn strip_drops_zshs_end_of_line_mark() {
+        const MARK: &[u8] = b"\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m                                       \r \r";
+        let cat = |parts: &[&[u8]]| parts.concat();
+        // A command's range, C to D: the mark comes before precmd's D.
+        let ran = cat(&[b"\x1b]133;C\x07hi\r\n", MARK, b"\x1b]133;D;0\x07"]);
+        assert_eq!(strip(&ran), "hi\n");
+        // `printf abc`: no newline, so the mark followed the output.
+        let abc = cat(&[b"abc", MARK, b"\r\x1b[0m\x1b[27m\x1b[24m\x1b[J$ \x1b[K"]);
+        assert_eq!(strip(&abc), "abc\n$ ");
+        // `printf '100%'`: the program's % stays.
+        let pct = cat(&[b"100%", MARK, b"\r$ "]);
+        assert_eq!(strip(&pct), "100%\n$ ");
+        // A line of just %, from the program, then zsh's mark.
+        let only = cat(&[b"%\r\n", MARK, b"\r$ "]);
+        assert_eq!(strip(&only), "%\n$ ");
+        // Root's #, and PROMPT_EOL_MARK set to '<-' and to ''.
+        let root = b"ok\r\n\x1b[1m\x1b[7m#\x1b[27m\x1b[1m\x1b[0m                                       \r \r\r# ";
+        assert_eq!(strip(root), "ok\n# ");
+        assert_eq!(strip(b"abc<-                                      \r  \r\r$ "), "abc\n$ ");
+        assert_eq!(strip(b"abc                                        \r\r\r$ "), "abc\n$ ");
+        // A read that starts at the mark, the prompt's CR after a newline,
+        // and a mark split from its last \r (a read that ends there), which
+        // stays as it was.
+        assert_eq!(strip(&cat(&[MARK, b"$ "])), "$ ");
+        assert_eq!(strip(&cat(&[b"\n", MARK, b"\r$ "])), "\n$ ");
+        assert_eq!(
+            strip(b"hi\r\n%                                       \r "),
+            "hi\n%                                       \n "
+        );
+        // A line cleared with CR, spaces and CR isn't a mark.
+        assert_eq!(strip(b"50%\r          \r60%\n"), "50%\n          \n60%\n");
+        assert_eq!(strip(b"\r60%"), "\n60%");
     }
 }
