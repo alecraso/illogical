@@ -699,6 +699,9 @@ impl Control {
             .header(AUTH, self.sign(e, "GET", path_and_query, b""))
             .send()
             .await?;
+        if res.status() == reqwest::StatusCode::GONE {
+            return Err(removed_answer(res).await.into());
+        }
         if res.status() == reqwest::StatusCode::UNAUTHORIZED {
             bail!(
                 "control doesn't know this daemon any more ({}); run `illogicald join` again",
@@ -1064,16 +1067,22 @@ impl Control {
     /// Run for good: notice joins and leaves, keep certificates fresh, and
     /// keep the relay socket up while enrolled.
     pub fn start(self: &Arc<Self>, app: Arc<App>) {
-        let a = app.clone();
-        self.run(move || app.mux.send(crate::mux::Cmd::AclChanged), move |me| tokio::spawn(keep_relay(me, a.clone())));
+        let (a, r) = (app.clone(), app.clone());
+        self.run(
+            move || app.mux.send(crate::mux::Cmd::AclChanged),
+            move |me| tokio::spawn(keep_relay(me, a.clone())),
+            move |url| crate::setup::rejoin(r.clone(), url),
+        );
     }
 
     /// [`Control::start`]'s loop: `acl_changed` after each reload and
-    /// refresh, `relay_with` to keep the socket up.
+    /// refresh, `relay_with` to keep the socket up, `rejoin` (control's
+    /// URL) when control says this machine was removed (#330).
     fn run(
         self: &Arc<Self>,
         acl_changed: impl Fn() + Send + 'static,
         relay_with: impl Fn(Arc<Self>) -> tokio::task::JoinHandle<()> + Send + 'static,
+        rejoin: impl Fn(String) + Send + 'static,
     ) {
         let me = self.clone();
         tokio::spawn(async move {
@@ -1104,6 +1113,14 @@ impl Control {
                                 acl_changed();
                                 let m = me.clone();
                                 tokio::spawn(async move { m.retry_invites().await });
+                            }
+                            // Removed from a browser (#330): a new key
+                            // asks to join the same control again.
+                            Err(e) if e.is::<Removed>() => {
+                                warn!(error = %e, "this machine was removed from its account; joining again with a new key");
+                                if let Some(en) = me.enrolled() {
+                                    rejoin(en.saved.url.clone());
+                                }
                             }
                             Err(e) => warn!(error = %e, "can't refresh certificates from control"),
                         }
@@ -1160,6 +1177,9 @@ async fn keep_relay(control: Arc<Control>, app: Arc<App>) {
                 wait = err.downcast_ref::<crate::dial::Busy>().map(|b| b.wait);
             }
         }
+        // Control may have hung up because this machine was removed
+        // (#330): find out now, not at the next refresh.
+        control.poke();
         if started.elapsed() > Duration::from_secs(30) {
             backoff = Duration::from_secs(1);
         }
@@ -1262,22 +1282,104 @@ async fn control_said(res: reqwest::Response) -> String {
     }
 }
 
+/// Control said this machine's key was removed from its account (410
+/// Gone, #330): someone removed it from a browser. A removed key never
+/// counts again, so a new one joins; the old one is kept aside (see
+/// [`retire`]). `GET /api/setup` shows this as `control.removed`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Removed {
+    /// What control said, in words.
+    pub said: String,
+    /// When it was removed (ms since the epoch), and on which device, as
+    /// control tells the key's holder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// The removed key's fingerprint, and where it's kept now.
+    pub old_key: String,
+    pub kept: String,
+    /// The new key's fingerprint.
+    pub new_key: String,
+    /// The account it was in (its root device), to rejoin it without
+    /// asking the person to check its fingerprint again.
+    #[serde(skip)]
+    pub root: Option<String>,
+}
+
+impl std::fmt::Display for Removed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "control says: {}", self.said)
+    }
+}
+
+impl std::error::Error for Removed {}
+
+/// Control's 410: the key was removed, and when and by whom if it says.
+async fn removed_answer(res: reqwest::Response) -> Removed {
+    let v: serde_json::Value = res.json().await.unwrap_or_default();
+    Removed {
+        said: v["error"].as_str().unwrap_or("this key was removed from its account").to_owned(),
+        at: v["removed"]["at"].as_u64(),
+        by: v["removed"]["by"].as_str().map(str::to_owned),
+        ..Default::default()
+    }
+}
+
+/// Set a removed key aside (`daemon.key.removed-<ms>`) with the
+/// enrollment it had (`control.json.removed-<ms>`), never deleting them,
+/// so the next join makes a new key.
+fn retire(state_dir: &Path, r: &mut Removed) -> anyhow::Result<()> {
+    let ms = now_ms();
+    let key = state_dir.join(KEY_FILE);
+    if let Ok(k) = DeviceKeys::load(&key) {
+        r.old_key = fingerprint(&k.id());
+    }
+    if let Ok(Some(s)) = read_saved(state_dir) {
+        r.root = Some(s.trust.root);
+    }
+    let kept = state_dir.join(format!("{KEY_FILE}.removed-{ms}"));
+    std::fs::rename(&key, &kept).with_context(|| format!("setting {} aside", key.display()))?;
+    if state_dir.join(FILE).exists() {
+        std::fs::rename(state_dir.join(FILE), state_dir.join(format!("{FILE}.removed-{ms}")))?;
+    }
+    r.kept = kept.display().to_string();
+    warn!(
+        old_key = r.old_key,
+        kept = r.kept,
+        said = r.said,
+        "this machine's key was removed; set it aside for a new one"
+    );
+    Ok(())
+}
+
 /// Why control refuses this machine's signature, if it does: what it said
 /// ("this machine's account was deleted", or that it left or was
 /// revoked). `None` when control still knows it, or can't be asked.
-async fn forgotten(s: &Saved, keys: &DeviceKeys) -> Option<String> {
+async fn forgotten(s: &Saved, keys: &DeviceKeys) -> Option<Forgot> {
     let http = crate::roots::http().timeout(Duration::from_secs(10)).build().ok()?;
     let v2 = takes_v2(&http, &s.url).await;
     let path = "/api/daemon/trust";
     let res =
         http.get(format!("{}{path}", s.url)).header(AUTH, auth_header(keys, "GET", path, b"", v2)).send().await.ok()?;
+    if res.status() == reqwest::StatusCode::GONE {
+        return Some(Forgot::Removed);
+    }
     if res.status() != reqwest::StatusCode::UNAUTHORIZED {
         return None;
     }
     let said = control_said(res).await;
     let said = said.strip_prefix("control says: ").map(str::to_owned).unwrap_or(said);
     // Not a clock that's off or a replayed signature: control has no such machine.
-    (said.contains("account was deleted") || said.contains("not an enrolled daemon")).then_some(said)
+    (said.contains("account was deleted") || said.contains("not an enrolled daemon")).then_some(Forgot::Said(said))
+}
+
+/// Why control doesn't know a saved enrollment any more.
+enum Forgot {
+    /// Its key was removed (#330): a new key joins again.
+    Removed,
+    /// What control said (its account was deleted, or it left).
+    Said(String),
 }
 
 /// Who a saved enrollment belongs to, in words.
@@ -1298,6 +1400,8 @@ pub struct JoinPending {
     pub expires_in_secs: u64,
     /// The team `--team` named, by name.
     pub team_name: Option<String>,
+    /// Control said the old key was removed, so this join has a new one.
+    pub renewed: Option<Removed>,
     poll: String,
     ask: Cert,
     http: reqwest::Client,
@@ -1396,39 +1500,55 @@ pub async fn join_start(
     if !url.starts_with("https://") && !private_http(&url) {
         bail!("control's URL must be https:// (or http on loopback or a private network, for testing)");
     }
-    let keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
+    let mut keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
     if let Some(s) = read_saved(state_dir)? {
         // Control may have forgotten it (its account deleted, or it was
-        // removed): say so, rather than that it's still in (#208).
-        if let Some(why) = forgotten(&s, &keys).await {
-            bail!(
+        // removed): say so, rather than that it's still in (#208). Removed
+        // (#330), it asks below with the old key, to hear when and by whom.
+        match forgotten(&s, &keys).await {
+            Some(Forgot::Removed) => {}
+            Some(Forgot::Said(why)) => bail!(
                 "this machine was in {} on {}, but control doesn't know it any more ({why}); run `illogicald leave` to forget that here, then join again",
                 whose(&s),
                 s.url
-            );
+            ),
+            None => bail!(
+                "this machine is already in {} on {}; to move it, run `illogicald leave`, then join again",
+                whose(&s),
+                s.url
+            ),
         }
-        bail!(
-            "this machine is already in {} on {}; to move it, run `illogicald leave`, then join again",
-            whose(&s),
-            s.url
-        );
     }
-    let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
-    // That this is the key's holder asking, not someone with its certificate.
-    let ms = now_ms();
-    let proof = serde_json::json!({
-        "ms": ms,
-        "sig": hex::encode(keys.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes())),
-    });
     let http = crate::roots::http().timeout(Duration::from_secs(20)).build()?;
-    let res = http
-        .post(format!("{url}/api/join"))
-        .json(&serde_json::json!({
-            "cert": ask, "urls": [], "team": team, "ticket": ticket, "features": features(), "proof": proof,
-        }))
-        .send()
-        .await
-        .with_context(|| format!("can't reach control at {url}"))?;
+    let mut renewed: Option<Removed> = None;
+    let (res, ask) = loop {
+        let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
+        // That this is the key's holder asking, not someone with its certificate.
+        let ms = now_ms();
+        let proof = serde_json::json!({
+            "ms": ms,
+            "sig": hex::encode(keys.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes())),
+        });
+        let res = http
+            .post(format!("{url}/api/join"))
+            .json(&serde_json::json!({
+                "cert": ask, "urls": [], "team": team, "ticket": ticket, "features": features(), "proof": proof,
+            }))
+            .send()
+            .await
+            .with_context(|| format!("can't reach control at {url}"))?;
+        // This key was removed from its account (#330): it never counts
+        // again, so set it aside and ask once more with a new one.
+        if res.status() == reqwest::StatusCode::GONE && renewed.is_none() {
+            let mut r = removed_answer(res).await;
+            retire(state_dir, &mut r)?;
+            keys = DeviceKeys::load_or_create(&state_dir.join(KEY_FILE))?;
+            r.new_key = fingerprint(&keys.id());
+            renewed = Some(r);
+            continue;
+        }
+        break (res, ask);
+    };
     if res.status() == reqwest::StatusCode::NOT_FOUND
         && let Some(t) = team
     {
@@ -1444,6 +1564,7 @@ pub async fn join_start(
         code: started.code,
         expires_in_secs: started.expires_in_secs,
         team_name: started.team_name,
+        renewed,
         poll: started.poll,
         ask,
         http,
@@ -1454,7 +1575,7 @@ pub async fn join_start(
 /// approving device chose. Nothing is saved until the person confirms the
 /// account ([`Approved::save`]).
 pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
-    let JoinPending { url, code, expires_in_secs, team_name, poll, ask, http } = p;
+    let JoinPending { url, code, expires_in_secs, team_name, poll, ask, http, .. } = p;
     let mins = expires_in_secs / 60;
     let deadline = std::time::Instant::now() + Duration::from_secs(expires_in_secs);
     let got = loop {
@@ -1547,6 +1668,13 @@ pub async fn join(
 ) -> anyhow::Result<()> {
     let account = account.map(parse_fingerprint).transpose()?;
     let p = join_start(url, name, team, ticket, state_dir).await?;
+    if let Some(r) = &p.renewed {
+        println!();
+        println!("  Control says {}.", r.said);
+        println!("  So this machine made a new key ({}) and asks to join with it.", r.new_key);
+        println!("  The old key ({}) is kept at {}.", r.old_key, r.kept);
+    }
+    let rejoining = p.renewed.as_ref().and_then(|r| r.root.clone());
     let to = match &p.team_name {
         Some(t) => format!("the team {t}"),
         None => "your account".into(),
@@ -1575,6 +1703,9 @@ pub async fn join(
         // A hosted sandbox runs on control's own provider: there is no
         // second device to check against.
         None if ticket.is_some() => Ok(()),
+        // Back into the account it was removed from (#330): the person
+        // checked that one's fingerprint when it first joined.
+        None if rejoining.as_deref().is_some_and(|root| a.is_account(root)) => Ok(()),
         None => confirm_account(&a),
     };
     if let Err(e) = checked {
@@ -1925,7 +2056,7 @@ mod tests {
         /// its first refreshes over: none left to refresh by chance.
         async fn daemon(&self) -> Arc<Control> {
             let c = Control::new(&self.dir, vec![], String::new(), self.acl.clone(), false);
-            c.run(|| {}, |_| tokio::spawn(std::future::pending()));
+            c.run(|| {}, |_| tokio::spawn(std::future::pending()), |_| {});
             assert!(c.refresh_now(REFRESH_WAIT).await, "the first refresh");
             tokio::time::sleep(Duration::from_millis(300)).await;
             c
@@ -2054,7 +2185,7 @@ mod tests {
         c.reload();
         assert!(c.refresh().await.is_err());
         assert_eq!(*c.refreshed.borrow(), 1);
-        c.run(|| {}, |_| tokio::spawn(std::future::pending()));
+        c.run(|| {}, |_| tokio::spawn(std::future::pending()), |_| {});
         let t = std::time::Instant::now();
         assert!(!c.refresh_now(Duration::from_millis(500)).await);
         assert!(t.elapsed() >= Duration::from_millis(500));
@@ -2104,6 +2235,128 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(r.opened().len(), 1, "once");
         let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// #330: control says this machine's key was removed from its account.
+    /// The join sets the old key and enrollment aside, asks with a new key,
+    /// and, back in the same account, saves it without asking again.
+    #[tokio::test]
+    async fn a_removed_key_is_set_aside_and_a_new_one_joins() {
+        use axum::{
+            Json, Router,
+            http::StatusCode,
+            routing::{get, post},
+        };
+        let (root_keys, mut root) = device("a", Kind::Browser);
+        root.approver = root.device.clone();
+        root.sig = hex::encode(root_keys.signature(root.body().as_bytes()));
+        let dir = std::env::temp_dir().join(format!("illogical-join-removed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Joined before, with a key a browser has since removed.
+        let old = DeviceKeys::load_or_create(&dir.join(KEY_FILE)).unwrap();
+        let mut old_cert = Cert::new(&old, "a", Kind::Daemon, "box");
+        old_cert.sign_with(&root_keys);
+        let saved = Saved {
+            url: String::new(),
+            trust: Trust { account: "a".into(), root: root.device.clone() },
+            cert: old_cert,
+            certs: vec![root.clone()],
+            revocations: vec![],
+            team: None,
+            roster: None,
+            team_certs: Default::default(),
+            team_names: Default::default(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: String::new(),
+            moved_at: 0,
+        };
+
+        write_saved(&dir, &saved).unwrap();
+
+        let asked: Arc<std::sync::Mutex<Vec<Cert>>> = Default::default();
+        let (a1, a2) = (asked.clone(), asked.clone());
+        let (old_id, root2, root_keys) = (old.id(), root.clone(), Arc::new(root_keys));
+        let gone = |by: Option<&str>| {
+            let mut v = serde_json::json!({ "error": "this machine was removed from its account on 2026-10-03 by laptop, so its key can't join again: it needs a new key" });
+            if let Some(by) = by {
+                v["removed"] = serde_json::json!({ "at": 1_790_000_000_000u64, "by": by });
+            }
+            (StatusCode::GONE, Json(v))
+        };
+        let app = Router::new()
+            .route("/control.json", get(|| async { Json(serde_json::json!({ "daemon_auth": 2 })) }))
+            .route("/api/daemon/trust", get(move || async move { gone(None) }))
+            .route(
+                "/api/join",
+                post(move |Json(b): Json<serde_json::Value>| async move {
+                    let c: Cert = serde_json::from_value(b["cert"].clone()).unwrap();
+                    a1.lock().unwrap().push(c.clone());
+                    if c.device == old_id {
+                        return gone(Some("laptop"));
+                    }
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({ "code": join_code(&c), "poll": "p", "expires_in_secs": 60 })),
+                    )
+                }),
+            )
+            .route(
+                "/api/join/{code}",
+                get(move || async move {
+                    let mut c = a2.lock().unwrap().last().cloned().unwrap();
+                    c.account = "a".into();
+                    c.sign_with(&root_keys);
+                    Json(serde_json::json!({
+                        "approved": true, "cert": c, "trust": { "account": "a", "root": root2.device },
+                        "certs": [root2], "revocations": [],
+                    }))
+                }),
+            );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await });
+        let mut s = read_saved(&dir).unwrap().unwrap();
+        s.url = url.clone();
+        write_saved(&dir, &s).unwrap();
+
+        // The old key asks once and is told; the new one gets the code.
+        let p = join_start(&url, "box", None, None, &dir).await.unwrap();
+        let r = p.renewed.clone().expect("renewed");
+        assert_eq!(r.by.as_deref(), Some("laptop"));
+        assert_eq!(r.at, Some(1_790_000_000_000));
+        assert_eq!(r.old_key, fingerprint(&old.id()));
+        assert_eq!(r.root.as_deref(), Some(root.device.as_str()));
+        let new = DeviceKeys::load(&dir.join(KEY_FILE)).unwrap();
+        assert_ne!(new.id(), old.id());
+        assert_eq!(r.new_key, fingerprint(&new.id()));
+        assert_eq!(p.code, join_code(&Cert::new(&new, "", Kind::Daemon, "box")));
+        let ids: Vec<String> = asked.lock().unwrap().iter().map(|c| c.device.clone()).collect();
+        assert_eq!(ids, [old.id(), new.id()]);
+        // Kept aside, not deleted: the old key and what it was enrolled as.
+        assert_eq!(DeviceKeys::load(Path::new(&r.kept)).unwrap().id(), old.id());
+        assert!(read_saved(&dir).unwrap().is_none());
+        let kept: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".removed-"))
+            .collect();
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        let rejoining = r.root.unwrap();
+        let a = join_finish(p).await.unwrap();
+        assert!(a.is_account(&rejoining));
+
+        // `illogicald join` does it all, and back in the same account it
+        // doesn't ask (stdin has nothing to say here).
+        std::fs::write(dir.join(KEY_FILE), std::fs::read(&r.kept).unwrap()).unwrap();
+        write_saved(&dir, &s).unwrap();
+        join(&url, "box", None, None, None, &dir).await.unwrap();
+        let now = read_saved(&dir).unwrap().unwrap();
+        assert_ne!(now.cert.device, old.id());
+        assert_eq!(now.trust.root, root.device);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// #100: a move signed by the account's own device is taken; one by

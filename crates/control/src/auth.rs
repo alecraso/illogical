@@ -202,7 +202,12 @@ fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError>
             None if app.db.daemon_account_deleted(id)? => {
                 return Err(err(StatusCode::UNAUTHORIZED, "this machine's account was deleted"));
             }
-            None => return Err(err(StatusCode::UNAUTHORIZED, "not an enrolled daemon (left, or revoked?)")),
+            // Removed from a browser (#330): Gone, for the daemon to make
+            // a new key and join again.
+            None => match crate::api::removed(app, id, Kind::Daemon, false)? {
+                Some((msg, _)) => return Err(err(StatusCode::GONE, &msg)),
+                None => return Err(err(StatusCode::UNAUTHORIZED, "not an enrolled daemon (left, or revoked?)")),
+            },
         },
     };
     if !illogical_e2e::cert::verify_hex(&cert.sign, msg.as_bytes(), sig) {

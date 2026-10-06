@@ -98,7 +98,12 @@ vs team machines and sharing a session:
    machines…* to revoke it.
 6. **Remove a device or machine** from *Devices and machines…* in the host
    menu. It loses access at once. A removed machine keeps running
-   illogical, reachable only locally; `illogicald join` adds it back.
+   illogical, reachable only locally. Its key never counts again, so when
+   control says it was removed, the machine sets the key aside
+   (`daemon.key.removed-…`) and asks to join again with a new one: a new
+   code to approve, shown in *Getting started* and by `illogicald join`.
+   Approved into the same account, it's back without checking the
+   fingerprint again.
 
 **How a device reaches a machine:**
 

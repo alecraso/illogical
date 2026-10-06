@@ -12,6 +12,11 @@
 //!   `false` drops it.
 //! - `POST /api/setup/claude`: `claude mcp add illogical -- illogical mcp`.
 //!
+//! When control says this machine's key was removed from its account
+//! (#330), the daemon makes a new key and starts a join itself; `GET
+//! /api/setup` shows that as `control.removed`, beside the new code. Back
+//! into the same account, it saves the join without asking again.
+//!
 //! `GET /api/setup` says how far along each one is. When a step needs
 //! something only a person can do (a one-time sudo, a switch in
 //! Tailscale's admin console, a sign-in), the error says so, with the
@@ -125,6 +130,11 @@ struct ControlStatus {
     /// The last join that didn't work, and why.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Control said this machine's old key was removed from its account
+    /// (#330), so the join waiting has a new key: what it said, when and
+    /// by which device, and both keys' fingerprints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    removed: Option<crate::control::Removed>,
     /// The control the button joins: `--control`, else illogical cloud
     /// (#207). The page sends it back with the join.
     url: String,
@@ -160,6 +170,8 @@ struct ClaudeStatus {
 static JOIN: Mutex<(Option<Pending>, Option<String>)> = Mutex::new((None, None));
 /// An approved join, until the person says the account is theirs.
 static APPROVED: Mutex<Option<crate::control::Approved>> = Mutex::new(None);
+/// The old key control said was removed, until this machine is in again.
+static REMOVED: Mutex<Option<crate::control::Removed>> = Mutex::new(None);
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
@@ -339,6 +351,7 @@ fn control_status(app: &App) -> ControlStatus {
             place: a.joined.place.clone(),
         }),
         error: error.filter(|_| saved.is_none()),
+        removed: REMOVED.lock().unwrap().clone().filter(|_| saved.is_none()),
         url: app.control.default_url.clone(),
     }
 }
@@ -355,18 +368,59 @@ async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json
         return Json(serde_json::json!({ "pending": p }));
     }
     let url = req.url.filter(|u| !u.trim().is_empty()).unwrap_or_else(|| app.control.default_url.clone());
+    Json(start_join(&app, &url, req.team.as_deref()).await)
+}
+
+/// Control said this machine's key was removed (#330): ask `url` to add
+/// it again, with a new key, unless a join is under way already.
+pub fn rejoin(app: Arc<App>, url: String) {
+    tokio::spawn(async move {
+        if APPROVED.lock().unwrap().is_some()
+            || JOIN.lock().unwrap().0.as_ref().is_some_and(|p| p.expires_ms > now_ms())
+        {
+            return;
+        }
+        let v = start_join(&app, &url, None).await;
+        match v["pending"]["approve"].as_str() {
+            Some(at) => tracing::warn!(approve = at, "joining again with a new key: approve it on a signed-in device"),
+            None => tracing::warn!(error = %v["error"], "can't join again with a new key"),
+        }
+    });
+}
+
+/// Ask control for a code and wait for its approval in the background.
+async fn start_join(app: &Arc<App>, url: &str, team: Option<&str>) -> Value {
     let name = app.hosts.name().to_owned();
     let dir = app.control.state_dir().to_owned();
-    match crate::control::join_start(&url, &name, req.team.as_deref(), None, &dir).await {
+    match crate::control::join_start(url, &name, team, None, &dir).await {
         Ok(p) => {
             let pending = Pending {
                 code: p.code.clone(),
                 approve: p.approve_url(),
                 expires_ms: now_ms() + p.expires_in_secs * 1000,
             };
+            let rejoining = p.renewed.as_ref().and_then(|r| r.root.clone());
+            if let Some(r) = &p.renewed {
+                *REMOVED.lock().unwrap() = Some(r.clone());
+            }
             *JOIN.lock().unwrap() = (Some(pending.clone()), None);
+            let app = app.clone();
             tokio::spawn(async move {
                 let r = crate::control::join_finish(p).await;
+                // Back into the account it was removed from: the person
+                // checked its fingerprint when it first joined.
+                let r = match r {
+                    Ok(a) if rejoining.as_deref().is_some_and(|root| a.is_account(root)) => {
+                        let saved = a.save(app.control.state_dir()).map(|_| ());
+                        if saved.is_ok() {
+                            *REMOVED.lock().unwrap() = None;
+                        }
+                        app.control.poke();
+                        *JOIN.lock().unwrap() = (None, saved.err().map(|e| e.to_string()));
+                        return;
+                    }
+                    r => r,
+                };
                 let mut j = JOIN.lock().unwrap();
                 match r {
                     Ok(a) => {
@@ -376,11 +430,11 @@ async fn control_join(State(app): AppState, body: Option<Json<JoinReq>>) -> Json
                     Err(e) => *j = (None, Some(e.to_string())),
                 }
             });
-            Json(serde_json::json!({ "pending": pending }))
+            serde_json::json!({ "pending": pending, "removed": REMOVED.lock().unwrap().clone() })
         }
         Err(e) => {
             JOIN.lock().unwrap().1 = Some(e.to_string());
-            Json(serde_json::json!({ "error": e.to_string() }))
+            serde_json::json!({ "error": e.to_string() })
         }
     }
 }
@@ -406,6 +460,9 @@ async fn control_confirm(State(app): AppState, Json(req): Json<ConfirmReq>) -> J
         Some(e)
     } else {
         let r = a.save(app.control.state_dir());
+        if r.is_ok() {
+            *REMOVED.lock().unwrap() = None;
+        }
         app.control.poke();
         r.err().map(|e| e.to_string())
     };

@@ -28,7 +28,7 @@ async function freePort(): Promise<number> {
   await new Promise((ok) => s.close(ok));
   return port;
 }
-const [CONTROL, GITHUB, DAEMON, SPY, PUSH, STRIPE, SPRITES, DAEMON2] = await Promise.all(Array.from({ length: 8 }, freePort));
+const [CONTROL, GITHUB, DAEMON, SPY, PUSH, STRIPE, SPRITES, DAEMON2, DAEMON3] = await Promise.all(Array.from({ length: 9 }, freePort));
 const WHSEC = "whsec_smoke";
 const base = `http://127.0.0.1:${CONTROL}`;
 const target = process.env.TARGET_DIR ?? "../target/debug";
@@ -404,6 +404,42 @@ try {
   const elsewhere = temp("elsewhere");
   check("a join into an account other than the one expected is refused", (await joinAs("elsewhere", elsewhere, "0123-4567-89ab-cdef")) !== 0);
   check("... and pins nothing", !readdirSync(elsewhere).includes("control.json"));
+
+  // 9b. A machine removed from a browser (#330): its key never counts
+  // again. The daemon hears so, sets the key aside, makes a new one and
+  // asks to join again; /api/setup shows why, with the new code. Approved
+  // into the same account, it's back without anyone checking a
+  // fingerprint again.
+  {
+    const st = temp("removed");
+    check("illogicald join finished (removable)", (await joinAs("removable", st, laptop.id)) === 0);
+    procs.push(
+      spawn(`${target}/illogicald`, [
+        ...["--listen", `127.0.0.1:${DAEMON3}`, "--name", "removable", "--state-dir", st],
+        ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent", "--no-claude-ide"],
+      ], { stdio: "ignore" }),
+    );
+    const was = await me.waitOnline("removable", 10_000);
+    await me.revoke(was.id);
+    const token = readFileSync(join(st, "local-token"), "utf8").trim();
+    type Setup = { control: { pending?: { code: string }; removed?: { said: string; by?: string; old_key: string; new_key: string; kept: string } } };
+    let setup: Setup | undefined;
+    for (let i = 0; i < 150 && !setup?.control.pending; i++) {
+      await sleep(200);
+      setup = await fetch(`http://127.0.0.1:${DAEMON3}/api/setup?part=control`, { headers: { authorization: `Bearer ${token}` } }).then((r) => r.json() as Promise<Setup>, () => undefined);
+    }
+    const removed = setup?.control.removed;
+    check("removed from a browser, the daemon asks to join again with a new key", !!setup?.control.pending && !!removed, JSON.stringify(setup));
+    check("... and says why: removed, by which device", !!removed?.said.includes("removed") && removed?.by === "laptop", removed?.said);
+    check("... keeping the old key aside", readdirSync(st).some((f) => f.startsWith("daemon.key.removed-")) && removed!.old_key !== removed!.new_key);
+    const again = await me.approveJoin(setup!.control.pending!.code);
+    check("the new code is for a new key", again.device !== was.id);
+    const back = await me.waitOnline(again.device, 15_000).catch(() => undefined);
+    check("approved once, it's back online", back?.online === true, JSON.stringify(back));
+    const listed = (await me.directory()).filter((d) => d.name === "removable");
+    check("listed once, with the new key", listed.length === 1 && listed[0].id === again.device, JSON.stringify(listed));
+    check("the old key stays out", !(await me.trusted()).has(was.id));
+  }
 
   // 10. Deleting an account (#173): someone with a machine leaves. The
   // machine is refused from then on, and nothing of theirs is left.

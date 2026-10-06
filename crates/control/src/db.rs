@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS revocations (
     device TEXT NOT NULL,
     body TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS revocations_device ON revocations (device);
 CREATE TABLE IF NOT EXISTS joins (
     code TEXT PRIMARY KEY,
     cert TEXT NOT NULL,
@@ -221,6 +222,11 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         let names: Vec<String> = q.query_map([], |r| r.get(1))?.collect::<Result<_, _>>()?;
         Ok(names.iter().any(|n| n == col))
     };
+    // A revocation of one of the account's own machines (#330): only those
+    // keep a key out of every account (see `Db::revoked`).
+    if !has("revocations", "machine")? {
+        conn.execute_batch("ALTER TABLE revocations ADD COLUMN machine INTEGER NOT NULL DEFAULT 0")?;
+    }
     if !has("daemons", "team")? {
         conn.execute_batch("ALTER TABLE daemons ADD COLUMN team TEXT")?;
     }
@@ -796,11 +802,63 @@ impl Db {
         Ok(())
     }
 
+    /// A revocation of a machine of `r.account`'s own (a `daemons` row of
+    /// that account when it was revoked): see [`Db::revoked`].
+    pub fn add_machine_revocation(&self, r: &Revocation) -> anyhow::Result<()> {
+        self.c().execute(
+            "INSERT INTO revocations (account, device, body, machine) VALUES (?1, ?2, ?3, 1)",
+            params![r.account, r.device, serde_json::to_string(r)?],
+        )?;
+        Ok(())
+    }
+
+    /// Whether `device` is `account`'s: one of its devices (approved or
+    /// asking), one of its machines, or a join it approved that the
+    /// machine hasn't collected yet. What it may revoke.
+    pub fn is_accounts(&self, account: &str, device: &str) -> anyhow::Result<bool> {
+        if self.device(account, device)?.is_some() || self.daemon_account(device)?.as_deref() == Some(account) {
+            return Ok(true);
+        }
+        let c = self.c();
+        let mut q = c.prepare("SELECT cert FROM joins WHERE account = ?1")?;
+        let certs = q.query_map(params![account], |r| r.get::<_, String>(0))?;
+        for cert in certs {
+            if cert_of(cert?)?.device == device {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub fn revocations(&self, account: &str) -> anyhow::Result<Vec<Revocation>> {
         let c = self.c();
         let mut q = c.prepare("SELECT body FROM revocations WHERE account = ?1")?;
         let rows = q.query_map(params![account], |r| r.get::<_, String>(0))?;
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+    }
+
+    /// The first time `device` was removed as one of its account's
+    /// machines (#330), if it was: that key never joins or signs again.
+    ///
+    /// This looks across accounts, so only machine revocations count: ones
+    /// whose account had the key as a machine (a `daemons` row) when it
+    /// revoked it. That row comes only from a join, and a join for a key
+    /// control knows needs the key's proof, so the account held the key.
+    /// Any other revocation (a device row anyone can make with someone
+    /// else's public keys, through `enroll`) keeps it out of that account
+    /// only, which `Trust::evaluate` does.
+    pub fn revoked(&self, device: &str) -> anyhow::Result<Option<Revocation>> {
+        let c = self.c();
+        let mut q = c.prepare("SELECT body FROM revocations WHERE device = ?1 AND machine = 1")?;
+        let rows = q.query_map(params![device], |r| r.get::<_, String>(0))?;
+        let mut first: Option<Revocation> = None;
+        for r in rows {
+            let r: Revocation = serde_json::from_str(&r?)?;
+            if first.as_ref().is_none_or(|f| r.at < f.at) {
+                first = Some(r);
+            }
+        }
+        Ok(first)
     }
 
     // ---- joins

@@ -15,7 +15,7 @@
 // docs/testing.md describes both.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { certBody, evaluate, joinCode, unhex, type Cert, type Revocation } from "../src/e2e/cert.ts";
+import { certBody, evaluate, joinCode, revocationBody, unhex, type Cert, type Revocation } from "../src/e2e/cert.ts";
 import { E2ESocket } from "../src/e2e/channel.ts";
 import { generateKeys, signText, type DeviceKeys } from "../src/e2e/keys.ts";
 import { signRoster, teamJoinBody, word, type Roster, type TeamPin, type TeamRole } from "../src/e2e/team.ts";
@@ -194,6 +194,14 @@ export class Device {
     if (team) team_sig = await signText(this.keys, teamJoinBody(c.device, (await this.team(team)).pin));
     await this.api(`/api/joins/${code}/approve`, { cert: c, team: team ?? null, team_sig });
     return c;
+  }
+
+  /** Remove a device or machine from the account, as the page's Remove
+   * button does: a revocation this device signs. */
+  async revoke(id: string): Promise<void> {
+    const r: Revocation = { v: 1, account: this.account, device: id, at: Date.now(), by: this.keys.id, sig: "" };
+    r.sig = await signText(this.keys, revocationBody(r));
+    await this.api("/api/revocations", { revocation: r });
   }
 
   // ---- teams (M19), as the page's owner does them
