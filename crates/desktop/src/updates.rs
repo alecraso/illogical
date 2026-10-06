@@ -7,10 +7,10 @@
 //! launch and then every six hours. A newer release is downloaded,
 //! checked against the key and put in place of this app; it runs from the
 //! next start, which the tray offers (*Restart to update*). The daemon
-//! keeps the panes through that restart, and the new app updates the
-//! daemon if it carries a newer one (`upgrade.rs`). When the daemon here
-//! speaks a newer protocol than this app knows, the setup page offers the
-//! update straight away and restarts into it (`compat.rs`).
+//! keeps the panes through that restart. The app never updates the daemon:
+//! the daemon updates itself (#391, #392). When the daemon here speaks a
+//! newer protocol than this app knows, the setup page offers the update
+//! straight away and restarts into it (`compat.rs`).
 //!
 //! Where it can update: the macOS app and the Linux AppImage. A .deb or
 //! .rpm belongs to the package manager.

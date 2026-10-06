@@ -216,7 +216,7 @@ fn app_updates(app: &AppHandle) -> bool {
 /// The daemon updates itself (#391's `POST /api/update/apply`, what the
 /// web client's Update now does), and the app waits for it to come back
 /// speaking a protocol in range. The app has no daemon update of its own
-/// for this: #392 takes the bundled replacement (`upgrade.rs`) away.
+/// for this (#392).
 fn update_daemon() -> Result<(), String> {
     let mut req = agent(Duration::from_secs(30)).post(&format!("{}/api/update/apply", crate::page()));
     if let Some(b) = crate::bearer() {

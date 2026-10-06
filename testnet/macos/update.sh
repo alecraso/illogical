@@ -2,8 +2,9 @@
 #
 # The desktop app updates itself (M46), in a fresh tart VM: an app built
 # as 0.17.0 finds 0.17.1 in a manifest, downloads it, checks its signature
-# and replaces itself; the new app carries a newer daemon and restarts its
-# launch agent on it, and the panes keep running through both.
+# and replaces itself. The new app carries a newer daemon but leaves the
+# running one alone (#392: the daemon updates itself), and the panes keep
+# running.
 #
 #   testnet/macos/update.sh          (after `just build`)
 #   KEEP=1 ...                       leave the clone running
@@ -16,8 +17,8 @@
 # changed (target/update-old, kept between runs). The host serves the
 # manifest and the archive on the tart network (port 7757).
 #   update  the app replaces itself with 0.17.1 and starts again
-#   daemon  the new app finds the older daemon running, restarts its launch
-#           agent on the bundle's newer one, and that one answers
+#   daemon  the new app finds the older daemon running and leaves it be:
+#           the same process answers with the same version
 #   panes   a running vim and a running build (a counter) carry on
 #   bad     a manifest whose signature doesn't match is refused
 # shellcheck disable=SC2016,SC2329 # strings run in the VM expand there; cleanup runs from the trap
@@ -163,21 +164,18 @@ if wait_for 30 restarted; then
 else
   fail update "it didn't start again after the update (was $first, now $(vs 'pgrep -x illogical-desktop' || echo none))"
 fi
-on_new() { [ "$(answers)" = "$new" ]; }
-if wait_for 60 on_new; then
-  d=$(daemon_pid)
-  if [ -n "$d" ] && [ "$d" != "$daemon0" ]; then
-    pass daemon "the launch agent runs the bundle's $new now (pid $daemon0 -> $d): $(vs 'grep -m1 "updated the daemon" /tmp/app.log')"
-  else
-    fail daemon "it answers $new, but the daemon's pid is $daemon0 -> ${d:-none}"
-  fi
+# Time for the new app to do anything it would to the daemon.
+sleep 15
+d=$(daemon_pid)
+if [ "$(answers)" = "$old" ] && [ -n "$d" ] && [ "$d" = "$daemon0" ]; then
+  pass daemon "the new app left the running $old daemon alone (pid $d)"
 else
-  fail daemon "still ${v0:-nothing} after the update: $(vs 'grep "daemon" /tmp/app.log' | tail -3)"
+  fail daemon "the daemon answers $(answers), pid $daemon0 -> ${d:-none}: $(vs 'grep "daemon" /tmp/app.log' | tail -3)"
 fi
 sleep 2
 if [ "$(vs 'pgrep -x vim')" = "$vim_pid" ]; then pass panes "vim (pid $vim_pid) is still running"; else fail panes "vim went away"; fi
 n=$(vs '$HOME/.local/bin/illogical --json ls' | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')
-if [ "$n" -ge 2 ]; then pass panes "the new daemon lists the $n panes"; else fail panes "the new daemon lists $n panes"; fi
+if [ "$n" -ge 2 ]; then pass panes "the daemon lists the $n panes"; else fail panes "the daemon lists $n panes"; fi
 count1=$(vs 'cat /tmp/count')
 if [ "$count1" -gt "$count0" ]; then pass panes "the build kept counting ($count0 -> $count1)"; else fail panes "the build stopped at $count1"; fi
 exit $failed

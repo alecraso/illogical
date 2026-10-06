@@ -428,7 +428,7 @@ logged-in session over ssh.
 | Panes outlive the app | | `restart`: the daemon's pids and panes are the same after the app restarts | |
 | Right-click a folder (M47) | `m47` (`just desktop-xvfb m47`): with the packages' .desktop file and Nautilus extension, a right-click on a folder (and inside one) in Nautilus, *Open in illogical*, opens a tab there in the running app and shows it | `finder`: the service is registered (`pbs`); a right-click on a folder in Finder, *New illogical Tab Here*, opens a tab there; a `.command` file opened with the app runs in a new pane | the file manager's menu has no entry, or it starts a second app |
 | Packages | `just desktop-packages ARCH`: .deb and .rpm install, libraries resolve, xdg-mime hands `illogical://` to the app, the .desktop file passes the link (`%u`) and has a New Tab action, the Nautilus extension is in place | `install` above | |
-| Updates | | `update.sh`: 0.17.0 refuses a manifest signed with another key, then replaces itself with 0.17.1 and restarts; the new app carries a newer daemon and restarts its launch agent on it; a running vim and a counting build carry on | |
+| Updates | | `update.sh`: 0.17.0 refuses a manifest signed with another key, then replaces itself with 0.17.1 and restarts; the new app carries a newer daemon and leaves the running one alone (#392); a running vim and a counting build carry on | |
 
 `update.sh` makes a throwaway updater key and builds the app twice with
 it. The installed one carries a daemon one minor version older than the

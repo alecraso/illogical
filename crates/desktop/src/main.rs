@@ -15,10 +15,13 @@
 //!   service), else the bundled one, which copies itself to `~/.local/bin`
 //!   and registers the launchd agent or systemd unit. The bundled CLI goes
 //!   to `~/.local/bin` too, unless an `illogical` is already installed.
-//! - **It updates an older daemon** (#176): when the daemon's service runs
-//!   an older version than the one bundled, the setup page runs the
-//!   bundled `illogicald install`, which keeps its flags and its panes
-//!   (`upgrade.rs`).
+//! - **It never replaces a running daemon** (#392): the daemon updates
+//!   itself (its web notice's *Update now*, `illogicald update`), so the
+//!   app and the daemon release apart. The bundled `illogicald` is only for
+//!   a machine with none (first run, offline), and may be older than the
+//!   one running. On macOS the app's launch agent runs the bundle's copy,
+//!   which hands on to a newer one the daemon's update put in
+//!   `~/.local/bin`.
 //! - **Every key reaches the page** (S25): on macOS the menu is Edit only,
 //!   so Cmd-W, T, N and Q are the client's; on Linux GTK's F10 menu-bar key
 //!   is turned off.
@@ -62,7 +65,7 @@
 //!   `command`, for notifications and the badge.
 //! - **`GET /ws`**: the WebSocket, with the local token as a bearer. The
 //!   app only reads it.
-//! - **`GET /api/host`**: `version` (`upgrade.rs`), `protocol`
+//! - **`GET /api/host`**: `version` and `protocol`
 //!   (`compat.rs`; absent means the baseline), `name` and `control`
 //!   (`cloud.rs`).
 //! - **`GET /api/update`** (`apply`, `command`) and **`POST
@@ -97,7 +100,6 @@ mod profile;
 mod service;
 mod settings;
 mod updates;
-mod upgrade;
 
 use std::{
     collections::HashMap,
@@ -263,8 +265,7 @@ fn ensure_daemon() -> Result<(), String> {
     static ONE: Mutex<()> = Mutex::new(());
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
     if reachable() {
-        // Answering, but older than ours: replace it.
-        return upgrade::run();
+        return Ok(());
     }
     #[cfg(target_os = "macos")]
     if service::usable() && !service::installed_by_script() && std::env::var_os("ILLOGICAL_NO_LAUNCH_AGENT").is_none() {
@@ -334,15 +335,15 @@ fn start_agent() -> Result<(), String> {
 }
 
 /// Where a new window starts:
-/// - no daemon answering, or an older one to update: the setup page, which
-///   installs, starts or updates it (`retry`) and then comes back here;
+/// - no daemon answering: the setup page, which installs or starts it
+///   (`retry`) and then comes back here;
 /// - a daemon speaking a protocol this app doesn't (#390): the setup page,
 ///   which says which side is behind and offers its update (`compat.rs`);
 /// - joined to control and signed in: control's client, every machine;
 /// - joined, not signed in: the app's sign-in page;
 /// - otherwise (or "just this machine"): the daemon's own page.
 fn target(app: &AppHandle) -> WebviewUrl {
-    if !reachable() || upgrade::pending().is_some() || compat::mismatch().is_some() {
+    if !reachable() || compat::mismatch().is_some() {
         return WebviewUrl::App("index.html".into());
     }
     WebviewUrl::External(home(app))
@@ -634,9 +635,6 @@ fn daemon_status() -> String {
     if !why.is_empty() {
         return why;
     }
-    if let Some(updating) = upgrade::pending() {
-        return updating;
-    }
     if let Some(m) = compat::mismatch() {
         return m.message();
     }
@@ -914,7 +912,6 @@ fn main() {
             profile::init(app.handle());
             #[cfg(target_os = "macos")]
             finder::init(app.handle());
-            upgrade::check();
             compat::check();
             let prefs = settings::load(app.handle());
             let hotkey_ok = match settings::apply(app.handle(), &prefs) {

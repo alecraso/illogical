@@ -80,9 +80,8 @@ login item runs the daemon in the app, and an update goes to
 `~/.local/bin`, which the app's copy runs from then on, as long as it's
 newer. `--no-update-check` (`ILLOGICAL_NO_UPDATE_CHECK=true`) turns the
 check off; a daemon run from where it was built (`target/`) doesn't
-check. The desktop app replaces an older
-daemon with the one it carries when that daemon runs as the service
-(`ILLOGICAL_NO_DAEMON_UPGRADE=1` stops it).
+check. The desktop app never replaces a running
+daemon: the daemon it carries is for a machine that has none.
 
 State (layout, logs, checkpoints) is in `~/.local/state/illogical`, private
 to you (0700/0600). `--state-dir` moves it.

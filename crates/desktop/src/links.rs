@@ -100,7 +100,7 @@ fn act_on(app: &AppHandle, what: String, act: Act) {
     let app = app.clone();
     std::thread::spawn(move || {
         for _ in 0..240 {
-            if crate::reachable() && crate::upgrade::pending().is_none() {
+            if crate::reachable() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(250));
