@@ -159,6 +159,8 @@ pub struct BlockEnv {
     pub ids: PaneIds,
     /// Standing permission rules (#166).
     pub rules: Arc<crate::rules::Rules>,
+    /// What runs an invite the owner sent from its card (#234).
+    pub invite: crate::invite::Hook,
 }
 
 /// The ids of the daemon's panes and blocks, as the multiplexer keeps them.
@@ -194,6 +196,7 @@ pub struct BlockCtx {
     ids: PaneIds,
     /// Standing permission rules (#166).
     pub rules: Arc<crate::rules::Rules>,
+    pub invite: crate::invite::Hook,
 }
 
 impl BlockCtx {
@@ -226,6 +229,7 @@ impl BlockCtx {
             cmds: base.cmds,
             ids: base.ids,
             rules: base.rules,
+            invite: base.invite,
         }
     }
 
@@ -363,6 +367,8 @@ pub fn create(kind: BlockType, ctx: BlockCtx, config: Value) -> Result<Arc<dyn B
         BlockType::App => crate::apps::AppBlock::create(ctx, config),
         BlockType::Forge => crate::forge::ForgeBlock::create(ctx, config),
         BlockType::Fountain => crate::fountain::FountainBlock::create(ctx, config),
+        BlockType::Invite => crate::invite::card::InviteBlock::create(ctx, config),
+        BlockType::Unknown => Err("a block type this build doesn't know".into()),
     }
 }
 

@@ -845,6 +845,13 @@ pub enum BlockType {
     /// with their own `fountain` login. Config `{profile?, view: catalog,
     /// filter?, specs?}`.
     Fountain,
+    /// An agent's invites into the session (#234), waiting for the owner:
+    /// a card each, beside the agent. Config `{drafter, drafts}`.
+    Invite,
+    /// A type a newer daemon has and this build doesn't know: its state
+    /// still parses. Nothing opens one.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Where a remote block's pane lives (#17): a host in the home daemon's
@@ -1147,6 +1154,11 @@ pub struct ThreadMsg {
     /// Principal ids it @mentions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentions: Vec<String>,
+    /// The `@` tokens (lowercase) that reached someone: each one naming a
+    /// person in `mentions`, and the agent's when `to_agent`. The page
+    /// marks only these; an `@word` that reached no one stays plain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub landed: Vec<String>,
     /// It @mentioned the pane's agent, and went to it as a follow-up.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub to_agent: bool,

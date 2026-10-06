@@ -32,6 +32,8 @@ import {
   type ThreadSummary,
   type ThreadTarget,
   threadKey,
+  type Unreached,
+  type Invitable,
 } from "./proto";
 import { decompress } from "fzstd";
 import { SCROLLBACK, TerminalView } from "./terminal-view";
@@ -433,11 +435,47 @@ export class Client {
     return (await r.json<{ messages: ThreadMsg[] }>()).messages;
   }
 
-  async postThread(t: ThreadTarget, text: string, quote?: { pane: PaneId; text: string }): Promise<void> {
+  /** Post in a thread: the message, the `@`s that reached no one, and for
+   *  the owner whom of those they may invite (#297). */
+  async postThread(
+    t: ThreadTarget,
+    text: string,
+    quote?: { pane: PaneId; text: string },
+  ): Promise<{ message: ThreadMsg; unreached: Unreached[]; invitable: Invitable[] }> {
     const r = await this.request("POST", `/api/threads/${threadKey(t)}`, { text, quote });
     if (!r.ok) throw new Error((await r.json<{ error?: string }>().catch(() => ({ error: undefined }))).error ?? `HTTP ${r.status}`);
-    const a = (await r.json<{ agent?: { delivered?: boolean; error?: string } | null }>()).agent;
-    if (a?.error) this.showError(`the agent didn't get it: ${a.error}`);
+    const body = await r.json<{
+      message: ThreadMsg;
+      agent?: { delivered?: boolean; error?: string } | null;
+      unreached?: Unreached[];
+      invitable?: Invitable[];
+    }>();
+    if (body.agent?.error) this.showError(`the agent didn't get it: ${body.agent.error}`);
+    return { message: body.message, unreached: body.unreached ?? [], invitable: body.invitable ?? [] };
+  }
+
+  /** Invite someone a message named into its thread (#297), as a viewer:
+   *  they see that message and what follows there, or the whole thread.
+   *  What to tell the owner about it. */
+  async inviteToThread(t: ThreadTarget, who: string, msg: ThreadMsg, wholeThread: boolean): Promise<string> {
+    const session = "session" in t ? t.session : this.sessionOfPane(t.pane);
+    if (session === null) throw new Error("that pane is gone");
+    const r = await this.request("POST", "/api/invite", {
+      session,
+      who,
+      role: "viewer",
+      thread: threadKey(t),
+      msg: msg.id,
+      whole_thread: wholeThread,
+      note: msg.text,
+    });
+    const body = await r.json<{ error?: string; delivery?: string; reason?: string | null; grant?: { name: string } }>().catch(() => null);
+    if (!r.ok || !body?.delivery) throw new Error(body?.error ?? `HTTP ${r.status}`);
+    const n = (body.grant?.name ?? who).split("@")[0];
+    const why = body.reason ? `: ${body.reason}` : "";
+    if (body.delivery === "sent") return `${n} is in, and was notified`;
+    if (body.delivery === "pending") return `${n} is in, and will be notified${why}`;
+    return `${n} is in, but wasn't notified${why}`;
   }
 
   markThreadRead(t: ThreadTarget, upto: number) {

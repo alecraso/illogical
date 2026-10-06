@@ -6,8 +6,11 @@
 // Joining (#100): the approver sees the team, picks it or Just me, and only
 // its owners can approve; Cancel turns the daemon down. A presigned invite
 // lets someone already in another team in with one click, no owner's yes.
+// Share and notify (#233): Alice's machine learns her teams from her
+// browser, and a teammate's phone gets the invite, opening at the pane.
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { createDecipheriv, createECDH, hkdfSync, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -23,6 +26,11 @@ let github = "";
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
 let gh: Server;
+// A push service of the test's own (control posts only to those it's told
+// it may, `--push-host`): what it got, by path.
+let pushes: Server;
+let pushHost = "";
+const pushed: { path: string; body: Buffer }[] = [];
 
 test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
@@ -57,6 +65,15 @@ test.beforeAll(async () => {
     } else res.writeHead(404).end();
   });
   github = `http://127.0.0.1:${await listen(gh)}`;
+  pushes = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (d: Buffer) => chunks.push(d));
+    req.on("end", () => {
+      pushed.push({ path: req.url!, body: Buffer.concat(chunks) });
+      res.writeHead(201).end();
+    });
+  });
+  pushHost = `127.0.0.1:${await listen(pushes)}`;
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
@@ -64,7 +81,7 @@ test.beforeAll(async () => {
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
-        ...["--github-url", github, "--github-api", github],
+        ...["--github-url", github, "--github-api", github, "--push-host", pushHost],
       ],
       { stdio: "ignore" },
     ),
@@ -83,6 +100,7 @@ test.beforeAll(async () => {
 test.afterAll(() => {
   for (const p of procs) p.kill("SIGKILL");
   gh?.close();
+  pushes?.close();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
@@ -103,6 +121,7 @@ const hostNames = (page: Page) => page.evaluate(() => window.__illogical.hosts.n
 
 let alice: Page;
 let bob: Page;
+let carol: Page;
 let team = "";
 let pane = 0;
 
@@ -265,7 +284,7 @@ test("a team-owned box joins; both use it through the relay and pass control", a
 
 test("a presigned invite: someone already in a team joins another in one click", async ({ browser }) => {
   // Carol has her own team already.
-  const carol = await person(browser, "carol");
+  carol = await person(browser, "carol");
   await carol.evaluate(() => window.__illogical.control!.createTeam("Carols"));
   // A team machine that doesn't understand presigned invites (an older
   // daemon, played by one that says it understands nothing): Alice's link
@@ -546,4 +565,76 @@ test("a session shared with someone outside your teams waits for their yes", asy
   await expect
     .poll(async () => (await erin.evaluate(() => window.__illogical.control!.refresh()), hostNames(erin)), { timeout: 30_000 })
     .toContain("minebox");
+});
+
+/** A notification as the browser holding `phone` and `auth` reads it
+ * (RFC 8291). */
+function openPush(body: Buffer, phone: ReturnType<typeof createECDH>, auth: Buffer) {
+  const salt = body.subarray(0, 16);
+  const idlen = body[20];
+  const asPublic = body.subarray(21, 21 + idlen);
+  const sealed = body.subarray(21 + idlen);
+  const info = Buffer.concat([Buffer.from("WebPush: info\0"), phone.getPublicKey(), asPublic]);
+  const ikm = Buffer.from(hkdfSync("sha256", phone.computeSecret(asPublic), auth, info, 32));
+  const cek = Buffer.from(hkdfSync("sha256", ikm, salt, Buffer.from("Content-Encoding: aes128gcm\0"), 16));
+  const nonce = Buffer.from(hkdfSync("sha256", ikm, salt, Buffer.from("Content-Encoding: nonce\0"), 12));
+  const d = createDecipheriv("aes-128-gcm", cek, nonce);
+  d.setAuthTag(sealed.subarray(-16));
+  const plain = Buffer.concat([d.update(sealed.subarray(0, -16)), d.final()]);
+  return JSON.parse(plain.subarray(0, plain.lastIndexOf(2)).toString());
+}
+
+test("Share and notify: a teammate's phone gets the invite, at the pane", async () => {
+  test.setTimeout(120_000);
+  // Carol (in Acme) turns notifications on, on a phone of the test's own.
+  const phone = createECDH("prime256v1");
+  phone.generateKeys();
+  const auth = randomBytes(16);
+  const endpoint = `http://${pushHost}/carol`;
+  await carol.evaluate(
+    (s) => window.__illogical.control!.subscribePush(s),
+    { endpoint, p256dh: phone.getPublicKey().toString("base64url"), auth: auth.toString("base64url") },
+  );
+  // Alice's browser told minebox (hers) about Acme as it connected; the
+  // machine checked Acme's roster from that pin itself.
+  await alice.evaluate(() => window.__illogical.hosts.select("minebox"));
+  await expect
+    .poll(
+      () =>
+        alice.evaluate(async () => {
+          const c = window.__illogical.client;
+          if (!c.connected) return [];
+          return (await (await c.request("GET", "/api/team-pins")).json<{ checked: string[] }>()).checked;
+        }),
+      { timeout: 30_000 },
+    )
+    .toContain(team);
+  // Its session, with one pane: where the invite opens.
+  const [session, first] = await alice.evaluate(async () => {
+    const c = window.__illogical.client;
+    const session = c.state!.sessions[0].id;
+    const panes = await (await c.request("GET", "/api/panes")).json<{ id: number; session: number }[]>();
+    return [session, panes.filter((p) => p.session === session).map((p) => p.id)] as const;
+  });
+  expect(first).toHaveLength(1);
+  // The dialog: her name, a note, Share and notify.
+  await alice.locator(".session-button").click();
+  await alice.getByRole("menuitem", { name: "Share session…" }).click();
+  const dialog = alice.locator(`[data-share="${session}"]`);
+  await dialog.getByLabel("Who").fill("carol");
+  await dialog.locator("[data-invite-note]").fill("take a look at the flaky test");
+  await dialog.locator("[data-invite]").click();
+  await expect(dialog.locator("[data-invite-delivery]")).toHaveAttribute("data-invite-delivery", "sent", { timeout: 30_000 });
+  await expect(dialog.locator("[data-invite-delivery]")).toHaveText("carol was notified");
+  await expect(dialog.locator(`[data-grant^="account:"]`, { hasText: "carol" })).toBeVisible();
+  // Her phone got it: from Alice, with the note, opening at the pane.
+  const got = pushed.filter((p) => p.path === "/carol").map((p) => openPush(p.body, phone, auth));
+  expect(got).toHaveLength(1);
+  expect(got[0].tag).toMatch(/^invite-/);
+  expect(got[0].pane).toBe(first[0]);
+  expect(got[0].body).toBe("take a look at the flaky test");
+  expect(got[0].title).toContain("brought you into");
+  const minebox = await alice.evaluate(() => window.__illogical.control!.daemons.find((d) => d.name === "minebox")!.id);
+  expect(got[0].daemon).toBe(minebox);
+  await dialog.getByRole("button", { name: "Done" }).click();
 });

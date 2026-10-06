@@ -120,6 +120,7 @@ fn own_routes(app: &Arc<App>) -> Router<Arc<App>> {
         .merge(crate::share::api_routes())
         .merge(crate::guest_ssh::routes())
         .merge(crate::acl::api::routes())
+        .merge(crate::invite::routes())
         .merge(crate::setup::routes())
         .merge(crate::update::routes())
 }

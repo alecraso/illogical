@@ -19,6 +19,8 @@
 //! | POST | `/api/panes/N/inbox` | `Stop`/`SessionStart` hook input (`illogical inbox`) | a follow-up: `{action: follow_up\|replaced, text?, by?}` |
 //! | POST | `/api/panes/N/followup` | `{text}` | `{delivered}`: the agent's next instruction, from whoever may drive it |
 //! | GET, POST | `/api/notify` | POST `{session?, on}` | `NotifyPref`: which agents' "needs you" notifications reach you (M29) |
+//! | POST | `/api/invite` | `{session, who, role?, note?, pane?, history?, drive_minutes?, root?}` | `{invite, grant, pane, delivery: sent\|pending\|unreachable, reason?, drive?}`: share a session and push that person alone (#233; the owner's) |
+//! | GET, POST | `/api/team-pins` | POST `{pins: {team: "<founder>.<founder's root>"}}` | `{pins, checked}`: teams the owner's browser pinned, whose rosters this machine checked (#233; the owner's) |
 //! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
 //! | POST | `/api/blocks` | `OpenRequest` | `{"block": N}` |
 //! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |

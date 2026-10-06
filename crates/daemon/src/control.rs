@@ -47,8 +47,12 @@ use crate::{
 };
 
 pub const FILE: &str = "control.json";
+const PINS_FILE: &str = "team-pins.json";
+const INVITES_FILE: &str = "invites.json";
 pub const KEY_FILE: &str = "daemon.key";
 const REFRESH: Duration = Duration::from_secs(60);
+/// How long [`Control::refresh_now`] waits by default (#232).
+pub const REFRESH_WAIT: Duration = Duration::from_secs(10);
 /// What this daemon tells control it understands, so control offers only
 /// what every daemon checking a team can take (presigned invites' rosters).
 /// `ILLOGICAL_FEATURES` says otherwise (tests play an older daemon with "").
@@ -149,6 +153,17 @@ pub struct PeerCerts {
     pub certs: Vec<Cert>,
     #[serde(default)]
     pub revocations: Vec<Revocation>,
+}
+
+/// How a push through control went (#232), by subscription.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Pushed {
+    /// Subscriptions the push was for.
+    pub matched: usize,
+    /// Those control took to relay.
+    pub relayed: usize,
+    /// Those control refused: not someone it routes to this daemon.
+    pub refused: usize,
 }
 
 pub struct Enrolled {
@@ -255,6 +270,11 @@ pub struct Control {
     pub default_url: String,
     /// Control said the account's devices changed: refresh now.
     nudge: tokio::sync::Notify,
+    /// Refreshes started, counting from 1 (#232).
+    started: std::sync::atomic::AtomicU64,
+    /// The number of the last refresh that went through, set as it ends
+    /// and nowhere else: [`Control::refresh_now`] waits on it.
+    refreshed: watch::Sender<u64>,
     http: reqwest::Client,
     /// What control was last told about access.
     published: std::sync::Mutex<Option<serde_json::Value>>,
@@ -265,6 +285,47 @@ pub struct Control {
     auth_v2: std::sync::atomic::AtomicBool,
     /// TURN credentials for huddles (M63), and when they were fetched.
     turn: tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>,
+    /// Teams the owner's browser pinned (#233), by id: `<founder
+    /// device>.<founder's root>`, in `team-pins.json`. Their rosters are
+    /// fetched and checked as a shared team's, so their members can be
+    /// named; they let no one in.
+    team_pins: RwLock<BTreeMap<String, String>>,
+    /// Invites waiting for their person to be reachable (#233), in
+    /// `invites.json`: tried again after each refresh, for a day.
+    invites: std::sync::Mutex<Vec<Waiting>>,
+    /// Held while they're tried: one try at a time, beside the refreshes.
+    retrying: tokio::sync::Mutex<()>,
+}
+
+/// An invite pushed to nobody yet (#233): its person hasn't accepted the
+/// share, or control didn't answer in time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Waiting {
+    /// Whom, by principal id.
+    pub who: String,
+    /// Into which session: once they can't read it (revoked), it's not
+    /// sent. (`None`: kept from before this was.)
+    #[serde(default)]
+    pub session: Option<illogical_core::SessionId>,
+    pub pane: u32,
+    pub title: String,
+    pub body: String,
+    pub extra: serde_json::Value,
+    /// When it was made (ms); a day later it stops waiting.
+    pub at: u64,
+}
+
+/// How long an invite waits for its person (#233).
+const INVITE_WAIT_MS: u64 = 24 * 3600 * 1000;
+
+/// Someone a roster this daemon checked names (#233): its own team's, or
+/// a team's the owner pinned or shared with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Known {
+    pub account: String,
+    pub root: String,
+    pub name: String,
+    pub role: TeamRole,
 }
 
 fn read_saved(dir: &Path) -> anyhow::Result<Option<Saved>> {
@@ -319,11 +380,26 @@ impl Control {
             direct_urls,
             default_url,
             nudge: tokio::sync::Notify::new(),
+            started: Default::default(),
+            refreshed: watch::channel(0).0,
             http: crate::roots::http().timeout(Duration::from_secs(20)).build().expect("http client"),
             published: Default::default(),
             no_relay,
             auth_v2: Default::default(),
             turn: Default::default(),
+            team_pins: RwLock::new(
+                std::fs::read(state_dir.join(PINS_FILE))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or_default(),
+            ),
+            invites: std::sync::Mutex::new(
+                std::fs::read(state_dir.join(INVITES_FILE))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or_default(),
+            ),
+            retrying: Default::default(),
         });
         me.reload();
         me
@@ -361,6 +437,18 @@ impl Control {
         self.nudge.notify_one();
     }
 
+    /// Look again now and wait for it (#232): true once a refresh that
+    /// started after this call has gone through (so it saw what changed
+    /// before it: a grant, say), false if none has within `timeout`. One
+    /// already under way when called doesn't count: it may have read the
+    /// grants before the change.
+    pub async fn refresh_now(&self, timeout: Duration) -> bool {
+        let mut done = self.refreshed.subscribe();
+        let before = self.started.load(std::sync::atomic::Ordering::SeqCst);
+        self.poke();
+        matches!(tokio::time::timeout(timeout, done.wait_for(|n| *n > before)).await, Ok(Ok(_)))
+    }
+
     /// What to call an account that's an owner here (M30): this daemon's
     /// own account's login, or a team box's owner as the roster names them.
     pub fn name_of_account(&self, account: &str) -> Option<String> {
@@ -370,6 +458,142 @@ impl Control {
         }
         let m = e.saved.roster.as_ref()?.member(account)?;
         Some(e.saved.team_names.get(account).unwrap_or(&m.name).clone())
+    }
+
+    /// Teams the owner's browser pinned (#233).
+    pub fn team_pins(&self) -> BTreeMap<String, String> {
+        self.team_pins.read().unwrap().clone()
+    }
+
+    /// Pin more (a newer pin of the same team replaces it) and unpin
+    /// teams left (`drop`); true if any changed. Only the owner's browser
+    /// sends these: control never does.
+    pub fn set_team_pins(&self, pins: BTreeMap<String, String>, drop: &[String]) -> std::io::Result<bool> {
+        let mut p = self.team_pins.write().unwrap();
+        let before = p.clone();
+        p.extend(pins);
+        p.retain(|team, _| !drop.contains(team));
+        if *p == before {
+            return Ok(false);
+        }
+        crate::store::write_atomic(&self.state_dir.join(PINS_FILE), &serde_json::to_vec_pretty(&*p)?)?;
+        Ok(true)
+    }
+
+    /// Teams whose roster checked out from its pin, by id.
+    pub fn checked_teams(&self) -> Vec<String> {
+        self.enrolled().map(|e| e.saved.shared_teams.keys().cloned().collect()).unwrap_or_default()
+    }
+
+    /// Everyone the rosters this daemon checked name (#233): its own
+    /// team's (a team daemon) and those of teams pinned or shared with;
+    /// not this account.
+    pub fn known(&self) -> Vec<Known> {
+        let Some(e) = self.enrolled() else { return Vec::new() };
+        let rosters = e.saved.roster.iter().chain(e.saved.shared_teams.values().map(|t| &t.roster));
+        let mut out: Vec<Known> = Vec::new();
+        for m in rosters.flat_map(|r| &r.members) {
+            if m.account == e.saved.cert.account || out.iter().any(|k| k.account == m.account) {
+                continue;
+            }
+            out.push(Known { account: m.account.clone(), root: m.root.clone(), name: m.name.clone(), role: m.role });
+        }
+        out
+    }
+
+    /// Whether this daemon's own team (a team daemon) has `account` as an
+    /// owner: an owner here already.
+    pub fn owns_here(&self, account: &str) -> bool {
+        self.enrolled().is_some_and(|e| {
+            e.saved.roster.as_ref().and_then(|r| r.member(account)).is_some_and(|m| m.role == TeamRole::Owner)
+        })
+    }
+
+    /// Whether this daemon is a team's (M19).
+    pub fn is_team(&self) -> bool {
+        self.enrolled().is_some_and(|e| e.saved.team.is_some())
+    }
+
+    /// Whether someone (by principal id) has devices this daemon lets in
+    /// through control: control routes them here.
+    pub fn reaches(&self, id: &str) -> bool {
+        self.enrolled().is_some_and(|e| e.others.iter().any(|(_, p)| p.id() == id))
+    }
+
+    /// Keep an invite for later (#233): pushed after a refresh that finds
+    /// its person reachable, or dropped after a day. A newer invite of
+    /// theirs into the same session replaces one waiting: one push.
+    pub fn wait_invite(&self, w: Waiting) {
+        let mut l = self.invites.lock().unwrap();
+        l.retain(|o| !(o.who == w.who && o.session == w.session));
+        l.push(w);
+        self.save_invites(&l);
+    }
+
+    fn save_invites(&self, l: &[Waiting]) {
+        let r = serde_json::to_vec_pretty(l)
+            .map_err(std::io::Error::other)
+            .and_then(|b| crate::store::write_atomic(&self.state_dir.join(INVITES_FILE), &b));
+        if let Err(e) = r {
+            warn!(error = %e, "can't save waiting invites");
+        }
+    }
+
+    /// Try the waiting invites again: each goes once a subscription took
+    /// it, or after a day stops waiting, or once its share is revoked.
+    pub async fn retry_invites(&self) {
+        let Ok(_one) = self.retrying.try_lock() else { return };
+        let waiting = self.invites.lock().unwrap().clone();
+        if waiting.is_empty() {
+            return;
+        }
+        let mut done = Vec::new();
+        for w in &waiting {
+            if w.at + INVITE_WAIT_MS <= now_ms() {
+                info!(who = w.who, "an invite waited a day; it's unreachable");
+                done.push(w.clone());
+                continue;
+            }
+            if w.session.is_some_and(|s| self.acl.role_of(&w.who, s).is_none()) {
+                info!(who = w.who, "a waiting invite's share was revoked; it's not sent");
+                done.push(w.clone());
+                continue;
+            }
+            let got = self.push_report(w.pane, &w.title, &w.body, Some(w.extra.clone()), |p| p.id() == w.who).await;
+            if got.relayed > 0 {
+                info!(who = w.who, "a waiting invite went out");
+                done.push(w.clone());
+            }
+        }
+        let mut l = self.invites.lock().unwrap();
+        l.retain(|w| !done.contains(w));
+        self.save_invites(&l);
+    }
+
+    /// People who have a team role here, by the roster (this daemon's team,
+    /// and teams sessions were shared with), connected or not.
+    pub fn team_people(&self) -> Vec<Principal> {
+        let Some(e) = self.enrolled() else { return Vec::new() };
+        let mut out = Vec::new();
+        if let Some(r) = &e.saved.roster {
+            for m in &r.members {
+                let id = format!("account:{}", m.account);
+                if e.team_roles.contains_key(&id) {
+                    let name = e.saved.team_names.get(&m.account).unwrap_or(&m.name).clone();
+                    out.push(Principal::User { id, name, pic: None });
+                }
+            }
+        }
+        for (team, t) in &e.saved.shared_teams {
+            for m in &t.roster.members {
+                let id = format!("account:{}", m.account);
+                if e.shared_roles.get(team).is_some_and(|r| r.contains_key(&id)) {
+                    let name = t.names.get(&m.account).unwrap_or(&m.name).clone();
+                    out.push(Principal::User { id, name, pic: None });
+                }
+            }
+        }
+        out
     }
 
     /// Who a Noise key belongs to, if this daemon lets them in: a device of
@@ -483,6 +707,7 @@ impl Control {
     /// with); keep what checks out against what this daemon pinned.
     async fn refresh(&self) -> anyhow::Result<bool> {
         let Some(e) = self.enrolled() else { return Ok(false) };
+        let number = self.started.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         self.check_auth(&e).await;
         #[derive(Deserialize)]
         struct Own {
@@ -551,8 +776,9 @@ impl Control {
         saved.peers = peers;
 
         // Teams sessions were shared with (M30): each roster checked from
-        // the founder the grant pinned.
-        let pins: BTreeMap<String, TeamPin> = self
+        // the founder the grant pinned. And those the owner's browser
+        // pinned (#233), checked the same way, for naming their members.
+        let mut pins: BTreeMap<String, TeamPin> = self
             .acl
             .list()
             .iter()
@@ -561,6 +787,11 @@ impl Control {
                 Some((team.to_owned(), team_pin(team, g.root.as_deref()?)?))
             })
             .collect();
+        for (team, root) in self.team_pins() {
+            if let Some(p) = team_pin(&team, &root) {
+                pins.entry(team).or_insert(p);
+            }
+        }
         saved.shared_teams = BTreeMap::new();
         if !pins.is_empty() {
             #[derive(Deserialize)]
@@ -617,18 +848,23 @@ impl Control {
             write_saved(&self.state_dir, &saved)?;
         }
         let mut next = Enrolled::build(saved, e.keys.clone(), &self.acl);
-        next.push = self.push_subs(&next).await;
         if next.trusted.get(&next.saved.cert.device).is_none() {
             warn!("this daemon's own certificate no longer checks out (revoked?)");
         }
+        // Who gets in first: control hands over only the subscriptions of
+        // people it knows this daemon serves (#232), so someone just
+        // granted is reachable after this refresh, not the next.
         self.publish(&next).await;
+        next.push = self.push_subs(&next).await;
         info!(devices = next.trusted.devices.len(), others = next.others.len(), changed, "certificates refreshed");
         self.install(Some(next));
+        self.refreshed.send_modify(|n| *n = (*n).max(number));
         Ok(changed)
     }
 
     /// Notify people through control (M21): every verified subscription
-    /// `to` accepts, encrypted here for that subscription alone.
+    /// `to` accepts, encrypted here for that subscription alone. In the
+    /// background; [`Control::push_report`] says how it went.
     pub fn push(
         self: &Arc<Self>,
         pane: u32,
@@ -637,18 +873,45 @@ impl Control {
         extra: Option<serde_json::Value>,
         to: impl Fn(&Principal) -> bool,
     ) {
-        let Some(e) = self.enrolled() else { return };
+        let Some((e, subs, payload)) = self.to_push(pane, title, body, extra, to) else { return };
+        let me = self.clone();
+        tokio::spawn(async move { me.relay_push(&e, subs, &payload).await });
+    }
+
+    /// [`Control::push`], waited for (#232): how many subscriptions `to`
+    /// matched, how many control took, and how many it refused (someone
+    /// it doesn't route to this daemon). `extra.tag` names the
+    /// notification (`invite-7`) in place of the pane's.
+    pub async fn push_report(
+        &self,
+        pane: u32,
+        title: &str,
+        body: &str,
+        extra: Option<serde_json::Value>,
+        to: impl Fn(&Principal) -> bool,
+    ) -> Pushed {
+        let Some((e, subs, payload)) = self.to_push(pane, title, body, extra, to) else { return Pushed::default() };
+        self.relay_push(&e, subs, &payload).await
+    }
+
+    /// The subscriptions `to` picks, and what to tell them.
+    fn to_push(
+        &self,
+        pane: u32,
+        title: &str,
+        body: &str,
+        extra: Option<serde_json::Value>,
+        to: impl Fn(&Principal) -> bool,
+    ) -> Option<(Arc<Enrolled>, Vec<PushSub>, String)> {
+        let e = self.enrolled()?;
         let subs: Vec<PushSub> = e.push.iter().filter(|(p, _)| to(p)).map(|(_, s)| s.clone()).collect();
         if subs.is_empty() {
-            return;
+            return None;
         }
-        let mut payload = serde_json::json!({
-            "title": title, "body": body, "pane": pane, "tag": format!("pane-{pane}"), "daemon": e.saved.cert.device,
-        });
-        if let Some(serde_json::Value::Object(extra)) = extra {
-            payload.as_object_mut().unwrap().extend(extra);
-        }
-        self.deliver(e, subs, payload.to_string());
+        let mut payload = crate::push::payload(pane, title, body, extra);
+        payload.entry("daemon").or_insert_with(|| e.saved.cert.device.clone().into());
+        let payload = serde_json::Value::Object(payload).to_string();
+        Some((e, subs, payload))
     }
 
     /// Notify one device (S33: wake a hand). False when control has no
@@ -661,34 +924,36 @@ impl Control {
         }
         let mut payload = payload;
         payload["daemon"] = e.saved.cert.device.clone().into();
-        self.deliver(e, subs, payload.to_string());
+        let payload = payload.to_string();
+        let me = self.clone();
+        tokio::spawn(async move { me.relay_push(&e, subs, &payload).await });
         true
     }
 
-    /// Encrypt `payload` for each subscription and hand it to control.
-    fn deliver(self: &Arc<Self>, e: Arc<Enrolled>, subs: Vec<PushSub>, payload: String) {
-        let me = self.clone();
-        tokio::spawn(async move {
-            use base64::Engine;
-            let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-            for s in subs {
-                let (Ok(ua), Ok(auth)) = (b64.decode(&s.p256dh), b64.decode(&s.auth)) else { continue };
-                let Ok(body) = crate::push::encrypt(
-                    payload.as_bytes(),
-                    &ua,
-                    &auth,
-                    &crate::push::new_secret(),
-                    &crate::push::random::<16>(),
-                ) else {
-                    continue;
-                };
-                let req = serde_json::json!({ "endpoint": s.endpoint, "body": base64::engine::general_purpose::STANDARD.encode(body) });
-                let res = me.post_json(&e, "/api/daemon/push", &req).send().await;
-                if let Err(err) = res {
-                    warn!(error = %err, "can't push through control");
-                }
+    async fn relay_push(&self, e: &Enrolled, subs: Vec<PushSub>, payload: &str) -> Pushed {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut got = Pushed { matched: subs.len(), ..Default::default() };
+        for s in subs {
+            let (Ok(ua), Ok(auth)) = (b64.decode(&s.p256dh), b64.decode(&s.auth)) else { continue };
+            let Ok(body) = crate::push::encrypt(
+                payload.as_bytes(),
+                &ua,
+                &auth,
+                &crate::push::new_secret(),
+                &crate::push::random::<16>(),
+            ) else {
+                continue;
+            };
+            let req = serde_json::json!({ "endpoint": s.endpoint, "body": base64::engine::general_purpose::STANDARD.encode(body) });
+            match self.post_json(e, "/api/daemon/push", &req).send().await {
+                Ok(r) if r.status().is_success() => got.relayed += 1,
+                Ok(r) if r.status() == reqwest::StatusCode::FORBIDDEN => got.refused += 1,
+                Ok(r) => warn!(status = %r.status(), "control didn't relay a push"),
+                Err(err) => warn!(error = %err, "can't push through control"),
             }
-        });
+        }
+        got
     }
 
     /// M40: a read-only installation token for a GitHub repository from
@@ -791,6 +1056,17 @@ impl Control {
     /// Run for good: notice joins and leaves, keep certificates fresh, and
     /// keep the relay socket up while enrolled.
     pub fn start(self: &Arc<Self>, app: Arc<App>) {
+        let a = app.clone();
+        self.run(move || app.mux.send(crate::mux::Cmd::AclChanged), move |me| tokio::spawn(keep_relay(me, a.clone())));
+    }
+
+    /// [`Control::start`]'s loop: `acl_changed` after each reload and
+    /// refresh, `relay_with` to keep the socket up.
+    fn run(
+        self: &Arc<Self>,
+        acl_changed: impl Fn() + Send + 'static,
+        relay_with: impl Fn(Arc<Self>) -> tokio::task::JoinHandle<()> + Send + 'static,
+    ) {
         let me = self.clone();
         tokio::spawn(async move {
             let mut stamp = file_stamp(&me.state_dir);
@@ -801,7 +1077,7 @@ impl Control {
                 if now != stamp {
                     stamp = now;
                     me.reload();
-                    app.mux.send(crate::mux::Cmd::AclChanged);
+                    acl_changed();
                     if let Some(r) = relay.take() {
                         r.abort();
                     }
@@ -813,13 +1089,20 @@ impl Control {
                         last_refresh = std::time::Instant::now();
                         match me.refresh().await {
                             // Roles may have changed: re-filter everyone.
-                            Ok(_) => app.mux.send(crate::mux::Cmd::AclChanged),
+                            // Someone an invite waits for may be reachable.
+                            // Beside the loop: a slow control doesn't hold up
+                            // the next refresh.
+                            Ok(_) => {
+                                acl_changed();
+                                let m = me.clone();
+                                tokio::spawn(async move { m.retry_invites().await });
+                            }
                             Err(e) => warn!(error = %e, "can't refresh certificates from control"),
                         }
                         stamp = file_stamp(&me.state_dir);
                     }
                     if !me.no_relay && relay.as_ref().is_none_or(|r| r.is_finished()) {
-                        relay = Some(tokio::spawn(keep_relay(me.clone(), app.clone())));
+                        relay = Some(relay_with(me.clone()));
                     }
                 } else if let Some(r) = relay.take() {
                     r.abort();
@@ -1449,6 +1732,353 @@ mod tests {
         join(&url, "box", None, Some(&fingerprint(&root.device)), None, &dir).await.unwrap();
         assert_eq!(read_saved(&dir).unwrap().unwrap().trust.root, root.device);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A control of the test's own (#232). As the real one, it hands a
+    /// daemon the subscriptions only of accounts it serves: its own, and
+    /// those the daemon told it about that control routes to it (`b1`,
+    /// once `routed`); and it refuses to relay to anyone else.
+    #[derive(Default)]
+    struct Fake {
+        /// What `/api/daemon/access` was last told.
+        published: Vec<String>,
+        routed: bool,
+        own: Vec<Cert>,
+        peer: Option<Cert>,
+        subs: Vec<PushSub>,
+        /// Pushes relayed: endpoint and body.
+        relayed: Vec<(String, Vec<u8>)>,
+    }
+
+    struct Rig {
+        dir: PathBuf,
+        fake: Arc<std::sync::Mutex<Fake>>,
+        /// Held, a refresh stops at `/api/daemon/peers` (after it read the
+        /// grants); `at_peers` says it got there.
+        hold: Arc<tokio::sync::Mutex<()>>,
+        at_peers: mpsc::UnboundedReceiver<()>,
+        acl: Arc<Acl>,
+        bea: DeviceKeys,
+        phone: p256::SecretKey,
+    }
+
+    /// Enrolled in account `a1` at a [`Fake`]; `b1` (Bea) has an account,
+    /// a phone with push on, and no grant yet.
+    async fn rig(name: &str) -> Rig {
+        use axum::{
+            Json, Router,
+            extract::{Query, State},
+            http::StatusCode,
+            routing::{get, post},
+        };
+        use base64::Engine;
+        type St = (Arc<std::sync::Mutex<Fake>>, Arc<tokio::sync::Mutex<()>>, mpsc::UnboundedSender<()>);
+
+        let (akeys, aroot) = device("a1", Kind::Browser);
+        let dkeys = DeviceKeys::generate();
+        let mut dcert = Cert::new(&dkeys, "a1", Kind::Daemon, "box");
+        dcert.sign_with(&akeys);
+        let (bea, broot) = device("b1", Kind::Browser);
+        let phone = p256::SecretKey::from_slice(&[7; 32]).unwrap();
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut sub = PushSub {
+            v: 1,
+            account: "b1".into(),
+            device: String::new(),
+            endpoint: "https://push.test/b1".into(),
+            p256dh: b64.encode(phone.public_key().to_sec1_bytes()),
+            auth: b64.encode([7u8; 16]),
+            at: now_ms(),
+            sig: String::new(),
+        };
+        sub.sign_with(&bea);
+        let fake = Arc::new(std::sync::Mutex::new(Fake {
+            own: vec![aroot.clone(), dcert.clone()],
+            peer: Some(broot),
+            subs: vec![sub],
+            ..Default::default()
+        }));
+        let hold: Arc<tokio::sync::Mutex<()>> = Default::default();
+        let (hit, at_peers) = mpsc::unbounded_channel();
+
+        #[derive(Deserialize)]
+        struct Accounts {
+            accounts: String,
+        }
+        let app = Router::new()
+            .route(
+                "/api/daemon/trust",
+                get(|State((f, _, _)): State<St>| async move {
+                    Json(serde_json::json!({ "certs": f.lock().unwrap().own, "revocations": [] }))
+                }),
+            )
+            .route(
+                "/api/daemon/peers",
+                get(|State((f, hold, hit)): State<St>, Query(q): Query<Accounts>| async move {
+                    let _ = hit.send(());
+                    drop(hold.lock().await);
+                    let f = f.lock().unwrap();
+                    let mut out = serde_json::Map::new();
+                    for a in q.accounts.split(',') {
+                        if a == "b1" && f.routed {
+                            out.insert(
+                                a.into(),
+                                serde_json::json!({ "name": "bea", "certs": [f.peer], "revocations": [] }),
+                            );
+                        }
+                    }
+                    Json(serde_json::Value::Object(out))
+                }),
+            )
+            .route(
+                "/api/daemon/access",
+                post(|State((f, _, _)): State<St>, Json(b): Json<serde_json::Value>| async move {
+                    f.lock().unwrap().published = serde_json::from_value(b["accounts"].clone()).unwrap();
+                    Json(serde_json::json!({}))
+                }),
+            )
+            .route(
+                "/api/daemon/push-subs",
+                get(|State((f, _, _)): State<St>| async move {
+                    let f = f.lock().unwrap();
+                    let served = |a: &str| f.routed && f.published.iter().any(|p| p == a);
+                    let subs: Vec<&PushSub> = f.subs.iter().filter(|s| served(&s.account)).collect();
+                    Json(serde_json::json!({ "subs": subs }))
+                }),
+            )
+            .route(
+                "/api/daemon/push",
+                post(|State((f, _, _)): State<St>, Json(b): Json<serde_json::Value>| async move {
+                    let mut f = f.lock().unwrap();
+                    let endpoint = b["endpoint"].as_str().unwrap_or_default().to_owned();
+                    let Some(s) = f.subs.iter().find(|s| s.endpoint == endpoint) else {
+                        return StatusCode::NOT_FOUND;
+                    };
+                    if !(f.routed && f.published.contains(&s.account)) {
+                        return StatusCode::FORBIDDEN;
+                    }
+                    let body = base64::engine::general_purpose::STANDARD
+                        .decode(b["body"].as_str().unwrap_or_default())
+                        .unwrap();
+                    f.relayed.push((endpoint, body));
+                    StatusCode::OK
+                }),
+            )
+            .with_state((fake.clone(), hold.clone(), hit));
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await });
+
+        let dir = std::env::temp_dir().join(format!("illogical-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dkeys.save(&dir.join(KEY_FILE)).unwrap();
+        let saved = Saved {
+            url,
+            trust: Trust { account: "a1".into(), root: aroot.device.clone() },
+            cert: dcert,
+            certs: vec![aroot],
+            revocations: vec![],
+            team: None,
+            roster: None,
+            team_certs: Default::default(),
+            team_names: Default::default(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: String::new(),
+            moved_at: 0,
+        };
+        write_saved(&dir, &saved).unwrap();
+        let acl = Arc::new(Acl::open(&dir));
+        Rig { dir, fake, hold, at_peers, acl, bea, phone }
+    }
+
+    impl Rig {
+        /// A daemon on it, its loop running (no relay socket: a socket
+        /// would nudge it too, and the test wants only its own pokes), and
+        /// its first refreshes over: none left to refresh by chance.
+        async fn daemon(&self) -> Arc<Control> {
+            let c = Control::new(&self.dir, vec![], String::new(), self.acl.clone(), false);
+            c.run(|| {}, |_| tokio::spawn(std::future::pending()));
+            assert!(c.refresh_now(REFRESH_WAIT).await, "the first refresh");
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            c
+        }
+
+        /// The owner shares session 1 with Bea, as `account:b1`.
+        fn grant(&self) {
+            let root = self.bea.id();
+            self.acl.set_full(1, "account:b1", "bea", Some(Role::Editor), "owner", None, Some(root), None).unwrap();
+        }
+
+        /// What Bea's phone got, decrypted as a browser would (RFC 8291).
+        fn opened(&self) -> Vec<serde_json::Value> {
+            use aes_gcm::{Aes128Gcm, KeyInit, aead::Aead};
+            use hkdf::Hkdf;
+            use sha2::Sha256;
+            let f = self.fake.lock().unwrap();
+            f.relayed
+                .iter()
+                .map(|(_, body)| {
+                    let (salt, rest) = body.split_at(16);
+                    let id_len = rest[4] as usize;
+                    let (as_public, sealed) = rest[5..].split_at(id_len);
+                    let shared = p256::ecdh::diffie_hellman(
+                        self.phone.to_nonzero_scalar(),
+                        p256::PublicKey::from_sec1_bytes(as_public).unwrap().as_affine(),
+                    );
+                    let mut info = b"WebPush: info\0".to_vec();
+                    info.extend_from_slice(&self.phone.public_key().to_sec1_bytes());
+                    info.extend_from_slice(as_public);
+                    let mut ikm = [0u8; 32];
+                    Hkdf::<Sha256>::new(Some(&[7u8; 16]), shared.raw_secret_bytes().as_ref())
+                        .expand(&info, &mut ikm)
+                        .unwrap();
+                    let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
+                    let (mut cek, mut nonce) = ([0u8; 16], [0u8; 12]);
+                    prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).unwrap();
+                    prk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
+                    let mut plain = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(&nonce.into(), sealed).unwrap();
+                    assert_eq!(plain.pop(), Some(2));
+                    serde_json::from_slice(&plain).unwrap()
+                })
+                .collect()
+        }
+    }
+
+    fn to_bea(p: &Principal) -> bool {
+        p.id() == "account:b1"
+    }
+
+    /// #232: someone just granted (whom control routes here) is reachable
+    /// once the next refresh is through, not a minute later: the access
+    /// list goes to control before the subscriptions are fetched.
+    #[tokio::test]
+    async fn a_grant_is_reachable_after_one_refresh() {
+        let r = rig("reach").await;
+        r.fake.lock().unwrap().routed = true;
+        let c = r.daemon().await;
+        let nobody = c.push_report(1, "t", "b", None, to_bea).await;
+        assert_eq!(nobody, Pushed::default(), "not before the grant");
+
+        r.grant();
+        let t = std::time::Instant::now();
+        assert!(c.refresh_now(REFRESH_WAIT).await);
+        assert!(t.elapsed() < Duration::from_secs(5), "no waiting out the minute: {:?}", t.elapsed());
+        let got = c.push_report(1, "Waiting", "on you", Some(serde_json::json!({ "tag": "invite-7" })), to_bea).await;
+        assert_eq!(got, Pushed { matched: 1, relayed: 1, refused: 0 });
+        let got = c.push_report(4, "Waiting", "again", None, to_bea).await;
+        assert_eq!(got.relayed, 1);
+        let tags: Vec<_> = r.opened().iter().map(|n| n["tag"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(tags, ["invite-7", "pane-4"], "the caller's tag, else the pane's");
+
+        // Control stops routing her here (she turned it down, say) before
+        // this daemon heard: the push still matched, and was refused.
+        r.fake.lock().unwrap().routed = false;
+        let got = c.push_report(1, "t", "b", None, to_bea).await;
+        assert_eq!(got, Pushed { matched: 1, relayed: 0, refused: 1 });
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// The trap (#232): a refresh already under way when `refresh_now` is
+    /// called may have read the grants before the new one; it doesn't
+    /// count. The one after does.
+    #[tokio::test]
+    async fn refresh_now_waits_for_a_refresh_that_started_after_it() {
+        let mut r = rig("trap").await;
+        r.fake.lock().unwrap().routed = true;
+        let c = r.daemon().await;
+        while r.at_peers.try_recv().is_ok() {}
+
+        // One under way, past reading the grants; then the grant.
+        let held = r.hold.clone().lock_owned().await;
+        c.poke();
+        r.at_peers.recv().await.unwrap();
+        r.grant();
+        let c2 = c.clone();
+        let waiting = tokio::spawn(async move { c2.refresh_now(REFRESH_WAIT).await });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!waiting.is_finished());
+        drop(held);
+
+        assert!(waiting.await.unwrap());
+        assert_eq!(c.push_report(1, "t", "b", None, to_bea).await.matched, 1, "the refresh that saw the grant");
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// Only a refresh that went through counts (#232): not a reload or a
+    /// change of trust (`changed`), and not one that failed. With control
+    /// unreachable, `refresh_now` gives up after the timeout.
+    #[tokio::test]
+    async fn only_a_refresh_counts_and_an_unreachable_control_times_out() {
+        let r = rig("generation").await;
+        let c = Control::new(&r.dir, vec![], String::new(), r.acl.clone(), false);
+        let changed = *c.changed.borrow();
+        c.reload();
+        c.install(c.enrolled().map(|e| Enrolled::build(e.saved.clone(), e.keys.clone(), &r.acl)));
+        assert!(*c.changed.borrow() > changed);
+        assert_eq!(*c.refreshed.borrow(), 0, "not by reload or install");
+        c.refresh().await.unwrap();
+        assert_eq!(*c.refreshed.borrow(), 1, "by a refresh");
+
+        // Control gone: every refresh fails, so none counts.
+        let mut saved = read_saved(&r.dir).unwrap().unwrap();
+        saved.url = "http://127.0.0.1:1".into();
+        write_saved(&r.dir, &saved).unwrap();
+        c.reload();
+        assert!(c.refresh().await.is_err());
+        assert_eq!(*c.refreshed.borrow(), 1);
+        c.run(|| {}, |_| tokio::spawn(std::future::pending()));
+        let t = std::time::Instant::now();
+        assert!(!c.refresh_now(Duration::from_millis(500)).await);
+        assert!(t.elapsed() >= Duration::from_millis(500));
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// #233: a waiting invite goes out after the refresh that finds its
+    /// person reachable, once; one that waited a day stops waiting,
+    /// unpushed, as does one whose share is gone. A second invite into the
+    /// same session replaces the first. Kept across restarts.
+    #[tokio::test]
+    async fn waiting_invites_go_once_or_stop_after_a_day() {
+        let r = rig("waiting").await;
+        let c = r.daemon().await;
+        // Shared with session 1 (not yet routed by control); never with 2.
+        r.grant();
+        let w = |at, session, tag: &str| Waiting {
+            who: "account:b1".into(),
+            session: Some(session),
+            pane: 1,
+            title: "alex brought you into api".into(),
+            body: "b".into(),
+            extra: serde_json::json!({ "tag": tag }),
+            at,
+        };
+        c.wait_invite(w(now_ms() - INVITE_WAIT_MS - 1, 3, "invite-old"));
+        c.wait_invite(w(now_ms(), 1, "invite-first"));
+        c.wait_invite(w(now_ms(), 1, "invite-new"));
+        c.wait_invite(w(now_ms(), 2, "invite-revoked"));
+        assert_eq!(c.invites.lock().unwrap().len(), 3, "the second into session 1 replaced the first");
+        c.retry_invites().await;
+        let left: Vec<_> = c.invites.lock().unwrap().iter().map(|w| w.extra["tag"].clone()).collect();
+        assert_eq!(left, ["invite-new"], "the old one and the revoked one stopped waiting");
+        let kept = Control::new(&r.dir, vec![], String::new(), r.acl.clone(), false);
+        assert_eq!(kept.invites.lock().unwrap().len(), 1, "kept in invites.json");
+
+        r.fake.lock().unwrap().routed = true;
+        assert!(c.refresh_now(REFRESH_WAIT).await);
+        let t = std::time::Instant::now();
+        while r.opened().is_empty() && t.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let tags: Vec<_> = r.opened().iter().map(|n| n["tag"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(tags, ["invite-new"]);
+        assert!(c.invites.lock().unwrap().is_empty());
+        assert!(c.refresh_now(REFRESH_WAIT).await);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(r.opened().len(), 1, "once");
+        let _ = std::fs::remove_dir_all(&r.dir);
     }
 
     /// #100: a move signed by the account's own device is taken; one by

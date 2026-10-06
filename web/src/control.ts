@@ -734,14 +734,19 @@ export class ControlSession {
    * was deleted), oldest first. */
   notices: { id: number; title: string; body: string }[] = [];
 
+  /** Whether the last load of the teams worked: an empty list is then
+   * this account's, not a failure. */
+  teamsLoaded = false;
+
   async loadTeams() {
+    let loaded = true;
     const r = await api<{ teams: Omit<Team, "verified">[]; asked?: ControlSession["asked"]; notices?: ControlSession["notices"] }>(
       "/api/teams",
-    ).catch(() => ({
-      teams: [] as Omit<Team, "verified">[],
-      asked: this.asked,
-      notices: this.notices,
-    }));
+    ).catch(() => {
+      loaded = false;
+      return { teams: [] as Omit<Team, "verified">[], asked: this.asked, notices: this.notices };
+    });
+    this.teamsLoaded = loaded;
     this.notices = r.notices ?? [];
     const out: Team[] = [];
     for (const t of r.teams) {
@@ -755,6 +760,21 @@ export class ControlSession {
     if (yes) this.joined = { team: yes.team, name: yes.name };
     this.asked = now;
     this.teams = out;
+  }
+
+  /** The teams this browser pinned and checked, for a machine of this
+   * account's to check their rosters by (#233): `<founder>.<founder's
+   * root>` by team. */
+  teamPins(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const t of this.teams) if (t.verified && t.role !== null) out[t.team] = `${t.pin.founder}.${t.pin.founder_root}`;
+    return out;
+  }
+
+  /** A machine of this account's own: not a team's, not someone else's. */
+  owns(id: string): boolean {
+    const d = this.daemons.find((x) => x.id === id);
+    return !!d && (!d.account || d.account === this.account) && !d.team;
   }
 
   sawJoined() {

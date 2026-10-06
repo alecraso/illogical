@@ -974,6 +974,43 @@ the daemon stopping, crashing, or the machine rebooting:
   instruction, as its sender's input; on someone's own machine a teammate
   needs their trust first. Cards show who else is looking. Who gets
   notified is opt-in per person (*Notify me about its agents*).
+- **Invites** (#233). "Bring Sam into this" in one step: *Share and
+  notify* in *Share session…*, `illogical invite sam`, or `POST
+  /api/invite` (the owner's only) shares the session (or upgrades a
+  share; never downgrades one) and pushes that one person, "Alex brought
+  you into api-work: take a look at the flaky test", opening at the pane,
+  whatever anyone's notification settings. It reports what happened, not
+  what was tried: *sent* when a subscription took it, *pending* while
+  someone outside your teams hasn't accepted the machine (retried after
+  each refresh for a day), else *unreachable* with why. People are named
+  as the machine itself knows them: tailnet logins, people already shared
+  with, and members of rosters it checked against a team pin your own
+  browser gave it, never on control's word. A team's members on a team's
+  machine already hold their role: they're just told. `--drive N` also
+  trusts an editor to type on your machine for N minutes. Audit-logged.
+- **An agent asks to invite someone** (#234). MCP's `invite_person
+  {who, role?, pane?, note}`, from any of your own agents, Claude Code in
+  a terminal included, shares nothing: it opens a small invite block
+  beside the agent with a card, "claude-code (pane %3, you started it)
+  wants to bring Sam [account:s1] (editor) into api-work at pane %3: …",
+  whose names are the session's and the person's as the machine knows
+  them when it's shown (the principal beside the name), and pushes it to you alone (not to
+  editors who opted in), with no buttons to send it from. Only the
+  session's owner answers it, by any route (the card, the push, the
+  swarm, the CLI): *Invite* sends #233's invite as you, with the role and
+  note as you left them and drive trust only if you set it; *Decline*
+  tells the agent, with a reason if you give one. Editors, and agents
+  (`agent_respond`, the CLI under one), are refused. An agent a guest
+  started (or one such an agent started) can't ask at all; nor can an
+  agent skip the card: `illogical invite` and `/api/team-pins` under one
+  are refused, and only `invite_person` makes invite blocks. Unanswered, it's
+  dropped after a day. Closing the invite block is yours alone too
+  (editors and agents are refused); what still waited is dropped, and
+  `read_invite` says so. `read_invite` tells the agent which: waiting,
+  sent (with the delivery), declined, dropped or failed. Each agent has at
+  most five waiting. The card lives on its own block, so it never
+  replaces the agent's own permission or question card. The audit log
+  names you as sender and the agent and its pane as drafter.
 - **The swarm** (M26, `/#swarm`, *Swarm* beside the tabs). Every pane on
   every machine you and your team can see, as one field of tiles coloured
   by kind and lit by activity, clustered by project (or directory, outside
@@ -1046,11 +1083,30 @@ the daemon stopping, crashing, or the machine rebooting:
   Each person has their own unread count: on the pane's bubble, a dot on
   the session button, and a folded corner in the swarm (blocks, hive and
   timeline; the city doesn't draw it yet). `@name` notifies someone, on
-  their phone too. *Quote selection in thread* posts terminal output as a
+  their phone too (a tap opens the thread; team members are reached
+  whether or not they're connected). *Quote selection in thread* posts terminal output as a
   quote that stays readable after the pane scrolls; clicking it jumps back
   to the output. `@agent` (or `@claude`) in a pane's thread goes to that
   pane's agent as a follow-up, from whoever may drive it, and agents read
-  and answer with the MCP tools `read_thread` and `post_thread`.
+  and answer with the MCP tools `read_thread` and `post_thread`. Only an
+  `@` that reached someone is marked in the thread; one that reached no
+  one (a name nobody here who can read the thread has, or an `@agent` in a
+  session's thread or from someone who can't drive the pane) stays plain
+  and the poster, and no one else, is told so under the message (and in
+  `post_thread`'s `unreached`).
+- **An @ of someone who can't see the thread offers to invite them**
+  (#297). When you, the owner, write "@sam look" and Sam is someone this
+  machine knows (shared with elsewhere, or on a roster it checked) but
+  can't read that thread, the composer says "Sam can't see this. Invite
+  them?" in place of the "nobody" note. One click is #233's invite, as a
+  viewer, with your message as its note: Sam's push opens that thread.
+  By default Sam sees that message and what follows in that thread only;
+  *Share the whole thread* gives that thread's history instead. Either
+  way every other thread of the session starts at the invite, like any
+  "from now" share, and a later role change keeps what Sam could read.
+  Nobody else's post is offered anything, so an @ never tells an editor
+  who exists. Agents get no offer: `post_thread` points them at
+  `invite_person`.
 - **Huddles** (M63). A voice call on a session, for the people working in
   it: the headphones button by the session's name (or *Start a huddle* in
   the session menu) starts one, and everyone with the session sees it's on

@@ -105,7 +105,14 @@ pub struct Caller {
     pub scope: Scope,
     /// The token it came with, for the log (`None`: the owner's own).
     pub token: Option<String>,
+    /// A full caller's pane, as `illogical mcp` in one says
+    /// (`$ILLOGICAL_PANE`, #234): where it works, by default. Not a
+    /// credential: a full caller reaches everything anyway.
+    pub pane: Option<PaneId>,
 }
+
+/// The header `illogical mcp` sends its pane in.
+pub const PANE_HEADER: &str = "x-illogical-pane";
 
 /// `/mcp`, for one of the daemon's routers.
 pub fn routes(app: &Arc<App>) -> Router<Arc<App>> {
@@ -125,7 +132,7 @@ pub fn pipe_server(app: &Arc<App>) -> relay::Serve {
     let app = Arc::downgrade(app);
     Arc::new(move |id, io| {
         let Some(app) = app.upgrade() else { return };
-        let caller = Caller { scope: Scope::Block(id), token: Some(format!("%{id}")) };
+        let caller = Caller { scope: Scope::Block(id), token: Some(format!("%{id}")), pane: None };
         let server = McpServer { app, fallback: Some(caller) };
         tokio::spawn(async move {
             match rmcp::ServiceExt::serve(server, tokio::io::split(io)).await {
@@ -156,27 +163,34 @@ async fn authenticate(State(app): State<Arc<App>>, mut req: Request, next: Next)
             }
         }
     };
-    let caller = match bearer {
-        None => Caller { scope: Scope::Full, token: None },
+    let mut caller = match bearer {
+        None => Caller { scope: Scope::Full, token: None, pane: None },
         // The daemon's local token: the owner, as the server already found.
-        Some(t) if app.access.is_local_token(&t) => Caller { scope: Scope::Full, token: None },
+        Some(t) if app.access.is_local_token(&t) => Caller { scope: Scope::Full, token: None, pane: None },
         Some(t) => match app.mcp.check(&t) {
             Some(Bearer::Client { name, scope }) => {
                 let scope = match scope {
                     TokenScope::Full => Scope::Full,
                     TokenScope::Read => Scope::Read,
                 };
-                Caller { scope, token: Some(name) }
+                Caller { scope, token: Some(name), pane: None }
             }
             Some(Bearer::Block(id)) => match app.mux.api(|r| Api::Block(id, r)).await.flatten() {
                 Some(b) if b.kind() == BlockType::Agent => {
-                    Caller { scope: Scope::Block(id), token: Some(format!("%{id}")) }
+                    Caller { scope: Scope::Block(id), token: Some(format!("%{id}")), pane: None }
                 }
                 _ => return refuse(StatusCode::UNAUTHORIZED, &format!("agent block %{id} is gone; its token with it")),
             },
             None => return refuse(StatusCode::UNAUTHORIZED, "unknown or revoked MCP token"),
         },
     };
+    if caller.scope == Scope::Full {
+        caller.pane = req
+            .headers()
+            .get(PANE_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().trim_start_matches('%').parse().ok());
+    }
     req.extensions_mut().insert(caller);
     next.run(req).await
 }
@@ -196,7 +210,7 @@ impl McpServer {
             .and_then(|p| p.extensions.get::<Caller>().cloned())
             .or_else(|| self.fallback.clone())
             // Never reached through `/mcp`; the least, to be safe.
-            .unwrap_or(Caller { scope: Scope::Read, token: Some("unknown".into()) })
+            .unwrap_or(Caller { scope: Scope::Read, token: Some("unknown".into()), pane: None })
     }
 }
 
@@ -238,7 +252,7 @@ const INSTRUCTIONS: &str = "illogical runs commands in durable terminal panes th
 (on the web and the phone) and take over. Use run to start a build or a dev server in a pane (wait: true \
 to wait for it), wait and read_output to follow it (they return \"still running\" with an offset: call \
 again), list to see what's there, open_port to show a dev server in a browser block beside its terminal, \
-open_app to show one of the user's studio apps (its agent's questions come to them; send_input prompts it), open_pr to show a pull request (read_pr reads it; pr_comment, pr_review and pr_merge draft writes the user sends), open_issue to show an issue (read_issue reads it; issue_comment and issue_new draft what the user sends), list_agents and read_agent to see the user's Fountain agents (open_fountain shows them as a catalog; start_agent with a Fountain agent hands one a task), start_agent and agent_respond to supervise another agent, read_thread and post_thread for the people's conversation about a pane or session (an @agent message there reaches you as a follow-up: answer with post_thread), list_conversations and open_conversation to \
+open_app to show one of the user's studio apps (its agent's questions come to them; send_input prompts it), open_pr to show a pull request (read_pr reads it; pr_comment, pr_review and pr_merge draft writes the user sends), open_issue to show an issue (read_issue reads it; issue_comment and issue_new draft what the user sends), list_agents and read_agent to see the user's Fountain agents (open_fountain shows them as a catalog; start_agent with a Fountain agent hands one a task), invite_person to ask the user to bring someone into the session (read_invite says what became of it), start_agent and agent_respond to supervise another agent, read_thread and post_thread for the people's conversation about a pane or session (an @agent message there reaches you as a follow-up: answer with post_thread), list_conversations and open_conversation to \
 pick up a Claude Code conversation from a terminal or the desktop app, and history and search for what \
 happened before. Output is paged: pass next_offset back as offset. \
 Blocks you can open: a terminal (run), a browser (open_port), a diff (show_changes), a file (show_file), \

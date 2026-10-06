@@ -598,3 +598,26 @@ fn uploads_are_refused_past_their_limits_and_swept_after_a_restart() {
     assert!(new.exists());
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// #233: an invite is in the audit log: who invited whom, as what, to
+/// which pane, and how it went.
+#[test]
+fn an_invite_is_audited() {
+    let d = start();
+    let p = &d.get("/api/panes")[0];
+    let (pane, session) = (p["id"].as_u64().unwrap(), p["session"].as_u64().unwrap());
+    let r = d.post("/api/invite", json!({ "session": session, "who": "tailnet:sam@example.com", "role": "editor" }));
+    assert_eq!(r["delivery"], "unreachable", "{r}");
+    let audit = d.get("/api/acl")["audit"].clone();
+    let line = audit.as_array().unwrap().iter().find(|a| a["action"] == "invite").cloned().unwrap_or_default();
+    assert_eq!(
+        (line["by"].as_str(), line["principal"].as_str(), line["role"].as_str(), line["pane"].as_u64()),
+        (Some("owner"), Some("tailnet:sam@example.com"), Some("editor"), Some(pane)),
+        "{audit}"
+    );
+    assert_eq!((line["session"].as_u64(), line["delivery"].as_str()), (Some(session), Some("unreachable")));
+    // The grant before it, as any share.
+    assert!(
+        audit.as_array().unwrap().iter().any(|a| a["action"] == "grant" && a["principal"] == "tailnet:sam@example.com")
+    );
+}

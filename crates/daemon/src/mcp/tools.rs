@@ -44,6 +44,8 @@ const WAIT_MAX: Duration = Duration::from_secs(3600);
 const PROGRESS_EVERY: Duration = Duration::from_secs(15);
 /// The last lines a finished command's result carries.
 const TAIL_LINES: usize = 40;
+/// Invites one caller may have waiting for the user (#234).
+const INVITES_WAITING: u64 = 5;
 /// Permission modes that approve everything (Claude Code's, codex-acp's):
 /// start_agent won't start an agent in one (#163).
 const SKIPS_CHECKS: &[&str] = &["bypassPermissions", "full-access"];
@@ -586,6 +588,32 @@ pub struct PrMergeArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct InvitePersonArgs {
+    /// Whom: a name this machine knows (a teammate, someone the session is
+    /// shared with), tailnet:<login> or account:<id>.
+    pub who: String,
+    /// viewer (the default) or editor.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Where it opens, and so the session (default: your own pane; a full
+    /// client outside a pane must say).
+    #[serde(default)]
+    pub pane: Option<PaneArg>,
+    /// Why you want them there, at most 500 characters: the user reads it on
+    /// the card, the person in their notification.
+    pub note: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReadInviteArgs {
+    /// The draft id invite_person returned.
+    pub draft: String,
+    /// The pane you invited from, if you gave one then.
+    #[serde(default)]
+    pub pane: Option<PaneArg>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ListAgentsArgs {
     /// Words to look for in each agent's name, description, skills and MCP
     /// servers (all must match): a skill's name finds the agents that have
@@ -726,7 +754,7 @@ fn defs() -> Vec<Def> {
         Def {
             name: "post_thread",
             title: "Post in a thread",
-            description: "Post a message in a pane's or a session's thread, where the people working on it talk; it shows as from an agent. Use it to answer an @agent message or to tell the people something they should see.",
+            description: "Post a message in a pane's or a session's thread, where the people working on it talk; it shows as from an agent. Use it to answer an @agent message or to tell the people something they should see. The result's `unreached` lists any @name that reached no one, and why. Someone who can't see the thread isn't told: call invite_person to ask the user to bring them in.",
             schema: schema_for_type::<PostThreadArgs>,
             read_only: false,
             destructive: false,
@@ -942,6 +970,26 @@ fn defs() -> Vec<Def> {
             destructive: false,
             idempotent: false,
             open_world: true,
+        },
+        Def {
+            name: "invite_person",
+            title: "Ask to invite a person",
+            description: "Ask the user to bring someone into the session you work in (your pane's): a teammate, someone it's shared with, or tailnet:<login>, as a viewer (default) or an editor, with a note saying why. Nothing is shared in an agent's name: it waits as a card beside you that only the session's owner sends (after editing the role or note, if they like) or declines. Only the owner's own agents may ask (not one a guest started). Returns its draft id at once with status waiting; read_invite shows what became of it.",
+            schema: schema_for_type::<InvitePersonArgs>,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: true,
+        },
+        Def {
+            name: "read_invite",
+            title: "Read an invite draft",
+            description: "What became of an invite_person draft: waiting, sent (with its grant and delivery: sent, pending or unreachable, and why), declined (and the owner's reason), dropped (nobody answered in a day) or failed (and why); who settled it and when.",
+            schema: schema_for_type::<ReadInviteArgs>,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
         },
         Def {
             name: "list_agents",
@@ -1229,6 +1277,14 @@ impl<'a> Call<'a> {
                         "repo": a.repo, "by": self.by(), "agent": true });
                     self.open_forge(c, a.dir, a.beside).await
                 }
+                Err(e) => Err(e),
+            },
+            "invite_person" => match parse(args) {
+                Ok(a) => self.invite_person(a).await,
+                Err(e) => Err(e),
+            },
+            "read_invite" => match parse(args) {
+                Ok(a) => self.read_invite(a).await,
                 Err(e) => Err(e),
             },
             "pr_comment" => match parse::<PrCommentArgs>(args) {
@@ -1858,7 +1914,10 @@ impl<'a> Call<'a> {
 
     async fn close(&self, a: PaneOnly) -> Out {
         let pane = a.pane.id()?;
-        self.drivable(pane).await?;
+        // An invite block (#234) is the owner's to close, never an agent's.
+        if self.drivable(pane).await?.info.kind == BlockType::Invite {
+            return Err(crate::invite::CLOSE_OWNER_ONLY.into());
+        }
         match self.app.mux.api(|r| Api::Close(pane, r)).await {
             Some(true) => done(format!("Closed %{pane}"), json!({ "pane": pane })),
             _ => Err(self.gone(pane).await),
@@ -1938,9 +1997,12 @@ impl<'a> Call<'a> {
             text: a.text,
             quote: None,
         };
-        let (msg, _) =
+        let (msg, _, unreached) =
             self.app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or("daemon is shutting down")?.map_err(|e| e.1)?;
-        done(format!("posted #{} in {}", msg.id, target.key()), json!({ "thread": target, "message": msg }))
+        done(
+            format!("posted #{} in {}", msg.id, target.key()),
+            json!({ "thread": target, "message": msg, "unreached": unreached }),
+        )
     }
 
     async fn history(&self, a: HistoryArgs) -> Out {
@@ -2396,6 +2458,178 @@ impl<'a> Call<'a> {
             ),
             out,
         )
+    }
+
+    /// An invite's panes (#234): the caller's own, and where it opens. An
+    /// agent's own block, or for a full caller the pane `illogical mcp`
+    /// runs in, else the one it names.
+    fn invite_panes(&self, pane: Option<&PaneArg>) -> Result<(PaneId, PaneId), String> {
+        let pane = pane.map(PaneArg::id).transpose()?;
+        let mine = self.me().or(self.caller.pane);
+        match (mine.or(pane), pane.or(mine)) {
+            (Some(from), Some(to)) => Ok((from, to)),
+            _ => Err("pane: which pane's session to invite them into (illogical mcp in a pane says its own)".into()),
+        }
+    }
+
+    /// Whose invite drafts these are: an agent block's, or a full client's
+    /// in a pane.
+    fn drafter(&self, from: PaneId) -> String {
+        match self.me() {
+            Some(me) => format!("%{me}"),
+            None => format!("{}@%{from}", self.by()),
+        }
+    }
+
+    /// The invite blocks (#234), with their sessions.
+    async fn invite_blocks(&self) -> Vec<(PaneId, illogical_core::SessionId, Arc<dyn crate::block::Block>)> {
+        let mut out = vec![];
+        for p in self.panes().await.into_iter().filter(|p| p.info.kind == BlockType::Invite) {
+            if let Some(b) = self.app.mux.api(|r| Api::Block(p.info.id, r)).await.flatten() {
+                out.push((p.info.id, p.session, b));
+            }
+        }
+        out
+    }
+
+    async fn invite_person(&self, a: InvitePersonArgs) -> Out {
+        let role = match a.role.as_deref().map(str::trim) {
+            None | Some("" | "viewer") => illogical_core::Role::Viewer,
+            Some("editor") => illogical_core::Role::Editor,
+            Some(r) => return Err(format!("role {r}: viewer or editor (an invite never makes an owner)")),
+        };
+        let note = a.note.trim();
+        if note.is_empty() {
+            return Err("note: say why you want them there (the user reads it on the card)".into());
+        }
+        if note.chars().count() > crate::invite::card::NOTE_MAX {
+            return Err(format!("note: at most {} characters", crate::invite::card::NOTE_MAX));
+        }
+        let (from, pane) = self.invite_panes(a.pane.as_ref())?;
+        let at = self.readable(pane).await?;
+        // The owner's agents ask; one a guest started (or an agent of
+        // theirs did) learns nothing of who this machine knows.
+        let started = self.started_text().await?;
+        // Someone this machine knows, or no card at all.
+        let person = crate::invite::resolve(self.app, &a.who, None).map_err(|(_, why)| why)?;
+        if crate::invite::owns_here(self.app, &person.id) {
+            return Err(format!("{} owns this machine already", person.name));
+        }
+        let drafter = self.drafter(from);
+        let blocks = self.invite_blocks().await;
+        let mine: Vec<_> = blocks.iter().filter(|(_, _, b)| b.config()["drafter"] == drafter.as_str()).collect();
+        let waiting: u64 = mine.iter().map(|(_, _, b)| b.state()["waiting"].as_u64().unwrap_or(0)).sum();
+        if waiting >= INVITES_WAITING {
+            return Err(format!(
+                "{waiting} of your invites wait for the user already: read_invite until they answer one"
+            ));
+        }
+        let block = match mine.iter().find(|(_, s, _)| *s == at.session) {
+            Some((id, _, b)) => (*id, b.clone()),
+            None => {
+                // A card of its own beside the pane, on this host; not the
+                // agent's to drive or close.
+                let req = OpenRequest {
+                    kind: BlockType::Invite,
+                    config: json!({ "drafter": drafter }),
+                    session: None,
+                    split: Some(pane),
+                    from_pane: Some(pane),
+                    vm: false,
+                    image: None,
+                    host: None,
+                    local: true,
+                };
+                let id = match self.app.mux.api(|r| Api::Open(req, None, r)).await {
+                    Some(r) => r?,
+                    None => return Err("the daemon is shutting down".into()),
+                };
+                let by = StartedBy { by: self.by(), block: None };
+                self.app.mux.send(crate::mux::Cmd::Api(Api::StartedBy(id, by)));
+                let b = self.app.mux.api(|r| Api::Block(id, r)).await.flatten().ok_or("the invite block closed")?;
+                (id, b)
+            }
+        };
+        let args = json!({ "who": a.who.trim(), "person": person.id, "name": person.name, "role": role,
+            "note": note, "session": at.session, "session_name": at.session_name, "pane": pane, "from": from,
+            "started": started });
+        let out = block.1.call_by("draft", args, Some(&self.by())).await?;
+        let draft = out["draft"].as_str().unwrap_or("?").to_owned();
+        done(
+            format!(
+                "Asked the user to invite {} ({}) into {} at %{pane}: {draft} waits on their card in %{} (read_invite shows what became of it)",
+                person.name,
+                role.as_str(),
+                at.session_name,
+                block.0
+            ),
+            json!({ "draft": draft, "status": "waiting", "block": block.0, "who": person.id, "name": person.name,
+                "role": role, "session": at.session, "pane": pane }),
+        )
+    }
+
+    /// Who started the agent asking (#234), as its card says it: the
+    /// owner, or the agent that did. An agent a guest stands behind may
+    /// not ask at all.
+    async fn started_text(&self) -> Result<String, String> {
+        let Some(me) = self.me() else { return Ok("your own client".into()) };
+        if self.app.mux.api(|r| Api::GuestBehind(me, r)).await.flatten().is_some() {
+            return Err("only the owner's own agents may ask to invite someone".into());
+        }
+        Ok(match self.readable(me).await?.info.started_by {
+            Some(StartedBy { by, block: Some(b) }) => format!("started by {by} in %{b}"),
+            Some(StartedBy { by, block: None }) => format!("started by {by}"),
+            None => "you started it".into(),
+        })
+    }
+
+    async fn read_invite(&self, a: ReadInviteArgs) -> Out {
+        let drafter = match self.me() {
+            Some(me) => format!("%{me}"),
+            None => self.drafter(self.invite_panes(a.pane.as_ref())?.0),
+        };
+        let id = a.draft.trim();
+        for (block, _, b) in self.invite_blocks().await {
+            if b.config()["drafter"] != drafter.as_str() {
+                continue;
+            }
+            let st = b.state();
+            let Some(d) = st["drafts"].as_array().and_then(|ds| ds.iter().find(|d| d["id"] == id)).cloned() else {
+                continue;
+            };
+            let status = d["status"].as_str().unwrap_or("waiting").to_owned();
+            let name = d["name"].as_str().unwrap_or("").to_owned();
+            let by = d["settled_by"].as_str().unwrap_or("the user");
+            let summary = match status.as_str() {
+                "waiting" => format!("{id} waits on the user's card in %{block}"),
+                "sent" => format!(
+                    "{by} invited {name}; their notification: {}{}",
+                    d["delivery"].as_str().unwrap_or("?"),
+                    d["delivery_reason"].as_str().map(|r| format!(" ({r})")).unwrap_or_default()
+                ),
+                "declined" => match d["reason"].as_str() {
+                    Some(r) => format!("{by} declined inviting {name}: {r}"),
+                    None => format!("{by} declined inviting {name}"),
+                },
+                "dropped" => format!("Nobody answered {id} in time: nothing was shared"),
+                _ => format!("Inviting {name} failed: {}", d["error"].as_str().unwrap_or("?")),
+            };
+            let mut v = d;
+            v["draft"] = json!(id);
+            v["block"] = json!(block);
+            return done(summary, v);
+        }
+        // Its block was closed: what it said then.
+        let root = self.app.mux.store.root().to_owned();
+        let kept = tokio::task::spawn_blocking(move || crate::invite::card::closed(&root)).await.unwrap_or_default();
+        if let Some(c) = kept.into_iter().rev().find(|c| c.drafter == drafter && c.draft.id == id) {
+            let mut v = serde_json::to_value(&c.draft).unwrap_or_default();
+            v["draft"] = json!(id);
+            v["block"] = json!(c.block);
+            let status = v["status"].as_str().unwrap_or("").to_owned();
+            return done(format!("{id} is {status}; its invite block %{} was closed", c.block), v);
+        }
+        Err(format!("no invite {id} of yours (invite_person returns one)"))
     }
 
     async fn open(&self, req: OpenRequest) -> Result<PaneId, String> {
@@ -2947,7 +3181,7 @@ mod tests {
     #[test]
     fn annotations_are_honest() {
         let all = list(Scope::Full);
-        assert_eq!(all.len(), 36);
+        assert_eq!(all.len(), 38);
         let ro: Vec<&str> = all
             .iter()
             .filter(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
@@ -2966,6 +3200,7 @@ mod tests {
                 "list_conversations",
                 "read_pr",
                 "read_issue",
+                "read_invite",
                 "list_agents",
                 "read_agent",
                 "read_file",

@@ -134,6 +134,12 @@ CREATE TABLE IF NOT EXISTS daemon_offers (
     since INTEGER NOT NULL,
     PRIMARY KEY (daemon, account)
 );
+CREATE TABLE IF NOT EXISTS daemon_offer_pushes (
+    daemon TEXT NOT NULL,
+    account TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (daemon, account)
+);
 CREATE TABLE IF NOT EXISTS share_answers (
     account TEXT NOT NULL,
     daemon TEXT NOT NULL,
@@ -931,6 +937,7 @@ impl Db {
         c.execute("DELETE FROM daemon_access WHERE daemon = ?1", params![id])?;
         c.execute("DELETE FROM daemon_links WHERE daemon = ?1", params![id])?;
         c.execute("DELETE FROM daemon_offers WHERE daemon = ?1", params![id])?;
+        c.execute("DELETE FROM daemon_offer_pushes WHERE daemon = ?1", params![id])?;
         c.execute("DELETE FROM share_answers WHERE daemon = ?1", params![id])?;
         Ok(())
     }
@@ -969,6 +976,18 @@ impl Db {
         }
         tx.commit()?;
         Ok(new)
+    }
+
+    /// Whether to push `account` of `daemon`'s offer (#232): once a day at
+    /// most, however often the daemon drops and makes it again.
+    pub fn push_offer(&self, daemon: &str, account: &str, now: u64) -> anyhow::Result<bool> {
+        const DAY: u64 = 24 * 3600 * 1000;
+        let n = self.c().execute(
+            "INSERT INTO daemon_offer_pushes (daemon, account, at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (daemon, account) DO UPDATE SET at = excluded.at WHERE at <= excluded.at - ?4",
+            params![daemon, account, now, DAY],
+        )?;
+        Ok(n > 0)
     }
 
     /// Daemons offering to share with this account that it hasn't answered.
@@ -1709,6 +1728,7 @@ impl Db {
                 "DELETE FROM daemon_links WHERE daemon = ?1",
                 "DELETE FROM daemon_watches WHERE daemon = ?1",
                 "DELETE FROM daemon_offers WHERE daemon = ?1",
+                "DELETE FROM daemon_offer_pushes WHERE daemon = ?1",
                 "DELETE FROM share_answers WHERE daemon = ?1",
             ] {
                 tx.execute(sql, params![d])?;
@@ -1725,6 +1745,7 @@ impl Db {
             "DELETE FROM daemons WHERE account = ?1",
             "DELETE FROM daemon_access WHERE account = ?1",
             "DELETE FROM daemon_offers WHERE account = ?1",
+            "DELETE FROM daemon_offer_pushes WHERE account = ?1",
             "DELETE FROM share_answers WHERE account = ?1",
             "DELETE FROM push_subs WHERE account = ?1",
             "DELETE FROM notices WHERE account = ?1",

@@ -62,6 +62,15 @@ const TYPING: Duration = Duration::from_secs(5);
 /// next to type drives (#118).
 const DRIVER_LAPSE: Duration = Duration::from_secs(10 * 60);
 
+/// A minute of trust (M14), or in a debug build `ILLOGICAL_TRUST_MINUTE_MS`
+/// (for tests).
+fn trust_minute_ms() -> u64 {
+    if !cfg!(debug_assertions) {
+        return 60_000;
+    }
+    std::env::var("ILLOGICAL_TRUST_MINUTE_MS").ok().and_then(|ms| ms.parse().ok()).unwrap_or(60_000)
+}
+
 /// [`DRIVER_LAPSE`], or `ILLOGICAL_DRIVER_LAPSE_MS` (for tests).
 fn driver_lapse() -> Duration {
     std::env::var("ILLOGICAL_DRIVER_LAPSE_MS")
@@ -176,15 +185,35 @@ pub enum Api {
     /// Post in a thread as `who`. `as_agent`: an agent posts through MCP
     /// under that name. Answers with the message, and whether it goes to
     /// the pane's agent as a follow-up.
-    ThreadPost(ThreadPost, oneshot::Sender<Result<(ThreadMsg, bool), ThreadError>>),
+    ThreadPost(ThreadPost, oneshot::Sender<Result<Posted, ThreadError>>),
     /// `who` has read a thread up to a message.
     ThreadRead(ThreadTarget, crate::acl::Principal, u64),
+    /// Which of these (principal ids) read a thread now (#297); `None` if
+    /// no grant could open it (gone, or a private pane's).
+    CanRead(ThreadTarget, Vec<String>, oneshot::Sender<Option<Vec<bool>>>),
+    /// A thread an invite opens at (#297): its session, and when a message
+    /// of it was posted (`None`: no such message there). `Err`: no grant
+    /// could open the thread.
+    ThreadPlace(ThreadTarget, Option<u64>, oneshot::Sender<Result<(SessionId, Option<u64>), String>>),
+    /// Where an invite to a session opens (#233): the pane given, if it's
+    /// in the session, else the session's first; and the session's name.
+    InviteTo(SessionId, Option<PaneId>, oneshot::Sender<Result<(PaneId, String), String>>),
+    /// Trust someone (by principal id) with a pane on this machine for so
+    /// many minutes (#233: an invite's `drive_minutes`), as the owner's
+    /// pane menu does (M14). Nothing on a VM, a block or a team's machine
+    /// (false).
+    Trust(PaneId, String, u32, oneshot::Sender<bool>),
+    /// A notice for whoever (by principal id) is connected.
+    Tell(String, String),
     /// Where each pane of a session's output ends now (a "from now" share
     /// starts there).
     SessionEnds(SessionId, oneshot::Sender<Option<BTreeMap<PaneId, u64>>>),
     /// An MCP client started this pane or block (M16): shown on it, and
     /// what lets an agent block's token drive it.
     StartedBy(PaneId, illogical_proto::StartedBy),
+    /// The guest (principal id) behind a pane or block, if any: who
+    /// started it, or the agent that did, or whose VM it runs on.
+    GuestBehind(PaneId, oneshot::Sender<Option<String>>),
     /// Typing by an MCP client (M16): as theirs, in the pane's history.
     InputBy(PaneId, Vec<u8>, String),
     /// An editor joined the swarm (M28): it gets an id of its own.
@@ -381,6 +410,8 @@ pub struct Config {
     pub private: Vec<PathBuf>,
     /// Where agent blocks reach MCP (M16); `None`: they don't.
     pub mcp: Option<crate::mcp::Link>,
+    /// What runs an invite the owner sent from an agent's card (#234).
+    pub invite: crate::invite::Hook,
     /// illogicald as Claude Code's IDE (M28); `None`: off.
     pub ide: Option<Arc<crate::ide::Ide>>,
 }
@@ -814,6 +845,19 @@ pub struct ThreadPost {
     pub text: String,
     pub quote: Option<Quote>,
 }
+
+/// An `@` in a post that reached no one, for the poster alone.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Unreached {
+    pub token: String,
+    /// `agent_needs_pane`, `may_not_drive` or `nobody`. `nobody` is the same
+    /// whether the name is unknown or its owner can't read the thread.
+    pub why: &'static str,
+}
+
+/// What a post comes to: the message, whether it went to the pane's agent,
+/// and the `@`s that reached no one.
+pub type Posted = (ThreadMsg, bool, Vec<Unreached>);
 
 /// Why a thread request failed: an HTTP status and what to say.
 #[derive(Debug)]
@@ -1269,6 +1313,7 @@ impl Daemon {
             cmds: Some(self.tx.clone()),
             ids: self.ids.clone(),
             rules: self.rules.clone(),
+            invite: self.config.invite.clone(),
         };
         let is_restore = restoring.is_some();
         let (policy, kept) = restoring.unwrap_or_default();
@@ -1387,6 +1432,20 @@ impl Daemon {
             if let Some(r) = &reason {
                 let x = extra.get_or_insert_with(|| serde_json::json!({}));
                 x["reason"] = serde_json::json!({ "kind": r.kind, "actions": r.actions, "bundle": r.bundle });
+            }
+            // An agent's invite (#234) is for the owner alone, and opens at
+            // its card: no buttons to send it from.
+            if self.is_invite(pane) {
+                if let Some(x) = extra.as_mut().and_then(|x| x.as_object_mut()) {
+                    x.remove("approve");
+                    x.remove("ask");
+                }
+                if let Some(push) = &self.push {
+                    push.send_to(pane, title, &body, extra.clone(), |who| who == "owner");
+                }
+                self.config.control.push(pane, title, &body, extra, |who| who.is_owner());
+                self.touch(pane);
+                return;
             }
             // The owner, and whoever may edit the session and opted in
             // (M29): on this daemon's own push, and through control (M21),
@@ -2137,6 +2196,52 @@ impl Daemon {
                     self.soon();
                 }
             }
+            Api::CanRead(target, ids, reply) => {
+                let r = self.thread_session(target).map(|_| {
+                    ids.into_iter()
+                        .map(|id| {
+                            let p = Principal::User { id, name: String::new(), pic: None };
+                            self.thread_role(&p, target).is_some()
+                        })
+                        .collect()
+                });
+                let _ = reply.send(r);
+            }
+            Api::ThreadPlace(target, msg, reply) => {
+                let r = self
+                    .thread_session(target)
+                    .ok_or_else(|| "no such thread, or it's a private pane's".to_owned())
+                    .map(|s| {
+                        (s, msg.and_then(|id| self.threads.get(target).iter().find(|m| m.id == id).map(|m| m.at)))
+                    });
+                let _ = reply.send(r);
+            }
+            Api::InviteTo(session, pane, reply) => {
+                let r = match self.mux.session(session) {
+                    Err(_) => Err(format!("no session ${session}")),
+                    Ok(s) => {
+                        let panes: Vec<PaneId> =
+                            s.tabs.iter().filter_map(|t| self.mux.tab(*t).ok()).flat_map(|t| t.root.panes()).collect();
+                        let name = s.name.clone();
+                        match pane {
+                            Some(p) if panes.contains(&p) => Ok((p, name)),
+                            Some(p) => Err(format!("%{p} isn't in {name}")),
+                            None => panes.first().map(|p| (*p, name.clone())).ok_or(format!("{name} has no panes")),
+                        }
+                    }
+                };
+                let _ = reply.send(r);
+            }
+            Api::Trust(pane, to, minutes, reply) => {
+                let here = self.machine_of(pane).is_none() && !self.blocks.contains_key(&pane);
+                let ok = here && !self.config.control.is_team();
+                if ok {
+                    self.trust_with(pane, &to, minutes);
+                    self.broadcast();
+                }
+                let _ = reply.send(ok);
+            }
+            Api::Tell(who, message) => self.tell(&who, ServerMsg::Notice { message }),
             Api::SessionEnds(session, reply) => {
                 let ends = self.mux.session(session).ok().map(|s| {
                     s.tabs
@@ -2312,9 +2417,19 @@ impl Daemon {
             }
             Api::StartedBy(pane, by) => {
                 if self.panes.contains_key(&pane) || self.blocks.contains_key(&pane) {
-                    self.meta.entry(pane).or_default().started_by = Some(by);
+                    // An agent's: whoever stands behind that agent stands
+                    // behind this too.
+                    let guest = by.block.and_then(|b| self.guest_behind(b));
+                    let meta = self.meta.entry(pane).or_default();
+                    meta.started_by = Some(by);
+                    if guest.is_some() {
+                        meta.guest = guest;
+                    }
                     self.touch(pane);
                 }
+            }
+            Api::GuestBehind(pane, reply) => {
+                let _ = reply.send(self.guest_behind(pane));
             }
             Api::Ask(pane, ask, reply) => {
                 let _ = reply.send(self.ask(pane, *ask));
@@ -2358,6 +2473,11 @@ impl Daemon {
                 }
             }
         }
+    }
+
+    /// Whether a block is an agent's invites (#234), the owner's to answer.
+    fn is_invite(&self, pane: PaneId) -> bool {
+        self.blocks.get(&pane).is_some_and(|b| b.kind() == BlockType::Invite)
     }
 
     /// Show a terminal's question on every client, and ask for you.
@@ -2415,6 +2535,11 @@ impl Daemon {
             .get(&pane)
             .filter(|a| id.as_ref().is_none_or(|id| *id == a.ask.id))
             .ok_or_else(|| format!("no open question in %{pane} (it was answered, or withdrawn)"))?;
+        // An agent's invite (#234) is the owner's to answer, by whatever
+        // route: editors may answer other cards, an agent none of these.
+        if self.is_invite(pane) && !by.as_ref().is_some_and(|b| b.who == "owner") {
+            return Err(crate::invite::OWNER_ONLY.into());
+        }
         let ask = a.ask.clone();
         let permission = ask.kind == AskKind::Permission;
         let answer = match answer {
@@ -2807,7 +2932,14 @@ impl Daemon {
         for m in self.machines.values_mut().filter(|m| !before.contains(&m.id)) {
             m.by = Some(who.id().to_owned());
         }
+        self.meta.entry(block).or_default().guest = Some(who.id().to_owned());
         Ok(block)
+    }
+
+    /// The guest behind a pane (by principal id): who started it, as its
+    /// meta says, or whose VM it runs on.
+    fn guest_behind(&self, pane: PaneId) -> Option<String> {
+        self.meta.get(&pane).and_then(|m| m.guest.clone()).or_else(|| self.machine_of(pane)?.by.clone())
     }
 
     fn open_block(&mut self, mut req: OpenRequest) -> Result<PaneId, String> {
@@ -3213,6 +3345,24 @@ impl Daemon {
                         .unwrap_or(false);
                     if !allowed {
                         let message = "you can't do that here (ask the owner for more access)".to_owned();
+                        let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id, message }));
+                        return;
+                    }
+                    // An agent's invites (#234): the owner's to close, alone
+                    // or with their tab or session.
+                    let panes = |tab| self.mux.tab(tab).map(|t| t.root.panes()).unwrap_or_default();
+                    let closes = match &intent {
+                        Intent::ClosePane { pane } => vec![*pane],
+                        Intent::CloseTab { tab } => panes(*tab),
+                        Intent::CloseSession { session } => self
+                            .mux
+                            .session(*session)
+                            .map(|s| s.tabs.iter().flat_map(|t| panes(*t)).collect())
+                            .unwrap_or_default(),
+                        _ => vec![],
+                    };
+                    if closes.iter().any(|p| self.is_invite(*p)) {
+                        let message = crate::invite::CLOSE_OWNER_ONLY.to_owned();
                         let _ = sub.ctrl.send(ToClient::Msg(ServerMsg::Error { id, message }));
                         return;
                     }
@@ -4026,20 +4176,7 @@ impl Daemon {
                 self.refuse_to(client, "only the owner trusts people with panes on this machine");
                 return true;
             }
-            PaneOp::GrantTrust { to, minutes } => {
-                let minutes = (*minutes).clamp(1, 24 * 60);
-                let until = now_ms() + u64::from(minutes) * 60_000;
-                self.trust.insert((pane, to.clone()), until);
-                info!(pane, to, minutes, "trusted with a local pane");
-                let message = format!("you may drive %{pane} for {minutes} minutes");
-                self.tell(to, ServerMsg::Notice { message });
-                let expire = self.tx.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(u64::from(minutes) * 60_000 + 50)).await;
-                    // Show everyone it ended.
-                    let _ = expire.send(Cmd::AclChanged);
-                });
-            }
+            PaneOp::GrantTrust { to, minutes } => self.trust_with(pane, to, *minutes),
             PaneOp::RevokeTrust { to } => {
                 self.trust.remove(&(pane, to.clone()));
                 if self.drivers.get(&pane).is_some_and(|d| &d.who == to) {
@@ -4068,6 +4205,22 @@ impl Daemon {
         }
         self.broadcast();
         true
+    }
+
+    /// Trust `to` with a pane on this machine for `minutes` (M14).
+    fn trust_with(&mut self, pane: PaneId, to: &str, minutes: u32) {
+        let minutes = minutes.clamp(1, 24 * 60);
+        let ms = u64::from(minutes) * trust_minute_ms();
+        self.trust.insert((pane, to.to_owned()), now_ms() + ms);
+        info!(pane, to, minutes, "trusted with a local pane");
+        let message = format!("you may drive %{pane} for {minutes} minutes");
+        self.tell(to, ServerMsg::Notice { message });
+        let expire = self.tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(ms + 50)).await;
+            // Show everyone it ended.
+            let _ = expire.send(Cmd::AclChanged);
+        });
     }
 
     fn refuse_to(&self, client: ClientId, why: &str) {
@@ -4112,6 +4265,19 @@ impl Daemon {
         }
     }
 
+    /// The session a thread is in, if a grant on it could open the thread:
+    /// not a private pane's (its owner's alone).
+    fn thread_session(&self, target: ThreadTarget) -> Option<SessionId> {
+        if !self.thread_exists(target) {
+            return None;
+        }
+        match target {
+            ThreadTarget::Pane(p) if self.meta.get(&p).is_some_and(|m| m.private) => None,
+            ThreadTarget::Pane(p) => self.session_of(p),
+            ThreadTarget::Session(s) => Some(s),
+        }
+    }
+
     /// `who`'s role in a thread, and the time its messages start for them:
     /// a pane's thread is read by whoever may read the pane (a private
     /// pane's only by its owner), a session's by whoever has a role in it.
@@ -4128,7 +4294,7 @@ impl Daemon {
             ThreadTarget::Session(s) => s,
         };
         let role = self.config.acl.role(who, session)?;
-        Some((role, self.config.acl.thread_floor(who, session).unwrap_or(0)))
+        Some((role, self.config.acl.thread_floor(who, session, target).unwrap_or(0)))
     }
 
     fn thread_get(&self, target: ThreadTarget, who: &Principal) -> Result<Vec<ThreadMsg>, ThreadError> {
@@ -4162,12 +4328,13 @@ impl Daemon {
     }
 
     /// Everyone a message could @mention: the owner, everyone shared with,
-    /// and whoever is connected.
+    /// team members (connected or not), and whoever is connected.
     fn mentionable(&self) -> Vec<Principal> {
         let mut out = vec![Principal::Owner];
         for g in self.config.acl.list() {
             out.push(Principal::User { id: g.principal.clone(), name: g.name.clone(), pic: None });
         }
+        out.extend(self.config.control.team_people());
         for c in self.clients.values() {
             out.push(c.principal.clone());
         }
@@ -4176,7 +4343,7 @@ impl Daemon {
         out
     }
 
-    fn thread_post(&mut self, post: ThreadPost) -> Result<(ThreadMsg, bool), ThreadError> {
+    fn thread_post(&mut self, post: ThreadPost) -> Result<Posted, ThreadError> {
         let ThreadPost { target, who, as_agent, text, quote } = post;
         let (role, _) = self.thread_role(&who, target).ok_or_else(|| ThreadError(404, "no such thread".into()))?;
         if role < Role::Editor {
@@ -4208,6 +4375,25 @@ impl Daemon {
         let to_agent = as_agent.is_none()
             && crate::threads::calls_agent(&tokens)
             && matches!(target, ThreadTarget::Pane(p) if self.may_drive_here(&who, p).is_ok());
+        // Which tokens went anywhere; the rest are the poster's to hear about.
+        let me = self.name_of(&who);
+        let (mut landed, mut unreached) = (Vec::new(), Vec::new());
+        for t in &tokens {
+            let person = self
+                .mentionable()
+                .into_iter()
+                .any(|p| mentions.iter().any(|m| m == p.id()) && crate::threads::names(t, p.id(), &self.name_of(&p)));
+            if person || (to_agent && crate::threads::calls_agent(std::slice::from_ref(t))) {
+                landed.push(t.clone());
+            } else if crate::threads::names(t, who.id(), &me) {
+                // Yourself: nothing to say.
+            } else if crate::threads::calls_agent(std::slice::from_ref(t)) {
+                let why = if matches!(target, ThreadTarget::Pane(_)) { "may_not_drive" } else { "agent_needs_pane" };
+                unreached.push(Unreached { token: t.clone(), why });
+            } else {
+                unreached.push(Unreached { token: t.clone(), why: "nobody" });
+            }
+        }
         let msg = ThreadMsg {
             id: 0,
             at: now_ms(),
@@ -4217,6 +4403,7 @@ impl Daemon {
             text,
             quote,
             mentions,
+            landed,
             to_agent,
             agent: as_agent.is_some(),
         };
@@ -4231,7 +4418,7 @@ impl Daemon {
         }
         self.soon();
         self.notify_mentions(target, &msg);
-        Ok((msg, to_agent))
+        Ok((msg, to_agent, unreached))
     }
 
     /// Tell everyone a message mentions, on their phones too.
@@ -4253,7 +4440,8 @@ impl Daemon {
         let Some(pane) = pane else { return };
         let title = format!("{} mentioned you", msg.name);
         let body: String = msg.text.chars().take(200).collect();
-        let extra = serde_json::json!({ "thread": target.key() });
+        // Its own notification, not the pane's.
+        let extra = serde_json::json!({ "thread": target.key(), "tag": format!("thread-{}", target.key()) });
         for id in &msg.mentions {
             let id = id.clone();
             if let Some(push) = &self.push {

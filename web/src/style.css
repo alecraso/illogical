@@ -5006,6 +5006,40 @@ html[data-desktop="macos"] .bar {
   color: var(--danger);
 }
 
+/* "Sam can't see this. Invite them?" (#297): the owner's alone. */
+.thread-offer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.thread-offer p {
+  margin: 0;
+}
+
+.thread-offer label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thread-offer .thread-offer-sees {
+  color: var(--dim);
+}
+
+.thread-offer .thread-error {
+  padding: 0;
+}
+
+.thread-offer-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* A message (M74): picture, name and time at the head of a run; the
    rest of the run under it, with its time in the gutter on hover. */
 .thread-msg {
@@ -6109,7 +6143,8 @@ html.chat-open .huddle-bar {
 
 .chat-thread .thread-compose,
 .chat-thread .thread-error,
-.chat-thread .thread-note {
+.chat-thread .thread-note,
+.chat-thread .thread-offer {
   margin-left: 8px;
   margin-right: 8px;
 }

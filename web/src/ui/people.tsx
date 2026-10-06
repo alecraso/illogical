@@ -221,8 +221,12 @@ export function ShareDialog({ client }: { client: Client }) {
   const [history, setHistory] = useState(false);
   const [err, setErr] = useState("");
   const [secrets, setSecrets] = useState<{ pane: PaneId; kinds: string[] }[]>([]);
-  // Control mode: the person found, to confirm by fingerprint.
-  const [found, setFound] = useState<{ account: string; name: string; root: string } | null>(null);
+  // Control mode: the person found, to confirm by fingerprint (and then
+  // to notify, if that's what was asked).
+  const [found, setFound] = useState<{ account: string; name: string; root: string; notify?: boolean } | null>(null);
+  // An invite (#233): what the notification says, and how it went.
+  const [note, setNote] = useState("");
+  const [told, setTold] = useState<{ delivery: string; text: string } | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const load = async (s: SessionId | null = session) => {
     const r = await client.request("GET", "/api/acl");
@@ -248,6 +252,30 @@ export function ShareDialog({ client }: { client: Client }) {
   const set = async (principal: string, r: Role | null, withHistory = true, extra: Record<string, string> = {}) => {
     const res = await client.request("POST", "/api/acl", { session, principal, role: r, history: withHistory, ...extra });
     if (!res.ok) setErr((await res.json<{ error?: string }>().catch(() => null))?.error ?? `HTTP ${res.status}`);
+    await load();
+  };
+  // Share and notify (#233): the machine grants and pushes them alone. A
+  // name it doesn't know is looked up on control and checked by its
+  // fingerprint first, as for a plain share.
+  const invite = async (whom: string, extra: Record<string, string> = {}) => {
+    setErr("");
+    setTold(null);
+    const res = await client.request("POST", "/api/invite", { session, who: whom, role, history, note, ...extra });
+    const body = await res.json<{ error?: string; delivery?: string; reason?: string | null; grant?: { name: string } }>().catch(() => null);
+    if (res.status === 404 && control && client.e2e && !extra.root) {
+      control.person(whom).then((p) => setFound({ ...p, notify: true }), (x: Error) => setErr(x.message));
+      return;
+    }
+    if (!res.ok || !body?.delivery) {
+      setErr(body?.error ?? `HTTP ${res.status}`);
+      return;
+    }
+    const n = body.grant?.name ?? whom;
+    const why = body.reason ? `: ${body.reason}` : "";
+    const text = body.delivery === "sent" ? `${n} was notified` : body.delivery === "pending" ? `${n} will be notified${why}` : `${n} wasn't notified${why}`;
+    setTold({ delivery: body.delivery, text });
+    setWho("");
+    setNote("");
     await load();
   };
   return (
@@ -307,13 +335,18 @@ export function ShareDialog({ client }: { client: Client }) {
                 class="primary"
                 data-share-confirm
                 onClick={() =>
-                  void set(`account:${found.account}`, role, history, { root: found.root, name: found.name }).then(() => {
+                  void (
+                    found.notify
+                      ? invite(`account:${found.account}`, { root: found.root })
+                      : set(`account:${found.account}`, role, history, { root: found.root, name: found.name })
+                  ).then(() => {
                     setFound(null);
                     setWho("");
                   })
                 }
               >
                 Share with {found.name}
+                {found.notify ? " and notify" : ""}
               </button>
             </div>
           </div>
@@ -366,7 +399,32 @@ export function ShareDialog({ client }: { client: Client }) {
           <button type="submit" class="primary">
             Share
           </button>
+          <input
+            class="share-note"
+            placeholder="a note, to notify them"
+            value={note}
+            onInput={(e) => setNote((e.target as HTMLInputElement).value)}
+            aria-label="Note"
+            data-invite-note
+          />
+          <button
+            type="button"
+            data-invite
+            onClick={() => {
+              const p = who.trim();
+              if (!p) return;
+              // A login is a tailnet one here; a name, someone the machine knows.
+              void invite(control && client.e2e ? p : p.includes("@") && !p.includes(":") ? `tailnet:${p}` : p);
+            }}
+          >
+            Share and notify
+          </button>
         </form>
+        {told ? (
+          <p class="dim" data-invite-delivery={told.delivery}>
+            {told.text}
+          </p>
+        ) : null}
         {control && client.e2e ? (
           <p>
             <button

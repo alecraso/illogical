@@ -92,8 +92,21 @@ impl Daemon {
 
     /// ...and extra environment.
     pub fn child_env(args: &[&str], env: &[(&str, &str)]) -> Self {
+        Self::child_in(args, env, |_| {})
+    }
+
+    /// ...with its state directory made by `setup` first (a control
+    /// enrollment, say).
+    pub fn child_in(args: &[&str], env: &[(&str, &str)], setup: impl FnOnce(&std::path::Path)) -> Self {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        // Short: Unix socket paths are limited to about 100 bytes.
+        let state = std::env::temp_dir().join(format!("ilg-agt-in-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state);
+        std::fs::create_dir_all(&state).unwrap();
+        setup(&state);
         let sessions = sessions();
-        let b = Self::builder(&sessions);
+        let b = Self::builder(&sessions).state_dir(state);
         let b = if args.is_empty() { b.no_wisp() } else { b.args(args) };
         Self { d: b.envs(env.iter().copied()).start(), sessions }
     }
@@ -115,6 +128,15 @@ impl Daemon {
 
     fn builder(sessions: &std::path::Path) -> Builder {
         illogicald!("agt").env("FAKE_ACP_DIR", sessions).wait_secs(20)
+    }
+
+    /// A request over TCP from a tailnet user, as `tailscale serve` hands
+    /// it on (the daemon needs `--owner`, and someone else's login here).
+    pub fn raw_as(&self, login: &str, method: &str, path: &str, body: Option<Value>) -> (u16, String) {
+        let body = body.map(|b| b.to_string()).unwrap_or_default();
+        let headers = [("Tailscale-User-Login", login), ("Content-Type", "application/json")];
+        let (status, _, body) = self.tcp(method, path, &headers, Some(&body));
+        (status, body)
     }
 
     pub fn call(&self, id: u64, method: &str, args: Value) -> Value {
@@ -160,6 +182,32 @@ pub fn alive(pid: u64) -> bool {
     !stat.trim().is_empty() && !stat.trim_start().starts_with('Z')
 }
 
+/// A notification as the browser whose keys these are reads it (RFC 8291).
+pub fn open_push(ua: &p256::SecretKey, auth: &[u8], body: &[u8]) -> Value {
+    use aes_gcm::{Aes128Gcm, KeyInit, aead::Aead};
+    use hkdf::Hkdf;
+    use p256::PublicKey;
+    use sha2::Sha256;
+
+    let (salt, rest) = body.split_at(16);
+    let idlen = rest[4] as usize;
+    let (as_public, sealed) = rest[5..].split_at(idlen);
+    let shared =
+        p256::ecdh::diffie_hellman(ua.to_nonzero_scalar(), PublicKey::from_sec1_bytes(as_public).unwrap().as_affine());
+    let mut info = b"WebPush: info\0".to_vec();
+    info.extend_from_slice(&ua.public_key().to_sec1_bytes());
+    info.extend_from_slice(as_public);
+    let mut ikm = [0u8; 32];
+    Hkdf::<Sha256>::new(Some(auth), shared.raw_secret_bytes().as_ref()).expand(&info, &mut ikm).unwrap();
+    let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
+    let (mut cek, mut nonce) = ([0u8; 16], [0u8; 12]);
+    prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).unwrap();
+    prk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
+    let mut plain = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(&nonce.into(), sealed).unwrap();
+    plain.pop();
+    serde_json::from_slice(&plain).unwrap()
+}
+
 /// A phone subscribed to push notifications: a push service of our own,
 /// whose messages it decrypts as a browser would (RFC 8291).
 pub struct Phone {
@@ -171,26 +219,55 @@ pub struct Phone {
 
 impl Phone {
     pub fn subscribe(d: &Daemon) -> Self {
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+        Self::subscribe_as(d, None)
+    }
+
+    /// Subscribed as a tailnet user (M29), or as the owner.
+    pub fn subscribe_as(d: &Daemon, login: Option<&str>) -> Self {
+        let phone = Self::bind();
+        let sub = phone.subscription();
+        match login {
+            None => {
+                d.post("/api/push/subscribe", sub);
+            }
+            Some(l) => {
+                let (status, body) = d.raw_as(l, "POST", "/api/push/subscribe", Some(sub));
+                assert_eq!(status, 200, "{l} subscribing: {body}");
+            }
+        }
+        phone
+    }
+
+    /// A phone nobody has subscribed yet.
+    pub fn bind() -> Self {
         let service = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!("http://127.0.0.1:{}/push/abc", service.local_addr().unwrap().port());
         let ua = p256::SecretKey::from_slice(&[7u8; 32]).unwrap();
         let ua_public = ua.public_key().to_sec1_bytes().to_vec();
-        let auth = [9u8; 16];
-        d.post(
-            "/api/push/subscribe",
-            json!({"endpoint": endpoint, "keys": {"p256dh": B64.encode(&ua_public), "auth": B64.encode(auth)}}),
-        );
-        Self { service, ua, ua_public, auth }
+        Self { service, ua, ua_public, auth: [9u8; 16] }
+    }
+
+    /// Its subscription, as `PushSubscription.toJSON()` gives it.
+    pub fn subscription(&self) -> Value {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+        let endpoint = format!("http://127.0.0.1:{}/push/abc", self.service.local_addr().unwrap().port());
+        json!({"endpoint": endpoint, "keys": {"p256dh": B64.encode(&self.ua_public), "auth": B64.encode(self.auth)}})
+    }
+
+    /// Whether nothing came for `ms`.
+    pub fn quiet(&self, ms: u64) -> bool {
+        self.service.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < deadline {
+            if self.service.accept().is_ok() {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        true
     }
 
     /// The next push.
     pub fn next(&self) -> Value {
-        use aes_gcm::{Aes128Gcm, KeyInit, aead::Aead};
-        use hkdf::Hkdf;
-        use p256::PublicKey;
-        use sha2::Sha256;
-
         self.service.set_nonblocking(true).unwrap();
         let deadline = Instant::now() + Duration::from_secs(30);
         let mut conn = loop {
@@ -222,25 +299,7 @@ impl Phone {
         let mut body = vec![0; len];
         r.read_exact(&mut body).unwrap();
         write!(conn, "HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
-        let (salt, rest) = body.split_at(16);
-        let idlen = rest[4] as usize;
-        let (as_public, sealed) = rest[5..].split_at(idlen);
-        let shared = p256::ecdh::diffie_hellman(
-            self.ua.to_nonzero_scalar(),
-            PublicKey::from_sec1_bytes(as_public).unwrap().as_affine(),
-        );
-        let mut info = b"WebPush: info\0".to_vec();
-        info.extend_from_slice(&self.ua_public);
-        info.extend_from_slice(as_public);
-        let mut ikm = [0u8; 32];
-        Hkdf::<Sha256>::new(Some(&self.auth), shared.raw_secret_bytes().as_ref()).expand(&info, &mut ikm).unwrap();
-        let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
-        let (mut cek, mut nonce) = ([0u8; 16], [0u8; 12]);
-        prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).unwrap();
-        prk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
-        let mut plain = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(&nonce.into(), sealed).unwrap();
-        plain.pop();
-        serde_json::from_slice(&plain).unwrap()
+        open_push(&self.ua, &self.auth, &body)
     }
 
     /// Pushes come for each attention change nobody is looking at; the next
@@ -251,6 +310,65 @@ impl Phone {
             if msg["title"] == "Needs you" {
                 return msg;
             }
+        }
+    }
+}
+
+/// An MCP client as Claude Code in a terminal pane starts one: `illogical
+/// mcp` on the daemon's socket, with `ILLOGICAL_PANE` (or none), for tests
+/// that aren't async (#234).
+pub struct Mcp {
+    rt: tokio::runtime::Runtime,
+    session: Option<rmcp::service::RunningService<rmcp::RoleClient, McpClient>>,
+}
+
+#[derive(Clone)]
+pub struct McpClient;
+
+impl rmcp::ClientHandler for McpClient {
+    fn get_info(&self) -> rmcp::model::ClientConfig {
+        rmcp::model::ClientConfig::new(
+            rmcp::model::ClientCapabilities::default(),
+            rmcp::model::Implementation::new("claude-code", "1"),
+        )
+    }
+}
+
+impl Mcp {
+    pub fn bridge(d: &Daemon, pane: Option<u64>) -> Self {
+        use rmcp::ServiceExt;
+        let bin = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+        let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+        assert!(status.success(), "building the CLI");
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let mut cmd = tokio::process::Command::new(bin);
+        cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE");
+        if let Some(p) = pane {
+            cmd.env("ILLOGICAL_PANE", p.to_string());
+        }
+        let session = rt.block_on(async {
+            McpClient.serve(rmcp::transport::TokioChildProcess::new(cmd).unwrap()).await.expect("illogical mcp")
+        });
+        Self { rt, session: Some(session) }
+    }
+
+    /// A tool's structured result, or its error sentence.
+    pub fn call(&self, tool: &str, args: Value) -> Result<Value, String> {
+        let s = self.session.as_ref().unwrap();
+        let params = rmcp::model::CallToolRequestParams::new(tool.to_owned())
+            .with_arguments(args.as_object().cloned().unwrap_or_default());
+        let r = self.rt.block_on(s.call_tool(params)).map_err(|e| format!("{tool}: {e}"))?;
+        if r.is_error == Some(true) {
+            return Err(r.content.iter().filter_map(|c| c.as_text().map(|t| t.text.clone())).collect());
+        }
+        Ok(r.structured_content.unwrap_or_default())
+    }
+}
+
+impl Drop for Mcp {
+    fn drop(&mut self) {
+        if let Some(s) = self.session.take() {
+            let _ = self.rt.block_on(s.cancel());
         }
     }
 }

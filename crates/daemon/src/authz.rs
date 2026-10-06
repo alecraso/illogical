@@ -185,6 +185,10 @@ mod tests {
         assert_eq!(policy(&g, "/api/fs/read"), Policy::Owner);
         assert_eq!(policy(&g, "/api/search"), Policy::Owner);
         assert_eq!(policy(&p, "/api/acl"), Policy::Owner);
+        // #233: inviting, and the owner's browser's team pins.
+        assert_eq!(policy(&p, "/api/invite"), Policy::Owner);
+        assert_eq!(policy(&p, "/api/team-pins"), Policy::Owner);
+        assert_eq!(policy(&g, "/api/team-pins"), Policy::Owner);
         assert_eq!(policy(&g, "/api/panes/x/capture"), Policy::Owner);
         assert_eq!(policy(&g, "/api/panes/3/diff"), Policy::On(3, Role::Viewer));
         assert_eq!(policy(&g, "/api/ide"), Policy::Owner);

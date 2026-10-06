@@ -8,14 +8,17 @@ import type { ComponentChildren } from "preact";
 /** Whether a mention (`@jake`) is the person reading. */
 export type IsMe = (token: string) => boolean;
 
-export function Markup({ text, isMe }: { text: string; isMe?: IsMe }) {
+/** `landed`: whether an @token reached someone (a thread message's, #296).
+ * Given, only those are marked; the rest stay plain text, so a highlight
+ * never promises a notification nobody got. */
+export function Markup({ text, isMe, landed }: { text: string; isMe?: IsMe; landed?: (token: string) => boolean }) {
   const out: ComponentChildren[] = [];
   // Fenced blocks first: nothing inside them is formatted.
   const fence = /```[^\n]*\n?([\s\S]*?)```/g;
   let at = 0;
   let k = 0;
   for (let m = fence.exec(text); m; m = fence.exec(text)) {
-    if (m.index > at) out.push(<Lines key={k++} text={text.slice(at, m.index)} isMe={isMe} />);
+    if (m.index > at) out.push(<Lines key={k++} text={text.slice(at, m.index)} isMe={isMe} landed={landed} />);
     out.push(
       <pre key={k++} class="msg-code">
         {m[1].replace(/\n$/, "")}
@@ -23,15 +26,15 @@ export function Markup({ text, isMe }: { text: string; isMe?: IsMe }) {
     );
     at = m.index + m[0].length;
   }
-  if (at < text.length) out.push(<Lines key={k++} text={text.slice(at)} isMe={isMe} />);
+  if (at < text.length) out.push(<Lines key={k++} text={text.slice(at)} isMe={isMe} landed={landed} />);
   return <>{out}</>;
 }
 
 /** Text between code blocks, trimmed of the newlines around the blocks. */
-function Lines({ text, isMe }: { text: string; isMe?: IsMe }) {
+function Lines({ text, isMe, landed }: { text: string; isMe?: IsMe; landed?: (token: string) => boolean }) {
   const t = text.replace(/^\n/, "").replace(/\n$/, "");
   if (!t) return null;
-  return <p class="thread-text">{inline(t, isMe)}</p>;
+  return <p class="thread-text">{inline(t, isMe, landed)}</p>;
 }
 
 // One pattern for every inline form; the first group that matched says
@@ -39,7 +42,7 @@ function Lines({ text, isMe }: { text: string; isMe?: IsMe }) {
 const INLINE =
   /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?:^|(?<=[\s(]))[*_][^*_\s][^*_\n]*[*_](?=$|[\s.,;:!?)]))|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])|((?:^|(?<=[^\w]))@[\w.-]*\w)/g;
 
-export function inline(text: string, isMe?: IsMe): ComponentChildren[] {
+export function inline(text: string, isMe?: IsMe, landed?: (token: string) => boolean): ComponentChildren[] {
   const out: ComponentChildren[] = [];
   let at = 0;
   let k = 0;
@@ -48,14 +51,15 @@ export function inline(text: string, isMe?: IsMe): ComponentChildren[] {
     if (i > at) out.push(text.slice(at, i));
     const s = m[0];
     if (m[1]) out.push(<code key={k++}>{s.slice(1, -1)}</code>);
-    else if (m[2]) out.push(<b key={k++}>{inline(s.slice(2, -2), isMe)}</b>);
-    else if (m[3]) out.push(<i key={k++}>{inline(s.slice(1, -1), isMe)}</i>);
+    else if (m[2]) out.push(<b key={k++}>{inline(s.slice(2, -2), isMe, landed)}</b>);
+    else if (m[3]) out.push(<i key={k++}>{inline(s.slice(1, -1), isMe, landed)}</i>);
     else if (m[4])
       out.push(
         <a key={k++} href={s} target="_blank" rel="noopener noreferrer">
           {s}
         </a>,
       );
+    else if (landed && !landed(s.slice(1).toLowerCase())) out.push(s);
     else {
       const token = s.slice(1).toLowerCase();
       out.push(

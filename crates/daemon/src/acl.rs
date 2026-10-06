@@ -17,6 +17,7 @@ use std::{
 };
 
 use illogical_core::{PaneId, Role, SessionId};
+use illogical_proto::ThreadTarget;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -80,6 +81,20 @@ pub struct Grant {
     pub key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<u64>,
+    /// An invite from a thread (#297): in that one thread, a "from now"
+    /// share reads from here instead. Every other thread starts at `at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_from: Option<ThreadFrom>,
+}
+
+/// Where one thread starts for someone invited into it (#297): the message
+/// that mentioned them, or (`from: 0`) the whole thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadFrom {
+    /// `pane-N` or `session-N`.
+    pub thread: String,
+    /// The first message's `at` (ms); 0 for all of it.
+    pub from: u64,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -267,6 +282,7 @@ impl Acl {
             root: None,
             key: Some(key.to_owned()),
             expires: Some(expires),
+            thread_from: None,
         });
         let file = File { grants: g.clone() };
         drop(g);
@@ -296,12 +312,17 @@ impl Acl {
     }
 
     /// For a "from now" share (M13): when it was made. Thread messages
-    /// (M61) from before it aren't theirs to read either.
-    pub fn thread_floor(&self, p: &Principal, session: SessionId) -> Option<u64> {
+    /// (M61) from before it aren't theirs to read either, but for the one
+    /// thread they were invited into (#297): there, from its exception.
+    pub fn thread_floor(&self, p: &Principal, session: SessionId, thread: ThreadTarget) -> Option<u64> {
         let Principal::User { id, .. } = p else { return None };
         let g = self.grants.read().unwrap();
         let grant = g.iter().find(|g| g.session == session && &g.principal == id)?;
-        grant.from.as_ref().map(|_| grant.at)
+        grant.from.as_ref()?;
+        match &grant.thread_from {
+            Some(t) if t.thread == thread.key() => Some(t.from),
+            _ => Some(grant.at),
+        }
     }
 
     /// Whether this principal may connect at all.
@@ -349,10 +370,12 @@ impl Acl {
         by: &str,
         from: Option<BTreeMap<PaneId, u64>>,
     ) -> std::io::Result<()> {
-        self.set_full(session, principal, name, role, by, from, None)
+        self.set_full(session, principal, name, role, by, from, None, None)
     }
 
-    /// With the root an `account:` principal's devices chain back to.
+    /// With the root an `account:` principal's devices chain back to, and
+    /// for a new grant from a thread's invite (#297), where that thread
+    /// starts for them. A grant held keeps its own.
     #[allow(clippy::too_many_arguments)]
     pub fn set_full(
         &self,
@@ -363,11 +386,23 @@ impl Acl {
         by: &str,
         from: Option<BTreeMap<PaneId, u64>>,
         root: Option<String>,
+        thread_from: Option<ThreadFrom>,
     ) -> std::io::Result<()> {
         let mut g = self.grants.write().unwrap();
         let before = g.clone();
         let old = g.iter().find(|x| x.session == session && x.principal == principal).cloned();
         let kept = old.as_ref().and_then(|x| x.from.clone());
+        // A role change keeps when the grant began (it's the thread floor of
+        // a "from now" share); a first grant, or one made after a revoke,
+        // begins now.
+        let at = match &old {
+            Some(x) if from.is_none() => x.at,
+            _ => now_ms(),
+        };
+        let thread_from = match &old {
+            Some(x) => x.thread_from.clone(),
+            None => thread_from,
+        };
         let root = root.or_else(|| old.and_then(|x| x.root));
         g.retain(|x| !(x.session == session && x.principal == principal));
         if let Some(role) = role {
@@ -377,11 +412,12 @@ impl Acl {
                 name: name.into(),
                 role,
                 by: by.into(),
-                at: now_ms(),
+                at,
                 from: from.or(kept),
                 root,
                 key: None,
                 expires: None,
+                thread_from,
             });
         }
         if let Err(e) = write_atomic(&self.path, &serde_json::to_vec_pretty(&File { grants: g.clone() }).unwrap()) {
@@ -455,6 +491,58 @@ mod tests {
         assert!(!again.knows(&alice));
         let log = again.audit();
         assert_eq!(log.iter().map(|e| e["action"].as_str().unwrap()).collect::<Vec<_>>(), ["grant", "grant", "revoke"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A role change keeps when a grant began (a "from now" share's thread
+    /// floor); a grant made again after a revoke begins now.
+    #[test]
+    fn a_role_change_keeps_when_the_grant_began() {
+        let dir = std::env::temp_dir().join(format!("illogical-acl-at-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let alice = Principal::tailnet("alice@example.com");
+        let acl = Acl::open(&dir);
+        let from: BTreeMap<PaneId, u64> = [(1, 5)].into();
+        acl.set_from(3, alice.id(), "alice", Some(Role::Viewer), "owner", Some(from.clone())).unwrap();
+        let first = acl.thread_floor(&alice, 3, ThreadTarget::Session(3)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        acl.set(3, alice.id(), "alice", Some(Role::Editor), "owner").unwrap();
+        assert_eq!(acl.role(&alice, 3), Some(Role::Editor));
+        assert_eq!(acl.thread_floor(&alice, 3, ThreadTarget::Session(3)), Some(first));
+        assert_eq!(acl.floor(&alice, 3, 1), Some(5));
+        acl.set(3, alice.id(), "alice", None, "owner").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        acl.set_from(3, alice.id(), "alice", Some(Role::Viewer), "owner", Some(from)).unwrap();
+        assert!(acl.thread_floor(&alice, 3, ThreadTarget::Session(3)).unwrap() > first);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An invite from a thread (#297) opens that thread from its message
+    /// and no other; a role change keeps it, a held grant isn't given one,
+    /// and a share with history has no floor anywhere.
+    #[test]
+    fn a_thread_exception_is_that_threads_alone_and_outlives_a_role_change() {
+        let dir = std::env::temp_dir().join(format!("illogical-acl-thread-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sam = Principal::tailnet("sam@example.com");
+        let acl = Acl::open(&dir);
+        let from: BTreeMap<PaneId, u64> = [(1, 5)].into();
+        let here = ThreadFrom { thread: "pane-1".into(), from: 42 };
+        acl.set_full(3, sam.id(), "sam", Some(Role::Viewer), "owner", Some(from.clone()), None, Some(here.clone()))
+            .unwrap();
+        let at = acl.thread_floor(&sam, 3, ThreadTarget::Session(3)).unwrap();
+        assert!(at > 42);
+        assert_eq!(acl.thread_floor(&sam, 3, ThreadTarget::Pane(1)), Some(42));
+        assert_eq!(acl.thread_floor(&sam, 3, ThreadTarget::Pane(2)), Some(at));
+        // A role change keeps it; one given to a grant held is ignored.
+        let other = ThreadFrom { thread: "pane-2".into(), from: 0 };
+        acl.set_full(3, sam.id(), "sam", Some(Role::Editor), "owner", None, None, Some(other.clone())).unwrap();
+        assert_eq!(acl.thread_floor(&sam, 3, ThreadTarget::Pane(1)), Some(42));
+        assert_eq!(acl.thread_floor(&sam, 3, ThreadTarget::Pane(2)), Some(at));
+        assert_eq!(Acl::open(&dir).thread_floor(&sam, 3, ThreadTarget::Pane(1)), Some(42), "it's kept on disk");
+        // With history: no floor at all.
+        acl.set_full(5, sam.id(), "sam", Some(Role::Viewer), "owner", None, None, Some(other)).unwrap();
+        assert_eq!(acl.thread_floor(&sam, 5, ThreadTarget::Pane(1)), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
@@ -593,7 +681,7 @@ pub mod api {
                 None => return (StatusCode::NOT_FOUND, Json(json!({ "error": "no such session" }))).into_response(),
             }
         };
-        if let Err(e) = app.acl.set_full(b.session, &principal, &name, b.role, "owner", from, b.root) {
+        if let Err(e) = app.acl.set_full(b.session, &principal, &name, b.role, "owner", from, b.root, None) {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response();
         }
         // Takes effect at once: new state for everyone, and a hang-up for

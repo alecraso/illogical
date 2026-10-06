@@ -275,7 +275,7 @@ export interface Delta {
   calls?: Call[];
 }
 
-export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "workspace" | "app" | "forge" | "fountain";
+export type BlockType = "terminal" | "browser" | "agent" | "editor" | "diff" | "file" | "remote" | "workspace" | "app" | "forge" | "fountain" | "invite";
 
 /** A remote block's config and state (#17): a pane on another host in the
  * home daemon's list, shown in this layout. */
@@ -395,6 +395,23 @@ export interface CallSignal {
 }
 
 /** M61: what a thread is about. */
+/** An `@` in a post that reached no one: told to the poster alone. */
+export interface Unreached {
+  token: string;
+  why: "agent_needs_pane" | "may_not_drive" | "nobody";
+}
+
+/** Someone the owner's `@token` named who can't read the thread (#297):
+ *  theirs to invite. Only ever in the owner's own response. */
+export interface Invitable {
+  token: string;
+  /** `tailnet:<login>` or `account:<id>`. */
+  who: string;
+  name: string;
+  /** Another principal taken to be them (a login by their name). */
+  merged?: string | null;
+}
+
 export type ThreadTarget = { pane: PaneId } | { session: SessionId };
 
 /** M61: one message in a pane's or session's thread. */
@@ -410,6 +427,8 @@ export interface ThreadMsg {
   quote?: { pane: PaneId; text: string };
   /** Principal ids it @mentions. */
   mentions?: string[];
+  /** The `@` tokens (lowercase) that reached someone; only these are marked. */
+  landed?: string[];
   /** It went to the pane's agent as a follow-up. */
   to_agent?: boolean;
   /** An agent posted it. */

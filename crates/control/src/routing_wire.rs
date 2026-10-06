@@ -338,15 +338,19 @@ async fn control_routes_a_daemon_only_to_accounts_with_a_say_in_it() {
         c.app.db.put_push_sub(&format!("https://fcm.googleapis.com/fcm/send/{e}"), a, &body.to_string()).unwrap();
     }
 
-    // The daemon says it lets in its owner's teammate and two strangers.
-    let (st, _) = c.daemon_post(&d, "/api/daemon/access", &json!({ "accounts": ["mate1", "vic1", "oth1"] })).await;
-    assert_eq!(st, 200);
     let subs = |v: &Value| -> Vec<String> {
         let mut a: Vec<String> =
             v["subs"].as_array().unwrap().iter().map(|s| s["account"].as_str().unwrap().to_owned()).collect();
         a.sort();
         a
     };
+    // Until the daemon says whom it lets in, not even a teammate's: why it
+    // says so before it fetches these (#232).
+    let (_, v) = c.daemon_get(&d, "/api/daemon/push-subs").await;
+    assert_eq!(subs(&v), vec!["own1"]);
+    // The daemon says it lets in its owner's teammate and two strangers.
+    let (st, _) = c.daemon_post(&d, "/api/daemon/access", &json!({ "accounts": ["mate1", "vic1", "oth1"] })).await;
+    assert_eq!(st, 200);
     let (_, v) = c.daemon_get(&d, "/api/daemon/push-subs").await;
     assert_eq!(subs(&v), vec!["mate1", "own1"], "not strangers' subscriptions");
     let (st, _) = c

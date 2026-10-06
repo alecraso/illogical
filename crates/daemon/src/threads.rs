@@ -209,6 +209,7 @@ mod tests {
             text: text.into(),
             quote: None,
             mentions: vec![],
+            landed: Vec::new(),
             to_agent: false,
             agent: false,
         }

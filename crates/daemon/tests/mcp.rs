@@ -74,7 +74,7 @@ type Session = RunningService<RoleClient, Client>;
 /// would start it.
 async fn bridge(d: &Daemon, client: Client) -> Session {
     let mut cmd = tokio::process::Command::new(cli_bin());
-    cmd.arg("--socket").arg(d.sock()).arg("mcp");
+    cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE");
     client.serve(TokioChildProcess::new(cmd).unwrap()).await.expect("connecting through illogical mcp")
 }
 
@@ -122,7 +122,7 @@ async fn tools_through_the_stdio_bridge() {
 
     // The tools, with honest annotations.
     let tools = s.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 36);
+    assert_eq!(tools.len(), 38);
     let ro = |n: &str| tools.iter().find(|t| t.name == n).unwrap().annotations.as_ref().unwrap().read_only_hint;
     assert_eq!(
         (ro("read_output"), ro("wait"), ro("run"), ro("close")),
@@ -253,7 +253,7 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     // (and retries it, then gives up: no tools).
     let tools = s.list_tools(None).await.unwrap();
     assert_eq!((tools.ttl_ms, tools.cache_scope), (Some(0), Some(CacheScope::Private)));
-    assert_eq!(tools.tools.len(), 36);
+    assert_eq!(tools.tools.len(), 38);
     let t = s.list_resource_templates(None).await.unwrap();
     assert_eq!((t.ttl_ms, t.cache_scope), (Some(0), Some(CacheScope::Private)));
     let r = call(&s, "run", json!({ "command": "echo stateless", "wait": true })).await;
@@ -293,8 +293,11 @@ async fn http_with_a_token_until_it_is_revoked() {
     let ro =
         d.post("/api/mcp/tokens", json!({ "name": "watcher", "scope": "read" }))["token"].as_str().unwrap().to_owned();
     let w = http(&d, &ro, Client::named("watcher")).await.unwrap();
-    assert_eq!(w.list_all_tools().await.unwrap().len(), 14);
+    assert_eq!(w.list_all_tools().await.unwrap().len(), 15);
     assert!(refused(&w, "run", json!({ "command": "true" })).await.contains("may only read"));
+    // #234: nor ask to invite anyone.
+    let invite = json!({ "who": "tailnet:sam@example.com", "pane": 1, "note": "x" });
+    assert!(refused(&w, "invite_person", invite).await.contains("may only read"));
     call(&w, "list", json!({})).await;
 
     // Revoked: cut off at its next call, and it can't start again.
@@ -665,6 +668,12 @@ async fn an_agent_reads_and_posts_in_threads() {
     assert_eq!(r["messages"].as_array().unwrap().len(), 1, "{r}");
     call(&s, "post_thread", json!({ "session": session, "text": "done for today" })).await;
     assert_eq!(d.get(&format!("/api/threads/session-{session}"))["messages"][0]["text"], "done for today");
+    // An @ that goes nowhere comes back to the agent that wrote it.
+    let p = call(&s, "post_thread", json!({ "session": session, "text": "@claude @notreal ping" })).await;
+    assert_eq!(
+        p["unreached"],
+        json!([{ "token": "claude", "why": "agent_needs_pane" }, { "token": "notreal", "why": "nobody" }])
+    );
     // A client with no pane of its own has to say which thread.
     assert!(refused(&s, "post_thread", json!({ "text": "hi" })).await.contains("which thread"));
     s.cancel().await.unwrap();
@@ -682,4 +691,380 @@ fn an_agent_blocks_thread_is_its_own() {
     // Another tab's pane isn't its to post in.
     let e = agent_mcp(&d, a, "post_thread", json!({ "pane": other, "text": "hi" })).unwrap_err();
     assert!(e.contains("another tab"), "{e}");
+}
+
+// ---------------------------------------------------------------- #234
+
+const OWNER: &str = "me@example.com";
+const FRIEND: &str = "friend@example.com";
+
+/// A daemon on a tailnet (so tests can be someone else), its first pane
+/// and session, and FRIEND an editor there.
+fn shared_daemon(env: &[(&str, &str)]) -> (Daemon, u64, u64) {
+    let args = ["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock", "--wisp-token-file", "/nonexistent"];
+    let d = Daemon::child_env(&args, env);
+    let p = &d.get("/api/panes")[0];
+    let (pane, session) = (p["id"].as_u64().unwrap(), p["session"].as_u64().unwrap());
+    d.post("/api/acl", json!({ "session": session, "principal": format!("tailnet:{FRIEND}"), "role": "editor" }));
+    (d, pane, session)
+}
+
+/// #297: an agent's @name of someone who can't see the thread makes no
+/// invite card and no grant; post_thread points it at invite_person.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agents_mention_invites_nobody() {
+    let (d, pane, session) = shared_daemon(&[]);
+    let elsewhere = d.post("/api/run", json!({ "session": "other" }))["pane"].as_u64().unwrap();
+    let other =
+        d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == elsewhere).unwrap()["session"].clone();
+    d.post("/api/acl", json!({ "session": other, "principal": "tailnet:sam@example.com", "role": "viewer" }));
+    let s = bridge(&d, Client::named("claude-code")).await;
+    let tools = s.list_tools(None).await.unwrap();
+    let post = tools.tools.iter().find(|t| t.name == "post_thread").unwrap();
+    assert!(post.description.as_deref().unwrap_or("").contains("invite_person"), "{post:?}");
+    let p = call(&s, "post_thread", json!({ "pane": pane, "text": "@sam look" })).await;
+    assert_eq!(p["unreached"], json!([{ "token": "sam", "why": "nobody" }]), "{p}");
+    assert!(p.get("invitable").is_none(), "{p}");
+    s.cancel().await.unwrap();
+    assert!(invite_blocks(&d).is_empty());
+    let grants = d.get("/api/acl")["grants"].clone();
+    assert!(
+        grants
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|g| g["principal"] != "tailnet:sam@example.com" || g["session"] != session),
+        "{grants}"
+    );
+}
+
+/// A POST on the socket as the CLI sends it under Claude Code: the HTTP
+/// status.
+fn as_agent(d: &Daemon, path: &str, body: Value) -> u16 {
+    use std::io::{Read, Write};
+    let mut s = std::os::unix::net::UnixStream::connect(d.sock()).unwrap();
+    let body = body.to_string();
+    write!(
+        s,
+        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nX-Illogical-Agent: 1\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    out.split_whitespace().nth(1).unwrap().parse().unwrap()
+}
+
+fn invite_blocks(d: &Daemon) -> Vec<u64> {
+    let panes = d.get("/api/panes");
+    panes.as_array().unwrap().iter().filter(|p| p["type"] == "invite").map(|p| p["id"].as_u64().unwrap()).collect()
+}
+
+fn grant_of(d: &Daemon, principal: &str) -> Option<Value> {
+    d.get("/api/acl")["grants"].as_array().unwrap().iter().find(|g| g["principal"] == principal).cloned()
+}
+
+/// The card on a block (or pane), if one is open.
+fn card_on(d: &Daemon, id: u64) -> Value {
+    let panes = d.get("/api/panes");
+    panes.as_array().unwrap().iter().find(|p| p["id"] == id).map(|p| p["ask"].clone()).unwrap_or(Value::Null)
+}
+
+/// `read_invite` until it isn't waiting.
+fn settled(m: &Mcp, draft: &str, pane: Option<u64>) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let r = m.call("read_invite", json!({ "draft": draft, "pane": pane })).unwrap();
+        if r["status"] != "waiting" {
+            return r;
+        }
+        assert!(std::time::Instant::now() < deadline, "still waiting: {r}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn an_invite_waits_for_the_owner_and_only_they_send_it() {
+    let (d, pane, _) = shared_daemon(&[]);
+    // A full client outside any pane (no $ILLOGICAL_PANE).
+    let m = Mcp::bridge(&d, None);
+    let note = "the flaky test needs their eyes";
+
+    // Where is unsaid; whom nobody knows; never an owner: no card.
+    let e = m.call("invite_person", json!({ "who": "tailnet:sam@example.com", "note": note })).unwrap_err();
+    assert!(e.contains("pane:"), "{e}");
+    let e = m.call("invite_person", json!({ "who": "sam", "pane": pane, "note": note })).unwrap_err();
+    assert!(e.contains("share once from the web"), "{e}");
+    let e = m.call("invite_person", json!({ "who": FRIEND, "pane": pane, "role": "owner", "note": note })).unwrap_err();
+    assert!(e.contains("never makes an owner"), "{e}");
+    let e = m.call("invite_person", json!({ "who": FRIEND, "pane": pane, "note": " " })).unwrap_err();
+    assert!(e.contains("note"), "{e}");
+    assert!(invite_blocks(&d).is_empty(), "no card for any of that");
+
+    // A draft, at once; nothing shared.
+    let sam = "tailnet:sam@example.com";
+    let r = m.call("invite_person", json!({ "who": sam, "pane": pane, "role": "editor", "note": note })).unwrap();
+    assert_eq!(r["status"], "waiting", "{r}");
+    let draft = r["draft"].as_str().unwrap().to_owned();
+    let block = r["block"].as_u64().unwrap();
+    assert!(grant_of(&d, sam).is_none());
+    assert_eq!(tab_of(&d, block), tab_of(&d, pane), "beside the pane");
+    let card = card_on(&d, block);
+    assert_eq!(card["source"], "invite", "{card}");
+    let name = d.get("/api/panes")[0]["session_name"].as_str().unwrap().to_owned();
+    assert_eq!(
+        card["message"],
+        format!(
+            "claude-code (pane %{pane}, your own client) wants to bring sam@example.com [{sam}] (editor) into {name} at pane %{pane}: {note}"
+        )
+    );
+    assert!(card_on(&d, pane).is_null(), "never on the pane itself");
+    assert_eq!(m.call("read_invite", json!({ "draft": draft, "pane": pane })).unwrap()["status"], "waiting");
+
+    // An editor may answer other cards, not this one: by the card, or the
+    // push's action. Nor an agent, through agent_respond.
+    let body = json!({ "id": draft, "content": { "role": "editor" } });
+    let (status, text) = d.raw_as(FRIEND, "POST", &format!("/api/blocks/{block}/call/answer"), Some(body));
+    assert_eq!(status, 403, "{text}");
+    let act = json!({ "action": "answer", "pane": block, "content": { "role": "editor" } });
+    let (status, text) = d.raw_as(FRIEND, "POST", "/api/attention/act", Some(act));
+    assert_eq!(status, 403, "{text}");
+    let (status, _) = d.raw_as(FRIEND, "POST", "/api/attention/act", Some(json!({ "action": "deny", "pane": block })));
+    assert_eq!(status, 403);
+    let e = m.call("agent_respond", json!({ "pane": block, "action": "answer", "answers": {} })).unwrap_err();
+    assert!(e.contains("only the session's owner"), "{e}");
+    // Nor Claude Code on the owner's own CLI (it says so).
+    assert_eq!(as_agent(&d, &format!("/api/blocks/{block}/call/answer"), json!({ "content": {} })), 403);
+    assert_eq!(as_agent(&d, "/api/attention/act", json!({ "action": "answer", "pane": block, "content": {} })), 403);
+    // Nor may it skip the card: invite on the CLI, or make a card of its
+    // own (whose words needn't be what it does), or pin a team.
+    let session = d.get("/api/panes")[0]["session"].clone();
+    let direct = json!({ "session": session, "who": sam, "role": "editor", "drive_minutes": 60 });
+    assert_eq!(as_agent(&d, "/api/invite", direct), 403);
+    assert_eq!(as_agent(&d, "/api/team-pins", json!({ "pins": {} })), 403);
+    let forged = json!({ "type": "invite", "config": { "drafter": "%1", "drafts": [] } });
+    let (status, text) = d.raw("POST", "/api/blocks", Some(forged));
+    assert_eq!(status, 403, "{text}");
+    assert_eq!(invite_blocks(&d), [block], "no other invite block");
+    assert!(grant_of(&d, sam).is_none(), "nothing granted");
+    assert_eq!(card_on(&d, block)["id"], draft.as_str(), "the card waits still");
+
+    // The owner sends it: #233's invite, as them.
+    let content = json!({ "role": "editor", "note": "edited: the flaky test" });
+    let (status, text) =
+        d.raw("POST", &format!("/api/blocks/{block}/call/answer"), Some(json!({ "content": content })));
+    assert_eq!(status, 200, "{text}");
+    let r = settled(&m, &draft, Some(pane));
+    assert_eq!(r["status"], "sent", "{r}");
+    assert_eq!((r["delivery"].as_str(), r["grant"]["principal"].as_str()), (Some("unreachable"), Some(sam)), "{r}");
+    assert!(r["delivery_reason"].is_string() && r["settled_by"].is_string(), "{r}");
+    assert_eq!(r["note"], "edited: the flaky test");
+    assert_eq!(grant_of(&d, sam).unwrap()["role"], "editor");
+    let audit = d.get("/api/acl")["audit"].clone();
+    let line = audit.as_array().unwrap().iter().find(|a| a["action"] == "invite").cloned().unwrap();
+    assert_eq!(
+        (line["by"].as_str(), line["approved_by"].as_str(), line["drafted_by"].as_str(), line["drafted_in"].as_u64()),
+        (Some("owner"), r["settled_by"].as_str(), Some("mcp:claude-code"), Some(pane)),
+        "{line}"
+    );
+
+    // Declined, with a reason the agent reads; and without one.
+    let kim = "tailnet:kim@example.com";
+    let r = m.call("invite_person", json!({ "who": kim, "pane": pane, "note": note })).unwrap();
+    let draft = r["draft"].as_str().unwrap().to_owned();
+    assert_eq!(r["block"].as_u64(), Some(block), "the same block for the same caller");
+    d.wait_for("its card", || card_on(&d, block)["id"] == draft.as_str());
+    let content = json!({ "decline": true, "reason": "not this week" });
+    d.post(&format!("/api/blocks/{block}/call/answer"), json!({ "content": content }));
+    let r = settled(&m, &draft, Some(pane));
+    assert_eq!((r["status"].as_str(), r["reason"].as_str()), (Some("declined"), Some("not this week")), "{r}");
+    assert!(r["summary"].as_str().unwrap().contains("not this week"));
+    let r = m.call("invite_person", json!({ "who": kim, "pane": pane, "note": note })).unwrap();
+    let draft = r["draft"].as_str().unwrap().to_owned();
+    d.wait_for("its card", || card_on(&d, block)["id"] == draft.as_str());
+    d.post(&format!("/api/blocks/{block}/call/decline"), json!({}));
+    let r = settled(&m, &draft, Some(pane));
+    assert_eq!((r["status"].as_str(), r["reason"].as_str()), (Some("declined"), None), "{r}");
+    assert!(grant_of(&d, kim).is_none());
+
+    // Five may wait; the sixth is refused.
+    for _ in 0..5 {
+        m.call("invite_person", json!({ "who": kim, "pane": pane, "note": note })).unwrap();
+    }
+    let e = m.call("invite_person", json!({ "who": kim, "pane": pane, "note": note })).unwrap_err();
+    assert!(e.contains("wait for the user already"), "{e}");
+    // Another caller reads none of them.
+    let other = Mcp::bridge(&d, Some(block));
+    let e = other.call("read_invite", json!({ "draft": draft })).unwrap_err();
+    assert!(e.contains("no invite"), "{e}");
+}
+
+#[test]
+fn an_unanswered_invite_is_dropped() {
+    let (d, pane, _) = shared_daemon(&[("ILLOGICAL_INVITE_TTL_MS", "1500")]);
+    let m = Mcp::bridge(&d, Some(pane));
+    let r = m.call("invite_person", json!({ "who": "tailnet:sam@example.com", "note": "x" })).unwrap();
+    assert_eq!(r["pane"].as_u64(), Some(pane), "the pane illogical mcp runs in, by default");
+    let block = r["block"].as_u64().unwrap();
+    let r = settled(&m, r["draft"].as_str().unwrap(), None);
+    assert_eq!(r["status"], "dropped", "{r}");
+    assert!(card_on(&d, block).is_null(), "its card went with it");
+    assert!(grant_of(&d, "tailnet:sam@example.com").is_none());
+}
+
+#[test]
+fn an_invite_card_leaves_the_panes_own_cards_alone() {
+    let d = Daemon::child();
+    let pane = d.get("/api/panes")[0]["id"].as_u64().unwrap();
+    // Claude Code in that terminal, asking a question through its hook.
+    let question = json!({ "questions": [{ "question": "Which colour?", "header": "Colour",
+        "options": [{ "label": "Blue" }, { "label": "Red" }], "multiSelect": false }] });
+    std::thread::scope(|s| {
+        let asked = s.spawn(|| d.raw("POST", &format!("/api/panes/{pane}/ask"), Some(question)));
+        d.wait_for("its question", || card_on(&d, pane)["kind"] == "questions");
+        let q = card_on(&d, pane)["id"].clone();
+        let m = Mcp::bridge(&d, Some(pane));
+        let r = m.call("invite_person", json!({ "who": "tailnet:sam@example.com", "note": "x" })).unwrap();
+        let block = r["block"].as_u64().unwrap();
+        assert_eq!(card_on(&d, pane)["id"], q, "its own card stays");
+        // Settling the invite doesn't answer it...
+        d.post(&format!("/api/blocks/{block}/call/decline"), json!({}));
+        settled(&m, r["draft"].as_str().unwrap(), None);
+        assert_eq!(card_on(&d, pane)["id"], q);
+        // ...nor answering it the invite.
+        let r = m.call("invite_person", json!({ "who": "tailnet:sam@example.com", "note": "y" })).unwrap();
+        let draft = r["draft"].as_str().unwrap().to_owned();
+        d.wait_for("the invite card", || card_on(&d, block)["id"] == draft.as_str());
+        let r = d.post(
+            "/api/attention/act",
+            json!({ "action": "answer", "pane": pane, "content": { "question_0": "Blue" } }),
+        );
+        assert_eq!(r["results"][0]["ok"], true, "{r}");
+        let (status, text) = asked.join().unwrap();
+        assert_eq!(status, 200, "{text}");
+        assert!(text.contains("Blue"), "{text}");
+        assert_eq!(card_on(&d, block)["id"], draft.as_str(), "the invite still waits");
+
+        // A permission card, the same.
+        let permit = json!({ "tool_name": "Bash", "tool_input": { "command": "ls" }, "session_id": "s" });
+        let permitted = s.spawn(|| d.raw("POST", &format!("/api/panes/{pane}/permit"), Some(permit)));
+        d.wait_for("its permission card", || card_on(&d, pane)["kind"] == "permission");
+        assert_eq!(card_on(&d, block)["id"], draft.as_str());
+        d.post(&format!("/api/blocks/{block}/call/answer"), json!({ "content": {} }));
+        assert_eq!(settled(&m, &draft, None)["status"], "sent");
+        assert_eq!(card_on(&d, pane)["kind"], "permission", "sending the invite left it");
+        d.post("/api/attention/act", json!({ "action": "allow", "pane": pane }));
+        let (status, text) = permitted.join().unwrap();
+        assert_eq!(status, 200, "{text}");
+        assert!(text.contains("allow"), "{text}");
+        // Nothing raises anything on the invite block but itself (a card
+        // that got there would wait for an answer: give it a few seconds).
+        let mut c = std::os::unix::net::UnixStream::connect(d.sock()).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let body = json!({ "questions": [{ "question": "?" }] }).to_string();
+        use std::io::{Read, Write};
+        write!(
+            c,
+            "POST /api/panes/{block}/ask HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut head = [0u8; 12];
+        c.read_exact(&mut head).expect("a question went up on the invite block");
+        assert_eq!(&head[9..12], b"403");
+    });
+}
+
+#[test]
+fn an_agent_block_drafts_beside_itself() {
+    let d = Daemon::child();
+    let a = d.open("hello");
+    d.wait(a, "idle");
+    let r =
+        agent_mcp(&d, a, "invite_person", json!({ "who": "tailnet:sam@example.com", "note": "pair on it" })).unwrap();
+    assert_eq!((r["status"].as_str(), r["pane"].as_u64()), (Some("waiting"), Some(a)), "{r}");
+    let block = r["block"].as_u64().unwrap();
+    assert_eq!(tab_of(&d, block), tab_of(&d, a));
+    assert!(grant_of(&d, "tailnet:sam@example.com").is_none());
+    let card = card_on(&d, block);
+    // Whose agent it is, and whom exactly, by their principal.
+    let want =
+        format!("fake-agent (pane %{a}, you started it) wants to bring sam@example.com [tailnet:sam@example.com]");
+    assert!(card["message"].as_str().unwrap().starts_with(&want), "{card}");
+    let draft = r["draft"].as_str().unwrap().to_owned();
+    let r = agent_mcp(&d, a, "read_invite", json!({ "draft": draft })).unwrap();
+    assert_eq!(r["status"], "waiting", "{r}");
+    // It may not close or answer its own card.
+    let e = agent_mcp(&d, a, "close", json!({ "pane": block })).unwrap_err();
+    assert!(e.contains("wasn't started by this agent"), "{e}");
+    d.post(&format!("/api/blocks/{block}/call/answer"), json!({ "content": {} }));
+    d.wait_for("sent", || {
+        agent_mcp(&d, a, "read_invite", json!({ "draft": draft })).is_ok_and(|r| r["status"] == "sent")
+    });
+    assert!(grant_of(&d, "tailnet:sam@example.com").is_some());
+}
+
+/// An intent over the WebSocket as FRIEND: the error it got, if any.
+fn intent_as_friend(d: &Daemon, intent: Value) -> Option<String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
+        req.headers_mut().insert("Tailscale-User-Login", FRIEND.parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(req).await.expect("FRIEND connects");
+        let msg = json!({ "type": "intent", "id": 7, "intent": intent });
+        ws.send(Message::Text(msg.to_string().into())).await.unwrap();
+        let wait = tokio::time::timeout(Duration::from_secs(3), async {
+            while let Some(Ok(m)) = ws.next().await {
+                if let Message::Text(t) = m
+                    && let Ok(v) = serde_json::from_str::<Value>(&t)
+                    && v["type"] == "error"
+                    && v["id"] == 7
+                {
+                    return v["message"].as_str().map(str::to_owned);
+                }
+            }
+            None
+        });
+        wait.await.unwrap_or(None)
+    })
+}
+
+#[test]
+fn closing_an_invite_block_is_the_owners_and_loses_nothing() {
+    let (d, pane, _) = shared_daemon(&[]);
+    let m = Mcp::bridge(&d, Some(pane));
+    let invite = |who: &str| m.call("invite_person", json!({ "who": who, "note": "x" })).unwrap();
+    let sent = invite("tailnet:sam@example.com");
+    let block = sent["block"].as_u64().unwrap();
+    let sent = sent["draft"].as_str().unwrap().to_owned();
+    d.post(&format!("/api/blocks/{block}/call/answer"), json!({ "content": {} }));
+    assert_eq!(settled(&m, &sent, None)["status"], "sent");
+    let waiting = invite("tailnet:kim@example.com")["draft"].as_str().unwrap().to_owned();
+    d.wait_for("its card", || card_on(&d, block)["id"] == waiting.as_str());
+
+    // An editor can't close it: by the API, the pane or its tab over the
+    // WebSocket. Nor an agent, through MCP's close.
+    let (status, text) = d.raw_as(FRIEND, "POST", &format!("/api/panes/{block}/close"), Some(json!({})));
+    assert_eq!(status, 403, "{text}");
+    let why = intent_as_friend(&d, json!({ "op": "close_pane", "pane": block }));
+    assert!(why.as_deref().is_some_and(|w| w.contains("only the session's owner closes")), "{why:?}");
+    let why = intent_as_friend(&d, json!({ "op": "close_tab", "tab": tab_of(&d, block) }));
+    assert!(why.as_deref().is_some_and(|w| w.contains("only the session's owner closes")), "{why:?}");
+    let e = m.call("close", json!({ "pane": block })).unwrap_err();
+    assert!(e.contains("only the session's owner closes"), "{e}");
+    assert_eq!(as_agent(&d, &format!("/api/panes/{block}/close"), json!({})), 403);
+    assert!(invite_blocks(&d).contains(&block), "still open");
+    assert_eq!(m.call("read_invite", json!({ "draft": waiting })).unwrap()["status"], "waiting");
+
+    // The owner closes it: what waited is dropped, and said so; what was
+    // sent still says so.
+    d.post(&format!("/api/panes/{block}/close"), json!({}));
+    d.wait_for("it to close", || !invite_blocks(&d).contains(&block));
+    let r = m.call("read_invite", json!({ "draft": waiting })).unwrap();
+    assert_eq!(r["status"], "dropped", "{r}");
+    assert!(r["reason"].as_str().unwrap().contains("closed"), "{r}");
+    assert_eq!(m.call("read_invite", json!({ "draft": sent })).unwrap()["status"], "sent");
+    assert!(grant_of(&d, "tailnet:kim@example.com").is_none());
 }

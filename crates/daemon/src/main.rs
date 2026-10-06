@@ -34,6 +34,7 @@ mod hosts;
 mod ide;
 mod install;
 mod inventory;
+mod invite;
 mod keys;
 mod localauth;
 mod machine;
@@ -1149,6 +1150,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
             }
         }
     };
+    let invite_hook = invite::Hook::default();
     let config = mux::Config {
         acl: acl.clone(),
         control: control.clone(),
@@ -1168,6 +1170,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
         secrets,
         private,
         mcp: mcp_link,
+        invite: invite_hook.clone(),
         ide: ide.clone(),
     };
     let mux = mux::start(config, store, kept, push.clone());
@@ -1212,6 +1215,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
     if let Some(serve) = mcp_serve {
         let _ = serve.set(mcp::pipe_server(&app));
     }
+    let _ = invite_hook.set(std::sync::Arc::downgrade(&app));
     // Read-only links end on time (M19).
     {
         let (acl, mux, control) = (acl.clone(), mux.clone(), control.clone());

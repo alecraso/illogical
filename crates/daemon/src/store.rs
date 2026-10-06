@@ -79,6 +79,11 @@ pub struct PaneMeta {
     /// Started through MCP (M16): by which client, for which agent block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<illogical_proto::StartedBy>,
+    /// The guest (principal id) behind it: they started it, or an agent
+    /// of theirs did. Such an agent asks the owner for nothing in their
+    /// name (#234's invites).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest: Option<String>,
     /// The agent conversation running in it (#146), for a restart to
     /// resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]

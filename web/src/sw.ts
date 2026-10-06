@@ -16,6 +16,7 @@
 
 import { E2ESocket } from "./e2e/channel.ts";
 import { existingKeys, loadWorkerDirectory } from "./e2e/keys.ts";
+import { tapThread, tapUrl } from "./tap.ts";
 
 /** The parts of a service worker's global scope used here (the project's
  * types are the page's). */
@@ -127,7 +128,7 @@ sw.addEventListener("push", (event: PushEvent) => {
       icon: "/icon.svg",
       requireInteraction: !!(approve || ask),
       actions,
-      data: { pane: msg.pane, daemon: msg.daemon, approve, ask, reason, control: msg.control === true },
+      data: { pane: msg.pane, daemon: msg.daemon, thread: msg.thread, approve, ask, reason, control: msg.control === true },
     } as NotificationOptions),
   );
 });
@@ -226,13 +227,10 @@ sw.addEventListener("notificationclick", (event: ClickEvent) => {
     );
     return;
   }
-  // A tap: open the pane (its card shows over it). Through control (M21)
-  // a notification names its daemon.
-  // Something that wants you (M24's reason) opens at its card on the swarm's
-  // rail (M26); anything else at the pane.
-  const where = data.reason ? "swarm" : "pane";
-  const thread = data.thread && /^(pane|session)-\d+$/.test(data.thread) ? data.thread : undefined;
-  const url = pane ? (data.daemon ? `/#${where}=${data.daemon}.${pane}` : `/#${where}=${pane}`) + (thread ? `&thread=${thread}` : "") : "/";
+  // A tap: open the pane (its card shows over it), or the card, or the
+  // thread (tapUrl).
+  const thread = tapThread(data.thread);
+  const url = tapUrl(data);
   event.waitUntil(
     (async () => {
       const wins = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });

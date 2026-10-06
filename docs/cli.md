@@ -123,6 +123,8 @@ illogical share --guest %3 --name sam          # an ssh command for someone with
 illogical share --guest %3 --rw --addr box.lan  # ...who may type; --reusable for more than one login
 illogical share --guest %3 --relay            # through control's ssh jump host (the default on a joined box with no --addr)
 illogical guests                              # ssh invites that still work; guests revoke ID
+illogical invite sam@example.com --note "the flaky test"   # share this session with them and notify them alone
+illogical invite bea --role editor --drive 30 --pane %4    # a teammate, by name: may also type in %4 for 30 min
 illogical search 'panic' --synced sbx         # a host's synced history (all: every host)
 illogical tail %4 --synced sbx --text         # one of its panes, after it's gone
 illogical synced                              # hosts whose history is kept here
@@ -148,6 +150,24 @@ illogical mcp token --name laptop [--scope read]  # a token for /mcp over HTTP, 
 illogical mcp token --list                    # tokens, and when each was last used
 illogical mcp token --revoke laptop           # cut it off at its next call
 ```
+
+`illogical invite WHO` shares a session (this pane's, or `--session S`) as
+a viewer (`--role editor` to drive; never lower than they have: revoke
+first) and pushes that person alone: "*you* brought you into *session*",
+the note, opening at the pane (this one, `--pane %N`, or the session's
+first). WHO is a tailnet login, someone already shared with, or, joined to
+illogical control, a member of your teams by name (your browser tells
+your machines which teams it checked; each machine checks the roster
+itself). Anyone else: share once from the web, which checks their
+fingerprint, then invite. `--root DEVICE` names an account's first device
+yourself: it prints the fingerprint to check with them and goes on only
+with `--yes` (or a yes at a terminal). It prints whether they were
+notified: *sent* (a subscription of theirs took it), *pending* (they
+haven't accepted this machine yet; it goes out when they do, for a day)
+or *unreachable*, and why (a tailnet guest who hasn't turned on
+notifications here hears once they connect). It's in `illogical access
+log`. `--drive MINUTES` also trusts an editor to type in that pane on this
+machine; on a team's machine or a VM they drive by their role anyway.
 
 `--json` prints the API's JSON. `--host`, anywhere on the line, is another
 daemon; a machine (a VM) is `--machine mN`.
@@ -224,10 +244,18 @@ The tools:
 | `read_agent` | One Fountain agent's whole recipe (prompt, skills, MCP servers, model, metadata), its servers' credentials as `${VAR}`s | yes |
 | `open_fountain` | The Fountain agent catalog as a block beside a pane (`query`, `source`); returns the list. `view: "runner"`: this host as the Fountain runner and its sandboxes instead | no |
 | `pr_comment`, `pr_review`, `pr_merge` | Draft a comment, a review (`event`) or a merge on a PR block: a card the user sends, edits or drops; returns the draft's id at once | no |
+| `invite_person` | Ask to bring someone (`who`: a teammate, a grantee, `tailnet:<login>`) into the pane's session as a viewer or an editor (`role`), with a `note`: a card on an invite block beside you that only the session's owner sends (editing the role, note or drive trust) or declines. `pane` defaults to your own (`illogical mcp` in a pane sends `$ILLOGICAL_PANE`); returns the draft's id at once | no |
+| `read_invite` | What became of a draft: `waiting`, `sent` (grant, `delivery`), `declined` (reason), `dropped` (unanswered for a day, or its block closed by the owner, the only one who may) or `failed`; who settled it, when | yes |
 
 Resources: `illogical://history`, and the templates
 `illogical://pane/{id}/output`, `illogical://pane/{id}/screen` and
 `illogical://block/{id}`.
+
+`invite_person` asks twice in a terminal: Claude Code's own permission
+prompt for the tool, then the invite card. The card is the real gate
+(only the session's owner sends it, by any route; never an editor or an
+agent), so allowing `mcp__illogical__invite_person` in Claude Code is
+safe.
 
 Waits send a progress notification every 15 seconds: over HTTP, Claude
 Code drops a call that's silent for 60. If a long build still doesn't fit,

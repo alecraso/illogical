@@ -98,6 +98,23 @@ function makeClient(base: string): Client {
 let client = makeClient(directory.base());
 // Inside the desktop app: its titlebar and keys (M46).
 setupDesktop(() => client);
+/** Hand a machine of yours the teams this browser pinned (#233), and drop
+ * those it has that this account isn't in now (only once the teams have
+ * loaded: a failed load isn't "none"). */
+async function syncPins(c: Client, session: ControlSession) {
+  const pins = session.teamPins();
+  let drop: string[] = [];
+  if (session.teamsLoaded) {
+    const r = await c.request("GET", "/api/team-pins");
+    const had = r.ok ? ((await r.json<{ pins?: Record<string, string> }>()).pins ?? {}) : {};
+    const mine = new Set(session.teams.map((t) => t.team));
+    drop = Object.keys(had).filter((t) => !mine.has(t));
+  }
+  if (!Object.keys(pins).length && !drop.length) return;
+  const r = await c.request("POST", "/api/team-pins", { pins, drop });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
 const connect = () => {
   // In control mode there's nothing to connect to until a daemon is known.
   if (!session || client.e2e) client.connect();
@@ -105,9 +122,18 @@ const connect = () => {
     const c = client;
     directory.setPath(null);
     let hadSessions = false;
+    let pinned = false;
     c.subscribe(() => {
       if (c !== client) return;
       directory.setPath(c.connected ? c.path : null);
+      // A machine of yours learns the teams this browser pinned (#233), so
+      // their members can be invited there, and forgets those this account
+      // left; it checks each roster itself.
+      const id = c.e2e?.daemon.id;
+      if (c.connected && c.state && !c.state.roles && !pinned && id && session.owns(id)) {
+        pinned = true;
+        void syncPins(c, session).catch(() => (pinned = false));
+      }
       // A hosted VM whose last tab closed is done (M20): delete it.
       const n = c.state?.sessions.length ?? 0;
       if (n > 0) hadSessions = true;

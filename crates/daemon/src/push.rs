@@ -122,33 +122,51 @@ impl Push {
         extra: Option<serde_json::Value>,
         to: impl Fn(&str) -> bool,
     ) {
-        let subs: Vec<Subscription> =
-            self.subs.lock().unwrap().iter().filter(|s| to(s.who.as_deref().unwrap_or("owner"))).cloned().collect();
+        let subs = self.picked(to);
         if subs.is_empty() {
             return;
         }
-        let mut payload =
-            serde_json::json!({ "title": title, "body": body, "pane": pane, "tag": format!("pane-{pane}") });
-        if let Some(serde_json::Value::Object(extra)) = extra {
-            payload.as_object_mut().unwrap().extend(extra);
-        }
-        let payload = payload.to_string();
+        let payload = serde_json::Value::Object(payload(pane, title, body, extra)).to_string();
         let this = self.clone();
-        tokio::spawn(async move {
-            for sub in subs {
-                match this.deliver(&sub, payload.as_bytes()).await {
-                    Ok(status) if status == 404 || status == 410 => {
-                        info!(endpoint = %sub.endpoint, "push subscription expired; dropping it");
-                        let mut subs = this.subs.lock().unwrap();
-                        subs.retain(|s| s.endpoint != sub.endpoint);
-                        let _ = write_atomic(&this.path, &serde_json::to_vec_pretty(&*subs).unwrap_or_default());
-                    }
-                    Ok(status) if !(200..300).contains(&status) => warn!(status, "push rejected"),
-                    Ok(_) => {}
-                    Err(e) => warn!(error = %e, "push failed"),
+        tokio::spawn(async move { this.post_all(subs, &payload).await });
+    }
+
+    /// [`Push::send_to`], waited for (#233): how many subscriptions `to`
+    /// picked, and how many push services took it.
+    pub async fn send_report(
+        &self,
+        pane: u32,
+        title: &str,
+        body: &str,
+        extra: Option<serde_json::Value>,
+        to: impl Fn(&str) -> bool,
+    ) -> (usize, usize) {
+        let subs = self.picked(to);
+        let payload = serde_json::Value::Object(payload(pane, title, body, extra)).to_string();
+        (subs.len(), self.post_all(subs, &payload).await)
+    }
+
+    fn picked(&self, to: impl Fn(&str) -> bool) -> Vec<Subscription> {
+        self.subs.lock().unwrap().iter().filter(|s| to(s.who.as_deref().unwrap_or("owner"))).cloned().collect()
+    }
+
+    /// Post to each; how many push services took it.
+    async fn post_all(&self, subs: Vec<Subscription>, payload: &str) -> usize {
+        let mut took = 0;
+        for sub in subs {
+            match self.deliver(&sub, payload.as_bytes()).await {
+                Ok(status) if status == 404 || status == 410 => {
+                    info!(endpoint = %sub.endpoint, "push subscription expired; dropping it");
+                    let mut subs = self.subs.lock().unwrap();
+                    subs.retain(|s| s.endpoint != sub.endpoint);
+                    let _ = write_atomic(&self.path, &serde_json::to_vec_pretty(&*subs).unwrap_or_default());
                 }
+                Ok(status) if !(200..300).contains(&status) => warn!(status, "push rejected"),
+                Ok(_) => took += 1,
+                Err(e) => warn!(error = %e, "push failed"),
             }
-        });
+        }
+        took
     }
 
     async fn deliver(&self, sub: &Subscription, payload: &[u8]) -> anyhow::Result<u16> {
@@ -171,6 +189,26 @@ impl Push {
             .await?;
         Ok(res.status().as_u16())
     }
+}
+
+/// What a notification says: tagged `pane-<n>` (one per pane, the newest
+/// replacing the last) unless `extra` names a tag of its own (`invite-7`),
+/// and `extra`'s fields with it. Here and through control (M21).
+pub fn payload(
+    pane: u32,
+    title: &str,
+    body: &str,
+    extra: Option<serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut p = serde_json::Map::new();
+    p.insert("title".into(), title.into());
+    p.insert("body".into(), body.into());
+    p.insert("pane".into(), pane.into());
+    p.insert("tag".into(), format!("pane-{pane}").into());
+    if let Some(serde_json::Value::Object(extra)) = extra {
+        p.extend(extra);
+    }
+    p
 }
 
 /// RFC 8291, shared with control (which encrypts its own notices).
@@ -201,6 +239,15 @@ mod tests {
         assert_eq!(a("https://fcm.googleapis.com/fcm/send/abc"), "https://fcm.googleapis.com");
         assert_eq!(a("https://web.push.apple.com:443/x"), "https://web.push.apple.com");
         assert_eq!(a("http://127.0.0.1:4567/push/phone"), "http://127.0.0.1:4567");
+    }
+
+    /// #232: a caller's tag (an invite's) in place of the pane's.
+    #[test]
+    fn a_tag_of_its_own_replaces_the_panes() {
+        let p = payload(3, "t", "b", Some(serde_json::json!({ "tag": "invite-7", "invite": 7 })));
+        assert_eq!((p["tag"].as_str(), p["invite"].as_u64(), p["pane"].as_u64()), (Some("invite-7"), Some(7), Some(3)));
+        assert_eq!(payload(3, "t", "b", None)["tag"], "pane-3");
+        assert_eq!(payload(3, "t", "b", Some(serde_json::json!({ "ask": 1 })))["tag"], "pane-3");
     }
 
     /// RFC 8291 Appendix A, byte for byte.

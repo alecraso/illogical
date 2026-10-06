@@ -6,7 +6,7 @@
 import { Fragment } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
-import { threadKey, type PaneId, type ThreadMsg, type ThreadTarget } from "../proto";
+import { threadKey, type Invitable, type PaneId, type ThreadMsg, type ThreadTarget, type Unreached } from "../proto";
 import { colorOf } from "./people";
 import type { MenuItem } from "./menu";
 import { Markup, mentionToken } from "./markup";
@@ -427,12 +427,20 @@ function Compose({
     });
   };
 
+  // What the message just posted said to no one.
+  const [missed, setMissed] = useState<string[]>([]);
+  // Whom it named who can't see the thread (#297; the owner's alone).
+  const [offer, setOffer] = useState<{ msg: ThreadMsg; people: Invitable[] } | null>(null);
+
   const send = async () => {
     if (sending || (!text.trim() && !quote)) return;
     setSending(true);
     setError(null);
+    setMissed([]);
     try {
-      await client.postThread(target, text, quote);
+      const { message, unreached, invitable } = await client.postThread(target, text, quote);
+      setMissed(unreached.map(unreachedNote));
+      setOffer(invitable.length ? { msg: message, people: invitable } : null);
       setText("");
       setQuote(undefined);
     } catch (e) {
@@ -451,6 +459,23 @@ function Compose({
         void send();
       }}
     >
+      {missed.map((n) => (
+        <p key={n} class="thread-note unreached">
+          {n}
+        </p>
+      ))}
+      {offer?.people.map((p) => (
+        <InviteOffer
+          key={`${offer.msg.id}-${p.who}`}
+          client={client}
+          target={target}
+          msg={offer.msg}
+          person={p}
+          // Two people for one @: say which is which.
+          named={offer.people.filter((o) => o.token === p.token).length > 1}
+          done={() => setOffer((o) => (o ? { ...o, people: o.people.filter((x) => x.who !== p.who) } : o))}
+        />
+      ))}
       {options.length > 0 && (
         <ul class="mention-pick" role="listbox" aria-label="People to mention">
           {options.map((p, i) => (
@@ -486,7 +511,10 @@ function Compose({
           value={text}
           aria-label={`Message ${name}`}
           placeholder={placeholder ?? `Message ${name}`}
-          onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+          onInput={(e) => {
+            setMissed([]);
+            setText((e.target as HTMLTextAreaElement).value);
+          }}
           onKeyDown={(e) => {
             if (options.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault();
@@ -511,6 +539,75 @@ function Compose({
         </button>
       </div>
     </form>
+  );
+}
+
+/** "Sam can't see this. Invite them?" (#297): one click shares the session
+ *  with them as a viewer and opens them this thread, from this message on
+ *  (the default) or all of it; no other thread opens to them. */
+function InviteOffer({
+  client,
+  target,
+  msg,
+  person,
+  named,
+  done,
+}: {
+  client: Client;
+  target: ThreadTarget;
+  msg: ThreadMsg;
+  person: Invitable;
+  named: boolean;
+  done: () => void;
+}) {
+  const [whole, setWhole] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const n = person.name.split("@")[0];
+  // Two people by one name, or one taken for another: say whom.
+  const who = named || person.merged ? `${n} (${person.who})` : n;
+  const invite = async () => {
+    setBusy(true);
+    try {
+      setSaid({ ok: true, text: await client.inviteToThread(target, person.who, msg, whole) });
+    } catch (e) {
+      setSaid({ ok: false, text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (said?.ok) {
+    return (
+      <p class="thread-note invited" data-offer={person.who}>
+        {said.text}
+      </p>
+    );
+  }
+  const name = `offer-${msg.id}-${person.who}`;
+  return (
+    <div class="thread-offer" data-offer={person.who}>
+      <p>
+        <strong>{who}</strong> can't see this. Invite them?
+      </p>
+      <label>
+        <input type="radio" name={name} checked={!whole} onChange={() => setWhole(false)} /> This message and what follows
+      </label>
+      <label>
+        <input type="radio" name={name} checked={whole} onChange={() => setWhole(true)} /> Share the whole thread
+      </label>
+      <p class="thread-offer-sees">
+        {whole ? `${n} will see all of this thread, and no other` : `${n} will see this message and what follows in this thread`}
+      </p>
+      {said && <p class="thread-error">{said.text}</p>}
+      <div class="thread-offer-buttons">
+        <button type="button" class="primary" disabled={busy} onClick={() => void invite()}>
+          Invite {n}
+        </button>
+        <button type="button" onClick={done}>
+          Not now
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -622,7 +719,7 @@ function Message({
             <time title={new Date(m.at).toLocaleString()}>{when(m.at)}</time>
           </div>
         )}
-        {m.text && <Markup text={m.text} isMe={isMe} />}
+        {m.text && <Markup text={m.text} isMe={isMe} landed={reached(m, isMe, client.me())} />}
         {m.quote && (
           <button class="thread-quote" title="Show it in the pane" onClick={() => reveal(m.quote!)}>
             <span class="thread-quote-from">
@@ -665,4 +762,28 @@ function Message({
       </div>
     </div>
   );
+}
+
+/** What to tell the poster about an `@` that went nowhere. Unknown names and
+ *  names without access read the same: it must not say who exists. */
+function unreachedNote(u: Unreached): string {
+  switch (u.why) {
+    case "agent_needs_pane":
+      return `@${u.token} reaches an agent from its pane's thread`;
+    case "may_not_drive":
+      return `@${u.token} reaches the agent only from someone who can drive the pane`;
+    default:
+      return `Nobody here called ${u.token} can read this thread`;
+  }
+}
+
+/** The @tokens of a message that reached someone (#296): the daemon's
+ *  `landed`, and any that name the reader when it reached them (`mentions`
+ *  says so). A message without `landed` (from a daemon before it was kept)
+ *  marks nothing else: better plain than a highlight that promises a
+ *  notification nobody got. */
+function reached(m: ThreadMsg, isMe: (token: string) => boolean, me: string): (token: string) => boolean {
+  const landed = m.landed ?? [];
+  const forMe = !!m.mentions?.includes(me);
+  return (token) => landed.includes(token) || (forMe && isMe(token));
 }

@@ -43,7 +43,9 @@ function Watching({ client, id }: { client: Client; id: PaneId }) {
 export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: Ask }) {
   const [hidden, setHidden] = useState(false);
   const call = (method: string, args: unknown) => void client.api(`/api/blocks/${id}/call/${method}`, args, `couldn't ${method}`);
-  const can = mayAnswer(client, id);
+  // #234: an agent's invite is the owner's alone to send or decline.
+  const invite = ask.source === "invite";
+  const can = invite ? !client.state?.roles : mayAnswer(client, id);
   // M35: a question raised on a block names who asks ("hud asks").
   const who = ask.agent ?? "Claude Code";
   const what = ask.kind === "permission" ? `${who} wants to use a tool` : `${who} asks`;
@@ -70,7 +72,7 @@ export function TermAsk({ client, id, ask }: { client: Client; id: PaneId; ask: 
       ) : !can ? (
         <div class="ask" data-ask={ask.id}>
           <p class="ask-message">{ask.questions?.[0]?.question ?? ask.message}</p>
-          <p class="ask-viewer">{VIEWER_NOTE}</p>
+          <p class="ask-viewer">{invite ? "Only the session's owner sends or declines an invite." : VIEWER_NOTE}</p>
         </div>
       ) : (
         <AskCard
