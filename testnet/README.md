@@ -19,6 +19,7 @@ just testnet test control m49  # M49: the CLI logged in, reaching a direct and a
 just testnet test control m49team  # #254: the CLI reaching a team machine of another account
 just testnet up tailnet        # headscale and two Tailscale nodes
 just testnet measure tailnet   # S28: ssh against the tailnet path
+testnet/selfupdate.sh OLD NEW  # #391: the daemon updates itself (two `just static` builds)
 ```
 
 The Rust tests that drive illogical against the stack,

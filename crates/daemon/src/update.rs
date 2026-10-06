@@ -9,7 +9,8 @@
 //! a daemon run from where it was built (tests, development) doesn't ask.
 //!
 //! `GET /api/update` says what it found and how this install updates:
-//! the web client shows a notice with the command.
+//! the web client shows a notice with an Update now button where the
+//! daemon can update itself (`selfupdate`, #391), else the command.
 
 use std::{
     path::{Path, PathBuf},
@@ -54,6 +55,9 @@ struct Checked {
 }
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
+/// Where `releases/latest` is, for the downloads (`selfupdate`).
+static URL: OnceLock<String> = OnceLock::new();
+static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
 static LAST: Mutex<Option<Checked>> = Mutex::new(None);
 
 /// Start checking in the background. Never holds up startup.
@@ -62,6 +66,8 @@ static LAST: Mutex<Option<Checked>> = Mutex::new(None);
 pub fn start(s: Settings) {
     let enabled = s.enabled && (this_kind() != Kind::Source || s.url != LATEST);
     let _ = ENABLED.set(enabled);
+    let _ = URL.set(s.url.clone());
+    let _ = STATE_DIR.set(s.state_dir.clone());
     if !enabled {
         info!("update check off");
         return;
@@ -105,6 +111,16 @@ async fn run(s: Settings, cached: Option<Checked>) {
             }
         }
     }
+}
+
+/// Ask once, now (`illogicald update`).
+pub async fn latest_once(url: &str) -> anyhow::Result<String> {
+    let client = crate::roots::http()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(20))
+        .user_agent("illogical")
+        .build()?;
+    latest(&client, url).await
 }
 
 /// The version `releases/latest` redirects to.
@@ -155,8 +171,8 @@ enum Kind {
     /// Homebrew: `brew upgrade`, then `illogicald install` again.
     #[cfg_attr(windows, allow(dead_code))] // Homebrew is macOS's and Linux's.
     Brew,
-    /// The desktop app (its .deb or the macOS app): a newer app replaces
-    /// the daemon when it opens.
+    /// The desktop app (its .deb or the macOS app). The daemon updates
+    /// itself (`selfupdate`).
     App,
     /// Built from source, or run from somewhere else.
     Source,
@@ -211,6 +227,11 @@ struct Status {
     command: Option<&'static str>,
     /// The release's page.
     url: String,
+    /// This daemon can update itself (`POST /api/update/apply`).
+    apply: bool,
+    /// An update under way, or the one that failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    applying: Option<crate::selfupdate::Applying>,
 }
 
 /// Windows: `illogicald install` puts it in `%LOCALAPPDATA%\Programs\illogical`
@@ -244,13 +265,52 @@ fn status() -> Status {
         url: latest.as_ref().map_or_else(|| RELEASES.to_owned(), |l| format!("{RELEASES}/tag/v{l}")),
         latest,
         enabled: ENABLED.get().copied().unwrap_or(false),
-        command: match kind {
-            Kind::Script => Some(if cfg!(windows) { INSTALL_PS1 } else { INSTALL_SH }),
-            Kind::Brew => Some("brew upgrade illogical && illogicald install"),
-            Kind::App | Kind::Source => None,
-        },
+        command: command(kind),
+        apply: crate::selfupdate::refusal().is_none(),
+        applying: crate::selfupdate::applying(),
         kind,
     }
+}
+
+fn command(kind: Kind) -> Option<&'static str> {
+    match kind {
+        Kind::Script | Kind::App => Some(if cfg!(windows) { INSTALL_PS1 } else { INSTALL_SH }),
+        Kind::Brew => Some(BREW),
+        Kind::Source => None,
+    }
+}
+
+const BREW: &str = "brew upgrade illogical && illogicald install";
+
+/// The install script's copy or the app's: `selfupdate` may replace it.
+/// Not Homebrew's (brew does) or a build's.
+pub fn updates_itself() -> bool {
+    matches!(this_kind(), Kind::Script | Kind::App)
+}
+
+/// `illogicald update` isn't how this one updates: the command that is.
+pub fn other_command() -> Option<&'static str> {
+    match this_kind() {
+        Kind::Brew => Some(BREW),
+        Kind::Source => Some("git pull, build it, and run `illogicald install` again"),
+        Kind::Script | Kind::App => None,
+    }
+}
+
+/// The latest release found, when it's newer than this.
+pub fn newer_release() -> Option<String> {
+    let latest = LAST.lock().unwrap().as_ref().and_then(|c| c.latest.clone())?;
+    newer(&latest, env!("CARGO_PKG_VERSION")).then_some(latest)
+}
+
+/// The daemon's state directory (an update is unpacked there).
+pub fn state_dir() -> Option<PathBuf> {
+    STATE_DIR.get().cloned()
+}
+
+/// Where `releases/latest` is looked up.
+pub fn url() -> String {
+    URL.get().cloned().unwrap_or_else(|| LATEST.to_owned())
 }
 
 pub fn routes() -> Router<Arc<App>> {

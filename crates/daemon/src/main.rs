@@ -63,6 +63,7 @@ mod calls;
 #[cfg(unix)]
 mod sandbox;
 mod seal;
+mod selfupdate;
 mod server;
 mod setup;
 mod share;
@@ -193,6 +194,14 @@ enum Command {
         out: PathBuf,
         #[arg(long, env = "ILLOGICAL_STATE_DIR")]
         state_dir: Option<PathBuf>,
+    },
+    /// Update illogical here to the latest release, after asking: download
+    /// it, check it against the release's SHA256SUMS and run its `install`,
+    /// which restarts the service (panes keep running) and keeps its flags.
+    Update {
+        /// Don't ask first.
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Take this machine off the control it joined.
     Leave {
@@ -828,6 +837,9 @@ fn main() -> anyhow::Result<()> {
     if argv.get(1).map(String::as_str) == Some("_host") {
         host::run(&argv[2..]);
     }
+    // The macOS app's agent, onto a newer daemon an update put in place.
+    #[cfg(target_os = "macos")]
+    selfupdate::hand_on();
     log_to_file(&argv);
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -867,6 +879,7 @@ fn main() -> anyhow::Result<()> {
             install::install(!no_start, &daemon_args, reset_args, system)
         }
         Some(Command::Uninstall) => install::uninstall(),
+        Some(Command::Update { yes }) => selfupdate::cli(yes, &args.run.update_url),
         #[cfg(unix)]
         Some(Command::Sandbox) => sandbox::supervise(),
         #[cfg(not(unix))]

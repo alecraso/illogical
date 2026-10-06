@@ -4972,6 +4972,22 @@ html[data-desktop="macos"] .bar {
   background: var(--raised-hover);
 }
 
+.update-now {
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+}
+
+.update-now:hover {
+  background: var(--raised-hover);
+}
+
+.update-error {
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
 /* ---- threads (M61): the people's conversation beside a pane or session */
 
 .thread-badge {

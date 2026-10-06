@@ -123,6 +123,7 @@ fn own_routes(app: &Arc<App>) -> Router<Arc<App>> {
         .merge(crate::invite::routes())
         .merge(crate::setup::routes())
         .merge(crate::update::routes())
+        .merge(crate::selfupdate::routes())
 }
 
 /// Plus what makes it a home daemon: hosts dialing in and pushing history,

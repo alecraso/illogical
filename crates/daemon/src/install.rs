@@ -730,6 +730,21 @@ mod launchd {
         });
         let gui = format!("gui/{}", me.uid);
         let user = format!("user/{}", me.uid);
+        // The desktop app's own launch agent runs the daemon (M46): the
+        // copy just put in ~/.local/bin is what its bundled one hands on to
+        // (#391), so restart that agent rather than start a second daemon.
+        let app_agent = format!("{gui}/{}", crate::selfupdate::APP_AGENT);
+        if !system && !agent.is_file() && has(&app_agent) {
+            println!("the illogical app's launch agent runs the daemon here; it runs {} from now on", exe.display());
+            if start {
+                let out = Command::new("launchctl").args(["kickstart", "-k", &app_agent]).output()?;
+                if !out.status.success() {
+                    bail!("launchctl kickstart -k {app_agent}: {}", String::from_utf8_lossy(&out.stderr).trim());
+                }
+                println!("restarted {app_agent}");
+            }
+            return Ok(());
+        }
         let mode = if system {
             Mode::System { user: me.name.clone(), home: me.home.display().to_string() }
         } else if has(&gui) {

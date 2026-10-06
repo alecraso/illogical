@@ -65,10 +65,22 @@ it. Flags after `--` are passed to the daemon on every start
 **Updates.** At most every 12 hours the daemon asks where GitHub's
 `releases/latest` redirects to (one request, with nothing about you or the
 machine in it) and keeps the answer in `update-check.json` in the state
-directory. When it's newer, the web client's top bar offers the command for
-this install (`GET /api/update` says it too). `--no-update-check`
-(`ILLOGICAL_NO_UPDATE_CHECK=true`) turns it off; a daemon run from where it
-was built (`target/`) doesn't check. The desktop app replaces an older
+directory. When it's newer, the web client's top bar offers it (`GET
+/api/update` says so too). The daemon updates itself when you ask: *Update
+now* there, or `illogicald update` in a terminal (`-y` doesn't ask). Either
+downloads this platform's archive from the release, checks it against the
+release's `SHA256SUMS`, and runs the new `illogicald install`, which keeps
+your flags and restarts the service; panes keep running. If anything fails
+before the restart, the old daemon carries on and says why (`update.log` in
+the state directory). The button is for the service `illogicald install`
+set up for you (install.sh, install.ps1 or the desktop app). Homebrew
+installs, `--system` services (they need sudo or an administrator) and
+daemons run by hand show the command instead. On macOS the desktop app's
+login item runs the daemon in the app, and an update goes to
+`~/.local/bin`, which the app's copy runs from then on, as long as it's
+newer. `--no-update-check` (`ILLOGICAL_NO_UPDATE_CHECK=true`) turns the
+check off; a daemon run from where it was built (`target/`) doesn't
+check. The desktop app replaces an older
 daemon with the one it carries when that daemon runs as the service
 (`ILLOGICAL_NO_DAEMON_UPGRADE=1` stops it).
 
