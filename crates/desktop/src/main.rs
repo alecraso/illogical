@@ -51,7 +51,11 @@
 //! - A tray icon with *New window* and *This machine* (which brings forward
 //!   a window already showing this machine, #323); one instance (a second
 //!   launch opens a window in the first).
-//! - **When control drops this machine** (#325, `daemon.rs`): a native
+//! - **The daemon in the menus** (#322, `daemon.rs`): a *Daemon* submenu
+//!   in the tray, and on macOS in the app menu and the Dock icon's menu
+//!   (with *This machine*), says the daemon's version, state and service
+//!   and this machine's standing with control (#325), and restarts, stops
+//!   and starts it. When control drops this machine, a native
 //!   notification, once per drop, whose click opens Getting started's join.
 //! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
 //!   the app is control's client only, so a window opens on sign-in or
@@ -76,9 +80,11 @@
 //!   #317), `name` and `control` (`cloud.rs`), `control_state`
 //!   (`daemon.rs`; absent from older daemons, which then never notify of
 //!   a drop).
-//! - **`GET /api/update`** (`apply`, `command`) and **`POST
-//!   /api/update/apply`** (#391): the daemon's own update, which the setup
-//!   page offers when the daemon is too old for this app (`compat.rs`).
+//! - **`GET /api/update`** (`apply`, `command`; `newer` and `latest` for
+//!   the *Daemon* menu) and **`POST /api/update/apply`** (#391): the
+//!   daemon's own update, which the setup page offers when the daemon is
+//!   too old for this app (`compat.rs`), and the *Daemon* menu when a newer
+//!   one is out (`daemon.rs`).
 //! - **`POST /api/run`** `{cwd, command}`, answering `{pane}`: a new tab
 //!   for `illogical://open`, a folder or a `.command` file (`links.rs`).
 //! - **The page**: `/`, `/#pane=N` and `/#getting-started=SECTION`, the
@@ -1040,6 +1046,9 @@ fn main() {
                 // confirming: the panes are the daemon's and keep running.
                 use tauri::menu::{PredefinedMenuItem, Submenu};
                 let check = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
+                // Where Mac users look first (#322): the tray icon hides
+                // behind the notch on a full menu bar.
+                let this = MenuItem::with_id(app, "menu-this", "This machine", true, None::<&str>)?;
                 let app_menu = Submenu::with_items(
                     app,
                     "illogical",
@@ -1047,6 +1056,8 @@ fn main() {
                     &[
                         &PredefinedMenuItem::about(app, None, None)?,
                         &check,
+                        &this,
+                        &daemon::submenu(app)?,
                         &PredefinedMenuItem::separator(app)?,
                         &PredefinedMenuItem::hide(app, Some("Hide illogical"))?,
                         &PredefinedMenuItem::hide_others(app, None)?,
@@ -1074,11 +1085,13 @@ fn main() {
             Menu::new(app)
         })
         // The app menu's Check for Updates… (#419) and Close Window (#323),
-        // macOS.
+        // macOS; the app menu's, the Dock's and the Daemon submenus' (#322).
         .on_menu_event(|app, e| match e.id().as_ref() {
             "check-updates" => updates::check_now(app),
             "close-window" => close_window(app),
-            _ => {}
+            id => {
+                daemon::menu_event(app, id);
+            }
         })
         .setup(move |app| {
             #[cfg(target_os = "linux")]
@@ -1118,6 +1131,8 @@ fn main() {
             let open = MenuItem::with_id(app, "open", "Open illogical", true, None::<&str>)?;
             let new = MenuItem::with_id(app, "new", "New window", true, None::<&str>)?;
             let this = MenuItem::with_id(app, "this", "This machine", true, None::<&str>)?;
+            // Windows has no daemon of its own yet (M59).
+            let daemon_menu = if cfg!(windows) { None } else { Some(daemon::submenu(app.handle())?) };
             let hotkey = CheckMenuItem::with_id(
                 app,
                 "hotkey",
@@ -1139,6 +1154,9 @@ fn main() {
             )?;
             let check = MenuItem::with_id(app, "tray-check-updates", "Check for updates…", true, None::<&str>)?;
             let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&version, &open, &new, &this];
+            if let Some(d) = &daemon_menu {
+                items.push(d);
+            }
             items.push(&hotkey);
             if updates::enabled() {
                 items.push(&check);
@@ -1186,13 +1204,17 @@ fn main() {
             std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
             let handle = app.handle().clone();
             std::thread::Builder::new().name("join".into()).spawn(move || follow_join(handle))?;
-            let handle = app.handle().clone();
-            std::thread::Builder::new().name("daemon".into()).spawn(move || daemon::follow(handle))?;
+            if !cfg!(windows) {
+                let handle = app.handle().clone();
+                std::thread::Builder::new().name("daemon".into()).spawn(move || daemon::follow(handle))?;
+            }
             #[cfg(target_os = "macos")]
             {
                 let handle = app.handle().clone();
                 std::thread::Builder::new().name("tab-bars".into()).spawn(move || follow_tab_bars(handle))?;
             }
+            #[cfg(target_os = "macos")]
+            daemon::dock::init(app.handle());
             Ok(())
         })
         .build(context)

@@ -20,6 +20,7 @@ pub mod follow;
 pub mod fs;
 pub mod hosts;
 pub mod keys;
+pub mod service;
 #[cfg(all(test, feature = "ts"))]
 mod ts;
 

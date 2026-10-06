@@ -367,7 +367,8 @@ enum Command {
     Logout,
     /// How illogical is doing on this machine.
     ///
-    /// The daemon, and whether and where it's joined to illogical control
+    /// The daemon (its version, the service that runs it, its binary and
+    /// log), and whether and where it's joined to illogical control
     /// (connected, or dropped by control). Exits 1 when the daemon doesn't
     /// answer or control dropped it.
     Status,

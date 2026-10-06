@@ -60,6 +60,19 @@ it. Flags after `--` are passed to the daemon on every start
   installed (the agent, the background agent, the LaunchDaemon with sudo,
   or on Linux the systemd user service). The binaries in `~/.local/bin`
   and the state in `~/.local/state/illogical` stay.
+- **From the desktop app:** its *Daemon* menu (in the tray, and on a Mac in
+  the app menu and the Dock icon's menu) says the daemon's version, whether
+  it's running and which service runs it (the app's own launch agent,
+  `wtf.widgets.illogical.daemon`, or what `illogicald install` set up),
+  and whether and where this machine is joined to control. *Restart*,
+  *Stop…* and *Start* go through that service, so a restart keeps the
+  panes; a stop ends them, and the daemon stays stopped until *Start* or
+  the next login (the LaunchDaemon asks for an admin password). *Open log*
+  opens the log. When a newer daemon is out it offers the daemon's own
+  update (below); the app never replaces a running daemon itself. When
+  the daemon and the app don't speak a protocol in common, it says which
+  is behind and opens the page that updates it. `illogical status` says
+  the same from a terminal.
 - **Without systemd on Linux** (a container, a box with another init): pass
   `--keep-panes` for the same behaviour.
 

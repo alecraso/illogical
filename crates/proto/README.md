@@ -10,3 +10,6 @@ Depends on `illogical-core`.
 
 Start with `src/lib.rs`: its header describes the protocol. `src/hosts.rs`
 is federation's host list, and where the `labs` switch is read.
+`src/service.rs` finds the service that runs the daemon here, for the
+desktop app's *Daemon* menu and `illogical status`: unlike the rest it
+looks at the machine (`launchctl`, `systemctl`).
