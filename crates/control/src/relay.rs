@@ -27,7 +27,6 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use illogical_e2e::{channel::MAX_WIRE, mux::Mux, now_ms};
-use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tracing::{info, warn};
 
@@ -345,19 +344,13 @@ impl Relay {
     }
 }
 
-#[derive(Deserialize)]
-pub struct DialQuery {
-    /// JSON list of the daemon's direct URLs, for the directory.
-    urls: Option<String>,
-}
-
 pub async fn dial(
     State(app): State<Arc<App>>,
     d: DaemonAuth,
-    Query(q): Query<DialQuery>,
+    Query(q): Query<illogical_control_wire::DialQuery>,
     up: WebSocketUpgrade,
 ) -> Response {
-    let urls: Option<Vec<String>> = q.urls.and_then(|u| serde_json::from_str(&u).ok());
+    let urls = q.direct_urls();
     let id = d.cert.device.clone();
     let ticket = match app.relay.admit(&app.db, &d.cert.account, true, app.stripe.is_some()) {
         Ok(t) => t,

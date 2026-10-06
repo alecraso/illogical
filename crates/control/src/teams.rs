@@ -24,6 +24,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
+use illogical_control_wire as wire;
 use illogical_e2e::{
     Cert, Revocation, Trust,
     team::{AccountCerts, Invite, Roster, TeamPin, TeamRole},
@@ -609,28 +610,11 @@ pub async fn lock(State(app): State<Arc<App>>, s: Session, Path(team): Path<Stri
 
 // ---------------------------------------------------------------- daemons
 
-/// What a daemon says it understands on its calls, comma-separated (older
-/// ones send none).
-#[derive(Deserialize)]
-pub struct Features {
-    #[serde(default)]
-    pub features: String,
-}
-
-#[derive(Deserialize)]
-pub struct Since {
-    #[serde(default)]
-    since: u64,
-    /// What this daemon understands, comma-separated (older ones send none).
-    #[serde(default)]
-    features: String,
-}
-
 /// A team daemon's team: rosters after the version it has, every member's
 /// certificates, and whether it's locked.
-pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<Since>) -> R {
+pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<wire::TeamQuery>) -> R {
     app.db.set_daemon_features(&d.cert.device, &q.features)?;
-    let Some(team) = app.db.daemon_team(&d.cert.device)? else { return Ok(Json(json!({ "team": null }))) };
+    let Some(team) = app.db.daemon_team(&d.cert.device)? else { return crate::reply(&wire::TeamNone::default()) };
     let t = app.db.team(&team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
     // A machine downgraded after its team took a presigned invite would
     // stop at the first version one wrote and keep whoever was in then,
@@ -654,14 +638,13 @@ pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Q
     accounts.dedup();
     let certs = certs_for(&app, accounts.iter().map(String::as_str))?;
     let names = names_of(&app, accounts.iter().map(String::as_str))?;
-    Ok(Json(json!({ "team": pin(&t), "locked": t.locked, "rosters": rosters, "certs": certs, "names": names })))
-}
-
-#[derive(Deserialize)]
-pub struct TeamIds {
-    ids: String,
-    #[serde(default)]
-    features: String,
+    crate::reply(&wire::TeamAnswer {
+        team: Some(pin(&t)),
+        locked: t.locked,
+        rosters,
+        certs,
+        names: names.into_iter().collect(),
+    })
 }
 
 /// Teams a member's own machine shared sessions with (M30): for each team
@@ -669,11 +652,11 @@ pub struct TeamIds {
 /// chain from the founder it pinned in the grant), every member's
 /// certificates, and whether it's locked. Teams its owner isn't in are
 /// left out.
-pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<TeamIds>) -> R {
+pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<wire::TeamsQuery>) -> R {
     let owner = app.db.daemon_account(&d.cert.device)?.unwrap_or_default();
     app.db.set_daemon_features(&d.cert.device, &q.features)?;
     let now = illogical_e2e::now_ms();
-    let mut out = serde_json::Map::new();
+    let mut out = std::collections::BTreeMap::new();
     for team in q.ids.split(',').filter(|t| !t.is_empty()).take(50) {
         let Some(t) = app.db.team(team)? else { continue };
         let Some(latest) = app.db.latest_roster(team)? else { continue };
@@ -696,17 +679,17 @@ pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
         let names = names_of(&app, accounts.iter().map(String::as_str))?;
         out.insert(
             team.to_owned(),
-            json!({
-                "team": pin(&t), "name": t.name, "locked": t.locked, "rosters": rosters, "certs": certs, "names": names,
-            }),
+            wire::SharedTeamAnswer {
+                team: Some(pin(&t)),
+                name: t.name,
+                locked: t.locked,
+                rosters,
+                certs,
+                names: names.into_iter().collect(),
+            },
         );
     }
-    Ok(Json(Value::Object(out)))
-}
-
-#[derive(Deserialize)]
-pub struct Peers {
-    accounts: String,
+    crate::reply(&out)
 }
 
 /// Certificates of accounts a daemon was shared with (by its owner,
@@ -714,13 +697,13 @@ pub struct Peers {
 /// Only accounts control routes to it (see the top); anyone else it names
 /// becomes an offer they answer, and gets certificates here once they
 /// accept.
-pub async fn daemon_peers(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<Peers>) -> R {
+pub async fn daemon_peers(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<wire::PeersQuery>) -> R {
     let owner = app.db.daemon_account(&d.cert.device)?.unwrap_or_else(|| d.cert.account.clone());
     let rel = Relations::of(&app, &d.cert.device, &owner)?;
     let mut accounts: Vec<&str> = q.accounts.split(',').filter(|a| !a.is_empty()).take(200).collect();
     accounts.sort_unstable();
     accounts.dedup();
-    let mut out = serde_json::Map::new();
+    let mut out = std::collections::BTreeMap::new();
     let mut asking = Vec::new();
     for a in accounts {
         if !rel.routes(&app, a)? {
@@ -733,7 +716,7 @@ pub async fn daemon_peers(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
         }
         let name = app.db.account(a)?.map(|x| x.name).unwrap_or_default();
         let (certs, revocations) = certs_of(&app, a)?;
-        out.insert(a.to_owned(), json!({ "certs": certs, "revocations": revocations, "name": name }));
+        out.insert(a.to_owned(), wire::PeerCerts { name, certs, revocations });
     }
     asking.truncate(50);
     let new = app.db.offer_shares(&d.cert.device, &asking, illogical_e2e::now_ms())?;
@@ -770,7 +753,7 @@ pub async fn daemon_peers(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
             "Open illogical to accept or turn it down.".into(),
         );
     }
-    Ok(Json(Value::Object(out)))
+    crate::reply(&out)
 }
 
 /// What control knows of who has a say in a daemon: its owner, its team's
@@ -832,22 +815,15 @@ pub async fn answer_share(
     Ok(Json(json!({ "accepted": b.accept })))
 }
 
-#[derive(Deserialize)]
-pub struct Access {
-    accounts: Vec<String>,
-    /// Until when (ms) read-only links may reach it through the relay.
-    links_until: Option<u64>,
-}
-
 /// Which accounts a daemon lets in, for the directory and the relay. The
 /// daemon decides for itself; control routes only those it would anyway
 /// (see the top): this list narrows that, never widens it.
-pub async fn daemon_access(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Json<Access>) -> R {
+pub async fn daemon_access(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Json<wire::AccessList>) -> R {
     if b.accounts.len() > 500 {
         return Err(err(StatusCode::BAD_REQUEST, "too many"));
     }
     app.db.set_access(&d.cert.device, &b.accounts, b.links_until)?;
-    Ok(Json(json!({})))
+    crate::reply(&wire::Ack {})
 }
 
 /// May `account` reach daemon `id` through the relay?

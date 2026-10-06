@@ -24,6 +24,9 @@ Each has a `README.md` with where to start reading.
   `illogical tmux -CC`.
 - `crates/control`: illogical control: accounts, devices, the directory and the
   relay.
+- `crates/control-wire`: the enrolment, routing and relay messages between
+  daemons and control, one type each, so both sides build from the same
+  definition.
 - `crates/testkit`: the harness for the daemon's integration tests.
 - `crates/desktop`: the desktop app (Tauri). Outside the Cargo workspace, with
   its own `Cargo.lock`, so it releases on its own (#388).

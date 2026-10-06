@@ -44,6 +44,7 @@ use axum::{
     serve::ListenerExt,
 };
 use clap::Parser;
+use illogical_control_wire as wire;
 use rust_embed::Embed;
 use serde_json::json;
 use tracing::info;
@@ -340,7 +341,7 @@ pub fn day(ms: u64) -> String {
 
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
-        .route("/control.json", get(control_json))
+        .route(wire::CONTROL_JSON, get(control_json))
         .route("/auth/github", get(auth::github_start))
         .route("/auth/github/callback", get(auth::github_callback))
         .route("/auth/logout", post(auth::logout))
@@ -367,14 +368,14 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/devices/{id}/reject", post(api::reject))
         .route("/api/revocations", post(api::revoke))
         .route("/api/recovery", post(api::add_recovery))
-        .route("/api/join", post(api::join))
-        .route("/api/join/{code}", get(api::join_poll))
+        .route(wire::JOIN, post(api::join))
+        .route(wire::JOIN_POLL, get(api::join_poll))
         .route("/api/joins/{code}", get(api::join_show))
         .route("/api/joins/{code}/approve", post(api::join_approve))
         .route("/api/joins/{code}/reject", post(api::join_reject))
         .route("/api/daemons/{id}/team", post(api::move_daemon))
-        .route("/api/daemon/trust", get(api::daemon_trust))
-        .route("/api/daemon/leave", post(api::daemon_leave))
+        .route(wire::TRUST, get(api::daemon_trust))
+        .route(wire::LEAVE, post(api::daemon_leave))
         .route("/api/directory", get(api::directory))
         .route("/api/shares/{daemon}", post(teams::answer_share))
         .route("/api/people", get(teams::person))
@@ -390,11 +391,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/invites/{team}/{code}/preview", get(teams::preview_invite))
         .route("/api/presigned/{team}/{key}", get(teams::show_presigned))
         .route("/api/presigned/{team}/{key}/preview", get(teams::preview_presigned))
-        .route("/api/daemon/team", get(teams::daemon_team))
-        .route("/api/daemon/peers", get(teams::daemon_peers))
+        .route(wire::TEAM, get(teams::daemon_team))
+        .route(wire::PEERS, get(teams::daemon_peers))
         .route("/api/daemon/turn", get(turn::daemon_turn))
-        .route("/api/daemon/teams", get(teams::daemon_teams))
-        .route("/api/daemon/access", post(teams::daemon_access))
+        .route(wire::TEAMS, get(teams::daemon_teams))
+        .route(wire::ACCESS, post(teams::daemon_access))
         .route("/api/relay/link/{id}", get(relay::link))
         .route("/api/push/subscribe", post(push::subscribe))
         .route("/api/push/unsubscribe", post(push::unsubscribe))
@@ -409,7 +410,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/stripe/webhook", post(billing::webhook))
         .route("/github/webhook", post(forge::webhook))
         .route("/api/daemon/github/token", post(forge::daemon_token))
-        .route("/api/relay/dial", get(relay::dial))
+        .route(wire::RELAY_DIAL, get(relay::dial))
         .route("/api/relay/c/{id}", get(relay::client))
         .route("/api/relay/m", get(relay::many))
         .fallback(asset)
@@ -419,21 +420,31 @@ pub fn router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
-async fn control_json(axum::extract::State(app): axum::extract::State<Arc<App>>) -> Json<serde_json::Value> {
+/// A typed answer, as JSON.
+pub fn reply<T: serde::Serialize>(answer: &T) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(serde_json::to_value(answer).map_err(anyhow::Error::from)?))
+}
+
+async fn control_json(
+    axum::extract::State(app): axum::extract::State<Arc<App>>,
+) -> Json<illogical_control_wire::ControlInfo> {
     // Passkeys need a domain name: WebAuthn refuses IP addresses.
     let passkeys = url::Url::parse(&app.cfg.public_url).is_ok_and(|u| matches!(u.host(), Some(url::Host::Domain(_))));
-    Json(json!({
-        "control": true, "url": app.cfg.public_url, "github": app.cfg.github.is_some(), "passkeys": passkeys,
-        "vapid": app.vapid.public(),
-        "github_app": app.github_app.as_ref().map(|g| g.slug.clone()),
+    Json(illogical_control_wire::ControlInfo {
+        control: true,
+        url: app.cfg.public_url.clone(),
+        github: app.cfg.github.is_some(),
+        passkeys,
+        vapid: app.vapid.public(),
+        github_app: app.github_app.as_ref().map(|g| g.slug.clone()),
         // How daemons sign their requests here (auth.rs): 2 takes body
         // hashes and nonces.
-        "daemon_auth": 2,
+        daemon_auth: 2,
         // The CLI joins with a code and signs its requests (M49).
-        "cli_join": 1,
+        cli_join: 1,
         // The ssh jump host for guests of daemons behind NAT (M65).
-        "guest_ssh": app.jump.as_ref().map(guest_jump::Jump::describe),
-    }))
+        guest_ssh: app.jump.as_ref().map(guest_jump::Jump::describe),
+    })
 }
 
 /// Nothing frames control's pages, and nothing on them comes from elsewhere

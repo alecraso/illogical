@@ -1769,6 +1769,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "illogical-control-wire",
  "illogical-e2e",
  "libc",
  "p256",
@@ -1785,6 +1786,16 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "webpki-root-certs",
+]
+
+[[package]]
+name = "illogical-control-wire"
+version = "0.24.0"
+dependencies = [
+ "illogical-e2e",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
 ]
 
 [[package]]
@@ -1865,6 +1876,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "illogical-control-wire",
  "illogical-core",
  "illogical-e2e",
  "illogical-proto",

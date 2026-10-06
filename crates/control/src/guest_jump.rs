@@ -73,13 +73,13 @@ impl Jump {
     }
 
     /// What `/control.json` says about it, for daemons making invites.
-    pub fn describe(&self) -> serde_json::Value {
-        json!({
-            "host": self.host,
-            "port": self.port,
-            "known_hosts": self.known_hosts(),
-            "fingerprint": self.key.public_key().fingerprint(HashAlg::Sha256).to_string(),
-        })
+    pub fn describe(&self) -> illogical_control_wire::GuestJump {
+        illogical_control_wire::GuestJump {
+            host: self.host.clone(),
+            port: self.port,
+            known_hosts: self.known_hosts(),
+            fingerprint: self.key.public_key().fingerprint(HashAlg::Sha256).to_string(),
+        }
     }
 }
 

@@ -43,6 +43,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use illogical_control_wire as wire;
 use illogical_core::Role;
 use illogical_e2e::{
     Cert, DeviceKeys, Kind, Revocation, Trust,
@@ -175,15 +176,7 @@ fn team_pin(team: &str, root: &str) -> Option<TeamPin> {
     Some(TeamPin { team: team.to_owned(), founder: founder.to_owned(), founder_root: founder_root.to_owned() })
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PeerCerts {
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub certs: Vec<Cert>,
-    #[serde(default)]
-    pub revocations: Vec<Revocation>,
-}
+pub use wire::PeerCerts;
 
 /// How a push through control went (#232), by subscription.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -318,7 +311,7 @@ pub struct Control {
     refreshed: watch::Sender<u64>,
     http: reqwest::Client,
     /// What control was last told about access.
-    published: std::sync::Mutex<Option<serde_json::Value>>,
+    published: std::sync::Mutex<Option<wire::AccessList>>,
     /// Reached through a provider's proxy (a hosted sandbox, M20): no relay
     /// socket, so certificates are fetched more often instead of nudged.
     pub no_relay: bool,
@@ -497,9 +490,9 @@ pub fn auth_header(keys: &DeviceKeys, method: &str, path_and_query: &str, body: 
 /// Whether the control at `url` takes signatures over the body and a
 /// nonce (it says `daemon_auth: 2` in `control.json`).
 async fn takes_v2(http: &reqwest::Client, url: &str) -> bool {
-    let Ok(r) = http.get(format!("{url}/control.json")).send().await else { return false };
-    let v: serde_json::Value = r.json().await.unwrap_or_default();
-    v["daemon_auth"].as_u64().is_some_and(|n| n >= 2)
+    let Ok(r) = http.get(format!("{url}{}", wire::CONTROL_JSON)).send().await else { return false };
+    let about: wire::ControlAuth = r.json().await.unwrap_or_default();
+    about.daemon_auth >= 2
 }
 
 const AUTH: &str = "x-illogical-auth";
@@ -681,18 +674,15 @@ impl Control {
     /// `None` when it runs none.
     pub async fn guest_jump(&self) -> anyhow::Result<Option<crate::guest_ssh::Jump>> {
         let Some(e) = self.enrolled() else { return Ok(None) };
-        let v: serde_json::Value = self
+        let about: wire::ControlJump = self
             .http
-            .get(format!("{}/control.json", e.saved.url.trim_end_matches('/')))
+            .get(format!("{}{}", e.saved.url.trim_end_matches('/'), wire::CONTROL_JSON))
             .send()
             .await?
             .error_for_status()?
             .json()
             .await?;
-        Ok(match &v["guest_ssh"] {
-            serde_json::Value::Null => None,
-            j => Some(serde_json::from_value(j.clone())?),
-        })
+        Ok(about.guest_ssh.map(|j| crate::guest_ssh::Jump { host: j.host, port: j.port, known_hosts: j.known_hosts }))
     }
 
     /// Look again soon (grants changed here, say).
@@ -962,7 +952,7 @@ impl Control {
     }
 
     /// POST JSON to control, signed over exactly the bytes sent.
-    fn post_json(&self, e: &Enrolled, path: &str, body: &serde_json::Value) -> reqwest::RequestBuilder {
+    fn post_json(&self, e: &Enrolled, path: &str, body: &impl Serialize) -> reqwest::RequestBuilder {
         let bytes = serde_json::to_vec(body).unwrap_or_default();
         self.http
             .post(format!("{}{path}", e.saved.url))
@@ -996,14 +986,7 @@ impl Control {
         let Some(e) = self.enrolled() else { return Ok(false) };
         let number = self.started.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         self.check_auth(&e).await;
-        #[derive(Deserialize)]
-        struct Own {
-            certs: Vec<Cert>,
-            revocations: Vec<Revocation>,
-            #[serde(default)]
-            moved: Option<Move>,
-        }
-        let own: Own = self.get(&e, &format!("/api/daemon/trust?features={}", features())).await?;
+        let own: wire::TrustAnswer = self.get(&e, &wire::Features::path(&features())).await?;
         let mut saved = e.saved.clone();
         saved.certs = own.certs;
         saved.revocations = own.revocations;
@@ -1012,16 +995,8 @@ impl Control {
         }
 
         if let Some(pin) = saved.team.clone() {
-            #[derive(Deserialize)]
-            struct TeamNow {
-                locked: bool,
-                rosters: Vec<Roster>,
-                certs: AccountCerts,
-                #[serde(default)]
-                names: BTreeMap<String, String>,
-            }
             let since = saved.roster.as_ref().map_or(0, |r| r.version);
-            let t: TeamNow = self.get(&e, &format!("/api/daemon/team?since={since}&features={}", features())).await?;
+            let t: wire::TeamAnswer = self.get(&e, &wire::TeamQuery::path(since, &features())).await?;
             let mut certs = saved.team_certs.clone();
             certs.extend(t.certs);
             let mut cur = saved.roster.clone();
@@ -1050,13 +1025,7 @@ impl Control {
         // The account's own login comes with them (M30): what to call it.
         let own = saved.cert.account.clone();
         let mut peers: BTreeMap<String, PeerCerts> = self
-            .get(
-                &e,
-                &format!(
-                    "/api/daemon/peers?accounts={}",
-                    [own.clone()].iter().chain(&accounts).cloned().collect::<Vec<_>>().join(",")
-                ),
-            )
+            .get(&e, &wire::PeersQuery::path(&[own.clone()].iter().chain(&accounts).cloned().collect::<Vec<_>>()))
             .await?;
         saved.login = peers.get(&own).map(|p| p.name.clone()).unwrap_or_default();
         peers.retain(|a, _| accounts.contains(a));
@@ -1081,17 +1050,9 @@ impl Control {
         }
         saved.shared_teams = BTreeMap::new();
         if !pins.is_empty() {
-            #[derive(Deserialize)]
-            struct Got {
-                locked: bool,
-                rosters: Vec<Roster>,
-                certs: AccountCerts,
-                #[serde(default)]
-                names: BTreeMap<String, String>,
-            }
             let ids: Vec<&str> = pins.keys().map(String::as_str).collect();
-            let got: BTreeMap<String, Got> =
-                self.get(&e, &format!("/api/daemon/teams?ids={}&features={}", ids.join(","), features())).await?;
+            let got: BTreeMap<String, wire::SharedTeamAnswer> =
+                self.get(&e, &wire::TeamsQuery::path(&ids, &features())).await?;
             for (team, g) in got {
                 let Some(pin) = pins.get(&team) else { continue };
                 let mut cur: Option<Roster> = None;
@@ -1332,11 +1293,11 @@ impl Control {
     /// Tell control which accounts get in (it routes them; we decide).
     async fn publish(&self, e: &Enrolled) {
         let links = self.acl.links_until();
-        let body = serde_json::json!({ "accounts": e.accounts(), "links_until": links });
+        let body = wire::AccessList { accounts: e.accounts(), links_until: links };
         if self.published.lock().unwrap().as_ref() == Some(&body) {
             return;
         }
-        let res = self.post_json(e, "/api/daemon/access", &body).send().await;
+        let res = self.post_json(e, wire::ACCESS, &body).send().await;
         match res {
             Ok(r) if r.status().is_success() => *self.published.lock().unwrap() = Some(body),
             Ok(r) => warn!(status = %r.status(), "control refused the access list"),
@@ -1525,9 +1486,10 @@ async fn relay_once(
     accept: &mpsc::UnboundedSender<tokio::io::DuplexStream>,
     raw: &mpsc::UnboundedSender<(Vec<u8>, tokio::io::DuplexStream)>,
 ) -> anyhow::Result<()> {
-    let path = "/api/relay/dial";
-    let mut url = reqwest::Url::parse(&e.saved.url)?.join(path)?;
-    url.query_pairs_mut().append_pair("urls", &serde_json::to_string(&control.direct_urls)?);
+    let mut url = reqwest::Url::parse(&e.saved.url)?.join(wire::RELAY_DIAL)?;
+    if let Some(urls) = wire::DialQuery::new(&control.direct_urls).urls {
+        url.query_pairs_mut().append_pair("urls", &urls);
+    }
     let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
     url.set_scheme(scheme).map_err(|()| anyhow::anyhow!("bad control URL"))?;
     control.check_auth(e).await;
@@ -1554,44 +1516,6 @@ async fn relay_once(
 }
 
 // ---------------------------------------------------------------- join
-
-#[derive(Deserialize)]
-struct JoinStarted {
-    code: String,
-    poll: String,
-    expires_in_secs: u64,
-    /// The team `--team` named, by name.
-    #[serde(default)]
-    team_name: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct JoinPoll {
-    approved: bool,
-    /// Turned down, on this device (#100).
-    #[serde(default)]
-    rejected: Option<String>,
-    cert: Option<Cert>,
-    trust: Option<Trust>,
-    #[serde(default)]
-    team: Option<JoinTeam>,
-    #[serde(default)]
-    certs: Vec<Cert>,
-    #[serde(default)]
-    revocations: Vec<Revocation>,
-}
-
-#[derive(Deserialize)]
-struct JoinTeam {
-    team: String,
-    founder: String,
-    founder_root: String,
-    #[serde(default)]
-    name: String,
-    /// The approving device's signature over [`TeamPin::join_body`].
-    #[serde(default)]
-    sig: Option<String>,
-}
 
 /// What control said, as a sentence: its `{"error": …}` if it sent one.
 async fn control_said(res: reqwest::Response) -> String {
@@ -1638,11 +1562,11 @@ impl std::error::Error for Removed {}
 
 /// Control's 410: the key was removed, and when and by whom if it says.
 async fn removed_answer(res: reqwest::Response) -> Removed {
-    let v: serde_json::Value = res.json().await.unwrap_or_default();
+    let v: wire::RemovedAnswer = res.json().await.unwrap_or_default();
     Removed {
-        said: v["error"].as_str().unwrap_or("this key was removed from its account").to_owned(),
-        at: v["removed"]["at"].as_u64(),
-        by: v["removed"]["by"].as_str().map(str::to_owned),
+        said: v.error.unwrap_or_else(|| "this key was removed from its account".to_owned()),
+        at: v.removed.as_ref().map(|r| r.at),
+        by: v.removed.and_then(|r| r.by),
         ..Default::default()
     }
 }
@@ -1682,7 +1606,7 @@ fn retire(state_dir: &Path, r: &mut Removed) -> anyhow::Result<()> {
 async fn forgotten(s: &Saved, keys: &DeviceKeys) -> Option<Forgot> {
     let http = crate::roots::http().timeout(Duration::from_secs(10)).build().ok()?;
     let v2 = takes_v2(&http, &s.url).await;
-    let path = "/api/daemon/trust";
+    let path = wire::TRUST;
     let res =
         http.get(format!("{}{path}", s.url)).header(AUTH, auth_header(keys, "GET", path, b"", v2)).send().await.ok()?;
     if res.status() == reqwest::StatusCode::GONE {
@@ -1878,7 +1802,7 @@ impl Approved {
     pub async fn refuse(self, state_dir: &Path) {
         let key = state_dir.join(KEY_FILE);
         if let Ok(keys) = DeviceKeys::load(&key) {
-            let path = "/api/daemon/leave";
+            let path = wire::LEAVE;
             let http = crate::roots::client();
             let v2 = takes_v2(&http, &self.saved.url).await;
             let _ = http
@@ -1951,15 +1875,20 @@ pub async fn join_start(
         let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Daemon, name) };
         // That this is the key's holder asking, not someone with its certificate.
         let ms = now_ms();
-        let proof = serde_json::json!({
-            "ms": ms,
-            "sig": hex::encode(keys.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes())),
-        });
+        let proof = wire::JoinProof {
+            ms,
+            sig: hex::encode(keys.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes())),
+        };
         let res = http
-            .post(format!("{url}/api/join"))
-            .json(&serde_json::json!({
-                "cert": ask, "urls": [], "team": team, "ticket": ticket, "features": features(), "proof": proof,
-            }))
+            .post(format!("{url}{}", wire::JOIN))
+            .json(&wire::JoinRequest {
+                cert: ask.clone(),
+                urls: vec![],
+                team: team.map(str::to_owned),
+                ticket: ticket.map(str::to_owned),
+                features: features(),
+                proof: Some(proof),
+            })
             .send()
             .await
             .with_context(|| format!("can't reach control at {url}"))?;
@@ -1983,7 +1912,7 @@ pub async fn join_start(
     if !res.status().is_success() {
         bail!("{}", control_said(res).await);
     }
-    let started: JoinStarted = res.json().await?;
+    let started: wire::JoinStarted = res.json().await?;
     debug_assert_eq!(started.code, join_code(&ask));
     lock.waiting(&started.code, &format!("{url}/#join={}", started.code), now_ms() + started.expires_in_secs * 1000);
     Ok(JoinPending {
@@ -2011,7 +1940,7 @@ pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
             bail!("nobody approved it in {mins} minutes; ask again for a new code");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let res = http.get(format!("{url}/api/join/{code}?poll={poll}")).send().await;
+        let res = http.get(format!("{url}{}", wire::JoinPoll::path(&code, &poll))).send().await;
         let Ok(res) = res else { continue };
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             bail!("the code expired; ask again for a new one");
@@ -2019,7 +1948,7 @@ pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
         if !res.status().is_success() {
             bail!("{}", control_said(res).await);
         }
-        let Ok(p) = res.json::<JoinPoll>().await else { continue };
+        let Ok(p) = res.json::<wire::JoinPoll>().await else { continue };
         if let Some(on) = p.rejected {
             bail!("turned down on {on}; ask again to try again");
         }
@@ -2217,7 +2146,7 @@ fn private_http(url: &str) -> bool {
 pub async fn leave(state_dir: &Path, listen: &str) -> anyhow::Result<()> {
     let Some(s) = read_saved(state_dir)? else { bail!("this machine isn't joined to any control") };
     let keys = DeviceKeys::load(&state_dir.join(KEY_FILE))?;
-    let path = "/api/daemon/leave";
+    let path = wire::LEAVE;
     let http = crate::roots::client();
     let v2 = takes_v2(&http, &s.url).await;
     let res =

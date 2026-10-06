@@ -14,7 +14,7 @@ illogical is MIT OR Apache-2.0. Its binaries include the software below.
 - **The web client** bundles npm packages: xterm.js, preact, fzstd and three.js (below). three.js draws the swarm's city and loads only when that theme is picked.
 - **Rust crates**, by license:
 
-- Apache License 2.0 (272)
+- Apache License 2.0 (273)
 - MIT License (69)
 - Unicode License v3 (19)
 - BSD 3-Clause "New" or "Revised" License (11)
@@ -6099,6 +6099,7 @@ Used by:
 - [libghostty-vt 0.2.1](https://github.com/uzaaft/libghostty-rs)
 - [illogical 0.24.0](https://github.com/arugula-salad/illogical)
 - [illogical-control 0.24.0](https://github.com/arugula-salad/illogical)
+- [illogical-control-wire 0.24.0](https://github.com/arugula-salad/illogical)
 - [illogical-core 0.24.0](https://github.com/arugula-salad/illogical)
 - [illogicald 0.24.0](https://github.com/arugula-salad/illogical)
 - [illogical-e2e 0.24.0](https://github.com/arugula-salad/illogical)

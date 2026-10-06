@@ -13,6 +13,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use illogical_control_wire as wire;
 use illogical_e2e::{
     Cert, Kind, Refusal, Revocation, Trust,
     cert::{join_code, normalize_code},
@@ -345,12 +346,12 @@ pub async fn revoke(State(app): State<Arc<App>>, s: Session, Json(b): Json<Revok
 /// Why a removed key can't come back (#330), when `device` was revoked:
 /// the words, and when and by which device (that by name only with
 /// `detail`, for the key's holder).
-pub fn removed(app: &App, device: &str, kind: Kind, detail: bool) -> anyhow::Result<Option<(String, Value)>> {
+pub fn removed(app: &App, device: &str, kind: Kind, detail: bool) -> anyhow::Result<Option<(String, wire::RemovedAt)>> {
     let Some(r) = app.db.revoked(device)? else { return Ok(None) };
     let day = crate::day(r.at);
     if !detail {
         let msg = format!("this key was removed from its account on {day}: it needs a new key, then join again");
-        return Ok(Some((msg, json!({ "at": r.at }))));
+        return Ok(Some((msg, wire::RemovedAt { at: r.at, by: None })));
     }
     let what = if kind == Kind::Daemon { "this machine" } else { "this device" };
     let by = app.db.device(&r.account, &r.by)?.map(|(c, _)| c.name).filter(|n| !n.is_empty());
@@ -358,35 +359,10 @@ pub fn removed(app: &App, device: &str, kind: Kind, detail: bool) -> anyhow::Res
     let msg = format!(
         "{what} was removed from its account on {day}{by_words}, so its key can't join again: it needs a new key"
     );
-    Ok(Some((msg, json!({ "at": r.at, "by": by }))))
+    Ok(Some((msg, wire::RemovedAt { at: r.at, by })))
 }
 
 // ---------------------------------------------------------------- joining
-
-#[derive(Deserialize)]
-pub struct JoinReq {
-    cert: Cert,
-    #[serde(default)]
-    urls: Vec<String>,
-    /// A machine that belongs to a team (M19), not a person.
-    #[serde(default)]
-    team: Option<String>,
-    /// A hosted sandbox's one-time ticket (M20).
-    #[serde(default)]
-    ticket: Option<String>,
-    /// What the daemon understands, comma-separated (older ones send none).
-    #[serde(default)]
-    features: String,
-    /// Its signature with the key it asks with (0.17 and newer).
-    #[serde(default)]
-    proof: Option<JoinProof>,
-}
-
-#[derive(Deserialize)]
-pub struct JoinProof {
-    ms: u64,
-    sig: String,
-}
 
 /// How far a join proof's time may be from control's clock.
 const PROOF_SKEW_MS: u64 = 5 * 60 * 1000;
@@ -397,7 +373,7 @@ const JOIN_NEEDS_UPDATE: &str =
 
 /// Whether the join request comes from the key's holder: an error if it
 /// says so and doesn't, `false` if it doesn't say (an older daemon).
-fn join_proven(app: &App, b: &JoinReq) -> Result<bool, ApiError> {
+fn join_proven(app: &App, b: &wire::JoinRequest) -> Result<bool, ApiError> {
     let Some(p) = &b.proof else { return Ok(false) };
     let body = illogical_e2e::cert::join_proof_body(&b.cert, p.ms);
     if !illogical_e2e::cert::verify_hex(&b.cert.sign, body.as_bytes(), &p.sig) {
@@ -440,7 +416,7 @@ pub async fn join(
     State(app): State<Arc<App>>,
     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
-    Json(b): Json<JoinReq>,
+    Json(b): Json<wire::JoinRequest>,
 ) -> Result<Response, ApiError> {
     app.limits.check(crate::limit::JOINS, app.limits.client_ip(peer, &headers))?;
     b.cert.check_request().map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
@@ -462,7 +438,8 @@ pub async fn join(
     // when it was removed (and by which device, to the key's holder), and
     // that it needs a new key. `removed` says so to the program asking.
     if let Some((msg, removed)) = removed(&app, &b.cert.device, b.cert.kind, proven)? {
-        return Ok((StatusCode::GONE, Json(json!({ "error": msg, "removed": removed }))).into_response());
+        let said = wire::RemovedAnswer { error: Some(msg), removed: Some(removed) };
+        return Ok((StatusCode::GONE, crate::reply(&said)?).into_response());
     }
     if !proven && app.db.device_known(&b.cert.device)? {
         return Err(err(StatusCode::UPGRADE_REQUIRED, JOIN_NEEDS_UPDATE));
@@ -504,19 +481,12 @@ pub async fn join(
             ),
         ));
     }
-    Ok(Json(
-        json!({ "code": code, "poll": poll, "expires_in_secs": crate::db::JOIN_TTL_MS / 1000, "team_name": team_name }),
-    )
-    .into_response())
-}
-
-#[derive(Deserialize)]
-pub struct Poll {
-    poll: String,
+    let started = wire::JoinStarted { code, poll, expires_in_secs: crate::db::JOIN_TTL_MS / 1000, team_name };
+    Ok(crate::reply(&started)?.into_response())
 }
 
 /// The daemon waits for someone to approve its code.
-pub async fn join_poll(State(app): State<Arc<App>>, Path(code): Path<String>, Query(q): Query<Poll>) -> R {
+pub async fn join_poll(State(app): State<Arc<App>>, Path(code): Path<String>, Query(q): Query<wire::PollQuery>) -> R {
     let code = normalize_code(&code).map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
     let j =
         app.db.join(&code, now_ms())?.ok_or_else(|| err(StatusCode::NOT_FOUND, "that code expired; run join again"))?;
@@ -532,21 +502,31 @@ pub async fn join_poll(State(app): State<Arc<App>>, Path(code): Path<String>, Qu
     }
     if let Some(on) = j.rejected {
         app.db.drop_join(&code)?;
-        return Ok(Json(json!({ "approved": false, "rejected": on })));
+        return crate::reply(&wire::JoinPoll::turned_down(on));
     }
-    let Some(account) = j.account else { return Ok(Json(json!({ "approved": false }))) };
+    let Some(account) = j.account else { return crate::reply(&wire::JoinPoll::waiting()) };
     let (trust, certs, revs) = trusted(&app, &account)?;
     app.db.drop_join(&code)?;
     // A team daemon pins the team's founder too, if the approver signed it in.
     let team = match &j.team {
-        Some(t) => app.db.team(t)?.map(|t| {
-            json!({ "team": t.id, "founder": t.founder, "founder_root": t.founder_root, "name": t.name, "sig": j.team_sig })
+        Some(t) => app.db.team(t)?.map(|t| wire::JoinTeam {
+            team: t.id,
+            founder: t.founder,
+            founder_root: t.founder_root,
+            name: t.name,
+            sig: j.team_sig,
         }),
         None => None,
     };
-    Ok(Json(
-        json!({ "approved": true, "cert": j.cert, "trust": trust, "certs": certs, "revocations": revs, "team": team }),
-    ))
+    crate::reply(&wire::JoinPoll {
+        approved: true,
+        rejected: None,
+        cert: Some(j.cert),
+        trust,
+        team,
+        certs,
+        revocations: revs,
+    })
 }
 
 /// What a signed-in person sees before approving a code.
@@ -758,18 +738,22 @@ pub async fn move_daemon(
 // ---------------------------------------------------------------- daemons
 
 /// The daemon's account's certificates, to evaluate against its root.
-pub async fn daemon_trust(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<crate::teams::Features>) -> R {
+pub async fn daemon_trust(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<wire::Features>) -> R {
     app.db.set_daemon_features(&d.cert.device, &q.features)?;
     let (trust, certs, revs) = trusted(&app, &d.cert.account)?;
     // Its last move (#100), for the daemon to check and take.
-    let moved: Option<Value> = app.db.daemon_moved(&d.cert.device)?.and_then(|j| serde_json::from_str(&j).ok());
-    Ok(Json(json!({ "trust": trust, "certs": certs, "revocations": revs, "moved": moved })))
+    let moved = app.db.daemon_moved(&d.cert.device)?.and_then(|j| {
+        serde_json::from_str(&j)
+            .inspect_err(|e| warn!(daemon = %d.cert.device, error = %e, "a stored move doesn't parse; not sending it"))
+            .ok()
+    });
+    crate::reply(&wire::TrustAnswer { trust, certs, revocations: revs, moved })
 }
 
 pub async fn daemon_leave(State(app): State<Arc<App>>, d: DaemonAuth) -> R {
     app.db.drop_daemon(&d.cert.device)?;
     app.relay.drop_daemon(&d.cert.device);
-    Ok(Json(json!({})))
+    crate::reply(&wire::Ack {})
 }
 
 // ---------------------------------------------------------------- directory

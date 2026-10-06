@@ -19,6 +19,7 @@ hkdf = "0.13.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+illogical-control-wire = { version = "0.24.0", path = "../control-wire" }
 illogical-core = { version = "0.24.0", path = "../core" }
 illogical-e2e = { version = "0.24.0", path = "../e2e" }
 illogical-proto = { version = "0.24.0", path = "../proto" }
