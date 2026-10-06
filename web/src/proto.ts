@@ -1,6 +1,6 @@
 // The wire types are generated from crates/proto (proto.gen.ts, `just
-// proto-ts`). This file adds the code that goes with them, and the HTTP
-// API's types that aren't in proto yet (#387).
+// proto-ts`). This file adds the code that goes with them. The HTTP API's
+// types that aren't generated yet are declared where they're used (#387).
 
 import type { ClientId, Gate, PaneId, ThreadTarget } from "./proto.gen";
 
@@ -26,23 +26,6 @@ export function callFingerprintBody(call: string, from: ClientId, to: ClientId, 
 /** `pane-7` / `session-2`: a thread's name in its API path. */
 export function threadKey(t: ThreadTarget): string {
   return "pane" in t ? `pane-${t.pane}` : `session-${t.session}`;
-}
-
-/** An `@` in a post that reached no one: told to the poster alone. */
-export interface Unreached {
-  token: string;
-  why: "agent_needs_pane" | "may_not_drive" | "nobody";
-}
-
-/** Someone the owner's `@token` named who can't read the thread (#297):
- *  theirs to invite. Only ever in the owner's own response. */
-export interface Invitable {
-  token: string;
-  /** `tailnet:<login>` or `account:<id>`. */
-  who: string;
-  name: string;
-  /** Another principal taken to be them (a login by their name). */
-  merged?: string | null;
 }
 
 export const enum FrameKind {

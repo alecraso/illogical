@@ -15,7 +15,7 @@ mod thread_ops;
 mod who_may;
 
 pub use config::Config;
-pub use thread_ops::{Posted, ThreadError, ThreadPost, Unreached};
+pub use thread_ops::{Posted, ThreadError, ThreadPost};
 
 use self::attention::{PendingDiff, TermAsk, Waiter};
 use crate::{

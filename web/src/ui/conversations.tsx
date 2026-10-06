@@ -14,7 +14,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ApiResponse, Client } from "../client";
 import { directory } from "../hosts";
-import type { PaneId } from "../proto";
+import type { OpenConversationRequest, OpenConversationResponse, PaneId } from "../proto";
 import { getFleet } from "./hosts";
 
 export interface Conversation {
@@ -264,8 +264,8 @@ function Picker({ client, where, phone, close }: { client: Client; where: Conver
     }
     setBusy(true);
     try {
-      const res = await within(f.request(host, "POST", "/api/conversations/open", { id: c.id, then: then ?? null }), HOST_MS);
-      const v = await res.json<{ block?: PaneId; error?: string }>().catch(() => null);
+      const res = await within(f.request(host, "POST", "/api/conversations/open", { id: c.id, then: then ?? null } satisfies OpenConversationRequest), HOST_MS);
+      const v = await res.json<Partial<OpenConversationResponse>>().catch(() => null);
       if (!res.ok || typeof v?.block !== "number") {
         client.toast(v?.error ?? `couldn't open it on ${host} (${res.status})`);
         return;

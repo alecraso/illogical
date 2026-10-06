@@ -310,7 +310,7 @@ impl InviteBlock {
             None => d.note.clone(),
         };
         let drive = content["drive_minutes"].as_u64().filter(|m| *m > 0).map(|m| m.min(u64::from(u32::MAX)) as u32);
-        let req = super::Request {
+        let req = illogical_proto::api::InviteRequest {
             session: d.session,
             who: d.person.clone(),
             role: Some(role),
@@ -332,12 +332,12 @@ impl InviteBlock {
         let settled = Draft { role, note, settled_by: Some(by.name.clone()), settled_ms: Some(now_ms()), ..d };
         match out {
             Ok(v) => {
-                info!(pane = self.ctx.id, id = settled.id, delivery = v["delivery"].as_str(), "invite sent");
+                info!(pane = self.ctx.id, id = settled.id, delivery = v.delivery.as_str(), "invite sent");
                 self.settle(Draft {
                     status: Status::Sent,
-                    grant: Some(v["grant"].clone()),
-                    delivery: v["delivery"].as_str().map(str::to_owned),
-                    delivery_reason: v["reason"].as_str().map(str::to_owned),
+                    grant: serde_json::to_value(&v.grant).ok(),
+                    delivery: Some(v.delivery.as_str().to_owned()),
+                    delivery_reason: v.reason,
                     ..settled
                 });
             }

@@ -15,7 +15,7 @@
 
 import { Client, paneIds } from "../client";
 import { directory } from "../hosts";
-import type { PaneId, RemoteRef, TabId } from "../proto";
+import type { OpenRequest, PaneId, RemoteRef, RunRequest, RunResponse, TabId } from "../proto";
 import { registerBlock, type BlockView } from "./view";
 import type { TerminalView } from "../terminal-view";
 
@@ -123,12 +123,12 @@ export async function newRemote(home: Client, host: string, where: { split?: Pan
   const there = new Client(directory.base(host));
   let pane: PaneId;
   try {
-    const res = await there.request("POST", "/api/run", { session: directory.home });
+    const res = await there.request("POST", "/api/run", { session: directory.home } satisfies RunRequest);
     if (!res.ok) {
       home.toast((await res.json<{ error?: string }>().catch(() => null))?.error ?? `${host} said no (${res.status})`);
       return;
     }
-    pane = (await res.json<{ pane: PaneId }>()).pane;
+    pane = (await res.json<RunResponse>()).pane;
   } catch {
     home.toast(`can't reach ${host}`);
     return;
@@ -138,7 +138,7 @@ export async function newRemote(home: Client, host: string, where: { split?: Pan
     config: { host, pane },
     split: where.split ?? null,
     session: where.split === undefined && where.session !== undefined ? String(where.session) : null,
-  });
+  } satisfies OpenRequest);
   if (failed) {
     home.toast(failed);
     // Nothing here shows it: don't leave it running there.

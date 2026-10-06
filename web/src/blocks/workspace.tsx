@@ -8,7 +8,7 @@
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { Client } from "../client";
-import { gateKey, type Gate, type PaneId } from "../proto";
+import { gateKey, type Gate, type PaneId, type RunRequest } from "../proto";
 import { registerBlock, type BlockView } from "./view";
 
 interface Diagnostic { rule: string; severity: string; message: string; file: string | null; line: number | null }
@@ -96,13 +96,13 @@ function WorkspaceBlock({ client, id, s }: { client: Client; id: PaneId; s: Work
   const mayApprove = role !== "viewer";
   const mayOpen = role === "owner";
   const beside = { split: id, from_pane: id };
-  const shell = (cwd: string) => void client.make("/api/run", { ...beside, cwd }).then((e) => e && client.toast(e));
+  const shell = (cwd: string) => void client.make("/api/run", { ...beside, cwd } satisfies RunRequest).then((e) => e && client.toast(e));
   const agent = (m: Member) => void client.openBlock({ type: "agent", config: { agent: "claude", cwd: m.path }, ...beside }, "couldn't start the agent");
   const changes = (m: Member) => void client.openBlock({ type: "diff", config: { repo: m.path }, ...beside }, "couldn't show the changes");
   const nested = (m: Member) => openWorkspace(client, m.path, id, s?.env ?? "local");
   const runOp = (g: Gate) =>
     g.source.kind === "chant" &&
-    void client.make("/api/run", { ...beside, cwd: g.source.dir, command: `${s?.chant ?? "chant"} run ${g.op}` }).then((e) => e && client.toast(e));
+    void client.make("/api/run", { ...beside, cwd: g.source.dir, command: `${s?.chant ?? "chant"} run ${g.op}` } satisfies RunRequest).then((e) => e && client.toast(e));
   const approve = async (g: Gate) => {
     setBusy(gateKey(g));
     setSaid(null);

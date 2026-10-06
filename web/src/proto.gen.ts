@@ -44,6 +44,10 @@ message?: string,
  */
 text?: string, };
 
+export type ActResponse = { results: Array<ActResult>, };
+
+export type ActResult = { pane: number, ok: boolean, error?: string, };
+
 /**
  * Something done about a reason (`POST /api/attention/act`).
  */
@@ -370,6 +374,36 @@ export type FollowMsg = FollowCursor | { open: FollowOpen, } | { edit: FollowEdi
 export type FollowOpen = { file: string, version: number, text: string | null, lang?: string, too_big?: boolean, };
 
 /**
+ * A machine's Fountain runner, for its line in the machine panel and the
+ * swarm (M45b). Read in the background, never on the request.
+ */
+export type FountainRunnerInfo = { 
+/**
+ * Its name on Fountain (the unit's `--name`).
+ */
+name: string, 
+/**
+ * What Fountain says; `None` until read.
+ */
+online?: boolean, 
+/**
+ * The runner's `fountain` version, as Fountain has it.
+ */
+version?: string, 
+/**
+ * `systemctl is-active fountain-runner`.
+ */
+unit_active?: boolean, 
+/**
+ * How many sandboxes it holds (when a runner view counted them).
+ */
+sandboxes?: number, checked_ms?: number, 
+/**
+ * What wants the owner (the runner view's attention), if anything.
+ */
+problem?: string, };
+
+/**
  * A gate that waits for someone (M34): an op stopped before a step until
  * a person approves it. The `gate` reason, its bundle on the swarm's rail,
  * the card and the phone's sheet are all made from this, whichever reader
@@ -414,6 +448,75 @@ box_url: string, app: string, } | { "kind": "forge",
  * address for the PR.
  */
 api: string, url: string, number: number, };
+
+/**
+ * An ssh invite to a pane (M65). `token`, `command` and the pinning lines
+ * are only in the answer that made it; the daemon keeps a hash.
+ */
+export type GuestInvite = { id: number, pane: number, rw: boolean, reusable: boolean, label: string, created_ms: number, expires_ms: number, 
+/**
+ * A single-use invite someone has logged in with.
+ */
+used: boolean, 
+/**
+ * Guests connected with it now.
+ */
+sessions: number, token?: string, 
+/**
+ * What the guest pastes: `ssh` with the host key pinned.
+ */
+command?: string, 
+/**
+ * The pinned key as a known-hosts line, for an OpenSSH older than 8.5
+ * (no `KnownHostsCommand`).
+ */
+known_hosts?: string, 
+/**
+ * The host key's SHA256 fingerprint.
+ */
+fingerprint?: string, host?: string, port?: number, 
+/**
+ * Through control's ssh jump host (the daemon is behind NAT).
+ */
+relay: boolean, 
+/**
+ * The jump host, as `host[:port]` (with `command` only).
+ */
+jump?: string, };
+
+/**
+ * `POST /api/guests` (M65): an invite to one terminal pane for someone
+ * with only OpenSSH.
+ */
+export type GuestInviteRequest = { pane: number, 
+/**
+ * They may type (one driver per pane still applies).
+ */
+rw?: boolean | null, 
+/**
+ * Good for any number of logins until it ends; else the first spends it.
+ */
+reusable?: boolean | null, 
+/**
+ * Seconds until it expires [default: an hour; at most a day, or two
+ * hours with `rw`].
+ */
+ttl_secs?: number | null, 
+/**
+ * What to call them, on their input [default: `guest`].
+ */
+label?: string | null, 
+/**
+ * The address to put in the command [default: the daemon's
+ * `--guest-ssh-host`, else its hostname].
+ */
+host?: string | null, 
+/**
+ * Through control's ssh jump host (`true`), or straight to this
+ * machine (`false`) [default: through control when the daemon is
+ * joined to one that has a jump host and no address is named].
+ */
+relay?: boolean | null, };
 
 /**
  * A tool a hand offers (S33).
@@ -462,7 +565,120 @@ threads?: boolean,
  */
 calls?: boolean, };
 
+/**
+ * `GET /api/host`: who this daemon is.
+ */
+export type HostInfo = { name: string, version: string, 
+/**
+ * The app↔daemon protocol it speaks ([`crate::PROTOCOL`], #390).
+ * Absent from daemons older than the number, which speak
+ * [`crate::PROTOCOL_BASELINE`].
+ */
+protocol?: number, 
+/**
+ * Where `tailscale serve` puts the app, when tailscaled told us this
+ * node's name (#109): `https://NAME.TAILNET.ts.net`.
+ */
+tailnet_url?: string, 
+/**
+ * The owner has come in over the tailnet since the daemon started:
+ * serve works (#110).
+ */
+tailnet_seen?: boolean, 
+/**
+ * The control this daemon joined, if any (#110).
+ */
+control?: string, 
+/**
+ * The team it joined as, if one (#110).
+ */
+team?: string, 
+/**
+ * This machine is the account's Fountain runner (M45b: it has the
+ * `fountain-runner` unit): what was last read of it.
+ */
+fountain_runner?: FountainRunnerInfo, 
+/**
+ * What this machine is set up for (#171, #180): the menus offer only
+ * these, or say how to turn them on. Absent from older daemons.
+ */
+features?: HostFeatures, };
+
 export type Intent = { "op": "new_session", name: string | null, from_pane: number | null, } | { "op": "rename_session", session: number, name: string, } | { "op": "close_session", session: number, } | { "op": "new_tab", session: number, from_pane: number | null, cwd?: string, } | { "op": "rename_tab", tab: number, name: string | null, } | { "op": "close_tab", tab: number, } | { "op": "move_tab", tab: number, session: number, index: number, } | { "op": "split", pane: number, edge: Edge, local?: boolean, cwd?: string, } | { "op": "close_pane", pane: number, } | { "op": "move_pane", pane: number, target: number, edge: Edge, } | { "op": "break_pane", pane: number, session: number, index: number | null, } | { "op": "dock_tab", tab: number, target: number, edge: Edge, } | { "op": "resize_split", split: number, weights: Array<number>, } | { "op": "set_option", scope: OptionScope, name: string, value: string | null, };
+
+/**
+ * Someone the owner's `@token` named who can't read the thread (#297):
+ * theirs to invite.
+ */
+export type Invitable = { token: string, 
+/**
+ * `tailnet:<login>` or `account:<id>`.
+ */
+who: string, name: string, 
+/**
+ * Another principal taken to be them (a login by their name).
+ */
+merged?: string, };
+
+/**
+ * How an invite's push went: `sent` once a subscription took it,
+ * `pending` while control can't reach them yet, else `unreachable`.
+ */
+export type InviteDelivery = "sent" | "pending" | "unreachable";
+
+/**
+ * What an invite granted: the role they hold now, and whether this invite
+ * gave it (`false`: they held it already).
+ */
+export type InviteGrant = { session: number, principal: string, name: string, role: Role, granted: boolean, };
+
+/**
+ * `POST /api/invite`: share a session with someone and tell them, and only
+ * them (#233; the owner's).
+ */
+export type InviteRequest = { session: number, 
+/**
+ * `tailnet:<login>`, `account:<id>`, or a name: someone shared with,
+ * or in a checked roster.
+ */
+who: string, role?: Role | null, note?: string | null, 
+/**
+ * Where it opens (default: the session's first pane).
+ */
+pane?: number | null, 
+/**
+ * With history (default: from now on), for a new grant.
+ */
+history?: boolean | null, 
+/**
+ * An editor may also type on this machine's pane for so long (M14).
+ */
+drive_minutes?: number | null, 
+/**
+ * For an `account:` no grant or pin vouches for: their root device,
+ * whose fingerprint the owner checked with them.
+ */
+root?: string | null, 
+/**
+ * From a thread's mention (#297): the thread (`pane-N`, `session-N`)
+ * it opens, the one a "from now" share reads from `msg` on (the
+ * message that mentioned them), or all of with `whole_thread`. Other
+ * threads start at the share, as ever.
+ */
+thread?: string | null, msg?: number | null, whole_thread?: boolean | null, };
+
+/**
+ * What an invite answers.
+ */
+export type Invited = { invite: string, grant: InviteGrant, pane: number, delivery: InviteDelivery, 
+/**
+ * Why it isn't `sent`.
+ */
+reason: string | null, 
+/**
+ * Whether they may drive (`drive_minutes`), when that was asked.
+ */
+drive: boolean | null, };
 
 export type Layout = { panes: Array<[number, Rect]>, splits: Array<SplitRect>, };
 
@@ -502,6 +718,81 @@ by?: string | null, };
 export type MachineState = "starting" | "running" | "gone";
 
 export type Node = { "type": "pane", pane: number, } | { "type": "split", id: number, dir: Dir, children: Array<Child>, };
+
+/**
+ * What "needs you" notifications someone other than the owner gets (M29):
+ * agents in these sessions, or everything they may edit here ("this team's
+ * agents" on a team daemon). The owner always is.
+ */
+export type NotifyPref = { all: boolean, sessions: Array<number>, };
+
+/**
+ * `POST /api/notify`: opt in or out of a session's agents, or all of them.
+ */
+export type NotifyRequest = { 
+/**
+ * One session; none: everything you may edit here.
+ */
+session?: number, on: boolean, };
+
+/**
+ * `POST /api/conversations/open` (M33): a Claude Code conversation as an
+ * agent block.
+ */
+export type OpenConversationRequest = { 
+/**
+ * Its id, or a unique prefix.
+ */
+id: string, 
+/**
+ * Then `continue` or `fork` it.
+ */
+then?: string | null, session?: string | null, split?: number | null, from_pane?: number | null, };
+
+/**
+ * What opening a conversation answers: its block (`opened`: made now, not
+ * there already), and why `then` didn't go through, if it didn't.
+ */
+export type OpenConversationResponse = { block: number, opened: boolean, conversation: string, error?: string, };
+
+/**
+ * `POST /api/blocks`: open a block of any type.
+ */
+export type OpenRequest = { type: BlockType, 
+/**
+ * What the type needs to make it (a URL, an agent command).
+ */
+config?: Record<string, unknown>, 
+/**
+ * Session name or id, as for `run`.
+ */
+session?: string | null, 
+/**
+ * Split this block instead of opening a tab.
+ */
+split?: number | null, from_pane?: number | null, 
+/**
+ * Run it on a new throwaway machine of its own.
+ */
+vm?: boolean | null, 
+/**
+ * The new machine's image.
+ */
+image?: string | null, 
+/**
+ * Run it on this machine [default: the tab's, when splitting in a VM
+ * tab; else this host].
+ */
+host?: number | null, 
+/**
+ * On this host, even split in a VM tab.
+ */
+local?: boolean | null, };
+
+/**
+ * What opening a block answers.
+ */
+export type OpenResponse = { block: number, };
 
 /**
  * Where an option lives, as in tmux: the server, a session, a window (tab)
@@ -739,6 +1030,59 @@ export type RemoteRef = { host: string, pane: number, };
  */
 export type Role = "viewer" | "editor" | "owner";
 
+/**
+ * `POST /api/run`: a new terminal pane.
+ */
+export type RunRequest = { 
+/**
+ * Run with the pane's shell (`$SHELL -l -c COMMAND`); none for just a
+ * shell.
+ */
+command?: string | null, 
+/**
+ * Run it on a new throwaway machine owned by the pane.
+ */
+vm?: boolean | null, 
+/**
+ * In a new tab whose panes all share a new throwaway machine.
+ */
+vm_tab?: boolean | null, 
+/**
+ * The machine's image (the provider's default if none).
+ */
+image?: string | null, 
+/**
+ * On a sandbox that already exists (the provider's name for it), over
+ * a plain exec with no daemon there ("open shell", M4b). The sandbox
+ * isn't ours: closing the pane leaves it be.
+ */
+sandbox?: string | null, 
+/**
+ * Session name or id; created if no session has that name. Default: the
+ * session of `from_pane`, else the first.
+ */
+session?: string | null, 
+/**
+ * Split this pane instead of opening a tab.
+ */
+split?: number | null, 
+/**
+ * With `split`: the new pane runs where the split pane does (its tab's
+ * machine, or the sandbox it has a shell on) instead of this host.
+ */
+join?: boolean | null, 
+/**
+ * Where it starts. On a machine, a directory there.
+ */
+cwd?: string | null, policy?: Policy | null, 
+/**
+ * Where the request comes from (`$ILLOGICAL_PANE`): the default session
+ * and working directory.
+ */
+from_pane?: number | null, };
+
+export type RunResponse = { pane: number, };
+
 export type SdpKind = "offer" | "answer";
 
 /**
@@ -747,6 +1091,29 @@ export type SdpKind = "offer" | "answer";
 export type ServerMsg = { "type": "hello", version: string, client: number, state: State, } | { "type": "state", state: State, } | { "type": "size", pane: number, cols: number, rows: number, } | { "type": "resync", pane: number, } | { "type": "error", id: number | null, message: string, } | { "type": "block", block: number, state: unknown, } | { "type": "pong", id: number, } | { "type": "notice", message: string, } | { "type": "control_request", pane: number, who: string, name: string, } | { "type": "trust_request", pane: number, who: string, name: string, } | { "type": "delta", delta: Delta, } | { "type": "follow", pane: number, msg: FollowMsg, } | { "type": "thread", target: ThreadTarget, msg: ThreadMsg, } | { "type": "call_signal", session: number, from: number, signal: CallSignal, cert?: unknown, } | { "type": "hand_call", id: number, tool: string, args: Record<string, unknown>, from: string, };
 
 export type Session = { id: number, name: string, tabs: Array<number>, };
+
+/**
+ * A read-only share of one pane. `token`, `path` and `url` are only in the
+ * answer that minted it; the daemon keeps a hash.
+ */
+export type Share = { id: number, pane: number, created_ms: number, expires_ms: number, token?: string, 
+/**
+ * `/share/<token>`, on this daemon.
+ */
+path?: string, 
+/**
+ * The whole link, on this daemon's tailnet name when it has one.
+ */
+url?: string, };
+
+/**
+ * `POST /api/shares`: a read-only link to one terminal pane.
+ */
+export type ShareRequest = { pane: number, 
+/**
+ * Seconds until it expires [default: an hour; at most a week].
+ */
+ttl_secs?: number | null, };
 
 /**
  * A split's area and how long each child is along the split's direction,
@@ -806,6 +1173,39 @@ calls?: Array<Call>, };
 export type TabView = { id: number, name: string | null, root: Node, cols: number, rows: number, owner: number | null, zoom: number | null, layout: Layout, };
 
 /**
+ * `GET` and `POST /api/team-pins`: the teams pinned here, and those whose
+ * rosters this machine checked.
+ */
+export type TeamPins = { pins: { [key in string]: string }, checked: Array<string>, };
+
+/**
+ * `POST /api/team-pins`: the teams the owner's browser pinned, and those
+ * it left (#233; the owner's). Their rosters are checked against these.
+ */
+export type TeamPinsRequest = { 
+/**
+ * Team id to `<founder device>.<founder's root>`, as the owner's
+ * browser pinned it.
+ */
+pins: { [key in string]: string }, 
+/**
+ * Teams pinned here that the owner's account is no longer in: their
+ * members stop being nameable.
+ */
+drop: Array<string>, };
+
+/**
+ * What handing a post to the pane's agent came to: `delivered` (`false`:
+ * queued), or `error`.
+ */
+export type ThreadAgent = { delivered?: boolean, error?: string, };
+
+/**
+ * `GET /api/threads/…`: a thread's messages, as the caller may read them.
+ */
+export type ThreadMessages = { target: ThreadTarget, messages: Array<ThreadMsg>, };
+
+/**
  * One message in a thread (M61).
  */
 export type ThreadMsg = { 
@@ -850,6 +1250,23 @@ to_agent?: boolean,
 agent?: boolean, };
 
 /**
+ * `POST /api/threads/…`: a message, with output it quotes.
+ */
+export type ThreadPostRequest = { text?: string | null, quote?: Quote | null, };
+
+/**
+ * What a post answers. `agent` is set when an `@agent` went to the pane's
+ * agent; `invitable` only in the owner's answer (#297), so nobody else's
+ * says who exists.
+ */
+export type ThreadPosted = { message: ThreadMsg, agent: ThreadAgent | null, unreached: Array<Unreached>, invitable?: Array<Invitable>, };
+
+/**
+ * `POST /api/threads/…/read`: the caller has read up to that message.
+ */
+export type ThreadReadRequest = { upto: number, };
+
+/**
  * A thread as one person has it (M61).
  */
 export type ThreadSummary = { target: ThreadTarget, 
@@ -870,6 +1287,16 @@ mention?: boolean, };
  * What a thread (M61) is about: a pane, or a session.
  */
 export type ThreadTarget = { "pane": number } | { "session": number };
+
+/**
+ * An `@` in a post that reached no one, for the poster alone.
+ */
+export type Unreached = { token: string, why: UnreachedWhy, };
+
+/**
+ * Why an `@` in a post reached no one.
+ */
+export type UnreachedWhy = "agent_needs_pane" | "may_not_drive" | "nobody";
 
 /**
  * What a pane is busy with (M23), for drawing and grouping it without

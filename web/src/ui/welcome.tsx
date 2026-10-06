@@ -24,7 +24,7 @@ import type { Client } from "../client";
 import { CopyText } from "./copy";
 import { notifyBlocker, pushNow, serveCommand, subscribePush } from "./notify";
 import { startAgent } from "./agent-dialog";
-import type { ControlState } from "../proto";
+import type { ControlState, HostInfo } from "../proto";
 import { placeOf, refreshControlState } from "./control-state";
 import { desktopApp } from "../desktop";
 import { AdapterHelp, adapterLine, adapterReady, installAdapter, type Adapter } from "./adapter";
@@ -35,15 +35,10 @@ const CONTROL = "https://control.illogical.widgets.wtf";
 const SEEN_KEY = "illogical.getting-started";
 
 /** What `/api/host` says about this daemon (the parts for this panel). */
-interface HostInfo {
-  name: string;
-  tailnet_url?: string;
-  tailnet_seen?: boolean;
-  control?: string;
-  team?: string;
-  /** #325: joined, not joined, or dropped by control. */
+type HostSays = Pick<HostInfo, "name" | "tailnet_url" | "tailnet_seen" | "control" | "team"> & {
+  /** #325: joined, not joined, or dropped by control (sent beside `HostInfo`). */
   control_state?: ControlState;
-}
+};
 
 /** `GET /api/setup`. */
 interface Setup {
@@ -199,7 +194,7 @@ function stepFor(section?: Section): number {
 
 function GettingStarted({ client, section, close }: { client: Client | null; section?: Section; close: () => void }) {
   const [step, setStep] = useState(stepFor(section));
-  const [host, setHost] = useState<HostInfo | null>(null);
+  const [host, setHost] = useState<HostSays | null>(null);
   const [setup, setSetup] = useState<Setup | null>(null);
   // The daemon can't run the steps here (through control, or not its
   // owner): show the commands instead.
@@ -237,7 +232,7 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
       .then((r) => r && setEarly(r.control))
       .catch(() => {});
     fetch("/api/host")
-      .then((r) => (r.ok ? (r.json() as Promise<HostInfo>) : null))
+      .then((r) => (r.ok ? (r.json() as Promise<HostSays>) : null))
       .then(setHost)
       .catch(() => {});
   }, []);
@@ -452,7 +447,7 @@ function Qr({ text }: { text: string }) {
   );
 }
 
-function Phone({ name, setup, host, manual, refresh }: { name: string; setup: Setup | null; host: HostInfo | null; manual: boolean; refresh: () => Promise<void> }) {
+function Phone({ name, setup, host, manual, refresh }: { name: string; setup: Setup | null; host: HostSays | null; manual: boolean; refresh: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const ts = setup?.tailscale;
@@ -539,7 +534,7 @@ function Cloud({
   name: string;
   setup: Setup | null;
   early: Setup["control"] | null;
-  host: HostInfo | null;
+  host: HostSays | null;
   manual: boolean;
   refresh: () => Promise<void>;
   setSetup: (fn: (s: Setup | null) => Setup | null) => void;

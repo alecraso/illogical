@@ -4,7 +4,7 @@
 //! | method | path | body / query | answer |
 //! |---|---|---|---|
 //! | GET | `/api/panes` | | `[PaneSummary]` |
-//! | POST | `/api/run` | `RunRequest` | `{"pane": N}` |
+//! | POST | `/api/run` | `RunRequest` | `RunResponse`: `{"pane": N}` |
 //! | POST | `/api/panes/N/send` | `SendRequest` | `{}` |
 //! | POST | `/api/panes/N/prompt` | `PromptRequest` | `PromptResult`: the agent's turn, waited through (#147) |
 //! | POST | `/api/panes/N/keys` | `KeysRequest` | `{}` |
@@ -18,11 +18,12 @@
 //! | POST | `/api/panes/N/hook` | any other Claude Code hook input | `{}`: closes a permission card the terminal answered |
 //! | POST | `/api/panes/N/inbox` | `Stop`/`SessionStart` hook input (`illogical inbox`) | a follow-up: `{action: follow_up\|replaced, text?, by?}` |
 //! | POST | `/api/panes/N/followup` | `{text}` | `{delivered}`: the agent's next instruction, from whoever may drive it |
-//! | GET, POST | `/api/notify` | POST `{session?, on}` | `NotifyPref`: which agents' "needs you" notifications reach you (M29) |
-//! | POST | `/api/invite` | `{session, who, role?, note?, pane?, history?, drive_minutes?, root?}` | `{invite, grant, pane, delivery: sent\|pending\|unreachable, reason?, drive?}`: share a session and push that person alone (#233; the owner's) |
+//! | GET, POST | `/api/notify` | POST `NotifyRequest` | `NotifyPref`: which agents' "needs you" notifications reach you (M29) |
+//! | POST | `/api/invite` | `InviteRequest` | `Invited`: share a session and push that person alone (#233; the owner's) |
 //! | GET, POST | `/api/team-pins` | POST `{pins: {team: "<founder>.<founder's root>"}}` | `{pins, checked}`: teams the owner's browser pinned, whose rosters this machine checked (#233; the owner's) |
-//! | POST | `/api/panes/N/close` | | `{}` (its output stays in history) |
-//! | POST | `/api/blocks` | `OpenRequest` | `{"block": N}` |
+//! | POST | `/api/panes/N/close` | | `Empty` (its output stays in history) |
+//! | POST | `/api/blocks` | `OpenRequest` | `OpenResponse`: `{"block": N}` |
+//! | POST | `/api/conversations/open` | `OpenConversationRequest` | `OpenConversationResponse`: a Claude Code conversation as an agent block (M33) |
 //! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |
 //! | POST | `/api/blocks/N/call/METHOD` | JSON args | the method's answer |
 //! | GET, POST, DELETE | `/api/studio` | POST `{url, token}` | the studio and whether there's a token (never the token); POST logs in (`{apps}`), DELETE forgets it (M35) |
@@ -40,9 +41,9 @@
 //! | GET | `/api/events` | `pane=`, `type=a,b`, `follow=1` | NDJSON `Event`s |
 //! | GET | `/api/history` | `pane=`, `failed=1`, `since=` secs, `cwd=`, `match=` | `[HistoryEntry]` |
 //! | GET | `/api/search` | `re=`, `since=` secs | `[SearchHit]` (output, and thread messages) |
-//! | GET | `/api/threads/pane-N`, `/api/threads/session-N` | | `{target, messages: [ThreadMsg]}`: a thread (M61), as the caller may read it |
-//! | POST | `/api/threads/pane-N`, `/api/threads/session-N` | `{text, quote?}` | `{message, agent}`: posted (needs drive); `agent` is `{delivered}` (or `{error}`) when an `@agent` went to the pane's agent |
-//! | POST | `/api/threads/…/read` | `{upto}` | `{}`: the caller has read up to that message |
+//! | GET | `/api/threads/pane-N`, `/api/threads/session-N` | | `ThreadMessages`: a thread (M61), as the caller may read it |
+//! | POST | `/api/threads/pane-N`, `/api/threads/session-N` | `ThreadPostRequest` | `ThreadPosted`: posted (needs drive); `agent` is `{delivered}` (or `{error}`) when an `@agent` went to the pane's agent |
+//! | POST | `/api/threads/…/read` | `ThreadReadRequest` | `Empty`: the caller has read up to that message |
 //! | GET | `/api/fs/…`, POST `/api/panes/N/cd` | | files on a host: see [`crate::fs`] |
 //! | GET | `/api/host` | | `HostInfo`: this daemon's name and version, its tailnet URL, whether the tailnet has reached it, the control it joined |
 //! | GET | `/api/hosts/self/shell-env` | | `{shell, ok, error, ms, path, vars}`: the shell environment blocks that run your tools get (#74) |
@@ -151,6 +152,8 @@ impl ActRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
 pub struct ActResult {
     pub pane: PaneId,
     pub ok: bool,
@@ -159,6 +162,7 @@ pub struct ActResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ActResponse {
     pub results: Vec<ActResult>,
 }
@@ -175,11 +179,14 @@ pub struct PaneSummary {
 
 /// `POST /api/blocks`: open a block of any type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct OpenRequest {
     #[serde(rename = "type")]
     pub kind: crate::BlockType,
     /// What the type needs to make it (a URL, an agent command).
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(type = "Record<string, unknown>", optional))]
     pub config: serde_json::Value,
     /// Session name or id, as for `run`.
     #[serde(default)]
@@ -191,6 +198,7 @@ pub struct OpenRequest {
     pub from_pane: Option<PaneId>,
     /// Run it on a new throwaway machine of its own.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub vm: bool,
     /// The new machine's image.
     #[serde(default)]
@@ -201,10 +209,21 @@ pub struct OpenRequest {
     pub host: Option<crate::MachineId>,
     /// On this host, even split in a VM tab.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub local: bool,
 }
 
+/// What opening a block answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct OpenResponse {
+    pub block: PaneId,
+}
+
+/// `POST /api/run`: a new terminal pane.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct RunRequest {
     /// Run with the pane's shell (`$SHELL -l -c COMMAND`); none for just a
     /// shell.
@@ -212,9 +231,11 @@ pub struct RunRequest {
     pub command: Option<String>,
     /// Run it on a new throwaway machine owned by the pane.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub vm: bool,
     /// In a new tab whose panes all share a new throwaway machine.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub vm_tab: bool,
     /// The machine's image (the provider's default if none).
     #[serde(default)]
@@ -234,6 +255,7 @@ pub struct RunRequest {
     /// With `split`: the new pane runs where the split pane does (its tab's
     /// machine, or the sandbox it has a shell on) instead of this host.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub join: bool,
     /// Where it starts. On a machine, a directory there.
     #[serde(default)]
@@ -247,6 +269,7 @@ pub struct RunRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RunResponse {
     pub pane: PaneId,
 }
@@ -476,6 +499,8 @@ pub struct SearchHit {
 
 /// `POST /api/shares`: a read-only link to one terminal pane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct ShareRequest {
     pub pane: PaneId,
     /// Seconds until it expires [default: an hour; at most a week].
@@ -486,6 +511,8 @@ pub struct ShareRequest {
 /// A read-only share of one pane. `token`, `path` and `url` are only in the
 /// answer that minted it; the daemon keeps a hash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
 pub struct Share {
     pub id: u32,
     pub pane: PaneId,
@@ -504,13 +531,17 @@ pub struct Share {
 /// `POST /api/guests` (M65): an invite to one terminal pane for someone
 /// with only OpenSSH.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct GuestInviteRequest {
     pub pane: PaneId,
     /// They may type (one driver per pane still applies).
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub rw: bool,
     /// Good for any number of logins until it ends; else the first spends it.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub reusable: bool,
     /// Seconds until it expires [default: an hour; at most a day, or two
     /// hours with `rw`].
@@ -533,6 +564,8 @@ pub struct GuestInviteRequest {
 /// An ssh invite to a pane (M65). `token`, `command` and the pinning lines
 /// are only in the answer that made it; the daemon keeps a hash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
 pub struct GuestInvite {
     pub id: u32,
     pub pane: PaneId,
@@ -599,4 +632,526 @@ pub struct SyncedPane {
 pub struct SyncedHost {
     pub name: String,
     pub panes: std::collections::BTreeMap<PaneId, SyncedPane>,
+}
+
+/// What a route answers when it has nothing to say: `{}`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Empty {}
+
+/// `GET /api/threads/…`: a thread's messages, as the caller may read them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ThreadMessages {
+    pub target: crate::ThreadTarget,
+    pub messages: Vec<crate::ThreadMsg>,
+}
+
+/// `POST /api/threads/…`: a message, with output it quotes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct ThreadPostRequest {
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<String>"))]
+    pub text: String,
+    #[serde(default)]
+    pub quote: Option<crate::Quote>,
+}
+
+/// `POST /api/threads/…/read`: the caller has read up to that message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ThreadReadRequest {
+    pub upto: u64,
+}
+
+/// What a post answers. `agent` is set when an `@agent` went to the pane's
+/// agent; `invitable` only in the owner's answer (#297), so nobody else's
+/// says who exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ThreadPosted {
+    pub message: crate::ThreadMsg,
+    pub agent: Option<ThreadAgent>,
+    pub unreached: Vec<Unreached>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub invitable: Option<Vec<Invitable>>,
+}
+
+/// What handing a post to the pane's agent came to: `delivered` (`false`:
+/// queued), or `error`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct ThreadAgent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Why an `@` in a post reached no one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum UnreachedWhy {
+    /// `@agent` in a session's thread: an agent is a pane's.
+    AgentNeedsPane,
+    /// `@agent` from someone who may not drive the pane.
+    MayNotDrive,
+    /// The name is unknown, or its owner can't read the thread.
+    Nobody,
+}
+
+/// An `@` in a post that reached no one, for the poster alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Unreached {
+    pub token: String,
+    pub why: UnreachedWhy,
+}
+
+/// Someone the owner's `@token` named who can't read the thread (#297):
+/// theirs to invite.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct Invitable {
+    pub token: String,
+    /// `tailnet:<login>` or `account:<id>`.
+    pub who: String,
+    pub name: String,
+    /// Another principal taken to be them (a login by their name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged: Option<String>,
+}
+
+/// `POST /api/invite`: share a session with someone and tell them, and only
+/// them (#233; the owner's).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct InviteRequest {
+    pub session: SessionId,
+    /// `tailnet:<login>`, `account:<id>`, or a name: someone shared with,
+    /// or in a checked roster.
+    pub who: String,
+    #[serde(default)]
+    pub role: Option<illogical_core::Role>,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Where it opens (default: the session's first pane).
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+    /// With history (default: from now on), for a new grant.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
+    pub history: bool,
+    /// An editor may also type on this machine's pane for so long (M14).
+    #[serde(default)]
+    pub drive_minutes: Option<u32>,
+    /// For an `account:` no grant or pin vouches for: their root device,
+    /// whose fingerprint the owner checked with them.
+    #[serde(default)]
+    pub root: Option<String>,
+    /// From a thread's mention (#297): the thread (`pane-N`, `session-N`)
+    /// it opens, the one a "from now" share reads from `msg` on (the
+    /// message that mentioned them), or all of with `whole_thread`. Other
+    /// threads start at the share, as ever.
+    #[serde(default)]
+    pub thread: Option<String>,
+    #[serde(default)]
+    pub msg: Option<u64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
+    pub whole_thread: bool,
+}
+
+/// How an invite's push went: `sent` once a subscription took it,
+/// `pending` while control can't reach them yet, else `unreachable`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum InviteDelivery {
+    Sent,
+    Pending,
+    Unreachable,
+}
+
+impl InviteDelivery {
+    /// `sent`, `pending` or `unreachable`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InviteDelivery::Sent => "sent",
+            InviteDelivery::Pending => "pending",
+            InviteDelivery::Unreachable => "unreachable",
+        }
+    }
+}
+
+/// What an invite granted: the role they hold now, and whether this invite
+/// gave it (`false`: they held it already).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct InviteGrant {
+    pub session: SessionId,
+    pub principal: String,
+    pub name: String,
+    pub role: illogical_core::Role,
+    pub granted: bool,
+}
+
+/// What an invite answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Invited {
+    pub invite: String,
+    pub grant: InviteGrant,
+    pub pane: PaneId,
+    pub delivery: InviteDelivery,
+    /// Why it isn't `sent`.
+    pub reason: Option<String>,
+    /// Whether they may drive (`drive_minutes`), when that was asked.
+    pub drive: Option<bool>,
+}
+
+/// `POST /api/conversations/open` (M33): a Claude Code conversation as an
+/// agent block.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct OpenConversationRequest {
+    /// Its id, or a unique prefix.
+    pub id: String,
+    /// Then `continue` or `fork` it.
+    #[serde(default)]
+    pub then: Option<String>,
+    #[serde(default)]
+    pub session: Option<String>,
+    #[serde(default)]
+    pub split: Option<PaneId>,
+    #[serde(default)]
+    pub from_pane: Option<PaneId>,
+}
+
+/// What opening a conversation answers: its block (`opened`: made now, not
+/// there already), and why `then` didn't go through, if it didn't.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct OpenConversationResponse {
+    pub block: PaneId,
+    pub opened: bool,
+    pub conversation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// `POST /api/team-pins`: the teams the owner's browser pinned, and those
+/// it left (#233; the owner's). Their rosters are checked against these.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct TeamPinsRequest {
+    /// Team id to `<founder device>.<founder's root>`, as the owner's
+    /// browser pinned it.
+    #[serde(default)]
+    pub pins: std::collections::BTreeMap<String, String>,
+    /// Teams pinned here that the owner's account is no longer in: their
+    /// members stop being nameable.
+    #[serde(default)]
+    pub drop: Vec<String>,
+}
+
+/// `GET` and `POST /api/team-pins`: the teams pinned here, and those whose
+/// rosters this machine checked.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TeamPins {
+    pub pins: std::collections::BTreeMap<String, String>,
+    pub checked: Vec<String>,
+}
+
+/// What "needs you" notifications someone other than the owner gets (M29):
+/// agents in these sessions, or everything they may edit here ("this team's
+/// agents" on a team daemon). The owner always is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct NotifyPref {
+    #[serde(default)]
+    pub all: bool,
+    #[serde(default)]
+    pub sessions: std::collections::BTreeSet<SessionId>,
+}
+
+/// `POST /api/notify`: opt in or out of a session's agents, or all of them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct NotifyRequest {
+    /// One session; none: everything you may edit here.
+    #[serde(default)]
+    pub session: Option<SessionId>,
+    pub on: bool,
+}
+
+/// Each typed answer against the `json!` literal the daemon built before
+/// the type existed (#445): the bytes on the wire don't change. The
+/// literals are copied from those handlers.
+#[cfg(test)]
+mod wire {
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::{Quote, ThreadMsg, ThreadTarget, hosts::*};
+
+    fn msg() -> ThreadMsg {
+        ThreadMsg {
+            id: 3,
+            at: 1000,
+            who: "owner".into(),
+            name: "owner".into(),
+            pic: None,
+            text: "hi @sam".into(),
+            quote: Some(Quote { pane: 2, text: "ls".into() }),
+            mentions: vec![],
+            landed: vec![],
+            to_agent: false,
+            agent: false,
+        }
+    }
+
+    /// `thread_get`, `thread_post` and `thread_read`.
+    #[test]
+    fn threads_answer_as_they_did() {
+        let m = msg();
+        let target = ThreadTarget::Pane(2);
+        let msgs = vec![m.clone()];
+        let typed = ThreadMessages { target, messages: msgs.clone() };
+        assert_eq!(serde_json::to_value(&typed).unwrap(), json!({ "target": target, "messages": msgs }));
+        let none = ThreadMessages { target: ThreadTarget::Session(1), messages: vec![] };
+        assert_eq!(
+            serde_json::to_value(&none).unwrap(),
+            json!({ "target": ThreadTarget::Session(1), "messages": Vec::<ThreadMsg>::new() })
+        );
+
+        // What the old `Unreached` and the old `agent` values serialized to.
+        let unreached = vec![
+            Unreached { token: "sam".into(), why: UnreachedWhy::Nobody },
+            Unreached { token: "agent".into(), why: UnreachedWhy::MayNotDrive },
+        ];
+        let old_unreached = json!([{ "token": "sam", "why": "nobody" }, { "token": "agent", "why": "may_not_drive" }]);
+        let session = Unreached { token: "agent".into(), why: UnreachedWhy::AgentNeedsPane };
+        assert_eq!(serde_json::to_value(&session).unwrap(), json!({ "token": "agent", "why": "agent_needs_pane" }));
+        let agents = [
+            (None, Value::Null),
+            (Some(ThreadAgent { delivered: Some(true), error: None }), json!({ "delivered": true })),
+            (Some(ThreadAgent { delivered: Some(false), error: None }), json!({ "delivered": false })),
+            (Some(ThreadAgent { delivered: None, error: Some("gone".into()) }), json!({ "error": "gone" })),
+        ];
+        for (agent, old_agent) in agents {
+            // Anyone's post: no `invitable`.
+            let theirs = ThreadPosted {
+                message: m.clone(),
+                agent: agent.clone(),
+                unreached: unreached.clone(),
+                invitable: None,
+            };
+            assert_eq!(
+                serde_json::to_value(&theirs).unwrap(),
+                json!({ "message": m, "agent": old_agent, "unreached": old_unreached })
+            );
+            // The owner's, even with no one to offer.
+            for (invitable, old) in [
+                (vec![], json!([])),
+                (
+                    vec![
+                        Invitable {
+                            token: "sam".into(),
+                            who: "tailnet:sam@x".into(),
+                            name: "sam".into(),
+                            merged: None,
+                        },
+                        Invitable {
+                            token: "al".into(),
+                            who: "account:1".into(),
+                            name: "al".into(),
+                            merged: Some("tailnet:al@x".into()),
+                        },
+                    ],
+                    // `merged` is only inserted when there is one.
+                    json!([
+                        { "token": "sam", "who": "tailnet:sam@x", "name": "sam" },
+                        { "token": "al", "who": "account:1", "name": "al", "merged": "tailnet:al@x" },
+                    ]),
+                ),
+            ] {
+                let mine = ThreadPosted {
+                    message: m.clone(),
+                    agent: agent.clone(),
+                    unreached: vec![],
+                    invitable: Some(invitable),
+                };
+                assert_eq!(
+                    serde_json::to_value(&mine).unwrap(),
+                    json!({ "message": m, "agent": old_agent, "unreached": [], "invitable": old })
+                );
+            }
+        }
+
+        assert_eq!(serde_json::to_value(Empty::default()).unwrap(), json!({}));
+        // What the handlers read still has its defaults.
+        let post: ThreadPostRequest = serde_json::from_value(json!({})).unwrap();
+        assert_eq!((post.text.as_str(), post.quote), ("", None));
+        assert_eq!(serde_json::from_value::<ThreadReadRequest>(json!({ "upto": 4 })).unwrap().upto, 4);
+    }
+
+    /// `invite::run`'s answer.
+    #[test]
+    fn an_invite_answers_as_it_did() {
+        for (delivery, old_delivery, reason, drive) in [
+            (InviteDelivery::Sent, "sent", None, None),
+            (
+                InviteDelivery::Pending,
+                "pending",
+                Some("control hasn't answered yet; it goes out once it does"),
+                Some(true),
+            ),
+            (InviteDelivery::Unreachable, "unreachable", Some("they haven't turned on notifications"), Some(false)),
+        ] {
+            let typed = Invited {
+                invite: "a1b2c3d4".into(),
+                grant: InviteGrant {
+                    session: 1,
+                    principal: "tailnet:sam@x".into(),
+                    name: "sam@x".into(),
+                    role: illogical_core::Role::Editor,
+                    granted: true,
+                },
+                pane: 4,
+                delivery,
+                reason: reason.map(str::to_owned),
+                drive,
+            };
+            let (id, session, principal, name, granted, pane) = ("a1b2c3d4", 1, "tailnet:sam@x", "sam@x", true, 4);
+            let role = illogical_core::Role::Editor;
+            let old = json!({
+                "invite": id,
+                "grant": { "session": session, "principal": principal, "name": name, "role": role, "granted": granted },
+                "pane": pane,
+                "delivery": old_delivery,
+                "reason": reason.map(str::to_owned),
+                "drive": drive,
+            });
+            assert_eq!(serde_json::to_value(&typed).unwrap(), old);
+            assert_eq!(delivery.as_str(), old_delivery);
+        }
+        let req: InviteRequest = serde_json::from_value(json!({ "session": 1, "who": "sam" })).unwrap();
+        assert_eq!((req.role, req.history, req.whole_thread, req.thread), (None, false, false, None));
+    }
+
+    /// `run`, `open_block`, `open_conversation` and `close`.
+    #[test]
+    fn blocks_answer_as_they_did() {
+        assert_eq!(serde_json::to_value(RunResponse { pane: 7 }).unwrap(), json!({ "pane": 7 }));
+        let block = 9;
+        assert_eq!(serde_json::to_value(OpenResponse { block }).unwrap(), json!({ "block": block }));
+
+        // A conversation opened now, or there already; `error` only when
+        // `then` failed (`out["error"] = ...`).
+        for (opened, error) in [(true, None), (false, None), (true, Some("it won't start"))] {
+            let typed = OpenConversationResponse {
+                block,
+                opened,
+                conversation: "abc-123".into(),
+                error: error.map(str::to_owned),
+            };
+            let mut old = json!({ "block": block, "opened": opened, "conversation": "abc-123" });
+            if let Some(e) = error {
+                old["error"] = json!(e);
+            }
+            assert_eq!(serde_json::to_value(&typed).unwrap(), old);
+        }
+
+        // `close` answered `json!({})`.
+        assert_eq!(serde_json::to_value(Empty {}).unwrap(), json!({}));
+        let open: OpenRequest = serde_json::from_value(json!({ "type": "browser" })).unwrap();
+        assert!(open.config.is_null() && !open.vm && !open.local);
+        let conv: OpenConversationRequest = serde_json::from_value(json!({ "id": "abc" })).unwrap();
+        assert_eq!((conv.then, conv.split), (None, None));
+    }
+
+    /// `notify_get` and `notify_set` answered the pref as it was.
+    #[test]
+    fn notify_answers_as_it_did() {
+        // `NotifyPref { all: true, ..Default::default() }`: the owner's.
+        let owner = NotifyPref { all: true, ..Default::default() };
+        assert_eq!(serde_json::to_value(&owner).unwrap(), json!({ "all": true, "sessions": [] }));
+        let some = NotifyPref { all: false, sessions: [3, 1].into() };
+        assert_eq!(serde_json::to_value(&some).unwrap(), json!({ "all": false, "sessions": [1, 3] }));
+        let req: NotifyRequest = serde_json::from_value(json!({ "on": true })).unwrap();
+        assert_eq!((req.session, req.on), (None, true));
+    }
+
+    /// `team-pins` answered `json!({ "pins": ..., "checked": ... })`.
+    #[test]
+    fn team_pins_answer_as_they_did() {
+        let pins: std::collections::BTreeMap<String, String> = [("t1".to_owned(), "dev.root".to_owned())].into();
+        let checked = vec!["t1".to_owned(), "t2".to_owned()];
+        let typed = TeamPins { pins: pins.clone(), checked: checked.clone() };
+        assert_eq!(serde_json::to_value(&typed).unwrap(), json!({ "pins": pins, "checked": checked }));
+        let none = TeamPins::default();
+        assert_eq!(serde_json::to_value(&none).unwrap(), json!({ "pins": {}, "checked": [] }));
+        let req: TeamPinsRequest = serde_json::from_value(json!({})).unwrap();
+        assert!(req.pins.is_empty() && req.drop.is_empty());
+        // What an act answers: `error` only when a pane refused.
+        let act = ActResponse {
+            results: vec![
+                ActResult { pane: 1, ok: true, error: None },
+                ActResult { pane: 2, ok: false, error: Some("no".into()) },
+            ],
+        };
+        assert_eq!(
+            serde_json::to_value(&act).unwrap(),
+            json!({ "results": [{ "pane": 1, "ok": true }, { "pane": 2, "ok": false, "error": "no" }] })
+        );
+    }
+
+    /// `GET /api/host`: `None`s are left out, as its derive always did.
+    #[test]
+    fn host_answers_as_it_did() {
+        let bare = HostInfo {
+            name: "box".into(),
+            version: "1.2.3".into(),
+            protocol: None,
+            tailnet_url: None,
+            tailnet_seen: false,
+            control: None,
+            team: None,
+            fountain_runner: None,
+            features: None,
+        };
+        assert_eq!(serde_json::to_value(&bare).unwrap(), json!({ "name": "box", "version": "1.2.3" }));
+        let full = HostInfo {
+            protocol: Some(2),
+            tailnet_url: Some("https://box.ts.net".into()),
+            tailnet_seen: true,
+            control: Some("https://control".into()),
+            team: Some("acme".into()),
+            fountain_runner: Some(FountainRunnerInfo { name: "r".into(), online: Some(true), ..Default::default() }),
+            features: Some(HostFeatures { labs: true, blocks: true, ..Default::default() }),
+            ..bare
+        };
+        assert_eq!(
+            serde_json::to_value(&full).unwrap(),
+            json!({
+                "name": "box", "version": "1.2.3", "protocol": 2, "tailnet_url": "https://box.ts.net",
+                "tailnet_seen": true, "control": "https://control", "team": "acme",
+                "fountain_runner": { "name": "r", "online": true },
+                "features": { "labs": true, "blocks": true, "vms": false, "fountain": false, "studio": false,
+                              "threads": false, "calls": false },
+            })
+        );
+    }
 }

@@ -6,7 +6,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
-import type { PaneId } from "../proto";
+import type { OpenRequest, OpenResponse, PaneId } from "../proto";
 
 export interface StudioApp {
   name: string;
@@ -66,13 +66,13 @@ export async function openApp(client: Client, app: string, where: AppsWhere): Pr
     split: where.split ?? null,
     session: where.session === undefined ? null : String(where.session),
     from_pane: where.split ?? null,
-  });
+  } satisfies OpenRequest);
   if (!res.ok) {
     const e = await res.json<{ error?: string }>().catch(() => ({ error: undefined }));
     client.toast(`couldn't open ${app}: ${e.error ?? res.status}`);
     return null;
   }
-  return (await res.json<{ block: PaneId }>()).block;
+  return (await res.json<OpenResponse>()).block;
 }
 
 function Picker({ client, where, phone, close }: { client: Client; where: AppsWhere; phone: boolean; close: () => void }) {

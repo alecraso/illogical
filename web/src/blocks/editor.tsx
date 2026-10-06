@@ -4,7 +4,7 @@
 
 import { render } from "preact";
 import type { Client } from "../client";
-import type { PaneId } from "../proto";
+import type { OpenRequest, PaneId } from "../proto";
 import { blocksOff } from "./browser";
 import { registerBlock, type BlockView } from "./view";
 
@@ -40,7 +40,7 @@ export interface EditorState {
  */
 export function openEditor(client: Client, from: PaneId, path?: string) {
   if (!client.has("blocks")) return blocksOff("editor");
-  void client.api("/api/blocks", { type: "editor", config: path ? { path } : {}, from_pane: from }, "couldn't open an editor");
+  void client.api("/api/blocks", { type: "editor", config: path ? { path } : {}, from_pane: from } satisfies OpenRequest, "couldn't open an editor");
 }
 
 const MB = (n: number) => `${Math.round(n / 1e6)} MB`;

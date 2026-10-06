@@ -4,7 +4,10 @@
 use super::{Daemon, SAVE_DEBOUNCE};
 use crate::{acl::Principal, pane::ToClient, store::now_ms};
 use illogical_core::Role;
-use illogical_proto::{Driver, Quote, ServerMsg, SessionId, ThreadMsg, ThreadSummary, ThreadTarget};
+use illogical_proto::{
+    Driver, Quote, ServerMsg, SessionId, ThreadMsg, ThreadSummary, ThreadTarget,
+    api::{Unreached, UnreachedWhy},
+};
 use tokio::time::Instant;
 
 /// A post to a thread (M61).
@@ -15,15 +18,6 @@ pub struct ThreadPost {
     pub as_agent: Option<Driver>,
     pub text: String,
     pub quote: Option<Quote>,
-}
-
-/// An `@` in a post that reached no one, for the poster alone.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Unreached {
-    pub token: String,
-    /// `agent_needs_pane`, `may_not_drive` or `nobody`. `nobody` is the same
-    /// whether the name is unknown or its owner can't read the thread.
-    pub why: &'static str,
 }
 
 /// What a post comes to: the message, whether it went to the pane's agent,
@@ -172,10 +166,14 @@ impl Daemon {
             } else if crate::threads::names(t, who.id(), &me) {
                 // Yourself: nothing to say.
             } else if crate::threads::calls_agent(std::slice::from_ref(t)) {
-                let why = if matches!(target, ThreadTarget::Pane(_)) { "may_not_drive" } else { "agent_needs_pane" };
+                let why = if matches!(target, ThreadTarget::Pane(_)) {
+                    UnreachedWhy::MayNotDrive
+                } else {
+                    UnreachedWhy::AgentNeedsPane
+                };
                 unreached.push(Unreached { token: t.clone(), why });
             } else {
-                unreached.push(Unreached { token: t.clone(), why: "nobody" });
+                unreached.push(Unreached { token: t.clone(), why: UnreachedWhy::Nobody });
             }
         }
         let msg = ThreadMsg {

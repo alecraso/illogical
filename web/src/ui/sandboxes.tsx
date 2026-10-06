@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { directory } from "../hosts";
+import type { RunRequest, RunResponse } from "../proto";
 
 interface SandboxInfo {
   name: string;
@@ -79,7 +80,7 @@ function Sandboxes({ close }: { close: () => void }) {
   const shell = async (name: string) => {
     setBusy(name);
     try {
-      const v = (await post("/api/run", { sandbox: name })) as { pane: number };
+      const v = (await post("/api/run", { sandbox: name } satisfies RunRequest)) as RunResponse;
       close();
       window.dispatchEvent(new CustomEvent("illogical:open-pane", { detail: v.pane }));
     } catch (e) {

@@ -7,7 +7,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Client } from "../client";
-import type { PaneId } from "../proto";
+import type { PaneId, RunRequest } from "../proto";
 import { directory } from "../hosts";
 import { fuzzy, isDir, listDirs, recentDirs, type FsList } from "../fs";
 import { isWorkspace, openWorkspace } from "../blocks/workspace";
@@ -178,13 +178,13 @@ function Picker({ client, pane, phone, close }: { client: Client; pane: PaneId; 
     const path = list.path;
     let err: string | null;
     if (what === "cd") err = await client.make(`/api/panes/${pane}/cd`, { path });
-    else if (what === "pane") err = await client.make("/api/run", { split: pane, join: true, cwd: path, from_pane: pane });
+    else if (what === "pane") err = await client.make("/api/run", { split: pane, join: true, cwd: path, from_pane: pane } satisfies RunRequest);
     else
       err = await client.make("/api/run", {
         cwd: path,
         from_pane: pane,
         sandbox: machine?.borrowed ? machine.sprite : null,
-      });
+      } satisfies RunRequest);
     setBusy(false);
     if (err) setError(err);
     else close();

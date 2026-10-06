@@ -17,18 +17,36 @@ import {
   type ClientMsg,
   type Delta,
   type Driver,
+  type GuestInvite,
+  type GuestInviteRequest,
   type HostFeatures,
+  type HostInfo,
   type Intent,
+  type InviteRequest,
+  type Invited,
+  type NotifyPref,
+  type NotifyRequest,
+  type OpenConversationRequest,
+  type OpenConversationResponse,
+  type OpenRequest,
+  type OpenResponse,
   type PaneId,
   type PaneInfo,
   type PaneOp,
   type Presence,
+  type RunRequest,
   type ServerMsg,
   type SessionId,
+  type Share,
+  type ShareRequest,
   type State,
   type TabId,
   type TabView,
+  type ThreadMessages,
   type ThreadMsg,
+  type ThreadPostRequest,
+  type ThreadPosted,
+  type ThreadReadRequest,
   type ThreadSummary,
   type ThreadTarget,
   threadKey,
@@ -492,7 +510,7 @@ export class Client {
   async loadThread(t: ThreadTarget): Promise<ThreadMsg[]> {
     const r = await this.request("GET", `/api/threads/${threadKey(t)}`);
     if (!r.ok) throw new Error((await r.json<{ error?: string }>().catch(() => ({ error: undefined }))).error ?? `HTTP ${r.status}`);
-    return (await r.json<{ messages: ThreadMsg[] }>()).messages;
+    return (await r.json<ThreadMessages>()).messages;
   }
 
   /** Post in a thread: the message, the `@`s that reached no one, and for
@@ -502,14 +520,9 @@ export class Client {
     text: string,
     quote?: { pane: PaneId; text: string },
   ): Promise<{ message: ThreadMsg; unreached: Unreached[]; invitable: Invitable[] }> {
-    const r = await this.request("POST", `/api/threads/${threadKey(t)}`, { text, quote });
+    const r = await this.request("POST", `/api/threads/${threadKey(t)}`, { text, quote } satisfies ThreadPostRequest);
     if (!r.ok) throw new Error((await r.json<{ error?: string }>().catch(() => ({ error: undefined }))).error ?? `HTTP ${r.status}`);
-    const body = await r.json<{
-      message: ThreadMsg;
-      agent?: { delivered?: boolean; error?: string } | null;
-      unreached?: Unreached[];
-      invitable?: Invitable[];
-    }>();
+    const body = await r.json<ThreadPosted>();
     if (body.agent?.error) this.showError(`the agent didn't get it: ${body.agent.error}`);
     return { message: body.message, unreached: body.unreached ?? [], invitable: body.invitable ?? [] };
   }
@@ -528,8 +541,8 @@ export class Client {
       msg: msg.id,
       whole_thread: wholeThread,
       note: msg.text,
-    });
-    const body = await r.json<{ error?: string; delivery?: string; reason?: string | null; grant?: { name: string } }>().catch(() => null);
+    } satisfies InviteRequest);
+    const body = await r.json<Partial<Invited> & { error?: string }>().catch(() => null);
     if (!r.ok || !body?.delivery) throw new Error(body?.error ?? `HTTP ${r.status}`);
     const n = (body.grant?.name ?? who).split("@")[0];
     const why = body.reason ? `: ${body.reason}` : "";
@@ -541,7 +554,7 @@ export class Client {
   markThreadRead(t: ThreadTarget, upto: number) {
     const s = this.thread(t);
     if (!s || (!s.unread && !s.mention)) return;
-    void this.request("POST", `/api/threads/${threadKey(t)}/read`, { upto }).catch(() => {});
+    void this.request("POST", `/api/threads/${threadKey(t)}/read`, { upto } satisfies ThreadReadRequest).catch(() => {});
   }
 
   // ---- huddles (M63)
@@ -667,7 +680,7 @@ export class Client {
     try {
       const res = await this.request("GET", "/api/host");
       if (!res.ok) return;
-      const h = await res.json<{ features?: HostFeatures; fountain_runner?: unknown }>();
+      const h = await res.json<HostInfo>();
       const features = h.features ?? null;
       const runner = !!h.fountain_runner;
       if (JSON.stringify(features) === JSON.stringify(this.features) && runner === this.fountainRunner) return;
@@ -716,8 +729,8 @@ export class Client {
    * to the clipboard when the browser lets us. */
   async share(pane: PaneId, ttlSecs = 3600): Promise<string | null> {
     try {
-      const res = await this.request("POST", "/api/shares", { pane, ttl_secs: ttlSecs });
-      const body = await res.json<{ url?: string; path?: string; error?: string }>().catch(() => null);
+      const res = await this.request("POST", "/api/shares", { pane, ttl_secs: ttlSecs } satisfies ShareRequest);
+      const body = await res.json<Partial<Share> & { error?: string }>().catch(() => null);
       if (!res.ok || !body) {
         this.toast(body?.error ?? `couldn't share it (${res.status})`);
         return null;
@@ -736,8 +749,8 @@ export class Client {
    * clipboard when the browser lets us. */
   async guestInvite(pane: PaneId): Promise<string | null> {
     try {
-      const res = await this.request("POST", "/api/guests", { pane });
-      const body = await res.json<{ command?: string; error?: string }>().catch(() => null);
+      const res = await this.request("POST", "/api/guests", { pane } satisfies GuestInviteRequest);
+      const body = await res.json<Partial<GuestInvite> & { error?: string }>().catch(() => null);
       if (!res.ok || !body?.command) {
         this.toast(body?.error ?? `couldn't make an invite (${res.status})`);
         return null;
@@ -769,7 +782,7 @@ export class Client {
         from_pane: fromPane,
         session: fromPane === null ? (where.session?.toString() ?? null) : null,
         split: where.tab ? null : (where.split ?? null),
-      },
+      } satisfies RunRequest,
       "couldn't start a VM",
     );
   }
@@ -786,7 +799,7 @@ export class Client {
         split: o.split ?? null,
         from_pane: o.from ?? null,
         session: o.from === undefined ? (o.session?.toString() ?? null) : null,
-      },
+      } satisfies OpenRequest,
       "couldn't start the agent",
     );
   }
@@ -803,8 +816,8 @@ export class Client {
         split: o.split ?? null,
         from_pane: o.split ?? null,
         session: o.split === undefined ? (o.session?.toString() ?? null) : null,
-      });
-      const v = await res.json<{ block?: PaneId; opened?: boolean; error?: string }>().catch(() => null);
+      } satisfies OpenConversationRequest);
+      const v = await res.json<Partial<OpenConversationResponse>>().catch(() => null);
       if (!res.ok || typeof v?.block !== "number") {
         this.toast(v?.error ?? `couldn't open it (${res.status})`);
         return null;
@@ -820,11 +833,11 @@ export class Client {
 
   /** Open a block (`POST /api/blocks`) and show it: its id, or null (and
    * the error as a toast). */
-  async openBlock(body: Record<string, unknown>, failure = "couldn't open that"): Promise<PaneId | null> {
+  async openBlock(body: OpenRequest, failure = "couldn't open that"): Promise<PaneId | null> {
     this.lastIntentAt = Date.now();
     try {
       const res = await this.request("POST", "/api/blocks", body);
-      const v = await res.json<{ block?: PaneId; error?: string }>().catch(() => null);
+      const v = await res.json<Partial<OpenResponse> & { error?: string }>().catch(() => null);
       if (res.ok && typeof v?.block === "number") return v.block;
       this.toast(v?.error ?? `${failure} (${res.status})`);
     } catch {
@@ -847,22 +860,22 @@ export class Client {
   }
 
   /** M29: which agents this person is told about here (not the owner). */
-  notifyPref: { all: boolean; sessions: SessionId[] } | null = null;
+  notifyPref: NotifyPref | null = null;
 
   async loadNotify() {
     try {
       const res = await this.request("GET", "/api/notify");
-      if (res.ok) this.notifyPref = await res.json();
+      if (res.ok) this.notifyPref = await res.json<NotifyPref>();
       this.emit();
     } catch {
       // not connected yet
     }
   }
 
-  async setNotify(body: { session?: SessionId; on: boolean }) {
+  async setNotify(body: NotifyRequest) {
     try {
       const res = await this.request("POST", "/api/notify", body);
-      if (res.ok) this.notifyPref = await res.json();
+      if (res.ok) this.notifyPref = await res.json<NotifyPref>();
       else this.toast((await res.json<{ error?: string }>().catch(() => null))?.error ?? "couldn't change that");
       this.emit();
     } catch {

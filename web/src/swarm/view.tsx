@@ -12,7 +12,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Fleet, FleetPane } from "../fleet";
-import { gateKey, type Action, type Reason } from "../proto";
+import { gateKey, type Action, type ActRequest, type ActResponse, type OpenRequest, type OpenResponse, type Reason } from "../proto";
 import { AskCard, type Answered } from "../blocks/ask";
 import { ANSWERED_MS, answeredLine, FollowUpBox, PermissionBody, PermissionButtons, VIEWER_NOTE, type Requester } from "../ui/answer-card";
 import { Avatar } from "../ui/people";
@@ -615,8 +615,8 @@ function canEdit(fleet: Fleet, p: FleetPane) {
 /** Open VS Code in a pane's directory, on its machine, and show it. */
 async function editIn(fleet: Fleet, p: FleetPane, back: () => void): Promise<string | null> {
   try {
-    const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "editor", config: {}, from_pane: p.id });
-    const v = await res.json<{ block?: number; error?: string }>().catch(() => null);
+    const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "editor", config: {}, from_pane: p.id } satisfies OpenRequest);
+    const v = await res.json<Partial<OpenResponse> & { error?: string }>().catch(() => null);
     if (!res.ok || v?.block === undefined) return v?.error ?? `couldn't (${res.status})`;
     back();
     fleet.open(p.host, v.block);
@@ -629,8 +629,8 @@ async function editIn(fleet: Fleet, p: FleetPane, back: () => void): Promise<str
 /** What changed in a pane's project (M11): a diff block beside it, shown. */
 async function changesOf(fleet: Fleet, p: FleetPane, back: () => void): Promise<string | null> {
   try {
-    const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "diff", config: {}, from_pane: p.id, split: p.id });
-    const v = await res.json<{ block?: number; error?: string }>().catch(() => null);
+    const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "diff", config: {}, from_pane: p.id, split: p.id } satisfies OpenRequest);
+    const v = await res.json<Partial<OpenResponse> & { error?: string }>().catch(() => null);
     if (!res.ok || v?.block === undefined) return v?.error ?? `couldn't (${res.status})`;
     back();
     fleet.open(p.host, v.block);
@@ -641,7 +641,7 @@ async function changesOf(fleet: Fleet, p: FleetPane, back: () => void): Promise<
 }
 
 /** Act on a bundle: one request per host, naming its panes. */
-async function act(fleet: Fleet, panes: FleetPane[], action: Action, extra: Record<string, unknown> = {}): Promise<string | null> {
+async function act(fleet: Fleet, panes: FleetPane[], action: Action, extra: Partial<ActRequest> = {}): Promise<string | null> {
   const hosts = new Map<string, FleetPane[]>();
   for (const p of panes) hosts.set(p.host, [...(hosts.get(p.host) ?? []), p]);
   let err: string | null = null;
@@ -650,10 +650,10 @@ async function act(fleet: Fleet, panes: FleetPane[], action: Action, extra: Reco
       const r = ps[0].info.reason;
       // What it answers: a question or approval's id, or a gate's key (M34).
       const id = r?.ask?.id ?? (r?.gate ? gateKey(r.gate) : undefined);
-      const body = ps.length === 1 ? { action, pane: ps[0].id, id, ...extra } : { action, panes: ps.map((p) => p.id), ...extra };
+      const body: ActRequest = ps.length === 1 ? { action, pane: ps[0].id, id, ...extra } : { action, panes: ps.map((p) => p.id), ...extra };
       try {
         const res = await fleet.request(host, "POST", "/api/attention/act", body);
-        if (!res.ok) err = (await res.json<{ error?: string; results?: { error?: string }[] }>().catch(() => null))?.error ?? `couldn't (${res.status})`;
+        if (!res.ok) err = (await res.json<Partial<ActResponse> & { error?: string }>().catch(() => null))?.error ?? `couldn't (${res.status})`;
       } catch (e) {
         err = String(e);
       }

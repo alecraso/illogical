@@ -6,16 +6,7 @@
 // minute over its summary connection.
 
 import type { Fleet } from "./fleet";
-
-export interface FountainRunnerInfo {
-  name: string;
-  online?: boolean;
-  version?: string;
-  unit_active?: boolean;
-  sandboxes?: number;
-  checked_ms?: number;
-  problem?: string;
-}
+import type { FountainRunnerInfo, HostInfo } from "./proto";
 
 const EVERY = 60_000;
 const known = new Map<string, { info: FountainRunnerInfo | null; at: number }>();
@@ -59,7 +50,7 @@ async function ask(fleet: Fleet) {
         try {
           const res = await fleet.request(h.name, "GET", "/api/host");
           if (!res.ok) return;
-          const v = await res.json<{ fountain_runner?: FountainRunnerInfo }>();
+          const v = await res.json<Partial<HostInfo>>();
           const info = v.fountain_runner ?? null;
           known.set(h.name, { info, at: now });
           if (JSON.stringify(was) !== JSON.stringify(info)) changed = true;

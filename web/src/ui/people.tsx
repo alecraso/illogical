@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import type { Client } from "../client";
-import type { PaneId, Presence, Role, SessionId } from "../proto";
+import type { InviteRequest, Invited, PaneId, Presence, Role, SessionId } from "../proto";
 import { roleLabel } from "./roles";
 import type { MenuItem } from "./menu";
 import type { ControlSession } from "../control";
@@ -260,8 +260,8 @@ export function ShareDialog({ client }: { client: Client }) {
   const invite = async (whom: string, extra: Record<string, string> = {}) => {
     setErr("");
     setTold(null);
-    const res = await client.request("POST", "/api/invite", { session, who: whom, role, history, note, ...extra });
-    const body = await res.json<{ error?: string; delivery?: string; reason?: string | null; grant?: { name: string } }>().catch(() => null);
+    const res = await client.request("POST", "/api/invite", { session, who: whom, role, history, note, ...extra } satisfies InviteRequest);
+    const body = await res.json<Partial<Invited> & { error?: string }>().catch(() => null);
     if (res.status === 404 && control && client.e2e && !extra.root) {
       control.person(whom).then((p) => setFound({ ...p, notify: true }), (x: Error) => setErr(x.message));
       return;

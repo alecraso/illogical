@@ -10,6 +10,7 @@
 // it also has a tailnet URL, that's tried once it's awake, and used when it
 // answers within about 5s (S4: wake through the provider first, because
 // tailnet packets don't wake a sleeping sandbox).
+import type { HostInfo } from "./proto";
 
 export interface ProviderRef {
   provider: string;
@@ -213,7 +214,7 @@ export class HostDirectory {
     }
     try {
       const res = await fetch("/api/host");
-      if (res.ok) this.joined = ((await res.json()) as { control?: string }).control ?? null;
+      if (res.ok) this.joined = ((await res.json()) as Partial<HostInfo>).control ?? null;
     } catch {
       // Keep what we knew.
     }

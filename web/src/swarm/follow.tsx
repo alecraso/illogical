@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Fleet, FleetPane } from "../fleet";
-import type { FollowMsg } from "../proto";
+import type { ActRequest, ActResponse, FollowMsg, OpenRequest, OpenResponse } from "../proto";
 import { openMenu, type MenuItem } from "../ui/menu";
 import { useSubscribe } from "../ui/hooks";
 import type { CodeView } from "./code";
@@ -89,10 +89,10 @@ export function FollowView({ fleet, pkey, close, back }: { fleet: Fleet; pkey: s
   const others = Math.max(0, (ed?.followers ?? 1) - 1);
   const paused = ed?.debug?.state === "paused";
 
-  const act = async (body: Record<string, unknown>) => {
+  const act = async (body: ActRequest) => {
     try {
       const res = await fleet.request(host, "POST", "/api/attention/act", body);
-      if (!res.ok) setErr((await res.json<{ error?: string }>().catch(() => null))?.error ?? `couldn't (${res.status})`);
+      if (!res.ok) setErr((await res.json<Partial<ActResponse> & { error?: string }>().catch(() => null))?.error ?? `couldn't (${res.status})`);
       else setErr(null);
     } catch (e) {
       setErr(String(e));
@@ -201,8 +201,8 @@ export function openHere(
     items.push({
       label: `VS Code in illogical (on ${p.host})`,
       run: async () => {
-        const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "editor", config: { path: file, line: at?.line ?? null } });
-        const v = await res.json<{ block?: number; error?: string }>().catch(() => null);
+        const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "editor", config: { path: file, line: at?.line ?? null } } satisfies OpenRequest);
+        const v = await res.json<Partial<OpenResponse> & { error?: string }>().catch(() => null);
         if (!res.ok || v?.block === undefined) return setErr(v?.error ?? `couldn't (${res.status})`);
         back();
         fleet.open(p.host, v.block);

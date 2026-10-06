@@ -3129,7 +3129,7 @@ impl<'a> Call<'a> {
         if let Some(b) = beside {
             self.readable(b).await?;
         }
-        let req = crate::api::OpenConversation {
+        let req = illogical_proto::api::OpenConversationRequest {
             id: a.id,
             then: a.then.map(|t| match t {
                 ConversationThen::Continue => "continue".into(),
@@ -3140,12 +3140,12 @@ impl<'a> Call<'a> {
             from_pane: beside,
         };
         let v = crate::api::open_conversation_as(self.app, None, req).await.map_err(|e| e.1)?;
-        let block = v["block"].as_u64().unwrap_or(0);
-        let summary = match v["error"].as_str() {
+        let block = v.block;
+        let summary = match v.error.as_deref() {
             Some(e) => format!("Opened it in %{block}, but: {e}"),
             None => format!("It's in %{block}; send_input to it to go on, then wait and read_output"),
         };
-        done(summary, v)
+        done(summary, serde_json::to_value(&v).unwrap_or_default())
     }
 
     async fn prompt_agent(&self, a: PromptArgs) -> Out {

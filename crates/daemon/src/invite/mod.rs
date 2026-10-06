@@ -28,10 +28,7 @@
 
 pub mod card;
 
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, OnceLock, Weak},
-};
+use std::sync::{Arc, OnceLock, Weak};
 
 use axum::{
     Json, Router,
@@ -41,8 +38,10 @@ use axum::{
     routing::{get, post},
 };
 use illogical_core::{Role, SessionId};
-use illogical_proto::{PaneId, ThreadTarget};
-use serde::Deserialize;
+use illogical_proto::{
+    PaneId, ThreadTarget,
+    api::{InviteDelivery, InviteGrant, InviteRequest, Invited, TeamPins, TeamPinsRequest},
+};
 use serde_json::json;
 
 use crate::{
@@ -85,41 +84,6 @@ pub const AGENT_ASKS: &str = "an agent doesn't invite: ask the user with illogic
 /// Whether the owner's CLI says an agent runs it (as for a forge's drafts).
 fn agent(headers: &HeaderMap) -> bool {
     headers.get("x-illogical-agent").is_some()
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Request {
-    pub session: SessionId,
-    /// `tailnet:<login>`, `account:<id>`, or a name: someone shared with,
-    /// or in a checked roster.
-    pub who: String,
-    #[serde(default)]
-    pub role: Option<Role>,
-    #[serde(default)]
-    pub note: Option<String>,
-    /// Where it opens (default: the session's first pane).
-    #[serde(default)]
-    pub pane: Option<PaneId>,
-    /// With history (default: from now on), for a new grant.
-    #[serde(default)]
-    pub history: bool,
-    /// An editor may also type on this machine's pane for so long (M14).
-    #[serde(default)]
-    pub drive_minutes: Option<u32>,
-    /// For an `account:` no grant or pin vouches for: their root device,
-    /// whose fingerprint the owner checked with them.
-    #[serde(default)]
-    pub root: Option<String>,
-    /// From a thread's mention (#297): the thread (`pane-N`, `session-N`)
-    /// it opens, the one a "from now" share reads from `msg` on (the
-    /// message that mentioned them), or all of with `whole_thread`. Other
-    /// threads start at the share, as ever.
-    #[serde(default)]
-    pub thread: Option<String>,
-    #[serde(default)]
-    pub msg: Option<u64>,
-    #[serde(default)]
-    pub whole_thread: bool,
 }
 
 /// An invite an agent drafted and the owner sent (#234), for the audit
@@ -253,7 +217,7 @@ pub fn resolve(app: &App, who: &str, root: Option<String>) -> Result<Person, (St
     }
 }
 
-async fn invite(State(app): State<Arc<App>>, headers: HeaderMap, Json(b): Json<Request>) -> Response {
+async fn invite(State(app): State<Arc<App>>, headers: HeaderMap, Json(b): Json<InviteRequest>) -> Response {
     if agent(&headers) {
         return refuse(StatusCode::FORBIDDEN, AGENT_ASKS);
     }
@@ -277,7 +241,7 @@ pub fn owns_here(app: &App, id: &str) -> bool {
 
 /// Invite someone, as the owner: `POST /api/invite`'s, or an agent's card
 /// the owner sent (`drafted`).
-pub async fn run(app: &App, b: Request, drafted: Option<&Drafted>) -> Result<serde_json::Value, (StatusCode, String)> {
+pub async fn run(app: &App, b: InviteRequest, drafted: Option<&Drafted>) -> Result<Invited, (StatusCode, String)> {
     let want = b.role.unwrap_or(Role::Viewer);
     if want == Role::Owner {
         return Err(no(StatusCode::BAD_REQUEST, "an invite makes someone a viewer or an editor"));
@@ -394,20 +358,20 @@ pub async fn run(app: &App, b: Request, drafted: Option<&Drafted>) -> Result<ser
     }
     app.acl.record(line);
     let role = if co_owner { Role::Owner } else { app.acl.role_of(&person.id, b.session).unwrap_or(want) };
-    Ok(json!({
-        "invite": id,
-        "grant": { "session": b.session, "principal": person.id, "name": person.name, "role": role, "granted": granted },
-        "pane": pane,
-        "delivery": delivery,
-        "reason": reason,
-        "drive": drive,
-    }))
+    Ok(Invited {
+        invite: id,
+        grant: InviteGrant { session: b.session, principal: person.id, name: person.name, role, granted },
+        pane,
+        delivery,
+        reason,
+        drive,
+    })
 }
 
 /// An invite from a thread (#297): the thread, checked to be in the
 /// session, and where it starts for them: the message, posted already and
 /// in that thread, or all of it.
-async fn from_thread(app: &App, b: &Request) -> Result<Option<ThreadFrom>, (StatusCode, String)> {
+async fn from_thread(app: &App, b: &InviteRequest) -> Result<Option<ThreadFrom>, (StatusCode, String)> {
     let Some(key) = &b.thread else {
         if b.msg.is_some() || b.whole_thread {
             return Err(no(StatusCode::BAD_REQUEST, "msg and whole_thread go with a thread"));
@@ -449,21 +413,21 @@ async fn deliver(
     body: &str,
     extra: &serde_json::Value,
     granted: bool,
-) -> (&'static str, Option<String>) {
+) -> (InviteDelivery, Option<String>) {
     let to = person.id.as_str();
     let (here, took) = match &app.push {
         Some(p) => p.send_report(pane, title, body, Some(extra.clone()), |w| w == to).await,
         None => (0, 0),
     };
     if took > 0 {
-        return ("sent", None);
+        return (InviteDelivery::Sent, None);
     }
     let through_control = to.starts_with("account:") && app.control.enrolled().is_some();
     if !through_control {
         return match (to.starts_with("account:"), here) {
-            (true, _) => ("unreachable", Some("this machine isn't joined to illogical control".into())),
-            (false, 0) => ("unreachable", Some("they haven't turned on notifications here".into())),
-            (false, _) => ("unreachable", Some("their push service turned it down".into())),
+            (true, _) => (InviteDelivery::Unreachable, Some("this machine isn't joined to illogical control".into())),
+            (false, 0) => (InviteDelivery::Unreachable, Some("they haven't turned on notifications here".into())),
+            (false, _) => (InviteDelivery::Unreachable, Some("their push service turned it down".into())),
         };
     }
     // Someone just granted needs a refresh to be pushable: control learns
@@ -471,7 +435,7 @@ async fn deliver(
     let refreshed = !granted || app.control.refresh_now(REFRESH_WAIT).await;
     let got = app.control.push_report(pane, title, body, Some(extra.clone()), |p| p.id() == to).await;
     if got.relayed > 0 {
-        return ("sent", None);
+        return (InviteDelivery::Sent, None);
     }
     let why = if !refreshed {
         "control hasn't answered yet; it goes out once it does"
@@ -480,7 +444,7 @@ async fn deliver(
     } else if got.matched > 0 {
         "control didn't relay it; it's tried again"
     } else {
-        return ("unreachable", Some("they haven't turned on notifications".into()));
+        return (InviteDelivery::Unreachable, Some("they haven't turned on notifications".into()));
     };
     app.control.wait_invite(Waiting {
         who: to.to_owned(),
@@ -491,23 +455,11 @@ async fn deliver(
         extra: extra.clone(),
         at: now_ms(),
     });
-    ("pending", Some(why.into()))
-}
-
-#[derive(Deserialize)]
-struct Pins {
-    /// Team id to `<founder device>.<founder's root>`, as the owner's
-    /// browser pinned it.
-    #[serde(default)]
-    pins: BTreeMap<String, String>,
-    /// Teams pinned here that the owner's account is no longer in: their
-    /// members stop being nameable.
-    #[serde(default)]
-    drop: Vec<String>,
+    (InviteDelivery::Pending, Some(why.into()))
 }
 
 fn pins_now(app: &App) -> Response {
-    Json(json!({ "pins": app.control.team_pins(), "checked": app.control.checked_teams() })).into_response()
+    Json(TeamPins { pins: app.control.team_pins(), checked: app.control.checked_teams() }).into_response()
 }
 
 async fn pins(State(app): State<Arc<App>>) -> Response {
@@ -516,7 +468,7 @@ async fn pins(State(app): State<Arc<App>>) -> Response {
 
 /// The owner's browser hands over the teams it pinned (#233), and those
 /// it left; their rosters are fetched and checked against these, now.
-async fn add_pins(State(app): State<Arc<App>>, headers: HeaderMap, Json(b): Json<Pins>) -> Response {
+async fn add_pins(State(app): State<Arc<App>>, headers: HeaderMap, Json(b): Json<TeamPinsRequest>) -> Response {
     if agent(&headers) {
         return refuse(StatusCode::FORBIDDEN, "the owner's browser pins teams, not an agent");
     }

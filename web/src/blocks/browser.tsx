@@ -4,7 +4,7 @@
 
 import { render } from "preact";
 import type { Client } from "../client";
-import type { PaneId } from "../proto";
+import type { OpenRequest, PaneId } from "../proto";
 import { askText, tellSetup } from "../ui/menu";
 import { registerBlock, type BlockView } from "./view";
 
@@ -69,7 +69,7 @@ export async function openPort(client: Client, where: { split?: PaneId; host?: n
       split: where.split ?? null,
       host: where.host ?? null,
       local: !!where.local,
-    },
+    } satisfies OpenRequest,
     "couldn't open that port",
   );
 }

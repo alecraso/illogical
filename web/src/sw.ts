@@ -15,6 +15,7 @@
 // Built by itself into dist/sw.js as a classic worker (vite.sw.config.ts).
 
 import { E2ESocket } from "./e2e/channel.ts";
+import type { ActRequest } from "./proto";
 import { existingKeys, loadWorkerDirectory } from "./e2e/keys.ts";
 import { tapThread, tapUrl } from "./tap.ts";
 
@@ -135,7 +136,7 @@ sw.addEventListener("push", (event: PushEvent) => {
 
 /** `POST /api/attention/act` to the daemon a notification came from: this
  * page's own, or one reached through control over a channel of our own. */
-async function act(daemon: string | undefined, body: Record<string, unknown>): Promise<boolean> {
+async function act(daemon: string | undefined, body: ActRequest): Promise<boolean> {
   try {
     if (!daemon) {
       const res = await fetch("/api/attention/act", {
@@ -191,7 +192,7 @@ sw.addEventListener("notificationclick", (event: ClickEvent) => {
     const choice = ask.options[Number(picked[1])];
     event.waitUntil(
       (async () => {
-        const body = { action: "answer", pane, id: ask.id, content: { [ask.field]: choice } };
+        const body = { action: "answer", pane, id: ask.id, content: { [ask.field]: choice } } satisfies ActRequest;
         if (!(await act(data.daemon, body))) await failed(pane, data.daemon, choice);
       })(),
     );

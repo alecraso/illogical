@@ -3,7 +3,7 @@
 // command palette reads the same lists, so the two can't drift.
 
 import { paneIds, type Client } from "../client";
-import type { Machine, PaneId, Policy, SessionId, TabView } from "../proto";
+import type { Machine, OpenRequest, PaneId, Policy, SessionId, TabView } from "../proto";
 import { askText, type MenuItem } from "./menu";
 import { openSandboxes } from "./sandboxes";
 import { driveItems, shareSession } from "./people";
@@ -69,7 +69,7 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
       label: "Open a web page…",
       run: async () => {
         const url = await askText("Open a web page", "", "https://… or example.com");
-        if (url) void client.api("/api/blocks", { type: "browser", config: { url }, split: id }, "couldn't open that page");
+        if (url) void client.api("/api/blocks", { type: "browser", config: { url }, split: id } satisfies OpenRequest, "couldn't open that page");
       },
     },
     // A port where this pane runs: its machine, or this host.

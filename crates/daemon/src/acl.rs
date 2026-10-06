@@ -17,7 +17,7 @@ use std::{
 };
 
 use illogical_core::{PaneId, Role, SessionId};
-use illogical_proto::ThreadTarget;
+use illogical_proto::{ThreadTarget, api::NotifyPref};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -117,17 +117,6 @@ pub struct Acl {
     /// id; in `notify.json`.
     notify_path: PathBuf,
     notify: RwLock<BTreeMap<String, NotifyPref>>,
-}
-
-/// What someone other than the owner is notified about (M29): agents in
-/// these sessions, or everything they may edit here ("this team's agents"
-/// on a team daemon). The owner always is.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NotifyPref {
-    #[serde(default)]
-    pub all: bool,
-    #[serde(default)]
-    pub sessions: std::collections::BTreeSet<SessionId>,
 }
 
 impl Acl {

@@ -88,6 +88,8 @@ pub struct AddHost {
 
 /// `GET /api/host`: who this daemon is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
 pub struct HostInfo {
     pub name: String,
     pub version: String,
@@ -103,6 +105,7 @@ pub struct HostInfo {
     /// The owner has come in over the tailnet since the daemon started:
     /// serve works (#110).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
     pub tailnet_seen: bool,
     /// The control this daemon joined, if any (#110).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -304,6 +307,8 @@ pub struct HostFeatures {
 /// A machine's Fountain runner, for its line in the machine panel and the
 /// swarm (M45b). Read in the background, never on the request.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
 pub struct FountainRunnerInfo {
     /// Its name on Fountain (the unit's `--name`).
     pub name: String,

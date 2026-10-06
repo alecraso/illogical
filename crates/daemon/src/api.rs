@@ -24,8 +24,10 @@ use futures_util::stream::{self, StreamExt};
 use illogical_proto::{
     Driver, EventKind, Frame, FrameKind, PaneId, SessionId,
     api::{
-        AttentionRequest, HistoryKind, KeysRequest, MouseRequest, Process, PromptRequest, PromptResult, RunRequest,
-        RunResponse, SendRequest, WaitResult,
+        AttentionRequest, Empty, HistoryKind, Invitable, KeysRequest, MouseRequest, NotifyPref, NotifyRequest,
+        OpenConversationRequest, OpenConversationResponse, OpenResponse, Process, PromptRequest, PromptResult,
+        RunRequest, RunResponse, SendRequest, ThreadAgent, ThreadMessages, ThreadPostRequest, ThreadPosted,
+        ThreadReadRequest, Unreached, UnreachedWhy, WaitResult,
     },
 };
 use regex::Regex;
@@ -867,19 +869,11 @@ async fn thread_get(
     State(app): AppState,
     Path(key): Path<String>,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<ThreadMessages>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let target = thread_target(&key)?;
-    let msgs = app.mux.api(|r| Api::ThreadGet(target, who, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
-    Ok(Json(serde_json::json!({ "target": target, "messages": msgs })))
-}
-
-#[derive(Deserialize)]
-struct ThreadPostRequest {
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    quote: Option<illogical_proto::Quote>,
+    let messages = app.mux.api(|r| Api::ThreadGet(target, who, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
+    Ok(Json(ThreadMessages { target, messages }))
 }
 
 /// Post in a thread. An `@agent` in a pane's thread, from someone who may
@@ -889,41 +883,33 @@ async fn thread_post(
     Path(key): Path<String>,
     who: Option<axum::Extension<crate::acl::Principal>>,
     Json(req): Json<ThreadPostRequest>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<ThreadPosted>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let owner = who.is_owner();
     let target = thread_target(&key)?;
     let post = crate::mux::ThreadPost { target, who, as_agent: None, text: req.text, quote: req.quote };
     let (msg, to_agent, mut unreached) =
         app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
-    let mut agent = serde_json::Value::Null;
+    let mut agent = None;
     if to_agent && let illogical_proto::ThreadTarget::Pane(pane) = target {
-        agent = match tell_agent(&app, pane, &msg).await {
-            Ok(now) => serde_json::json!({ "delivered": now }),
-            Err(e) => serde_json::json!({ "error": e }),
-        };
+        agent = Some(match tell_agent(&app, pane, &msg).await {
+            Ok(now) => ThreadAgent { delivered: Some(now), error: None },
+            Err(e) => ThreadAgent { delivered: None, error: Some(e) },
+        });
     }
     // The owner, who sees every grant and roster already, is offered to
     // invite whom an @ named but who can't read the thread (#297). Nobody
     // else's post does any of this, so theirs says nothing about who exists.
-    if owner {
-        let invitable = invitable(&app, target, &mut unreached).await;
-        return Ok(Json(
-            serde_json::json!({ "message": msg, "agent": agent, "unreached": unreached, "invitable": invitable }),
-        ));
-    }
-    Ok(Json(serde_json::json!({ "message": msg, "agent": agent, "unreached": unreached })))
+    let invitable = if owner { Some(invitable(&app, target, &mut unreached).await) } else { None };
+    Ok(Json(ThreadPosted { message: msg, agent, unreached, invitable }))
 }
 
 /// Whom an owner's `@`s that reached nobody name, of those an invite may
 /// name, who can't read the thread and could once invited (not on a
 /// private pane's). Their tokens leave `unreached`: the offer says it.
-async fn invitable(
-    app: &App,
-    target: illogical_proto::ThreadTarget,
-    unreached: &mut Vec<crate::mux::Unreached>,
-) -> Vec<serde_json::Value> {
-    let tokens: Vec<String> = unreached.iter().filter(|u| u.why == "nobody").map(|u| u.token.clone()).collect();
+async fn invitable(app: &App, target: illogical_proto::ThreadTarget, unreached: &mut Vec<Unreached>) -> Vec<Invitable> {
+    let tokens: Vec<String> =
+        unreached.iter().filter(|u| u.why == UnreachedWhy::Nobody).map(|u| u.token.clone()).collect();
     if tokens.is_empty() {
         return Vec::new();
     }
@@ -943,15 +929,7 @@ async fn invitable(
         named.into_iter().zip(reads).filter(|(_, reads)| !reads).map(|(n, _)| n).collect();
     unreached.retain(|u| !out.iter().any(|(t, _)| *t == u.token));
     // One taken for another (a login by an account's name) says whom.
-    out.into_iter()
-        .map(|(token, p)| {
-            let mut o = serde_json::json!({ "token": token, "who": p.id, "name": p.name });
-            if let Some(m) = p.merged {
-                o["merged"] = m.into();
-            }
-            o
-        })
-        .collect()
+    out.into_iter().map(|(token, p)| Invitable { token, who: p.id, name: p.name, merged: p.merged }).collect()
 }
 
 /// Hand a thread message to the pane's agent, as a follow-up from its
@@ -970,21 +948,16 @@ async fn tell_agent(app: &App, pane: PaneId, msg: &illogical_proto::ThreadMsg) -
     app.mux.api(|r| Api::FollowUp(pane, text, by, r)).await.unwrap_or_else(|| Err("daemon is shutting down".into()))
 }
 
-#[derive(Deserialize)]
-struct ThreadReadRequest {
-    upto: u64,
-}
-
 async fn thread_read(
     State(app): AppState,
     Path(key): Path<String>,
     who: Option<axum::Extension<crate::acl::Principal>>,
     Json(req): Json<ThreadReadRequest>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<Empty>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let target = thread_target(&key)?;
     app.mux.send(Cmd::Api(Api::ThreadRead(target, who, req.upto)));
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 /// Whether a block is an agent's invites (#234): the owner's to answer,
@@ -1097,14 +1070,14 @@ async fn close(
     Path(id): Path<PaneId>,
     who: Option<axum::Extension<crate::acl::Principal>>,
     headers: HeaderMap,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<Empty>> {
     // An agent's invites (#234) are the owner's to close, not an agent's.
     let owner = who.is_none_or(|axum::Extension(w)| w.is_owner());
     if (!owner || headers.get("x-illogical-agent").is_some()) && is_invite(&app, id).await {
         return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::CLOSE_OWNER_ONLY.into()));
     }
     match app.mux.api(|r| Api::Close(id, r)).await {
-        Some(true) => Ok(Json(serde_json::json!({}))),
+        Some(true) => Ok(Json(Empty {})),
         _ => Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}"))),
     }
 }
@@ -1149,7 +1122,7 @@ async fn open_block(
     who: Option<axum::Extension<crate::acl::Principal>>,
     headers: HeaderMap,
     Json(mut req): Json<illogical_proto::api::OpenRequest>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<OpenResponse>> {
     let who = who.map(|axum::Extension(w)| w);
     // An invite block (#234) is MCP's invite_person's to make, for what it
     // checked: never anyone's from here.
@@ -1194,7 +1167,7 @@ async fn open_block(
         }
     }
     match app.mux.api(|r| Api::Open(req, who, r)).await {
-        Some(Ok(block)) => Ok(Json(serde_json::json!({ "block": block }))),
+        Some(Ok(block)) => Ok(Json(OpenResponse { block })),
         Some(Err(e)) => Err(bad(e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }
@@ -1317,37 +1290,22 @@ pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<serd
     Ok(serde_json::json!({ "conversations": out, "total": total }))
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub struct OpenConversation {
-    /// Its id, or a unique prefix.
-    pub id: String,
-    /// Then `continue` or `fork` it.
-    #[serde(default)]
-    pub then: Option<String>,
-    #[serde(default)]
-    pub session: Option<String>,
-    #[serde(default)]
-    pub split: Option<PaneId>,
-    #[serde(default)]
-    pub from_pane: Option<PaneId>,
-}
-
 /// `POST /api/conversations/open` (M33): a conversation as an agent block,
 /// stopped, showing its transcript; the block that already has it, if one
 /// does. `then` continues or forks it.
 async fn open_conversation(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-    Json(req): Json<OpenConversation>,
-) -> Res<Json<serde_json::Value>> {
+    Json(req): Json<OpenConversationRequest>,
+) -> Res<Json<OpenConversationResponse>> {
     open_conversation_as(&app, who.map(|axum::Extension(w)| w), req).await.map(Json)
 }
 
 pub async fn open_conversation_as(
     app: &App,
     who: Option<crate::acl::Principal>,
-    req: OpenConversation,
-) -> Result<serde_json::Value, ApiError> {
+    req: OpenConversationRequest,
+) -> Result<OpenConversationResponse, ApiError> {
     let id = req.id.clone();
     let c = tokio::task::spawn_blocking(move || crate::conversations::Index::global().lock().unwrap().find(&id))
         .await
@@ -1382,7 +1340,7 @@ pub async fn open_conversation_as(
             }
         }
     };
-    let mut out = serde_json::json!({ "block": block, "opened": opened, "conversation": c.id });
+    let mut out = OpenConversationResponse { block, opened, conversation: c.id, error: None };
     if let Some(then) = req.then.as_deref() {
         let method = match then {
             "continue" | "fork" => then,
@@ -1390,7 +1348,7 @@ pub async fn open_conversation_as(
         };
         let b = app.mux.api(|r| Api::Block(block, r)).await.flatten().ok_or_else(|| bad("the block went away"))?;
         if let Err(e) = b.call(method, serde_json::json!({})).await {
-            out["error"] = serde_json::json!(e);
+            out.error = Some(e);
         }
     }
     Ok(out)
@@ -2132,23 +2090,15 @@ async fn push_subscribe(
     Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
 }
 
-#[derive(Deserialize)]
-struct NotifyRequest {
-    /// One session; none: everything you may edit here.
-    #[serde(default)]
-    session: Option<SessionId>,
-    on: bool,
-}
-
 /// What "needs you" notifications you get here (M29): `GET` yours, `POST`
 /// to opt in or out of a session's agents, or all of them.
 async fn notify_get(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<crate::acl::NotifyPref>> {
+) -> Res<Json<NotifyPref>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     if who.is_owner() {
-        return Ok(Json(crate::acl::NotifyPref { all: true, ..Default::default() }));
+        return Ok(Json(NotifyPref { all: true, ..Default::default() }));
     }
     Ok(Json(app.acl.notify_pref(who.id())))
 }
@@ -2157,7 +2107,7 @@ async fn notify_set(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
     Json(req): Json<NotifyRequest>,
-) -> Res<Json<crate::acl::NotifyPref>> {
+) -> Res<Json<NotifyPref>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     if who.is_owner() {
         return Err(bad("the owner is always told"));
