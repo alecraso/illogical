@@ -8,10 +8,10 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-illogical-core = { version = "0.24.0", path = "../core" }
-illogical-e2e = { version = "0.24.0", path = "../e2e" }
-illogical-proto = { version = "0.24.0", path = "../proto" }
-illogical-vt = { version = "0.24.0", path = "../vt" }
+illogical-core = { version = "0.25.0", path = "../core" }
+illogical-e2e = { version = "0.25.0", path = "../e2e" }
+illogical-proto = { version = "0.25.0", path = "../proto" }
+illogical-vt = { version = "0.25.0", path = "../vt" }
 ratatui = "0.29.0"
 rustls = "0.23.45"
 rustls-platform-verifier = "0.7.1"

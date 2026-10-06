@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-illogical-e2e = { version = "0.24.0", path = "../e2e" }
+illogical-e2e = { version = "0.25.0", path = "../e2e" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 

@@ -1,6 +1,6 @@
 [package]
 name = "illogical-desktop"
-version = "0.24.0"
+version = "0.25.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "illogical's desktop app: the web client in a native window, with native notifications"
