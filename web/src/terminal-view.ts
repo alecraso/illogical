@@ -72,7 +72,7 @@ export class TerminalView {
     );
     this.swallowQueries();
     this.watchCommands();
-    this.term.attachCustomKeyEventHandler((e) => this.clipboardKeys(e));
+    this.term.attachCustomKeyEventHandler((e) => this.keys(e));
     this.takeFiles();
     this.term.open(this.host);
     this.touchScroll();
@@ -347,8 +347,15 @@ export class TerminalView {
   };
 
   /** Ctrl+Shift+C copies the selection; Ctrl+Shift+V is left to the
-   * browser's paste event, which xterm.js handles. */
-  private clipboardKeys(e: KeyboardEvent): boolean {
+   * browser's paste event, which xterm.js handles. Shift+Enter sends ESC CR
+   * (Alt+Enter, a new line in Claude Code and line editors, with or without
+   * the kitty protocol, whose state the web can't see) where xterm.js sends
+   * CR; the keypress is stopped too, or it would send CR as well. */
+  private keys(e: KeyboardEvent): boolean {
+    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
+      if (e.type === "keydown") this.term.input("\x1b\r", true);
+      return false;
+    }
     if (e.type !== "keydown" || !e.ctrlKey || !e.shiftKey) return true;
     if (e.code === "KeyC") {
       const text = this.term.getSelection();
