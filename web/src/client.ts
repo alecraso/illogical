@@ -44,6 +44,9 @@ import { pick, upload } from "./upload";
 
 /** Ack about this often (bytes drawn); the daemon allows 512 KB. */
 const ACK_EVERY = 64 * 1024;
+/** #369: a link up this long was a good one: the next reconnect starts
+ * from the shortest delay again. */
+const STABLE_MS = 10_000;
 
 export interface PaneEntry {
   view: TerminalView;
@@ -97,7 +100,8 @@ export interface E2ETarget {
 interface Link {
   onText: (t: string) => void;
   onBinary: (b: ArrayBuffer) => void;
-  onClose: () => void;
+  /** `why`: for the console (#369). */
+  onClose: (why: string) => void;
   readonly open: boolean;
   /** Why it couldn't connect, when control's relay was full (#344). */
   readonly full?: string;
@@ -109,13 +113,13 @@ interface Link {
 class SocketLink implements Link {
   onText: (t: string) => void = () => {};
   onBinary: (b: ArrayBuffer) => void = () => {};
-  onClose: () => void = () => {};
+  onClose: (why: string) => void = () => {};
   private sock: WebSocket;
   constructor(url: string) {
     this.sock = new WebSocket(url);
     this.sock.binaryType = "arraybuffer";
     this.sock.onmessage = (e) => (typeof e.data === "string" ? this.onText(e.data) : this.onBinary(e.data as ArrayBuffer));
-    this.sock.onclose = () => this.onClose();
+    this.sock.onclose = (e) => this.onClose(`socket closed (${e.code}${e.reason ? ` ${e.reason}` : ""})`);
   }
   get open() {
     return this.sock.readyState === WebSocket.OPEN;
@@ -134,7 +138,7 @@ class SocketLink implements Link {
 class E2ELink implements Link {
   onText: (t: string) => void = () => {};
   onBinary: (b: ArrayBuffer) => void = () => {};
-  onClose: () => void = () => {};
+  onClose: (why: string) => void = () => {};
   sock: E2ESocket | undefined;
   full: string | undefined;
   private closed = false;
@@ -154,12 +158,12 @@ class E2ELink implements Link {
         onPath(target.direct.some((u) => sock.url.startsWith(u.replace(/^http/, "ws").replace(/\/$/, ""))) ? "direct" : "relayed");
         sock.onText = (t) => this.onText(t);
         sock.onBinary = (b) => this.onBinary(b.slice().buffer as ArrayBuffer);
-        sock.onClose = () => this.onClose();
+        sock.onClose = () => this.onClose(sock.why);
         sock.start();
       },
       (e: Error & { full?: boolean }) => {
         if (e.full) this.full = e.message;
-        this.onClose();
+        this.onClose(`couldn't connect: ${e.message}`);
       },
     );
   }
@@ -236,7 +240,28 @@ export class Client {
   /** M25: ask the daemon to answer (it pongs), which keeps `lastHeard`
    * fresh on a quiet daemon. */
   heartbeat() {
+    this.asked ||= Date.now();
     this.send({ type: "ping", id: this.nextId++ });
+  }
+
+  /** #369: when the first heartbeat still unanswered was sent (ms), or 0.
+   * Anything the daemon sends answers it. */
+  private asked = 0;
+
+  /** M25: keep a quiet link honest, every second or so: ask a daemon
+   * that's been quiet `heartbeatMs` to answer, and drop the link when an
+   * ask went unanswered for `answerMs`. Judged on the ask, not on the
+   * quiet alone (#369): a hidden page's timers run late, and a tick 15s
+   * after the last one found every quiet link "silent" and dropped it
+   * before it was asked. True if it dropped the link. */
+  keepAlive(now: number, heartbeatMs: number, answerMs: number): boolean {
+    if (!this.connected) return false;
+    if (this.asked && now - this.asked > answerMs) {
+      this.drop("no answer to a heartbeat");
+      return true;
+    }
+    if (!this.asked && now - this.lastHeard > heartbeatMs) this.heartbeat();
+    return false;
   }
 
   /** M25: a connection is up or being made. */
@@ -246,11 +271,12 @@ export class Client {
 
   /** M25: give up on the link now (it went quiet) and reconnect as after
    * any drop. */
-  drop() {
+  drop(why = "dropped") {
     const link = this.link;
     if (!link) return;
+    // Its reason first: closing it would report its own.
+    link.onClose(why);
     link.close();
-    link.onClose();
   }
 
   /** A request to the daemon's API: fetch, or through the channel. */
@@ -310,6 +336,8 @@ export class Client {
 
   private link: Link | undefined;
   private retry = 0;
+  /** When this link's daemon said hello (ms). */
+  private helloAt = 0;
   private nextId = 1;
   private listeners = new Set<() => void>();
   private errorTimer: number | undefined;
@@ -855,20 +883,33 @@ export class Client {
       link = new SocketLink(url);
     }
     this.link = link;
+    const started = Date.now();
     link.onText = (t) => {
       this.lastHeard = Date.now();
+      this.asked = 0;
       this.onMessage(JSON.parse(t) as ServerMsg);
     };
     link.onBinary = (b) => {
       this.lastHeard = Date.now();
+      this.asked = 0;
       this.onFrame(b);
     };
-    link.onClose = () => {
+    link.onClose = (why) => {
       if (this.link !== link) return;
+      const up = this.connected ? Date.now() - this.helloAt : null;
       if (!this.connected) this.failures++;
+      // #369: back off from the shortest delay again only after a link
+      // that lasted; one that dies right after hello keeps backing off.
+      if (up !== null && up > STABLE_MS) this.retry = 0;
+      console.info(
+        `illogical: link to ${this.base || location.host} closed ` +
+          `${up === null ? `before hello, ${Date.now() - started}ms in` : `after ${up}ms up`}: ${why}` +
+          ` (try ${this.retry + 1})`,
+      );
       this.link = undefined;
       this.connected = false;
       this.clientId = null;
+      this.asked = 0;
       // Control's relay is full (#344): say so, and wait half a minute or
       // so (spread out, as everyone's page is waiting) rather than seconds.
       const delay = link.full ? 30_000 + Math.random() * 30_000 : Math.min(250 * 2 ** this.retry, 5000);
@@ -912,11 +953,13 @@ export class Client {
     this.emit();
   }
 
-  /** Reconnect now if the socket is down (a phone coming back). */
-  wake() {
+  /** Reconnect now if the socket is down (a phone coming back), from the
+   * shortest delay again. `fresh: false` keeps the backoff: a reconnect
+   * the fleet queued (#369), which otherwise never backed off. */
+  wake(fresh = true) {
     this.asleep = false;
     if (!this.link && !this.closed) {
-      this.retry = 0;
+      if (fresh) this.retry = 0;
       this.connect();
     }
   }
@@ -991,7 +1034,7 @@ export class Client {
         this.clientId = msg.client;
         this.connected = true;
         this.focused = undefined;
-        this.retry = 0;
+        this.helloAt = Date.now();
         if (this.summary) this.send({ type: "subscribe", summary: true });
         // A new connection: follow again what was followed.
         for (const pane of this.editorFollows.keys()) this.send({ type: "follow", pane, on: true });

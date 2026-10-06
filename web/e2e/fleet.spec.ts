@@ -175,6 +175,42 @@ test("a machine that stops answering greys within 10 s, and comes back", async (
   await expect.poll(() => hostStates(page).then((s) => s.sandbox), { timeout: 15_000 }).toBe("connected");
 });
 
+test("a late tick drops no healthy link, and a host that's down is tried less and less often (#369)", async ({ page }) => {
+  await allThree(page);
+  type Inside = { lastBeat: number; tick(): void; hosts: Map<string, { client: { clientId: number | null; lastHeard: number } | null }> };
+  const ids = () =>
+    page.evaluate(() => {
+      const f = window.__illogical.fleet as unknown as Inside;
+      return Object.fromEntries([...f.hosts].map(([name, e]) => [name, e.client?.clientId ?? null]));
+    });
+  // A hidden page's timers ran late: the last tick, and the last word from
+  // each host, were 15 s ago. It asks them, and they answer: nothing drops
+  // (it used to drop every one, every tick, while the page was hidden).
+  const before = await ids();
+  await page.evaluate(() => {
+    const f = window.__illogical.fleet as unknown as Inside;
+    const then = Date.now() - 15_000;
+    f.lastBeat = then;
+    for (const e of f.hosts.values()) if (e.client) e.client.lastHeard = then;
+    f.tick();
+  });
+  await page.waitForTimeout(2500);
+  expect(await ids()).toEqual(before);
+
+  // Down for good: each try waits longer than the last (250 ms doubling,
+  // to 5 s), where it was 250–500 ms for as long as the host was down.
+  daemons.get("jake-mini")!.kill("SIGKILL");
+  await expect.poll(() => hostStates(page).then((s) => s["jake-mini"]), { timeout: 10_000 }).toBe("stale");
+  const started = () => page.evaluate(() => window.__illogical.fleet.stats.started);
+  const s0 = await started();
+  await page.waitForTimeout(6000);
+  const tries = (await started()) - s0;
+  expect(tries).toBeGreaterThan(0);
+  expect(tries).toBeLessThanOrEqual(6);
+  await startDaemon("jake-mini", ["--allow-origin", homeUrl]);
+  await expect.poll(() => hostStates(page).then((s) => s["jake-mini"]), { timeout: 15_000 }).toBe("connected");
+});
+
 test("twenty machines come back after a wake without a burst of failures", async ({ page }) => {
   test.setTimeout(120_000);
   const many: string[] = [];

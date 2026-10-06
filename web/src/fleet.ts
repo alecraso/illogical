@@ -95,8 +95,8 @@ const SLOT_MS = 3000;
 const SPREAD_MS = 1500;
 /** Ask quiet hosts to answer this often... */
 const HEARTBEAT_MS = 3000;
-/** ...and give up on a link that said nothing for this long. */
-const SILENT_MS = 6000;
+/** ...and give up on a link that hasn't answered in this long. */
+const ANSWER_MS = 3000;
 /** A host away this long is offline, not just stale. */
 const OFFLINE_MS = 60_000;
 /** Hidden this long, the page lets go of sandboxes (as the tab view does). */
@@ -122,6 +122,8 @@ export class Fleet {
   private queue: Client[] = [];
   /** Clients connecting now, and how to give back their slot. */
   private trying = new Map<Client, () => void>();
+  /** Queued by a wake: reconnect from the shortest delay again. */
+  private fresh = new Set<Client>();
   private timer: number | undefined;
   private lastBeat = Date.now();
   private hidden: number | undefined;
@@ -269,6 +271,7 @@ export class Fleet {
     e.off = null;
     if (e.client) {
       this.queue = this.queue.filter((c) => c !== e.client);
+      this.fresh.delete(e.client);
       this.trying.get(e.client)?.();
       e.client.close();
     }
@@ -301,7 +304,10 @@ export class Fleet {
       // a host that doesn't answer doesn't hold up the rest.
       const timer = window.setTimeout(free, SLOT_MS);
       this.trying.set(c, free);
-      c.wake();
+      // Its backoff carries on, unless a wake started it over (#369: this
+      // reset it on every try, so a host whose channel kept dying was
+      // tried again every 250–500ms for as long as it did).
+      c.wake(this.fresh.delete(c));
     }
   }
 
@@ -340,21 +346,15 @@ export class Fleet {
 
   private tick() {
     const now = Date.now();
-    // A long gap between ticks: the machine slept.
+    // A long gap between ticks: the machine slept (or the page was hidden
+    // and its timers slowed).
     if (now - this.lastBeat > 5000) this.wake();
     this.lastBeat = now;
     let changed = false;
     for (const e of this.hosts.values()) {
       const c = e.client;
-      if (c?.connected) {
-        if (now - c.lastHeard > SILENT_MS) {
-          // Gone quiet without closing: treat it as dropped.
-          c.drop();
-          changed = true;
-        } else if (now - c.lastHeard > HEARTBEAT_MS) {
-          c.heartbeat();
-        }
-      }
+      // Gone quiet without closing: treat it as dropped.
+      if (c?.keepAlive(now, HEARTBEAT_MS, ANSWER_MS)) changed = true;
       if ((e.state === "stale" || e.state === "connecting") && e.lostAt !== null && now - e.lostAt > OFFLINE_MS) {
         e.state = "offline";
         changed = true;
@@ -377,6 +377,7 @@ export class Fleet {
         c.heartbeat();
         continue;
       }
+      this.fresh.add(c);
       window.setTimeout(() => this.enqueue(c), Math.random() * SPREAD_MS);
     }
   }

@@ -25,8 +25,9 @@ const GONE_GRACE_MS = 5000;
 /** A host that dropped off the network closes nothing: its connection
  * just goes quiet. Ask a quiet host to answer this often... */
 const HEARTBEAT_MS = 3000;
-/** ...and give up on a link that said nothing for this long, or that
- * hasn't connected in this long, and connect again as after any drop. */
+/** ...and give up on a link that said nothing for this long (counted from
+ * the ask, see `Client.keepAlive`), or that hasn't connected in this long,
+ * and connect again as after any drop. */
 const SILENT_MS = 6000;
 
 interface HostLink {
@@ -49,13 +50,12 @@ class RemoteHosts {
       const c = l.client;
       if (c.connected) {
         l.trying = null;
-        if (now - c.lastHeard > SILENT_MS) c.drop();
-        else if (now - c.lastHeard > HEARTBEAT_MS) c.heartbeat();
+        c.keepAlive(now, HEARTBEAT_MS, SILENT_MS - HEARTBEAT_MS);
       } else if (c.linked) {
         l.trying ??= now;
         if (now - l.trying > SILENT_MS) {
           l.trying = null;
-          c.drop();
+          c.drop("didn't connect in time");
         }
       } else {
         l.trying = null;

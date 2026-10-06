@@ -133,6 +133,8 @@ export class E2ESocket {
   onClose: () => void = () => {};
   /** Which way it went: the first URL tried, or a later one (the relay). */
   readonly url: string;
+  /** #369: why it closed, once it has. */
+  why = "";
 
   private sendQ: Promise<void> = Promise.resolve();
   private recvQ: Promise<void> = Promise.resolve();
@@ -152,13 +154,14 @@ export class E2ESocket {
     this.recv = recv;
     this.url = ws.url;
     const take = (wire: Uint8Array) => {
-      this.recvQ = this.recvQ.then(() => this.take(wire)).catch(() => this.close());
+      this.recvQ = this.recvQ.then(() => this.take(wire)).catch((e: Error) => this.close(`couldn't read: ${e.message}`));
     };
     // What the daemon sent right after its handshake message (its hello)
     // arrived while we were still finishing ours.
     for (const w of early) take(w);
     ws.onmessage = (e) => take(new Uint8Array(e.data as ArrayBuffer));
-    ws.onclose = () => this.close();
+    // A relay channel says why control closed it (`reason`).
+    ws.onclose = () => this.close((ws as { reason?: string }).reason ? `relay closed it: ${(ws as { reason?: string }).reason}` : "socket closed");
   }
 
   /** Try each URL in order (direct ones first, the relay last). */
@@ -281,7 +284,7 @@ export class E2ESocket {
           if (last) break;
         }
       })
-      .catch(() => this.close());
+      .catch((e: Error) => this.close(`couldn't send: ${e.message}`));
   }
 
   sendText(text: string) {
@@ -327,9 +330,10 @@ export class E2ESocket {
     });
   }
 
-  close() {
+  close(why = "closed here") {
     if (this.closed) return;
     this.closed = true;
+    this.why = why;
     this.ws.close();
     for (const p of this.pending.values()) p.rej(new Error("connection closed"));
     this.pending.clear();
