@@ -241,7 +241,7 @@ in front of it: Caddy, Fly, or `tailscale serve`.
 illogical-control --public-url https://control.example.com --listen 127.0.0.1:7690 --db /var/lib/illogical/control.db
 ```
 
-- **Moving to another URL** (#507): run with `--public-url` set to the new
+- **Moving to another URL:** run with `--public-url` set to the new
   one and `--also-url` (`ILLOGICAL_CONTROL_ALSO_URLS`, comma-separated) to
   the old. Both answer: a browser is served as the site it came in on, with
   that site's own origin, cookies and passkeys (a passkey works only where
