@@ -446,6 +446,12 @@ export function TabArea({ client, tab, cell, phone }: { client: Client; tab: Tab
 /** CSS length (Preact 11 no longer appends "px" to numbers). */
 const len = (n: number) => `${n}px`;
 
+/** A text box of the page's own, not xterm's hidden one (a terminal's
+ * right-click lands there). */
+function editable(t: EventTarget | null): boolean {
+  return t instanceof HTMLElement && t.matches("textarea, input") && !t.closest(".xterm");
+}
+
 function px(r: Rect, cell: Cell) {
   return {
     left: len(r.x * cell.width),
@@ -518,6 +524,9 @@ function PaneSlot({
   const menu = (e: MouseEvent) => {
     // A program that tracks the mouse gets right-clicks; Shift reaches us.
     if (entry?.view.mouseTracking && !e.shiftKey) return;
+    // A text box's own menu (an agent's composer): on a phone, its Paste
+    // is the one that can paste an image (Chrome refuses ours).
+    if (editable(e.target)) return;
     const items = () => paneItems(client, id, phone, isWorkspace ? workspaceDir : null);
     // A remote pane's menu doesn't depend on this daemon's features.
     if (info?.type === "remote") openMenu(e, items());

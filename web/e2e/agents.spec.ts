@@ -104,6 +104,14 @@ test("an image pasted into the composer reaches the agent and shows in the trans
       [png, event, name] as const,
     );
   const composer = block.locator(".agent-composer");
+  // A long-press or right-click in the box is the browser's (its Paste
+  // pastes an image on a phone); elsewhere on the block, the pane's menu.
+  await composer.locator("textarea").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Start an agent…" })).toHaveCount(0);
+  await block.locator(".agent-log").click({ button: "right" });
+  await expect(page.getByRole("menuitem").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem")).toHaveCount(0);
   await give(".agent-composer textarea", "paste", "shot.png");
   await expect(composer.locator(".agent-attached-file img")).toHaveCount(1);
   await expect(composer.locator("textarea")).toHaveValue("");
