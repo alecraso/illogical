@@ -451,6 +451,7 @@
           <div class="ch"><b>macOS</b></div>
           <div class="cm">apple silicon or intel · .zip</div>
           <p>Unzip it and drag <em>illogical</em> to Applications. It isn't notarized yet: the first time, open it, then choose <em>Open Anyway</em> in System Settings › Privacy &amp; Security.</p>
+          <p>Or, in Terminal, <code>curl -fsSL https://illogical.widgets.wtf/install.sh | sh</code> installs the app with no <em>Open Anyway</em> step, along with its service and the CLI, and opens it.</p>
           <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-arm64.zip" data-dl="mac">Apple silicon</a><a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-x86_64.zip">Intel</a></div>
         </div>
         <div class="card" style="--c: var(--k-agent)">
@@ -479,7 +480,7 @@
           <div class="ch"><b>One command</b></div>
           <div class="cm">shell · linux · macos</div>
           <pre id="way1">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</pre>
-          <p>Installs illogical and starts its background service. Run again to upgrade.</p>
+          <p>Installs illogical and starts its background service (on a Mac at its screen, the app too; <code>sh -s -- --no-app</code> leaves it out). Run again to upgrade.</p>
           <div class="ca"><button type="button" class="pri copy" data-copy="way1">Copy</button></div>
         </div>
         <div class="card" style="--c: var(--k-server)">

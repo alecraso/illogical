@@ -11,8 +11,9 @@
 //! installs the daemon with `illogicald install` instead.
 //!
 //! A daemon that `illogicald install` (install.sh, Homebrew, an older
-//! app) set up keeps its own plist in `~/Library/LaunchAgents`: the app
-//! adopts that one and never registers a second.
+//! app) set up keeps its own plist in `~/Library/LaunchAgents` (or
+//! `/Library/LaunchDaemons` with `--system`): the app adopts that one and
+//! never registers a second.
 
 use std::process::Command;
 
@@ -85,10 +86,16 @@ pub fn restart() -> Result<(), String> {
 }
 
 /// A plist from `illogicald install` is there: that install owns the daemon.
+/// Its launch agent (label `illogicald`, what install.sh sets up), or the
+/// LaunchDaemon `illogicald install --system` wrote, which a later
+/// `illogicald install` (install.sh run again) keeps.
 pub fn installed_by_script() -> bool {
-    std::env::var_os("HOME")
+    let agent = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
-        .is_some_and(|h| h.join("Library/LaunchAgents/illogicald.plist").is_file())
+        .is_some_and(|h| h.join("Library/LaunchAgents/illogicald.plist").is_file());
+    let daemon = std::env::var("USER")
+        .is_ok_and(|u| std::path::Path::new(&format!("/Library/LaunchDaemons/illogicald.{u}.plist")).is_file());
+    agent || daemon
 }
 
 unsafe extern "C" {

@@ -84,6 +84,9 @@ the same computer (approve it as a new device once) and shows every machine in y
 and your teams. The macOS app
 isn't notarized yet: the first time, open it, then choose *Open Anyway* in
 System Settings › Privacy & Security.
+Or, in Terminal, install.sh (below) installs the Mac app too, with no
+*Open Anyway* step (`curl` leaves no quarantine flag), in `/Applications`
+if you can write there and `~/Applications` if not, and opens it.
 
 The Windows installer isn't signed yet: when SmartScreen stops it, choose
 *More info*, then *Run anyway*.
@@ -96,7 +99,12 @@ curl -fsSL https://illogical.widgets.wtf/install.sh | sh
 
 This puts `illogicald` and `illogical` in `~/.local/bin` and starts the
 daemon as a service (systemd user unit on Linux, launchd agent on macOS).
+On a Mac with someone at its screen it installs the desktop app too, from
+the newest app release; the app uses the daemon install.sh set up.
+`sh -s -- --no-app` leaves the app out; over ssh it's left out unless you
+add `--app`.
 Run it again to upgrade. `ILLOGICAL_VERSION=vX.Y.Z` picks a version.
+`ILLOGICAL_APP_VERSION=app-vX.Y.Z` picks the app's.
 
 On Windows, in PowerShell:
 
@@ -128,7 +136,7 @@ loginctl enable-linger $USER
 command for how you installed it. Panes keep running while the daemon
 restarts.
 
-- install.sh or install.ps1: run it again.
+- install.sh or install.ps1: run it again (on a Mac at its screen, that updates the app too).
 - Homebrew: `brew upgrade illogical && illogicald install`.
 - The desktop app: download the new one and open it. When it finds an
   older daemon running as the service, it puts its own in its place,

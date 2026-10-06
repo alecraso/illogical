@@ -28,6 +28,17 @@
 #   restart   the app quits and starts again; the daemon and its panes
 #             stay (pids unchanged)
 #
+# And one not run by default, as it fetches a published release from
+# GitHub instead of the .dmg (#318, #319):
+#   installsh this tree's scripts/install.sh --app on the fresh account:
+#             the app it puts in /Applications has no quarantine flag,
+#             opens with no Gatekeeper window, and adopts install.sh's
+#             daemon (no SMAppService agent); then, with /Applications not
+#             writable, the same into ~/Applications. Gatekeeper's verdict
+#             (spctl) is printed, not judged. ILLOGICAL_VERSION picks the
+#             daemon's release (default: the latest), ILLOGICAL_APP_VERSION
+#             the app's (default: app-latest).
+#
 # The .dmg is $ILLOGICAL_DMG, default dist/illogical-desktop-macos-arm64.dmg
 # (`just desktop` on a Mac). The app
 # is copied in without a quarantine flag: an ad-hoc signed app needs a
@@ -46,10 +57,11 @@ DMG="${ILLOGICAL_DMG:-$ROOT/dist/illogical-desktop-macos-arm64.dmg}"
 
 # shellcheck source=testnet/macos/need-tart.sh
 . "$HERE/need-tart.sh"
-[ -f "$DMG" ] || { echo "no .dmg (ILLOGICAL_DMG, or build one: just desktop)" >&2; exit 2; }
-
 claims=("$@")
 [ ${#claims[@]} -gt 0 ] || claims=(install agent pane keys links finder tabs hotkey restart)
+if [[ " ${claims[*]} " == *" install "* ]]; then
+  [ -f "$DMG" ] || { echo "no .dmg (ILLOGICAL_DMG, or build one: just desktop)" >&2; exit 2; }
+fi
 failed=0
 v() { "$V" "$1" "$VM" "${@:2}"; }
 vs() { v ssh "$@"; }
@@ -332,6 +344,56 @@ claim_restart() {
   else
     fail restart "daemon pids $before -> $after, panes $n -> $(panes | wc -l)"
   fi
+}
+
+# installsh: one install.sh --app run into DIR's illogical.app.
+installsh_into() {
+  local dir=$1 out
+  out=$(vs "ILLOGICAL_VERSION=${ILLOGICAL_VERSION:-} ILLOGICAL_APP_VERSION=${ILLOGICAL_APP_VERSION:-} sh /tmp/install.sh --app" 2>&1) || {
+    fail installsh "install.sh into $dir exited non-zero: $(tail -3 <<<"$out" | xargs)"; return 1; }
+  if ! vs "test -d $dir/illogical.app"; then
+    fail installsh "no app in $dir: $(grep -i app <<<"$out" | xargs)"; return 1
+  fi
+  if vs "! xattr -r $dir/illogical.app | grep -q com.apple.quarantine"; then
+    pass installsh "$dir/illogical.app has no quarantine flag"
+  else
+    fail installsh "$dir/illogical.app is quarantined"
+  fi
+  echo "[macos desktop installsh] spctl, $dir: $(vs "spctl -a -vv $dir/illogical.app 2>&1" | xargs)"
+  # Hung in Gatekeeper (#315), a binary never gets past dyld: give it 10s.
+  if vs "$dir/illogical.app/Contents/MacOS/illogicald --version & p=\$!; for i in \$(seq 20); do kill -0 \$p 2>/dev/null || { wait \$p; exit \$?; }; sleep 0.5; done; kill \$p; exit 1" >/dev/null; then
+    pass installsh "the bundle's illogicald runs from $dir"
+  else
+    fail installsh "the bundle's illogicald hangs (or fails) in $dir"
+  fi
+  if wait_for 60 has_window; then
+    pass installsh "install.sh opened the app from $dir: $(vs 'pgrep -fl illogical-desktop' | head -1)"
+  else
+    fail installsh "no window from $dir/illogical.app within 60s"
+  fi
+  local gk; gk=$(osa 'tell application "System Events" to count windows of process "CoreServicesUIAgent"' 2>/dev/null || echo 0)
+  if [ "${gk:-0}" = 0 ]; then pass installsh "no Gatekeeper window"; else fail installsh "Gatekeeper shows $gk window(s)"; fi
+}
+
+claim_installsh() {
+  v push "$ROOT/scripts/install.sh" /tmp/install.sh
+  # An admin can write /Applications, so the first run goes there.
+  installsh_into /Applications || return
+  if vs 'launchctl print gui/$(id -u)/illogicald 2>/dev/null | grep -q "state = running"' \
+    && ! vs 'launchctl print gui/$(id -u)/wtf.widgets.illogical.daemon >/dev/null 2>&1'; then
+    pass installsh "the app adopted install.sh's daemon (no agent of its own)"
+  else
+    fail installsh "the app didn't adopt install.sh's daemon: $(vs 'launchctl list | grep -i illogical' | xargs)"
+  fi
+  if vs '$HOME/.local/bin/illogical ls >/dev/null 2>&1'; then
+    pass installsh "the CLI reaches it ($(vs '$HOME/.local/bin/illogicald --version'))"
+  else
+    fail installsh "the CLI can't reach a daemon"
+  fi
+  # A user who can't write /Applications: install.sh puts it in ~/Applications.
+  vs 'pkill -x illogical-desktop; sleep 2; sudo chmod 755 /Applications'
+  installsh_into '$HOME/Applications'
+  vs 'pkill -x illogical-desktop; sudo chmod 775 /Applications'
 }
 
 for c in "${claims[@]}"; do

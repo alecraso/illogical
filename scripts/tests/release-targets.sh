@@ -114,6 +114,12 @@ done <<<"$in_release"
 for t in "${targets[@]}"; do
   grep -q "target=$t\b" scripts/install.sh || bad "scripts/install.sh never picks $t"
 done
+# And on a Mac the app's zip, which the app's release makes (#318).
+zips=$(grep -o 'zip=illogical-desktop-[A-Za-z0-9_-]*\.zip' scripts/install.sh | sed 's/^zip=//')
+[ -n "$zips" ] || bad "scripts/install.sh fetches no Mac app zip"
+for z in $zips; do
+  printf '%s\n' "${downloads[@]}" | grep -qx "$z" || bad "scripts/install.sh fetches $z, which no app release makes"
+done
 
 # The site offers every download, and no page links to one that isn't made.
 # Not yet on the site: the .rpm and .dmg and the Linux arm64 bundles (M46,
