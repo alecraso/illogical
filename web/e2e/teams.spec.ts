@@ -180,10 +180,9 @@ test("two people at different companies join a team by invite", async ({ browser
   await expect(bob.locator(`[data-joined="${team}"]`)).toHaveText("You're in Acme", { timeout: 15_000 });
   await bob.getByRole("button", { name: "OK", exact: true }).click();
   await expect(bob.locator("[data-asked]")).toHaveCount(0);
-  // A member who isn't an owner is told to ask one for machines.
+  // A member who isn't an owner adds machines too (#332): the panel says how.
   await bob.getByRole("button", { name: "Teams…" }).click();
-  await expect(bob.locator("[data-ask-owner]")).toBeVisible();
-  await expect(bob.locator("[data-team-join]")).toHaveCount(0);
+  await expect(bob.locator("[data-team-join]")).toHaveText(`illogicald join ${base} --team ${team}`);
   await expect(bob.locator(`[data-member] .dim`).first()).toHaveText("owner");
   await bob.getByRole("button", { name: "Done" }).click();
 });
@@ -238,16 +237,18 @@ test("a team-owned box joins; both use it through the relay and pass control", a
   const j = await startJoin("buildbox", state, ["--team", team]);
   expect(j.out()).toContain("To add this machine (buildbox) to the team Acme");
   expect(j.out()).toContain("Waiting for approval (the code lasts 15 minutes)");
-  // #100: Bob (an editor) sees it's for the team, and can't approve it.
+  // #100: Bob (an editor) sees it's for the team; he could add it (#332),
+  // as his, and is told what that shares. Alice adds it instead.
   await bob.goto(j.link);
   await expect(bob.locator("[data-join-team]")).toHaveText("Acme");
-  await expect(bob.locator("[data-join-not-owner]")).toBeVisible();
-  await expect(bob.locator("[data-approve-join]")).toBeDisabled();
+  await expect(bob.locator("[data-join-to]")).toHaveValue(team);
+  await expect(bob.locator("[data-join-grants]")).toContainText("Everyone in Acme sees it");
+  await expect(bob.locator("[data-approve-join]")).toBeEnabled();
   // Alice owns it: the team is picked already, and she's told what it grants.
   await alice.goto(j.link);
   await expect(alice.locator("[data-join-team]")).toHaveText("Acme");
   await expect(alice.locator("[data-join-to]")).toHaveValue(team);
-  await expect(alice.locator("[data-join-grants]")).toContainText("The members of Acme reach it by their role");
+  await expect(alice.locator("[data-join-grants]")).toContainText("Everyone in Acme sees it and reaches it by their role");
   const answer = await j.confirm(alice);
   await alice.locator("[data-approve-join]").click();
   answer();
@@ -280,6 +281,65 @@ test("a team-owned box joins; both use it through the relay and pass control", a
   await bob.evaluate((p) => window.__illogical.client.paneOp(p, { op: "request_control" }), pane);
   await alice.locator("[data-give]").click();
   await run(bob, pane, "echo bob-$((6*7))", "bob-42");
+});
+
+test("a member puts their own machine in the team; an owner can take it out", async () => {
+  // #332: Bob (an editor, not an owner) joins a machine to his account.
+  const state = temp("bobbox");
+  const j = await startJoin("bobbox", state);
+  await bob.goto(j.link);
+  const answer = await j.confirm(bob);
+  await bob.locator("[data-approve-join]").click();
+  answer();
+  expect(await j.exited).toBe(0);
+  // An illogical from before owners could take machines out.
+  let d = runDaemon("bobbox", state, { env: { ILLOGICAL_FEATURES: "presigned-invites" } });
+  await bob.goto("/");
+  await bob.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  const bobbox = await bob.evaluate(() => window.__illogical.control!.daemons.find((d) => d.name === "bobbox")!.id);
+  await expect
+    .poll(() => bob.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.online, bobbox), { timeout: 30_000 })
+    .toBe(true);
+  // He puts it in Acme himself, told the whole team sees it.
+  await controlPanel(bob, "devices");
+  const row = bob.locator(`[data-move="${bobbox}"]`);
+  await row.locator("[data-move-to]").selectOption(team);
+  await expect(row.locator("[data-move-explain]")).toContainText("Everyone in Acme sees bobbox");
+  await row.locator("[data-move-go]").click();
+  await expect(row.locator("[data-move-explain]")).toHaveCount(0);
+  await expect(bob.locator(".control-error")).toHaveCount(0);
+  await expect.poll(() => pinned(state), { timeout: 15_000 }).toBe(team);
+  await bob.getByRole("button", { name: "Done" }).click();
+  // Alice reaches it, and sees it in the team as Bob's.
+  await expect.poll(async () => (await alice.evaluate(() => window.__illogical.control!.refresh()), hostNames(alice)), { timeout: 30_000 }).toContain("bobbox");
+  await controlPanel(alice, "teams");
+  const listed = alice.locator(`[data-team-machine="${bobbox}"]`);
+  await expect(listed).toContainText("bob's");
+  // Its illogical is too old to take an owner's move: she's told so.
+  await listed.locator("[data-take-out]").click();
+  await listed.locator("[data-take-out-go]").click();
+  await expect(alice.locator(".control-error")).toContainText("bobbox runs an older illogical: its owner updates it");
+  expect(pinned(state)).toBe(team);
+  // Updated, it does: she takes it out (asked first), and it's Bob's alone again.
+  d.proc.kill("SIGKILL");
+  await new Promise((r) => d.proc.on("exit", r));
+  d = runDaemon("bobbox", state, { log: true });
+  // It says what it understands as it fetches its certificates.
+  await expect.poll(d.log, { timeout: 30_000 }).toContain("certificates refreshed");
+  await listed.locator("[data-take-out]").click();
+  await expect(listed.locator("[data-take-out-explain]")).toContainText("Acme's members lose bobbox at once");
+  await listed.locator("[data-take-out-go]").click();
+  await expect.poll(() => pinned(state), { timeout: 15_000 }).toBeNull();
+  await expect(listed).toHaveCount(0);
+  await alice.getByRole("button", { name: "Done" }).click();
+  // Gone, so the tests after see only their machines; Bob is back on buildbox.
+  d.proc.kill("SIGKILL");
+  const left = spawn("../target/debug/illogicald", ["leave", "--state-dir", state], { stdio: "ignore" });
+  expect(await new Promise((r) => left.on("exit", r))).toBe(0);
+  await bob.goto("/");
+  await bob.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await expect.poll(() => hostNames(bob), { timeout: 30_000 }).toEqual(["buildbox"]);
+  await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
 });
 
 test("a presigned invite: someone already in a team joins another in one click", async ({ browser }) => {
@@ -516,7 +576,7 @@ test("Move to… puts a machine in a team and back, signed by the device", async
   await controlPanel(alice, "devices");
   const row = alice.locator(`[data-move="${minebox}"]`);
   await row.locator("[data-move-to]").selectOption(team);
-  await expect(row.locator("[data-move-explain]")).toContainText("Acme's members reach minebox by their role");
+  await expect(row.locator("[data-move-explain]")).toContainText("Everyone in Acme sees minebox and reaches it by their role");
   await row.locator("[data-move-go]").click();
   await expect(row.locator("[data-move-explain]")).toHaveCount(0);
   // Control lists it as the team's, and the daemon pinned the team itself.

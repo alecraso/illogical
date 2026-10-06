@@ -68,22 +68,33 @@ A team shares its machines with its members.
    the fingerprint of the person's first device. Check it with them if you
    can (a call, a message), then *Add them*. Adding someone signs the
    team's new member list on your device.
-4. **Add team machines:** on the machine, `illogicald join` as above.
-   When you approve, pick the team under *Join to*: the list is the teams
-   you own. To have it picked already, join with the team's id (it's in
-   *Teams…*, with the command to copy):
+4. **Add team machines:** any member can, owner or not. On the machine,
+   `illogicald join` as above. When you approve, pick the team under
+   *Join to*: the list is the teams you're in. To have it picked already,
+   join with the team's id (it's in *Teams…*, with the command to copy):
 
    ```
    illogicald join https://control.illogical.widgets.wtf --team ID
    ```
 
+   A machine already joined goes in with *In …* on it in *Devices and
+   machines…*. Either way it stays yours, and you can take it out again.
+   Once it's in, everyone in the team sees it and reaches it by their
+   role, and the team's owners count as its owner (they see its private
+   panes too). While a team is locked, only its owners add machines.
+5. **Take a machine out:** the team's machines are listed in *Teams…*. An
+   owner can *Take out* a member's machine: the team loses it at once, and
+   it's its owner's alone again. The machine checks that an owner signed
+   it. One on an older illogical can't take that until it's updated, and
+   the owner is told so.
+
 **Roles.** Owners change them in *Teams…*.
 
 | Role | May |
 | --- | --- |
-| watches | see the team's machines and panes |
+| watches | see the team's machines and panes, add their own machines |
 | drives | also type, answer agents and send them follow-ups |
-| owner | also add machines, invite and admit people, change roles, remove members, lock the team |
+| owner | also take members' machines out, invite and admit people, change roles, remove members, lock the team |
 
 **Locking.** *Lock (owners only)* is the kill switch: only owners reach
 the team's machines, and open invites and requests are dropped. Members'
@@ -110,9 +121,10 @@ panes leave their screens within a second. *Unlock* lets them back in.
   owners count as its owner. Sharing warns about panes that look like
   they show a secret, and offers to make them private.
 - **Moving a machine** between your account and a team, or between teams:
-  *Move to…* on it in *Devices and machines…* (you must own the teams on
-  both sides). The members of the team it leaves lose it at once. Your
-  device signs the move and the machine checks it, as at a join.
+  *In …* on it in *Devices and machines…* (any team you're in). The
+  members of the team it leaves lose it at once. Your device signs the
+  move and the machine checks it, as at a join. A team's owners can take
+  your machine out of their team, but never put it anywhere.
 
 ## Sharing one session
 

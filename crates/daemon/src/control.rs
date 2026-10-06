@@ -57,7 +57,7 @@ pub const REFRESH_WAIT: Duration = Duration::from_secs(10);
 /// what every daemon checking a team can take (presigned invites' rosters).
 /// `ILLOGICAL_FEATURES` says otherwise (tests play an older daemon with "").
 fn features() -> String {
-    std::env::var("ILLOGICAL_FEATURES").unwrap_or_else(|_| "presigned-invites".into())
+    std::env::var("ILLOGICAL_FEATURES").unwrap_or_else(|_| "presigned-invites,owner-moves".into())
 }
 const WATCH: Duration = Duration::from_secs(3);
 
@@ -116,16 +116,24 @@ pub struct SharedTeam {
 }
 
 /// Take a move (#100) if a device of this machine's own account signed
-/// it: into a team, between teams, or back to the account. The new team's
-/// roster is fetched from scratch, checked against the pin as at a join.
-/// One no newer than the last it took is a replay (or the same one again).
+/// it: into a team, between teams, or back to the account. An owner of
+/// its team (in the roster it checked) may take it out too (#332). The new
+/// team's roster is fetched from scratch, checked against the pin as at a
+/// join. One no newer than the last it took is a replay (or the same one
+/// again).
 fn take_move(saved: &mut Saved, m: Move) {
     if m.at <= saved.moved_at {
         return;
     }
     let trusted = saved.trust.evaluate(&saved.certs, &saved.revocations);
-    if !trusted.get(&m.by).is_some_and(|by| m.signed_for(&saved.cert.device, by)) {
-        warn!(by = m.by, "a move from control isn't signed by this account's devices; ignoring it");
+    let own = trusted.get(&m.by).is_some_and(|by| m.signed_for(&saved.cert.device, by));
+    let owner_out = saved.team.is_some()
+        && saved.roster.as_ref().is_some_and(|r| m.owner_takes_out(&saved.cert.device, r, &saved.team_certs));
+    if !own && !owner_out {
+        warn!(
+            by = m.by,
+            "a move from control isn't signed by this account's devices or its team's owners; ignoring it"
+        );
         return;
     }
     if saved.team != m.team {
@@ -2120,6 +2128,73 @@ mod tests {
         // Control replays the move into the team: too old.
         take_move(&mut saved, into);
         assert_eq!(saved.team, None);
+    }
+
+    /// #332: a member's machine in a team; the team's owners may take it
+    /// out, but not put it anywhere, and an editor may do neither.
+    #[test]
+    fn a_teams_owners_take_a_members_machine_out() {
+        let (_, root) = device("m", Kind::Browser);
+        let (_, daemon) = device("m", Kind::Daemon);
+        let (okeys, owner) = device("o", Kind::Browser);
+        let (ekeys, editor) = device("e", Kind::Browser);
+        let member = |account: &str, root: &Cert, role| illogical_e2e::team::Member {
+            account: account.into(),
+            root: root.device.clone(),
+            role,
+            name: account.into(),
+        };
+        let roster = Roster {
+            v: 1,
+            team: "t1".into(),
+            name: "Acme".into(),
+            version: 2,
+            at: 1,
+            members: vec![
+                member("o", &owner, TeamRole::Owner),
+                member("e", &editor, TeamRole::Editor),
+                member("m", &root, TeamRole::Editor),
+            ],
+            spent: vec![],
+            redeem: None,
+            by: String::new(),
+            sig: String::new(),
+        };
+        let pin = TeamPin { team: "t1".into(), founder: "o".into(), founder_root: owner.device.clone() };
+        let mut saved = Saved {
+            url: String::new(),
+            trust: Trust { account: "m".into(), root: root.device.clone() },
+            cert: daemon.clone(),
+            certs: vec![root],
+            revocations: vec![],
+            team: Some(pin.clone()),
+            roster: Some(roster),
+            team_certs: [
+                ("o".to_owned(), (vec![owner.clone()], vec![])),
+                ("e".to_owned(), (vec![editor.clone()], vec![])),
+            ]
+            .into_iter()
+            .collect(),
+            team_names: Default::default(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: String::new(),
+            moved_at: 0,
+        };
+        let d = daemon.device.as_str();
+
+        take_move(&mut saved, mv(&ekeys, &editor, d, None, 5));
+        assert_eq!(saved.team.as_ref(), Some(&pin), "not by an editor");
+        let other = TeamPin { team: "t2".into(), ..pin.clone() };
+        take_move(&mut saved, mv(&okeys, &owner, d, Some(&other), 5));
+        assert_eq!(saved.team.as_ref(), Some(&pin), "an owner doesn't move it elsewhere");
+
+        take_move(&mut saved, mv(&okeys, &owner, d, None, 6));
+        assert_eq!((saved.team.as_ref(), saved.moved_at), (None, 6));
+        // Out of the team, its owners are nobody to it.
+        take_move(&mut saved, mv(&okeys, &owner, d, None, 7));
+        assert_eq!(saved.moved_at, 6);
     }
 
     /// #208: a team member is called what they set ("Sam Stranger"), not

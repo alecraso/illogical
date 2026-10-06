@@ -150,10 +150,12 @@ the host menu.
     more (see below).
 
 **Moving a machine** between your account and a team (or between teams):
-*Move to…* on it in *Devices and machines…*. You need to own the teams on
-both sides. Your device signs the move and the machine checks that
-signature, so control can't move a machine by itself. An offline machine
-moves when it next connects.
+*In …* on it in *Devices and machines…*, into any team you're in. Your
+device signs the move and the machine checks that signature, so control
+can't move a machine by itself. A team's owners can take a member's
+machine out of the team (*Take out* in *Teams…*): the machine checks that
+an owner of the team, in the member list it checked, signed it, and takes
+nothing else from them. An offline machine moves when it next connects.
 
 **What isn't here yet:** the CLI (`illogical`) still reaches only the local
 daemon, or others over the tailnet.

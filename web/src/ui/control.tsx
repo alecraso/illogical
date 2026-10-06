@@ -531,11 +531,12 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
       (e: Error) => setErr(e.message),
     );
   }, [code]);
-  // Teams I own (#100), and the one it asked for even if I don't.
-  const owned = s.teams.filter((t) => t.role === "owner" && t.verified);
-  const asked = j?.team && !owned.some((t) => t.team === j.team!.team) ? j.team : null;
-  const team = owned.find((t) => t.team === to);
-  const notOwner = !!to && !team;
+  // Teams I'm in (#332), and the one it asked for even if I can't add to it.
+  const teams = s.addableTeams();
+  const asked = j?.team && !teams.some((t) => t.team === j.team!.team) ? j.team : null;
+  const team = teams.find((t) => t.team === to);
+  const cant = !!to && !team;
+  const locked = !!asked && !!s.teams.find((t) => t.team === asked.team)?.locked;
   const cancel = () => {
     if (j) void s.rejectJoin(j.code).catch(() => {});
     clearHash();
@@ -562,30 +563,36 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
               . Once you approve, the machine shows its account's fingerprint: check it's this one there.
             </p>
           ) : null}
-          {owned.length || asked ? (
+          {teams.length || asked ? (
             <p>
               <label>
                 Join to{" "}
                 <select class="control-select" data-join-to value={to} onChange={(e) => setTo((e.target as HTMLSelectElement).value)}>
                   <option value="">Just me</option>
-                  {owned.map((t) => (
+                  {teams.map((t) => (
                     <option key={t.team} value={t.team}>
                       {t.roster.name}
                     </option>
                   ))}
-                  {asked ? <option value={asked.team}>{asked.name} (you're not an owner)</option> : null}
+                  {asked ? (
+                    <option value={asked.team}>
+                      {asked.name} ({locked ? "locked" : "you're not in it"})
+                    </option>
+                  ) : null}
                 </select>
               </label>
             </p>
           ) : null}
-          {notOwner ? (
-            <p class="control-error" data-join-not-owner>
-              Only the team's owners add its machines. Ask one of them to approve it, or pick Just me.
+          {cant ? (
+            <p class="control-error" data-join-not-member>
+              {locked
+                ? `${asked!.name} is locked: only its owners add machines to it. Ask one of them to approve it, or pick Just me.`
+                : `Only ${asked!.name}'s members add machines to it. Ask one of them to approve it, or pick Just me.`}
             </p>
           ) : (
             <p class="dim" data-join-grants>
               {team
-                ? `The members of ${team.roster.name} reach it by their role: owners and editors drive its terminals, viewers watch.`
+                ? `Everyone in ${team.roster.name} sees it and reaches it by their role: owners and editors drive its terminals, viewers watch. Its owners also see private panes, and can take it out of the team. It stays yours.`
                 : "Only your devices reach it, and they can drive its terminals."}{" "}
               Control relays the connection but can't read it.
             </p>
@@ -601,7 +608,7 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
         <button
           class="primary"
           data-approve-join
-          disabled={!j || busy || notOwner}
+          disabled={!j || busy || cant}
           onClick={async () => {
             if (!j) return;
             setBusy(true);
@@ -858,15 +865,14 @@ const since = (ms: number) => {
   return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
 };
 
-/** *Move to…* on a machine (#100): into a team you own, or back to just
- * you. Only shown when there's somewhere to move it. */
+/** *Move to…* on a machine (#100): into a team you're in (#332), or back
+ * to just you. Only shown when there's somewhere to move it. */
 function MoveMachine({ s, c, team, online }: { s: ControlSession; c: Cert; team: string | null; online: boolean }) {
   const [to, setTo] = useState<string | null | undefined>(undefined);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const owned = s.teams.filter((t) => t.role === "owner" && t.verified);
-  const ownsNow = !team || owned.some((t) => t.team === team);
-  if (!ownsNow || (owned.length === 0 && !team)) return null;
+  const teams = s.addableTeams();
+  if (teams.length === 0 && !team) return null;
   const name = (id: string | null) => (id ? s.teams.find((t) => t.team === id)?.roster.name ?? "a team" : "just you");
   return (
     <div class="control-move" data-move={c.device}>
@@ -883,17 +889,18 @@ function MoveMachine({ s, c, team, online }: { s: ControlSession; c: Cert; team:
           }}
         >
           <option value="">Just me</option>
-          {owned.map((t) => (
+          {teams.map((t) => (
             <option key={t.team} value={t.team}>
               {t.roster.name}
             </option>
           ))}
+          {team && !teams.some((t) => t.team === team) ? <option value={team}>{name(team)}</option> : null}
         </select>
       </label>
       {to !== undefined ? (
         <p class="dim control-explain" data-move-explain>
           {to
-            ? `${name(to)}'s members reach ${c.name} by their role${team ? `, and ${name(team)}'s lose it` : ""}. It stays yours.`
+            ? `Everyone in ${name(to)} sees ${c.name} and reaches it by their role${team ? `, and ${name(team)}'s members lose it` : ""}; its owners also see private panes. It stays yours, and you can take it out again.`
             : `${name(team)}'s members lose ${c.name} at once; only your devices reach it.`}
           {online ? " " : " It's offline, so it moves when it next connects. "}
           <button
@@ -1300,7 +1307,7 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
         ))}
       </ul>
       <p class="dim">
-        An invite link lets one person in right away (with Ask me first, an owner says yes to each). Machines join a team when an owner approves them for it.{" "}
+        An invite link lets one person in right away (with Ask me first, an owner says yes to each). Any member can add their own machines to a team; its owners can take them out.{" "}
         <a href="https://github.com/arugula-salad/illogical/blob/main/docs/teams.md" target="_blank" rel="noreferrer">
           More about teams
         </a>
@@ -1340,6 +1347,9 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
   // The member whose Remove was clicked: a dialog asks.
   const [removing, setRemoving] = useState<string | null>(null);
   const owner = t.role === "owner";
+  // A member's machine an owner is taking out of the team (#332).
+  const [takingOut, setTakingOut] = useState<string | null>(null);
+  const machines = s.daemons.filter((d) => d.team === t.team);
   // One-click links not used yet (#134), each with Cancel.
   const [unused, setUnused] = useState<PresignedInvite[]>([]);
   const [reload, setReload] = useState(0);
@@ -1359,17 +1369,17 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
       <h3>
         {t.roster.name} {t.locked ? <span class="control-error">· locked</span> : null}
       </h3>
-      {owner ? (
+      {t.locked && !owner ? (
+        <p class="dim" data-team-add-locked>
+          It's locked: only its owners add machines to it until it's unlocked.
+        </p>
+      ) : (
         <>
           <p class="dim">
-            Team id <CopyText inline text={t.team} data-team-id />. Add a machine to it with:
+            Team id <CopyText inline text={t.team} data-team-id />. Add a machine to it with <i>In …</i> on it in <i>Devices and machines…</i>, or on the machine:
           </p>
           <CopyText text={`illogicald join ${s.info.url} --team ${t.team}`} data-team-join />
         </>
-      ) : (
-        <p class="dim" data-ask-owner>
-          Ask an owner to add a machine.
-        </p>
       )}
       <ul class="control-devices">
         {t.roster.members.map((m) => (
@@ -1413,6 +1423,47 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
         >
           <p>They lose the team's machines at once. To come back, they need a new invite.</p>
         </ConfirmRemove>
+      ) : null}
+      {machines.length ? (
+        <ul class="control-devices" data-team-machines={t.team}>
+          {machines.map((d) => {
+            const mine = !d.account || d.account === s.account;
+            return (
+              <li key={d.id} data-team-machine={d.id}>
+                <span>
+                  {d.name}
+                  <span class="dim">{mine ? " · yours" : ` · ${d.owner_name || "a member"}'s`}</span>
+                </span>
+                <span class="dim">{d.online ? "online" : "offline"}</span>
+                {owner && !mine ? (
+                  <button class="control-revoke" data-take-out={d.id} title="Take it out of the team; it stays its owner's" onClick={() => setTakingOut(d.id)}>
+                    Take out
+                  </button>
+                ) : (
+                  <span />
+                )}
+                {takingOut === d.id ? (
+                  <p class="dim control-explain" data-take-out-explain>
+                    {t.roster.name}'s members lose {d.name} at once. It stays {d.owner_name || "its owner"}'s, and they can add it again.{" "}
+                    <button data-take-out-cancel onClick={() => setTakingOut(null)}>
+                      Cancel
+                    </button>{" "}
+                    <button
+                      class="danger"
+                      data-take-out-go
+                      onClick={() => {
+                        setTakingOut(null);
+                        act(() => s.moveDaemon(d.id, null));
+                      }}
+                    >
+                      Take it out
+                    </button>
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
       {owner ? (
         <>

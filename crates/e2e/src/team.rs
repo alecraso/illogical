@@ -229,6 +229,18 @@ impl Move {
             && by.kind.approves()
             && verify_hex(&by.sign, Self::body(daemon, self.team.as_ref(), self.at).as_bytes(), &self.sig)
     }
+
+    /// One of `roster`'s owners taking `daemon` out of that team, back to
+    /// its own account (#332): a member puts their own machine in, and the
+    /// team's owners can take it out. Never into a team.
+    pub fn owner_takes_out(&self, daemon: &str, roster: &Roster, certs: &AccountCerts) -> bool {
+        self.team.is_none()
+            && roster
+                .members
+                .iter()
+                .filter(|m| m.role == TeamRole::Owner)
+                .any(|m| roster.devices(&m.account, certs).get(&self.by).is_some_and(|by| self.signed_for(daemon, by)))
+    }
 }
 
 /// Every member account's certificates and revocations, as control hands

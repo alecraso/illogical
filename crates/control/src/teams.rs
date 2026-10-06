@@ -51,9 +51,18 @@ const WATCH_TTL_MS: u64 = 7 * 86_400 * 1000;
 /// owner's clock.
 const PRESIGNED_MAX_MS: u64 = 86_400 * 1000 + 10 * 60 * 1000;
 
+/// What a daemon that takes a move out of its team signed by one of the
+/// team's owners says it understands (#332).
+pub const OWNER_MOVES: &str = "owner-moves";
+
+/// Whether a daemon said it understands `feature`.
+pub fn has_feature(features: &str, feature: &str) -> bool {
+    features.split(',').any(|f| f == feature)
+}
+
 /// Whether a daemon said it understands presigned invites' rosters.
 pub fn takes_presigned(features: &str) -> bool {
-    features.split(',').any(|f| f == PRESIGNED_INVITES)
+    has_feature(features, PRESIGNED_INVITES)
 }
 
 /// The machines checking this team's rosters that don't understand

@@ -17,7 +17,7 @@ use illogical_e2e::{
     Cert, Kind, Revocation, Trust,
     cert::{join_code, normalize_code},
     now_ms,
-    team::TeamPin,
+    team::{TeamPin, TeamRole},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -525,11 +525,11 @@ pub async fn join_approve(
         refused("join_approve", &s.account, &c, "a known daemon's join without its key");
         return Err(err(StatusCode::CONFLICT, JOIN_NEEDS_UPDATE));
     }
-    // A team's machine: only its owners add one, and the approving device
-    // signs it in, for the daemon to check.
+    // A team's machine: any member adds one of their own (#332), and the
+    // approving device signs it in, for the daemon to check.
     let team = match &b.team {
         Some(id) => {
-            let pin = owned_team(&app, &s.account, id, "only the team's owners add its machines")?;
+            let pin = in_team(&app, &s.account, id, false, "only the team's members add machines to it")?;
             can_follow(&app, id, &j.features, &c.name)?;
             let sig = b.team_sig.as_deref().unwrap_or_default();
             let (trust, certs, revs) = trusted(&app, &s.account)?;
@@ -585,13 +585,19 @@ pub async fn join_reject(
     Ok(Json(json!({})))
 }
 
-/// A team `account` owns, as a daemon pins it; `no` when they don't.
-fn owned_team(app: &App, account: &str, id: &str, no: &str) -> Result<TeamPin, ApiError> {
+/// A team `account` is in, as a daemon pins it; `no` when it isn't. Any
+/// member adds their own machines (#332), but only owners while it's
+/// locked; with `owner`, only owners at all.
+fn in_team(app: &App, account: &str, id: &str, owner: bool, no: &str) -> Result<TeamPin, ApiError> {
     let t = app.db.team(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
     let r = app.db.latest_roster(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
     let r: illogical_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
-    if r.member(account).map(|m| m.role) != Some(illogical_e2e::team::TeamRole::Owner) {
-        return Err(err(StatusCode::FORBIDDEN, no));
+    let Some(role) = r.member(account).map(|m| m.role) else { return Err(err(StatusCode::FORBIDDEN, no)) };
+    if role != TeamRole::Owner && (owner || t.locked) {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            if owner { no } else { "the team is locked: only its owners add machines until it's unlocked" },
+        ));
     }
     Ok(TeamPin { team: t.id, founder: t.founder, founder_root: t.founder_root })
 }
@@ -599,27 +605,36 @@ fn owned_team(app: &App, account: &str, id: &str, no: &str) -> Result<TeamPin, A
 /// How far a move's time may be from control's clock.
 const MOVE_SKEW_MS: u64 = 10 * 60 * 1000;
 
-/// *Move to…* on a machine (#100): into a team its account owns, or back
-/// to the account. A device of the account signs it; the daemon checks.
+/// *Move to…* on a machine (#100): its own account moves it into a team
+/// it's in, between them, or back to the account (#332: members too).
+/// A device of the account signs it; the daemon checks. A team's owners
+/// may also take a member's machine out, signed by one of their devices,
+/// which the daemon checks against the roster.
 pub async fn move_daemon(
     State(app): State<Arc<App>>,
     s: Session,
     Path(id): Path<String>,
     Json(m): Json<illogical_e2e::team::Move>,
 ) -> R {
-    let (owner, _) = app.db.daemon_row(&id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such machine"))?;
-    if owner != s.account {
-        return Err(err(StatusCode::FORBIDDEN, "only the machine's own account moves it"));
-    }
-    // Owners of the team it leaves and the team it joins.
+    let (owner, d) = app.db.daemon_row(&id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such machine"))?;
     let now = app.db.daemon_team(&id)?;
-    if let Some(t) = &now
-        && m.team.as_ref().map(|p| &p.team) != Some(t)
-    {
-        owned_team(&app, &s.account, t, "only the team's owners take its machines out")?;
+    if owner != s.account {
+        let Some(t) = now.as_ref().filter(|_| m.team.is_none()) else {
+            return Err(err(StatusCode::FORBIDDEN, "only the machine's own account moves it"));
+        };
+        in_team(&app, &s.account, t, true, "only the machine's own account and the team's owners take it out")?;
+        if !crate::teams::has_feature(&app.db.daemon_features(&id)?, crate::teams::OWNER_MOVES) {
+            return Err(err(
+                StatusCode::CONFLICT,
+                &format!(
+                    "{} runs an older illogical: its owner updates it, then the team's owners can take it out",
+                    d.name
+                ),
+            ));
+        }
     }
     let pin = match &m.team {
-        Some(p) => Some(owned_team(&app, &s.account, &p.team, "only the team's owners add its machines")?),
+        Some(p) => Some(in_team(&app, &s.account, &p.team, false, "only the team's members add machines to it")?),
         None => None,
     };
     if pin != m.team {
@@ -628,8 +643,7 @@ pub async fn move_daemon(
     if let Some(p) = &m.team
         && now.as_ref() != Some(&p.team)
     {
-        let name = app.db.daemon_row(&id)?.map(|(_, d)| d.name).unwrap_or_default();
-        can_follow(&app, &p.team, &app.db.daemon_features(&id)?, &name)?;
+        can_follow(&app, &p.team, &app.db.daemon_features(&id)?, &d.name)?;
     }
     let last = app
         .db

@@ -995,28 +995,35 @@ export class ControlSession {
     return j;
   }
 
-  /** Approve a daemon into this account, or into `team` (one I own): this
+  /** Teams I can put my machines in (#332): any I'm in, but only those I
+   * own while they're locked. */
+  addableTeams(): Team[] {
+    return this.teams.filter((t) => t.verified && (t.role === "owner" || !t.locked));
+  }
+
+  /** Approve a daemon into this account, or into `team` (one I'm in): this
    * device signs the team in, so control can't pick one (#100). */
   async approveJoin(code: string, c: Cert, team: string | null = null) {
     const signed: Cert = { ...c, account: this.account, approver: this.keys.id, sig: "" };
     signed.sig = await signText(this.keys, certBody(signed));
     let teamSig: string | null = null;
     if (team) {
-      const t = this.teams.find((x) => x.team === team && x.role === "owner" && x.verified);
-      if (!t) throw new Error("only the team's owners add its machines");
+      const t = this.addableTeams().find((x) => x.team === team);
+      if (!t) throw new Error("only the team's members add machines to it");
       teamSig = await signText(this.keys, teamJoinBody(c.device, t.pin));
     }
     await api(`/api/joins/${code}/approve`, { cert: signed, team, team_sig: teamSig });
     await this.refresh();
   }
 
-  /** Move a machine of this account into `team` (one I own), or back to
-   * the account (null). This device signs it for the daemon to check. */
+  /** Move a machine of this account into `team` (one I'm in), or back to
+   * the account (null). This device signs it for the daemon to check. A
+   * team's owner takes someone else's machine out of it the same way. */
   async moveDaemon(daemon: string, team: string | null) {
     let pin: TeamPin | null = null;
     if (team) {
-      const t = this.teams.find((x) => x.team === team && x.role === "owner" && x.verified);
-      if (!t) throw new Error("only the team's owners add its machines");
+      const t = this.addableTeams().find((x) => x.team === team);
+      if (!t) throw new Error("only the team's members add machines to it");
       pin = t.pin;
     }
     const at = Date.now();
