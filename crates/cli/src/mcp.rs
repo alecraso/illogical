@@ -45,14 +45,20 @@ struct Session {
 struct Bridge {
     target: Target,
     token: Option<String>,
-    /// The pane it runs in.
+    /// The pane this runs in (`$ILLOGICAL_PANE`), sent on every request so
+    /// the tools can default to it.
     pane: Option<String>,
     session: Mutex<Session>,
     out: Mutex<std::io::Stdout>,
 }
 
 pub fn run(target: Target, token: Option<String>) -> anyhow::Result<i32> {
-    let pane = std::env::var("ILLOGICAL_PANE").ok().filter(|p| p.trim().parse::<u32>().is_ok());
+    // Another daemon's panes aren't this shell's.
+    let pane = std::env::var("ILLOGICAL_PANE")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|_| matches!(target, Target::Socket(_)))
+        .map(|p| p.to_string());
     let bridge = Arc::new(Bridge {
         target,
         token,
@@ -271,6 +277,9 @@ impl Bridge {
         let auth = self.token.as_ref().map(|t| format!("Bearer {t}"));
         if let Some(a) = &auth {
             headers.push(("Authorization", a));
+        }
+        if let Some(p) = &self.pane {
+            headers.push(("X-Illogical-Pane", p));
         }
         let res = http::send(&self.target, "POST", PATH, &headers, init.as_bytes())?;
         let id = res.header("mcp-session-id").map(str::to_owned);

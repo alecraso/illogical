@@ -105,13 +105,26 @@ pub struct Caller {
     pub scope: Scope,
     /// The token it came with, for the log (`None`: the owner's own).
     pub token: Option<String>,
-    /// A full caller's pane, as `illogical mcp` in one says
-    /// (`$ILLOGICAL_PANE`, #234): where it works, by default. Not a
-    /// credential: a full caller reaches everything anyway.
+    /// The caller's own pane, which a tool uses where it's left out: an
+    /// agent block's own id, or for the others the pane `illogical mcp` says
+    /// it runs in (`x-illogical-pane`). It only fills defaults, and is no credential:
+    /// what a caller may reach is its scope's alone.
     pub pane: Option<PaneId>,
 }
 
-/// The header `illogical mcp` sends its pane in.
+impl Caller {
+    /// A caller with `scope`. An agent block is always its own pane, whatever
+    /// `from_header` says; the others take the header's, if there was one.
+    fn new(scope: Scope, token: Option<String>, from_header: Option<PaneId>) -> Self {
+        let pane = match scope {
+            Scope::Block(id) => Some(id),
+            Scope::Full | Scope::Read => from_header,
+        };
+        Caller { scope, token, pane }
+    }
+}
+
+/// The header `illogical mcp` sends its pane in (`$ILLOGICAL_PANE`).
 pub const PANE_HEADER: &str = "x-illogical-pane";
 
 /// `/mcp`, for one of the daemon's routers.
@@ -132,7 +145,7 @@ pub fn pipe_server(app: &Arc<App>) -> relay::Serve {
     let app = Arc::downgrade(app);
     Arc::new(move |id, io| {
         let Some(app) = app.upgrade() else { return };
-        let caller = Caller { scope: Scope::Block(id), token: Some(format!("%{id}")), pane: None };
+        let caller = Caller::new(Scope::Block(id), Some(format!("%{id}")), None);
         let server = McpServer { app, fallback: Some(caller) };
         tokio::spawn(async move {
             match rmcp::ServiceExt::serve(server, tokio::io::split(io)).await {
@@ -163,34 +176,30 @@ async fn authenticate(State(app): State<Arc<App>>, mut req: Request, next: Next)
             }
         }
     };
-    let mut caller = match bearer {
-        None => Caller { scope: Scope::Full, token: None, pane: None },
+    let pane = req
+        .headers()
+        .get(PANE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().trim_start_matches('%').parse::<PaneId>().ok());
+    let caller = match bearer {
+        None => Caller::new(Scope::Full, None, pane),
         // The daemon's local token: the owner, as the server already found.
-        Some(t) if app.access.is_local_token(&t) => Caller { scope: Scope::Full, token: None, pane: None },
+        Some(t) if app.access.is_local_token(&t) => Caller::new(Scope::Full, None, pane),
         Some(t) => match app.mcp.check(&t) {
             Some(Bearer::Client { name, scope }) => {
                 let scope = match scope {
                     TokenScope::Full => Scope::Full,
                     TokenScope::Read => Scope::Read,
                 };
-                Caller { scope, token: Some(name), pane: None }
+                Caller::new(scope, Some(name), pane)
             }
             Some(Bearer::Block(id)) => match app.mux.api(|r| Api::Block(id, r)).await.flatten() {
-                Some(b) if b.kind() == BlockType::Agent => {
-                    Caller { scope: Scope::Block(id), token: Some(format!("%{id}")), pane: None }
-                }
+                Some(b) if b.kind() == BlockType::Agent => Caller::new(Scope::Block(id), Some(format!("%{id}")), pane),
                 _ => return refuse(StatusCode::UNAUTHORIZED, &format!("agent block %{id} is gone; its token with it")),
             },
             None => return refuse(StatusCode::UNAUTHORIZED, "unknown or revoked MCP token"),
         },
     };
-    if caller.scope == Scope::Full {
-        caller.pane = req
-            .headers()
-            .get(PANE_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().trim_start_matches('%').parse().ok());
-    }
     req.extensions_mut().insert(caller);
     next.run(req).await
 }
@@ -210,7 +219,7 @@ impl McpServer {
             .and_then(|p| p.extensions.get::<Caller>().cloned())
             .or_else(|| self.fallback.clone())
             // Never reached through `/mcp`; the least, to be safe.
-            .unwrap_or(Caller { scope: Scope::Read, token: Some("unknown".into()), pane: None })
+            .unwrap_or(Caller::new(Scope::Read, Some("unknown".into()), None))
     }
 }
 

@@ -73,8 +73,17 @@ type Session = RunningService<RoleClient, Client>;
 /// `illogical mcp` against the daemon's socket, as Claude Code or Codex
 /// would start it.
 async fn bridge(d: &Daemon, client: Client) -> Session {
+    bridge_in(d, client, None).await
+}
+
+/// The same, started from a terminal pane (`$ILLOGICAL_PANE`), or from
+/// none: not the pane this test runs in, if it runs in one.
+async fn bridge_in(d: &Daemon, client: Client, pane: Option<u64>) -> Session {
     let mut cmd = tokio::process::Command::new(cli_bin());
     cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE");
+    if let Some(p) = pane {
+        cmd.env("ILLOGICAL_PANE", p.to_string());
+    }
     client.serve(TokioChildProcess::new(cmd).unwrap()).await.expect("connecting through illogical mcp")
 }
 
@@ -747,6 +756,99 @@ fn an_agent_blocks_thread_is_its_own() {
     // Another tab's pane isn't its to post in.
     let e = agent_mcp(&d, a, "post_thread", json!({ "pane": other, "text": "hi" })).unwrap_err();
     assert!(e.contains("another tab"), "{e}");
+}
+
+/// A Claude Code in a terminal pane, through `illogical mcp`, is that pane
+/// where a call leaves one out, and `list` says which it is.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_pane_is_the_default_of_the_mcp_server_it_runs() {
+    let d = Daemon::child();
+    let mine = d.get("/api/panes")[0]["id"].as_u64().unwrap();
+    let other = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+    d.post(&format!("/api/threads/pane-{mine}"), json!({ "text": "what is this pane for?" }));
+    d.post(&format!("/api/threads/pane-{other}"), json!({ "text": "and this one?" }));
+
+    let s = bridge_in(&d, Client::named("claude-code"), Some(mine)).await;
+    let r = call(&s, "read_thread", json!({})).await;
+    assert_eq!(r["messages"][0]["text"], "what is this pane for?", "{r}");
+    call(&s, "post_thread", json!({ "text": "a build pane" })).await;
+    let posted = d.get(&format!("/api/threads/pane-{mine}"));
+    assert_eq!(posted["messages"][1]["text"], "a build pane", "{posted}");
+    assert_eq!(d.get(&format!("/api/threads/pane-{other}"))["messages"].as_array().unwrap().len(), 1);
+    // Splitting "self" opens beside it, in its tab.
+    let r = call(&s, "run", json!({ "split": "self" })).await;
+    let split = r["pane"].as_u64().unwrap();
+    assert_ne!(split, mine);
+    let tab = |p: u64| d.get("/api/panes").as_array().unwrap().iter().find(|x| x["id"] == p).unwrap()["tab"].clone();
+    assert_eq!(tab(split), tab(mine), "{r}");
+    // Naming a pane still wins.
+    let r = call(&s, "read_thread", json!({ "pane": other })).await;
+    assert_eq!(r["messages"][0]["text"], "and this one?", "{r}");
+    let l = call(&s, "list", json!({})).await;
+    let you: Vec<u64> = l["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["you"] == true)
+        .map(|p| p["pane"].as_u64().unwrap())
+        .collect();
+    assert_eq!(you, [mine], "only the caller's row says you: {l}");
+    assert!(l["panes"].as_array().unwrap().iter().all(|p| p.get("you").is_none() || p["you"] == true), "{l}");
+    s.cancel().await.unwrap();
+
+    // No pane, as before: it has to say which thread.
+    let s = bridge_in(&d, Client::named("claude-code"), None).await;
+    assert!(refused(&s, "read_thread", json!({})).await.contains("which thread"));
+    assert!(refused(&s, "run", json!({ "split": "Self" })).await.contains("no pane of its own"));
+    let l = call(&s, "list", json!({})).await;
+    assert!(l["panes"].as_array().unwrap().iter().all(|p| p.get("you").is_none()), "{l}");
+    s.cancel().await.unwrap();
+
+    // A pane that isn't open resolves no better than a wrong one named.
+    let s = bridge_in(&d, Client::named("claude-code"), Some(9999)).await;
+    let by_default = refused(&s, "read_thread", json!({})).await;
+    assert_eq!(by_default, refused(&s, "read_thread", json!({ "pane": 9999 })).await);
+    s.cancel().await.unwrap();
+}
+
+/// The header only fills in a default: an agent block's token is its own
+/// pane, whatever pane the request says it is in.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_blocks_token_is_its_own_pane_whatever_the_header_says() {
+    use axum::http::{HeaderName, HeaderValue};
+    let d = Daemon::child_with(&["--wisp-token-file", "/nonexistent", "--block-listen", "127.0.0.1:0"]);
+    let other = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+    d.post(&format!("/api/threads/pane-{other}"), json!({ "text": "not for the agent" }));
+    let a = d.open("hello");
+    d.wait(a, "idle");
+    let servers = std::fs::read_dir(&d.sessions)
+        .unwrap()
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with("mcp-"))
+        .map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).unwrap()).unwrap())
+        .expect("the session's MCP servers");
+    let ours = servers.as_array().unwrap().iter().find(|s| s["name"] == "illogical").cloned().unwrap();
+    let token = ours["headers"][0]["value"].as_str().unwrap().trim_start_matches("Bearer ").to_owned();
+
+    let mut config =
+        StreamableHttpClientTransportConfig::with_uri(format!("http://127.0.0.1:{}/mcp", d.port)).auth_header(token);
+    config
+        .custom_headers
+        .insert(HeaderName::from_static("x-illogical-pane"), HeaderValue::from_str(&other.to_string()).unwrap());
+    let s = Client::named("claude-code").serve(StreamableHttpClientTransport::from_config(config)).await.unwrap();
+    call(&s, "post_thread", json!({ "text": "from the agent" })).await;
+    assert_eq!(d.get(&format!("/api/threads/pane-{a}"))["messages"][0]["text"], "from the agent");
+    assert_eq!(d.get(&format!("/api/threads/pane-{other}"))["messages"].as_array().unwrap().len(), 1);
+    let l = call(&s, "list", json!({})).await;
+    let you: Vec<u64> = l["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["you"] == true)
+        .map(|p| p["pane"].as_u64().unwrap())
+        .collect();
+    assert_eq!(you, [a], "{l}");
+    s.cancel().await.unwrap();
 }
 
 // ---------------------------------------------------------------- #234
