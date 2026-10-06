@@ -202,8 +202,13 @@ desktop-macos arch="" *tauri_args="":
     fi
     mkdir -p binaries
     for b in illogicald illogical; do install -m 755 "$src/$b" "binaries/$b-$t"; done
+    # The bundler runs `xattr -crs` from PATH: pyenv's shim (Python's
+    # xattr, no -c or -r) can come first and fail it (#467). Only the
+    # system xattr goes first; the rest of PATH stays as it was.
+    sysbin=$(mktemp -d); trap 'rm -rf "$sysbin"' EXIT
+    ln -s /usr/bin/xattr "$sysbin/xattr"
     # ${flags[@]+…}: macOS bash 3.2 calls an empty array unbound.
-    cargo tauri build --bundles app ${flags[@]+"${flags[@]}"} {{tauri_args}}
+    PATH="$sysbin:$PATH" cargo tauri build --bundles app ${flags[@]+"${flags[@]}"} {{tauri_args}}
     app=$out/bundle/macos/illogical.app
     "$root/scripts/macos-sign" app "$app"
     # A zip of the app: ditto keeps its signature and symlinks.
