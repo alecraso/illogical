@@ -896,7 +896,9 @@ export class Field implements SwarmScene {
           break;
         }
       }
-      // Still in the way: the shortest form, nudged up or down a little.
+      // Still in the way: the shortest form, nudged up or down a little;
+      // no room even so (clusters close while they move), no name this
+      // frame rather than one over another's.
       if (!chosen) {
         const [meta, need] = variants[variants.length - (needText ? 2 : 1)];
         for (let k = 1; k <= 8 && !chosen; k++) {
@@ -908,9 +910,8 @@ export class Field implements SwarmScene {
             }
           }
         }
-        chosen ??= make("", "", 0);
       }
-      placed.push(chosen);
+      if (chosen) placed.push(chosen);
     }
     return placed;
   }

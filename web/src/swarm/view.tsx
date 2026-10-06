@@ -258,8 +258,9 @@ export function SwarmView({
       if (!p || !r || r.kind !== "ask" || reasonOf(p)) continue;
       const a = p.info.answered;
       // Worth keeping a card for: someone else answered, or the agent can
-      // take a follow-up.
-      const worth = a && (a.who !== fleet.meOn(p.host) || p.info.inbox || p.info.type === "agent");
+      // take a follow-up. An agent in a terminal waits on its inbox only
+      // once it stops, maybe after this update: its box shows then.
+      const worth = a && (a.who !== fleet.meOn(p.host) || p.info.inbox || p.info.type === "agent" || p.info.kind === "agent");
       if (a && worth && (!r.ask || a.id === r.ask.id) && !answered.some((d) => d.key === key && d.answered.at_ms === a.at_ms)) {
         next.push({ key, pane: p, answered: a, until: now + ANSWERED_MS });
       }
