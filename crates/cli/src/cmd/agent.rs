@@ -2,7 +2,7 @@
 
 use super::Ctx;
 use crate::http::request;
-use crate::util::{Pane, REMOTE, env_pane, print_json};
+use crate::util::{Pane, REMOTE, absolute, env_pane, print_json};
 use anyhow::Context;
 use serde_json::json;
 
@@ -157,12 +157,16 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
             }
             // A VM, or another daemon's machine, has none of this host's
             // directories.
-            let cwd = if vm || machine.is_some() || REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
-                cwd
-            } else {
-                cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()))
-            };
+            let here = !(vm || machine.is_some() || REMOTE.load(std::sync::atomic::Ordering::Relaxed));
+            let cwd =
+                if here { cwd.or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string())) } else { cwd };
             config["cwd"] = json!(cwd);
+            // #379: Claude Code logs in as whoever ran this, not as the
+            // daemon's default login ("" says this has none).
+            if here && fountain.is_none() && !codex {
+                let dir = std::env::var("CLAUDE_CONFIG_DIR").ok().filter(|d| !d.is_empty());
+                config["claude_config_dir"] = json!(dir.map(|d| absolute(&d)).transpose()?.unwrap_or_default());
+            }
             config["model"] = json!(model);
             if !mcp.is_empty() {
                 config["mcp_servers"] = json!(mcp);

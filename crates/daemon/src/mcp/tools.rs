@@ -1422,6 +1422,13 @@ impl<'a> Call<'a> {
         }
     }
 
+    /// #379: the `CLAUDE_CONFIG_DIR` the stdio bridge sent for its client.
+    fn claude_config_dir(&self) -> Option<String> {
+        let parts = self.ctx.extensions.get::<axum::http::request::Parts>()?;
+        let d = parts.headers.get(illogical_proto::CLAUDE_CONFIG_DIR_HEADER)?.to_str().ok()?.trim();
+        (!d.is_empty()).then(|| d.to_owned())
+    }
+
     /// The agent block whose token this is: what confines a caller.
     fn me(&self) -> Option<PaneId> {
         match self.caller.scope {
@@ -2867,6 +2874,16 @@ impl<'a> Call<'a> {
         }
         if a.user_settings {
             config["user_settings"] = json!(true);
+        }
+        // #379: Claude Code's login is the caller's (`illogical mcp` says
+        // its client's directory), not the daemon's default one. Without
+        // it, a block beside an agent or a pane takes theirs (the mux).
+        if matches!(a.agent, AgentKind::Claude | AgentKind::Acp)
+            && !a.vm
+            && host.is_none()
+            && let Some(d) = self.claude_config_dir()
+        {
+            config["claude_config_dir"] = json!(d);
         }
         let req = OpenRequest {
             kind: BlockType::Agent,

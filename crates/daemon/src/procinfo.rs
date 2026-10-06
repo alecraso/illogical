@@ -36,6 +36,26 @@ pub fn argv(pid: u32) -> Option<Vec<String>> {
     imp::argv(pid).map(|raw| raw.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect())
 }
 
+/// One variable of a process's environment as it started (#379: a pane's
+/// `CLAUDE_CONFIG_DIR`). Linux only (/proc, the user's own processes):
+/// macOS no longer shows another process's environment, and Windows isn't
+/// asked.
+pub fn env_var(pid: u32, name: &str) -> Option<String> {
+    #[cfg(unix)]
+    {
+        let want = format!("{name}=");
+        imp::environ(pid)?
+            .iter()
+            .rev()
+            .find_map(|kv| kv.strip_prefix(want.as_bytes()).map(|v| String::from_utf8_lossy(v).into_owned()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, name);
+        None
+    }
+}
+
 /// A process's short name (`comm`).
 pub fn comm(pid: u32) -> Option<String> {
     imp::comm(pid)
@@ -136,6 +156,11 @@ mod imp {
 
     pub fn argv(pid: u32) -> Option<Vec<Vec<u8>>> {
         let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        Some(raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(<[u8]>::to_vec).collect())
+    }
+
+    pub fn environ(pid: u32) -> Option<Vec<Vec<u8>>> {
+        let raw = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
         Some(raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(<[u8]>::to_vec).collect())
     }
 
@@ -268,6 +293,12 @@ mod imp {
             args.push(a.to_vec());
         }
         Some(args.into_iter().filter(|a| !a.is_empty()).collect())
+    }
+
+    /// macOS 26's `KERN_PROCARGS2` has no environment for another process,
+    /// the user's own included (`ps -E` shows none either).
+    pub fn environ(_pid: u32) -> Option<Vec<Vec<u8>>> {
+        None
     }
 
     pub fn comm(pid: u32) -> Option<String> {
@@ -724,7 +755,12 @@ mod tests {
 
     #[test]
     fn argv_of_a_child() {
-        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .env("ILLOGICAL_PROCINFO_TEST", "/a dir/x")
+            .env_remove("ILLOGICAL_PROCINFO_ABSENT")
+            .spawn()
+            .unwrap();
         let pid = child.id();
         // Until it execs, the child is still a copy of us.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -733,6 +769,11 @@ mod tests {
         }
         assert_eq!(argv(pid).unwrap(), ["sleep", "30"]);
         assert_eq!(comm(pid).as_deref(), Some("sleep"));
+        // #379: one variable of its environment, and none it hasn't.
+        #[cfg(target_os = "linux")]
+        assert_eq!(env_var(pid, "ILLOGICAL_PROCINFO_TEST").as_deref(), Some("/a dir/x"));
+        assert_eq!(env_var(pid, "ILLOGICAL_PROCINFO_ABSENT"), None);
+        assert_eq!(env_var(pid, "ILLOGICAL_PROCINFO"), None, "the whole name");
         child.kill().unwrap();
         child.wait().unwrap();
         // Reaped: gone, and waiting returns at once.

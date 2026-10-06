@@ -21,6 +21,30 @@ use serde_json::{Value, json};
 pub const CLAUDE_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.85.0";
 pub const CODEX_ACP: &str = "@agentclientprotocol/codex-acp@2.1.0";
 
+/// Where Claude Code keeps its login and sessions (#379).
+pub const CLAUDE_CONFIG_DIR: &str = "CLAUDE_CONFIG_DIR";
+
+/// #379: which login a Claude Code with this environment uses, said when a
+/// turn fails on authentication, with how to log in to that one. Names
+/// only: never a credential's value.
+pub fn login_hint(env: &[(String, String)]) -> String {
+    let get = |k: &str| env.iter().rev().find(|(e, _)| e == k).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty());
+    let key =
+        ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"].into_iter().find(|k| get(k).is_some());
+    let mut out = match get(CLAUDE_CONFIG_DIR) {
+        Some(dir) => format!(
+            "It used the login in CLAUDE_CONFIG_DIR={dir}: to log in to that one, run `CLAUDE_CONFIG_DIR={dir} claude`, then /login."
+        ),
+        None => "It used the default login (no CLAUDE_CONFIG_DIR): to log in to that one, run \
+                 `env -u CLAUDE_CONFIG_DIR claude`, then /login."
+            .into(),
+    };
+    if let Some(k) = key {
+        out.push_str(&format!(" Its environment also has {k}, which Claude Code may use instead."));
+    }
+    out
+}
+
 /// The parent Claude Code session's variables, which would make the
 /// adapter's Claude Code think it is nested inside another one.
 pub const CLAUDE_ENV_REMOVE: &[&str] = &[
@@ -90,6 +114,12 @@ pub struct Def {
     /// mode, `CLAUDE.md`) but none of their hooks.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub user_settings: bool,
+    /// #379: the `CLAUDE_CONFIG_DIR` of whoever started it (the CLI's, the
+    /// MCP bridge's, the pane's), so its Claude Code uses their login, not
+    /// the daemon's default one. A path, not a credential: it's kept, and
+    /// a restarted daemon starts the adapter with it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_config_dir: Option<String>,
 }
 
 /// How to start the agent server.
@@ -153,6 +183,9 @@ impl Def {
             _ if self.user_settings && self.agent != Kind::Claude => {
                 Err("user_settings is Claude Code's (agent: claude)".into())
             }
+            Kind::Codex | Kind::Fountain if self.claude_config_dir.is_some() => {
+                Err("claude_config_dir is Claude Code's (agent: claude, or acp running its adapter)".into())
+            }
             Kind::Fountain if self.permission_mode.is_some() => {
                 Err("a Fountain agent takes permission, not permission_mode".into())
             }
@@ -209,6 +242,11 @@ impl Def {
         }
         if !self.command.is_empty() {
             l.argv = self.command.clone();
+        }
+        // #379: a VM's Claude Code logs in with the token it's given, not
+        // with a directory of this host's.
+        if let Some(dir) = self.claude_config_dir.as_ref().filter(|d| !vm && !d.is_empty()) {
+            l.env.push((CLAUDE_CONFIG_DIR.into(), dir.clone()));
         }
         Ok(l)
     }
@@ -338,6 +376,37 @@ mod tests {
         assert!(bare["claudeCode"]["options"].get("model").is_none());
         assert!(Def { agent: Kind::Codex, as_fountain: Some("x".into()), ..Default::default() }.check().is_err());
         assert!(Def { as_fountain: Some(" ".into()), ..Default::default() }.check().is_err());
+    }
+
+    #[test]
+    fn a_callers_login_goes_to_a_local_claude_only() {
+        // #379.
+        let home = Path::new("/nonexistent-home");
+        let def = Def { claude_config_dir: Some("/u/.claude-two".into()), ..Default::default() };
+        let env = vec![(CLAUDE_CONFIG_DIR.to_owned(), "/u/.claude-two".to_owned())];
+        assert_eq!(def.launch(home, false).unwrap().env, env);
+        assert!(def.launch(home, true).unwrap().env.is_empty(), "a VM logs in with its token");
+        let acp = Def { agent: Kind::Acp, command: vec!["claude-agent-acp".into()], ..def.clone() };
+        assert_eq!(acp.launch(home, false).unwrap().env, env);
+        assert!(Def { agent: Kind::Codex, ..def.clone() }.check().is_err());
+        assert!(Def::default().launch(home, false).unwrap().env.is_empty());
+    }
+
+    #[test]
+    fn a_login_hint_names_the_login_and_never_a_secret() {
+        let e = |kv: &[(&str, &str)]| kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
+        let h = login_hint(&e(&[("CLAUDE_CONFIG_DIR", "/u/two")]));
+        assert_eq!(
+            h,
+            "It used the login in CLAUDE_CONFIG_DIR=/u/two: to log in to that one, run `CLAUDE_CONFIG_DIR=/u/two claude`, then /login."
+        );
+        let h = login_hint(&e(&[("CLAUDE_CONFIG_DIR", ""), ("ANTHROPIC_API_KEY", "sk-secret")]));
+        assert!(h.starts_with("It used the default login (no CLAUDE_CONFIG_DIR)"), "{h}");
+        assert!(
+            h.contains("`env -u CLAUDE_CONFIG_DIR claude`, then /login.") && h.contains("ANTHROPIC_API_KEY"),
+            "{h}"
+        );
+        assert!(!h.contains("sk-secret"), "{h}");
     }
 
     #[test]

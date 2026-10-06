@@ -1,5 +1,6 @@
 //! Starting things: running a command in a pane, opening a block, guest blocks,
-//! and the defaults an editor or a viewer block gets from the pane it opens beside.
+//! and the defaults an editor or a viewer block gets from the pane it opens beside
+//! (and an agent block, its login).
 
 use super::{Daemon, config::Join};
 use crate::acl::Principal;
@@ -168,6 +169,7 @@ impl Daemon {
         match req.kind {
             BlockType::Editor => self.editor_defaults(&mut req, from),
             BlockType::Diff | BlockType::File => self.view_defaults(&mut req, from),
+            BlockType::Agent => self.agent_login(&mut req, from),
             _ => {}
         }
         // A pane on another daemon (#17): only its place is here, never on
@@ -265,6 +267,43 @@ impl Daemon {
                 req.config = serde_json::json!({});
             }
             req.config["path"] = path.into();
+        }
+    }
+
+    /// #379: a Claude Code block started beside a pane uses that pane's
+    /// login, unless the request said whose (the CLI and the MCP bridge
+    /// send their own `CLAUDE_CONFIG_DIR`): an agent block's
+    /// `claude_config_dir`, or a terminal's `CLAUDE_CONFIG_DIR`, read from
+    /// its foreground program's environment (`CLAUDE_CONFIG_DIR=… claude`),
+    /// else its shell's. Only that variable is read. None found: the
+    /// daemon's environment decides, as before.
+    fn agent_login(&self, req: &mut OpenRequest, from: Option<PaneId>) {
+        let c = &req.config;
+        let claude = matches!(c["agent"].as_str(), None | Some("claude"));
+        // An opened conversation (M33) is in the daemon's own directory.
+        let opened = !c["import"].is_null() || !c["session_id"].is_null();
+        if req.vm || req.host.is_some() || !claude || opened || !c["claude_config_dir"].is_null() {
+            return;
+        }
+        let Some(beside) = req.split.or(from) else { return };
+        let dir = if let Some(b) = self.blocks.get(&beside) {
+            (b.kind() == BlockType::Agent)
+                .then(|| b.config()["claude_config_dir"].as_str().map(str::to_owned))
+                .flatten()
+        } else if self.meta.get(&beside).is_some_and(|m| m.host.is_some()) {
+            None
+        } else {
+            self.panes.get(&beside).and_then(|h| h.pid_now()).and_then(|shell| {
+                let var = crate::agent::defs::CLAUDE_CONFIG_DIR;
+                let fg = crate::procinfo::foreground(shell).filter(|p| *p != shell);
+                fg.and_then(|p| crate::procinfo::env_var(p, var)).or_else(|| crate::procinfo::env_var(shell, var))
+            })
+        };
+        if let Some(d) = dir.filter(|d| !d.is_empty()) {
+            if !req.config.is_object() {
+                req.config = serde_json::json!({});
+            }
+            req.config["claude_config_dir"] = d.into();
         }
     }
 

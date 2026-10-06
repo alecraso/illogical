@@ -48,6 +48,9 @@ struct Bridge {
     /// The pane this runs in (`$ILLOGICAL_PANE`), sent on every request so
     /// the tools can default to it.
     pane: Option<String>,
+    /// #379: the client's `CLAUDE_CONFIG_DIR`, for the agents it starts
+    /// here (a directory of this host's, so never sent anywhere else).
+    claude_config_dir: Option<String>,
     session: Mutex<Session>,
     out: Mutex<std::io::Stdout>,
 }
@@ -59,10 +62,16 @@ pub fn run(target: Target, token: Option<String>) -> anyhow::Result<i32> {
         .and_then(|v| v.trim().parse::<u32>().ok())
         .filter(|_| matches!(target, Target::Socket(_)))
         .map(|p| p.to_string());
+    // #379: nor is this host's Claude Code login another daemon's.
+    let claude_config_dir = matches!(target, Target::Socket(_))
+        .then(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
+        .flatten()
+        .filter(|d| !d.is_empty() && d.chars().all(|c| c == ' ' || c.is_ascii_graphic()));
     let bridge = Arc::new(Bridge {
         target,
         token,
         pane,
+        claude_config_dir,
         session: Mutex::new(Session::default()),
         out: Mutex::new(std::io::stdout()),
     });
@@ -199,6 +208,9 @@ impl Bridge {
         }
         if let Some(p) = &self.pane {
             headers.push(("X-Illogical-Pane", p));
+        }
+        if let Some(d) = &self.claude_config_dir {
+            headers.push((illogical_proto::CLAUDE_CONFIG_DIR_HEADER, d));
         }
         let res = http::send(&self.target, "POST", PATH, &headers, line.as_bytes())?;
         let status = res.status;

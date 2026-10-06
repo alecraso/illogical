@@ -323,6 +323,134 @@ fn an_agent_that_dies_says_so_and_starts_again_on_send() {
     assert!(err.contains("VM"), "{err}");
 }
 
+/// The CLI, built for its `illogical agent`.
+fn cli_bin() -> std::path::PathBuf {
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    let status = std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    assert!(status.success(), "building the CLI");
+    bin
+}
+
+/// What the fake adapter said `env NAME` was, on its last turn.
+fn env_said(d: &Daemon, id: u64) -> String {
+    entries(&d.state(id))
+        .iter()
+        .rev()
+        .find_map(|e| e["text"].as_str().and_then(|t| t.strip_prefix("ENV ")).map(str::to_owned))
+        .unwrap_or_else(|| panic!("no ENV line: {}", d.state(id)))
+}
+
+/// #379: a block's adapter logs in as whoever started it: the CLI's
+/// `CLAUDE_CONFIG_DIR`, a pane's, an agent's (its `start_agent`), kept
+/// across a restart; and a failed login says which one, and how to log in.
+#[test]
+fn a_block_uses_the_login_of_whoever_started_it() {
+    let mut d = Daemon::child();
+    let theirs = d.sessions.join("their-claude");
+    let cmd = format!("python3 {}", fake());
+    let cli = |dir: Option<&std::path::Path>| {
+        let mut c = std::process::Command::new(cli_bin());
+        c.arg("--socket").arg(d.sock()).args(["agent", "--acp", &cmd, "--cwd"]).arg(&d.sessions);
+        c.args(["env", "CLAUDE_CONFIG_DIR"]).env_remove("ILLOGICAL_PANE").env_remove("CLAUDE_CONFIG_DIR");
+        if let Some(dir) = dir {
+            c.env("CLAUDE_CONFIG_DIR", dir);
+        }
+        let out = c.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().trim_start_matches('%').parse::<u64>().unwrap()
+    };
+
+    // `illogical agent` from a shell with its own login, and from one without.
+    let a = cli(Some(&theirs));
+    d.wait(a, "idle");
+    assert_eq!(env_said(&d, a), format!("CLAUDE_CONFIG_DIR={}", theirs.display()));
+    let plain = cli(None);
+    d.wait(plain, "idle");
+    assert_eq!(env_said(&d, plain), "CLAUDE_CONFIG_DIR unset", "the daemon's default");
+
+    // *Start an agent…* beside a pane running `CLAUDE_CONFIG_DIR=… claude`
+    // (a program the shell started with it; the shell has none). Linux
+    // only: macOS shows no other process's environment.
+    let sessions = d.sessions.clone();
+    let claude =
+        |prompt: &str| json!({ "agent": "claude", "command": ["python3", fake()], "cwd": sessions, "prompt": prompt });
+    if cfg!(target_os = "linux") {
+        let pane_dir = d.sessions.join("pane-claude");
+        let pane = d.post("/api/run", json!({}))["pane"].as_u64().unwrap();
+        let marker = "61.379";
+        d.post(
+            &format!("/api/panes/{pane}/send"),
+            json!({ "text": format!("CLAUDE_CONFIG_DIR={} sleep {marker}", pane_dir.display()), "enter": true }),
+        );
+        d.wait_for("the pane's program", || {
+            let ps = std::process::Command::new("ps").args(["-A", "-o", "args="]).output().unwrap();
+            String::from_utf8_lossy(&ps.stdout).lines().any(|l| l.trim() == format!("sleep {marker}"))
+        });
+        let req =
+            json!({ "type": "agent", "config": claude("env CLAUDE_CONFIG_DIR"), "split": pane, "from_pane": pane });
+        let b = d.open_with(req);
+        d.wait(b, "idle");
+        assert_eq!(env_said(&d, b), format!("CLAUDE_CONFIG_DIR={}", pane_dir.display()));
+    }
+
+    // An agent that starts another hands it its login (start_agent beside it).
+    let mut cfg = claude("env CLAUDE_CONFIG_DIR");
+    cfg["claude_config_dir"] = json!(theirs);
+    let lead = d.open_with(json!({ "type": "agent", "config": cfg }));
+    d.wait(lead, "idle");
+    assert_eq!(env_said(&d, lead), format!("CLAUDE_CONFIG_DIR={}", theirs.display()));
+    let args = json!({ "agent": "claude", "command": cmd, "prompt": "env CLAUDE_CONFIG_DIR" });
+    d.call(lead, "send", json!({ "text": format!("mcp start_agent {args}") }));
+    d.wait(lead, "idle");
+    let said = entries(&d.state(lead))
+        .iter()
+        .rev()
+        .find_map(|e| e["text"].as_str().and_then(|t| t.strip_prefix("MCP ")).map(str::to_owned))
+        .unwrap();
+    let r: Value = serde_json::from_str(&said).unwrap();
+    let started = r["structuredContent"]["block"].as_u64().unwrap_or_else(|| panic!("{r}"));
+    d.wait(started, "idle");
+    assert_eq!(env_said(&d, started), format!("CLAUDE_CONFIG_DIR={}", theirs.display()));
+
+    // A restarted daemon starts it with the same login.
+    d.stop();
+    d.start();
+    d.wait_for("the block", || d.raw("GET", &format!("/api/blocks/{a}"), None).0 == 200);
+    d.wait_for("the session", || d.state(a)["status"] == "ready");
+    d.call(a, "send", json!({ "text": "env CLAUDE_CONFIG_DIR" }));
+    d.wait(a, "idle");
+    assert_eq!(env_said(&d, a), format!("CLAUDE_CONFIG_DIR={}", theirs.display()));
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(d.state.join("layout.json")).unwrap()).unwrap();
+    assert_eq!(saved["panes"][a.to_string()]["config"]["claude_config_dir"], json!(theirs), "kept, as a path");
+    assert!(saved["panes"][plain.to_string()]["config"].get("claude_config_dir").is_none(), "{saved}");
+
+    // A failed login says whose, and how to log in to it.
+    let mut cfg = claude("expired");
+    cfg["claude_config_dir"] = json!(theirs);
+    let e = d.open_with(json!({ "type": "agent", "config": cfg }));
+    d.wait(e, "idle");
+    let s = d.state(e);
+    let note = entries(&s)
+        .iter()
+        .rev()
+        .find_map(|e| e["text"].as_str().filter(|t| t.starts_with("The turn failed")).map(str::to_owned))
+        .unwrap();
+    let dir = theirs.display();
+    assert!(note.starts_with("The turn failed: Authentication required. "), "{note}");
+    assert!(note.contains(&format!("It used the login in CLAUDE_CONFIG_DIR={dir}")), "{note}");
+    assert!(note.contains(&format!("`CLAUDE_CONFIG_DIR={dir} claude`, then /login")), "{note}");
+    assert!(s["error"].as_str().unwrap().contains(&format!("CLAUDE_CONFIG_DIR={dir}")), "the card's error too: {s}");
+    let e = d.open_with(json!({ "type": "agent", "config": claude("expired") }));
+    d.wait(e, "idle");
+    let text = d.raw("GET", &format!("/api/panes/{e}/capture"), None).1;
+    assert!(text.contains("It used the default login (no CLAUDE_CONFIG_DIR)"), "{text}");
+    assert!(text.contains("`env -u CLAUDE_CONFIG_DIR claude`, then /login"), "{text}");
+    // Another agent's failure is left as it was.
+    let other = d.open_with(json!({ "type": "agent", "config": { "agent": "acp", "command": ["python3", fake()], "cwd": d.sessions, "prompt": "expired" } }));
+    d.wait(other, "idle");
+    assert_eq!(d.state(other)["error"], "Authentication required");
+}
+
 /// Under systemd: a restart with an approval pending. The agent server
 /// lives through it (its scope; its pipes in the FD store), and the
 /// approval, answered to the new daemon, still works.

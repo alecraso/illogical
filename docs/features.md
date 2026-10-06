@@ -230,6 +230,17 @@ stopping, crashing, or the machine rebooting:
     can't start one in `bypassPermissions`). `--user-settings` gives Claude
     Code your settings (allow and deny lists, default mode, `CLAUDE.md`)
     with every hook off, as an opened conversation has.
+  - Claude Code logs in as whoever started the block.
+    `illogical agent` and MCP `start_agent` (through `illogical mcp`)
+    pass on their `CLAUDE_CONFIG_DIR`, an agent's `start_agent` passes its
+    own, and *Start an agent…* beside a terminal takes the one its program
+    runs with (Linux only: macOS doesn't show another process's
+    environment). Otherwise it's the daemon's, from its environment or
+    your login shell's. The directory is kept in the block's config, so a
+    restart keeps it; keys and tokens in the caller's environment aren't
+    passed on. A turn that fails on logging in says which login the block
+    used and how to log in to it: `CLAUDE_CONFIG_DIR=… claude` (or `env -u
+    CLAUDE_CONFIG_DIR claude` for the default one), then `/login`.
   - The block's log is the JSON-RPC stream; `capture` is the transcript as
     Markdown, `history` lists the agent's commands and turns, `search`
     covers what agents said and ran.

@@ -142,6 +142,11 @@ pub struct HandTool {
     pub schema: serde_json::Value,
 }
 
+/// #379: the header `illogical mcp` sends with the `CLAUDE_CONFIG_DIR` of
+/// the client that started it (on the local socket only), so an agent it
+/// starts uses that client's Claude Code login.
+pub const CLAUDE_CONFIG_DIR_HEADER: &str = "Illogical-Claude-Config-Dir";
+
 /// The most people in one huddle: every member sends to every other
 /// (S30: CPU and how it sounds are the limit, not bandwidth).
 pub const CALL_MAX: usize = 5;

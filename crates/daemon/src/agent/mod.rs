@@ -345,6 +345,9 @@ struct Inner {
     /// #128: illogical's own MCP token, when it goes by reference (a local
     /// Claude Code), to keep out of logs too.
     token: Option<String>,
+    /// #379: which login its Claude Code uses and how to log in to it,
+    /// said when a turn fails on authentication.
+    login: Option<String>,
 }
 
 enum Msg {
@@ -411,6 +414,7 @@ impl Inner {
             wearing: false,
             awaiting_shell: false,
             token: None,
+            login: None,
         }
     }
 
@@ -531,6 +535,7 @@ impl Inner {
                 }
             }
             "queue_clear" => self.queue.clear(),
+            "login" => self.login = e["login"].as_str().map(str::to_owned),
             "spawn" => {
                 // A new server: nothing outstanding carries over.
                 if self.prompt_id.is_some() || !self.pending.is_empty() || !self.asks.is_empty() {
@@ -730,6 +735,11 @@ impl Inner {
             (Some(id), None) => {
                 let Some(purpose) = id.as_u64().and_then(|id| self.ours.remove(&id)) else { return fx };
                 let error = m.get("error").map(|e| e["message"].as_str().unwrap_or("error").to_owned());
+                // #379: say whose login failed, and how to log in to it.
+                let login = match (m.get("error"), &self.login) {
+                    (Some(e), Some(l)) if auth_failed(e) => format!(". {l} Then send the prompt again."),
+                    _ => String::new(),
+                };
                 let r = &m["result"];
                 match (purpose, error) {
                     (Purpose::Init, None) => {
@@ -802,8 +812,8 @@ impl Inner {
                             }
                         }
                         if let Some(e) = result {
-                            self.t.note(format!("The turn failed: {e}"), at);
-                            self.error = Some(e);
+                            self.t.note(format!("The turn failed: {e}{login}"), at);
+                            self.error = Some(format!("{e}{login}"));
                         }
                         self.last_stop = Some(stop);
                         // Requests the turn left open are moot.
@@ -816,8 +826,8 @@ impl Inner {
                         self.error = Some(format!("permission mode {mode}: {e}"));
                     }
                     (Purpose::Init | Purpose::New, Some(e)) => {
-                        self.t.note(format!("The agent couldn't start a session: {e}"), at);
-                        self.error = Some(e);
+                        self.t.note(format!("The agent couldn't start a session: {e}{login}"), at);
+                        self.error = Some(format!("{e}{login}"));
                     }
                     (_, Some(e)) => warn!(error = e, "agent request failed"),
                     _ => {}
@@ -1099,7 +1109,9 @@ impl Agent {
                 *m = json!({ "name": name, "command": command, "args": argv, "env": [] });
             }
         }
-        let cfg: Config = serde_json::from_value(config).map_err(|e| format!("agent config: {e}"))?;
+        let mut cfg: Config = serde_json::from_value(config).map_err(|e| format!("agent config: {e}"))?;
+        // #379: "" is the CLI saying it has none (the default login).
+        cfg.def.claude_config_dir = cfg.def.claude_config_dir.take().filter(|d| !d.trim().is_empty());
         cfg.def.check()?;
         let vm = ctx.sprite.is_some();
         if vm && ctx.provider.is_none() {
@@ -1363,6 +1375,9 @@ impl Agent {
                     }
                 }
                 with_node_on_path(&mut env, &self.ctx.home);
+                if says_login(&inner.cfg.def) {
+                    inner.note(json!({ "e": "login", "login": local_login(&env, &launch.remove) }));
+                }
                 let spawn = link::LocalSpawn {
                     id: self.ctx.id,
                     dir: &self.ctx.dir,
@@ -1392,6 +1407,9 @@ impl Agent {
                     _ => vec![],
                 };
                 secret.extend(launch.env.iter().cloned());
+                if inner.cfg.def.agent == Kind::Claude {
+                    inner.note(json!({ "e": "login", "login": vm_login(&self.ctx) }));
+                }
                 let begin = link::VmBegin::New {
                     npm: launch.npm.map(str::to_owned),
                     cwd: inner.cfg.cwd.clone().unwrap_or_else(|| "/home/sprite".into()),
@@ -1508,6 +1526,49 @@ impl Agent {
         warn!(block = self.ctx.id, why, "agent failed to start");
         inner.note(json!({ "e": "exit", "why": format!("couldn't start: {why}"), "adapter": adapter }));
     }
+}
+
+/// #379: whether a block's failed authentication says which login it was:
+/// Claude Code's, and an ACP command that runs its adapter by hand.
+fn says_login(def: &Def) -> bool {
+    def.agent == Kind::Claude
+        || (def.agent == Kind::Acp
+            && def.command.iter().any(|w| w.rsplit('/').next().is_some_and(|n| n.starts_with("claude"))))
+}
+
+/// #379: the login a local adapter uses: what it's given over the daemon's
+/// own environment, less what's taken out.
+fn local_login(env: &[(String, String)], remove: &[String]) -> String {
+    const KEYS: [&str; 4] =
+        [defs::CLAUDE_CONFIG_DIR, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"];
+    let mut seen: Vec<(String, String)> = KEYS
+        .iter()
+        .filter(|k| !remove.iter().any(|r| r == *k))
+        .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+        .collect();
+    seen.extend(env.iter().filter(|(k, _)| KEYS.contains(&k.as_str())).cloned());
+    defs::login_hint(&seen)
+}
+
+/// #379: the login an agent in a VM uses (see [`secret_env`]).
+fn vm_login(ctx: &BlockCtx) -> String {
+    let has = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.len() > 0);
+    if has(&ctx.secrets.anthropic_key) {
+        format!("It used the API key in {}: put a working one there.", ctx.secrets.anthropic_key.display())
+    } else {
+        format!(
+            "It used the token in {}: put a fresh one from `claude setup-token` there.",
+            ctx.secrets.claude_token.display()
+        )
+    }
+}
+
+/// #379: an ACP error that is about logging in: `authRequired` (-32000),
+/// or a message that says so.
+fn auth_failed(e: &Value) -> bool {
+    let m = e["message"].as_str().unwrap_or_default().to_lowercase();
+    e["code"].as_i64() == Some(-32000)
+        || ["authenticat", "/login", "oauth", "not logged in", "invalid api key"].iter().any(|w| m.contains(w))
 }
 
 /// The credentials an agent in a VM gets in its environment: an Anthropic

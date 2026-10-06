@@ -11,6 +11,10 @@ Prompts:
   slow           streams for ~10s unless cancelled
   remember WORD  remembers WORD; "recall" says it (across processes)
   crash          exits with code 3 mid-turn
+  env NAME       says NAME from its environment ("ENV NAME=value", or
+                 "ENV NAME unset"), #379
+  expired        fails the turn as claude-agent-acp does on a stale login:
+                 authRequired (-32000), #379
   ask [one|two|preview]
                  AskUserQuestion as claude-agent-acp 0.81.2 sends it (S13):
                  a tool call, then elicitation/create with question_<n>
@@ -489,6 +493,14 @@ def prompt(mid, p):
     elif text == "crash":
         msg("bye")
         os._exit(3)
+    elif text.startswith("env "):
+        name = text[4:]
+        msg(f"ENV {name}={os.environ[name]}" if name in os.environ else f"ENV {name} unset")
+    elif text == "expired":
+        msg("Failed to authenticate: OAuth session expired and could not be refreshed")
+        save(sid, s)
+        send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
+        return
     else:
         msg("Hello! I am fake.")
     if stop != "cancelled":

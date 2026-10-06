@@ -290,6 +290,26 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
     s.cancel().await.unwrap();
 }
 
+/// #379: a Claude Code with a login of its own (`CLAUDE_CONFIG_DIR`, as a
+/// second account has) starts agents through `illogical mcp` that use that
+/// login, not the daemon's default one.
+#[tokio::test(flavor = "multi_thread")]
+async fn start_agent_gives_the_agent_its_callers_login() {
+    let d = Daemon::child();
+    let theirs = d.sessions.join("second-account");
+    let mut cmd = tokio::process::Command::new(cli_bin());
+    cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE").env("CLAUDE_CONFIG_DIR", &theirs);
+    let s = Client::named("claude-code").serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
+    let args = json!({ "agent": "acp", "command": format!("python3 {}", fake()), "prompt": "env CLAUDE_CONFIG_DIR",
+        "cwd": d.sessions });
+    let b = call(&s, "start_agent", args).await["block"].as_u64().unwrap();
+    call(&s, "wait", json!({ "pane": b, "until": "idle", "timeout": 30 })).await;
+    let t = call(&s, "read_output", json!({ "pane": b })).await;
+    let want = format!("ENV CLAUDE_CONFIG_DIR={}", theirs.display());
+    assert!(t["text"].as_str().unwrap().contains(&want), "{t}");
+    s.cancel().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_bridge_outlives_a_daemon_restart() {
     let mut d = Daemon::child();

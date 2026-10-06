@@ -127,7 +127,9 @@ impl Daemon {
     }
 
     fn builder(sessions: &std::path::Path) -> Builder {
-        illogicald!("agt").env("FAKE_ACP_DIR", sessions).wait_secs(20)
+        // #379: blocks take their login from whoever starts them; the
+        // test's own (a Claude Code running it) stays out.
+        illogicald!("agt").env("FAKE_ACP_DIR", sessions).env_remove("CLAUDE_CONFIG_DIR").wait_secs(20)
     }
 
     /// A request over TCP from a tailnet user, as `tailscale serve` hands
