@@ -84,4 +84,15 @@ test("make an account with a passkey, sign out, sign back in", async ({ page }) 
   await controlPanel(page, "account");
   await expect(page.locator("[data-passkey-name]")).toHaveText(/^Passkey from Chrome on \w+/);
   await expect(page.locator("[data-passkeys] li .dim")).toContainText("last used");
+  // With a second passkey, one can be removed, after a dialog: a
+  // double-click on Remove only opens it.
+  await page.locator("[data-add-passkey]").click();
+  await expect(page.locator("[data-passkeys] li")).toHaveCount(2);
+  await page.locator("[data-remove-passkey]").first().dblclick();
+  await new Promise((r) => setTimeout(r, 1000));
+  expect(((await page.evaluate(() => fetch("/api/me/passkeys").then((r) => r.json()))) as { passkeys: unknown[] }).passkeys).toHaveLength(2);
+  const ask = page.locator("[data-confirm-dialog]");
+  await expect(ask).toContainText("stops signing you in at once");
+  await ask.locator("[data-confirm-remove]").click();
+  await expect(page.locator("[data-passkeys] li")).toHaveCount(1);
 });

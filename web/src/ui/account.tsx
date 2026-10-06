@@ -5,6 +5,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, type ControlSession } from "../control";
 import { currentHand, lending, setLending } from "../hand";
+import { ConfirmRemove } from "./confirm";
 
 interface SessionRow {
   id: string;
@@ -75,6 +76,8 @@ export function AccountPanel({ s, close }: { s: ControlSession; close: () => voi
   const [keys, setKeys] = useState<Passkeys | null>(null);
   const [err, setErr] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
+  // The passkey whose Remove was clicked: a dialog asks.
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const load = () => {
     api<{ sessions: SessionRow[] }>("/api/me/sessions").then((r) => setSessions(r.sessions), (e: Error) => setErr(e.message));
@@ -148,24 +151,33 @@ export function AccountPanel({ s, close }: { s: ControlSession; close: () => voi
                   {k.used ? `, last used ${day(k.used)}` : ""}
                 </span>
                 <button
-                  class={confirming === k.id ? "control-revoke danger" : "control-revoke"}
+                  class="control-revoke"
                   data-remove-passkey={k.id}
                   disabled={(keys?.ways ?? 0) <= 1}
                   title={(keys?.ways ?? 0) <= 1 ? "Your only way to sign in" : undefined}
-                  onClick={() =>
-                    confirming === k.id
-                      ? act(async () => {
-                          await api(`/api/me/passkeys/${encodeURIComponent(k.id)}/remove`, {});
-                          await s.refreshMe();
-                        })
-                      : setConfirming(k.id)
-                  }
+                  onClick={() => setRemoving({ id: k.id, name: passkeyName(k, i) })}
                 >
-                  {confirming === k.id ? "Really remove?" : "Remove"}
+                  Remove
                 </button>
               </li>
             ))}
           </ul>
+          {removing ? (
+            <ConfirmRemove
+              title={`Remove ${removing.name}?`}
+              cancel={() => setRemoving(null)}
+              go={() => {
+                const id = removing.id;
+                setRemoving(null);
+                act(async () => {
+                  await api(`/api/me/passkeys/${encodeURIComponent(id)}/remove`, {});
+                  await s.refreshMe();
+                });
+              }}
+            >
+              <p>It stops signing you in at once. To use it again, add it as a new passkey.</p>
+            </ConfirmRemove>
+          ) : null}
           {s.info.passkeys ? (
             <button data-add-passkey onClick={() => act(() => s.addPasskey())}>
               Add a passkey

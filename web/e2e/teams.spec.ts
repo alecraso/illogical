@@ -426,14 +426,19 @@ test("a read-only link works logged out, and dies at expiry", async ({ browser }
 
 test("removing a member cuts them off within a second", async () => {
   await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected)).toBe(true);
-  // Remove asks first (#101).
+  // Remove asks first (#101), in a dialog: a double-click on Remove
+  // only opens it.
   const bobId = await bob.evaluate(() => window.__illogical.control!.account);
   await controlPanel(alice, "teams");
   const remove = alice.locator(`[data-remove-member="${bobId}"]`);
-  await remove.click();
-  await expect(remove).toHaveText("Really remove?");
+  await remove.dblclick();
+  await new Promise((r) => setTimeout(r, 1000));
+  expect(await bob.evaluate(() => window.__illogical.client.connected)).toBe(true);
+  await expect(alice.locator(`[data-member="${bobId}"]`)).toHaveCount(1);
+  const ask = alice.locator("[data-confirm-dialog]");
+  await expect(ask).toContainText("lose the team's machines at once");
   const t = Date.now();
-  await remove.click();
+  await ask.locator("[data-confirm-remove]").click();
   await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected), { timeout: 3000, intervals: [50] }).toBe(false);
   expect(Date.now() - t).toBeLessThan(1500);
 });

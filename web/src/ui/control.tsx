@@ -14,6 +14,7 @@ import type { PresignedInvite, ShareOffer, Team } from "../control";
 import type { TeamRole } from "../e2e/team.ts";
 import { qr, qrPath } from "./qr";
 import { AccountPanel } from "./account";
+import { ConfirmRemove } from "./confirm";
 
 export function useControl(s: ControlSession) {
   useSubscribe((fn) => s.subscribe(fn));
@@ -927,22 +928,15 @@ function MoveMachine({ s, c, team, online }: { s: ControlSession; c: Cert; team:
 
 function Devices({ s, close }: { s: ControlSession; close: () => void }) {
   const [err, setErr] = useState("");
-  const [confirming, setConfirming] = useState<string | null>(null);
+  // The machine or device whose Remove was clicked: a dialog asks.
+  const [removing, setRemoving] = useState<Cert | null>(null);
   const [renewing, setRenewing] = useState(false);
   const devices = [...s.trusted.values()].filter((c) => c.kind !== "recovery");
   const machines = devices.filter((c) => c.kind === "daemon");
   const browsers = devices.filter((c) => c.kind !== "daemon");
   const remove = (c: Cert) => (
-    <button
-      class={confirming === c.device ? "control-revoke danger" : "control-revoke"}
-      data-remove={c.device}
-      onClick={() => {
-        if (confirming !== c.device) return setConfirming(c.device);
-        setConfirming(null);
-        s.revoke(c.device).catch((e: Error) => setErr(e.message));
-      }}
-    >
-      {confirming === c.device ? "Really remove?" : "Remove"}
+    <button class="control-revoke" data-remove={c.device} onClick={() => setRemoving(c)}>
+      Remove
     </button>
   );
   const left = s.recoveryLeft;
@@ -990,11 +984,6 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
               <span class="dim">{fingerprint(c.device)}</span>
               {remove(c)}
               <MoveMachine s={s} c={c} team={d?.team ?? null} online={!!d?.online} />
-              {confirming === c.device ? (
-                <p class="dim control-explain" data-remove-explain>
-                  It's taken off your account at once; illogical keeps running on it, reachable only locally. <code>illogicald join</code> adds it back.
-                </p>
-              ) : null}
             </li>
           );
         })}
@@ -1015,7 +1004,6 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
             </span>
             <span class="dim">{fingerprint(c.device)}</span>
             {c.device !== s.keys.id ? remove(c) : <span />}
-            {confirming === c.device ? <p class="dim control-explain">It loses access at once.</p> : null}
           </li>
         ))}
       </ul>
@@ -1052,6 +1040,26 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
         <PasskeyNudge s={s} />
       )}
       {err ? <p class="control-error">{err}</p> : null}
+      {removing ? (
+        <ConfirmRemove
+          title={`Remove ${removing.name}?`}
+          cancel={() => setRemoving(null)}
+          go={() => {
+            setRemoving(null);
+            s.revoke(removing.device).catch((e: Error) => setErr(e.message));
+          }}
+        >
+          {removing.kind === "daemon" ? (
+            <p data-remove-explain>
+              It loses access at once: it's taken off your account. illogical keeps running on it, reachable only locally. To add it back, join it again with{" "}
+              <code>illogicald join</code>, which makes a new key.
+            </p>
+          ) : (
+            <p data-remove-explain>It loses access to your machines at once. To use it again, add it as a new device: it gets a new key.</p>
+          )}
+          <p class="fingerprint">{fingerprint(removing.device)}</p>
+        </ConfirmRemove>
+      ) : null}
       <div class="prompt-buttons">
         <button onClick={() => s.signOut(false)}>Sign out</button>
         <button onClick={close}>Done</button>
@@ -1327,8 +1335,10 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
   const [askFirst, setAskFirst] = useState(false);
   const [linkAsks, setLinkAsks] = useState(false);
   const [linkWhy, setLinkWhy] = useState("");
-  // Which button waits for a second click: "lock", or a member to remove.
+  // Which button waits for a second click: "lock".
   const [confirming, setConfirming] = useState<string | null>(null);
+  // The member whose Remove was clicked: a dialog asks.
+  const [removing, setRemoving] = useState<string | null>(null);
   const owner = t.role === "owner";
   // One-click links not used yet (#134), each with Cancel.
   const [unused, setUnused] = useState<PresignedInvite[]>([]);
@@ -1383,17 +1393,8 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
               <span class="dim">{roleLabel(m.role)}</span>
             )}
             {owner && m.account !== s.account ? (
-              <button
-                class={confirming === m.account ? "control-revoke danger" : "control-revoke"}
-                data-remove-member={m.account}
-                title="They lose access to the team's machines at once"
-                onClick={() => {
-                  if (confirming !== m.account) return setConfirming(m.account);
-                  setConfirming(null);
-                  act(() => s.changeTeam(t.team, (ms) => ms.filter((x) => x.account !== m.account)));
-                }}
-              >
-                {confirming === m.account ? "Really remove?" : "Remove"}
+              <button class="control-revoke" data-remove-member={m.account} title="They lose access to the team's machines at once" onClick={() => setRemoving(m.account)}>
+                Remove
               </button>
             ) : (
               <span />
@@ -1401,6 +1402,18 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
           </li>
         ))}
       </ul>
+      {removing ? (
+        <ConfirmRemove
+          title={`Remove ${t.names?.[removing] ?? t.roster.members.find((m) => m.account === removing)?.name ?? "them"} from ${t.roster.name}?`}
+          cancel={() => setRemoving(null)}
+          go={() => {
+            setRemoving(null);
+            act(() => s.changeTeam(t.team, (ms) => ms.filter((x) => x.account !== removing)));
+          }}
+        >
+          <p>They lose the team's machines at once. To come back, they need a new invite.</p>
+        </ConfirmRemove>
+      ) : null}
       {owner ? (
         <>
           <div class="control-code control-invite">
