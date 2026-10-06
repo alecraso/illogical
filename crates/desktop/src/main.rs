@@ -22,9 +22,10 @@
 //!   one running. On macOS the app's launch agent runs the bundle's copy,
 //!   which hands on to a newer one the daemon's update put in
 //!   `~/.local/bin`.
-//! - **Every key reaches the page** (S25): on macOS the menu is Edit only,
-//!   so Cmd-W, T, N and Q are the client's; on Linux GTK's F10 menu-bar key
-//!   is turned off.
+//! - **Every key reaches the page** (S25), except a Mac's own: on macOS
+//!   the app menu has Hide (Cmd-H), Hide Others and Quit (Cmd-Q, #320), and
+//!   the rest is Edit only, so Cmd-W, T, N, M and U are the client's; on
+//!   Linux GTK's F10 menu-bar key is turned off.
 //! - **Native notifications** (S25: a webview has no push): a thread
 //!   follows the daemon's state, notifies when a pane starts needing you and
 //!   no window has focus, and a click opens that pane. The needs-you count
@@ -904,15 +905,28 @@ fn main() {
         .menu(|app| {
             #[cfg(target_os = "macos")]
             {
-                // Edit only (copy, paste, select all, which WKWebView needs
-                // a menu for): Tauri's default menu takes Cmd-W/Q/H/M.
+                // The app menu, and Edit (copy, paste, select all, which
+                // WKWebView needs a menu for). Not Tauri's default menu: it
+                // takes Cmd-W and M, which are the page's. Cmd-Q, H and
+                // Option-H are the Mac's (#320): the page doesn't use them,
+                // and the terminal never gets Cmd keys. Quitting needs no
+                // confirming: the panes are the daemon's and keep running.
                 use tauri::menu::{PredefinedMenuItem, Submenu};
                 let check = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
                 let app_menu = Submenu::with_items(
                     app,
                     "illogical",
                     true,
-                    &[&PredefinedMenuItem::about(app, None, None)?, &check],
+                    &[
+                        &PredefinedMenuItem::about(app, None, None)?,
+                        &check,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::hide(app, Some("Hide illogical"))?,
+                        &PredefinedMenuItem::hide_others(app, None)?,
+                        &PredefinedMenuItem::show_all(app, None)?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::quit(app, Some("Quit illogical"))?,
+                    ],
                 )?;
                 let edit = Submenu::with_items(
                     app,

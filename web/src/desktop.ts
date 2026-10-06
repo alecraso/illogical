@@ -4,10 +4,11 @@
 // - The client's bar is the window's titlebar: `html[data-desktop]` lets the
 //   stylesheet leave room for macOS's window buttons, and on Linux (no
 //   decorations) the bar carries its own (ui/window-buttons.tsx).
-// - On macOS the app's menu is Edit only, so Cmd-W, T and N reach the page:
-//   Cmd-W closes the pane (not the window), Cmd-T opens a tab, Cmd-N a window,
-//   and Cmd-U attaches files (as Claude's app does): the agent composer's 📎
-//   when one has focus or is the active pane, else the active terminal's
+// - On macOS the app's menus take only the Mac's own keys (Cmd-Q, H,
+//   Option-H) and Edit's, so Cmd-W, T, N and U reach the page: Cmd-W closes
+//   the pane (not the window), Cmd-T opens a tab, Cmd-N a window, and Cmd-U
+//   attaches files (as Claude's app does): the agent composer's 📎 when one
+//   has focus or is the active pane, else the active terminal's
 //   *Attach file…* (M70).
 
 import type { Client } from "./client";

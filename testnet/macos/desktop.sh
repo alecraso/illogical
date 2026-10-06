@@ -14,8 +14,9 @@
 #             linked into ~/.local/bin, and no illogicald install plist exists
 #   pane      the window shows a pane: typing a command into it runs it
 #   keys      Ctrl-W, T, N, Q and Tab reach the pane as bytes; Cmd-W closes
-#             the pane and not the window; Cmd-T opens a tab; Cmd-Q, H and M
-#             leave the app running and its window up
+#             the pane and not the window; Cmd-T opens a tab; Cmd-M leaves
+#             the app running and its window up; Cmd-H hides the app and
+#             Cmd-Q quits it (#320), and its panes keep running
 #   links     `open illogical://open?cwd=DIR` opens a tab there and shows
 #             it; `open illogical://pane/%N` shows pane N
 #   finder    M47: the app's service is registered; right-clicking a
@@ -89,6 +90,7 @@ has_window() { [ "$(windows)" -ge 1 ]; }
 more_panes_than() { [ "$(panes | wc -l)" -gt "$1" ]; }
 fewer_panes_than() { [ "$(panes | wc -l)" -lt "$1" ]; }
 app_running() { vs 'pgrep -x illogical-desktop >/dev/null'; }
+app_gone() { ! app_running; }
 windows() { osa 'tell application "System Events" to count windows of process "illogical-desktop"' 2>/dev/null || echo 0; }
 visible() { osa 'tell application "System Events" to get visible of process "illogical-desktop"'; }
 front() { osa 'tell application "System Events" to set frontmost of process "illogical-desktop" to true' >/dev/null; sleep 0.5; }
@@ -204,20 +206,43 @@ claim_keys() {
   front
   keys 'keystroke "t" using command down'
   if wait_for 10 more_panes_than "$n"; then pass keys "Cmd-T opened a tab"; else fail keys "Cmd-T opened no tab"; fi
-  for k in q h m; do
-    local K; K=$(echo "$k" | tr '[:lower:]' '[:upper:]')
-    front
-    keys "keystroke \"$k\" using command down"
-    sleep 1.5
-    local vis; vis=$(osa 'tell application "System Events" to get visible of process "illogical-desktop"' 2>/dev/null || echo gone)
-    local mini; mini=$(osa 'tell application "System Events" to get value of attribute "AXMinimized" of window 1 of process "illogical-desktop"' 2>/dev/null || echo none)
-    if app_running && [ "$vis" = true ] && [ "$mini" = false ]; then
-      pass keys "Cmd-$K reached the page: the app runs, shown, not minimized"
-    else
-      fail keys "after Cmd-$K: running=$(app_running && echo yes || echo no) visible=$vis minimized=$mini"
-      vs 'open -a /Applications/illogical.app'; sleep 3
-    fi
-  done
+  # Cmd-M is the page's: the app stays up, shown, not minimized.
+  front
+  keys 'keystroke "m" using command down'
+  sleep 1.5
+  local vis mini
+  vis=$(visible 2>/dev/null || echo gone)
+  mini=$(osa 'tell application "System Events" to get value of attribute "AXMinimized" of window 1 of process "illogical-desktop"' 2>/dev/null || echo none)
+  if app_running && [ "$vis" = true ] && [ "$mini" = false ]; then
+    pass keys "Cmd-M reached the page: the app runs, shown, not minimized"
+  else
+    fail keys "after Cmd-M: running=$(app_running && echo yes || echo no) visible=$vis minimized=$mini"
+  fi
+  # Cmd-H and Cmd-Q are the Mac's (#320): the app menu hides and quits.
+  front
+  keys 'keystroke "h" using command down'
+  sleep 1.5
+  if [ "$(visible 2>/dev/null || echo gone)" = false ] && app_running; then
+    pass keys "Cmd-H hid the app"
+  else
+    fail keys "after Cmd-H: running=$(app_running && echo yes || echo no) visible=$(visible 2>/dev/null || echo gone)"
+  fi
+  vs 'open -a /Applications/illogical.app'
+  sleep 2
+  front
+  keys 'keystroke "q" using command down'
+  if wait_for 10 app_gone; then
+    pass keys "Cmd-Q quit the app"
+  else
+    fail keys "Cmd-Q left the app running"
+    vs 'pkill -x illogical-desktop' || true
+  fi
+  # The daemon's panes outlive it; the app comes back for the next claims.
+  n=$(panes | wc -l)
+  vs 'open -a /Applications/illogical.app'
+  wait_for 30 has_window || fail keys "the app didn't start again after Cmd-Q"
+  sleep 3
+  if [ "$(panes | wc -l)" = "$n" ]; then pass keys "and its $n panes kept running"; else fail keys "panes $n -> $(panes | wc -l) across Cmd-Q"; fi
 }
 
 claim_links() {
