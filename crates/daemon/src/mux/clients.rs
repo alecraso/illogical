@@ -7,7 +7,7 @@ use crate::{
     pane::{Start, ToClient, Want},
     store::{PaneLog, PaneMeta},
 };
-use illogical_core::{Effect, Intent, Role};
+use illogical_core::{Claim, Effect, Intent, Role};
 use illogical_proto::{
     Activity, Attention, ClientId, ClientMsg, Delta, Driver, EventKind, MachineId, Owner, PaneId, PaneInfo, PaneOp,
     Presence, ServerMsg, SessionId, State, TabId,
@@ -60,7 +60,7 @@ impl Daemon {
                     }
                 }
             }
-            ClientMsg::View { tab, cols, rows, zoom, claim } => {
+            ClientMsg::View { tab, cols, rows, zoom, claim, typed } => {
                 match zoom {
                     Some(z) => self.zoomed.insert(client, z),
                     None => self.zoomed.remove(&client),
@@ -80,7 +80,13 @@ impl Daemon {
                 if !editor {
                     return;
                 }
-                if let Ok(true) = self.mux.view(client, tab, cols, rows, zoom, claim) {
+                let claim = match (claim, typed) {
+                    (false, _) => Claim::No,
+                    (true, true) => Claim::Typed,
+                    (true, false) => Claim::Yes,
+                };
+                let now = std::time::Instant::now();
+                if let Ok(true) = self.hold.view(&mut self.mux, client, tab, (cols, rows), zoom, claim, now) {
                     self.changed();
                 }
             }
@@ -471,7 +477,8 @@ impl Daemon {
     /// An ssh guest's window (M65) sizes the pane's tab, zoomed to it.
     pub(super) fn guest_view(&mut self, client: ClientId, pane: PaneId, (cols, rows): (u16, u16)) {
         let Ok(tab) = self.mux.tab_of(pane) else { return };
-        if let Ok(true) = self.mux.view(client, tab, cols, rows, Some(pane), true) {
+        let now = std::time::Instant::now();
+        if let Ok(true) = self.hold.view(&mut self.mux, client, tab, (cols, rows), Some(pane), Claim::Yes, now) {
             self.changed();
         }
     }

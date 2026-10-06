@@ -75,7 +75,10 @@ test("output produced while no browser is attached is complete", async ({ browse
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("two clients see the same output; the last to type sets the size", async ({ browser }) => {
+// #333: typing takes the size only once the window that has it has left
+// the keyboard for SIZE_HOLD (3 s); until then the other types into it.
+test("two clients see the same output; typing takes the size once its owner is idle", async ({ browser }) => {
+  const hold = 3_500;
   const a = await (await browser.newContext({ viewport: { width: 1000, height: 640 } })).newPage();
   await reset(a);
   const b = await (await browser.newContext({ viewport: { width: 760, height: 500 } })).newPage();
@@ -83,21 +86,30 @@ test("two clients see the same output; the last to type sets the size", async ({
   const pane = (await panes(a))[0];
   await ready(b, pane);
 
+  // B opened the tab last, so the size is B's until it has been idle a while.
+  await a.waitForTimeout(hold);
   await run(a, pane, "clear; echo from-a-$((3*3))", "from-a-9");
   await expect.poll(() => text(b, pane)).toContain("from-a-9");
   const sizeA = (await size(a, pane))!;
+  await expect.poll(() => size(b, pane)).toEqual(sizeA);
+  await run(a, pane, "tput cols", `\n${sizeA[0]}`);
 
-  await run(b, pane, "echo from-b-$((4*4))", "from-b-16");
+  // B types straight after A: A keeps the size, and B types into it.
+  await run(b, pane, "echo from-b-$((4*4)); tput cols", "from-b-16");
   await expect.poll(() => text(a, pane)).toContain("from-b-16");
+  expect(await text(b, pane)).toContain(`from-b-16\n${sizeA[0]}`);
+  expect(await size(a, pane)).toEqual(sizeA);
+  expect(await size(b, pane)).toEqual(sizeA);
+
+  // Once A has been idle past the hold, B's typing takes the size, and A
+  // draws at it rather than resizing the pane back.
+  await b.waitForTimeout(hold);
+  await type(b, pane, "echo from-b-$((5*5))\n");
+  await expect.poll(async () => (await size(b, pane))![0]).toBeLessThan(sizeA[0]);
   const sizeB = (await size(b, pane))!;
-  expect(sizeB[0]).toBeLessThan(sizeA[0]);
-  // A now draws at B's size rather than resizing the pane back.
   await expect.poll(() => size(a, pane)).toEqual(sizeB);
   await run(b, pane, "tput cols", `\n${sizeB[0]}`);
-
-  // Typing in A takes the size back.
-  await run(a, pane, "tput cols", `\n${sizeA[0]}`);
-  await expect.poll(() => size(b, pane)).toEqual(sizeA);
+  await expect.poll(() => text(a, pane)).toContain("from-b-25");
   await Promise.all([a.context().close(), b.context().close()]);
 });
 

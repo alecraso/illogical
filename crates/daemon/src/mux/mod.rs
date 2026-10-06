@@ -363,6 +363,9 @@ struct Daemon {
     /// Panes typed in since their agent was last idle: its next idle ends
     /// a turn someone started (a spinner at startup doesn't).
     turn_typed: std::collections::HashSet<PaneId>,
+    /// Who's been typing in the tabs whose size they own: another client's
+    /// typing waits for them to stop before taking the size (#333).
+    hold: illogical_core::SizeHold,
     clients: HashMap<ClientId, Subscriber>,
     /// The pane each client's focused window is looking at.
     focus: HashMap<ClientId, PaneId>,
@@ -541,6 +544,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, Kept>, push:
         unread: Default::default(),
         screen: Default::default(),
         turn_typed: Default::default(),
+        hold: Default::default(),
         clients: HashMap::new(),
         focus: HashMap::new(),
         refused: HashMap::new(),
@@ -1163,6 +1167,9 @@ impl Daemon {
                         }
                         None => {}
                     }
+                }
+                if !matches!(&data[..], b"\x1b[I" | b"\x1b[O") {
+                    self.hold.typed(&self.mux, c, pane, std::time::Instant::now());
                 }
                 let name = self.driver_for(c).name;
                 self.input(pane, data, Some(name))

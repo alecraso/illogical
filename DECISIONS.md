@@ -65,15 +65,29 @@ Where: `crates/daemon/src/pane.rs` (`ACK_WINDOW`, `PROGRAM_QUEUE`).
 From: [Protocol, flow control](docs/plan-archive.md#protocol-one-protocol-two-transports), #52.
 
 ### Size: a tab has one size, set by its owner
-The client that last claimed a tab (it was opened, or the person typed or
-focused there) sets its cols and rows, and the PTYs follow. Other viewers
-render at the real size, letterboxed on the desktop and scaled on the phone.
-The size is never smaller than the split tree needs. The plan first said "per
-pane"; the code is per tab.
+The client that last claimed a tab sets its cols and rows, and the PTYs
+follow. Only editors size a tab. A client claims when it opens or switches to
+the tab, when it asks ("use this size", the `sized-elsewhere` button), or when
+it types there; a plain view (a window resize, a split) only sizes a tab it
+owns or nobody does. Other viewers render at the real size, letterboxed on the
+desktop and scaled on the phone. The size is never smaller than the split tree
+needs. The plan first said "per pane"; the code is per tab.
+
+Typing takes the size only once the owner has been idle for 3 s
+(`SIZE_HOLD`; the owner's typing and taking the size both count). Until then
+the newcomer types into the owner's size. Such a claim carries `typed: true`;
+an older daemon ignores the field and takes it at once. Focusing a window
+doesn't claim (web or TUI), and a remote pane claims its host's tab only when
+typed into, not because this window owns its home tab. `illogical attach` and
+an iTerm2 window resize still claim at once: they are one terminal's own size
+changing.
 Why: one person moving between devices; "smallest wins" would make the desktop
-suffer whenever the phone is open.
-Where: `crates/core/src/mux.rs` (`Mux::view`), `crates/proto/src/lib.rs` (`ClientMsg::View`).
-From: [Size arbitration](docs/plan-archive.md#size-arbitration), [M1](docs/plan-archive.md#m1-multiplexer), [M5](docs/plan-archive.md#m5-tmux-control-mode--cc-front-end).
+suffer whenever the phone is open. The hold is #333: two editors typing in
+turn, or one person with two windows, resized the PTY at every handover, and
+each resize is a SIGWINCH and a redraw. tmux's "smallest client wins" as a
+pairing mode isn't done; add it per session if pairing asks for it.
+Where: `crates/core/src/mux.rs` (`Mux::view`, `SizeHold`), `crates/proto/src/lib.rs` (`ClientMsg::View`), `crates/daemon/src/mux/clients.rs`.
+From: [Size arbitration](docs/plan-archive.md#size-arbitration), [M1](docs/plan-archive.md#m1-multiplexer), [M5](docs/plan-archive.md#m5-tmux-control-mode--cc-front-end), #333.
 
 ### TypeScript types are generated from `proto`
 `web/src/proto.gen.ts` comes from the Rust types (`ts-rs`, `just proto-ts`),

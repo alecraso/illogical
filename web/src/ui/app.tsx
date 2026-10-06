@@ -45,7 +45,8 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
   const [renaming, setRenaming] = useState<Renaming>(null);
 
   useEffect(() => {
-    const focus = () => client.tab !== null && client.claim(client.tab);
+    // Focusing the window doesn't take the size from another window
+    // (#333): typing here, showing a tab or "use this size" does.
     // A sandbox host sleeps when nothing holds it awake, and an open
     // connection does: let go of it while the page is hidden.
     let hidden: number | undefined;
@@ -54,11 +55,9 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       if (document.visibilityState === "visible") client.wake();
       else if (directory.sleeps) hidden = window.setTimeout(() => client.sleep(), HIDDEN_GRACE_MS);
     };
-    window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", visible);
     return () => {
       clearTimeout(hidden);
-      window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visible);
     };
   }, [client]);
@@ -406,9 +405,9 @@ export function TabArea({ client, tab, cell, phone }: { client: Client; tab: Tab
   size.current = { cols, rows, zoom };
   const shown = useRef<{ tab: TabId; zoom: PaneId | null } | null>(null);
   useEffect(() => {
-    client.claim = (t) => {
+    client.claim = (t, typed) => {
       const s = size.current;
-      if (s.cols) client.view(t, s.cols, s.rows, s.zoom, true);
+      if (s.cols) client.view(t, s.cols, s.rows, s.zoom, true, typed);
     };
   }, [client]);
   useEffect(() => {

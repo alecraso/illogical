@@ -339,7 +339,7 @@ async fn a_held_back_client_that_resizes_starts_over() {
     let (_, resynced) = read_until_held(&mut ws, start).await;
     assert!(!resynced);
     // What it missed was printed for the old size: don't replay it.
-    send(&mut ws, ClientMsg::View { tab, cols: 90, rows: 20, zoom: None, claim: true }).await;
+    send(&mut ws, ClientMsg::View { tab, cols: 90, rows: 20, zoom: None, claim: true, typed: false }).await;
     until(&mut ws, |m| matches!(m, In::Msg(ServerMsg::Resync { pane: 1 })).then_some(())).await;
 }
 
@@ -516,15 +516,15 @@ async fn the_tab_takes_the_claiming_clients_size() {
         ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: false, kitty_keys: false },
     )
     .await;
-    send(&mut a, ClientMsg::View { tab, cols: 101, rows: 30, zoom: None, claim: true }).await;
+    send(&mut a, ClientMsg::View { tab, cols: 101, rows: 30, zoom: None, claim: true, typed: false }).await;
     until(&mut a, |m| matches!(m, In::Msg(ServerMsg::Size { pane: 1, cols: 101, rows: 30 })).then_some(())).await;
     type_line(&mut a, "stty size").await;
     read_until(&mut a, None, "30 101").await;
 
     // Another client's unclaimed view doesn't take over; a claimed one does.
     let (mut b, _) = connect_state(&d).await;
-    send(&mut b, ClientMsg::View { tab, cols: 60, rows: 20, zoom: None, claim: false }).await;
-    send(&mut b, ClientMsg::View { tab, cols: 61, rows: 20, zoom: None, claim: true }).await;
+    send(&mut b, ClientMsg::View { tab, cols: 60, rows: 20, zoom: None, claim: false, typed: false }).await;
+    send(&mut b, ClientMsg::View { tab, cols: 61, rows: 20, zoom: None, claim: true, typed: false }).await;
     // Other state (prompts, directories) may come first; wait for the size.
     let state = until(&mut a, |m| match m {
         In::Msg(ServerMsg::State { state }) if state.tabs[0].cols != 101 => Some(state.clone()),
@@ -533,6 +533,37 @@ async fn the_tab_takes_the_claiming_clients_size() {
     .await;
     assert_eq!((state.tabs[0].cols, state.tabs[0].rows), (61, 20), "B's claim, not its plain view");
     assert_ne!(state.tabs[0].owner, None);
+}
+
+/// #333: a second window's typing doesn't take the size from a window
+/// still typing there (it would resize the pane at every turn); showing
+/// the tab or "use this size" still does.
+#[tokio::test]
+async fn typing_waits_for_the_size_owner_to_stop() {
+    let d = start().await;
+    let (mut a, state) = connect_state(&d).await;
+    let tab = state.tabs[0].id;
+    send(
+        &mut a,
+        ClientMsg::Attach { panes: vec![AttachPane::new(1, None)], zstd: false, acks: false, kitty_keys: false },
+    )
+    .await;
+    send(&mut a, ClientMsg::View { tab, cols: 101, rows: 30, zoom: None, claim: true, typed: false }).await;
+    until(&mut a, |m| matches!(m, In::Msg(ServerMsg::Size { pane: 1, cols: 101, rows: 30 })).then_some(())).await;
+    type_line(&mut a, "stty size").await;
+    read_until(&mut a, None, "30 101").await;
+
+    let (mut b, _) = connect_state(&d).await;
+    // B types while A has only just typed: A keeps the size...
+    send(&mut b, ClientMsg::View { tab, cols: 61, rows: 20, zoom: None, claim: true, typed: true }).await;
+    // ...and B's "use this size", sent after it, is the next size A sees.
+    send(&mut b, ClientMsg::View { tab, cols: 62, rows: 20, zoom: None, claim: true, typed: false }).await;
+    let state = until(&mut a, |m| match m {
+        In::Msg(ServerMsg::State { state }) if state.tabs[0].cols != 101 => Some(state.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!((state.tabs[0].cols, state.tabs[0].rows), (62, 20), "B's typing took the size from A");
 }
 
 #[tokio::test]

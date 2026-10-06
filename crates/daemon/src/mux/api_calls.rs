@@ -188,6 +188,7 @@ impl Daemon {
                         }
                     }
                 }
+                self.hold.typed(&self.mux, client, pane, std::time::Instant::now());
                 self.input(pane, data, Some(by.name));
                 let _ = reply.send(Ok(()));
             }

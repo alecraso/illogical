@@ -67,10 +67,22 @@ pub enum ClientMsg {
     /// Stop receiving panes.
     Detach { panes: Vec<PaneId> },
     /// The client is showing `tab` in a `cols`x`rows` cell area, optionally
-    /// with one pane zoomed to fill it. With `claim` (the client was opened,
-    /// focused or typed in), that becomes the tab's size; otherwise it only
-    /// does if the client already owns the tab's size or nobody does.
-    View { tab: TabId, cols: u16, rows: u16, zoom: Option<PaneId>, claim: bool },
+    /// with one pane zoomed to fill it. With `claim` (the client opened or
+    /// switched to the tab, or typed in it), that becomes the tab's size;
+    /// otherwise it only does if the client already owns the tab's size or
+    /// nobody does. A claim with `typed` (made because the client typed)
+    /// waits until the owner has been idle a few seconds, so two editors
+    /// typing in turn don't resize the pane at every turn (#333). An older
+    /// daemon ignores `typed` and takes any claim at once.
+    View {
+        tab: TabId,
+        cols: u16,
+        rows: u16,
+        zoom: Option<PaneId>,
+        claim: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        typed: bool,
+    },
     /// Change sessions, tabs or splits. Errors come back as
     /// [`ServerMsg::Error`] with the same id.
     Intent { id: Option<u64>, intent: Intent },

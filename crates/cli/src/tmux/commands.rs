@@ -357,9 +357,15 @@ impl Front {
     /// Tell the daemon the size this client wants for `tab` (its own, else
     /// the client's).
     fn view(&mut self, tab: TabId, claim: bool) -> Result<(), String> {
+        self.send_view(tab, claim, false)
+    }
+
+    /// `typed`: a claim for typing, which the daemon holds off while the
+    /// size's owner is still typing (#333).
+    fn send_view(&mut self, tab: TabId, claim: bool, typed: bool) -> Result<(), String> {
         let Some((cols, rows)) = self.sizes.get(&tab).copied().or(self.default_size) else { return Ok(()) };
         let zoom = self.zoom.get(&tab).copied().flatten();
-        self.sync(vec![ClientMsg::View { tab, cols, rows, zoom, claim }])
+        self.sync(vec![ClientMsg::View { tab, cols, rows, zoom, claim, typed }])
     }
 
     /// Mirrors for the panes a format reads terminal state from.
@@ -422,7 +428,7 @@ impl Front {
         }
         // It starts at the client's size, as a new tmux window would.
         if let Some((cols, rows)) = self.default_size {
-            more.push(ClientMsg::View { tab, cols, rows, zoom: None, claim: false });
+            more.push(ClientMsg::View { tab, cols, rows, zoom: None, claim: false, typed: false });
         }
         if !more.is_empty() {
             self.sync(more)?;
@@ -665,11 +671,12 @@ impl Front {
         if data.is_empty() || !is_terminal {
             return Ok(vec![]);
         }
-        // Typing claims the window's size, as it does in the web client.
+        // Typing claims the window's size, as it does in the web client
+        // (once whoever has it stops typing, #333).
         if let Some(tab) = t.tab
             && self.tab(tab).is_some_and(|v| v.owner != Some(self.client))
         {
-            let _ = self.view(tab, true);
+            let _ = self.send_view(tab, true, true);
         }
         self.conn.input(pane, data).map_err(|e| e.to_string())?;
         Ok(vec![])
@@ -736,7 +743,7 @@ impl Front {
                     .map(|tab| {
                         let (cols, rows) = self.sizes.get(&tab).copied().unwrap_or(sz);
                         let zoom = self.zoom.get(&tab).copied().flatten();
-                        ClientMsg::View { tab, cols, rows, zoom, claim: false }
+                        ClientMsg::View { tab, cols, rows, zoom, claim: false, typed: false }
                     })
                     .collect();
                 self.sync(views)?;

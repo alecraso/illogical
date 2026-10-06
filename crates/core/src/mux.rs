@@ -4,7 +4,10 @@
 //! a pane's process) for the daemon to carry out; sizes come from
 //! [`Mux::pane_rects`].
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::{Duration, Instant},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -599,5 +602,74 @@ impl Mux {
             }
         }
         Ok(())
+    }
+}
+
+/// How long a tab's size owner keeps the size against another client's
+/// typing after it last typed there or took the size (#333).
+pub const SIZE_HOLD: Duration = Duration::from_secs(3);
+
+/// Why a client sends its size for a tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Claim {
+    /// It only shows the tab: its size counts if it owns the tab or nobody
+    /// does.
+    No,
+    /// It typed in the tab. It takes the size unless the owner typed there
+    /// or took the size within [`SIZE_HOLD`]; until then it types into the
+    /// owner's size, letterboxed or scaled.
+    Typed,
+    /// It opened or switched to the tab, or asked for it ("use this size").
+    Yes,
+}
+
+/// Size arbitration between clients (DECISIONS.md, "Size arbitration"):
+/// when each tab's size owner last did something there. Kept beside the
+/// [`Mux`], not in it, as it's only for now: nothing to save or send.
+#[derive(Debug, Default)]
+pub struct SizeHold {
+    active: HashMap<TabId, Instant>,
+}
+
+impl SizeHold {
+    /// [`Mux::view`], with typing claims held off while the owner is busy.
+    #[allow(clippy::too_many_arguments)]
+    pub fn view(
+        &mut self,
+        mux: &mut Mux,
+        client: ClientId,
+        tab: TabId,
+        (cols, rows): (u16, u16),
+        zoom: Option<PaneId>,
+        claim: Claim,
+        now: Instant,
+    ) -> Result<bool, Error> {
+        let owner = mux.tab(tab)?.owner;
+        let take = match claim {
+            Claim::No => false,
+            Claim::Yes => true,
+            Claim::Typed => {
+                owner.is_none_or(|o| o == client)
+                    || self.active.get(&tab).is_none_or(|at| now.saturating_duration_since(*at) >= SIZE_HOLD)
+            }
+        };
+        let changed = mux.view(client, tab, cols, rows, zoom, take)?;
+        if take {
+            self.active.insert(tab, now);
+        }
+        if self.active.len() > mux.tabs.len() {
+            self.active.retain(|t, _| mux.tabs.contains_key(t));
+        }
+        Ok(changed)
+    }
+
+    /// `client` typed in `pane`: if its tab's size is theirs, they keep it
+    /// a while longer.
+    pub fn typed(&mut self, mux: &Mux, client: ClientId, pane: PaneId, now: Instant) {
+        if let Ok(tab) = mux.tab_of(pane)
+            && mux.tab(tab).is_ok_and(|t| t.owner == Some(client))
+        {
+            self.active.insert(tab, now);
+        }
     }
 }

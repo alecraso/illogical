@@ -343,8 +343,14 @@ impl App {
     }
 
     /// Tell the daemon what we show, at what size. `claim`: make it the
-    /// tab's size (opened, focused, typed in).
+    /// tab's size (opened, switched to, resized).
     pub fn view(&mut self, claim: bool) {
+        self.send_view(claim, false);
+    }
+
+    /// `typed`: the claim is for typing, which the daemon holds off while
+    /// the size's owner is still typing (#333).
+    fn send_view(&mut self, claim: bool, typed: bool) {
         let Some(tab) = self.tab else { return };
         let (cols, rows) = (self.area.width, self.area.height);
         if cols == 0 || rows == 0 {
@@ -358,13 +364,14 @@ impl App {
             return;
         }
         self.viewed = now;
-        self.conn.send(&ClientMsg::View { tab, cols, rows, zoom, claim });
+        self.conn.send(&ClientMsg::View { tab, cols, rows, zoom, claim, typed });
     }
 
-    /// Typed in: take the tab's size back if another client has it.
+    /// Typed in: take the tab's size back if another client has it (once
+    /// they've stopped typing there for a moment).
     fn claim(&mut self) {
         if self.tab_view().is_some_and(|t| t.owner != Some(self.me)) {
-            self.view(true);
+            self.send_view(true, true);
         }
     }
 
@@ -608,8 +615,10 @@ impl App {
                 // Attention skips panes someone is looking at.
                 let pane = if gained { self.focus } else { None };
                 self.conn.send(&ClientMsg::Focus { pane });
+                // Focus alone doesn't take the size from another window
+                // (#333): typing here does.
                 if gained {
-                    self.view(true);
+                    self.view(false);
                 }
                 if let Some((pane, t)) = self.focused_terminal() {
                     let data = t.engine.encode_focus(gained);

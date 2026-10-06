@@ -350,8 +350,10 @@ export class Client {
     this.send({ type: "focus", pane });
   }
 
-  /** Set by the UI: make this client's size the tab's size. */
-  claim: (tab: TabId) => void = () => {};
+  /** Set by the UI: make this client's size the tab's size. `typed`: for
+   * typing, which the daemon holds off while the size's owner is still
+   * typing (#333). */
+  claim: (tab: TabId, typed?: boolean) => void = () => {};
 
   private link: Link | undefined;
   private retry = 0;
@@ -1025,14 +1027,15 @@ export class Client {
     this.send({ type: "intent", id: this.nextId++, intent });
   }
 
-  view(tab: TabId, cols: number, rows: number, zoom: PaneId | null, claim: boolean) {
-    this.send({ type: "view", tab, cols, rows, zoom, claim });
+  view(tab: TabId, cols: number, rows: number, zoom: PaneId | null, claim: boolean, typed = false) {
+    this.send({ type: "view", tab, cols, rows, zoom, claim, typed });
   }
 
   input(pane: PaneId, data: Uint8Array) {
     const tab = this.tabOfPane(pane);
-    // Typing here makes this window the one whose size counts.
-    if (tab && tab.owner !== this.clientId) this.claim(tab.id);
+    // Typing here makes this window the one whose size counts, once
+    // whoever has it stops typing for a moment.
+    if (tab && tab.owner !== this.clientId) this.claim(tab.id, true);
     data = this.applyModifiers(data);
     if (this.link?.open) this.link.sendBinary(encodeFrame(FrameKind.Input, pane, data));
   }
@@ -1239,7 +1242,7 @@ export class Client {
     for (const t of state.tabs) {
       for (const [id, r] of t.layout.panes) {
         this.panes.get(id)?.view.resize(r.cols, r.rows);
-        this.blocks.get(id)?.view.layout?.(r.cols, r.rows, t.owner === this.clientId);
+        this.blocks.get(id)?.view.layout?.(r.cols, r.rows);
       }
     }
     this.fixSelection();

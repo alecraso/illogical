@@ -105,6 +105,56 @@ fn view_ownership_and_zoom() {
     assert_eq!(m.pane_rects().len(), 2);
 }
 
+/// #333: two editors typing in one pane in turn, a second or so apart,
+/// used to resize it at every handover. The size now stays with whoever
+/// has it until they've left the keyboard for [`SIZE_HOLD`].
+#[test]
+fn editors_typing_in_turn_dont_fight_over_the_size() {
+    use std::time::{Duration, Instant};
+
+    use crate::{Claim, SIZE_HOLD, SizeHold};
+
+    let mut m = mux_with_session();
+    let mut hold = SizeHold::default();
+    let t0 = Instant::now();
+    let at = |s: f64| t0 + Duration::from_secs_f64(s);
+    let (a, b) = (7, 8);
+    let size = |m: &Mux| (m.tab(1).unwrap().cols, m.tab(1).unwrap().rows);
+    // A opens the tab; B opens it too, later, and the size is B's.
+    assert!(hold.view(&mut m, a, 1, (120, 40), None, Claim::Yes, at(0.0)).unwrap());
+    assert!(hold.view(&mut m, b, 1, (90, 30), None, Claim::Yes, at(10.0)).unwrap());
+    // Long after, A types: B left the keyboard, so A takes it.
+    assert!(hold.view(&mut m, a, 1, (120, 40), None, Claim::Typed, at(20.0)).unwrap());
+    hold.typed(&m, a, 1, at(20.0));
+    // Now they take turns, 1.5 s apart, for a minute: nothing resizes.
+    let mut resizes = 0;
+    let mut t = 20.0;
+    for turn in 0..40 {
+        t += 1.5;
+        let who = if turn % 2 == 0 { b } else { a };
+        let mine = if who == a { (120, 40) } else { (90, 30) };
+        let before = size(&m);
+        hold.view(&mut m, who, 1, mine, None, Claim::Typed, at(t)).unwrap();
+        hold.typed(&m, who, 1, at(t));
+        resizes += usize::from(size(&m) != before);
+    }
+    assert_eq!(resizes, 0, "typing in turn resized the pane");
+    assert_eq!(m.tab(1).unwrap().owner, Some(a));
+    // A stops; B's keys take the size once A has been idle long enough.
+    let last = t;
+    assert!(!hold.view(&mut m, b, 1, (90, 30), None, Claim::Typed, at(last + 1.0)).unwrap());
+    let idle = last + SIZE_HOLD.as_secs_f64() + 0.01;
+    assert!(hold.view(&mut m, b, 1, (90, 30), None, Claim::Typed, at(idle)).unwrap());
+    assert_eq!((size(&m), m.tab(1).unwrap().owner), ((90, 30), Some(b)));
+    // Showing the tab or "use this size" still takes it at once.
+    assert!(hold.view(&mut m, a, 1, (120, 40), None, Claim::Yes, at(idle + 0.1)).unwrap());
+    // A plain view by someone else changes nothing.
+    assert!(!hold.view(&mut m, b, 1, (91, 30), None, Claim::No, at(idle + 60.0)).unwrap());
+    // The owner leaving frees the size for the next typist at once.
+    m.release(a);
+    assert!(hold.view(&mut m, b, 1, (90, 30), None, Claim::Typed, at(idle + 0.2)).unwrap());
+}
+
 #[test]
 fn layout_serializes_for_clients() {
     let mut m = mux_with_session();
