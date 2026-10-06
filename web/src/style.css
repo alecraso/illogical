@@ -1555,6 +1555,10 @@ html[data-desktop="macos"] .bar {
   border: 1px solid var(--accent);
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  /* #421: a card taller than the pane scrolls, so its buttons are reachable. */
+  flex-shrink: 0;
+  max-height: calc(100% - 8px);
+  overflow-y: auto;
 }
 
 .agent-perm-q {
@@ -1569,6 +1573,10 @@ html[data-desktop="macos"] .bar {
   font: 12px ui-monospace, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  /* #421: a long command scrolls inside its box, not the buttons away. */
+  max-height: 30vh;
+  max-height: 30dvh;
+  overflow: auto;
 }
 
 .agent-perm-buttons {
@@ -2974,7 +2982,8 @@ html[data-desktop="macos"] .bar {
 }
 
 .perm-diff {
-  max-height: 12em;
+  max-height: min(12em, 30vh);
+  max-height: min(12em, 30dvh);
   overflow: auto;
   font-size: 12px;
   margin: 4px 0;
@@ -3336,7 +3345,7 @@ html[data-desktop="macos"] .bar {
 .swarm-card .agent-perm-cmd {
   margin: 0 0 8px;
   max-height: 60px;
-  overflow: hidden;
+  overflow: auto;
 }
 .swarm-card-err {
   margin-top: 6px;
