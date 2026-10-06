@@ -99,6 +99,8 @@ interface Link {
   onBinary: (b: ArrayBuffer) => void;
   onClose: () => void;
   readonly open: boolean;
+  /** Why it couldn't connect, when control's relay was full (#344). */
+  readonly full?: string;
   sendText(t: string): void;
   sendBinary(b: Uint8Array): void;
   close(): void;
@@ -134,6 +136,7 @@ class E2ELink implements Link {
   onBinary: (b: ArrayBuffer) => void = () => {};
   onClose: () => void = () => {};
   sock: E2ESocket | undefined;
+  full: string | undefined;
   private closed = false;
   /** Connects in the background; the Client sees it as a socket that opens
    * (or closes, and is retried). */
@@ -154,7 +157,10 @@ class E2ELink implements Link {
         sock.onClose = () => this.onClose();
         sock.start();
       },
-      () => this.onClose(),
+      (e: Error & { full?: boolean }) => {
+        if (e.full) this.full = e.message;
+        this.onClose();
+      },
     );
   }
   get open() {
@@ -863,7 +869,13 @@ export class Client {
       this.link = undefined;
       this.connected = false;
       this.clientId = null;
-      const delay = Math.min(250 * 2 ** this.retry, 5000);
+      // Control's relay is full (#344): say so, and wait half a minute or
+      // so (spread out, as everyone's page is waiting) rather than seconds.
+      const delay = link.full ? 30_000 + Math.random() * 30_000 : Math.min(250 * 2 ** this.retry, 5000);
+      if (link.full) {
+        console.warn(`relay: ${link.full}`);
+        this.showError(link.full);
+      }
       this.retry++;
       this.emit();
       this.schedule(() => this.connect(), delay);

@@ -416,16 +416,44 @@ pub async fn open_ws(url: &reqwest::Url, headers: &[(&str, &str)]) -> anyhow::Re
     let mut config = tungstenite::protocol::WebSocketConfig::default();
     config.max_message_size = Some(1 << 20);
     let (ws, _) = tokio_tungstenite::client_async_with_config(req, io, Some(config)).await.map_err(|e| match e {
-        tungstenite::Error::Http(r) => anyhow::anyhow!(
-            "{} said {}: {}",
-            url.host_str().unwrap_or("it"),
-            r.status(),
-            r.body().as_deref().map(String::from_utf8_lossy).unwrap_or_default()
-        ),
+        tungstenite::Error::Http(r) => {
+            let said = format!(
+                "{} said {}: {}",
+                url.host_str().unwrap_or("it"),
+                r.status(),
+                r.body().as_deref().map(String::from_utf8_lossy).unwrap_or_default()
+            );
+            let wait = r.headers().get("retry-after").and_then(|v| v.to_str().ok()?.trim().parse().ok());
+            match wait {
+                Some(secs) if r.status() == 503 => {
+                    anyhow::Error::new(Busy { wait: Duration::from_secs(secs).min(MOST_WAIT), said })
+                }
+                _ => anyhow::anyhow!(said),
+            }
+        }
         e => e.into(),
     })?;
     Ok(ws)
 }
+
+/// The other end is full for now and said how long to wait (`503` with
+/// `Retry-After`: control's relay at its ceiling, #344), up to
+/// [`MOST_WAIT`].
+#[derive(Debug)]
+pub struct Busy {
+    pub wait: Duration,
+    said: String,
+}
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.said)
+    }
+}
+
+impl std::error::Error for Busy {}
+
+const MOST_WAIT: Duration = Duration::from_secs(600);
 
 fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
     use tokio_rustls::rustls;
@@ -572,6 +600,29 @@ mod tests {
         json.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
         defang(&mut json);
         assert_eq!(json[header::CONTENT_TYPE], "application/json");
+    }
+
+    #[tokio::test]
+    async fn a_full_relay_says_how_long_to_wait() {
+        // Control's relay at its ceiling (#344); and a plain refusal.
+        let full = || async {
+            let mut r =
+                (StatusCode::SERVICE_UNAVAILABLE, r#"{"error":"control is full: try again shortly"}"#).into_response();
+            r.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from_static("30"));
+            r
+        };
+        let app = Router::new()
+            .route("/full", get(full))
+            .route("/no", get(|| async { (StatusCode::TOO_MANY_REQUESTS, "slow down") }));
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = l.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        let url = |p: &str| reqwest::Url::parse(&format!("ws://{at}{p}")).unwrap();
+        let e = open_ws(&url("/full"), &[]).await.err().unwrap();
+        assert_eq!(e.downcast_ref::<Busy>().unwrap().wait, Duration::from_secs(30));
+        assert!(e.to_string().contains("503 Service Unavailable: {\"error\":\"control is full"), "{e}");
+        let e = open_ws(&url("/no"), &[]).await.err().unwrap();
+        assert!(e.downcast_ref::<Busy>().is_none(), "{e}");
     }
 
     #[test]

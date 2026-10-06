@@ -731,6 +731,86 @@ async fn deleting_a_founder_hangs_up_the_teams_machines_and_tells_its_members() 
     }
 }
 
+#[tokio::test]
+async fn a_full_relay_refuses_new_sockets_and_still_signs_people_in() {
+    // #344: a ceiling of two relay sockets, one account's daemon and page
+    // holding both.
+    let c = control(|a| a.relay.caps.total = 2).await;
+    let root = person(&c.app, "jake", "a1");
+    let geek = daemon(&c.app, "a1", "geek");
+    let geeks_socket = dial_relay(&c, &geek).await;
+    let cookie = session(&c.app, "a1");
+    let page_socket = || {
+        let mut req = format!("{}/api/relay/m", c.base.replace("http://", "ws://")).into_client_request().unwrap();
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        req.headers_mut().insert("origin", c.base.parse().unwrap());
+        req
+    };
+    let (mut page, _) = tokio_tungstenite::connect_async(page_socket()).await.unwrap();
+    assert_eq!(c.app.relay.counts().0, 2);
+
+    // Another account's daemon is told to wait, with why.
+    person(&c.app, "mo", "m1");
+    let box_ = daemon(&c.app, "m1", "box");
+    let mut req = format!("{}/api/relay/dial", c.base.replace("http://", "ws://")).into_client_request().unwrap();
+    req.headers_mut().insert("x-illogical-auth", v2(&box_, "GET", "/api/relay/dial", b"").parse().unwrap());
+    let Err(tokio_tungstenite::tungstenite::Error::Http(r)) = tokio_tungstenite::connect_async(req).await else {
+        panic!("a daemon dials into a full relay");
+    };
+    assert_eq!(r.status(), 503);
+    assert_eq!(r.headers()["retry-after"], "30");
+    let body: Value = serde_json::from_slice(r.body().as_deref().unwrap()).unwrap();
+    assert_eq!(body["error"], crate::relay::FULL);
+    // So is the CLI, the same way.
+    let cli = DeviceKeys::generate();
+    let mut cert = Cert::new(&cli, "a1", Kind::Cli, "illogical CLI");
+    cert.sign_with(&root);
+    c.app.db.put_device(&cert, true, now_ms()).unwrap();
+    let path = format!("/api/relay/c/{}", geek.id());
+    let mut req = format!("{}{path}", c.base.replace("http://", "ws://")).into_client_request().unwrap();
+    req.headers_mut().insert("x-illogical-auth", v2(&cli, "GET", &path, b"").parse().unwrap());
+    let Err(tokio_tungstenite::tungstenite::Error::Http(r)) = tokio_tungstenite::connect_async(req).await else {
+        panic!("the CLI connects through a full relay");
+    };
+    assert_eq!(r.status(), 503);
+    // A browser can't read that, so its socket is closed at once with why.
+    let (mut second, _) = tokio_tungstenite::connect_async(page_socket()).await.unwrap();
+    let Some(Ok(Message::Close(Some(f)))) = tokio::time::timeout(Duration::from_secs(2), second.next()).await.unwrap()
+    else {
+        panic!("a browser's socket is closed");
+    };
+    assert_eq!((u16::from(f.code), f.reason.as_str()), (1013, crate::relay::FULL));
+    assert_eq!(c.app.relay.counts(), (2, 1, 2, 3));
+
+    // Control's pages and sign-ins still answer.
+    assert_eq!(c.http.get(format!("{}/control.json", c.base)).send().await.unwrap().status(), 200);
+    let (st, v) = c.as_person("", "POST", "/auth/passkey/login", None).await;
+    assert_eq!(st, 200, "{v}");
+    assert!(v["challenge"].is_string());
+    assert_eq!(c.as_person(&cookie, "GET", "/api/me", None).await.0, 200);
+
+    // What was open stays open; one closing makes room.
+    assert!(c.app.relay.online(&geek.id()));
+    page.close(None).await.unwrap();
+    assert!(closes(&mut page).await);
+    for _ in 0..50 {
+        if c.app.relay.counts().0 < 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let _boxes_socket = dial_relay(&c, &box_).await;
+    for _ in 0..50 {
+        if c.app.relay.online(&box_.id()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(c.app.relay.online(&box_.id()), "the box is on the relay now");
+    assert!(c.app.relay.online(&geek.id()), "geek's socket was kept throughout");
+    drop(geeks_socket);
+}
+
 #[test]
 fn join_proofs_and_signatures_are_what_daemons_sign() {
     // The daemon's side (crates/daemon) signs these same strings.

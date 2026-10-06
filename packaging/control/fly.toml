@@ -17,6 +17,9 @@ kill_timeout = "15s"
   ILLOGICAL_CONTROL_LISTEN = "0.0.0.0:7690"
   ILLOGICAL_CONTROL_DB = "/data/control.db"
   ILLOGICAL_CONTROL_PROXY_HEADER = "Fly-Client-IP"
+  # Relay sockets, all accounts together (#344): below soft_limit, so a
+  # full relay leaves room for pages and sign-ins.
+  ILLOGICAL_RELAY_MAX_TOTAL = "5000"
 
 [[mounts]]
   source = "control_data"

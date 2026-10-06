@@ -1152,17 +1152,34 @@ async fn keep_relay(control: Arc<Control>, app: Arc<App>) {
     loop {
         let Some(e) = control.enrolled() else { return };
         let started = std::time::Instant::now();
+        let mut wait = None;
         match relay_once(&control, &app, &e, &accept, &raw).await {
             Ok(()) => info!("relay socket closed"),
-            Err(err) => warn!(error = %err, "can't reach control's relay"),
+            Err(err) => {
+                warn!(error = %err, "can't reach control's relay");
+                wait = err.downcast_ref::<crate::dial::Busy>().map(|b| b.wait);
+            }
         }
         if started.elapsed() > Duration::from_secs(30) {
             backoff = Duration::from_secs(1);
         }
         let jitter = Duration::from_millis(u64::from(std::process::id() % 500));
-        tokio::time::sleep(backoff + jitter).await;
+        tokio::time::sleep(match wait {
+            // A full relay (#344): wait as long as control asked, and up to
+            // as long again, so its daemons don't all come back at once.
+            Some(w) => w.max(backoff) + spread(w),
+            None => backoff + jitter,
+        })
+        .await;
         backoff = (backoff * 2).min(Duration::from_secs(60));
     }
+}
+
+/// A random wait up to `w`.
+fn spread(w: Duration) -> Duration {
+    let mut b = [0u8; 4];
+    let _ = getrandom::fill(&mut b);
+    w.mul_f64(f64::from(u32::from_le_bytes(b)) / f64::from(u32::MAX))
 }
 
 async fn relay_once(

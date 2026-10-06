@@ -12,13 +12,22 @@ const DATA = 2;
 const CLOSE = 3;
 const OPENED = 4;
 
+/** The close code (try again later) control's relay closes a browser's
+ * socket with when it's at its ceiling (#344), saying why. */
+export const FULL = 1013;
+
+/** Why control's relay is full, if this closed a socket for that. */
+export function fullReason(e?: { code: number; reason: string }): string | undefined {
+  return e?.code === FULL ? e.reason || "control is full: try again shortly" : undefined;
+}
+
 /** What E2ESocket needs of a socket. */
 export interface SocketLike {
   binaryType: string;
   readonly url: string;
   readonly readyState: number;
   onmessage: ((e: { data: ArrayBuffer }) => void) | null;
-  onclose: (() => void) | null;
+  onclose: ((e?: { code: number; reason: string }) => void) | null;
   send(data: Uint8Array): void;
   close(): void;
 }
@@ -38,6 +47,8 @@ class MuxChannel implements SocketLike {
   onclose: (() => void) | null = null;
   /** Why control closed it, if it did. */
   reason = "";
+  /** Set when control's relay was full (#344). */
+  full = false;
   private mux: RelayMux;
   readonly chan: number;
   readonly url: string;
@@ -113,10 +124,12 @@ export class RelayMux {
         rej(new Error(`couldn't connect: ${this.url}`));
       };
       ws.onmessage = (e) => this.take(new Uint8Array(e.data as ArrayBuffer));
-      ws.onclose = () => {
+      ws.onclose = (e) => {
         if (this.ws === ws) this.ws = null;
+        const full = fullReason(e);
         // Every channel inside it is gone too.
         for (const { ch, opened } of [...this.chans.values()]) {
+          if (full) Object.assign(ch, { reason: full, full: true });
           opened(false);
           ch.ended();
         }
@@ -172,7 +185,7 @@ export class RelayMux {
           if (ok) res(ch);
           // Control answered, but no channel: the shared socket works, so
           // a socket of its own wouldn't do better.
-          else rej(Object.assign(new Error(ch.reason || `couldn't reach ${id}`), { refused: true }));
+          else rej(Object.assign(new Error(ch.reason || `couldn't reach ${id}`), { refused: true, full: ch.full }));
         },
       });
       ws.send(frame(OPEN, chan, new TextEncoder().encode(id)));

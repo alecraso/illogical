@@ -156,6 +156,12 @@ struct Args {
     relay_max_machines: usize,
     #[arg(long, default_value_t = 2_000, env = "ILLOGICAL_RELAY_DAILY_MB")]
     relay_daily_mb: u64,
+    /// Relay sockets at once, every account's together (#344), 0 for no
+    /// limit. Keep it below the proxy's connection limit (Fly's
+    /// `soft_limit`), so a full relay still leaves room for pages and
+    /// sign-ins.
+    #[arg(long, default_value_t = 5_000, env = "ILLOGICAL_RELAY_MAX_TOTAL")]
+    relay_max_total: usize,
 
     /// Off-site backup with Litestream (#174).
     #[command(flatten)]
@@ -649,6 +655,7 @@ async fn main() -> anyhow::Result<()> {
             sockets: a.relay_max_sockets,
             daemons: a.relay_max_machines,
             daily_bytes: a.relay_daily_mb * 1_000_000,
+            total: a.relay_max_total,
         }),
         passkeys: Default::default(),
         limits: limit::Limits::new(a.trust_proxy_header),
@@ -667,6 +674,7 @@ async fn main() -> anyhow::Result<()> {
         info!(addr = %l.local_addr()?, host = %j.host, port = j.port, "guest ssh jump host");
         tokio::spawn(guest_jump::serve(app.clone(), l));
     }
+    tokio::spawn(relay::Relay::log_counts(app.clone()));
     if !app.cfg.old_daemon_signatures {
         info!("refusing daemons' pre-0.17 request signatures");
     }

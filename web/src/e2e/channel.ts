@@ -9,7 +9,7 @@
 import { cat, Initiator, type Cipher } from "./noise.ts";
 import type { DeviceKeys } from "./keys.ts";
 import { unhex } from "./cert.ts";
-import { RelayMux, type SocketLike } from "./relaymux.ts";
+import { fullReason, RelayMux, type SocketLike } from "./relaymux.ts";
 
 const CHUNK = 16 * 1024;
 const MAX_MSG = 64 << 20;
@@ -205,9 +205,11 @@ export class E2ESocket {
           rej(err);
         }
       };
-      ws.onclose = () => {
+      ws.onclose = (e) => {
         clearTimeout(t);
-        rej(new Error("closed during the handshake (not an approved device?)"));
+        const full = fullReason(e);
+        if (full) rej(Object.assign(new Error(full), { full: true }));
+        else rej(new Error("closed during the handshake (not an approved device?)"));
       };
       void ik
         .write(new Uint8Array(), enc.encode(`illogical/1\n${daemon.id}\n`))

@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -20,9 +20,9 @@ use std::{
 use axum::{
     extract::{
         Path, Query, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
@@ -51,6 +51,10 @@ const DAEMON_READ_BUFFER: usize = 32 * 1024;
 /// The largest message a daemon's socket takes: a mux frame's most data
 /// (its window) and header, with room to spare.
 const DAEMON_MAX_MESSAGE: usize = 512 * 1024;
+/// What a socket refused over the relay's ceiling (#344) hears, and how
+/// long it's asked to wait.
+pub const FULL: &str = "control is full: try again shortly";
+const FULL_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct Relay {
@@ -60,7 +64,20 @@ pub struct Relay {
     accounts: Arc<Mutex<HashMap<String, Arc<Use>>>>,
     /// Daemons hung up on by [`Relay::redial`], to nudge when they're back.
     renudge: Mutex<std::collections::HashSet<String>>,
+    /// Every relay socket open, and how many are daemons (#344).
+    open: Arc<Open>,
     pub caps: Caps,
+}
+
+/// The relay's sockets in all, against [`Caps::total`].
+#[derive(Default)]
+struct Open {
+    all: AtomicUsize,
+    daemons: AtomicUsize,
+    /// Sockets refused for the ceiling, ever, and whether the last one
+    /// asked was (so the log says when it fills and when it has room).
+    refused: AtomicU64,
+    full: AtomicBool,
 }
 
 /// Per-account relay limits (#174), so one account can't take the whole
@@ -75,12 +92,25 @@ pub struct Caps {
     pub daemons: usize,
     /// Relayed bytes a day, both ways, while billing is off.
     pub daily_bytes: u64,
+    /// Relay sockets of every kind, all accounts together (#344): below
+    /// the proxy's connection limit, so a full relay leaves room for
+    /// control's pages and sign-ins.
+    pub total: usize,
 }
 
 impl Default for Caps {
     fn default() -> Self {
-        Self { sockets: 32, daemons: 50, daily_bytes: 2_000_000_000 }
+        Self { sockets: 32, daemons: 50, daily_bytes: 2_000_000_000, total: 5_000 }
     }
+}
+
+/// Why a socket wasn't let onto the relay.
+#[derive(Debug, PartialEq)]
+pub enum Refused {
+    /// Its account is at one of its own limits.
+    Account(String),
+    /// The relay is at its ceiling (#344).
+    Full,
 }
 
 /// One account's open relay sockets.
@@ -99,6 +129,7 @@ pub struct Ticket {
     map: Arc<Mutex<HashMap<String, Arc<Use>>>>,
     account: String,
     u: Arc<Use>,
+    open: Arc<Open>,
     daemon: bool,
     /// The byte budget to slow down past (0: none).
     budget: u64,
@@ -125,6 +156,10 @@ impl Ticket {
 
 impl Drop for Ticket {
     fn drop(&mut self) {
+        self.open.all.fetch_sub(1, Ordering::Relaxed);
+        if self.daemon {
+            self.open.daemons.fetch_sub(1, Ordering::Relaxed);
+        }
         let mut map = self.map.lock().unwrap();
         let mut open = self.u.open.lock().unwrap();
         if self.daemon {
@@ -154,10 +189,12 @@ impl Relay {
         Self { caps, ..Default::default() }
     }
 
-    /// Count a socket against `account`, or say why not (#174).
+    /// Count a socket against `account` and the relay's ceiling, or say
+    /// why not (#174, #344). An account at its own limit is refused for
+    /// that and takes nothing from the ceiling; sockets already open stay.
     /// `billing`: control bills (its own allowance applies, not the
     /// daily budget).
-    pub fn admit(&self, db: &crate::db::Db, account: &str, daemon: bool, billing: bool) -> Result<Ticket, String> {
+    pub fn admit(&self, db: &crate::db::Db, account: &str, daemon: bool, billing: bool) -> Result<Ticket, Refused> {
         let mut map = self.accounts.lock().unwrap();
         let u = match map.get(account) {
             Some(u) => u.clone(),
@@ -179,24 +216,74 @@ impl Relay {
         } else {
             (&mut open.0, self.caps.sockets, "connections through the relay")
         };
-        if cap > 0 && *n >= cap {
-            let why = format!("this account has {n} {what}, the most at once; close some first");
+        let all = &self.open.all;
+        let why = if cap > 0 && *n >= cap {
+            Some(Refused::Account(format!("this account has {n} {what}, the most at once; close some first")))
+        } else if self.caps.total > 0 && all.load(Ordering::Relaxed) >= self.caps.total {
+            Some(Refused::Full)
+        } else {
+            None
+        };
+        if let Some(why) = why {
             let empty = *open == (0, 0);
             drop(open);
             if empty {
                 map.remove(account);
             }
+            if why == Refused::Full {
+                self.open.refused.fetch_add(1, Ordering::Relaxed);
+                if !self.open.full.swap(true, Ordering::Relaxed) {
+                    warn!(sockets = self.caps.total, "the relay is full: refusing new sockets");
+                }
+            }
             return Err(why);
         }
         *n += 1;
         drop(open);
+        // Under the map's lock, so the ceiling holds.
+        all.fetch_add(1, Ordering::Relaxed);
+        if daemon {
+            self.open.daemons.fetch_add(1, Ordering::Relaxed);
+        }
+        if self.open.full.swap(false, Ordering::Relaxed) {
+            info!(refused = self.open.refused.load(Ordering::Relaxed), "the relay has room again");
+        }
         Ok(Ticket {
             map: self.accounts.clone(),
             account: account.to_owned(),
             u,
+            open: self.open.clone(),
             daemon,
             budget: if billing { 0 } else { self.caps.daily_bytes },
         })
+    }
+
+    /// Relay sockets open (all, daemons), the ceiling, and how many were
+    /// refused for it since control started (#344).
+    pub fn counts(&self) -> (usize, usize, usize, u64) {
+        let o = &self.open;
+        (
+            o.all.load(Ordering::Relaxed),
+            o.daemons.load(Ordering::Relaxed),
+            self.caps.total,
+            o.refused.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Log the relay's sockets each minute they've changed (#344), for
+    /// watching `fly logs`.
+    pub async fn log_counts(app: Arc<App>) {
+        let mut last = None;
+        let mut every = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            every.tick().await;
+            let now = app.relay.counts();
+            if last != Some(now) {
+                let (sockets, daemons, max, refused) = now;
+                info!(sockets, daemons, clients = sockets.saturating_sub(daemons), max, refused, "relay sockets");
+                last = Some(now);
+            }
+        }
     }
 
     /// The account was deleted (#173): hang up its open sockets.
@@ -274,7 +361,7 @@ pub async fn dial(
     let id = d.cert.device.clone();
     let ticket = match app.relay.admit(&app.db, &d.cert.account, true, app.stripe.is_some()) {
         Ok(t) => t,
-        Err(why) => return err(StatusCode::TOO_MANY_REQUESTS, &why).into_response(),
+        Err(why) => return refuse(why, false, up),
     };
     if let Err(e) = app.db.seen(&id, urls.as_deref(), now_ms()) {
         warn!(error = %e, "recording a daemon");
@@ -357,7 +444,37 @@ async fn daemon_socket(app: Arc<App>, id: String, ws: WebSocket, ticket: Ticket)
     info!(daemon = %id, "daemon left the relay");
 }
 
-pub async fn client(State(app): State<Arc<App>>, s: Session, Path(id): Path<String>, up: WebSocketUpgrade) -> Response {
+/// A refused socket's answer. Over the ceiling (#344), a browser can't
+/// read a refused upgrade's status, so it gets the socket and at once a
+/// close that says why (1013, try again later). Daemons and the CLI,
+/// which sign their requests (a browser can't), get 503 with
+/// `Retry-After`.
+fn refuse(why: Refused, browser: bool, up: WebSocketUpgrade) -> Response {
+    match why {
+        Refused::Account(why) => err(StatusCode::TOO_MANY_REQUESTS, &why).into_response(),
+        Refused::Full if browser => up.on_upgrade(|mut ws| async move {
+            let _ = ws.send(Message::Close(Some(CloseFrame { code: 1013, reason: FULL.into() }))).await;
+        }),
+        Refused::Full => {
+            let mut r = err(StatusCode::SERVICE_UNAVAILABLE, FULL).into_response();
+            r.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from(FULL_RETRY.as_secs()));
+            r
+        }
+    }
+}
+
+/// Not signed, so a browser: daemons and the CLI sign their requests.
+fn browser(headers: &HeaderMap) -> bool {
+    !headers.contains_key(crate::auth::AUTH_HEADER)
+}
+
+pub async fn client(
+    State(app): State<Arc<App>>,
+    s: Session,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    up: WebSocketUpgrade,
+) -> Response {
     // Its owner's, a team's member, or someone it was shared with (the
     // daemon checks for itself; this only routes).
     match crate::teams::may_reach(&app, &s.account, &id) {
@@ -365,7 +482,7 @@ pub async fn client(State(app): State<Arc<App>>, s: Session, Path(id): Path<Stri
         Ok(false) => return err(StatusCode::NOT_FOUND, "no such daemon").into_response(),
         Err(e) => return crate::ApiError::from(e).into_response(),
     }
-    splice_to(app, id, Some(s.account), up)
+    splice_to(app, id, Some(s.account), &headers, up)
 }
 
 /// A read-only link's viewer (M19): no account. Only to a daemon that has
@@ -381,20 +498,26 @@ pub async fn link(
         return e.into_response();
     }
     match app.db.daemon_has_links(&id, now_ms()) {
-        Ok(true) => splice_to(app, id, None, up),
+        Ok(true) => splice_to(app, id, None, &headers, up),
         Ok(false) => err(StatusCode::NOT_FOUND, "that link has expired").into_response(),
         Err(e) => crate::ApiError::from(e).into_response(),
     }
 }
 
-fn splice_to(app: Arc<App>, id: String, account: Option<String>, up: WebSocketUpgrade) -> Response {
+fn splice_to(
+    app: Arc<App>,
+    id: String,
+    account: Option<String>,
+    headers: &HeaderMap,
+    up: WebSocketUpgrade,
+) -> Response {
     // Links count against the daemon's owner (#174: sockets too).
     let Some(who) = account.clone().or_else(|| app.db.daemon_account(&id).ok().flatten()) else {
         return err(StatusCode::NOT_FOUND, "no such daemon").into_response();
     };
     let ticket = match app.relay.admit(&app.db, &who, false, app.stripe.is_some()) {
         Ok(t) => t,
-        Err(why) => return err(StatusCode::TOO_MANY_REQUESTS, &why).into_response(),
+        Err(why) => return refuse(why, browser(headers), up),
     };
     // A hosted sandbox (M20) doesn't dial in: it's reached through the
     // provider's proxy, which wakes it.
@@ -602,10 +725,10 @@ fn mframe(kind: u8, chan: u32, payload: &[u8]) -> Vec<u8> {
     f
 }
 
-pub async fn many(State(app): State<Arc<App>>, s: Session, up: WebSocketUpgrade) -> Response {
+pub async fn many(State(app): State<Arc<App>>, s: Session, headers: HeaderMap, up: WebSocketUpgrade) -> Response {
     let ticket = match app.relay.admit(&app.db, &s.account, false, app.stripe.is_some()) {
         Ok(t) => Arc::new(t),
-        Err(why) => return err(StatusCode::TOO_MANY_REQUESTS, &why).into_response(),
+        Err(why) => return refuse(why, browser(&headers), up),
     };
     up.max_message_size(MAX_WIRE + 5)
         .read_buffer_size(CLIENT_READ_BUFFER)
@@ -770,10 +893,11 @@ mod tests {
     #[tokio::test]
     async fn caps_per_account() {
         let db = crate::db::Db::memory();
-        let r = Relay::new(Caps { sockets: 2, daemons: 1, daily_bytes: 100 });
+        let r = Relay::new(Caps { sockets: 2, daemons: 1, daily_bytes: 100, total: 0 });
         let a1 = r.admit(&db, "a", false, false).unwrap();
         let a2 = r.admit(&db, "a", false, false).unwrap();
-        assert!(r.admit(&db, "a", false, false).err().unwrap().contains("the most at once"));
+        let Err(Refused::Account(why)) = r.admit(&db, "a", false, false) else { panic!("over the account's limit") };
+        assert!(why.contains("the most at once"));
         // Someone else's count is their own; machines count apart.
         let _b = r.admit(&db, "b", false, false).unwrap();
         let d = r.admit(&db, "a", true, false).unwrap();
@@ -794,5 +918,35 @@ mod tests {
         let t = r.admit(&db, "c", false, false).unwrap();
         r.account_gone("c");
         tokio::time::timeout(Duration::from_secs(1), t.gone()).await.unwrap();
+    }
+
+    #[test]
+    fn a_ceiling_over_every_account() {
+        let db = crate::db::Db::memory();
+        let r = Relay::new(Caps { sockets: 2, daemons: 1, daily_bytes: 0, total: 4 });
+        // A is at its own limit: refused for that, which takes nothing from
+        // the ceiling, so B still gets in.
+        let a = [r.admit(&db, "a", false, false).unwrap(), r.admit(&db, "a", false, false).unwrap()];
+        for _ in 0..10 {
+            assert!(matches!(r.admit(&db, "a", false, false), Err(Refused::Account(_))));
+        }
+        let b = r.admit(&db, "b", false, false).unwrap();
+        let bd = r.admit(&db, "b", true, false).unwrap();
+        assert_eq!(r.counts(), (4, 1, 4, 0));
+        // Full: anyone's next socket is refused, a daemon's too, and what's
+        // open stays open.
+        assert_eq!(r.admit(&db, "c", false, false).err(), Some(Refused::Full));
+        assert_eq!(r.admit(&db, "c", true, false).err(), Some(Refused::Full));
+        assert!(r.accounts.lock().unwrap().get("c").is_none(), "a refused account isn't kept");
+        // An account at its own limit still hears that, not that it's full.
+        assert!(matches!(r.admit(&db, "a", false, false), Err(Refused::Account(_))));
+        assert_eq!(r.counts(), (4, 1, 4, 2));
+        // A socket closing makes room.
+        drop(b);
+        let c = r.admit(&db, "c", false, false).unwrap();
+        assert_eq!(r.counts(), (4, 1, 4, 2));
+        drop((a, bd, c));
+        assert_eq!(r.counts(), (0, 0, 4, 2));
+        assert!(r.accounts.lock().unwrap().is_empty());
     }
 }

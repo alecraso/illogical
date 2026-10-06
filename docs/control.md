@@ -236,6 +236,14 @@ illogical-control --public-url https://control.example.com --listen 127.0.0.1:76
   - `ILLOGICAL_RELAY_DAILY_MB` (2000): relayed traffic a day, while
     billing is off. Past it the account's relayed traffic slows to about
     64 KB/s, as billing's allowance does. Direct connections don't count.
+- **A ceiling on the relay,** every account's sockets together:
+  `ILLOGICAL_RELAY_MAX_TOTAL` (5000; 0 for none). Keep it below the
+  proxy's connection limit, so a full relay still leaves room for
+  control's pages and sign-ins. Past it a new relay socket is refused
+  (what's open stays): daemons and the CLI get `503` with
+  `Retry-After: 30`, and a browser's socket closes at once with code
+  1013 and the reason. Daemons wait that long and up to as long again;
+  a page says control is full and waits 30 to 60 seconds.
 - **Backups:** set `LITESTREAM_BUCKET` and control backs its database up
   continuously with Litestream (below).
 
@@ -254,7 +262,13 @@ The hosted control is one Fly machine (`packaging/control/fly.toml`):
 `fly.toml` (6,000 soft, 8,000 hard) are about open files, not memory.
 Control raises its open-file limit to the hard one at start and logs it
 (`open file limit open_files=…` in `fly logs`); keep `hard_limit` below
-that. Each account is held to the relay limits above.
+that. Each account is held to the relay limits above, and the relay as
+a whole to its ceiling (5,000, under Fly's soft limit, so pages and
+sign-ins still get through when it's full). Each minute it changed,
+`fly logs` has `relay sockets` with the count (`sockets`, `daemons`,
+`clients`), the ceiling (`max`) and how many were refused for it
+(`refused`); `the relay is full` and `the relay has room again` mark
+when it fills and empties.
 
 **Backups (Litestream to Cloudflare R2).** Off until its secrets are set;
 then:
