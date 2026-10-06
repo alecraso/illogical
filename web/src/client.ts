@@ -354,6 +354,8 @@ export class Client {
   private retry = 0;
   /** When this link's daemon said hello (ms). */
   private helloAt = 0;
+  /** The version the first `hello` said: another one means an update (#419). */
+  private daemonVersion: string | undefined;
   private nextId = 1;
   private listeners = new Set<() => void>();
   private errorTimer: number | undefined;
@@ -1051,6 +1053,14 @@ export class Client {
   private onMessage(msg: ServerMsg) {
     switch (msg.type) {
       case "hello":
+        // The daemon that served this page came back as another version (an
+        // update restarted it, #419): its web client changed too, so load the
+        // new one. Not for a page from elsewhere (a host's, control's).
+        if (!this.base && !this.e2e && this.daemonVersion && this.daemonVersion !== msg.version) {
+          location.reload();
+          return;
+        }
+        this.daemonVersion = msg.version;
         this.revoked = false;
         this.clientId = msg.client;
         this.connected = true;

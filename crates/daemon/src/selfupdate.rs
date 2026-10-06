@@ -334,8 +334,10 @@ fn outside(exe: &Path) -> Command {
     c
 }
 
-/// Windows: out of the task's job, which `schtasks /End` ends whole. A
-/// job that doesn't allow that refuses it; then try without.
+/// Windows: out of the task's job, which `schtasks /End` ends whole.
+/// Task Scheduler's job refuses breakaway (Access denied, on Windows 11),
+/// and inside it the install still finishes: the daemon stops when asked,
+/// which ends the task before the install's `/End` has anything to end.
 #[cfg(windows)]
 fn spawn(cmd: &mut Command) -> anyhow::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
@@ -346,7 +348,7 @@ fn spawn(cmd: &mut Command) -> anyhow::Result<std::process::Child> {
     match cmd.creation_flags(flags | CREATE_BREAKAWAY_FROM_JOB).spawn() {
         Ok(c) => Ok(c),
         Err(e) => {
-            warn!(error = %e, "update: can't leave the task's job; running the install inside it");
+            info!(error = %e, "update: can't leave the task's job; running the install inside it");
             Ok(cmd.creation_flags(flags).spawn()?)
         }
     }

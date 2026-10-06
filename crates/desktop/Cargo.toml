@@ -34,6 +34,8 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-global-shortcut = "2"
 # App updates (M46): a signed manifest on the release page.
 tauri-plugin-updater = "2"
+# Check for Updates… says what it found (#419).
+tauri-plugin-dialog = "2"
 tungstenite = "0.30"
 # Control's ticket for signing in (M48), and the local daemon's /api/host.
 ureq = { version = "3", features = ["json"] }

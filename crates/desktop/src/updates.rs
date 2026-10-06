@@ -147,3 +147,58 @@ pub fn from_tray(app: &AppHandle) {
         }
     });
 }
+
+/// *Check for Updates…* (the macOS app menu, and the tray; #419): check
+/// now and say what was found, since by the time the tray item's text
+/// changes its menu has closed.
+pub fn check_now(app: &AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let app = app.clone();
+    let current = app.package_info().version.to_string();
+    if !enabled() {
+        let why = if can_update() {
+            "This build of illogical doesn't check for updates."
+        } else {
+            "This copy of illogical updates with its package manager."
+        };
+        app.dialog().message(why).title(format!("illogical {current}")).show(|_| {});
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        // Windows: find only; the installer closes the app, so it waits
+        // for a yes.
+        let found = fetch(&app, !cfg!(windows)).await;
+        let dialog = app.dialog().clone();
+        match found {
+            Ok(None) => {
+                dialog.message(format!("illogical {current} is the latest.")).title("No update").show(|_| {});
+            }
+            Ok(Some(v)) => {
+                ready(&app, &v);
+                let in_place = READY.lock().unwrap().is_some();
+                let (text, yes) = if in_place {
+                    (format!("illogical {v} is ready. Restart now to use it?"), "Restart Now")
+                } else {
+                    (format!("illogical {v} is out. Install it now? The app closes while it installs."), "Update Now")
+                };
+                let app = app.clone();
+                dialog
+                    .message(text)
+                    .title("Update")
+                    .buttons(MessageDialogButtons::OkCancelCustom(yes.into(), "Later".into()))
+                    .show(move |yes| {
+                        if yes {
+                            from_tray(&app);
+                        }
+                    });
+            }
+            Err(e) => {
+                dialog
+                    .message(format!("Couldn't check for updates: {e}"))
+                    .title("Update")
+                    .kind(MessageDialogKind::Error)
+                    .show(|_| {});
+            }
+        }
+    });
+}

@@ -114,3 +114,29 @@ test("the real daemon answers: off for a build run from target/", async ({ page 
   const r = await page.evaluate(() => fetch("/api/update/apply", { method: "POST" }).then((r) => r.status));
   expect(r).toBe(409);
 });
+
+test("any open page reloads when its daemon comes back as another version (#419)", async ({ page }) => {
+  // The first connection passes through; the next one's hello says a new
+  // version, as the daemon would after an update restarted it.
+  let n = 0;
+  const socks: { close: () => Promise<void> }[] = [];
+  await page.routeWebSocket(/\/ws(\?|$)/, (ws) => {
+    const server = ws.connectToServer();
+    const conn = ++n;
+    socks.push({ close: () => ws.close() });
+    server.onMessage((m) => {
+      if (conn > 1 && typeof m === "string" && m.includes('"type":"hello"')) {
+        const msg = JSON.parse(m) as { version: string };
+        msg.version = "99.0.0";
+        return ws.send(JSON.stringify(msg));
+      }
+      ws.send(m);
+    });
+  });
+  await reset(page);
+  await expect(page.locator(".session-button")).toBeVisible();
+  const reloaded = page.waitForEvent("load");
+  await socks[0].close();
+  await reloaded;
+  expect(n).toBeGreaterThan(1);
+});

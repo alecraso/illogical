@@ -839,6 +839,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(settings::plugin());
+    builder = builder.plugin(tauri_plugin_dialog::init());
     if updater {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
@@ -876,8 +877,13 @@ fn main() {
                 // Edit only (copy, paste, select all, which WKWebView needs
                 // a menu for): Tauri's default menu takes Cmd-W/Q/H/M.
                 use tauri::menu::{PredefinedMenuItem, Submenu};
-                let app_menu =
-                    Submenu::with_items(app, "illogical", true, &[&PredefinedMenuItem::about(app, None, None)?])?;
+                let check = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
+                let app_menu = Submenu::with_items(
+                    app,
+                    "illogical",
+                    true,
+                    &[&PredefinedMenuItem::about(app, None, None)?, &check],
+                )?;
                 let edit = Submenu::with_items(
                     app,
                     "Edit",
@@ -892,6 +898,12 @@ fn main() {
             }
             #[cfg(not(target_os = "macos"))]
             Menu::new(app)
+        })
+        // The app menu's Check for Updates… (macOS, #419).
+        .on_menu_event(|app, e| {
+            if e.id().as_ref() == "check-updates" {
+                updates::check_now(app);
+            }
         })
         .setup(move |app| {
             #[cfg(target_os = "linux")]
@@ -941,9 +953,20 @@ fn main() {
             )?;
             let update = MenuItem::with_id(app, "update", "Restart to update", false, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&open, &new, &this];
+            // Which app this is (#419): there's no other place it shows on
+            // Linux and Windows.
+            let version = MenuItem::with_id(
+                app,
+                "version",
+                format!("illogical {}", app.package_info().version),
+                false,
+                None::<&str>,
+            )?;
+            let check = MenuItem::with_id(app, "tray-check-updates", "Check for updates…", true, None::<&str>)?;
+            let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&version, &open, &new, &this];
             items.push(&hotkey);
             if updates::enabled() {
+                items.push(&check);
                 items.push(&update);
             }
             items.push(&quit);
@@ -976,6 +999,7 @@ fn main() {
                         let _ = hotkey_item.set_checked(on);
                     }
                     "update" => updates::from_tray(app),
+                    "tray-check-updates" => updates::check_now(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })

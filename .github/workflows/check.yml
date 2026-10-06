@@ -2,7 +2,8 @@
 # - lint: the quick checks, on GitHub's runners;
 # - on geek's runner pool (label linux-x86_64-ci, docs/development.md):
 #   - build and static: the debug and the box's (static) binaries, once;
-#   - clippy: Linux, both Macs (cross) and the desktop app, and notices;
+#   - clippy: Linux, both Macs (cross), the desktop app (when the push
+#     changes it: scripts/app-changed), and notices;
 #   - test: `just test` (the Rust tests under nextest);
 #   - testnet: the test stack's claims (ssh, then control);
 #   - e2e: the Playwright specs in six shards; stack: those on the test
@@ -100,8 +101,10 @@ jobs:
       - run: mise exec -- cargo clippy --workspace --all-targets -- -D warnings
       - run: just check-macos
       - run: just check-macos x86_64
+      # Only when the push changes what the app is built from
+      # (scripts/app-changed): its own workspace, compiled for nothing else.
       - name: The desktop app
-        run: just desktop-check
+        run: if scripts/app-changed "${{ github.event.before }}"; then just desktop-check; fi
       - name: THIRD_PARTY.md is current
         run: just notices && git diff --exit-code THIRD_PARTY.md crates/desktop/THIRD_PARTY.md
 
