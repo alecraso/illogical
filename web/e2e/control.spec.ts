@@ -262,6 +262,22 @@ test("two machines join by code; one direct, one only through the relay", async 
   await laptop.evaluate((p) => window.__illogical.client.input(p, new TextEncoder().encode("\x15")), pane);
 });
 
+test("a relayed page that goes leaves the machine's clients (presence) too", async () => {
+  const viewers = () => laptop.evaluate(() => window.__illogical.client.state?.presence?.length ?? 0);
+  const before = await viewers();
+  // Each page that came and went stayed a client of the mux until the
+  // daemon restarted: hundreds, slowing every keystroke.
+  for (let i = 0; i < 3; i++) {
+    const other = await laptop.context().newPage();
+    await other.goto("/");
+    await booted(other);
+    await showHost(other, "mac");
+    await expect.poll(viewers, { timeout: 20_000 }).toBe(before + 1);
+    await other.close();
+    await expect.poll(viewers, { timeout: 20_000 }).toBe(before);
+  }
+});
+
 async function phoneContext(browser: Browser) {
   return browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true });
 }

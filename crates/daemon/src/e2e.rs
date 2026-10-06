@@ -180,9 +180,12 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
             device: Some(device.clone()).filter(|d| !d.sign.is_empty()),
         },
     });
+    // The callers drop this future when the socket's reader ends first,
+    // which is how most channels end: leave the mux and the hands then too.
+    let _left = Leave { app: app.clone(), client, device: device.device.clone() };
     let router = crate::server::channel_router(app.clone());
     let mut changed = app.control.changed.subscribe();
-    let result = loop {
+    loop {
         tokio::select! {
             w = inbound.recv() => {
                 let Some(w) = w else { break Ok(()) };
@@ -225,11 +228,22 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
                 }
             }
         }
-    };
-    app.mux.send(Cmd::Disconnect { client });
-    app.hands.disconnect(client);
-    info!(device = device.device, "channel closed");
-    result
+    }
+}
+
+/// A channel's client leaving the mux and the hands, however the channel ends.
+struct Leave {
+    app: Arc<App>,
+    client: illogical_proto::ClientId,
+    device: String,
+}
+
+impl Drop for Leave {
+    fn drop(&mut self) {
+        self.app.mux.send(Cmd::Disconnect { client: self.client });
+        self.app.hands.disconnect(self.client);
+        info!(device = self.device, "channel closed");
+    }
 }
 
 /// `None`: hang up.
