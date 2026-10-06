@@ -395,6 +395,11 @@ struct World {
 }
 
 fn world() -> World {
+    world_where(TeamRole::Viewer)
+}
+
+/// [`world`], with Dee in `t1` as `dee`.
+fn world_where(dee_role: TeamRole) -> World {
     let (alex, alex_root) = device("a1");
     let daemon = DeviceKeys::generate();
     let mut daemon_cert = Cert::new(&daemon, "a1", Kind::Daemon, "box");
@@ -408,12 +413,7 @@ fn world() -> World {
         name: "Acme".into(),
         version: 1,
         at: 1,
-        members: vec![
-            owner.clone(),
-            bea.member(TeamRole::Editor),
-            cy.member(TeamRole::Viewer),
-            dee.member(TeamRole::Viewer),
-        ],
+        members: vec![owner.clone(), bea.member(TeamRole::Editor), cy.member(TeamRole::Viewer), dee.member(dee_role)],
         spent: vec![],
         redeem: None,
         by: String::new(),
@@ -590,6 +590,40 @@ fn on_a_team_daemon_a_members_role_is_enough() {
     // The owner is the owner already.
     let (status, _) = invite(&d, json!({ "session": session, "who": "account:a1" }));
     assert_eq!(status, 404, "this account is never named");
+}
+
+/// #386: on a team daemon, the team's other owners get in as the owner,
+/// yet each is someone to invite and @mention: no grant, just their phone,
+/// opening at the pane.
+#[test]
+fn a_teams_other_owner_is_told_not_granted() {
+    let w = world_where(TeamRole::Owner);
+    w.fake.lock().unwrap().team = Some(w.t1.clone());
+    w.route(&w.bea);
+    w.route(&w.dee);
+    let d = w.daemon(true);
+    let (pane, session) = first(&d);
+
+    let (status, r) =
+        invite_when_known(&d, json!({ "session": session, "who": "dee", "role": "editor", "drive_minutes": 30 }));
+    assert_eq!(status, 200, "{r}");
+    let grant = &r["grant"];
+    assert_eq!((grant["principal"].as_str(), grant["granted"].as_bool()), (Some("account:d1"), Some(false)), "{r}");
+    assert_eq!((grant["role"].as_str(), r["drive"].as_bool()), (Some("owner"), None), "{r}");
+    assert_eq!(r["delivery"], "sent", "{r}");
+    assert!(d.get("/api/acl")["grants"].as_array().unwrap().is_empty());
+    let got = w.dee.got(&w.fake);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0]["pane"].as_u64(), Some(pane));
+    assert!(w.bea.got(&w.fake).is_empty(), "nobody else");
+
+    // @dee in the pane's thread reaches her phone too, and her alone.
+    let r = d.post(&format!("/api/threads/pane-{pane}"), json!({ "text": "@dee the flaky test again" }));
+    assert_eq!(r["unreached"], json!([]), "{r}");
+    assert_eq!(r["message"]["mentions"], json!(["account:d1"]), "{r}");
+    d.wait_for("Dee's mention", || w.dee.got(&w.fake).len() == 2);
+    assert!(w.dee.got(&w.fake)[1]["tag"].as_str().unwrap().starts_with("thread-"));
+    assert!(w.bea.got(&w.fake).is_empty(), "nobody else");
 }
 
 /// #234, end to end: Claude Code in a terminal pane on Alex's own machine

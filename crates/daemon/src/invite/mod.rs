@@ -166,7 +166,7 @@ pub fn nameable(app: &App) -> Vec<Person> {
     let account = |p: &Person| p.id.starts_with("account:");
     let key = |p: &Person| p.name.split('@').next().unwrap_or("").trim().to_lowercase();
     for p in people {
-        if owns_here(app, &p.id) || out.iter().any(|o| o.id == p.id) {
+        if is_me(app, &p.id) || out.iter().any(|o| o.id == p.id) {
             continue;
         }
         // A login and an account by one name: the account, saying which
@@ -263,8 +263,14 @@ async fn invite(State(app): State<Arc<App>>, headers: HeaderMap, Json(b): Json<R
     }
 }
 
-/// Whether `id` is the account this machine is the owner's, who needs no
-/// invite.
+/// Whether `id` is this machine's own account, whom an invite can't reach
+/// by name: it's the owner.
+pub fn is_me(app: &App, id: &str) -> bool {
+    id.strip_prefix("account:").is_some_and(|a| app.control.is_me(a))
+}
+
+/// Whether `id` owns this machine through its team (#386): every session
+/// is theirs already, so an invite only tells them.
 pub fn owns_here(app: &App, id: &str) -> bool {
     id.strip_prefix("account:").is_some_and(|a| app.control.owns_here(a))
 }
@@ -295,14 +301,16 @@ pub async fn run(app: &App, b: Request, drafted: Option<&Drafted>) -> Result<ser
         None => return Err(no(StatusCode::SERVICE_UNAVAILABLE, "shutting down")),
     };
     let person = resolve(app, &b.who, b.root)?;
-    if owns_here(app, &person.id) {
-        return Err(no(StatusCode::BAD_REQUEST, format!("{} owns this machine already", person.name)));
+    if is_me(app, &person.id) {
+        return Err(no(StatusCode::BAD_REQUEST, format!("{} owns this machine", person.name)));
     }
+    let co_owner = owns_here(app, &person.id);
 
     // The grant: none if they hold the role already (a team daemon's
-    // members hold theirs on every session), an upgrade if lower, never a
-    // downgrade of one.
-    let grant = app.acl.list().into_iter().find(|g| g.session == b.session && g.principal == person.id);
+    // members hold theirs on every session, its owners everything), an
+    // upgrade if lower, never a downgrade of one.
+    let grant =
+        app.acl.list().into_iter().find(|g| g.session == b.session && g.principal == person.id).filter(|_| !co_owner);
     if let Some(h) = grant.as_ref().map(|g| g.role).filter(|h| *h > want) {
         return Err(no(
             StatusCode::CONFLICT,
@@ -316,7 +324,7 @@ pub async fn run(app: &App, b: Request, drafted: Option<&Drafted>) -> Result<ser
             ),
         ));
     }
-    let granted = app.acl.role_of(&person.id, b.session).is_none_or(|h| h < want);
+    let granted = !co_owner && app.acl.role_of(&person.id, b.session).is_none_or(|h| h < want);
     if granted {
         if person.id.starts_with("account:") && person.root.is_none() {
             return Err(no(StatusCode::BAD_REQUEST, format!("sharing with {} needs their root device", person.name)));
@@ -349,7 +357,7 @@ pub async fn run(app: &App, b: Request, drafted: Option<&Drafted>) -> Result<ser
         app.mux.send(Cmd::AclChanged);
         app.control.poke();
     }
-    let drive = match b.drive_minutes {
+    let drive = match b.drive_minutes.filter(|_| !co_owner) {
         Some(m) => Some(app.mux.api(|r| Api::Trust(pane, person.id.clone(), m, r)).await.unwrap_or(false)),
         None => None,
     };
@@ -385,7 +393,7 @@ pub async fn run(app: &App, b: Request, drafted: Option<&Drafted>) -> Result<ser
         line["drafted_in"] = json!(d.pane);
     }
     app.acl.record(line);
-    let role = app.acl.role_of(&person.id, b.session).unwrap_or(want);
+    let role = if co_owner { Role::Owner } else { app.acl.role_of(&person.id, b.session).unwrap_or(want) };
     Ok(json!({
         "invite": id,
         "grant": { "session": b.session, "principal": person.id, "name": person.name, "role": role, "granted": granted },

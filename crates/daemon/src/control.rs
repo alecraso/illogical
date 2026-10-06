@@ -249,6 +249,17 @@ impl Enrolled {
         Self { saved, keys, trusted, others, team_roles, shared_roles, push: Vec::new() }
     }
 
+    /// A team's other owner (#386): an owner here as this machine's own
+    /// account is, yet still someone to name, as `account:<id>`.
+    fn co_owner(&self, account: &str) -> Option<Principal> {
+        if account == self.saved.cert.account {
+            return None;
+        }
+        let m = self.saved.roster.as_ref()?.member(account).filter(|m| m.role == TeamRole::Owner)?;
+        let name = self.saved.team_names.get(account).unwrap_or(&m.name).clone();
+        Some(Principal::User { id: format!("account:{account}"), name, pic: None })
+    }
+
     /// Every account outside this one that gets in, for control to route.
     fn accounts(&self) -> Vec<String> {
         let mut a: Vec<String> = self.others.iter().map(|(c, _)| c.account.clone()).collect();
@@ -517,6 +528,11 @@ impl Control {
         })
     }
 
+    /// Whether `account` is this machine's own.
+    pub fn is_me(&self, account: &str) -> bool {
+        self.enrolled().is_some_and(|e| e.saved.cert.account == account)
+    }
+
     /// Whether this daemon is a team's (M19).
     pub fn is_team(&self) -> bool {
         self.enrolled().is_some_and(|e| e.saved.team.is_some())
@@ -525,7 +541,11 @@ impl Control {
     /// Whether someone (by principal id) has devices this daemon lets in
     /// through control: control routes them here.
     pub fn reaches(&self, id: &str) -> bool {
-        self.enrolled().is_some_and(|e| e.others.iter().any(|(_, p)| p.id() == id))
+        self.enrolled().is_some_and(|e| {
+            e.others
+                .iter()
+                .any(|(c, p)| p.id() == id || (p.is_owner() && id.strip_prefix("account:") == Some(&c.account)))
+        })
     }
 
     /// Keep an invite for later (#233): pushed after a refresh that finds
@@ -602,6 +622,14 @@ impl Control {
             }
         }
         out
+    }
+
+    /// The team's other owners (#386), by account: they get in as the
+    /// owner, but each is someone to @mention.
+    pub fn co_owners(&self) -> Vec<Principal> {
+        let Some(e) = self.enrolled() else { return Vec::new() };
+        let Some(r) = &e.saved.roster else { return Vec::new() };
+        r.members.iter().filter_map(|m| e.co_owner(&m.account)).collect()
     }
 
     /// Who a Noise key belongs to, if this daemon lets them in: a device of
@@ -915,7 +943,11 @@ impl Control {
         to: impl Fn(&Principal) -> bool,
     ) -> Option<(Arc<Enrolled>, Vec<PushSub>, String)> {
         let e = self.enrolled()?;
-        let subs: Vec<PushSub> = e.push.iter().filter(|(p, _)| to(p)).map(|(_, s)| s.clone()).collect();
+        // A team's other owner's devices are the owner's, and theirs by
+        // account too (#386): `account:<id>` picks them alone.
+        let picks =
+            |(p, s): &&(Principal, PushSub)| to(p) || (p.is_owner() && e.co_owner(&s.account).is_some_and(|c| to(&c)));
+        let subs: Vec<PushSub> = e.push.iter().filter(picks).map(|(_, s)| s.clone()).collect();
         if subs.is_empty() {
             return None;
         }
@@ -2614,6 +2646,106 @@ mod tests {
         // Out of the team, its owners are nobody to it.
         take_move(&mut saved, mv(&okeys, &owner, d, None, 7));
         assert_eq!(saved.moved_at, 6);
+    }
+
+    /// #386: a team's other owner gets in as the owner, but is someone of
+    /// their own by account: `account:o` reaches their devices alone, the
+    /// owner's pushes still reach them, and an editor stays an editor.
+    #[test]
+    fn a_teams_other_owner_is_reachable_by_account() {
+        let (keys, root) = device("m", Kind::Browser);
+        let (_, daemon) = device("m", Kind::Daemon);
+        let (_, owner) = device("o", Kind::Browser);
+        let (_, editor) = device("e", Kind::Browser);
+        let member = |account: &str, root: &Cert, role| illogical_e2e::team::Member {
+            account: account.into(),
+            root: root.device.clone(),
+            role,
+            name: account.into(),
+        };
+        let roster = Roster {
+            v: 1,
+            team: "t1".into(),
+            name: "Acme".into(),
+            version: 1,
+            at: 1,
+            members: vec![
+                member("m", &root, TeamRole::Owner),
+                member("o", &owner, TeamRole::Owner),
+                member("e", &editor, TeamRole::Editor),
+            ],
+            spent: vec![],
+            redeem: None,
+            by: String::new(),
+            sig: String::new(),
+        };
+        let saved = Saved {
+            url: String::new(),
+            trust: Trust { account: "m".into(), root: root.device.clone() },
+            cert: daemon,
+            certs: vec![root.clone()],
+            revocations: vec![],
+            team: None,
+            roster: Some(roster),
+            team_certs: [
+                ("o".to_owned(), (vec![owner.clone()], vec![])),
+                ("e".to_owned(), (vec![editor.clone()], vec![])),
+            ]
+            .into_iter()
+            .collect(),
+            team_names: [("o".to_owned(), "Olive".to_owned())].into_iter().collect(),
+            locked: false,
+            peers: Default::default(),
+            shared_teams: Default::default(),
+            login: String::new(),
+            moved_at: 0,
+        };
+        let dir = std::env::temp_dir().join(format!("illogical-co-owners-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let acl = Arc::new(Acl::open(&dir));
+        let mut e = Enrolled::build(saved, Arc::new(keys), &acl);
+        let sub = |account: &str, device: &Cert| PushSub {
+            v: 1,
+            account: account.into(),
+            device: device.device.clone(),
+            endpoint: format!("https://push.test/{account}"),
+            p256dh: String::new(),
+            auth: String::new(),
+            at: 0,
+            sig: String::new(),
+        };
+        let editor_is = Principal::User { id: "account:e".into(), name: "e".into(), pic: None };
+        e.push = vec![
+            (Principal::Owner, sub("m", &root)),
+            (Principal::Owner, sub("o", &owner)),
+            (editor_is.clone(), sub("e", &editor)),
+        ];
+        let c = Control::new(&dir, vec![], String::new(), acl.clone(), false);
+        c.install(Some(e));
+
+        let ids: Vec<_> = c.co_owners().iter().map(|p| (p.id().to_owned(), c_name(p))).collect();
+        assert_eq!(ids, [("account:o".to_owned(), "Olive".to_owned())], "not this machine's own, nor an editor");
+        assert!(c.owns_here("o") && c.owns_here("m") && !c.owns_here("e"));
+        assert!(c.is_me("m") && !c.is_me("o"));
+        assert!(c.reaches("account:o") && c.reaches("account:e") && !c.reaches("account:m"));
+
+        let to = |f: fn(&Principal) -> bool| -> Vec<String> {
+            c.to_push(1, "t", "b", None, f)
+                .map(|(_, s, _)| s.into_iter().map(|s| s.account).collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(to(|p| p.id() == "account:o"), ["o"], "their own devices, by account");
+        assert_eq!(to(|p| p.is_owner()), ["m", "o"], "the owner's pushes still reach them");
+        assert_eq!(to(|p| p.id() == "account:e"), ["e"]);
+        assert!(to(|p| p.id() == "account:m").is_empty(), "this machine's own account is the owner");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        fn c_name(p: &Principal) -> String {
+            match p {
+                Principal::User { name, .. } => name.clone(),
+                Principal::Owner => "owner".into(),
+            }
+        }
     }
 
     /// #208: a team member is called what they set ("Sam Stranger"), not

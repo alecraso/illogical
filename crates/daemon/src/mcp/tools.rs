@@ -2663,8 +2663,8 @@ impl<'a> Call<'a> {
         let started = self.started_text().await?;
         // Someone this machine knows, or no card at all.
         let person = crate::invite::resolve(self.app, &a.who, None).map_err(|(_, why)| why)?;
-        if crate::invite::owns_here(self.app, &person.id) {
-            return Err(format!("{} owns this machine already", person.name));
+        if crate::invite::is_me(self.app, &person.id) {
+            return Err(format!("{} owns this machine", person.name));
         }
         let drafter = self.drafter(from);
         let blocks = self.invite_blocks().await;

@@ -4334,10 +4334,12 @@ impl Daemon {
         out
     }
 
-    /// Everyone a message could @mention: the owner, everyone shared with,
-    /// team members (connected or not), and whoever is connected.
+    /// Everyone a message could @mention: the owner, the team's other
+    /// owners (#386), everyone shared with, team members (connected or
+    /// not), and whoever is connected.
     fn mentionable(&self) -> Vec<Principal> {
         let mut out = vec![Principal::Owner];
+        out.extend(self.config.control.co_owners());
         for g in self.config.acl.list() {
             out.push(Principal::User { id: g.principal.clone(), name: g.name.clone(), pic: None });
         }
@@ -4367,10 +4369,14 @@ impl Daemon {
         }
         let by = as_agent.clone().unwrap_or_else(|| self.driver_of(&who));
         let tokens = crate::threads::mentions(&text);
+        // A team's other owner reads every thread, as the owner does.
+        let co_owner =
+            |p: &Principal| p.id().strip_prefix("account:").is_some_and(|a| self.config.control.owns_here(a));
         let mentions: Vec<String> = self
             .mentionable()
             .into_iter()
-            .filter(|p| p.id() != by.who && self.thread_role(p, target).is_some())
+            .filter(|p| p.id() != by.who)
+            .filter(|p| self.thread_role(p, target).is_some() || (co_owner(p) && self.thread_exists(target)))
             .filter(|p| {
                 let name = self.name_of(p);
                 tokens.iter().any(|t| crate::threads::names(t, p.id(), &name))

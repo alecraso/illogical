@@ -156,7 +156,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
     out.send(m2).await?;
     let out = Arc::new(Out { ch: Arc::new(ch), q: tokio::sync::Mutex::new(out) });
     let ch = out.ch.clone();
-    info!(device = device.device, name = device.name, who = principal.id(), "channel open");
+    info!(device = device.device, account = device.account, name = device.name, who = principal.id(), "channel open");
 
     // An owner here through control has a name of their own (M30).
     let name = principal.is_owner().then(|| app.control.name_of_account(&device.account)).flatten();
