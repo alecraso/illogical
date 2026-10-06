@@ -69,6 +69,8 @@ vs team machines and sharing a session:
    join at a time: while Getting started's waits, `illogicald join` says
    which code it is and where to approve it, and the other way round.
    An approval is never lost to a second request from the same machine.
+   If control refuses an approval, the page says which check failed and
+   what to do; closing it then doesn't turn the machine down.
 3. **Add your phone** (or any other browser): *Add a phone or browser…* in
    the host menu shows control's address as a QR code and a link. Sign in
    there. It shows a fingerprint and waits. Your devices ask *New device?*
@@ -107,6 +109,9 @@ vs team machines and sharing a session:
    code to approve, shown in *Getting started* and by `illogicald join`.
    Approved into the same account, it's back without checking the
    fingerprint again.
+   A removed browser says so when it opens control's page, and offers to
+   forget its key and enroll again, approved by another device or a
+   recovery code.
 
 **How a device reaches a machine:**
 

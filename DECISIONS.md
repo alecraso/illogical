@@ -428,6 +428,20 @@ signed by an owner's device of the previous version.
 Where: `crates/e2e/src/cert.rs`, `crates/e2e/src/team.rs`.
 From: [M17](docs/plan-archive.md#m17-illogical-control-accounts-devices-enrollment-directory), [M19](docs/plan-archive.md#m19-teams-sharing-roles-team-daemons-invites), S15.
 
+### A refused approval names the check, and isn't a turn-down
+When control refuses an approval, its 403 carries a `reason` code beside the
+sentence (`revoked`, `approver_untrusted`, `bad_signature`, `cant_approve`,
+`recovery_for_machine`, `no_chain`), and the page acts on the code. Control,
+the daemon and the CLI find the failed check with one function, so they
+agree. A removed key keeps #330's words: it is refused at join with 410, and
+at approval with 403 `revoked`. Closing the prompt after a refusal leaves the
+join waiting; only *Cancel* turns a machine down. A browser checks its own key
+against the account's trust before it offers *Approve*.
+Why: "doesn't check out" left people with no way forward, and a failed
+approval was recorded as a rejection.
+Where: `crates/e2e/src/cert.rs` (`Trust::refusal`, `Refusal`), `crates/control/src/api.rs` (`approval_ok`), `web/src/control.ts` (`REFUSED`, the `untrusted` phase).
+From: #327, #330.
+
 ### Control is open source and self-hostable; the tailnet stays first class
 `illogical-control` lives in this repo and the hosted one runs the same code.
 Tailnet users can skip control, or enroll and keep direct connections. Free

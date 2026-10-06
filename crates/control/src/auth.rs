@@ -79,7 +79,7 @@ impl FromRequestParts<Arc<App>> for Session {
         match parts.extensions.get::<Signed>() {
             Some(Signed(Ok(cert))) if cert.kind == Kind::Cli => return Ok(Session { account: cert.account.clone() }),
             Some(Signed(Ok(_))) => return Err(err(StatusCode::UNAUTHORIZED, "sign in first")),
-            Some(Signed(Err((status, msg)))) => return Err(crate::ApiError(*status, msg.clone())),
+            Some(Signed(Err((status, msg)))) => return Err(err(*status, msg)),
             None => {}
         }
         let upgrade = parts.headers.contains_key(header::UPGRADE);
@@ -238,7 +238,7 @@ impl FromRequestParts<Arc<App>> for DaemonAuth {
         match parts.extensions.get::<Signed>() {
             Some(Signed(Ok(cert))) if cert.kind == Kind::Daemon => Ok(DaemonAuth { cert: cert.clone() }),
             Some(Signed(Ok(_))) => Err(err(StatusCode::UNAUTHORIZED, "not an enrolled daemon")),
-            Some(Signed(Err((status, msg)))) => Err(crate::ApiError(*status, msg.clone())),
+            Some(Signed(Err((status, msg)))) => Err(err(*status, msg)),
             None => Err(err(StatusCode::UNAUTHORIZED, "bad daemon signature")),
         }
     }

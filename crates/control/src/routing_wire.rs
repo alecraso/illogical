@@ -276,6 +276,7 @@ async fn a_removed_machine_rejoins_only_with_a_new_key() {
     let (st, said) = approve(&old, &old_code).await;
     assert_eq!(st, 403);
     assert!(said["error"].as_str().unwrap().contains("removed"), "{said}");
+    assert_eq!(said["reason"], "revoked", "pages act on it (#327)");
 
     // With a new key: a new code, approved once.
     let new = DeviceKeys::generate();
@@ -289,6 +290,64 @@ async fn a_removed_machine_rejoins_only_with_a_new_key() {
     // The old key stays out.
     assert_eq!(c.daemon_get(&old, "/api/daemon/trust").await.0, 410);
     assert_eq!(post(join_body(&old, true)).await.unwrap().status(), 410);
+}
+
+/// #327: a refused approval says which check failed, as a `reason` code
+/// beside the sentence, and leaves the join waiting: it isn't a turn-down.
+#[tokio::test]
+async fn a_refused_approval_says_why_and_the_join_still_waits() {
+    let c = control(|_| {}).await;
+    let root = person(&c.app, "jake", "a1");
+    let cookie = session(&c.app, "a1");
+    // A browser the account removed: what a stale one still holds.
+    let stale = DeviceKeys::generate();
+    let mut sc = Cert::new(&stale, "a1", Kind::Browser, "old laptop");
+    sc.sign_with(&root);
+    c.app.db.put_device(&sc, true, now_ms()).unwrap();
+    let rev = illogical_e2e::Revocation::new("a1", &stale.id(), &root);
+    let (st, _) = c.as_person(&cookie, "POST", "/api/revocations", Some(json!({ "revocation": rev }))).await;
+    assert_eq!(st, 200);
+    // A recovery code, which approves people's devices only.
+    let code_keys = DeviceKeys::generate();
+    let mut cc = Cert::new(&code_keys, "a1", Kind::Recovery, "recovery code 1");
+    cc.sign_with(&root);
+    c.app.db.put_device(&cc, true, now_ms()).unwrap();
+
+    let machine = DeviceKeys::generate();
+    let r: Value = c
+        .http
+        .post(format!("{}/api/join", c.base))
+        .json(&join_body(&machine, true))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let code = r["code"].as_str().unwrap().to_owned();
+    let poll_url = format!("{}/api/join/{code}?poll={}", c.base, r["poll"].as_str().unwrap());
+    let approve = |by: &DeviceKeys| {
+        let mut cert = Cert { account: "a1".into(), ..Cert::new(&machine, "", Kind::Daemon, "box") };
+        cert.sign_with(by);
+        let path = format!("/api/joins/{code}/approve");
+        let (c, cookie) = (&c, cookie.clone());
+        async move { c.as_person(&cookie, "POST", &path, Some(json!({ "cert": cert }))).await }
+    };
+    let poll = || async { c.http.get(&poll_url).send().await.unwrap().json::<Value>().await.unwrap() };
+
+    let (st, said) = approve(&stale).await;
+    assert_eq!(st, 403);
+    assert_eq!(said["reason"], "approver_untrusted");
+    assert!(said["error"].as_str().unwrap().contains("isn't one this account trusts"), "{said}");
+    let p = poll().await;
+    assert_eq!((p["approved"].as_bool(), p.get("rejected")), (Some(false), None), "{p}");
+
+    let (st, said) = approve(&code_keys).await;
+    assert_eq!((st, said["reason"].as_str()), (403, Some("recovery_for_machine")), "{said}");
+
+    // A device that checks out still approves it.
+    assert_eq!(approve(&root).await.0, 200);
+    assert_eq!(poll().await["approved"], true);
 }
 
 /// #329: two joins from one machine (the CLI and Getting started, say)

@@ -378,7 +378,7 @@ try {
   // #94: the self-approval refused in 2 is logged, with why and whose,
   // and not its signature.
   const refusal = logs.split("\n").find((l) => l.includes("refused") && l.includes(phone.id)) ?? "";
-  check("a refused approval is logged with its reason and ids", refusal.includes("isn't a device this account trusts") && refusal.includes(me.account), refusal);
+  check("a refused approval is logged with its reason and ids", refusal.includes("isn't one the account trusts") && refusal.includes(me.account), refusal);
   check("but not its signature", !logs.includes(forged.sig));
   spy.close();
 

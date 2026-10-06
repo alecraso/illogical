@@ -14,7 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use illogical_e2e::{
-    Cert, Kind, Revocation, Trust,
+    Cert, Kind, Refusal, Revocation, Trust,
     cert::{join_code, normalize_code},
     now_ms,
     team::{TeamPin, TeamRole},
@@ -26,7 +26,7 @@ use tracing::warn;
 use crate::{
     ApiError, App,
     auth::{DaemonAuth, Session, hash, token},
-    err,
+    err, refusal,
 };
 
 type R = Result<Json<Value>, ApiError>;
@@ -87,39 +87,52 @@ fn refused(what: &str, account: &str, c: &Cert, why: &str) {
     warn!(what, account, device = ?clip(&c.device), kind = c.kind.as_str(), approver = ?clip(&c.approver), why, "refused");
 }
 
+/// A removed key, approved again (#330's words).
+const REVOKED: &str = "that key was removed from this account, so it can't be approved again: it needs a new key";
+
+/// What the person who approved reads when control refuses (#327): what
+/// failed and what to do. Pages show their own words by the reason code.
+fn refused_say(r: Refusal) -> &'static str {
+    match r {
+        Refusal::Revoked => REVOKED,
+        Refusal::ApproverUntrusted => {
+            "the approving device isn't one this account trusts any more: approve from another of your devices, or enroll this one again (a recovery code approves it)"
+        }
+        Refusal::BadSignature => {
+            "the approval isn't signed by the approving device's key (its key changed?): enroll that device again, then approve"
+        }
+        Refusal::CantApprove => "a machine can't approve devices: approve from a browser, phone or the CLI",
+        Refusal::RecoveryForMachine => {
+            "a recovery code approves browsers and phones, not machines: approve the machine from one of your devices"
+        }
+        Refusal::NoChain => {
+            "the approval doesn't chain to this account's first device (its form, kind or time): reload and try again"
+        }
+    }
+}
+
 /// `cert` checks out against the account's trusted devices. `what` names
-/// the request, for the log.
+/// the request, for the log. Refused, the 403 says which check failed, as
+/// a `reason` code and a sentence (#327).
 fn approval_ok(app: &App, account: &str, cert: &Cert, what: &str) -> Result<(), ApiError> {
-    let (trust, mut certs, revs) = trusted(app, account)?;
+    let (trust, certs, revs) = trusted(app, account)?;
     let Some(trust) = trust else {
         refused(what, account, cert, "the account has no devices yet");
-        return Err(err(StatusCode::CONFLICT, "this account has no devices yet"));
+        return Err(refusal(StatusCode::CONFLICT, "no_devices", "this account has no devices yet"));
     };
     // A removed key never counts again (#330): say so, not that it
-    // doesn't chain.
+    // doesn't chain. `revoked` says so to pages (#327).
     if revs.iter().any(|r| r.device == cert.device) {
         refused(what, account, cert, "this device was removed from the account (revoked): it needs a new key");
-        return Err(err(
-            StatusCode::FORBIDDEN,
-            "that key was removed from this account, so it can't be approved again: it needs a new key",
-        ));
+        return Err(refusal(StatusCode::FORBIDDEN, Refusal::Revoked.code(), REVOKED));
     }
-    certs.push(cert.clone());
-    if trust.evaluate(&certs, &revs).get(&cert.device).is_none_or(|c| c != cert) {
-        certs.pop();
-        let why = match trust.evaluate(&certs, &revs).get(&cert.approver) {
-            None => "the approver isn't a device this account trusts",
-            Some(a) if !cert.signed_by(a) => "the signature doesn't verify with the approver's key",
-            Some(a) if !a.kind.approves() => "the approver can't approve",
-            Some(_) => "it doesn't chain to the account's root (form, kind or time)",
-        };
-        refused(what, account, cert, why);
-        return Err(err(
-            StatusCode::FORBIDDEN,
-            "that approval doesn't check out (signed by a device this account trusts?)",
-        ));
+    match trust.refusal(&certs, &revs, cert) {
+        None => Ok(()),
+        Some(r) => {
+            refused(what, account, cert, r.check());
+            Err(refusal(StatusCode::FORBIDDEN, r.code(), refused_say(r)))
+        }
     }
-    Ok(())
 }
 
 #[derive(Deserialize)]

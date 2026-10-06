@@ -15,7 +15,7 @@ pub mod mux;
 pub mod push;
 pub mod team;
 
-pub use cert::{Cert, Kind, Revocation, Trust};
+pub use cert::{Cert, Kind, Refusal, Revocation, Trust};
 pub use keys::DeviceKeys;
 
 /// Random bytes from the OS.

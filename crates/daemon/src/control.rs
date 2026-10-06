@@ -1741,11 +1741,12 @@ pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
         bail!("control sent back a certificate for a different key; not joining");
     }
     let trusted = trust.evaluate(&got.certs, &got.revocations);
+    // Which check failed, if one did (#327).
+    if let Some(r) = trust.refusal(&got.certs, &got.revocations, &cert) {
+        bail!("the approval doesn't check out against the account's devices: {}; not joining", r.check());
+    }
     let mut all = got.certs.clone();
     all.push(cert.clone());
-    if trust.evaluate(&all, &got.revocations).get(&cert.device) != Some(&cert) {
-        bail!("the approval doesn't check out against the account's devices; not joining");
-    }
     let approver = trusted.get(&cert.approver);
     // A team is pinned only if the approving device chose it (#100):
     // control can't make a machine a team's on its own.

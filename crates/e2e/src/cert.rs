@@ -284,6 +284,30 @@ impl Trust {
         out
     }
 
+    /// Why `cert` wouldn't count with the account's `certs` (#327), or
+    /// `None` when it does.
+    pub fn refusal(&self, certs: &[Cert], revocations: &[Revocation], cert: &Cert) -> Option<Refusal> {
+        let mut all = certs.to_vec();
+        all.push(cert.clone());
+        if self.evaluate(&all, revocations).get(&cert.device) == Some(cert) {
+            return None;
+        }
+        all.pop();
+        let now = self.evaluate(&all, revocations);
+        // A revocation stands for good; one signed by a device trusted now.
+        let revoked = revocations.iter().any(|r| {
+            r.device == cert.device && r.account == self.account && now.get(&r.by).is_some_and(|by| r.signed_by(by))
+        });
+        Some(match now.get(&cert.approver) {
+            _ if revoked => Refusal::Revoked,
+            None => Refusal::ApproverUntrusted,
+            Some(a) if !cert.signed_by(a) => Refusal::BadSignature,
+            Some(a) if !a.kind.approves() => Refusal::CantApprove,
+            Some(a) if a.kind == Kind::Recovery && cert.kind == Kind::Daemon => Refusal::RecoveryForMachine,
+            Some(_) => Refusal::NoChain,
+        })
+    }
+
     /// `id`'s certificate, if it was valid at time `at`: not revoked by
     /// then, and signed by a device that was valid when this was created.
     fn valid_cert<'a>(
@@ -315,6 +339,51 @@ impl Trust {
             }
         }
         None
+    }
+}
+
+/// Which check an approval failed (#327).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// The device was revoked: its key can't be approved again.
+    Revoked,
+    /// The approving device isn't one the account trusts (now).
+    ApproverUntrusted,
+    /// The signature isn't the approving device's.
+    BadSignature,
+    /// The approving device is a machine, which approves nothing.
+    CantApprove,
+    /// A recovery code approving a machine.
+    RecoveryForMachine,
+    /// Anything else: its form, its kind, or when it was made.
+    NoChain,
+}
+
+impl Refusal {
+    /// A code for clients to act on.
+    pub fn code(self) -> &'static str {
+        match self {
+            Refusal::Revoked => "revoked",
+            Refusal::ApproverUntrusted => "approver_untrusted",
+            Refusal::BadSignature => "bad_signature",
+            Refusal::CantApprove => "cant_approve",
+            Refusal::RecoveryForMachine => "recovery_for_machine",
+            Refusal::NoChain => "no_chain",
+        }
+    }
+
+    /// The check that failed, as a clause.
+    pub fn check(self) -> &'static str {
+        match self {
+            Refusal::Revoked => {
+                "its key was removed from the account, so it can't be approved again: it needs a new key"
+            }
+            Refusal::ApproverUntrusted => "the approving device isn't one the account trusts",
+            Refusal::BadSignature => "the signature doesn't verify with the approving device's key",
+            Refusal::CantApprove => "the approving device can't approve others",
+            Refusal::RecoveryForMachine => "a recovery code approves browsers and phones, not machines",
+            Refusal::NoChain => "it doesn't chain to the account's first device (form, kind or time)",
+        }
     }
 }
 
@@ -469,6 +538,39 @@ mod tests {
         let t = trust(&rc).evaluate(&[rc.clone(), cc, newc, dc], &[]);
         assert!(t.devices.values().any(|c| c.name == "new laptop"));
         assert!(!t.devices.values().any(|c| c.name == "box"));
+    }
+
+    /// #327: which check an approval failed.
+    #[test]
+    fn refusals_name_the_check() {
+        let (rk, rc) = root("acct");
+        let t = trust(&rc);
+        let (ck, cc) = approved(&rk, "acct", Kind::Recovery, "recovery 1");
+        let (dk, dc) = approved(&rk, "acct", Kind::Daemon, "box");
+        let have = [rc.clone(), cc.clone(), dc.clone()];
+        let new = |by: &DeviceKeys, kind: Kind| {
+            let mut c = Cert::new(&DeviceKeys::generate(), "acct", kind, "new");
+            c.sign_with(by);
+            c
+        };
+        assert_eq!(t.refusal(&have, &[], &new(&rk, Kind::Browser)), None);
+        let (stranger, _) = root("acct");
+        assert_eq!(t.refusal(&have, &[], &new(&stranger, Kind::Browser)), Some(Refusal::ApproverUntrusted));
+        let mut forged = new(&rk, Kind::Browser);
+        forged.name = "renamed".into();
+        assert_eq!(t.refusal(&have, &[], &forged), Some(Refusal::BadSignature));
+        assert_eq!(t.refusal(&have, &[], &new(&dk, Kind::Browser)), Some(Refusal::CantApprove));
+        assert_eq!(t.refusal(&have, &[], &new(&ck, Kind::Daemon)), Some(Refusal::RecoveryForMachine));
+        // A removed machine, approved again with its old key.
+        let mut again = Cert::new(&dk, "acct", Kind::Daemon, "box");
+        again.created = dc.created + 1;
+        again.sign_with(&rk);
+        let gone = Revocation::new("acct", &dc.device, &rk);
+        assert_eq!(t.refusal(&have, &[gone], &again), Some(Refusal::Revoked));
+        let mut other = new(&rk, Kind::Browser);
+        other.account = "elsewhere".into();
+        other.sign_with(&rk);
+        assert_eq!(t.refusal(&have, &[], &other), Some(Refusal::NoChain));
     }
 
     #[test]

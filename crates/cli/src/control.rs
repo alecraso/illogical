@@ -393,11 +393,9 @@ pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()>
     if !cert.same_request(&ask) {
         bail!("control sent back a certificate for a different key; not logging in");
     }
-    let mut all = certs.clone();
-    all.push(cert.clone());
-    let now = trust.evaluate(&all, &revs);
-    if now.get(&cert.device) != Some(&cert) {
-        bail!("the approval doesn't check out against the account's devices; not logging in");
+    // Which check failed, if one did (#327).
+    if let Some(r) = trust.refusal(&certs, &revs, &cert) {
+        bail!("the approval doesn't check out against the account's devices: {}; not logging in", r.check());
     }
     let approver = trust.evaluate(&certs, &revs).get(&cert.approver).map(|c| c.name.clone()).unwrap_or_default();
     let fp = fingerprint(&trust.root);

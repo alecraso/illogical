@@ -140,6 +140,15 @@ class HttpError extends Error {
   }
 }
 
+/** An approval control refused (#327): its reason code, and what to do. */
+export class RefusedError extends Error {
+  reason: string;
+  constructor(reason: string, message: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
+
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
@@ -249,7 +258,40 @@ export function restoreInvite() {
 /** How long a presigned invite lasts unless the owner says otherwise. */
 const PRESIGNED_TTL_MS = 24 * 3600_000;
 
-export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "lost-key" | "ready" | "error";
+export type Phase = "loading" | "signed-out" | "waiting" | "turned-down" | "lost-key" | "untrusted" | "ready" | "error";
+
+/** What the person reads when control refuses an approval (#327), by its
+ * reason code: which check failed, and what to do next. `revoked` isn't
+ * here: control's own words say it (#330), and a removed machine asks
+ * again with a new key by itself. */
+const REFUSED: Record<string, string> = {
+  approver_untrusted:
+    "This browser isn't one your account trusts any more, so its approvals are refused. Forget it and enroll it again (another of your devices or a recovery code approves it), then try again.",
+  bad_signature: "This browser's key isn't the one your account approved. Forget it and enroll it again, then try again.",
+  cant_approve: "A machine can't approve devices. Approve from a browser, phone or the illogical CLI.",
+  recovery_for_machine: "A recovery code approves browsers and phones, not machines. Approve the machine from one of your devices.",
+  no_chain: "Control's records for your account don't add up from here (the approval doesn't chain to your first device). Reload and try again; if it keeps happening, approve from another device.",
+  no_devices: "This account has no devices yet. Reload: this browser becomes its first.",
+};
+
+/** Refusals that mean this browser itself isn't trusted. */
+const SELF_REFUSED = new Set(["approver_untrusted", "bad_signature"]);
+
+/** Where `enrollAgain` leaves a note for the next page: open the recovery
+ * form (#327). */
+const RECOVER_KEY = "illogical.control.recover";
+
+/** The page came from forgetting a stale browser: offer the recovery code
+ * at once. Read once. */
+export function cameToRecover(): boolean {
+  try {
+    const yes = sessionStorage.getItem(RECOVER_KEY) === "1";
+    sessionStorage.removeItem(RECOVER_KEY);
+    return yes;
+  } catch {
+    return false;
+  }
+}
 
 // ---- recovery codes: an Ed25519 seed each, on paper only.
 
@@ -367,6 +409,9 @@ export class ControlSession {
   /** Control says the account's root is a different device than the one
    * this browser pinned: don't trust anything new from it. */
   rootMismatch = false;
+  /** Why the account doesn't trust this browser (#327), in the
+   * `untrusted` phase: a device removed it, or it's missing. */
+  untrustedWhy: "removed" | "missing" = "missing";
   private listeners = new Set<() => void>();
   private timer: number | undefined;
   readonly info: ControlInfo;
@@ -428,7 +473,8 @@ export class ControlSession {
         this.usedRecovery = null;
       }
       await this.refresh();
-      this.set("ready");
+      // #327: a browser the account no longer trusts says so at once.
+      this.set(this.phase === "untrusted" ? "untrusted" : "ready");
       this.timer = window.setInterval(() => void this.refresh(), 10_000);
     } catch (e) {
       this.set("error", String((e as Error).message ?? e));
@@ -609,6 +655,13 @@ export class ControlSession {
       this.rootMismatch = !!devs.trust && devs.trust.root !== e.root;
       this.trusted = await evaluate({ account: e.account, root: e.root }, devs.certs, devs.revocations);
       this.revocations = devs.revocations;
+      // #327: this browser's own place, checked like any other device's.
+      // (A different root is said elsewhere, and isn't fixed by enrolling
+      // again under control's.)
+      const mine = this.trusted.has(this.keys.id) || this.rootMismatch;
+      if (!mine) this.untrustedWhy = devs.revocations.some((r) => r.device === this.keys.id) ? "removed" : "missing";
+      if (!mine && (this.phase === "ready" || this.phase === "loading")) this.phase = "untrusted";
+      else if (mine && this.phase === "untrusted") this.phase = "ready";
       this.pending = devs.pending;
       const daemons: DirDaemon[] = [];
       for (const d of dir.daemons) {
@@ -975,8 +1028,24 @@ export class ControlSession {
   async approve(c: Cert) {
     const signed: Cert = { ...c, account: this.account, approver: this.keys.id, sig: "" };
     signed.sig = await signText(this.keys, certBody(signed));
-    await api(`/api/devices/${c.device}/approve`, { cert: signed });
+    await this.approving(api(`/api/devices/${c.device}/approve`, { cert: signed }));
     await this.refresh();
+  }
+
+  /** An approval's request: refused, it says which check failed and what
+   * to do (#327); one that says this browser isn't trusted shows that
+   * screen. */
+  private async approving(req: Promise<unknown>) {
+    try {
+      await req;
+    } catch (e) {
+      const reason = e instanceof HttpError && typeof e.body.reason === "string" ? e.body.reason : "";
+      if (!reason) throw e;
+      // Checked here too: if this browser's own reckoning agrees, refresh
+      // switches to the screen that says so.
+      if (SELF_REFUSED.has(reason)) await this.refresh();
+      throw new RefusedError(reason, REFUSED[reason] ?? (e as Error).message);
+    }
   }
 
   async reject(c: Cert) {
@@ -1012,7 +1081,7 @@ export class ControlSession {
       if (!t) throw new Error("only the team's members add machines to it");
       teamSig = await signText(this.keys, teamJoinBody(c.device, t.pin));
     }
-    await api(`/api/joins/${code}/approve`, { cert: signed, team, team_sig: teamSig });
+    await this.approving(api(`/api/joins/${code}/approve`, { cert: signed, team, team_sig: teamSig }));
     await this.refresh();
   }
 
@@ -1070,9 +1139,17 @@ export class ControlSession {
   }
 
   /** After a lost key (#94): forget this browser's place in the account
-   * and ask to join again, as a new device. */
-  async enrollAgain() {
+   * and ask to join again, as a new device. One the account stopped
+   * trusting (#327) asks with the recovery form open; a lost key asks as
+   * before, the form a button away. */
+  async enrollAgain(recover = false) {
     await forget(location.origin);
+    if (recover)
+      try {
+        sessionStorage.setItem(RECOVER_KEY, "1");
+      } catch {
+        // The form stays a button away.
+      }
     location.reload();
   }
 

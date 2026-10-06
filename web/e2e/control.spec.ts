@@ -418,12 +418,12 @@ test("devices and machines, grouped; new recovery codes retire the old", async (
   await expect(laptop.locator("[data-account]")).toHaveText("stranger");
   const machines = laptop.locator("[data-machines] li");
   await expect(machines).toHaveCount(2);
-  await expect(machines.filter({ hasText: "box" }).locator("[data-status]")).toContainText("online · direct");
-  await expect(machines.filter({ hasText: "mac" }).locator("[data-status]")).toContainText("online · relayed");
+  await expect(machines.filter({ hasText: /^box\b/ }).locator("[data-status]")).toContainText("online · direct");
+  await expect(machines.filter({ hasText: /^mac\b/ }).locator("[data-status]")).toContainText("online · relayed");
   // Removing a machine asks in a dialog that says what happens to it. A
   // double-click on Remove only opens it (#328 lost a Mac that way).
-  const mac = await machines.filter({ hasText: "mac" }).getAttribute("data-device");
-  await machines.filter({ hasText: "mac" }).locator("[data-remove]").dblclick();
+  const mac = await machines.filter({ hasText: /^mac\b/ }).getAttribute("data-device");
+  await machines.filter({ hasText: /^mac\b/ }).locator("[data-remove]").dblclick();
   await new Promise((r) => setTimeout(r, 1000));
   expect(await laptop.evaluate((d) => window.__illogical.control!.trusted.has(d), mac!)).toBe(true);
   const ask = laptop.locator("[data-confirm-dialog]");
@@ -434,7 +434,7 @@ test("devices and machines, grouped; new recovery codes retire the old", async (
   await expect(machines).toHaveCount(2);
   // The laptop, the phone and the browser the recovery code let in.
   await expect(laptop.locator("[data-browsers] li")).toHaveCount(3);
-  await expect(laptop.locator("[data-browsers] li").filter({ hasText: "(this browser)" })).toHaveCount(1);
+  await expect(laptop.locator("[data-browsers] li [data-this-browser]")).toHaveCount(1);
   // One code was spent.
   await expect(laptop.locator("[data-recovery-left]")).toHaveAttribute("data-recovery-left", "1");
   await laptop.locator("[data-new-codes]").click();
@@ -509,6 +509,23 @@ test("with no sessions on the machine shown, control's page still has the host a
   await expect(laptop.locator("[data-no-sessions-host]")).toBeVisible();
   await laptop.getByRole("button", { name: "New session" }).click();
   await expect.poll(none).toBe(1);
+});
+
+test("a browser the account removed says so before offering Approve, and enrolls again (#327)", async () => {
+  // The phone was removed above. Opened again (here on a machine's join
+  // link), it checks its own key first: no Approve button that would fail.
+  await phone.goto(`${base}/#join=AAAAA-AAAAA`);
+  await expect(phone.locator('[data-untrusted="removed"]')).toBeVisible({ timeout: 20_000 });
+  await expect(phone.locator("[data-approve-join]")).toHaveCount(0);
+  await expect(phone.locator("[data-sign-out-forget]")).toBeVisible();
+  // Forgotten, it asks as a new device, with the recovery form open.
+  await phone.locator("[data-enroll-again]").click();
+  await expect(phone.getByText("Approve this browser")).toBeVisible();
+  await expect(phone.locator("[data-recovery-input]")).toBeVisible();
+  // Not wanted back: the laptop turns it down, so nothing waits on it.
+  await expect(laptop.locator("[data-pending]")).toBeVisible({ timeout: 20_000 });
+  await laptop.locator("[data-reject]").click();
+  await expect(phone.locator("[data-turned-down]")).toBeVisible({ timeout: 10_000 });
 });
 
 test("Getting started asks to check the account's fingerprint before the machine trusts it", async ({ browser }) => {

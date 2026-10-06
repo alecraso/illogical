@@ -3,7 +3,7 @@
 // list, and how to add a machine.
 
 import { useEffect, useState } from "preact/hooks";
-import { inviteInHash, passkeyRegister, passkeySignIn, previewInvite, signInNext, type ControlSession, type JoinRequest } from "../control";
+import { cameToRecover, inviteInHash, passkeyRegister, passkeySignIn, previewInvite, RefusedError, signInNext, type ControlSession, type JoinRequest } from "../control";
 import { fingerprint, type Cert } from "../e2e/cert.ts";
 import { useSubscribe } from "./hooks";
 import { directory } from "../hosts";
@@ -86,10 +86,8 @@ export function ControlGate({ s }: { s: ControlSession }) {
           {fingerprint(s.keys.id)}
         </p>
         <p class="dim">Waiting…</p>
-        <RecoveryForm s={s} />
-        <button class="control-linkish" data-sign-out onClick={() => void s.signOut(false)}>
-          Sign out
-        </button>
+        <RecoveryForm s={s} open={recovering()} />
+        <SignOuts s={s} />
       </Center>
     );
   if (s.phase === "lost-key")
@@ -105,9 +103,27 @@ export function ControlGate({ s }: { s: ControlSession }) {
         <button class="primary" data-enroll-again onClick={() => void s.enrollAgain()}>
           Forget this browser and enroll again
         </button>
-        <button class="control-linkish" data-sign-out onClick={() => void s.signOut(false)}>
-          Sign out
+        <SignOuts s={s} />
+      </Center>
+    );
+  // #327: the account doesn't trust this browser's key any more (removed,
+  // or its approval went), so its approvals would be refused. Say so before
+  // anyone clicks Approve.
+  if (s.phase === "untrusted")
+    return (
+      <Center>
+        <h1>This browser isn't trusted any more</h1>
+        <p data-untrusted={s.untrustedWhy}>
+          Your account {s.untrustedWhy === "removed" ? "removed this browser" : "no longer trusts this browser"} (<b>{s.enrollment?.cert.name ?? "this browser"}</b>,{" "}
+          {fingerprint(s.keys.id)}), so it can't approve machines or devices, or reach your machines.
+        </p>
+        <p>
+          Forget it here and enroll it again as a new device. Another of your devices approves it, or a recovery code does: the next screen asks for one.
+        </p>
+        <button class="primary" data-enroll-again onClick={() => void s.enrollAgain(true)}>
+          Forget this browser and enroll again
         </button>
+        <SignOuts s={s} />
       </Center>
     );
   if (s.phase === "turned-down")
@@ -121,13 +137,31 @@ export function ControlGate({ s }: { s: ControlSession }) {
           Try again
         </button>
         <RecoveryForm s={s} label="Use a recovery code" />
-        <button class="control-linkish" data-sign-out onClick={() => void s.signOut(false)}>
-          Sign out
-        </button>
+        <SignOuts s={s} />
       </Center>
     );
   return null;
 }
+
+/** Sign out, keeping this browser's key for next time, or forgetting it
+ * too (#327): a key the account no longer trusts only gets in the way. */
+function SignOuts({ s }: { s: ControlSession }) {
+  return (
+    <p class="control-signouts">
+      <button class="control-linkish" data-sign-out onClick={() => void s.signOut(false)}>
+        Sign out
+      </button>
+      {" · "}
+      <button class="control-linkish" data-sign-out-forget onClick={() => void s.signOut(true)}>
+        Sign out and forget this browser
+      </button>
+    </p>
+  );
+}
+
+/** Here from forgetting a stale browser: the recovery form starts open. */
+let recover: boolean | undefined;
+const recovering = () => (recover ??= cameToRecover());
 
 /** Signed out, but following a link (#103): say what it was for. The hash
  * survives signing in, so it opens once you're in. */
@@ -261,13 +295,14 @@ function NameLine({ s }: { s: ControlSession }) {
   );
 }
 
-function RecoveryForm({ s, label = "Lost your other devices? Use a recovery code" }: { s: ControlSession; label?: string }) {
-  const [open, setOpen] = useState(false);
+function RecoveryForm({ s, label = "Lost your other devices? Use a recovery code", open: startOpen = false }: { s: ControlSession; label?: string; open?: boolean }) {
+  const [open, setOpen] = useState(startOpen);
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
+  // A button that looks like one (#327): as a link it read as a sentence.
   if (!open)
     return (
-      <button class="control-linkish" data-use-recovery onClick={() => setOpen(true)}>
+      <button class="control-secondary" data-use-recovery onClick={() => setOpen(true)}>
         {label}
       </button>
     );
@@ -279,7 +314,7 @@ function RecoveryForm({ s, label = "Lost your other devices? Use a recovery code
         s.useRecoveryCode(code).catch((x: Error) => setErr(x.message));
       }}
     >
-      <input placeholder="Recovery code" value={code} onInput={(e) => setCode((e.target as HTMLInputElement).value)} aria-label="Recovery code" />
+      <input placeholder="Recovery code" value={code} onInput={(e) => setCode((e.target as HTMLInputElement).value)} aria-label="Recovery code" data-recovery-input autoFocus={startOpen} />
       <button type="submit">Use it</button>
       {err ? <p class="control-error">{err}</p> : null}
     </form>
@@ -520,9 +555,14 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
   const [j, setJ] = useState<JoinRequest | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // Control refused an approval from here (#327): closing then isn't
+  // turning the machine down. It keeps waiting for one that works.
+  const [refused, setRefused] = useState(false);
   // "" is just me; else a team's id.
   const [to, setTo] = useState("");
   useEffect(() => {
+    // This browser's own trust, fresh, before it offers Approve (#327).
+    void s.refresh();
     s.showJoin(code).then(
       (j) => {
         setJ(j);
@@ -538,15 +578,24 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
   const cant = !!to && !team;
   const locked = !!asked && !!s.teams.find((t) => t.team === asked.team)?.locked;
   const cancel = () => {
-    if (j) void s.rejectJoin(j.code).catch(() => {});
+    if (j && !refused) void s.rejectJoin(j.code).catch(() => {});
     clearHash();
   };
+  const failed = (e: unknown) => {
+    setErr((e as Error).message);
+    if (e instanceof RefusedError) setRefused(true);
+    setBusy(false);
+  };
   // M49: the illogical CLI on a machine, asking to be one of your devices.
-  if (j?.cert.kind === "cli") return <CliJoin s={s} j={j} cancel={cancel} />;
+  if (j?.cert.kind === "cli") return <CliJoin s={s} j={j} cancel={cancel} refused={refused} failed={failed} />;
   return (
     <Modal close={clearHash}>
       <h2>Add a machine?</h2>
-      {err ? <p class="control-error">{err}</p> : null}
+      {err ? (
+        <p class="control-error" data-join-error>
+          {err}
+        </p>
+      ) : null}
       {j ? (
         <>
           <p>
@@ -603,7 +652,7 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
       )}
       <div class="prompt-buttons">
         <button data-cancel-join onClick={cancel}>
-          Cancel
+          {refused ? "Close" : "Cancel"}
         </button>
         <button
           class="primary"
@@ -616,8 +665,7 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
               await s.approveJoin(j.code, j.cert, team?.team ?? null);
               clearHash();
             } catch (e) {
-              setErr((e as Error).message);
-              setBusy(false);
+              failed(e);
             }
           }}
         >
@@ -631,13 +679,17 @@ function JoinPrompt({ s, code }: { s: ControlSession; code: string }) {
 /** M49: the illogical CLI on some machine asks to be one of this account's
  * devices (`illogical login`). Approved, it reaches the account's machines
  * and can approve devices and machines, as this browser can. */
-function CliJoin({ s, j, cancel }: { s: ControlSession; j: JoinRequest; cancel: () => void }) {
+function CliJoin({ s, j, cancel, refused, failed }: { s: ControlSession; j: JoinRequest; cancel: () => void; refused: boolean; failed: (e: unknown) => void }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   return (
     <Modal close={clearHash}>
       <h2>Add a terminal?</h2>
-      {err ? <p class="control-error">{err}</p> : null}
+      {err ? (
+        <p class="control-error" data-join-error>
+          {err}
+        </p>
+      ) : null}
       <p data-join-cli={j.cert.name}>
         The illogical command line on <b>{j.cert.name}</b> asks to be one of your devices, with code <b data-join-code={j.code}>{j.code}</b>. Check it's the code
         it shows where you ran <code>illogical login</code>.
@@ -655,7 +707,7 @@ function CliJoin({ s, j, cancel }: { s: ControlSession; j: JoinRequest; cancel: 
       <p class="dim">It reaches your machines (directly or through control's relay, end to end encrypted) and can approve devices, as this one can.</p>
       <div class="prompt-buttons">
         <button data-cancel-join onClick={cancel}>
-          Cancel
+          {refused ? "Close" : "Cancel"}
         </button>
         <button
           class="primary"
@@ -669,6 +721,7 @@ function CliJoin({ s, j, cancel }: { s: ControlSession; j: JoinRequest; cancel: 
             } catch (e) {
               setErr((e as Error).message);
               setBusy(false);
+              failed(e);
             }
           }}
         >
@@ -933,6 +986,19 @@ function MoveMachine({ s, c, team, online }: { s: ControlSession; c: Cert; team:
   );
 }
 
+/** When a device was added and which device approved it (#327). */
+function Approved({ s, c }: { s: ControlSession; c: Cert }) {
+  if (c.approver === c.device) return <span class="dim"> · added {since(c.created)}, the first device</span>;
+  const by = s.trusted.get(c.approver);
+  const on = !by ? "on a device since removed" : by.kind === "recovery" ? `with ${by.name}` : `on ${by.name}${by.device === s.keys.id ? " (this browser)" : ""}`;
+  return (
+    <span class="dim" data-approved-by={c.approver}>
+      {" "}
+      · added {since(c.created)}, approved {on}
+    </span>
+  );
+}
+
 function Devices({ s, close }: { s: ControlSession; close: () => void }) {
   const [err, setErr] = useState("");
   // The machine or device whose Remove was clicked: a dialog asks.
@@ -987,6 +1053,7 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
                   {d?.online ? "online" : d?.last_seen ? `seen ${since(d.last_seen)}` : "offline"}
                   {d?.online ? ` · ${path}` : ""}
                 </span>
+                <Approved s={s} c={c} />
               </span>
               <span class="dim">{fingerprint(c.device)}</span>
               {remove(c)}
@@ -1005,9 +1072,8 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
           <li key={c.device} data-device={c.device}>
             <span>
               {c.name}
-              {c.device === s.keys.id ? " (this browser)" : ""}
-              {c.device === s.enrollment?.root ? " · first device" : ""}
-              <span class="dim"> · added {since(c.created)}</span>
+              {c.device === s.keys.id ? <b data-this-browser> (this browser)</b> : ""}
+              <Approved s={s} c={c} />
             </span>
             <span class="dim">{fingerprint(c.device)}</span>
             {c.device !== s.keys.id ? remove(c) : <span />}
