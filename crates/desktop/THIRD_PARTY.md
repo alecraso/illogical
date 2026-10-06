@@ -8205,9 +8205,9 @@ Apache License
 ## Apache License 2.0
 
 Used by:
-- [illogical-core 0.21.0](https://github.com/arugula-salad/illogical)
-- [illogical-desktop 0.21.0](https://crates.io/crates/illogical-desktop)
-- [illogical-proto 0.21.0](https://github.com/arugula-salad/illogical)
+- [illogical-core 0.22.0](https://github.com/arugula-salad/illogical)
+- [illogical-desktop 0.22.0](https://crates.io/crates/illogical-desktop)
+- [illogical-proto 0.22.0](https://github.com/arugula-salad/illogical)
 - [alsa 0.11.0](https://github.com/diwic/alsa-rs)
 - [anyhow 1.0.104](https://github.com/dtolnay/anyhow)
 - [asn1-rs-impl 0.2.0](https://github.com/rusticata/asn1-rs.git)

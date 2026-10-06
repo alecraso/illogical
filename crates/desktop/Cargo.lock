@@ -2296,14 +2296,14 @@ dependencies = [
 
 [[package]]
 name = "illogical-core"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "illogical-desktop"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "illogical-proto"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "illogical-core",
  "serde",

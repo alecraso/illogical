@@ -19,10 +19,10 @@ hkdf = "0.13.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
-illogical-core = { version = "0.21.0", path = "../core" }
-illogical-e2e = { version = "0.21.0", path = "../e2e" }
-illogical-proto = { version = "0.21.0", path = "../proto" }
-illogical-vt = { version = "0.21.0", path = "../vt" }
+illogical-core = { version = "0.22.0", path = "../core" }
+illogical-e2e = { version = "0.22.0", path = "../e2e" }
+illogical-proto = { version = "0.22.0", path = "../proto" }
+illogical-vt = { version = "0.22.0", path = "../vt" }
 instant-acme = { version = "0.8.5", features = ["rcgen"] }
 p256 = { version = "0.14.0", features = ["ecdh", "ecdsa"] }
 regex = "1.13.1"
