@@ -5,7 +5,10 @@
 //   stylesheet leave room for macOS's window buttons, and on Linux (no
 //   decorations) the bar carries its own (ui/window-buttons.tsx).
 // - On macOS the app's menu is Edit only, so Cmd-W, T and N reach the page:
-//   Cmd-W closes the pane (not the window), Cmd-T opens a tab, Cmd-N a window.
+//   Cmd-W closes the pane (not the window), Cmd-T opens a tab, Cmd-N a window,
+//   and Cmd-U attaches files (as Claude's app does): the agent composer's 📎
+//   when one has focus or is the active pane, else the active terminal's
+//   *Attach file…* (M70).
 
 import type { Client } from "./client";
 
@@ -56,6 +59,14 @@ export function setupDesktop(client: () => Client) {
             if (c.session !== null) c.intent({ op: "new_tab", session: c.session, from_pane: c.active() ?? null });
           },
           KeyN: () => openInNewWindow(),
+          KeyU: () => {
+            const pane = c.active();
+            const el = pane === undefined ? null : document.querySelector(`[data-pane="${pane}"]`);
+            const composer = document.activeElement?.closest(".agent-composer") ?? el?.querySelector(".agent-composer");
+            const attach = composer?.querySelector<HTMLButtonElement>("button.attach");
+            if (attach) attach.click();
+            else if (pane !== undefined && c.panes.has(pane) && c.mayType(pane)) void c.attachFiles(pane);
+          },
         } as Record<string, () => void>
       )[e.code];
       if (!act) return;

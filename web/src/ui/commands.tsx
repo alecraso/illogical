@@ -15,7 +15,7 @@ import { openPicker } from "./picker";
 import { agentNotifyItems, notificationItems } from "./notify";
 import { openGettingStarted } from "./welcome";
 import { openRules } from "./rules";
-import { desktopApp, openInNewWindow } from "../desktop";
+import { desktopApp, desktopPlatform, openInNewWindow } from "../desktop";
 import { sessionThreadItems, threadItems } from "./threads";
 import { huddleItems } from "./huddle";
 import { showMore } from "../more";
@@ -23,6 +23,8 @@ import { showMore } from "../more";
 /** Chords, as menus and the palette show them. */
 export const PICKER_KEY = "Ctrl+Shift+G";
 export const PALETTE_KEY = "Ctrl+Shift+P";
+/** The desktop app on macOS (desktop.ts). */
+export const ATTACH_KEY = "⌘U";
 
 /** A pane's right-click menu. `workspace` is the directory it's in when
  * that is a chant workspace (M34). */
@@ -98,7 +100,9 @@ export function paneItems(client: Client, id: PaneId, phone: boolean, workspace:
     "separator",
     // M70: a file onto this pane's host, its path pasted in (for an agent
     // there to read).
-    ...(entry && client.mayType(id) ? [{ label: "Attach file…", run: () => void client.attachFiles(id) } as MenuItem] : []),
+    ...(entry && client.mayType(id)
+      ? [{ label: "Attach file…", shortcut: desktopPlatform() === "macos" ? ATTACH_KEY : undefined, run: () => void client.attachFiles(id) } as MenuItem]
+      : []),
     moveToTab,
     { label: "Go to directory…", shortcut: PICKER_KEY, run: () => openPicker(client, id, phone) },
     { label: "Copy working directory", disabled: !cwd, run: () => cwd && void navigator.clipboard?.writeText(cwd) },

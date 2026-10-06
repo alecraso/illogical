@@ -74,6 +74,16 @@ test("Attach file… picks files and pastes their paths together", async ({ page
   expect([readFileSync(a, "utf8"), readFileSync(b, "utf8")]).toEqual(["first", "second"]);
 });
 
+test("in the desktop app on macOS, Cmd-U attaches files to the active pane", async ({ page }) => {
+  await page.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "test-mac", platform: "macos" } }));
+  const pane = await standIn(page);
+  await ready(page, pane);
+  const chooser = page.waitForEvent("filechooser");
+  await page.keyboard.press("Meta+u");
+  await (await chooser).setFiles([{ name: "c.txt", mimeType: "text/plain", buffer: Buffer.from("third") }]);
+  expect(readFileSync(await pasted(page, pane), "utf8")).toBe("third");
+});
+
 test("into what isn't a shell or an agent, it asks first", async ({ page }) => {
   await reset(page);
   const pane = await active(page);
