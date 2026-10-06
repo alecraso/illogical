@@ -182,58 +182,7 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
 
 ## Layout
 
-- `crates/core`: sessions, tabs and split trees, the intents that change
-  them, and the cell layout. Pure state, property-tested.
-- `crates/proto`: wire protocol (JSON control messages + binary frames with a
-  per-pane stream offset). The web client's copy, `web/src/proto.gen.ts`,
-  is generated from it with ts-rs: after changing a type the web client
-  uses, run `just proto-ts` (CI fails if the file is stale).
-- `crates/vt`: server-side terminal state on libghostty-vt (libghostty-rs
-  `master`, Zig 0.16). VT snapshots for xterm.js (spike S1's fix-ups),
-  checkpoints for disk (GHOSTSNP + zstd, spike S5), answers to terminal
-  queries limited to what xterm.js can draw, recorded fixtures.
-- `crates/daemon`: `illogicald`. A multiplexer task owning the layout and
-  attention (`mux.rs`), a PTY + VT thread per pane with its log, checkpoints
-  and OSC scanner (`pane.rs`, `store.rs`, `osc.rs`), restore and restart
-  policies, the pane shim and FD store (`shim.rs`, `sys.rs`), shell
-  integration (`shellint.rs`, `shell/`), the HTTP API (`api.rs`, history and
-  search in `history.rs`), Web Push (`push.rs`), VM panes on wisp
-  (`machine.rs`), sandbox providers (`provider/`: the `Provider` trait
-  and its capabilities, and the Sprites API adapter: exec TTY and piped
-  sessions, the proxy, files and services), sandboxes and resident daemons
-  (`resident.rs`), the provider tunnel (`provider_tunnel.rs`), blocks
-  (`block.rs`, `browser.rs`; agents in `agent/`: the ACP client, the
-  transcript, agent definitions, the local and VM pipes), block sites
-  (`sites.rs`: per-block origins and their HTTP proxy; `ports.rs`: reaching
-  a port here or in a VM; `tls.rs`: the wildcard certificate and ACME), the
-  WebSocket server, embedded web client, access checks, `install`.
-  Federation: the host list and invites (`hosts.rs`), tailscaled's local
-  API and WhoIs (`tailscale.rs`), and sandboxes (`sandbox.rs`: `install
-  --tailnet` and the `sandbox` supervisor). M4c: the dial-out transport
-  (`dial.rs`, over `dialout_mux.rs`'s streams), share links (`share.rs`), and
-  history sync (`sync.rs`, sealed by `seal.rs`). M7: files on a host
-  (`fs.rs`), names (`illogical_core::names`). M11: diff and file blocks
-  (`review/`). M6c: questions and forms
-  (`illogical_proto::ask`: the card's shape and how its answer becomes
-  Claude Code's; agent blocks' elicitations in `agent/`; a terminal's
-  questions in `mux.rs` and the `/ask` route). M16: MCP (`mcp/`: the server at `/mcp`, its
-  tools, and client and block tokens).
-- `crates/cli`: `illogical`, over the daemon's Unix socket, or HTTP(S) to
-  another daemon with `--host` (`hosts.rs`); `ask.rs` is Claude Code's
-  AskUserQuestion hook; `mcp.rs` is `illogical mcp`, the stdio bridge to
-  `/mcp`. `tmux/` is the tmux
-  control-mode front end (M5): the command parser and `-F` format expander,
-  layout strings derived from the daemon's ratios (spike S11's converter),
-  and a mirror terminal per pane so captures line up with the output
-  stream. `crates/daemon/tests/integration/tmux.rs` replays iTerm2's command sequence
-  and compares every reply with what tmux 3.6 answered (S11's transcript).
-- `web`: TypeScript client: Preact for the chrome, xterm.js 6 terminals that
-  are moved between slots rather than recreated, Playwright tests (desktop
-  and phone).
-- `vendor/libghostty-vt-sys`: libghostty-rs's sys crate, vendored (the root
-  `Cargo.toml` patches it in) so the build can apply `patches/*.patch` to
-  Ghostty after checkout (M9: no Zig signal stack in every thread).
-- `spikes`: S1–S3 write-ups and code.
+See [AGENTS.md](../AGENTS.md) for the crate map and the daemon's layers. Each crate has a `README.md` with what it is, what it depends on inside the workspace, and where to start reading.
 
 ## Things M0–M4c taught us
 
