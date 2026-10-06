@@ -17,6 +17,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 runs=$HOME/.cache/illogical-ci/runs
 run=$runs/$GITHUB_RUN_ID
 echo "CI_RUN=$run" >> "$GITHUB_ENV"
+# Six threads for the tests and the builds: nextest's default is one per
+# core (32 on geek), and several jobs at that each kept geek at load 30+,
+# which failed the tests that time things.
+{ echo "NEXTEST_TEST_THREADS=6"; echo "CARGO_BUILD_JOBS=6"; } >> "$GITHUB_ENV"
 case "${1:-}" in
   target)
     job=${2:?usage: ci-env target JOB}

@@ -43,7 +43,7 @@ CI (`.github/workflows/check.yml`) runs on pushes, every job it can at
 once (#287); a new push to a branch cancels that branch's run:
 - **lint** (GitHub's runners): rustfmt, shellcheck, `just test-scripts`
   and gitleaks.
-- On geek's pool (twelve runners, `linux-x86_64-ci`):
+- On geek's pool (eight runners, `linux-x86_64-ci`):
   - **build** and **static**: the debug binaries (with `--features
     debug-embed`, so they carry `web/dist`) and the box's static ones,
     once, kept for the run's other jobs (`scripts/ci-env keep`);
@@ -59,15 +59,20 @@ once (#287); a new push to a branch cancels that branch's run:
   Each job takes one of two build directories kept for its kind of job,
   and a test stack with its own name, ports and subnet (`scripts/ci-env`),
   so jobs and runs on geek don't share either.
-- **macos** (jake-mini): `just test` and `just e2e-webkit`.
+  Pushes to branches other than main skip testnet, stack and perf (geek
+  runs several branches at once, and their load failed the tests that
+  time things); `gh workflow run check.yml --ref BRANCH` runs them all.
+- **macos** (GitHub's `macos-15`, Apple silicon, free for a public repo):
+  `just test` and `just e2e-webkit`, with `ILLOGICAL_SKIP_DOCKER=1` (no
+  Docker there; geek's test runs the ssh tests).
 
 The Rust tests run under cargo-nextest (`.config/nextest.toml`): each in
 its own process and all at once, `ssh.rs` and `reboot.rs` one at a time
 (the test stack). CI's profile (`NEXTEST_PROFILE=ci`) retries a failure
 once and reports a test that passes the second time as flaky.
 
-geek and jake-mini need Docker (the testnet, and `ssh.rs` in `just test`):
-without it the run fails. To run one shard's specs locally: `E2E_SET=rest
+geek needs Docker (the testnet, and `ssh.rs` in `just test`): without it
+the run fails. To run one shard's specs locally: `E2E_SET=rest
 pnpm exec playwright test --shard=2/6` in `web/`. `just browsers` installs Playwright's browsers (with their
 system libraries on Linux, if sudo needs no password; otherwise run `sudo
 pnpm exec playwright install-deps` in `web/` once). See

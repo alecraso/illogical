@@ -61,14 +61,26 @@ CI runs on two self-hosted GitHub Actions runners in the arugula-salad
 org's `illogical` runner group, which only this repo may use: geek
 (`linux-x86_64`, a systemd user service,
 `~/.config/systemd/user/actions-runner-illogical.service`, runner in
-`~/.local/share/actions-runner-illogical`), geek's CI pool (twelve more,
-`linux-x86_64-ci`, `actions-runner-illogical-e2e@1…12.service` from one
+`~/.local/share/actions-runner-illogical`), geek's CI pool (eight more,
+`linux-x86_64-ci`, `actions-runner-illogical-e2e@1…8.service` from one
 template unit, runners in `~/.local/share/actions-runner-illogical-e2e-N`,
-which run check.yml's jobs on geek side by side; more is `cp -a` of one
+which run check.yml's jobs on geek side by side; 9–12 are registered but
+disabled: twelve with no limits kept geek at load 30+ and failed the tests
+that time things. The drop-in `actions-runner-illogical-e2e@.service.d/limits.conf`
+puts them in `illogical-ci.slice` (CPUWeight 50 under the desktop, 96 GB
+for all of CI) and gives each 20 GB; `scripts/ci-env` caps nextest and
+cargo at six threads, rather than a CPUQuota, which stalls a runner for
+the rest of its period and times tests out. The drop-in also sets
+`KillMode=control-group` (the template's `process` stopped `run.sh`
+alone, and the next start ran a second listener beside the old one), so
+stopping a runner cancels its job: drain it first, `gh api -X DELETE
+orgs/arugula-salad/actions/runners/ID/labels` (needs `admin:org`), wait
+for `.busy` false, restart, then `PUT` its three labels back. More is `cp -a` of one
 without `_work`, `.runner` and `.credentials*`, `config.sh --runnergroup
 illogical --labels linux-x86_64,linux-x86_64-e2e,linux-x86_64-ci` with an
 org registration token, and `systemctl --user enable --now` of the next
-number) and jake-mini (`macos-arm64`, a
+number) and jake-mini (`macos-arm64`, releases only: check.yml's macos job
+runs on GitHub's `macos-15`, as one runner kept every run waiting; a
 launchd agent, `~/Library/LaunchAgents/illogical.actions-runner.plist`,
 with `ProcessType` Interactive: launchd's throttling of background agents
 made daemon tests time out; Docker is colima, a Homebrew service). All run jobs on the host and keep their

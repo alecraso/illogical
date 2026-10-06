@@ -7,12 +7,15 @@
 #   - testnet: the test stack's claims (ssh, then control);
 #   - e2e: the Playwright specs in six shards; stack: those on the test
 #     stack; perf: the specs that time things, once the shards are done;
-# - macos: build, test and the WebKit specs, on jake-mini.
+# - macos: test and the WebKit specs, on GitHub's macOS runner.
 # Jobs on geek take a build directory and a test stack of their own
-# (scripts/ci-env), so runs and jobs don't wait on each other. geek and
-# jake-mini need Docker: the test stack (testnet/README.md) and the ssh
+# (scripts/ci-env), so runs and jobs don't wait on each other. geek needs
+# Docker: the test stack (testnet/README.md) and the ssh
 # tests in `just test` fail without it. Only pushes (never pull requests),
 # since most of it runs on our own machines.
+# Other branches' pushes skip testnet, stack and perf: geek runs several
+# branches at once, and their load made the tests that time things fail
+# (a full run is `gh workflow run check.yml --ref BRANCH`). main runs all.
 name: check
 on:
   push:
@@ -120,6 +123,7 @@ jobs:
   # it must fail.
   testnet:
     needs: [build, static]
+    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, linux-x86_64-ci]
     steps:
       - uses: actions/checkout@v4
@@ -160,6 +164,7 @@ jobs:
   # The specs on the test stack (team-swarm-phones' box behind netem).
   stack:
     needs: [build, static]
+    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, linux-x86_64-ci]
     steps:
       - uses: actions/checkout@v4
@@ -182,7 +187,7 @@ jobs:
   # measured geek's load.
   perf:
     needs: [build, e2e]
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
     runs-on: [self-hosted, linux-x86_64-ci]
     steps:
       - uses: actions/checkout@v4
@@ -197,18 +202,35 @@ jobs:
           E2E_CHROMIUM: "1"
           E2E_SET: perf
 
-  # jake-mini has one runner: its runs take turns.
+  # GitHub's Apple silicon runner (free for a public repo, up to five at
+  # once): jake-mini's one runner kept every run waiting 12-27 min for it,
+  # and stays for releases. No Docker there, so the ssh tests skip
+  # (ILLOGICAL_SKIP_DOCKER=1, loudly); test runs them on geek.
   macos:
-    runs-on: [self-hosted, macos-arm64]
+    runs-on: macos-15
+    env:
+      ILLOGICAL_SKIP_DOCKER: "1"
     steps:
       - uses: actions/checkout@v4
-      - name: Keep the build between runs
-        run: echo "CARGO_TARGET_DIR=$HOME/.cache/illogical-ci/check" >> "$GITHUB_ENV"
-      - run: scripts/ci-cap-target 30
+      - name: bash 4.4+ (macOS ships 3.2; the shell integration tests need PS0)
+        run: brew install bash
+      - name: Rust (rust-toolchain.toml's)
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal -c rustfmt,clippy
+      - name: mise (it brings the Zig libghostty needs, from .mise.toml)
+        run: |
+          curl -fsSL https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: Swatinem/rust-cache@v2
       - run: just bootstrap
-      # The box's binaries, for the ssh tests in `just test` (which bring
-      # the test stack up themselves).
-      - run: just static aarch64
       # Before `just test`: reboot.rs drives Chromium, the WebKit specs WebKit.
       - name: Playwright's browsers
         run: just browsers
@@ -217,6 +239,3 @@ jobs:
         run: just e2e-webkit
         env:
           E2E_PORT: "7769"
-      - name: Take the test stack down
-        if: always()
-        run: just testnet down
