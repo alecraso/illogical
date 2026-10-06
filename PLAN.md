@@ -4884,6 +4884,16 @@ The phone keeps today's list-then-thread flow, styled to match.
 - The details panel's pane view shows live output.
 - Old thread files (no `pic`) still load.
 
+**As built (2026-10-05, PR #353):**
+- `ThreadMsg.pic` is filled from the poster's principal at post time (the owner's from `owner_pic`). An agent's message has none, and shows a ⚙ tile and the *Agent* badge.
+- `ui/markup.tsx` renders the Markdown subset as Preact nodes.
+- The *New* line is placed once, when the thread loads, from `ThreadSummary.unread`.
+- The details panel's live view is a text capture (`/api/panes/N/capture?format=text`) every 1.5 s through the thread's own client, not a second terminal view: it works for every machine's panes and costs no terminal.
+- Member avatars come from presence in the session plus the thread's posters. The share list isn't read.
+- @ completion offers the same people, plus `@agent` on a pane's thread. Enter sends when the typed word is already a whole name.
+- Drafts are kept in `sessionStorage` under `chat.draft:<host>/<thread>`.
+- The drawer shares the message list and composer (28 px pictures).
+
 #### M75: getting around like Slack (#338, after M74)
 
 - **Ctrl/Cmd+K on the chat page** is a channel switcher over every machine's channels and threads, ranked by unread and recency. It reuses the palette's matcher.
@@ -4893,6 +4903,12 @@ The phone keeps today's list-then-thread flow, styled to match.
 - **Mark read up to here** from a message's hover menu.
 
 **Done when:** Playwright switches channels by keyboard only, finds a message on a second machine (the testnet profile) by search and lands on it, and sees a mention in Activity that clears when read.
+
+**As built (2026-10-05):**
+- **Search and Activity load every thread the reader can read**, through each machine's own client, and filter in the page. `/api/search` is the owner's alone and covers output too. Threads reload when their last message changes.
+- **Routes:** `#chat=activity` and `#chat=search/<words>`. Typing replaces the history entry, so Back doesn't step through each letter.
+- **Activity's count** is the number of threads with an unread mention.
+- **Not done:** *Mark read up to here*. Reading a thread marks it all read, and the daemon only moves a read mark forward, so the item would do nothing. *Mark unread* would need the daemon to move it back.
 
 ## Acceptance tests (automated where possible)
 

@@ -1056,7 +1056,7 @@ the daemon stopping, crashing, or the machine rebooting:
   the session menu) starts one, and everyone with the session sees it's on
   (the button goes green with how many are in) and joins with a click. Up
   to 5 people. The huddle bar stays in the corner while you move between
-  tabs, sessions and the chat view: who's in, who's talking, who's muted,
+  tabs, sessions and chat (where it sits in the sidebar's corner): who's in, who's talking, who's muted,
   *Mute* (Ctrl/Cmd+Shift+Space) and *Leave*. Audio goes straight between
   devices, encrypted end to end (WebRTC, DTLS-SRTP), through a TURN relay
   when there's no direct path; the machine only introduces the members.
@@ -1071,12 +1071,30 @@ the daemon stopping, crashing, or the machine rebooting:
   so. The Linux desktop app's web view has no WebRTC, so the app runs the
   call itself (WebRTC in Rust, Opus, and WebRTC's echo cancellation and
   noise suppression), with the same bar and buttons.
-- **Chat: every thread in one place.** *Chat* in the bar (or the phone's
-  sheet, or the command palette; `/#chat`) shows every thread on every
-  machine you can reach, like a team chat: each machine's sessions are the
-  channels, and each pane's thread sits under its session, newest first,
-  with your unread count and @mentions. The button counts what's unread
-  everywhere. A thread is read and written there, and *Go to pane* (or *Go
-  to session*) takes you to what it's about, switching machines if it's on
-  another one; so does clicking a quote. Escape, or picking a tab, goes
-  back to the panes.
+- **Chat: every thread in one place.** *Chat* (beside *Panes* and *Swarm*
+  in the bar, the phone's sheet, or the command palette; `/#chat`) is a
+  page of its own, laid out like a team chat. On the left: *Activity*,
+  any huddles that are on, then each machine's sessions as channels with
+  each pane's thread under its session, newest first, unread in bold and
+  @mentions counted. Fold a machine away, show only what's unread, or drag
+  the sidebar wider; the browser remembers. The panes stay as they were
+  under the page; *Panes*, or Back, returns to them.
+  - **Messages** carry the poster's picture, run together under one
+    heading, and have a line between days and a red *New* line at the
+    first one you hadn't read. An agent's are badged. Text takes a little
+    Markdown: `code`, fenced code blocks, **bold**, *italic*, links and
+    @mentions (yours stand out); anything else, HTML included, stays text.
+    Hover a message to quote it in your reply, copy a link to it (the link
+    opens the thread at that message), or go to its pane.
+  - **Writing:** Enter sends, Shift+Enter makes a new line, and @ offers
+    the people here (and `@agent` in a pane's thread). An unsent message
+    waits in its thread while you look at another.
+  - **The header** says where the thread is and what its pane is doing,
+    who's in it, and has the huddle button and *Go to pane* (or *Go to
+    session*). ⓘ opens details: the pane's screen, live (or each of the
+    session's panes), and the people.
+  - **Getting around:** the search field in the bar searches every thread
+    on every machine you can read as you type. *Activity* lists messages
+    that mention you and agents' answers to you. Ctrl/Cmd+K jumps to a
+    channel by name. Alt+↑/↓ moves between channels, Alt+Shift+↑/↓ between
+    unread ones, and Shift+Esc marks everything read.

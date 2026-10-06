@@ -3914,6 +3914,14 @@ impl Daemon {
         }
     }
 
+    /// A person's picture, if they have one.
+    fn pic_of(&self, who: &Principal) -> Option<String> {
+        match who {
+            Principal::User { pic, .. } => pic.clone(),
+            Principal::Owner => self.config.owner_pic.clone(),
+        }
+    }
+
     fn driver_of(&self, who: &Principal) -> Driver {
         Driver { who: who.id().to_owned(), name: self.name_of(who) }
     }
@@ -4205,6 +4213,7 @@ impl Daemon {
             at: now_ms(),
             who: by.who.clone(),
             name: by.name.clone(),
+            pic: if as_agent.is_some() { None } else { self.pic_of(&who) },
             text,
             quote,
             mentions,
@@ -4325,10 +4334,7 @@ impl Daemon {
             client: sub.client,
             who: who.id().to_owned(),
             name: sub.name.clone().unwrap_or_else(|| self.name_of(who)),
-            pic: match who {
-                Principal::User { pic, .. } => pic.clone(),
-                Principal::Owner => self.config.owner_pic.clone(),
-            },
+            pic: self.pic_of(who),
             muted: false,
             joined: crate::store::now_ms(),
             device: sub.device.as_ref().map(|d| d.device.clone()),

@@ -403,6 +403,8 @@ export interface ThreadMsg {
   at: number;
   who: string;
   name: string;
+  /** M74: the poster's picture when they posted. */
+  pic?: string;
   text: string;
   /** Terminal output it quotes, kept as text. */
   quote?: { pane: PaneId; text: string };

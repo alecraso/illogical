@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { ready, run } from "./helpers";
 import { ANY, daemonPort } from "./ports";
 
 let homeUrl = "";
@@ -163,7 +164,7 @@ test("the sidebar remembers a machine folded away, and can show only what's unre
   await page.locator(".menu").getByText("Show unread only").click();
   // Everything here is read (your own messages are), so only the thread
   // shown stays listed.
-  await expect(chat.locator(".chat-row")).toHaveCount(1);
+  await expect(chat.locator(".chat-row[data-chat-thread]")).toHaveCount(1);
   await expect(chat.locator(".chat-row.selected")).toHaveCount(1);
   await chat.locator("[data-chat-workspace]").click();
   await page.locator(".menu").getByText("Show every channel").click();
@@ -220,6 +221,33 @@ test("another host's thread reads there, and its pane opens on that host", async
   await expect(chat).toBeHidden();
   await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("jake-mini");
   await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(mini.pane);
+});
+
+test("details show the pane live, and a draft waits in its thread", async () => {
+  await ready(page, home.pane);
+  await run(page, home.pane, "echo PEEK-$((6*7))", "PEEK-42");
+  await page.locator("[data-open-chat]").click();
+  const chat = page.locator("[data-chat]");
+  const geek = chat.locator(".chat-list section").first();
+  await geek.locator(`[data-chat-thread="pane-${home.pane}"]`).click();
+  await chat.locator("[data-chat-details]").click();
+  await expect(chat.locator(`[data-chat-peek="${home.pane}"]`)).toContainText("PEEK-42");
+
+  // A session's details show its panes, each opening its own thread.
+  await geek.locator(`[data-chat-thread="session-${home.session}"]`).click();
+  await expect(chat.locator(`[data-chat-peek="${home.pane}"]`)).toBeVisible();
+  await expect(chat.locator("[data-chat-topic]")).toContainText("pane");
+
+  // Half a message stays with its thread while you look at another.
+  await chat.locator(".chat-thread textarea").fill("half a thought");
+  await geek.locator(`[data-chat-thread="pane-${home.pane}"]`).click();
+  await expect(chat.locator(".chat-thread textarea")).toHaveValue("");
+  await geek.locator(`[data-chat-thread="session-${home.session}"]`).click();
+  await expect(chat.locator(".chat-thread textarea")).toHaveValue("half a thought");
+  await chat.locator(".chat-thread textarea").fill("");
+  await chat.locator("[data-chat-details]").click();
+  await expect(chat.locator("[data-chat-details-panel]")).toHaveCount(0);
+  await chat.locator("[data-open-panes]").click();
 });
 
 test("on a phone: the list, then a thread, and back", async ({ browser }) => {

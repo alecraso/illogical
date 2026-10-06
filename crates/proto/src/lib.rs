@@ -1137,6 +1137,9 @@ pub struct ThreadMsg {
     /// or `mcp:…` for an agent.
     pub who: String,
     pub name: String,
+    /// M74: the poster's picture when they posted, if they have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pic: Option<String>,
     pub text: String,
     /// Terminal output it quotes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
