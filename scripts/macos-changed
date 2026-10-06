@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Could this push behave differently on macOS? check.yml's macos job asks
 # first, so a docs-, site-, testnet- or control-only push doesn't wait on
-# GitHub's macOS runner. main runs it on every push regardless. The Rust
-# paths are windows.yml's, plus what the macOS job also runs: the web UI
+# GitHub's macOS runner. main runs it on every push regardless. The paths
+# are the workspace but control, plus what the macOS job also runs: the web UI
 # (the WebKit specs, and the daemon embeds it), the justfile, mise and
 # nextest's config.
 #

@@ -1,4 +1,4 @@
-# Every push, as parallel as it goes (#287):
+# Every push to main, as parallel as it goes (#287):
 # - lint: the quick checks, on GitHub's runners;
 # - on geek's runner pool (label linux-x86_64-ci, docs/development.md):
 #   - build and static: the debug and the box's (static) binaries, once;
@@ -14,19 +14,17 @@
 # Jobs on geek take a build directory and a test stack of their own
 # (scripts/ci-env), so runs and jobs don't wait on each other. geek needs
 # Docker: the test stack (testnet/README.md) and the ssh
-# tests in `just test` fail without it. Only pushes (never pull requests),
-# since most of it runs on our own machines.
-# Other branches' pushes skip testnet, stack and perf: geek runs several
-# branches at once, and their load made the tests that time things fail
-# (a full run is `gh workflow run check.yml --ref BRANCH`). main runs all.
+# tests in `just test` fail without it. Only main's pushes (never other
+# branches or pull requests), since most of it runs on our own machines; a
+# branch runs by hand: `gh workflow run check.yml --ref BRANCH`.
 name: check
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   workflow_dispatch:
 
-# A new push to a branch cancels its run in progress; main's runs all
-# finish.
+# A new run by hand on a branch cancels its run in progress; main's runs
+# all finish.
 concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -137,7 +135,6 @@ jobs:
   # it must fail.
   testnet:
     needs: [build, static]
-    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, linux-x86_64-ci]
     steps:
       - uses: actions/checkout@v4
@@ -178,7 +175,6 @@ jobs:
   # The specs on the test stack (team-swarm-phones' box behind netem).
   stack:
     needs: [build, static]
-    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, linux-x86_64-ci]
     steps:
       - uses: actions/checkout@v4
@@ -201,7 +197,7 @@ jobs:
   # measured geek's load.
   perf:
     needs: [build, e2e]
-    if: ${{ !cancelled() && needs.build.result == 'success' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: [self-hosted, linux-x86_64-ci]
     steps:
       - uses: actions/checkout@v4

@@ -1,13 +1,14 @@
 # The Windows desktop app's installer, on GitHub's own runners. It runs only
 # when something the app is built from changes (#389): a daemon-only or
 # web-only change doesn't need it. The workspace's Windows checks stay in
-# windows.yml, on every change. check.yml's desktop-check uses the same
+# windows.yml. Only main's pushes (never pull requests); a branch runs by
+# hand. check.yml's desktop-check uses the same
 # paths (scripts/app-changed): keep the two in step.
 name: windows-desktop
 on:
   push:
     branches: [main]
-    paths: &app
+    paths:
       - crates/desktop/**
       # The app's only workspace deps, and the root manifest they inherit
       # their version and lints from.
@@ -19,8 +20,6 @@ on:
       - LICENSE-MIT
       - LICENSE-APACHE
       - .github/workflows/windows-desktop.yml
-  pull_request:
-    paths: *app
   workflow_dispatch:
 
 permissions:

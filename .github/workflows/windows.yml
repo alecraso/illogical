@@ -1,21 +1,12 @@
-# Windows on GitHub's own runners (the Windows track, #224). They're not our
-# host runners, so pull requests can run this too. The desktop app's
-# installer builds in windows-desktop.yml, only when the app can change.
+# Windows on GitHub's own runners (the Windows track, #224). The desktop
+# app's installer builds in windows-desktop.yml, only when the app can
+# change.
 name: windows
-# Pull requests run it only when they change what it builds: the workspace
-# but control (scripts/macos-changed lists the same, plus what only the
-# macOS job runs). main runs it on every push.
+# main runs it on every push (never pull requests); a branch runs by hand:
+# `gh workflow run windows.yml --ref BRANCH`.
 on:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - crates/**
-      - "!crates/control/**"
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - .github/workflows/windows.yml
   workflow_dispatch:
 
 permissions:
