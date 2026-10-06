@@ -12,6 +12,7 @@ use crate::{NodeId, PaneId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Dir {
     /// Children side by side, left to right.
     Row,
@@ -22,6 +23,7 @@ pub enum Dir {
 /// Where to put something relative to a pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Edge {
     Left,
     Right,
@@ -48,12 +50,14 @@ impl Edge {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Node {
     Pane { pane: PaneId },
     Split { id: NodeId, dir: Dir, children: Vec<Child> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Child {
     pub weight: f64,
     pub node: Node,

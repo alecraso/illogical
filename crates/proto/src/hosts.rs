@@ -117,6 +117,7 @@ pub struct HostInfo {
 
 /// The optional parts of a machine, as `GET /api/host` reports them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HostFeatures {
     /// Browser blocks on ports and editor blocks: block sites are on
     /// (`--block-listen`).
@@ -131,9 +132,11 @@ pub struct HostFeatures {
     /// Threads on panes and sessions (M61): always, from daemons that have
     /// them. Older daemons leave it out, and pages hide threads there.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>", optional))]
     pub threads: bool,
     /// Huddles on sessions (M63), likewise.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>", optional))]
     pub calls: bool,
 }
 

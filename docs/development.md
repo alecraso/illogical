@@ -147,7 +147,9 @@ from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
 - `crates/core`: sessions, tabs and split trees, the intents that change
   them, and the cell layout. Pure state, property-tested.
 - `crates/proto`: wire protocol (JSON control messages + binary frames with a
-  per-pane stream offset). Mirrored by hand in `web/src/proto.ts`.
+  per-pane stream offset). The web client's copy, `web/src/proto.gen.ts`,
+  is generated from it with ts-rs: after changing a type the web client
+  uses, run `just proto-ts` (CI fails if the file is stale).
 - `crates/vt`: server-side terminal state on libghostty-vt (libghostty-rs
   `master`, Zig 0.16). VT snapshots for xterm.js (spike S1's fix-ups),
   checkpoints for disk (GHOSTSNP + zstd, spike S5), answers to terminal

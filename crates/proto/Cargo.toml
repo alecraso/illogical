@@ -9,6 +9,14 @@ repository.workspace = true
 illogical-core = { version = "0.23.0", path = "../core" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# Its warnings are for serde attributes it can't read (`from`, `other`):
+# they change only how a type parses, not how it looks.
+ts-rs = { version = "12.0.1", optional = true, features = ["no-serde-warnings"] }
+
+[features]
+# TypeScript for the types the web client uses: `just proto-ts` writes
+# web/src/proto.gen.ts, and a test checks it's current.
+ts = ["dep:ts-rs", "illogical-core/ts"]
 
 [lints]
 workspace = true

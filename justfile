@@ -23,6 +23,11 @@ bootstrap:
 web:
     cd web && pnpm run build
 
+# Write the web client's wire types (web/src/proto.gen.ts) from
+# crates/proto. Without `write`, check they're current, as CI does.
+proto-ts mode="write":
+    {{ if mode == "write" { "ILLOGICAL_WRITE_TS=1" } else { "" } }} cargo test -q -p illogical-proto --features ts ts::
+
 # Release build of everything.
 build: web
     {{cargo}} build --release
@@ -455,6 +460,7 @@ test-scripts:
 
 # What CI runs.
 check: test
+    just proto-ts check
     {{cargo}} fmt --all --check
     {{cargo}} clippy --workspace --all-targets -- -D warnings
 

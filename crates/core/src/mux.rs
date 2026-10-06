@@ -15,6 +15,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Session {
     pub id: SessionId,
     pub name: String,
@@ -40,6 +41,7 @@ pub struct Tab {
 /// or a pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum OptionScope {
     Global,
     Session(SessionId),
@@ -53,14 +55,18 @@ pub type OptionMap = BTreeMap<String, String>;
 /// options: iTerm2's tab grouping and attach guard, `@affinities`). Saved
 /// with the layout; an entry goes when what it belongs to does.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Options {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub global: OptionMap,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "by_id")]
+    #[cfg_attr(feature = "ts", ts(as = "Vec<(SessionId, OptionMap)>"))]
     pub sessions: BTreeMap<SessionId, OptionMap>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "by_id")]
+    #[cfg_attr(feature = "ts", ts(as = "Vec<(TabId, OptionMap)>"))]
     pub tabs: BTreeMap<TabId, OptionMap>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "by_id")]
+    #[cfg_attr(feature = "ts", ts(as = "Vec<(PaneId, OptionMap)>"))]
     pub panes: BTreeMap<PaneId, OptionMap>,
 }
 
@@ -106,6 +112,7 @@ pub const DEFAULT_ROWS: u16 = 24;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Intent {
     /// A session with one tab and one pane. `from_pane` lends its working
     /// directory to the new pane.
@@ -126,6 +133,7 @@ pub enum Intent {
         session: SessionId,
         from_pane: Option<PaneId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts", ts(optional))]
         cwd: Option<String>,
     },
     RenameTab {
@@ -150,6 +158,7 @@ pub enum Intent {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         local: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts", ts(optional))]
         cwd: Option<String>,
     },
     ClosePane {

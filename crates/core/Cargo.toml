@@ -7,6 +7,13 @@ repository.workspace = true
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
+# Its warnings are for serde attributes it can't read (`from`, `other`):
+# they change only how a type parses, not how it looks.
+ts-rs = { version = "12.0.1", optional = true, features = ["no-serde-warnings"] }
+
+[features]
+# TypeScript for the types the web client uses (`just proto-ts`).
+ts = ["dep:ts-rs"]
 
 [lints]
 workspace = true

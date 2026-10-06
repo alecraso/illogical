@@ -12,6 +12,7 @@ use crate::{Error, Intent, Mux, OptionScope, SessionId};
 /// Ordered: an owner can do anything an editor can, and so on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Role {
     /// Watch, scroll, select, copy, capture, tail.
     Viewer,

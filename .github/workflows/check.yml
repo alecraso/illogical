@@ -60,6 +60,8 @@ jobs:
         run: shellcheck -s sh scripts/install.sh scripts/glibc-floor && shellcheck -s bash scripts/tests/*.sh
       - name: Release scripts and ratchets
         run: just test-scripts
+      - name: The web client's wire types are current (web/src/proto.gen.ts)
+        run: just proto-ts check
       - name: The CI's and the test stack's scripts
         run: shellcheck -x scripts/ci-* scripts/free-port testnet/*.sh testnet/forges/*.sh testnet/hosts/*.sh testnet/editors/*.sh testnet/macos/*.sh && shellcheck -s sh testnet/editors/box/entrypoint.sh testnet/sshd/entrypoint.sh testnet/sshd-systemd/keys.sh testnet/git/entrypoint.sh testnet/tailnet/entrypoint.sh
       - name: No secrets

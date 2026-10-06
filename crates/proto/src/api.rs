@@ -102,32 +102,41 @@ pub struct AttentionItem {
 /// several at once ("allow all 3", "dismiss all 11"). Each pane needs
 /// editor on its session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ActRequest {
     pub action: crate::Action,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub pane: Option<PaneId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub panes: Vec<PaneId>,
     /// The ask it answers (`AskRef::id`); without one, whatever the pane
     /// asks now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub id: Option<String>,
     /// `answer`: the card's fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    #[cfg_attr(feature = "ts", ts(type = "Record<string, unknown>"))]
     pub content: Option<serde_json::Value>,
     /// `allow`: `once` (default) or `always`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub option: Option<String>,
     /// `allow` `always` for Claude Code in a terminal (M29): which of its
     /// suggestions to keep (default the first).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub suggestion: Option<u64>,
     /// `deny`: why, for the agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub message: Option<String>,
     /// `accept` (M28): the file as it should be saved, when someone
     /// changed the proposal first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub text: Option<String>,
 }
 

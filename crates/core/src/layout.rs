@@ -12,6 +12,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Rect {
     pub x: u16,
     pub y: u16,
@@ -22,6 +23,7 @@ pub struct Rect {
 /// A split's area and how long each child is along the split's direction,
 /// so a client can turn a divider drag into new weights.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SplitRect {
     pub id: NodeId,
     pub dir: Dir,
@@ -30,6 +32,7 @@ pub struct SplitRect {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Layout {
     pub panes: Vec<(PaneId, Rect)>,
     pub splits: Vec<SplitRect>,
