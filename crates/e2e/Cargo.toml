@@ -16,7 +16,9 @@ p256 = { version = "0.14.0", features = ["ecdh"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
-snow = "0.10.0"
+# Its RustCrypto resolver only: its `std` feature turns on `ring/std`, which
+# builds ring (a second crypto backend beside aws-lc-rs) for nothing (#466).
+snow = { version = "0.10.0", default-features = false, features = ["default-resolver-crypto"] }
 tokio = { version = "1.53.1", features = ["sync", "io-util", "rt", "macros"] }
 
 [lints]

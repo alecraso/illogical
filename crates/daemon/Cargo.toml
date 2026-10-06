@@ -64,7 +64,8 @@ workspace = true
 futures-util = "0.3.34"
 illogical-testkit = { path = "../testkit" }
 rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
-rcgen = "0.14.10"
+# instant-acme's features (aws-lc-rs): the defaults add ring (#466).
+rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "crypto", "pem"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 rmcp = { version = "=3.5.0", default-features = false, features = ["transport-streamable-http-client-unix-socket"] }
