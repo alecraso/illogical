@@ -1,23 +1,30 @@
-// The chat view: every thread (M61) on every machine in one place, like a
+// The chat page: every thread (M61) on every machine in one place, like a
 // team chat. Sessions are the channels, each pane's thread sits under its
 // session, and each one links to the pane or session it's about. It's
-// `/#chat`, over the tabs and under the bar (the bar is the desktop app's
-// titlebar); on a phone the list and a thread take the screen in turn.
+// `/#chat`, a page of its own beside the panes and the swarm (M73): its own
+// bar (the desktop app's titlebar), a sidebar of channels and the thread.
+// The panes stay mounted under it, so their terminals keep their size. On
+// a phone the list and a thread take the screen in turn.
 //
 // The shown host's threads come from the page's own connection; the other
 // hosts' from the fleet's summary connections, which get threads too.
 //
 // A session's huddle (M63) shows on its channel row and in its header.
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { Client } from "../client";
 import type { Fleet } from "../fleet";
 import { directory } from "../hosts";
+import { openSwarm } from "../swarm/route";
 import { threadKey, type SessionId, type ThreadSummary, type ThreadTarget } from "../proto";
 import { getFleet } from "./hosts";
 import { usePhone } from "./hooks";
+import { openMenu, type MenuItem } from "./menu";
+import { openPalette } from "./palette";
 import { closeThread, ThreadBody, type Quote } from "./threads";
-import { HuddleButton, HuddleChip } from "./huddle";
+import { HuddleButton, HuddleChip, useHuddle } from "./huddle";
+import { UpdateChip } from "./update";
+import { WindowButtons } from "./window-buttons";
 
 // ---- the route
 
@@ -32,17 +39,16 @@ function chatRoute(): { host?: string; key?: string } | null {
   return m[2] ? { host: decodeURIComponent(m[1]), key: m[2] } : {};
 }
 
-// Escape closes it, wherever the focus is: a terminal under the view can
-// keep it after a host switch, and doesn't get the key.
-addEventListener(
-  "keydown",
-  (e) => {
-    if (e.key !== "Escape" || !chatRoute() || document.querySelector(".menu, .prompt")) return;
-    if (!(e.target as HTMLElement).closest?.(".chat")) e.stopPropagation();
-    closeChat();
-  },
-  true,
-);
+/** Whether the chat page is shown, kept current with the route. */
+export function useChatOpen(): boolean {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const fn = () => setTick((t) => t + 1);
+    listeners.add(fn);
+    return () => void listeners.delete(fn);
+  }, []);
+  return isChatOpen();
+}
 
 export function openChat(host?: string, target?: ThreadTarget) {
   closeThread();
@@ -116,25 +122,76 @@ function useChatTick(client: Client) {
   }, [client]);
 }
 
-// ---- the bar's button
+// ---- the places: the panes, the swarm and chat
 
-export function ChatButton({ client }: { client: Client }) {
+/** Panes · Swarm · Chat, in the panes' bar and in chat's. */
+export function Places({ client, at }: { client: Client; at: "panes" | "chat" }) {
   useChatTick(client);
-  if (!client.hasThreads()) return null;
-  const { n, mention } = chatUnread(client);
-  const open = isChatOpen();
+  const { n, mention } = client.hasThreads() ? chatUnread(client) : { n: 0, mention: false };
   return (
-    <button
-      class={`chat-button${open ? " open" : ""}`}
-      title="Chat: every thread, on every machine"
-      data-open-chat
-      onClick={() => (open ? closeChat() : openChat())}
-    >
-      Chat
-      {n > 0 && <span class={mention ? "chat-count mention" : "chat-count"}>{mention ? `@${n}` : n}</span>}
-    </button>
+    <div class="places" role="group" aria-label="Places">
+      <button class={at === "panes" ? "place here" : "place"} title="Your panes" data-open-panes aria-pressed={at === "panes"} onClick={() => at === "chat" && closeChat()}>
+        Panes
+      </button>
+      <button class="place" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
+        Swarm
+      </button>
+      {client.hasThreads() && (
+        <button
+          class={at === "chat" ? "place here" : "place"}
+          title="Chat: every thread, on every machine"
+          data-open-chat
+          aria-pressed={at === "chat"}
+          onClick={() => at === "panes" && openChat()}
+        >
+          Chat
+          {n > 0 && <span class={mention ? "chat-count mention" : "chat-count"}>{mention ? `@${n}` : n}</span>}
+        </button>
+      )}
+    </div>
   );
 }
+
+/** Chat's own bar, which is the desktop app's titlebar on this page. */
+function ChatBar({ client }: { client: Client }) {
+  return (
+    <header class="bar chat-bar" data-tauri-drag-region>
+      <Places client={client} at="chat" />
+      <div class="bar-fill" data-tauri-drag-region />
+      <button class="chat-search" title="Search (the command palette for now)" onClick={() => openPalette(client)}>
+        <span aria-hidden="true">⌕</span> Search
+      </button>
+      <div class="bar-fill" data-tauri-drag-region />
+      <UpdateChip client={client} />
+      <WindowButtons />
+    </header>
+  );
+}
+
+// ---- what this browser remembers about the sidebar
+
+function remembered<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+}
+
+function remember(key: string, v: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(v));
+  } catch {
+    // private window: it lasts for this page only
+  }
+}
+
+const SIDE_MIN = 200;
+const SIDE_MAX = 420;
+let sideWidth = remembered("chat.side", 260);
+let collapsed = new Set<string>(remembered<string[]>("chat.collapsed", []));
+let unreadOnly = remembered("chat.unreadOnly", false);
 
 // ---- the view
 
@@ -200,16 +257,43 @@ function goTo(s: Source, target: ThreadTarget, then?: (c: Client) => void) {
   else directory.select(s.host);
 }
 
-export function ChatLayer({ client }: { client: Client }) {
+export function ChatPage({ client }: { client: Client }) {
   useChatTick(client);
   const route = chatRoute();
-  if (!route || !client.hasThreads()) return null;
-  return <ChatView client={client} route={route} />;
+  const open = !!route && client.hasThreads();
+  // The huddle bar docks in the sidebar's footer on this page (style.css).
+  useEffect(() => {
+    document.documentElement.classList.toggle("chat-open", open);
+    return () => document.documentElement.classList.remove("chat-open");
+  }, [open]);
+  if (!open) return null;
+  return <ChatView client={client} route={route!} />;
+}
+
+/** The sidebar's title: the team's, when every machine here is one team's. */
+function workspaceName(all: Source[], fleet: Fleet | null): string {
+  const people = new Set<string>();
+  let team: string | null = null;
+  for (const s of all) {
+    const h = fleet?.host(s.host);
+    const p = h ? fleet!.personOf(h) : { id: "me", name: "", kind: "me" as const };
+    people.add(p.id);
+    if (p.kind === "team") team = p.name;
+  }
+  if (people.size === 1 && team) return team;
+  return all.length > 1 ? "Your machines" : all[0]?.host || "This machine";
+}
+
+function markAllRead(all: Source[]) {
+  for (const s of all) for (const t of s.client.state?.threads ?? []) if (t.unread) s.client.markThreadRead(t.target, t.last);
 }
 
 function ChatView({ client, route }: { client: Client; route: { host?: string; key?: string } }) {
   const phone = usePhone();
   const fleet = getFleet();
+  const huddle = useHuddle();
+  const [, setTick] = useState(0);
+  const redraw = () => setTick((t) => t + 1);
   const all = sources(client, fleet);
   const multi = all.length > 1;
   const rows = all.map((s) => ({ s, rows: rowsOf(s) }));
@@ -229,49 +313,83 @@ function ChatView({ client, route }: { client: Client; route: { host?: string; k
     if (best) picked = { s: best.s, target: best.r.target };
   }
 
-  // Picking a tab or a session in the bar goes back to the panes.
-  const at = `${client.session}/${client.tab}`;
-  const first = useRef(at);
+  // The sidebar's width, on the root: the docked huddle bar reads it too.
   useEffect(() => {
-    if (at !== first.current) closeChat();
-  }, [at]);
+    document.documentElement.style.setProperty("--chat-side", `${sideWidth}px`);
+  });
+  useEffect(() => () => document.documentElement.style.removeProperty("--chat-side"), []);
 
   const pickedKey = picked ? `${picked.s.host}/${threadKey(picked.target)}` : null;
+
+  const row = (s: Source, r: Row) => {
+    const key = `${r.host}/${threadKey(r.target)}`;
+    const n = r.summary?.unread ?? 0;
+    return (
+      <button
+        key={key}
+        class={`chat-row${r.sub ? " sub" : ""}${key === pickedKey ? " selected" : ""}${n ? " unread" : ""}${r.summary ? "" : " quiet"}`}
+        data-chat-thread={threadKey(r.target)}
+        title={"pane" in r.target ? `This pane's thread` : `The session's thread`}
+        onClick={() => openChat(r.host, r.target)}
+      >
+        <span class="chat-sigil">{"pane" in r.target ? "↳" : "#"}</span>
+        <span class="chat-label">{r.label}</span>
+        {"session" in r.target && <HuddleChip client={s.client} session={r.target.session} />}
+        {n > 0 && <span class={r.summary?.mention ? "chat-count mention" : "chat-count"}>{r.summary?.mention ? `@${n}` : n}</span>}
+      </button>
+    );
+  };
+
+  // Sessions with a huddle on, at the top, as in a team chat's sidebar.
+  const huddles = rows.flatMap(({ s, rows }) => rows.filter((r) => "session" in r.target && s.client.call(r.target.session)).map((r) => ({ s, r })));
+
+  const toggle = (host: string) => {
+    if (collapsed.has(host)) collapsed.delete(host);
+    else collapsed.add(host);
+    remember("chat.collapsed", [...collapsed]);
+    redraw();
+  };
+
   const list = (
     <nav class="chat-list" aria-label="Threads">
-      {rows.map(({ s, rows }) => (
-        <section key={s.host}>
-          {multi && <h2>{s.host || "this machine"}</h2>}
-          {rows.length === 0 && <p class="chat-none">No sessions.</p>}
-          {rows.map((r) => {
-            const key = `${r.host}/${threadKey(r.target)}`;
-            const n = r.summary?.unread ?? 0;
-            return (
-              <button
-                key={key}
-                class={`chat-row${r.sub ? " sub" : ""}${key === pickedKey ? " selected" : ""}${n ? " unread" : ""}${r.summary ? "" : " quiet"}`}
-                data-chat-thread={threadKey(r.target)}
-                title={"pane" in r.target ? `This pane's thread` : `The session's thread`}
-                onClick={() => openChat(r.host, r.target)}
-              >
-                <span class="chat-sigil">{"pane" in r.target ? "↳" : "#"}</span>
-                <span class="chat-label">{r.label}</span>
-                {"session" in r.target && <HuddleChip client={s.client} session={r.target.session} />}
-                {n > 0 && <span class={r.summary?.mention ? "chat-count mention" : "chat-count"}>{r.summary?.mention ? `@${n}` : n}</span>}
-              </button>
-            );
-          })}
+      {huddles.length > 0 && (
+        <section data-chat-huddles>
+          <h2 class="chat-section">Huddles</h2>
+          {huddles.map(({ s, r }) => row(s, { ...r, sub: false, label: multi ? `${r.label} · ${s.host || "this machine"}` : r.label }))}
         </section>
-      ))}
+      )}
+      {rows.map(({ s, rows }) => {
+        // One machine: its name is the sidebar's title already.
+        const name = multi ? s.host || "this machine" : "Sessions";
+        const shut = !phone && collapsed.has(s.host);
+        const shown = unreadOnly ? rows.filter((r) => r.summary?.unread || `${r.host}/${threadKey(r.target)}` === pickedKey) : rows;
+        const unread = rows.reduce((n, r) => n + (r.summary?.unread ?? 0), 0);
+        return (
+          <section key={s.host}>
+            <h2 class="chat-section">
+              <button aria-expanded={!shut} onClick={() => toggle(s.host)} title={shut ? "Show its channels" : "Hide its channels"}>
+                <span class="chat-caret" aria-hidden="true">
+                  {shut ? "▸" : "▾"}
+                </span>
+                {name}
+                {shut && unread > 0 && <span class="chat-count">{unread}</span>}
+              </button>
+            </h2>
+            {!shut && rows.length === 0 && <p class="chat-none">No sessions.</p>}
+            {!shut && rows.length > 0 && shown.length === 0 && <p class="chat-none">Nothing unread.</p>}
+            {!shut && shown.map((r) => row(s, r))}
+          </section>
+        );
+      })}
     </nav>
   );
 
   const thread = picked && <ChatThread key={pickedKey} s={picked.s} target={picked.target} phone={phone} multi={multi} />;
 
-  return (
-    <div class={phone ? "chat phone" : "chat"} data-chat>
-      {phone ? (
-        picked ? (
+  if (phone) {
+    return (
+      <div class="chat phone" data-chat>
+        {picked ? (
           thread
         ) : (
           <>
@@ -283,13 +401,56 @@ function ChatView({ client, route }: { client: Client; route: { host?: string; k
             </header>
             {list}
           </>
-        )
-      ) : (
-        <>
+        )}
+      </div>
+    );
+  }
+
+  const workspaceMenu = (e: MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const items: MenuItem[] = [
+      { label: "New session", run: () => client.intent({ op: "new_session", name: null, from_pane: null }) },
+      { label: "Mark all as read", run: () => markAllRead(all) },
+      "separator",
+      { label: "Show every channel", checked: !unreadOnly, run: () => ((unreadOnly = false), remember("chat.unreadOnly", false), redraw()) },
+      { label: "Show unread only", checked: unreadOnly, run: () => ((unreadOnly = true), remember("chat.unreadOnly", true), redraw()) },
+    ];
+    openMenu({ clientX: r.left, clientY: r.bottom + 4, preventDefault: () => e.preventDefault() }, items);
+  };
+
+  // Drag the sidebar's edge to widen it; this browser keeps the width.
+  const resize = (e: PointerEvent) => {
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = sideWidth;
+    const move = (m: PointerEvent) => {
+      sideWidth = Math.max(SIDE_MIN, Math.min(SIDE_MAX, w0 + m.clientX - x0));
+      redraw();
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      remember("chat.side", sideWidth);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+  };
+
+  return (
+    <div class="chat" data-chat>
+      <ChatBar client={client} />
+      <div class="chat-body">
+        <aside class={huddle ? "chat-side huddling" : "chat-side"}>
+          <header class="chat-side-head">
+            <button class="chat-workspace" data-chat-workspace onClick={workspaceMenu} onContextMenu={workspaceMenu}>
+              {workspaceName(all, fleet)} <span class="caret">▾</span>
+            </button>
+          </header>
           {list}
-          {thread ?? <div class="chat-thread chat-empty">No threads yet. Start one from a pane's menu, or pick a session.</div>}
-        </>
-      )}
+          <div class="chat-resize" role="separator" aria-orientation="vertical" title="Drag to resize" onPointerDown={resize} />
+        </aside>
+        {thread ?? <div class="chat-thread chat-empty">No threads yet. Start one from a pane's menu, or pick a session.</div>}
+      </div>
     </div>
   );
 }

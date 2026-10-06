@@ -9,10 +9,9 @@ import { closeMenu, MenuLayer, openMenu, PromptLayer, type MenuItem } from "./me
 import { KeyBar, PhoneHeader } from "./phone";
 import { ThreadBadge, ThreadLayer } from "./threads";
 import { HuddleBar, HuddleButton } from "./huddle";
-import { ChatButton, ChatLayer } from "./chat";
+import { ChatPage, Places, useChatOpen } from "./chat";
 import { AttentionBadge, tabAttention } from "./attention";
 import { HostButton, HostPicker } from "./hosts";
-import { openSwarm } from "../swarm/route";
 import { ControlRequests, PaneMarks, PeopleBar, ShareDialog, TabPeople } from "./people";
 import { directory } from "../hosts";
 import { SandboxesLayer } from "./sandboxes";
@@ -85,14 +84,17 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
 
   const state = client.state;
   const tab = client.tabView();
+  // M73: the chat page covers the panes, which stay laid out under it (so
+  // their terminals keep their size) but can't be reached.
+  const chatOpen = useChatOpen() && !!state && client.hasThreads();
   return (
     <div class={phone ? "app phone" : "app"}>
       {state && state.sessions.length > 0 && (phone ? (
         <PhoneHeader client={client} />
       ) : (
-        <TopBar client={client} renaming={renaming} setRenaming={setRenaming} />
+        <TopBar client={client} renaming={renaming} setRenaming={setRenaming} inert={chatOpen} />
       ))}
-      <main class="main">
+      <main class="main" inert={chatOpen}>
         {!state ? (
           <HostPicker />
         ) : state.sessions.length === 0 ? (
@@ -112,7 +114,7 @@ export function App({ client, cell }: { client: Client; cell: Cell }) {
       <AgentDialogLayer />
       <ThreadLayer phone={phone} />
       <HuddleBar />
-      {state && <ChatLayer client={client} />}
+      {state && <ChatPage client={client} />}
       <ConversationsLayer />
       <AppsLayer />
       <SandboxesLayer />
@@ -135,10 +137,12 @@ function TopBar({
   client,
   renaming,
   setRenaming,
+  inert,
 }: {
   client: Client;
   renaming: Renaming;
   setRenaming: (r: Renaming) => void;
+  inert: boolean;
 }) {
   useSubscribe(drag.subscribe);
   const state = client.state!;
@@ -160,12 +164,9 @@ function TopBar({
   };
 
   return (
-    <header class="bar" data-tauri-drag-region>
+    <header class="bar" data-tauri-drag-region inert={inert}>
       <HostButton />
-      <button class="swarm-button" title="Every pane, everywhere (the swarm)" data-open-swarm onClick={openSwarm}>
-        Swarm
-      </button>
-      <ChatButton client={client} />
+      <Places client={client} at="panes" />
       {renaming?.kind === "session" && renaming.id === session.id ? (
         <RenameInput
           value={session.name}

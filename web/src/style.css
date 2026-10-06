@@ -5308,16 +5308,38 @@ button.thread-quote:hover {
 .huddle-act.leave:hover {
   background: var(--danger);
   color: var(--letterbox);
-/* The chat view (ui/chat.tsx): every thread, under the bar. */
-.chat-button {
+}
+
+/* Panes · Swarm · Chat (M73): the three places, in the panes' bar and
+   chat's. */
+.places {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 6px;
+}
+
+.place {
+  height: 26px;
   padding: 0 10px;
+  border-radius: 6px;
+  color: var(--dim);
   white-space: nowrap;
 }
 
-.chat-button:hover,
-.chat-button.open {
+.place:hover {
   background: var(--raised);
+  color: var(--fg);
 }
+
+.place.here {
+  background: var(--raised);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* The chat page (ui/chat.tsx, M73): every thread, on a page of its own
+   with its own bar, over the panes (which stay laid out under it). */
 
 .chat-count {
   display: inline-block;
@@ -5340,14 +5362,101 @@ button.thread-quote:hover {
 
 .chat {
   position: fixed;
-  /* Over the panes and the thread drawer, under menus (50). */
+  /* Over the panes, their bar and the thread drawer, under menus (50). */
   z-index: 46;
-  top: var(--bar-h);
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   display: flex;
+  flex-direction: column;
   background: var(--bg);
+}
+
+.chat-bar {
+  align-items: center;
+}
+
+.chat-search {
+  flex: 0 1 420px;
+  min-width: 120px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--divider);
+  background: var(--bg);
+  color: var(--dim);
+  text-align: left;
+}
+
+.chat-search:hover {
+  border-color: var(--raised-hover);
+  color: var(--fg);
+}
+
+.chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.chat-side {
+  flex: none;
+  position: relative;
+  width: var(--chat-side, 260px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--divider);
+}
+
+.chat-side-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 49px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--divider);
+}
+
+.chat-workspace {
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-workspace:hover {
+  background: var(--raised);
+}
+
+.chat-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.chat-resize:hover {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* The huddle bar docks in the sidebar's footer on the chat page. */
+html.chat-open .huddle-bar {
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(var(--chat-side, 260px) - 18px);
+  flex-wrap: wrap;
+  box-shadow: none;
+}
+
+.chat-side.huddling .chat-list {
+  padding-bottom: 88px;
 }
 
 .chat.phone {
@@ -5359,27 +5468,42 @@ button.thread-quote:hover {
 }
 
 .chat-list {
-  flex: none;
-  width: 260px;
-  overflow-y: auto;
-  padding: 8px 0 16px;
-  background: var(--surface);
-  border-right: 1px solid var(--divider);
-}
-
-.chat.phone .chat-list {
   flex: 1;
-  width: auto;
-  border-right: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0 16px;
 }
 
-.chat-list h2 {
-  margin: 12px 14px 4px;
+.chat-section {
+  margin: 12px 6px 2px;
   color: var(--dim);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+}
+
+.chat-section:not(:has(button)) {
+  padding: 3px 8px;
+}
+
+.chat-section button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: inherit;
+  text-align: left;
+}
+
+.chat-section button:hover {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.chat-caret {
+  width: 12px;
+  font-size: 10px;
 }
 
 .chat-none {
@@ -5391,19 +5515,24 @@ button.thread-quote:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  padding: 5px 14px;
+  width: calc(100% - 12px);
+  margin: 0 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
   text-align: left;
   color: var(--fg);
 }
 
 .chat.phone .chat-row {
+  width: 100%;
+  margin: 0;
   padding: 10px 16px;
+  border-radius: 0;
   font-size: 15px;
 }
 
 .chat-row.sub {
-  padding-left: 30px;
+  padding-left: 26px;
 }
 
 .chat.phone .chat-row.sub {
@@ -5424,8 +5553,13 @@ button.thread-quote:hover {
 }
 
 .chat-row.selected {
-  background: var(--raised-hover);
-  color: var(--fg);
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.chat-row.selected .chat-sigil,
+.chat-row.selected.unread .chat-label {
+  color: inherit;
 }
 
 .chat-sigil {
@@ -5516,6 +5650,8 @@ button.thread-quote:hover {
   font-size: 22px;
   line-height: 1;
   color: var(--dim);
+}
+
 /* ---- S33: a hand's requests from agents */
 
 .hand-cards {

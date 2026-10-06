@@ -12,7 +12,7 @@ import { CALL_MAX, type CallMember, type SessionId } from "../proto";
 import { Avatar } from "./people";
 import type { MenuItem } from "./menu";
 
-function useHuddle(): Huddle | null {
+export function useHuddle(): Huddle | null {
   const [, setTick] = useState(0);
   useEffect(() => onHuddle(() => setTick((t) => t + 1)), []);
   return activeHuddle();

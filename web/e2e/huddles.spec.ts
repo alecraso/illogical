@@ -134,7 +134,8 @@ test("a watcher joins too, from the chat view's channel, and a mute shows for ev
   // The chat view shows the huddle on the session's channel, and its
   // header joins it.
   await watcher.evaluate(() => (location.hash = "#chat"));
-  const row = watcher.locator(`.chat-row[data-chat-thread="session-${session}"]`);
+  // Its channel is under Huddles at the top of the sidebar (M73), too.
+  const row = watcher.locator(`[data-chat-huddles] .chat-row[data-chat-thread="session-${session}"]`);
   await expect(row.locator(".huddle-chip .avatar")).toHaveCount(2);
   await row.click();
   await watcher.locator(".chat-head .huddle-button", { hasText: "Join huddle" }).click();

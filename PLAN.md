@@ -4838,6 +4838,13 @@ The phone keeps today's list-then-thread flow, styled to match.
 - Screenshots in `docs/` at desktop width (light and dark) and phone width.
 - geek's desktop app: the window drags from Chat's bar and its buttons work. The same on jake-air.
 
+**As built (2026-10-05, PR #350):**
+- **The cause of the popout look:** since M63's merge, `.huddle-act.leave:hover` in style.css had lost its `}`. Browsers read every rule after it as nested under that selector, so none of the chat view's styles applied, and S33's hand cards had lost theirs the same way (`.chat-back`). `web/scripts/check-css.mjs` now fails the web build on a rule opened inside another.
+- `ChatPage` stays a fixed layer, but now over the whole window (`inset: 0`) with its own bar, rather than `App` switching on the route. The panes' bar and `<main>` get `inert`, so the panes keep their layout and size and nothing under the page takes focus.
+- The switch is `Places` (`[data-open-panes]`, `[data-open-swarm]`, `[data-open-chat]`). The swarm keeps its own bar.
+- The sidebar's folds, unread-only filter and width are kept in `localStorage` (`chat.collapsed`, `chat.unreadOnly`, `chat.side`). With one machine, its section is called *Sessions*.
+- The phone's bar keeps its sheet button; the switch isn't on the phone.
+
 #### M74: messages and composer like Slack (#337, after M73)
 
 - **Messages:**
