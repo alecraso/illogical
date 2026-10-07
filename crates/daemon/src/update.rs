@@ -123,15 +123,24 @@ pub async fn latest_once(url: &str) -> anyhow::Result<String> {
     latest(&client, url).await
 }
 
-/// The version `releases/latest` redirects to.
+/// The version `releases/latest` redirects to. Redirects that aren't to a
+/// tag are followed first, a few at most: a renamed repository answers its
+/// old name with a redirect to the same page under the new one (#506).
 async fn latest(client: &reqwest::Client, url: &str) -> anyhow::Result<String> {
-    let res = client.get(url).send().await?;
-    let location = res
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|l| l.to_str().ok())
-        .ok_or_else(|| anyhow::anyhow!("{url}: {} with no redirect", res.status()))?;
-    tag_of(location).ok_or_else(|| anyhow::anyhow!("{url}: no release tag in {location}"))
+    let mut at = reqwest::Url::parse(url)?;
+    for _ in 0..5 {
+        let res = client.get(at.clone()).send().await?;
+        let location = res
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|l| l.to_str().ok())
+            .ok_or_else(|| anyhow::anyhow!("{at}: {} with no redirect", res.status()))?;
+        if let Some(v) = tag_of(location) {
+            return Ok(v);
+        }
+        at = at.join(location)?;
+    }
+    anyhow::bail!("{url}: no release tag after 5 redirects")
 }
 
 /// `…/releases/tag/v0.17.0` → `0.17.0`.
@@ -349,6 +358,24 @@ mod tests {
             let _ = std::fs::remove_dir_all(local.join(dir));
         }
         let _ = std::fs::remove_dir_all(&local);
+    }
+
+    /// #506: the old repository's name redirects to the new one's
+    /// `releases/latest`, which redirects to the tag.
+    #[tokio::test]
+    async fn follows_a_renamed_repository_to_the_tag() {
+        use axum::{Router, response::Redirect, routing::get};
+        let app = Router::new()
+            .route("/old/releases/latest", get(|| async { Redirect::permanent("/new/releases/latest") }))
+            .route("/new/releases/latest", get(|| async { Redirect::to("/new/releases/tag/v9.8.7") }))
+            .route("/loop/releases/latest", get(|| async { Redirect::to("/loop/releases/latest") }));
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+        assert_eq!(latest(&client, &format!("{base}/old/releases/latest")).await.unwrap(), "9.8.7");
+        assert_eq!(latest(&client, &format!("{base}/new/releases/latest")).await.unwrap(), "9.8.7");
+        assert!(latest(&client, &format!("{base}/loop/releases/latest")).await.is_err(), "gives up on a loop");
     }
 
     #[test]
