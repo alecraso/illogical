@@ -139,3 +139,25 @@ async fn once_moved_the_old_sites_pages_send_browsers_on() {
     let posted = c.at(OLD, reqwest::Method::POST, "/api/me/name").json(&json!({})).send().await.unwrap();
     assert_ne!(posted.status(), StatusCode::PERMANENT_REDIRECT);
 }
+
+#[tokio::test]
+async fn a_daemon_at_the_old_url_is_noted_once() {
+    use arugula_e2e::{Cert, DeviceKeys, Kind, cert::request_auth, now_ms};
+    let c = control(|_| {}).await;
+    c.app.db.account_for("github", "gh-1", "sam", "a1", now_ms()).unwrap();
+    let keys = DeviceKeys::generate();
+    let cert = Cert::new(&keys, "a1", Kind::Daemon, "geek");
+    c.app.db.put_device(&cert, true, now_ms()).unwrap();
+    c.app.db.put_daemon("a1", &cert.device, "geek", &[]).unwrap();
+    let trust = |site: &'static str| {
+        let pq = "/api/daemon/trust";
+        c.at(site, reqwest::Method::GET, pq).header("x-arugula-auth", request_auth(&keys, "GET", pq, b"")).send()
+    };
+    assert_eq!(trust(NEW).await.unwrap().status(), StatusCode::OK);
+    assert!(c.app.old_hosts.0.lock().unwrap().is_empty(), "the new URL isn't noted");
+    assert_eq!(trust(OLD).await.unwrap().status(), StatusCode::OK);
+    let first = c.app.old_hosts.0.lock().unwrap().get(&cert.device).copied();
+    assert!(first.is_some(), "the old URL is");
+    assert_eq!(trust(OLD).await.unwrap().status(), StatusCode::OK);
+    assert_eq!(c.app.old_hosts.0.lock().unwrap().get(&cert.device).copied(), first, "once an hour");
+}

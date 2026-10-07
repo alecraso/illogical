@@ -300,6 +300,8 @@ pub struct App {
     pub app_logins: app_login::Tickets,
     /// Daemon signatures (and join proofs) already taken.
     pub daemon_sigs: auth::Replays,
+    /// Who still signs requests at an old URL (#535).
+    pub old_hosts: auth::OldHosts,
     /// TURN credentials for huddles (M63).
     pub turn: Option<turn::Turn>,
     /// The ssh jump host for guests (M65), when it's on, and the routes
@@ -338,6 +340,7 @@ impl App {
             forge: Default::default(),
             app_logins: Default::default(),
             daemon_sigs: Default::default(),
+            old_hosts: Default::default(),
             turn: None,
             jump: None,
             guest_routes: Default::default(),
@@ -790,6 +793,7 @@ async fn run() -> anyhow::Result<()> {
         forge: Default::default(),
         app_logins: Default::default(),
         daemon_sigs: Default::default(),
+        old_hosts: Default::default(),
         turn,
         jump,
         guest_routes: Default::default(),

@@ -167,8 +167,38 @@ pub async fn verify_daemon(
         return err(StatusCode::PAYLOAD_TOO_LARGE, "a signed request's body is at most 1 MB").into_response();
     };
     let checked = check_daemon(&app, &parts, &bytes).map_err(|e| (e.0, e.1));
+    if let Ok(cert) = &checked {
+        note_old_host(&app, &parts.headers, cert);
+    }
     parts.extensions.insert(Signed(checked));
     next.run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes))).await
+}
+
+/// Daemons and CLIs still signing requests at a URL control is moving away
+/// from (#535): logged once an hour each, so `fly logs | grep "old URL"`
+/// says who's left before the old URL goes.
+#[derive(Default)]
+pub struct OldHosts(pub(crate) std::sync::Mutex<std::collections::HashMap<String, u64>>);
+
+fn note_old_host(app: &App, headers: &HeaderMap, cert: &Cert) {
+    let site = app.cfg.site(headers);
+    if site == &app.cfg.sites[0] {
+        return;
+    }
+    let now = now_ms();
+    let mut seen = app.old_hosts.0.lock().unwrap();
+    if seen.get(&cert.device).is_some_and(|at| now - at < 3_600_000) {
+        return;
+    }
+    seen.insert(cert.device.clone(), now);
+    info!(
+        device = cert.device,
+        account = cert.account,
+        kind = cert.kind.as_str(),
+        name = cert.name,
+        at = site.url,
+        "a signed request at an old URL"
+    );
 }
 
 fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError> {
