@@ -155,10 +155,6 @@ if [ "$os" = Linux ] && ! command -v systemctl >/dev/null 2>&1; then
   for b in arugulad arugula; do
     cp "$tmp/$name/$b" "$HOME/.local/bin/.$b.new" && mv "$HOME/.local/bin/.$b.new" "$HOME/.local/bin/$b"
   done
-  # The old names, as links (#505): hooks and older clients call them.
-  for p in illogicald:arugulad illogical:arugula; do
-    ln -sf "${p#*:}" "$HOME/.local/bin/.${p%:*}.link" && mv -f "$HOME/.local/bin/.${p%:*}.link" "$HOME/.local/bin/${p%:*}"
-  done
   say "installed ~/.local/bin/arugulad and ~/.local/bin/arugula"
   # An install from before the rename: its names now lead to the new
   # binaries, for the panes and hooks that call them (#505, drop in #508).

@@ -965,10 +965,7 @@ mod tests {
         // Joined and connected: no join item.
         let joined = ControlState { state: "joined".into(), connected: true, said: None, dropped_ms: None, ..dropped };
         let es = with(joined);
-        assert_eq!(
-            find(&es, "daemon-control").unwrap().text,
-            "In the team arugula on control.arugula.io: connected"
-        );
+        assert_eq!(find(&es, "daemon-control").unwrap().text, "In the team arugula on control.arugula.io: connected");
         assert!(find(&es, "daemon-join").is_none());
 
         // Not joined: Join….

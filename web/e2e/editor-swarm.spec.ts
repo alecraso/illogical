@@ -51,7 +51,8 @@ async function up(url: string) {
  * first time (M27), so ask it for an editor block if it isn't here yet. */
 async function codeServer(): Promise<string> {
   const cache = join(homedir(), ".cache/arugula/code-server");
-  const find = () => (existsSync(cache) ? readdirSync(cache).map((d) => join(cache, d, "bin/code-server")).find((p) => existsSync(p)) : undefined);
+  // Not a download still being unpacked (`.PID-…`, renamed when done).
+  const find = () => (existsSync(cache) ? readdirSync(cache).filter((d) => !d.startsWith(".")).map((d) => join(cache, d, "bin/code-server")).find((p) => existsSync(p)) : undefined);
   if (!find()) {
     await fetch(`${APP}/api/blocks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "editor", config: { path: proj } }) });
     for (let i = 0; i < 5400 && !find(); i++) await new Promise((r) => setTimeout(r, 100));
